@@ -140,6 +140,15 @@ export async function PUT(
 							console.error("Finalize promotion error:", err),
 						);
 					}
+				} else if (job.job_type === "DESTROY") {
+					// A successful DESTROY tore down the env's infra — clear the BYO-IaC
+					// deployed-commit pin so the source can be detached again (finalizeDeployment
+					// no-ops for template envs). Best-effort: never fail the status update.
+					if (status === "SUCCESS") {
+						await finalizeDeployment(jobId).catch((err) =>
+							console.error("Finalize destroy error:", err),
+						);
+					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
 						await setEnvStatus("FAILED");

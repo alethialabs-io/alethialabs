@@ -8,6 +8,7 @@ CREATE TABLE "project_iac_sources" (
 	"ref" text,
 	"path" text DEFAULT '' NOT NULL,
 	"commit_sha" text,
+	"deployed_commit_sha" text,
 	"git_credential_id" uuid,
 	"var_values" jsonb DEFAULT '{}'::jsonb,
 	"enabled" boolean DEFAULT true NOT NULL,

@@ -566,6 +566,7 @@ async function buildConfigSnapshot(
 	owner: string,
 	projectId: string,
 	environmentId?: string | null,
+	jobKind: "plan" | "deploy" | "destroy" | "drift" = "deploy",
 ) {
 	return withOwnerScope(owner, async (tx) => {
 		const [project] = await tx
@@ -926,13 +927,18 @@ async function buildConfigSnapshot(
 			// Bring-your-own IaC (E3, replace mode): when present, the runner clones this repo at
 			// the PINNED commit_sha (never the moving ref — TOCTOU protection) and runs the
 			// customer's root module instead of the built-in template. Absent for template envs.
+			// A DESTROY job pins the commit that CREATED the live state (deployed_commit_sha), not
+			// a newer unpinned re-scan — `tofu destroy` must run the module that actually applied.
 			...(iacSource
 				? {
 						iac_source: {
 							repo_url: iacSource.repo_url,
 							ref: iacSource.ref ?? undefined,
 							path: iacSource.path,
-							commit_sha: iacSource.commit_sha,
+							commit_sha:
+								jobKind === "destroy"
+									? (iacSource.deployed_commit_sha ?? iacSource.commit_sha)
+									: iacSource.commit_sha,
 							var_values: iacSource.var_values ?? {},
 						},
 					}
@@ -946,13 +952,16 @@ async function buildConfigSnapshot(
 }
 
 /**
- * Queue gate for BYO-IaC environments: when an enabled IaC source exists, PLAN/DEPLOY/DESTROY
- * may only queue if the feature flag is on (defense in depth — a row can predate a flag flip)
- * AND the source has passed a scan that pinned the commit to apply. Template envs (no row)
- * pass through untouched.
+ * Queue gate for BYO-IaC environments: when an enabled IaC source exists, the job may only
+ * queue if the feature flag is on (defense in depth — a row can predate a flag flip). PLAN and
+ * DEPLOY additionally require a fresh scan that pinned the commit to apply. DESTROY does NOT —
+ * it tears down the live state created by the last successful DEPLOY, so it gates on
+ * `deployed_commit_sha` (the commit that CREATED the state) instead: a failed re-scan clears
+ * `commit_sha` but must never trap deployed infra. Template envs (no row) pass through untouched.
  */
 function assertIacSourceQueueable(
 	iacSource: typeof projectIacSources.$inferSelect | null,
+	kind: "plan" | "deploy" | "destroy",
 ): void {
 	if (!iacSource) return;
 	if (!isByoIacEnabled()) {
@@ -961,10 +970,20 @@ function assertIacSourceQueueable(
 				"on this instance — set ALETHIA_BYO_IAC_ENABLED=true, or detach the IaC source.",
 		);
 	}
+	if (kind === "destroy") {
+		// Destroy needs the module commit that created the state, not a clean re-scan.
+		if (!iacSource.deployed_commit_sha) {
+			throw new Error(
+				"This environment has no deployed IaC state to destroy — deploy the attached IaC " +
+					"source first (destroy tears down the exact commit that was applied).",
+			);
+		}
+		return;
+	}
 	if (iacSource.scan_status !== "done" || !iacSource.commit_sha) {
 		throw new Error(
 			"The attached IaC source hasn't passed a scan yet — run the IaC scan first (it pins the " +
-				"exact commit that will be applied) before planning, deploying, or destroying this environment.",
+				"exact commit that will be applied) before planning or deploying this environment.",
 		);
 	}
 }
@@ -1015,8 +1034,8 @@ export async function planProject(
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, projectId, environmentId);
-	assertIacSourceQueueable(iacSource);
+		await buildConfigSnapshot(owner, projectId, environmentId, "plan");
+	assertIacSourceQueueable(iacSource, "plan");
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -1054,8 +1073,8 @@ export async function provisionProject(
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, projectId, environmentId);
-	assertIacSourceQueueable(iacSource);
+		await buildConfigSnapshot(owner, projectId, environmentId, "deploy");
+	assertIacSourceQueueable(iacSource, "deploy");
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -1147,8 +1166,8 @@ export async function destroyProject(
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, projectId, environmentId);
-	assertIacSourceQueueable(iacSource);
+		await buildConfigSnapshot(owner, projectId, environmentId, "destroy");
+	assertIacSourceQueueable(iacSource, "destroy");
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx

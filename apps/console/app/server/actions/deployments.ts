@@ -12,6 +12,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectIacSources,
 	projectNosqlTables,
 	projectQueues,
 	projectSecrets,
@@ -59,9 +60,24 @@ const deployMetaSchema = z.object({
 		.catch(undefined),
 });
 
+// The BYO-IaC slice of a job's config_snapshot — the only key finalizeDeployment reads from it.
+// Lenient: unknown keys are stripped and a malformed snapshot yields {} (never throws).
+const iacSnapshotSchema = z
+	.object({
+		iac_source: z
+			.object({ commit_sha: z.string().nullish().catch(null) })
+			.optional(),
+	})
+	.catch({});
+
 /**
  * After a DEPLOY job succeeds, persist terraform outputs to the project component
  * tables. Service path — runs on the BYPASSRLS connection (runner-triggered).
+ *
+ * Also tracks BYO-IaC (E3) deployed state on the env's project_iac_sources row: a successful
+ * DEPLOY records the commit it applied (so DESTROY can later tear down THAT exact module, and
+ * detach stays blocked while live BYO infra exists); a successful DESTROY clears it. No-op for
+ * template envs (no iac source row matches the update).
  */
 export async function finalizeDeployment(jobId: string) {
 	const db = getServiceDb();
@@ -72,6 +88,7 @@ export async function finalizeDeployment(jobId: string) {
 			project_id: jobs.project_id,
 			environment_id: jobs.environment_id,
 			job_type: jobs.job_type,
+			config_snapshot: jobs.config_snapshot,
 			execution_metadata: jobs.execution_metadata,
 		})
 		.from(jobs)
@@ -80,9 +97,34 @@ export async function finalizeDeployment(jobId: string) {
 
 	if (!job) return;
 	if (job.status !== "SUCCESS") return;
-	if (job.job_type !== "DEPLOY") return;
 	if (!job.project_id) return;
 	if (!job.environment_id) return;
+
+	// BYO-IaC deployed-commit tracking runs BEFORE the DEPLOY-only / metadata guards below so it
+	// also fires for DESTROY (which carries no tofu outputs). DEPLOY pins the commit it applied so
+	// a later DESTROY tears down THAT exact module (and detach stays blocked while live BYO infra
+	// exists); DESTROY clears the pin. Only BYO envs carry `iac_source` in the snapshot, so a
+	// template env skips this entirely (no stray write).
+	if (job.job_type === "DEPLOY" || job.job_type === "DESTROY") {
+		const snap = iacSnapshotSchema.parse(job.config_snapshot ?? {});
+		if (snap.iac_source) {
+			await db
+				.update(projectIacSources)
+				.set({
+					deployed_commit_sha:
+						job.job_type === "DEPLOY" ? (snap.iac_source.commit_sha ?? null) : null,
+					updated_at: new Date(),
+				})
+				.where(
+					and(
+						eq(projectIacSources.project_id, job.project_id),
+						eq(projectIacSources.environment_id, job.environment_id),
+					),
+				);
+		}
+	}
+
+	if (job.job_type !== "DEPLOY") return;
 	if (!job.execution_metadata) return;
 
 	const projectId = job.project_id;

@@ -23,6 +23,7 @@ import {
 	createProject,
 	deleteEnvironment,
 	deleteProject,
+	destroyProject,
 	duplicateProjectForProvider,
 	getProject,
 	getProjectAsFormData,
@@ -696,6 +697,66 @@ describe("provisionProject", () => {
 		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-7" });
+	});
+});
+
+describe("destroyProject — BYO IaC source", () => {
+	const OLD_FLAG = process.env.ALETHIA_BYO_IAC_ENABLED;
+	// A source that DEPLOYED successfully (deployed_commit_sha set), then had a later re-scan FAIL
+	// (commit_sha cleared, scan_status back off "done"). It must still be destroyable.
+	const deployedIacRow = {
+		id: "iac-1",
+		project_id: "p1",
+		environment_id: "env-1",
+		repo_url: "https://github.com/acme/infra.git",
+		ref: "main",
+		path: "stacks/prod",
+		commit_sha: null,
+		deployed_commit_sha: "cafed00d",
+		var_values: { env: "prod" },
+		enabled: true,
+		scan_status: "failed",
+	};
+
+	beforeEach(() => {
+		process.env.ALETHIA_BYO_IAC_ENABLED = "true";
+	});
+	afterEach(() => {
+		if (OLD_FLAG === undefined) delete process.env.ALETHIA_BYO_IAC_ENABLED;
+		else process.env.ALETHIA_BYO_IAC_ENABLED = OLD_FLAG;
+	});
+
+	it("allows DESTROY after a deploy even when a later re-scan failed — snapshot pins deployed_commit_sha", async () => {
+		const { valuesSpy, setSpy } = setupDb({
+			select: snapshotSelect(new Map([[projectIacSources, [deployedIacRow]]])),
+			insert: new Map([[jobs, [{ id: "job-9" }]]]),
+		});
+
+		const r = await destroyProject("p1");
+		expect(r).toEqual({ jobId: "job-9" });
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals).toMatchObject({ job_type: "DESTROY", status: "QUEUED" });
+		// Destroy tears down the module that CREATED the state, not the failed fresh scan.
+		expect(jobVals.config_snapshot).toMatchObject({
+			iac_source: { commit_sha: "cafed00d" },
+		});
+		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("rejects DESTROY when the source was never deployed (no deployed_commit_sha)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map([
+					[
+						projectIacSources,
+						[{ ...deployedIacRow, deployed_commit_sha: null, scan_status: "unscanned" }],
+					],
+				]),
+			),
+		});
+		await expect(destroyProject("p1")).rejects.toThrow(/no deployed IaC state/);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 });
 

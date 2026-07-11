@@ -54,6 +54,8 @@ export interface IacSourceState {
 	path: string;
 	/** The commit pinned by the last successful scan — what a deploy will actually apply. */
 	commitSha: string | null;
+	/** The commit the last successful DEPLOY applied (live BYO state). null = never deployed. */
+	deployedCommitSha: string | null;
 	gitCredentialId: string | null;
 	varValues: IacVarValues;
 	enabled: boolean;
@@ -155,7 +157,13 @@ export async function attachIacSource(input: {
  * Detaches an environment's IaC source (deletes the row) — the environment falls back to the
  * built-in template model. Deliberately NOT flag-gated: with the flag off, provisioning of an
  * environment that still has a row is rejected (defense in depth), so detaching must stay
- * possible as the way out.
+ * possible as the way out (a never-deployed source can always be detached).
+ *
+ * BUT it IS guarded on DEPLOYED state: once a replace-mode DEPLOY has applied the customer's
+ * module (deployed_commit_sha set), or the env is in an active/in-flight status, detaching would
+ * drop the only handle to that live BYO infra — a later template deploy would then collide with /
+ * orphan it. So destroy first (which clears deployed_commit_sha), then detach. The guard is scoped
+ * to DEPLOYED state, not the flag — a source that never deployed stays freely detachable.
  */
 export async function detachIacSource(input: {
 	projectId: string;
@@ -164,6 +172,33 @@ export async function detachIacSource(input: {
 	const actor = await authorize("edit", { type: "project", id: input.projectId });
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 	await withOwnerScope(actor.userId, async (tx) => {
+		const [source] = await tx
+			.select({ deployed_commit_sha: projectIacSources.deployed_commit_sha })
+			.from(projectIacSources)
+			.where(
+				and(
+					eq(projectIacSources.project_id, input.projectId),
+					eq(projectIacSources.environment_id, envId),
+				),
+			)
+			.limit(1);
+		if (!source) return; // nothing attached — idempotent no-op.
+
+		const [env] = await tx
+			.select({ status: projectEnvironments.status })
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.id, envId))
+			.limit(1);
+
+		const holdsDeployedState =
+			source.deployed_commit_sha !== null ||
+			(env ? TEMPLATE_STATE_ENV_STATUSES.has(env.status) : false);
+		if (holdsDeployedState) {
+			throw new Error(
+				"This environment has infrastructure deployed from its IaC source — destroy it before detaching.",
+			);
+		}
+
 		await tx
 			.delete(projectIacSources)
 			.where(
@@ -204,6 +239,7 @@ export async function getIacSource(
 		ref: row.ref,
 		path: row.path,
 		commitSha: row.commit_sha,
+		deployedCommitSha: row.deployed_commit_sha,
 		gitCredentialId: row.git_credential_id,
 		varValues: row.var_values ?? {},
 		enabled: row.enabled,

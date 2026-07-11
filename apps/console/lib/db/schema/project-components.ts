@@ -351,6 +351,11 @@ export const projectIacSources = pgTable(
 		// sha (never the moving ref), so what was scanned is exactly what applies (TOCTOU
 		// protection). NULL until the first successful scan; provisioning is gated on it.
 		commit_sha: text(),
+		// The commit a successful DEPLOY actually applied (the module that created live
+		// state). Set by finalizeDeployment on DEPLOY success, cleared on DESTROY success.
+		// DESTROY tears down THIS commit's module (not a newer unpinned re-scan), and detach
+		// is blocked while it is set (the env holds live BYO infra).
+		deployed_commit_sha: text(),
 		// The projectGitCredentials row (purpose='infrastructure') used to clone the repo.
 		// NULL = public repo / owner-OAuth fallback (the runner's git-token route).
 		git_credential_id: uuid().references(() => projectGitCredentials.id, {

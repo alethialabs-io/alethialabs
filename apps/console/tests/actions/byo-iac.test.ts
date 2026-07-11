@@ -110,6 +110,7 @@ const IAC_ROW = {
 	ref: "main",
 	path: "stacks/prod",
 	commit_sha: null,
+	deployed_commit_sha: null,
 	git_credential_id: null,
 	var_values: { env: "prod" },
 	enabled: true,
@@ -214,11 +215,48 @@ describe("attachIacSource", () => {
 });
 
 describe("detachIacSource", () => {
-	it("deletes the environment's source and works even with the flag off (the way out)", async () => {
+	it("deletes a never-deployed source and works even with the flag off (the way out)", async () => {
 		delete process.env.ALETHIA_BYO_IAC_ENABLED;
-		const { deleteSpy } = setupDb({});
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectIacSources, [{ deployed_commit_sha: null }]],
+				[projectEnvironments, [{ status: "DRAFT" }]],
+			]),
+		});
 		await expect(detachIacSource({ projectId: "p1" })).resolves.toEqual({ ok: true });
 		expect(deleteSpy).toHaveBeenCalledWith(projectIacSources);
+	});
+
+	it("rejects detach when the env holds deployed BYO state (deployed_commit_sha set)", async () => {
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectIacSources, [{ deployed_commit_sha: "cafed00d" }]],
+				[projectEnvironments, [{ status: "ACTIVE" }]],
+			]),
+		});
+		await expect(detachIacSource({ projectId: "p1" })).rejects.toThrow(
+			/infrastructure deployed from its IaC source/,
+		);
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("rejects detach when the env is in an active status even if deployed_commit_sha is null", async () => {
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectIacSources, [{ deployed_commit_sha: null }]],
+				[projectEnvironments, [{ status: "PROVISIONING" }]],
+			]),
+		});
+		await expect(detachIacSource({ projectId: "p1" })).rejects.toThrow(
+			/destroy it before detaching/,
+		);
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("is an idempotent no-op when nothing is attached", async () => {
+		const { deleteSpy } = setupDb({});
+		await expect(detachIacSource({ projectId: "p1" })).resolves.toEqual({ ok: true });
+		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 });
 

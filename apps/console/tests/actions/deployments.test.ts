@@ -17,6 +17,7 @@ import {
 	projectCluster,
 	projectDatabases,
 	projectEnvironments,
+	projectIacSources,
 } from "@/lib/db/schema";
 
 type Captured = { table: unknown; set: Record<string, unknown> | undefined };
@@ -100,8 +101,14 @@ describe("finalizeDeployment — guards (no writes)", () => {
 		expect(updates).toHaveLength(0);
 	});
 
-	it("does nothing when the job is not a DEPLOY", async () => {
+	it("does nothing for a non-BYO DESTROY (no iac_source in the snapshot)", async () => {
 		const { updates } = mockDb([{ ...fullJob(), job_type: "DESTROY" }]);
+		await finalizeDeployment("job-1");
+		expect(updates).toHaveLength(0);
+	});
+
+	it("does nothing when the job is neither DEPLOY nor DESTROY", async () => {
+		const { updates } = mockDb([{ ...fullJob(), job_type: "PLAN" }]);
 		await finalizeDeployment("job-1");
 		expect(updates).toHaveLength(0);
 	});
@@ -238,5 +245,35 @@ describe("finalizeDeployment — success path", () => {
 		expect(cache).not.toHaveProperty("reader_endpoint");
 		// rds absent → no database write
 		expect(writeFor(projectDatabases)).toBeUndefined();
+	});
+});
+
+describe("finalizeDeployment — BYO IaC deployed-commit tracking", () => {
+	it("records the applied commit onto the iac source on a BYO DEPLOY success", async () => {
+		const job = { ...fullJob(), config_snapshot: { iac_source: { commit_sha: "cafed00d" } } };
+		const { writeFor } = mockDb([job]);
+		await finalizeDeployment("job-1");
+		expect(writeFor(projectIacSources)?.set).toMatchObject({
+			deployed_commit_sha: "cafed00d",
+		});
+	});
+
+	it("clears deployed_commit_sha on a BYO DESTROY success (detach unblocked)", async () => {
+		const job = {
+			...fullJob(),
+			job_type: "DESTROY",
+			config_snapshot: { iac_source: { commit_sha: "cafed00d" } },
+		};
+		const { updates, writeFor } = mockDb([job]);
+		await finalizeDeployment("job-1");
+		// A DESTROY carries no tofu outputs — the pin clear is the ONLY write.
+		expect(updates).toHaveLength(1);
+		expect(writeFor(projectIacSources)?.set).toMatchObject({ deployed_commit_sha: null });
+	});
+
+	it("writes no iac-source row for a template DEPLOY (no iac_source in the snapshot)", async () => {
+		const { writeFor } = mockDb([fullJob()]);
+		await finalizeDeployment("job-1");
+		expect(writeFor(projectIacSources)).toBeUndefined();
 	});
 });
