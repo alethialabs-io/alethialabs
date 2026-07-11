@@ -79,8 +79,8 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"create_ots": len(config.NosqlTables) > 0,
 		"ots_tables": buildOTSTables(config.NosqlTables),
 
-		// Container Registry (ACR) — enable when ProjectConfig wires registries.
-		"provision_cr": false,
+		// Container Registry (ACR)
+		"provision_cr": len(config.ContainerRegistries) > 0,
 
 		// OSS (object storage)
 		"create_oss":  len(config.StorageBuckets) > 0,
