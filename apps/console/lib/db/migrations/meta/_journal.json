@@ -512,6 +512,13 @@
       "when": 1783786126805,
       "tag": "0072_huge_ezekiel_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1783796701518,
+      "tag": "0073_black_the_executioner",
+      "breakpoints": true
     }
   ]
 }

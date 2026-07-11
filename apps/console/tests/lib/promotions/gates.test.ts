@@ -3,10 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	applyClassificationEnforcement,
+	type EnforcingValue,
 	evaluateGates,
 	type GateContext,
 	type PromotionRules,
 } from "@/lib/promotions/gates";
+import type { ApproverSpec } from "@/types/jsonb.types";
 
 const OFF: PromotionRules = {
 	require_predecessor: false,
@@ -146,5 +149,121 @@ describe("overall precedence", () => {
 			}),
 		);
 		expect(e.overall).toBe("blocked");
+	});
+});
+
+// ── Classification-driven enforcement (label drives policy) ──────────────────────────
+
+/** A classification value carrying an enforcement policy. */
+function enforcing(
+	label: string,
+	e: Partial<EnforcingValue["enforcement"]> = {},
+): EnforcingValue {
+	return {
+		value_label: label,
+		dimension_label: "Environment",
+		enforcement: {
+			require_approval: false,
+			require_verify_pass: false,
+			min_approvals: 1,
+			...e,
+		},
+	};
+}
+
+describe("applyClassificationEnforcement", () => {
+	it("is a no-op with no enforcing values", () => {
+		const { rules, minApprovals, reasons } = applyClassificationEnforcement(OFF, null, []);
+		expect(rules).toEqual(OFF);
+		expect(minApprovals).toBe(0);
+		expect(reasons).toEqual({});
+	});
+
+	it("turns approval on and records the driving label", () => {
+		const { rules, minApprovals, reasons } = applyClassificationEnforcement(
+			OFF,
+			null,
+			[enforcing("production", { require_approval: true, min_approvals: 2 })],
+		);
+		expect(rules.require_approval).toBe(true);
+		expect(rules.require_verify_pass).toBe(false);
+		expect(minApprovals).toBe(2);
+		expect(reasons.manual_approval).toEqual(["production"]);
+	});
+
+	it("turns verify on and records the driving label", () => {
+		const { rules, reasons } = applyClassificationEnforcement(OFF, null, [
+			enforcing("restricted", { require_verify_pass: true }),
+		]);
+		expect(rules.require_verify_pass).toBe(true);
+		expect(reasons.verify_pass).toEqual(["restricted"]);
+	});
+
+	it("takes the strictest approval count across the spec and every value", () => {
+		const spec: ApproverSpec = { user_ids: [], role: null, min_count: 3 };
+		const { minApprovals } = applyClassificationEnforcement(
+			{ ...OFF, require_approval: true },
+			spec,
+			[
+				enforcing("production", { require_approval: true, min_approvals: 2 }),
+				enforcing("regulated", { require_approval: true, min_approvals: 5 }),
+			],
+		);
+		expect(minApprovals).toBe(5);
+	});
+
+	it("keeps an already-on gate on and never lowers the count", () => {
+		const { rules, minApprovals } = applyClassificationEnforcement(
+			{ ...OFF, require_verify_pass: true },
+			null,
+			[enforcing("production", { require_approval: true, min_approvals: 1 })],
+		);
+		expect(rules.require_verify_pass).toBe(true);
+		expect(rules.require_approval).toBe(true);
+		expect(minApprovals).toBe(1);
+	});
+});
+
+describe("evaluateGates — classification annotations", () => {
+	it("parks for approval solely because a classification forced it, with the why in the detail", () => {
+		const { rules, minApprovals, reasons } = applyClassificationEnforcement(
+			OFF,
+			null,
+			[enforcing("production", { require_approval: true, min_approvals: 2 })],
+		);
+		const e = evaluateGates(
+			ctx({
+				rules,
+				approvals: { approved: 0, required: minApprovals },
+				enforcedReasons: reasons,
+			}),
+		);
+		expect(e.overall).toBe("pending_approval");
+		const approval = e.results.find((r) => r.type === "manual_approval");
+		expect(approval?.status).toBe("pending");
+		expect(approval?.detail).toContain("classified production");
+	});
+
+	it("annotates the verify detail when classification forced it", () => {
+		const { rules, reasons } = applyClassificationEnforcement(OFF, null, [
+			enforcing("production", { require_verify_pass: true }),
+		]);
+		const e = evaluateGates(
+			ctx({ rules, verifyUnwaivedHardFailures: 0, enforcedReasons: reasons }),
+		);
+		const verify = e.results.find((r) => r.type === "verify_pass");
+		expect(verify?.status).toBe("pass");
+		expect(verify?.detail).toContain("classified production");
+	});
+
+	it("leaves details unannotated when nothing forced the gate", () => {
+		const e = evaluateGates(
+			ctx({
+				rules: { ...OFF, require_approval: true },
+				approvals: { approved: 0, required: 1 },
+			}),
+		);
+		const approval = e.results.find((r) => r.type === "manual_approval");
+		expect(approval?.detail).not.toContain("classified");
 	});
 });

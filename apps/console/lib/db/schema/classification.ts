@@ -22,6 +22,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import { resourceKind, type ResourceKind } from "./enums";
+import type { ClassificationEnforcement } from "@/types/jsonb.types";
 
 // A named classification axis (e.g. "Environment", "Team", "Data classification").
 // `key` is a stable slug unique within the org; `multi` decides whether a resource may
@@ -67,6 +68,9 @@ export const classificationValue = pgTable(
 		label: text().notNull(),
 		// Optional CSS colour string (hex/oklch); null renders the neutral chip.
 		color: text(),
+		// Promotion-gate policy this value imposes on any env carrying it (label drives policy);
+		// null ⇒ inert (the default, so existing values enforce nothing). See gates.ts.
+		enforcement: jsonb().$type<ClassificationEnforcement>(),
 		position: integer().default(0).notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},

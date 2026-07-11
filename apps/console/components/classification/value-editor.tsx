@@ -17,7 +17,8 @@ import {
 	DialogTitle,
 } from "@repo/ui/dialog";
 import { Input } from "@repo/ui/input";
-import { Check } from "lucide-react";
+import { Switch } from "@repo/ui/switch";
+import { Check, ShieldCheck } from "lucide-react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -27,7 +28,7 @@ import {
 	updateValue,
 } from "@/app/server/actions/classification/dimensions";
 import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
-import { Spinner } from "./classification-ui";
+import { InfoHint, Spinner } from "./classification-ui";
 
 /** Lowercases + hyphenates a label into a slug candidate. */
 function slugify(input: string): string {
@@ -64,6 +65,7 @@ export function ValueEditor({
 		defaultValues: {
 			value: value?.value ?? "",
 			label: value?.label ?? "",
+			enforcement: value?.enforcement ?? null,
 			position: value?.position ?? 0,
 		},
 	});
@@ -73,12 +75,26 @@ export function ValueEditor({
 			form.reset({
 				value: value?.value ?? "",
 				label: value?.label ?? "",
+				enforcement: value?.enforcement ?? null,
 				position: value?.position ?? 0,
 			});
 		}
 	}, [open, value, form]);
 
 	const label = form.watch("label");
+	const enforcement = form.watch("enforcement");
+	const enforceOn = Boolean(enforcement);
+
+	/** Toggles the enforcement policy on/off, seeding a sensible default (require approval). */
+	const setEnforce = (on: boolean) => {
+		form.setValue(
+			"enforcement",
+			on
+				? { require_approval: true, require_verify_pass: false, min_approvals: 1 }
+				: null,
+			{ shouldDirty: true },
+		);
+	};
 
 	const onSubmit = async (data: ValueInput) => {
 		try {
@@ -133,6 +149,77 @@ export function ValueEditor({
 								{...form.register("value")}
 							/>
 						</div>
+					</div>
+
+					{/* Promotion enforcement — the label drives policy. */}
+					<div className="rounded-md border">
+						<div className="flex items-center justify-between gap-4 p-3">
+							<div className="flex items-start gap-2">
+								<ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-text-tertiary" />
+								<div>
+									<div className="flex items-center gap-1.5 text-[12.5px] font-medium">
+										Enforce promotion gates
+										<InfoHint>
+											When an environment is tagged with this value, promotions{" "}
+											<em>into</em> that environment require these gates — on top of the
+											environment{"'"}s own protection rules. The classification becomes
+											the policy.
+										</InfoHint>
+									</div>
+									<p className="mt-0.5 text-[11px] text-text-tertiary">
+										Applies to any environment carrying this value.
+									</p>
+								</div>
+							</div>
+							<Switch checked={enforceOn} onCheckedChange={setEnforce} />
+						</div>
+
+						{enforceOn && enforcement && (
+							<div className="space-y-3 border-t p-3">
+								<div className="flex items-center justify-between gap-4">
+									<div className="text-[12.5px]">Require manual approval</div>
+									<Switch
+										checked={enforcement.require_approval}
+										onCheckedChange={(v) =>
+											form.setValue("enforcement.require_approval", v, {
+												shouldDirty: true,
+											})
+										}
+									/>
+								</div>
+								<div className="flex items-center justify-between gap-4">
+									<div className="flex items-center gap-1.5 text-[12.5px]">
+										Require verify pass
+										<InfoHint>
+											The elench verify gate must pass on the promotion{"'"}s plan (no
+											unwaived hard control failures).
+										</InfoHint>
+									</div>
+									<Switch
+										checked={enforcement.require_verify_pass}
+										onCheckedChange={(v) =>
+											form.setValue("enforcement.require_verify_pass", v, {
+												shouldDirty: true,
+											})
+										}
+									/>
+								</div>
+								{enforcement.require_approval && (
+									<div className="flex items-center justify-between gap-4">
+										<div className="text-[12.5px]">Minimum approvals</div>
+										<Input
+											type="number"
+											min={1}
+											max={10}
+											className="h-8 w-16 text-center text-[12.5px]"
+											{...form.register("enforcement.min_approvals", {
+												valueAsNumber: true,
+											})}
+										/>
+									</div>
+								)}
+							</div>
+						)}
 					</div>
 
 					<DialogFooter>

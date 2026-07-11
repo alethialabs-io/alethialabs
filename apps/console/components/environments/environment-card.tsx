@@ -20,6 +20,25 @@ import { envHref } from "@/lib/routing";
 import type { EnvRow } from "./environments-view";
 import { StatusDot } from "./env-ui";
 
+/**
+ * Gates a classification value tagged on this env forces onto promotions into it (the label drives
+ * policy) — flattened to `{ label, source }` chips shown alongside the env's own rules.
+ */
+function inheritedGateChips(assignments: AssignedValue[] | undefined) {
+	const out: { label: string; source: string }[] = [];
+	for (const a of assignments ?? []) {
+		const e = a.enforcement;
+		if (!e) continue;
+		if (e.require_approval)
+			out.push({
+				label: e.min_approvals > 1 ? `Approval ×${e.min_approvals}` : "Approval",
+				source: a.value_label,
+			});
+		if (e.require_verify_pass) out.push({ label: "Verify", source: a.value_label });
+	}
+	return out;
+}
+
 /** The protection rules → gate chips (on = enforced, off = not required). */
 function gateChips(p: ProtectionSummary | undefined) {
 	if (!p) return [];
@@ -68,6 +87,7 @@ export function EnvironmentCard({
 	const isProd = env.stage === "production";
 	const chips = gateChips(protection);
 	const hasRules = chips.some((c) => c.on);
+	const inherited = inheritedGateChips(classAssignments);
 
 	return (
 		<div className="grid grid-cols-1 gap-4 rounded-lg border bg-surface p-4 shadow-sm sm:grid-cols-[1fr_auto]">
@@ -137,7 +157,7 @@ export function EnvironmentCard({
 							</button>
 						)}
 					</div>
-					{hasRules ? (
+					{hasRules && (
 						<div className="flex flex-wrap gap-1.5">
 							{chips.map((c) =>
 								c.on ? (
@@ -158,7 +178,31 @@ export function EnvironmentCard({
 								),
 							)}
 						</div>
-					) : (
+					)}
+
+					{/* Gates inherited from a classification value tagged on this env (label drives policy). */}
+					{inherited.length > 0 && (
+						<div className={hasRules ? "mt-2" : undefined}>
+							<div className="mb-1.5 text-[10.5px] text-text-tertiary">
+								Inherited from classification
+							</div>
+							<div className="flex flex-wrap gap-1.5">
+								{inherited.map((c) => (
+									<span
+										key={`${c.label}-${c.source}`}
+										className="inline-flex items-center gap-1.5 rounded-[5px] border border-dashed border-border-strong bg-surface-muted px-2 py-0.5 font-mono text-[11px] text-text-primary"
+										title={`Required because this env is classified ${c.source}`}
+									>
+										<span className="size-[5px] rounded-full bg-[var(--signal-strong)]" />
+										{c.label}
+										<span className="text-text-tertiary">· {c.source}</span>
+									</span>
+								))}
+							</div>
+						</div>
+					)}
+
+					{!hasRules && inherited.length === 0 && (
 						<span className="text-[12px] italic text-text-tertiary">
 							No protection — any editor can promote in.
 						</span>
