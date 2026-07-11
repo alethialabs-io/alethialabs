@@ -22,7 +22,6 @@ export interface HcloudConfig {
 	webOrigin: string;
 	bootstrapToken: string;
 	slots: number;
-	storage: { endpoint: string; region: string; accessKey: string; secretKey: string };
 }
 
 /** Reads the provider config from env. Throws if the essentials are missing. */
@@ -44,12 +43,6 @@ export function hcloudConfigFromEnv(): HcloudConfig {
 		webOrigin,
 		bootstrapToken,
 		slots: Number.parseInt(process.env.FLEET_RUNNER_SLOTS ?? "1", 10) || 1,
-		storage: {
-			endpoint: process.env.ALETHIA_STORAGE_ENDPOINT ?? "",
-			region: process.env.ALETHIA_STORAGE_REGION ?? "",
-			accessKey: process.env.ALETHIA_STORAGE_ACCESS_KEY_ID ?? "",
-			secretKey: process.env.ALETHIA_STORAGE_SECRET_ACCESS_KEY ?? "",
-		},
 	};
 }
 
@@ -62,10 +55,9 @@ export function renderCloudInit(cfg: HcloudConfig, provider: string, version: st
 		ALETHIA_RUNNER_OPERATOR: "managed",
 		ALETHIA_RUNNER_BOOTSTRAP_TOKEN: cfg.bootstrapToken,
 		ALETHIA_RUNNER_SLOTS: String(cfg.slots),
-		ALETHIA_STORAGE_ENDPOINT: cfg.storage.endpoint,
-		ALETHIA_STORAGE_REGION: cfg.storage.region,
-		ALETHIA_STORAGE_ACCESS_KEY_ID: cfg.storage.accessKey,
-		ALETHIA_STORAGE_SECRET_ACCESS_KEY: cfg.storage.secretKey,
+		// No ALETHIA_STORAGE_*: runner-lifecycle + project tofu state both go via the console
+		// http state proxy, so the fleet holds no storage master credentials (the metadata
+		// userdata no longer leaks them).
 	};
 	const envFlags = Object.entries(env)
 		.filter(([, v]) => v !== "")

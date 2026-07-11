@@ -4,7 +4,7 @@
 
 import { authorize } from "@/lib/authz/guard";
 import { deploymentMode } from "@/lib/billing/config";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { generateRunnerToken } from "@/lib/runners/auth";
@@ -356,6 +356,37 @@ function buildRunnerConfigSnapshot(
 	};
 }
 
+/**
+ * Rejects a new runner-lifecycle job when ANY DEPLOY/UPDATE/DESTROY_RUNNER job for this runner is
+ * already active. All three share one tofu-state object (`runners/{id}/tofu.tfstate`), so overlapping
+ * ops would race the state lock and — worse — a DESTROY could delete the runner + purge its state
+ * under a live UPDATE. The console tofu-lock serializes concurrent writes, but not this higher-level
+ * ordering, so guard it at queue time.
+ */
+async function assertNoActiveLifecycleJob(
+	tx: Tx,
+	runnerId: string,
+): Promise<void> {
+	const active = await tx
+		.select({ config_snapshot: jobs.config_snapshot })
+		.from(jobs)
+		.where(
+			and(
+				inArray(jobs.job_type, [
+					"DEPLOY_RUNNER",
+					"UPDATE_RUNNER",
+					"DESTROY_RUNNER",
+				]),
+				inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
+			),
+		);
+	if (active.some((j) => j.config_snapshot?.runner_id === runnerId)) {
+		throw new Error(
+			"A runner-lifecycle job is already in progress for this runner",
+		);
+	}
+}
+
 /** Queues a DESTROY_RUNNER job for a self-operated, deployed runner with cloud resources. */
 export async function destroyRunner(
 	runnerId: string,
@@ -369,22 +400,7 @@ export async function destroyRunner(
 	);
 
 	const result = await withOwnerScope(owner, async (tx) => {
-		const activeJobs = await tx
-			.select({ id: jobs.id, config_snapshot: jobs.config_snapshot })
-			.from(jobs)
-			.where(
-				and(
-					eq(jobs.job_type, "DESTROY_RUNNER"),
-					inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
-				),
-			);
-
-		const duplicate = activeJobs.find(
-			(j) => j.config_snapshot?.runner_id === runnerId,
-		);
-		if (duplicate) {
-			throw new Error("A destroy job is already in progress for this runner");
-		}
+		await assertNoActiveLifecycleJob(tx, runnerId);
 
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
@@ -427,6 +443,8 @@ export async function updateRunner(runnerId: string) {
 		);
 
 	const result = await withOwnerScope(owner, async (tx) => {
+		await assertNoActiveLifecycleJob(tx, runnerId);
+
 		const [latestRelease] = await tx
 			.select({ version: runnerReleases.version })
 			.from(runnerReleases)
