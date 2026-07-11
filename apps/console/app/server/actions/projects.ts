@@ -21,6 +21,7 @@ import {
 	projectDns,
 	projectEnvironments,
 	projectAddons,
+	projectIacSources,
 	projectNetwork,
 	projectNosqlTables,
 	projectObservability,
@@ -33,6 +34,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
+import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import {
 	HETZNER_DB_ENGINES,
@@ -697,6 +699,24 @@ async function buildConfigSnapshot(
 			)
 			.filter((s): s is AddOnInstallSpec => s !== null);
 
+		// Bring-your-own IaC (E3): when the environment has an ENABLED project_iac_sources row,
+		// the customer's OpenTofu root module replaces the built-in per-cloud template for this
+		// environment (v1 replace mode). The snapshot then carries `iac_source` and the
+		// template-model gates below (core placement + network provisioning) are skipped — the
+		// component graph is not the source of truth for what gets provisioned. Components and
+		// add-ons still ride the snapshot (the UI reads them; the Go side skips ProviderTfvars
+		// for a replace-mode job and ignores what it doesn't need).
+		const [iacSource] = await tx
+			.select()
+			.from(projectIacSources)
+			.where(
+				and(
+					envScope(projectIacSources, projectId, envId),
+					eq(projectIacSources.enabled, true),
+				),
+			)
+			.limit(1);
+
 		// Hetzner is compute-only: canvas database/cache/queue nodes have no managed cloud
 		// service, so they deploy as in-cluster Helm charts (CloudNativePG / Valkey / RabbitMQ).
 		// Map them to install specs and append — the runner renders each as an ArgoCD
@@ -809,22 +829,26 @@ async function buildConfigSnapshot(
 				cid: n.cloud_identity_id,
 			})),
 		];
-		for (const c of coreChecks) {
-			if (c.cid && c.cid !== identity.id) {
-				throw placementGateError(c.type, c.name);
+		// Both template-model gates are skipped in BYO-IaC replace mode (see iacSource above):
+		// the customer's module, not the component graph, decides what gets provisioned.
+		if (!iacSource) {
+			for (const c of coreChecks) {
+				if (c.cid && c.cid !== identity.id) {
+					throw placementGateError(c.type, c.name);
+				}
 			}
-		}
 
-		if (network?.provision_network === false && !network?.network_id) {
-			const netLabel =
-				identity.provider === "azure"
-					? "VNet"
-					: identity.provider === "gcp"
-						? "network"
-						: "VPC";
-			throw new Error(
-				`Cannot plan: no ${netLabel} selected. Edit the project's network settings or enable network provisioning.`,
-			);
+			if (network?.provision_network === false && !network?.network_id) {
+				const netLabel =
+					identity.provider === "azure"
+						? "VNet"
+						: identity.provider === "gcp"
+							? "network"
+							: "VPC";
+				throw new Error(
+					`Cannot plan: no ${netLabel} selected. Edit the project's network settings or enable network provisioning.`,
+				);
+			}
 		}
 
 		const configSnapshot = {
@@ -899,12 +923,50 @@ async function buildConfigSnapshot(
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
+			// Bring-your-own IaC (E3, replace mode): when present, the runner clones this repo at
+			// the PINNED commit_sha (never the moving ref — TOCTOU protection) and runs the
+			// customer's root module instead of the built-in template. Absent for template envs.
+			...(iacSource
+				? {
+						iac_source: {
+							repo_url: iacSource.repo_url,
+							ref: iacSource.ref ?? undefined,
+							path: iacSource.path,
+							commit_sha: iacSource.commit_sha,
+							var_values: iacSource.var_values ?? {},
+						},
+					}
+				: {}),
 			// Token is fetched at runtime by the runner via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
 		};
 
-		return { project, identity, environment, configSnapshot };
+		return { project, identity, environment, configSnapshot, iacSource: iacSource ?? null };
 	});
+}
+
+/**
+ * Queue gate for BYO-IaC environments: when an enabled IaC source exists, PLAN/DEPLOY/DESTROY
+ * may only queue if the feature flag is on (defense in depth — a row can predate a flag flip)
+ * AND the source has passed a scan that pinned the commit to apply. Template envs (no row)
+ * pass through untouched.
+ */
+function assertIacSourceQueueable(
+	iacSource: typeof projectIacSources.$inferSelect | null,
+): void {
+	if (!iacSource) return;
+	if (!isByoIacEnabled()) {
+		throw new Error(
+			"This environment has a bring-your-own IaC source attached, but the feature is disabled " +
+				"on this instance — set ALETHIA_BYO_IAC_ENABLED=true, or detach the IaC source.",
+		);
+	}
+	if (iacSource.scan_status !== "done" || !iacSource.commit_sha) {
+		throw new Error(
+			"The attached IaC source hasn't passed a scan yet — run the IaC scan first (it pins the " +
+				"exact commit that will be applied) before planning, deploying, or destroying this environment.",
+		);
+	}
 }
 
 /**
@@ -952,8 +1014,9 @@ export async function planProject(
 	const actor = await authorize("plan", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { project, identity, environment, configSnapshot } =
+	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, projectId, environmentId);
+	assertIacSourceQueueable(iacSource);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -990,8 +1053,9 @@ export async function provisionProject(
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { project, identity, environment, configSnapshot } =
+	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, projectId, environmentId);
+	assertIacSourceQueueable(iacSource);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -1082,11 +1146,9 @@ export async function destroyProject(
 	const actor = await authorize("destroy", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		projectId,
-		environmentId,
-	);
+	const { identity, environment, configSnapshot, iacSource } =
+		await buildConfigSnapshot(owner, projectId, environmentId);
+	assertIacSourceQueueable(iacSource);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx

@@ -123,6 +123,9 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"AUDIT",
 	// Bring-your-own Helm chart safety scan: clone → helm template → verify.EvaluateManifests.
 	"CHART_SCAN",
+	// Bring-your-own IaC (E3) module scan: clone → pin commit → inventory providers/modules →
+	// tofu validate. Its result gates the env's PLAN/DEPLOY/DESTROY (finalizeIacScan pins commit_sha).
+	"IAC_SCAN",
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);

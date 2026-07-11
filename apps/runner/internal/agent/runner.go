@@ -363,6 +363,11 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeChartScan:
 		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
+	case types.JobTypeIacScan:
+		// BYO IaC (E3): the scan executor (clone → pin commit → inventory → tofu validate)
+		// lands with the runner half of the feature. Fail loudly until then — the console
+		// only queues IAC_SCAN behind ALETHIA_BYO_IAC_ENABLED.
+		execErr = fmt.Errorf("IAC_SCAN is not implemented by this runner version — upgrade the runner to use bring-your-own IaC")
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}

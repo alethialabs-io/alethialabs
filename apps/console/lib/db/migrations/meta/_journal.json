@@ -526,6 +526,13 @@
       "when": 1783800032569,
       "tag": "0074_minor_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1783801551864,
+      "tag": "0075_brown_whiplash",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
+import { finalizeIacScan } from "@/app/server/actions/byo-iac";
 import { recordDriftPosture } from "@/app/server/actions/drift";
 import {
 	advancePromotionOnPlan,
@@ -220,6 +221,14 @@ export async function PUT(
 			if (job?.job_type === "CHART_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
 				await finalizeChartScan(jobId).catch((err) =>
 					console.error("Finalize chart scan error:", err),
+				);
+			}
+
+			// IAC_SCAN: write the BYO-IaC scan report back onto its project_iac_sources row and
+			// pin the scanned commit (done/failed).
+			if (job?.job_type === "IAC_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
+				await finalizeIacScan(jobId).catch((err) =>
+					console.error("Finalize IaC scan error:", err),
 				);
 			}
 

@@ -9,7 +9,7 @@
 // provider-mapping warnings are genuinely exercised, not re-implemented here. Each test asserts
 // the persisted .values()/.set() payloads, derived return shapes, and the branch outcomes.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
@@ -47,6 +47,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectIacSources,
 	projectNetwork,
 	projectRepositories,
 	projectSecrets,
@@ -576,6 +577,95 @@ describe("planProject", () => {
 	it("rejects when the project has no default environment", async () => {
 		setupDb({ select: snapshotSelect(new Map([[projectEnvironments, []]])) });
 		await expect(planProject("p1")).rejects.toThrow(/no default environment/);
+	});
+});
+
+// ============================================================
+// BYO IaC (E3) — snapshot branch + queue gating
+// ============================================================
+
+describe("planProject — BYO IaC source", () => {
+	const OLD_FLAG = process.env.ALETHIA_BYO_IAC_ENABLED;
+	const scannedIacRow = {
+		id: "iac-1",
+		project_id: "p1",
+		environment_id: "env-1",
+		repo_url: "https://github.com/acme/infra.git",
+		ref: "main",
+		path: "stacks/prod",
+		commit_sha: "deadbeef",
+		var_values: { env: "prod" },
+		enabled: true,
+		scan_status: "done",
+	};
+
+	beforeEach(() => {
+		process.env.ALETHIA_BYO_IAC_ENABLED = "true";
+	});
+	afterEach(() => {
+		if (OLD_FLAG === undefined) delete process.env.ALETHIA_BYO_IAC_ENABLED;
+		else process.env.ALETHIA_BYO_IAC_ENABLED = OLD_FLAG;
+	});
+
+	it("snapshots iac_source with the pinned sha and SKIPS the template-model gates", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[projectIacSources, [scannedIacRow]],
+					// Both template gates would throw for a template env — they must be skipped:
+					// a cross-cloud CORE resource + provisioning off with no network selected.
+					[projectDatabases, [{ name: "db1", cloud_identity_id: "ci-OTHER" }]],
+					[projectNetwork, [{ provision_network: false, network_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals.config_snapshot).toMatchObject({
+			iac_source: {
+				repo_url: "https://github.com/acme/infra.git",
+				ref: "main",
+				path: "stacks/prod",
+				commit_sha: "deadbeef",
+				var_values: { env: "prod" },
+			},
+		});
+	});
+
+	it("rejects queueing while the source is unscanned (no pinned commit)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map([
+					[
+						projectIacSources,
+						[{ ...scannedIacRow, commit_sha: null, scan_status: "unscanned" }],
+					],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/hasn't passed a scan/);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("rejects a scanned-but-unpinned source (defense in depth)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map([[projectIacSources, [{ ...scannedIacRow, commit_sha: null }]]]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/hasn't passed a scan/);
+	});
+
+	it("rejects when the flag is off but a row exists (defense in depth)", async () => {
+		delete process.env.ALETHIA_BYO_IAC_ENABLED;
+		setupDb({
+			select: snapshotSelect(new Map([[projectIacSources, [scannedIacRow]]])),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/disabled/);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 });
 
