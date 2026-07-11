@@ -49,15 +49,6 @@ export function ValueDrillDrawer({
 										{dimensionLabel} · value
 									</div>
 									<div className="flex items-center gap-2.5">
-										<span
-											className="size-2.5 shrink-0 rounded-full"
-											style={{
-												background: value.color ?? "transparent",
-												border: value.color
-													? undefined
-													: "1.5px solid var(--border-strong)",
-											}}
-										/>
 										<h3 className="m-0 font-display text-lg font-semibold tracking-tight">
 											{value.label}
 										</h3>

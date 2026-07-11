@@ -4,7 +4,7 @@
 
 // Settings · Classification — author the org's classification taxonomy (dimensions = axes ×
 // their allowed values) and see how it is actually used. A master/detail: the dimension rail
-// selects, the detail edits values (drag-reorder, color, usage drill). Search is server-side.
+// selects, the detail edits values (drag-reorder, usage drill). Search is server-side.
 // Read-only without `org:edit`. The section title lives in the settings sidebar, so this page
 // leads straight into a toolbar (no in-page header). Reads/writes via the classification server
 // actions through TanStack Query (shared cache with every picker).
@@ -156,7 +156,6 @@ export function ClassificationManager() {
 			await createValue(dim.id, {
 				value: slugify(label),
 				label,
-				color: undefined,
 				position: dim.values.length,
 			});
 			refresh();
