@@ -31,3 +31,10 @@ check "ack_cluster_name_present" {
     error_message = "When provision_ack is true, the derived ACK cluster name must be non-empty."
   }
 }
+
+check "ack_rrsa_provider_present" {
+  assert {
+    condition     = !var.provision_ack || length(trimspace(module.cluster[0].rrsa_oidc_provider_arn)) > 0
+    error_message = "ACK RRSA (workload identity) did not report an OIDC provider ARN — in-cluster components can't assume RAM roles."
+  }
+}
