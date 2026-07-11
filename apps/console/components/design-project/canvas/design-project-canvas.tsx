@@ -25,6 +25,10 @@ import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
 import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
 import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
 import { getProjectByoCharts } from "@/app/server/actions/byo-charts";
+import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
+import { IacSourceCanvasProvider } from "@/components/design-project/byo/iac-source-canvas-context";
+import { IacSourceOverlay } from "@/components/design-project/byo/iac-source-overlay";
+import { getIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { Button } from "@repo/ui/button";
 import {
@@ -61,6 +65,9 @@ interface DesignProjectCanvasProps {
 	/** Whether bring-your-own Helm charts are enabled on this instance (server flag). Gates the
 	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
 	byoHelmEnabled?: boolean;
+	/** Whether bring-your-own IaC is enabled on this instance (server flag). Gates the ⌘K "Bring
+	 * your own IaC" entry + the external-IaC overlay. Server actions enforce the real gate. */
+	byoIacEnabled?: boolean;
 }
 
 /** The canvas editor surface (inside its own ReactFlowProvider). */
@@ -79,6 +86,7 @@ function CanvasInner({
 	environmentId,
 	dockInShell,
 	byoHelmEnabled,
+	byoIacEnabled,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -93,6 +101,10 @@ function CanvasInner({
 		useState<AddonMarketItem | null>(null);
 	const [addonSheetOpen, setAddonSheetOpen] = useState(false);
 	const [byoDialogOpen, setByoDialogOpen] = useState(false);
+	const [iacDialogOpen, setIacDialogOpen] = useState(false);
+	// The environment's attached BYO IaC source (edit mode + flag on). When present + enabled it
+	// takes over the canvas (replace mode) — see IacSourceOverlay.
+	const [iacSource, setIacSource] = useState<IacSourceState | null>(null);
 	const openConfigureAddon = useCallback((item: AddonMarketItem) => {
 		setConfiguringAddon(item);
 		setAddonSheetOpen(true);
@@ -128,6 +140,25 @@ function CanvasInner({
 	useEffect(() => {
 		refreshCharts();
 	}, [refreshCharts]);
+
+	// BYO IaC source is single-per-env, loaded out-of-band from getIacSource (and re-loaded after
+	// attach/detach/rescan). Only in edit mode with the feature on.
+	const refreshIacSource = useCallback(() => {
+		if (!projectId || !byoIacEnabled) return;
+		void getIacSource(projectId, environmentId ?? null)
+			.then(setIacSource)
+			.catch(() => {
+				/* best-effort — a fetch failure just leaves the canvas without the IaC overlay */
+			});
+	}, [projectId, environmentId, byoIacEnabled]);
+
+	useEffect(() => {
+		refreshIacSource();
+	}, [refreshIacSource]);
+
+	// While an ENABLED IaC source governs this env, the component graph isn't the source of truth —
+	// disable the Add palette + ⌘K component-add entirely (the overlay states why).
+	const iacGoverned = Boolean(iacSource?.enabled);
 
 	// Repo-first on-ramp: the new-project "Bring your own Helm chart" path lands here with
 	// ?attachChart=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
@@ -276,7 +307,8 @@ function CanvasInner({
 					t.isContentEditable);
 			if (typing) return;
 			if (e.key === "a") {
-				setPaletteOpen(true);
+				// No component-add while an IaC source governs the env (replace mode).
+				if (!iacGoverned) setPaletteOpen(true);
 				return;
 			}
 			if (e.key === "?") {
@@ -297,6 +329,7 @@ function CanvasInner({
 		undo,
 		redo,
 		duplicateNodes,
+		iacGoverned,
 	]);
 
 	const boardContent = (
@@ -312,6 +345,10 @@ function CanvasInner({
 			>
 				<CanvasFlow />
 			</motion.div>
+
+			{/* External-IaC takeover — dims the (inert) component graph + centers the source card when a
+			    BYO IaC source governs this environment. Renders null otherwise. */}
+			<IacSourceOverlay />
 
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />
@@ -329,15 +366,18 @@ function CanvasInner({
 				>
 					<Settings className="h-4 w-4" />
 				</Button>
-				<Button
-					type="button"
-					size="sm"
-					className="h-8 text-xs"
-					onClick={() => setPaletteOpen(true)}
-				>
-					<Plus className="mr-1 h-3.5 w-3.5" />
-					Add
-				</Button>
+				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
+				{!iacGoverned && (
+					<Button
+						type="button"
+						size="sm"
+						className="h-8 text-xs"
+						onClick={() => setPaletteOpen(true)}
+					>
+						<Plus className="mr-1 h-3.5 w-3.5" />
+						Add
+					</Button>
+				)}
 			</div>
 
 			{/* Bottom-left: settings / zoom / fit / undo-redo / layers */}
@@ -378,6 +418,12 @@ function CanvasInner({
 					onAttachChart={
 						byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
 					}
+					onAttachIac={
+						byoIacEnabled && projectId && !iacGoverned
+							? () => setIacDialogOpen(true)
+							: undefined
+					}
+					disableComponentAdd={iacGoverned}
 			/>
 			{projectId && byoHelmEnabled && (
 				<ByoChartDialog
@@ -386,6 +432,15 @@ function CanvasInner({
 					projectId={projectId}
 					environmentId={environmentId ?? null}
 					onAttached={refreshCharts}
+				/>
+			)}
+			{projectId && byoIacEnabled && (
+				<ByoIacDialog
+					open={iacDialogOpen}
+					onOpenChange={setIacDialogOpen}
+					projectId={projectId}
+					environmentId={environmentId ?? null}
+					onAttached={refreshIacSource}
 				/>
 			)}
 
@@ -412,13 +467,23 @@ function CanvasInner({
 		</>
 	);
 
-	// Chart nodes (rendered by React Flow, propless) reach the project/env + a refresh via context.
+	// Chart + IaC nodes (rendered propless: chart nodes by React Flow, the IaC overlay by the board)
+	// reach the project/env + their refresh via context.
 	const withByoContext = (content: React.ReactNode) =>
 		projectId ? (
 			<ByoChartCanvasProvider
 				value={{ projectId, environmentId: environmentId ?? null, refresh: refreshCharts }}
 			>
-				{content}
+				<IacSourceCanvasProvider
+					value={{
+						projectId,
+						environmentId: environmentId ?? null,
+						source: iacSource,
+						refresh: refreshIacSource,
+					}}
+				>
+					{content}
+				</IacSourceCanvasProvider>
 			</ByoChartCanvasProvider>
 		) : (
 			content
