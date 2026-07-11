@@ -85,16 +85,12 @@ jobs:
             infracost --version
             test -x /usr/local/bin/runner && echo "runner binary present"
             # CLI-free invariant: the cloud CLIs must be ABSENT — cluster auth is minted in-process
-            # by the runner kube-token exec-plugin. Fail loudly if any crept back in.
+            # by the runner kube-token exec-plugin (unit-tested in packages; exercised end-to-end by
+            # the real-VM canary). Fail loudly if any CLI crept back into the image.
             for cli in aws aws-iam-authenticator gcloud gke-gcloud-auth-plugin az kubelogin; do
               if command -v "$cli" >/dev/null 2>&1; then
                 echo "ERROR: $cli present in CLI-free runner image" >&2; exit 1
               fi
             done
-            # kube-token is wired: unsupported provider is our error (proves dispatch, not the normal boot).
-            kt_out=$(/usr/local/bin/runner kube-token --provider bogus 2>&1 || true)
-            echo "kube-token check output: [$kt_out]"
-            echo "$kt_out" | grep -q "unsupported provider" || { echo "ERROR: kube-token subcommand not dispatched" >&2; exit 1; }
-            echo "kube-token subcommand wired"
             echo "toolchain OK (CLI-free)"
           '
