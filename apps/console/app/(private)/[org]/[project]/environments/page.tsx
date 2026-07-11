@@ -6,7 +6,11 @@ import {
 	getEnvConsistency,
 	getProjectEnvironments,
 } from "@/app/server/actions/projects";
-import { listPromotions } from "@/app/server/actions/promotions";
+import {
+	getPromotionDetail,
+	listPromotions,
+} from "@/app/server/actions/promotions";
+import { listProtectionRules } from "@/app/server/actions/protection";
 import { getEnvReconcileStates } from "@/app/server/actions/reconcile";
 import { resolveProjectId } from "@/app/server/actions/resolve";
 import {
@@ -44,13 +48,14 @@ export default async function ProjectEnvironmentsPage({
 	// probes (consistency / reconcile / promotions) each read per-env design and can throw (e.g. a
 	// since-deleted cloud identity); they degrade to safe empty defaults rather than crashing the page.
 	const { environments } = await getProjectEnvironments(projectId);
-	const [consistency, reconcile, promotions] = await Promise.all([
+	const [consistency, reconcile, promotions, protectionByEnv] = await Promise.all([
 		getEnvConsistency(projectId).catch(() => ({
 			envs: environments.map((e) => ({ id: e.id, name: e.name, stage: e.stage })),
 			rows: [],
 		})),
 		getEnvReconcileStates(projectId).catch(() => []),
 		listPromotions(projectId).catch(() => []),
+		listProtectionRules(projectId).catch(() => ({})),
 	]);
 	const envs: EnvRow[] = environments.map((e) => ({
 		id: e.id,
@@ -68,6 +73,19 @@ export default async function ProjectEnvironmentsPage({
 		created_at: p.created_at.toISOString(),
 	}));
 
+	// The in-flight promotion (if any) drives the active-promotion panel; hydrate its detail
+	// (gates + named approval slots + diff). Degrades to null so the page still renders.
+	const inFlight = new Set([
+		"PENDING_PLAN",
+		"PENDING_APPROVAL",
+		"APPROVED",
+		"DEPLOYING",
+	]);
+	const active = promotions.find((p) => inFlight.has(p.status));
+	const activePromotion = active
+		? await getPromotionDetail(active.id).catch(() => null)
+		: null;
+
 	return (
 		<EnvironmentsView
 			org={org}
@@ -77,6 +95,8 @@ export default async function ProjectEnvironmentsPage({
 			consistency={consistency}
 			reconcile={reconcile}
 			promotions={promotionRows}
+			activePromotion={activePromotion}
+			protectionByEnv={protectionByEnv}
 		/>
 	);
 }
