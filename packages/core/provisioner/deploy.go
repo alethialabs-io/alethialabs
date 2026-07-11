@@ -86,6 +86,11 @@ type PlanResult struct {
 	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
 	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
 	SecurityPosture *argocd.SecurityPosture
+	// InfraServices is the machine-readable per-service install/skip decision set for the
+	// post-apply infra services (external-dns, external-secrets store, ingress, storage
+	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
+	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
+	InfraServices []argocd.InfraServiceDecision
 }
 
 // applyBootstrapManifests applies a self-managed cluster's CNI + cloud-integration
@@ -498,6 +503,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			return nil, fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
 		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
+		// Record the honest per-service install/skip decisions from the SAME gates the
+		// render below uses, so the console/CLI can show what shipped (and why a service
+		// was skipped) instead of guessing from output presence.
+		result.InfraServices = argocd.InfraServiceDecisions(facts)
 		// Connector-backed external-dns providers read a token Secret that must exist
 		// before the Application's first sync (mirrors ensureArgoRedisSecret's pre-seed).
 		switch facts.DNSProvider() {

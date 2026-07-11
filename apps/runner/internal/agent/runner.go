@@ -558,6 +558,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if len(result.AddOnStatus) > 0 {
 			metadata["addon_status"] = result.AddOnStatus
 		}
+		if len(result.InfraServices) > 0 {
+			// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
+			// Non-sensitive, safe to persist to the console alongside addon_status.
+			metadata["infra_services"] = result.InfraServices
+		}
 		if result.SecurityPosture != nil {
 			metadata["security_report"] = result.SecurityPosture
 		}
