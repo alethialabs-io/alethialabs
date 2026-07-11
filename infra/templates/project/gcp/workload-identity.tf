@@ -61,6 +61,19 @@ resource "google_secret_manager_secret_iam_member" "external_secrets_accessor" {
   depends_on = [module.secret_manager]
 }
 
+# Parity with the AWS path (which grants ESO read on the RDS master/extra credential
+# secrets): the Cloud SQL module stores DB credentials in its own Secret Manager secret
+# outside custom_secrets, so grant secretAccessor on it too — otherwise an ExternalSecret
+# syncing DB creds succeeds on AWS but PermissionDenies on GCP.
+resource "google_secret_manager_secret_iam_member" "external_secrets_sql_accessor" {
+  count = var.provision_gke && var.create_cloud_sql ? 1 : 0
+
+  project   = var.project_id
+  secret_id = module.cloud_sql[0].credentials_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.external_secrets[0].email}"
+}
+
 resource "google_service_account_iam_member" "external_secrets_wi" {
   count              = var.provision_gke ? 1 : 0
   service_account_id = google_service_account.external_secrets[0].name
