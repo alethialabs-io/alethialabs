@@ -215,12 +215,13 @@ from `ALIBABA_CLOUD_OIDC_TOKEN_FILE` (re-read on refresh). Revocation is instant
 SNAT), EIP, RDS, Container Registry EE, KVStore (Redis), AliDNS, KMS, Message Service (MNS), OSS, Tablestore
 (OTS), and WAF.
 
-<Callout type="warn">
-**Least-privilege by attached policy.** Unlike the other clouds' account-wide defaults, the Alibaba RAM role
-attaches **per-service system policies** (`AliyunCS/VPC/ECS/SLB/EIP FullAccess`) — never account admin. We are
-tightening this further: attaching each service's policy **only when that module is enabled**, and granting a
-**narrow `ram:CreateServiceLinkedRole`** (never `AliyunRAMFullAccess`) for the service-linked roles ACK needs.
-Track it in the [Alibaba connector guide](/console/connectors/alibaba).
+<Callout type="info">
+**Least-privilege by attached policy — never account admin.** The Alibaba RAM role attaches **one per-service
+system policy for each service Alethia provisions** (`AliyunCS/VPC/ECS/SLB/EIP FullAccess` for the core ACK
+path, plus RDS/ContainerRegistry/Kvstore/DNS/KMS/MNS/OSS/OTS/WAF for the optional modules) — never
+`AliyunRAMFullAccess` or an admin policy. The service-linked roles ACK/NAT need are covered by a **narrow
+custom policy granting only `ram:CreateServiceLinkedRole`** (service-linked roles are cloud-managed with
+fixed permissions, so this can't escalate). See the [Alibaba connector guide](/console/connectors/alibaba).
 </Callout>
 
 ## Key rotation
