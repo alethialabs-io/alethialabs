@@ -61,7 +61,6 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 
 	return (
 		<ConnectSheetShell
-			title="Connect Hetzner Cloud"
 			badgeLabel="Encrypted"
 			intro="Hetzner Cloud has no role federation, so Alethia connects with a project-scoped API token you create. It's encrypted at rest (AES-GCM) and only decrypted on the runner at provision time — never in a project snapshot. Alethia uses it to provision a self-managed Talos Linux Kubernetes cluster on Hetzner's cheap VMs."
 			howItWorks={
@@ -82,7 +81,7 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 				</>
 			}
 		>
-			<div className="space-y-8">
+			<div className="space-y-6">
 				<Step n={1} title="Create a project-scoped API token">
 					<p className="max-w-md text-muted-foreground text-xs">
 						In the Hetzner Cloud Console, open your project, then{" "}
@@ -157,7 +156,7 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 										<Input
 											type="password"
 											placeholder="Paste your Read & Write API token"
-											className="h-9 border-border/50 font-mono text-sm"
+											className="h-9 border-border/60 font-mono text-sm"
 											{...field}
 										/>
 									</FormControl>
