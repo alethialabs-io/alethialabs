@@ -50,7 +50,6 @@ function baseCfg(over: Partial<HcloudConfig> = {}): HcloudConfig {
 		sshKeys: ["key-a"],
 		defaultImageTag: "latest",
 		webOrigin: "https://app.test",
-		bootstrapToken: "boot-xyz",
 		slots: 2,
 		...over,
 	};
@@ -146,27 +145,28 @@ describe("hcloudConfigFromEnv", () => {
 });
 
 describe("renderCloudInit", () => {
-	it("pins the runner image to the explicit version and injects managed env", () => {
-		const out = renderCloudInit(baseCfg(), "gcp", "v1.2.3");
+	it("pins the runner image to the explicit version and injects the PER-VM bootstrap token", () => {
+		const out = renderCloudInit(baseCfg(), "gcp", "v1.2.3", "vm-boot-tok");
 		expect(out).toContain("ghcr.io/alethialabs-io/runner-gcp:v1.2.3");
 		expect(out).toContain('-e ALETHIA_RUNNER_OPERATOR="managed"');
 		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
-		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="boot-xyz"');
+		// The token comes from the per-VM arg (E0 0b), NOT a shared config field.
+		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="vm-boot-tok"');
 		expect(out).toContain('-e ALETHIA_RUNNER_SLOTS="2"');
 		expect(out).toContain("#cloud-config");
 	});
 
 	it("uses the default image tag when no version is pinned", () => {
-		const out = renderCloudInit(baseCfg({ defaultImageTag: "stable" }), "aws", null);
+		const out = renderCloudInit(baseCfg({ defaultImageTag: "stable" }), "aws", null, "vm-boot-tok");
 		expect(out).toContain("ghcr.io/alethialabs-io/runner-aws:stable");
 	});
 
 	it("never injects storage master credentials into the fleet (proxy-only state)", () => {
-		const out = renderCloudInit(baseCfg(), "azure", null);
+		const out = renderCloudInit(baseCfg(), "azure", null, "vm-boot-tok");
 		expect(out).not.toContain("ALETHIA_STORAGE_");
 		// The runner still gets what it needs to self-register + reach the console.
 		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
-		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="boot-xyz"');
+		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="vm-boot-tok"');
 	});
 });
 
@@ -176,6 +176,7 @@ describe("serverCreatePayload", () => {
 			name: "fleet-aws-abc12345",
 			location: "fsn1",
 			version: "v9",
+			bootstrapToken: "vm-boot-tok",
 		});
 		expect(payload.name).toBe("fleet-aws-abc12345");
 		expect(payload.server_type).toBe("cax21");
@@ -196,6 +197,7 @@ describe("serverCreatePayload", () => {
 			name: "n",
 			location: "nbg1",
 			version: null,
+			bootstrapToken: "vm-boot-tok",
 		});
 		expect(payload.labels).toEqual({ "alethia-managed": "true", "alethia-pool": "gcp" });
 	});
@@ -253,7 +255,11 @@ describe("HcloudFleetProvider.create", () => {
 	it("POSTs a generated server payload built from serverCreatePayload", async () => {
 		fetchMock.mockResolvedValue(jsonRes({ server: { id: 1 } }, 201));
 
-		await getHcloudFleetProvider().create(target("aws"), { location: "fsn1", version: "v3" });
+		await getHcloudFleetProvider().create(target("aws"), {
+			location: "fsn1",
+			version: "v3",
+			bootstrapToken: "vm-boot-tok",
+		});
 
 		const [url, init] = fetchMock.mock.calls[0];
 		expect(url).toBe("https://api.hetzner.cloud/v1/servers");
@@ -266,6 +272,7 @@ describe("HcloudFleetProvider.create", () => {
 		expect(body.labels["alethia-version"]).toBe("v3");
 		expect(body.labels["alethia-pool"]).toBe("aws");
 		expect(String(body.user_data)).toContain("runner-aws:v3");
+		expect(String(body.user_data)).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="vm-boot-tok"');
 	});
 });
 

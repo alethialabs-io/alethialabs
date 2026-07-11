@@ -491,6 +491,13 @@
       "when": 1783702819731,
       "tag": "0069_groovy_bloodaxe",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1783755957584,
+      "tag": "0070_sudden_maggott",
+      "breakpoints": true
     }
   ]
 }
