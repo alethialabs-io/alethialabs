@@ -3,7 +3,13 @@
 
 package k8s
 
-import "testing"
+import (
+	"context"
+	"io"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestCountReadyNodes(t *testing.T) {
 	cases := []struct {
@@ -51,5 +57,30 @@ func TestCountReadyNodes(t *testing.T) {
 				t.Errorf("got ready=%d total=%d, want ready=%d total=%d", ready, total, tc.wantReady, tc.wantTot)
 			}
 		})
+	}
+}
+
+func TestPodToAPIServerJob(t *testing.T) {
+	y := podToAPIServerJob("alethia-apiserver-probe", "10.0.96.1", "busybox:1.36")
+	for _, want := range []string{
+		"name: alethia-apiserver-probe",
+		"image: busybox:1.36",
+		"nc -w 3 10.0.96.1 443",                 // TCP-connect to the ClusterIP datapath
+		"node-role.kubernetes.io/control-plane", // prefer a non-control-plane node
+		"operator: DoesNotExist",
+		"runAsNonRoot: true", // restricted-PSA compliant
+		"readOnlyRootFilesystem: true",
+		"restartPolicy: Never",
+	} {
+		if !strings.Contains(y, want) {
+			t.Errorf("probe Job manifest missing %q\n---\n%s", want, y)
+		}
+	}
+}
+
+func TestWaitPodToAPIServerSkip(t *testing.T) {
+	t.Setenv("ALETHIA_CLUSTER_SKIP_INCLUSTER_PROBE", "1")
+	if err := WaitPodToAPIServer(context.Background(), time.Second, io.Discard); err != nil {
+		t.Fatalf("skip env should short-circuit to nil, got %v", err)
 	}
 }
