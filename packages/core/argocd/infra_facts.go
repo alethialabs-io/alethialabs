@@ -37,29 +37,34 @@ type InfraFacts struct {
 	AppsDestinationRepo string
 
 	// ── AWS (IRSA) ──────────────────────────────────────────────
-	AWSAccountID         string
-	VPCID                string
-	ACMCertificateArn    string
-	IRSAExternalDNSArn   string
-	IRSAALBControllerArn string
-	NodeIAMRoleName      string
-	NodeSecurityGroup    string
-	KarpenterQueueName   string
+	AWSAccountID           string
+	VPCID                  string
+	ACMCertificateArn      string
+	IRSAExternalDNSArn     string
+	IRSAALBControllerArn   string
+	IRSAExternalSecretsArn string // IRSA role for the external-secrets operator (gates secretstore-aws)
+	NodeIAMRoleName        string
+	NodeSecurityGroup      string
+	KarpenterQueueName     string
 
 	// ── GCP (Workload Identity) ─────────────────────────────────
-	GCPProjectID     string
-	GCPExternalDNSSA string // GSA email bound to the external-dns KSA
-	GCPIngressSA     string // GSA email for the ingress/gateway controller
+	GCPProjectID         string
+	GCPExternalDNSSA     string // GSA email bound to the external-dns KSA
+	GCPIngressSA         string // GSA email for the ingress/gateway controller
+	GCPExternalSecretsSA string // GSA email bound to the external-secrets KSA (gates secretstore-gcp)
 
 	// ── Azure (Federated / Workload Identity) ───────────────────
-	AzureResourceGroup     string
-	AzureTenantID          string
-	AzureExternalDNSClient string // managed-identity client id for external-dns
-	AzureIngressClient     string // managed-identity client id for the AGIC
+	AzureResourceGroup         string
+	AzureTenantID              string
+	AzureExternalDNSClient     string // managed-identity client id for external-dns
+	AzureIngressClient         string // managed-identity client id for the AGIC
+	AzureExternalSecretsClient string // managed-identity client id for the external-secrets operator (gates secretstore-azure)
+	AzureKeyVaultURI           string // project Key Vault URI (the azurekv store's vaultUrl)
 
 	// ── Alibaba (RRSA — RAM Roles for Service Accounts) ─────────
-	AlibabaOIDCIssuerURL   string // ACK cluster OIDC issuer
-	AlibabaOIDCProviderArn string // RAM OIDC provider ARN that RRSA roles trust
+	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
+	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
+	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
 }
 
 // DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
@@ -140,6 +145,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.GCPProjectID = firstNonEmpty(ExtractOutput(outputs, "gcp_project_id"), vc.CloudAccountID)
 		f.GCPExternalDNSSA = ExtractOutput(outputs, "external_dns_service_account")
 		f.GCPIngressSA = ExtractOutput(outputs, "ingress_service_account")
+		f.GCPExternalSecretsSA = ExtractOutput(outputs, "external_secrets_service_account")
 	case "azure":
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "aks_cluster_endpoint")
@@ -147,14 +153,18 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AzureTenantID = firstNonEmpty(ExtractOutput(outputs, "azure_tenant_id"), vc.CloudAccountID)
 		f.AzureExternalDNSClient = ExtractOutput(outputs, "external_dns_client_id")
 		f.AzureIngressClient = ExtractOutput(outputs, "ingress_client_id")
+		f.AzureExternalSecretsClient = ExtractOutput(outputs, "external_secrets_client_id")
+		f.AzureKeyVaultURI = ExtractOutput(outputs, "key_vault_uri")
 	case "alibaba":
 		f.ClusterName = ExtractOutput(outputs, "ack_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "ack_cluster_endpoint")
 		f.VPCID = ExtractOutput(outputs, "vpc_id")
 		f.AlibabaOIDCIssuerURL = ExtractOutput(outputs, "rrsa_oidc_issuer_url")
 		f.AlibabaOIDCProviderArn = ExtractOutput(outputs, "rrsa_oidc_provider_arn")
-		// The RRSA facts feed workload-identity for in-cluster components (e.g. the
-		// external-secrets operator, A6). external-dns's alibabacloud provider does NOT
+		f.AlibabaExternalSecretsRoleArn = ExtractOutput(outputs, "external_secrets_ram_role_arn")
+		// The RRSA facts feed workload-identity for in-cluster components (the
+		// external-secrets store renders off the role ARN above). external-dns's
+		// alibabacloud provider does NOT
 		// support RRSA upstream (kubernetes-sigs/external-dns#5019), so DNSProvider()
 		// still skips external-dns on alibaba — an honest gap, recorded in the docs.
 	case "hetzner":
@@ -170,6 +180,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.ACMCertificateArn = ExtractOutput(outputs, "acm_certificate_arn")
 		f.IRSAExternalDNSArn = ExtractOutput(outputs, "eks_irsa_external_dns_arn")
 		f.IRSAALBControllerArn = ExtractOutput(outputs, "eks_irsa_alb_controller_arn")
+		f.IRSAExternalSecretsArn = ExtractOutput(outputs, "eks_irsa_external_secrets_arn")
 		f.NodeIAMRoleName = ExtractOutput(outputs, "node_iam_role_name")
 		f.NodeSecurityGroup = ExtractOutput(outputs, "node_security_group")
 		f.KarpenterQueueName = ExtractOutput(outputs, "karpenter_queue_name")

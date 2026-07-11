@@ -34,3 +34,36 @@ resource "google_service_account_iam_member" "external_dns_wi" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/external-dns-sa]"
 }
+
+# GSA for the external-secrets operator: bound to its KSA via Workload Identity so the
+# gcpsm ClusterSecretStore reads Secret Manager with NO static key. Exported as
+# `external_secrets_service_account` and rendered onto the operator's ServiceAccount
+# (iam.gke.io/gcp-service-account annotation) by the ArgoCD Application.
+resource "google_service_account" "external_secrets" {
+  count        = var.provision_gke ? 1 : 0
+  project      = var.project_id
+  account_id   = "extsec-${substr(sha256(local.gke_name), 0, 8)}"
+  display_name = "external-secrets (${var.project_name})"
+}
+
+# Least-privilege: secretAccessor is granted PER SECRET (the ones this template creates via
+# modules/secret-manager), not project-wide — a project-level binding would force the
+# provisioner to hold resourcemanager.projectIamAdmin (same rationale as the zone-scoped
+# external-dns binding above). Keyed by the secret's declared name (known at plan time).
+resource "google_secret_manager_secret_iam_member" "external_secrets_accessor" {
+  for_each = var.provision_gke ? { for s in var.custom_secrets : s.name => s } : {}
+
+  project   = var.project_id
+  secret_id = "${var.environment}-${var.project_name}-${each.key}"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.external_secrets[0].email}"
+
+  depends_on = [module.secret_manager]
+}
+
+resource "google_service_account_iam_member" "external_secrets_wi" {
+  count              = var.provision_gke ? 1 : 0
+  service_account_id = google_service_account.external_secrets[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]"
+}

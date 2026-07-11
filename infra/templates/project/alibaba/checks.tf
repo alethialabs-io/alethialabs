@@ -38,3 +38,10 @@ check "ack_rrsa_provider_present" {
     error_message = "ACK RRSA (workload identity) did not report an OIDC provider ARN — in-cluster components can't assume RAM roles."
   }
 }
+
+check "external_secrets_rrsa_role_present" {
+  assert {
+    condition     = !local.eso_rrsa_enabled || length(trimspace(try(alicloud_ram_role.external_secrets[0].arn, ""))) > 0
+    error_message = "Native KMS secrets exist on an ACK cluster but the external-secrets RRSA role reported no ARN — the ESO ClusterSecretStore cannot authenticate."
+  }
+}

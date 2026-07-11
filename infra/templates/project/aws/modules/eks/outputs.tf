@@ -22,6 +22,11 @@ output "eks_irsa_external_dns_arn" {
   value = module.iam_assumable_role_external_dns.iam_role_arn
 }
 
+output "eks_irsa_external_secrets_arn" {
+  description = "IRSA role ARN for the external-secrets operator (annotated onto its ServiceAccount)"
+  value       = module.iam_assumable_role_admin_secrets_operator.iam_role_arn
+}
+
 output "node_security_group_id" {
   description = "ID of the node shared security group"
   value       = module.eks.node_security_group_id

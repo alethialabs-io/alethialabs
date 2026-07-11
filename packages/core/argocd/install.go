@@ -69,10 +69,22 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 			fmt.Fprintf(stderr, "Warning: could not remove stale external-dns application: %v\n", err)
 		}
 	}
-	if facts.Provider != "aws" {
-		cmd := "kubectl delete clustersecretstore secretstore-aws --ignore-not-found --timeout=60s"
+	// Per-cloud ClusterSecretStores: each gate must mirror external-secrets-operator.yaml's
+	// render conditions — a store whose identity fact disappeared (or that belongs to another
+	// cloud) stops rendering and would otherwise be orphaned in a permanently-broken state.
+	esoStores := map[string]bool{
+		"secretstore-aws":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "",
+		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
+		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
+		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
+	}
+	for name, renders := range esoStores {
+		if renders {
+			continue
+		}
+		cmd := fmt.Sprintf("kubectl delete clustersecretstore %s --ignore-not-found --timeout=60s", name)
 		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "Warning: could not remove stale AWS ClusterSecretStore: %v\n", err)
+			fmt.Fprintf(stderr, "Warning: could not remove stale ClusterSecretStore %s: %v\n", name, err)
 		}
 	}
 }

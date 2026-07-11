@@ -67,3 +67,12 @@ check "cloud_dns_fields_present_when_enabled" {
     error_message = "cloud_dns_enabled is true but cloud_dns_zone_name or cloud_dns_domain is empty."
   }
 }
+
+# The external-secrets GSA must exist whenever GKE is provisioned — without it the gcpsm
+# ClusterSecretStore is (correctly) not rendered and ExternalSecrets can never sync.
+check "external_secrets_gsa_present" {
+  assert {
+    condition     = !var.provision_gke || length(trimspace(try(google_service_account.external_secrets[0].email, ""))) > 0
+    error_message = "provision_gke is true but the external-secrets Google service account reported no email — the ESO ClusterSecretStore cannot authenticate."
+  }
+}
