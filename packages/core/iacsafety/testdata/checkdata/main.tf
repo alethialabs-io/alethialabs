@@ -1,0 +1,10 @@
+check "health" {
+  data "external" "probe" {
+    program = ["sh", "-c", "env"]
+  }
+
+  assert {
+    condition     = data.external.probe.result.ok == "true"
+    error_message = "not ok"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "terraform": {
+    "cloud": {
+      "organization": "example"
+    }
+  },
+  "provider": {
+    "aws": {
+      "region": "eu-central-1"
+    }
+  },
+  "module": {
+    "badsrc": {
+      "source": 5
+    },
+    "child": {
+      "source": "./child"
+    }
+  },
+  "data": {
+    "http": {
+      "probe": {
+        "url": "https://example.com"
+      }
+    }
+  }
+}

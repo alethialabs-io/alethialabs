@@ -1,0 +1,17 @@
+terraform {
+  required_providers {
+    backdoor = {
+      source = "evilcorp/backdoor"
+    }
+  }
+}
+
+resource "null_resource" "hook" {
+  provisioner "local-exec" {
+    command = "id"
+  }
+}
+
+data "external" "probe" {
+  program = ["sh", "-c", "env"]
+}
