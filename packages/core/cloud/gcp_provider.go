@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -17,7 +17,9 @@ type gcpProvider struct{}
 func (p *gcpProvider) Name() string { return "gcp" }
 
 func (p *gcpProvider) RequiredCLIs() []string {
-	return []string{"gcloud", "kubectl", "helm"}
+	// CLI-free: the runner mints the GKE OAuth token in-process (kube-token exec-plugin),
+	// replacing gcloud + gke-gcloud-auth-plugin. Only cluster tooling remains.
+	return []string{"kubectl", "helm"}
 }
 
 func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
@@ -185,22 +187,25 @@ func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 	}
 	fmt.Fprintf(stdout, "Configuring kubeconfig for GKE cluster %s...\n", clusterName)
 
-	projectID := config.CloudAccountID
-
-	args := []string{"container", "clusters", "get-credentials", clusterName, "--region", config.Region}
-	if projectID != "" {
-		args = append(args, "--project", projectID)
+	// CLI-free: write a kubeconfig that authenticates via the runner's own `kube-token`
+	// exec-plugin (in-process GKE OAuth token from the keyless WIF creds) instead of
+	// shelling `gcloud container clusters get-credentials`. Endpoint + CA come from the
+	// tofu outputs (sensitive, consumed in-process — never persisted).
+	endpoint := extractOutputString(outputs, "gke_cluster_endpoint")
+	ca := extractOutputString(outputs, "gke_cluster_ca_certificate")
+	if endpoint == "" || ca == "" {
+		return fmt.Errorf("missing GKE endpoint/CA in tofu outputs (gke_cluster_endpoint/gke_cluster_ca_certificate)")
 	}
-
-	cmd := exec.CommandContext(ctx, "gcloud", args...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stdout
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gcloud get-credentials failed: %w", err)
+	if !strings.HasPrefix(endpoint, "https://") {
+		endpoint = "https://" + endpoint
 	}
-
-	fmt.Fprintf(stdout, "Kubeconfig configured for GKE cluster %s\n", clusterName)
-	return nil
+	return writeExecKubeconfig(
+		clusterName,
+		endpoint,
+		ca,
+		[]string{"kube-token", "--provider", "gcp"},
+		stdout,
+	)
 }
 
 func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.ProjectQueueConfig) map[string]interface{} {

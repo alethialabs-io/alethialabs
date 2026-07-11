@@ -95,12 +95,14 @@
   .ah-cmds { grid-template-columns: 1fr 1fr !important; }
   .ah-surface, .ah-foot-grid, .ah-3col, .ah-2col { grid-template-columns: 1fr !important; }
   .ah-3col, .ah-2col { gap: 16px !important; }
+  .ah-4col { grid-template-columns: 1fr 1fr !important; gap: 16px !important; }
   .ah-foot-grid { grid-template-columns: 1fr 1fr !important; gap: 28px !important; }
   .ah-navmenu { display: none !important; }
 }
 @media (max-width: 620px) {
   .ah-h1 { font-size: 36px !important; }
   .ah-life { grid-template-columns: 1fr !important; }
+  .ah-4col { grid-template-columns: 1fr !important; }
   .ah-hide-sm { display: none !important; }
 }
 

@@ -16,8 +16,8 @@ runner start
   └── Poll loop (every 10s)
        ├── POST /api/jobs/claim
        ├── If job claimed:
-       │    ├── Assume cloud credentials
-       │    ├── Execute job (Terraform, ArgoCD, etc.)
+       │    ├── Mint per-job cloud credentials (keyless OIDC)
+       │    ├── Execute job via the sandbox seam (OpenTofu, ArgoCD, …)
        │    ├── Stream logs
        │    └── Report result
        └── If no job: sleep 10s, repeat
@@ -25,13 +25,20 @@ runner start
 
 The poll loop runs on the main goroutine. The heartbeat runs as a background goroutine. Both share the Runner configuration.
 
+Provisioning work runs through the **sandbox seam** (`packages/core/sandbox`), not by invoking the provisioner
+directly. For trusted Alethia templates the default `Passthrough` backend runs it in-process; on the managed
+fleet, untrusted bring-your-own IaC/Helm runs in a per-job **container** with an allowlisted environment and a
+locked-down network. See the [`sandbox` package README](https://github.com/alethialabs-io/alethialabs/blob/main/packages/core/sandbox/README.md)
+and [Security Architecture → Execution isolation](/concepts/security#execution-isolation-managed-untrusted-byo).
+
 ### Job types
 
 The dispatch switch (`internal/agent/runner.go`) routes each claimed job to its handler:
 
 | Job type | Handler | Does |
 |---|---|---|
-| `PLAN` / `DEPLOY` / `DESTROY` | `executePlan` / `executeDeploy` / … | OpenTofu plan/apply/destroy (+ the verify gate, ArgoCD, and manifest scaffold on deploy). |
+| `PLAN` / `DEPLOY` / `DESTROY` | `executePlan` / `executeDeploy` / … | OpenTofu plan/apply/destroy (+ the verify gate, ArgoCD, and manifest scaffold on deploy). Routed through the **sandbox seam**. |
+| `CHART_SCAN` | `executeChartScan` | Render a bring-your-own Helm chart to manifests + scan it (zero secrets, deny-all egress) — always sandboxed. |
 | `ANALYZE_REPO` | `executeAnalyzeRepo` | Clone + statically scan a repo into a `RepoDigest`. |
 | `DETECT_DRIFT` | `executeDriftDetection` | `tofu plan -refresh-only` → `drift.Analyze` → post a `Posture`. |
 | `AUDIT` | `executeAudit` | Run the elench verify engine over a **bring-your-own** plan or k8s manifests → post `verify_result`. Provisions nothing. |
@@ -47,11 +54,13 @@ Runner receives its configuration via environment variables:
 | `ALETHIA_RUNNER_ID` | Unique Runner identifier (assigned at registration) |
 | `ALETHIA_RUNNER_TOKEN` | Authentication token for API calls |
 | `ALETHIA_RUNNER_OPERATOR` | `managed` or `self` (the legacy `ALETHIA_RUNNER_MODE` with `cloud-hosted`/`self-hosted` still works as a back-compat fallback) |
-| `ALETHIA_STORAGE_ENDPOINT` | S3 endpoint for Terraform state |
-| `ALETHIA_STORAGE_REGION` | S3 region |
-| `ALETHIA_STORAGE_ACCESS_KEY_ID` | S3 access key |
-| `ALETHIA_STORAGE_SECRET_ACCESS_KEY` | S3 secret key |
 | `INFRACOST_API_KEY` | Optional, for cost estimation |
+
+The runner holds **no object-storage credentials**. Terraform state goes through the console **state proxy**
+(`backend "http"` → `/api/jobs/{id}/state`) authenticated by a per-job token in `TF_HTTP_PASSWORD`, and cloud
+auth is minted per job via keyless OIDC — so a managed fleet VM's cloud-init carries no long-lived secret.
+Managed fleet VMs additionally self-register with a per-VM, short-TTL bootstrap token rather than any static
+credential.
 
 ## Heartbeat Mechanism
 
@@ -70,7 +79,7 @@ If a Runner crashes mid-job:
 1. Heartbeat stops arriving
 2. After 60 seconds, Alethia marks the Runner OFFLINE
 3. If no log updates for 5+ minutes, the job is marked FAILED
-4. User can retry the job — Terraform state is preserved in S3
+4. User can retry the job — Terraform state is preserved in the console state proxy (`project-tofu-state`, with fenced locks so a reclaimed lock can't clobber a slow writer)
 
 ## Graceful Shutdown
 
@@ -82,7 +91,9 @@ When Runner receives SIGINT or SIGTERM:
 4. Sends final heartbeat with OFFLINE status
 5. Exits
 
-ECS Fargate sends SIGTERM when stopping a task, so Runners always attempt a graceful shutdown.
+The managed fleet runs disposable per-job Hetzner VMs (one job per VM); on scale-down the VM stops the
+container, which sends SIGTERM, so runners always attempt a graceful shutdown. (Self-hosted runners get the
+same on any orchestrator's stop signal.)
 
 ## API Client
 
@@ -107,7 +118,9 @@ Runner and Alethia CLI both import from `packages/core/`:
 |---------|---------|
 | `provisioner/` | Bootstrap, deploy, destroy orchestration |
 | `terraform/` | Terraform CLI wrapper (init, plan, apply, destroy) |
-| `cloud/aws/` | AWS SDK for provisioning (STS AssumeRole, EKS kubeconfig, S3 state) |
+| `cloud/aws/` | AWS SDK for provisioning (keyless `AssumeRoleWithWebIdentity`, EKS kubeconfig) |
+| `cloud/` (`http_backend.go`) | The console HTTP state backend (per-job token via `TF_HTTP_PASSWORD`) — no storage credential on the runner |
+| `sandbox/` | The per-job isolation seam (Passthrough / Container backends) |
 | `cloud/gcp/` | GCP Workload Identity Federation + kubeconfig |
 | `cloud/azure/` | Azure federated auth + kubeconfig |
 | `argocd/` | ArgoCD installation and configuration |

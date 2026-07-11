@@ -215,6 +215,14 @@ var credAllowKeys = map[string]bool{
 	"ALIBABA_CLOUD_ROLE_ARN": true, "ALIBABA_CLOUD_OIDC_PROVIDER_ARN": true, "ALIBABA_CLOUD_OIDC_TOKEN_FILE": true, "ALIBABA_CLOUD_ROLE_SESSION_NAME": true,
 	// token clouds (secrets, but the tofu provider needs them)
 	"HCLOUD_TOKEN": true, "DIGITALOCEAN_ACCESS_TOKEN": true, "DIGITALOCEAN_TOKEN": true, "CIVO_TOKEN": true,
+	// egress forward-proxy (Step 3b: managed fleet default-deny netns + domain-allowlist
+	// squid). The child routes ALL outbound through the proxy; every tool it runs (tofu
+	// providers / helm / aws|gcloud|az|kubectl) honors these. NOT secrets. NO_PROXY is kept
+	// minimal by the fleet (localhost only — NEVER the 169.254.169.254 metadata IP, which
+	// must not bypass the proxy; see hcloud.ts renderCloudInit). Both cases: net/http honors
+	// lowercase, tofu/helm honor uppercase.
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true,
+	"http_proxy": true, "https_proxy": true, "no_proxy": true,
 	// toolchain / locale (NOT KUBECONFIG/TF_PLUGIN_CACHE_DIR/HOME — the child sets those
 	// to writable per-job paths; TF_HTTP_* is injected explicitly below)
 	"PATH": true, "LANG": true, "LC_ALL": true, "TZ": true,

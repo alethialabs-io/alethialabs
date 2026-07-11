@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Lean Alibaba-only runner image (per-cloud routing) — `runner-alibaba`. Builds FROM the shared runner-base
+# and adds only the Alibaba (ACK) project template. No cloud CLI: the alicloud provider authenticates from
+# the keyless OIDC identity (ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY / ALICLOUD_SECURITY_TOKEN exported by
+# the runner), and the ACK kubeconfig comes straight from a tofu output (RequiredCLIs = kubectl, helm — both
+# already in the base). Declares ALETHIA_RUNNER_PROVIDERS=alibaba so it only claims Alibaba jobs.
+
+ARG RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:latest
+FROM ${RUNNER_BASE}
+
+COPY --chown=runner:runner infra/templates/project/alibaba/ /home/runner/project-templates/alibaba/
+
+USER runner
+WORKDIR /home/runner
+
+# Pre-initialize only the Alibaba template (alicloud + random providers). TF_PLUGIN_CACHE_DIR is inherited
+# from the base; keeps the .terraform tree warm for the per-job copy.
+RUN cd /home/runner/project-templates/alibaba && tofu init -backend=false -input=false -upgrade
+
+ENV ALETHIA_RUNNER_PROVIDERS=alibaba
+ENTRYPOINT ["runner"]

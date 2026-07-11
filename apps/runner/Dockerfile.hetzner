@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Lean Hetzner-only runner image (per-cloud routing) — `runner-hetzner`. Builds FROM the shared runner-base
+# and adds only the Hetzner (self-managed Talos) project template. No cloud CLI: the hcloud/talos/imager
+# providers drive the whole apply and the kubeconfig is emitted by the talos provider output (RequiredCLIs is
+# empty — kubectl/helm from the base cover the post-apply CNI/CCM manifests). Declares
+# ALETHIA_RUNNER_PROVIDERS=hetzner so it only claims Hetzner jobs.
+
+ARG RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:latest
+FROM ${RUNNER_BASE}
+
+COPY --chown=runner:runner infra/templates/project/hetzner/ /home/runner/project-templates/hetzner/
+
+USER runner
+WORKDIR /home/runner
+
+# Pre-initialize only the Hetzner template (hcloud + siderolabs/talos + hcloud-talos/imager +
+# hashicorp/helm + alekc/kubectl providers). TF_PLUGIN_CACHE_DIR is inherited from the base; keeps the
+# .terraform tree warm for the per-job copy.
+RUN cd /home/runner/project-templates/hetzner && tofu init -backend=false -input=false -upgrade
+
+ENV ALETHIA_RUNNER_PROVIDERS=hetzner
+ENTRYPOINT ["runner"]

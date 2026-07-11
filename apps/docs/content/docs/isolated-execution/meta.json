@@ -1,0 +1,6 @@
+{
+  "title": "Isolated Execution",
+  "icon": "Container",
+  "root": true,
+  "pages": ["index", "architecture"]
+}

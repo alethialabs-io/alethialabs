@@ -8,7 +8,7 @@ terraform {
     }
   }
 
-  backend "s3" {}
+  backend "http" {}
 }
 
 provider "aws" {

@@ -14,6 +14,7 @@ import {
 	retireRunner,
 	setRunnerObserved,
 } from "@/lib/fleet/queue";
+import { mintBootstrapToken } from "@/lib/runners/bootstrap-token";
 
 const BOOT_GRACE_SECONDS =
 	Number.parseInt(process.env.FLEET_BOOT_GRACE_SECONDS ?? "180", 10) || 180;
@@ -30,5 +31,6 @@ export function makeDbDeps(): ControllerDeps {
 		persistObserved: (runnerId, patch) =>
 			setRunnerObserved(runnerId, patch.location, patch.version),
 		bootGraceSeconds: BOOT_GRACE_SECONDS,
+		mintBootstrapToken: () => mintBootstrapToken(),
 	};
 }

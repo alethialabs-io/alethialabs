@@ -37,7 +37,10 @@ class ManualFleetProvider implements FleetProvider {
 		}));
 	}
 
-	async create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
+	async create(
+		project: FleetTarget,
+		opts: { location: string; version: string | null; bootstrapToken?: string },
+	): Promise<void> {
 		console.log(
 			`[fleet] ${project.provider}: would create a runner (loc=${opts.location} ver=${opts.version}) ` +
 				`— manual provider, run a worker to match.`,

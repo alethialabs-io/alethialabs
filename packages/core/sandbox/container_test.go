@@ -47,6 +47,10 @@ func TestBuildChildEnv_AllowlistsAndStripsSecrets(t *testing.T) {
 		"TF_HTTP_PASSWORD=state-token",
 		"TF_HTTP_USERNAME=alethia",
 		"PATH=/usr/bin",
+		// egress forward-proxy (Step 3b) — must cross so the child routes through the proxy
+		"HTTPS_PROXY=http://alethia-egress-proxy:3128",
+		"HTTP_PROXY=http://alethia-egress-proxy:3128",
+		"NO_PROXY=localhost,127.0.0.1",
 		// a per-job stage secret the parent stashed for the child
 		"ALETHIA_STAGE_GIT_TOKEN=ghp_x",
 	}
@@ -61,6 +65,7 @@ func TestBuildChildEnv_AllowlistsAndStripsSecrets(t *testing.T) {
 	mustHave := []string{
 		"AWS_CONFIG_FILE", "AWS_PROFILE", "AZURE_FEDERATED_TOKEN_FILE",
 		"TF_HTTP_PASSWORD", "TF_HTTP_USERNAME", "PATH",
+		"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
 		"ALETHIA_STAGE_GIT_TOKEN", "ALETHIA_RUNNER_EXEC_STAGE", "ALETHIA_STAGE_WORKDIR", "HOME",
 	}
 	for _, k := range mustHave {
