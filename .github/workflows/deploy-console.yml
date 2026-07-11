@@ -509,6 +509,11 @@ jobs:
           } > env.deploy
 
           SSHOPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          # Free disk FIRST — the box can fill so completely that even scp'ing the few-KB
+          # .env fails ("write remote: Failure"). Prune all UNUSED images + build cache
+          # over ssh before anything writes to the box (running images are protected;
+          # rollback re-pulls from GHCR). Must run before the scp below.
+          ssh $SSHOPTS "root@${HOST}" 'df -h /; docker image prune -af || true; docker builder prune -af || true; df -h /'
           scp $SSHOPTS env.deploy "root@${HOST}:/opt/alethia/.env.new"
           rm -f env.deploy
 
