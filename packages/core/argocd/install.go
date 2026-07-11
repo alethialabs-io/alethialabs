@@ -22,6 +22,38 @@ func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// externalDNSSecretManifest builds the namespace + token Secret manifest external-dns's
+// connector-backed providers read (cloudflare CF_API_TOKEN / hetzner HETZNER_TOKEN).
+// The namespace is included because the Secret must exist before the Application's first
+// sync creates it via CreateNamespace=true.
+func externalDNSSecretManifest(secretName, key, token string) string {
+	b64 := base64.StdEncoding.EncodeToString
+	return fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: external-dns
+data:
+  %s: %s
+`, secretName, key, b64([]byte(token)))
+}
+
+// EnsureExternalDNSSecret applies the token Secret a connector-backed external-dns needs
+// (idempotent; re-applying refreshes a rotated token on every deploy). Callers must pass a
+// non-empty token — the render gate (DNSCredentialPresent) skips the app otherwise.
+func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Writer) error {
+	if token == "" {
+		return fmt.Errorf("refusing to write an empty %s token secret", secretName)
+	}
+	fmt.Fprintf(stdout, "Seeding external-dns credential secret %s...\n", secretName)
+	return ApplyManifest(externalDNSSecretManifest(secretName, key, token), stdout, stderr)
+}
+
 // CleanupSkippedInfraServices removes infra-service objects that earlier deploys applied but
 // the current facts no longer render. Infra services are plain `kubectl apply` (no label/prune
 // scheme yet), so an app that stops rendering would otherwise be ORPHANED on the cluster —

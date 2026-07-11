@@ -222,20 +222,73 @@ func TestRender_DNSDisabledSkipsExternalDNS(t *testing.T) {
 	assertNoExternalDNS(t, files, "no domain")
 }
 
-func TestRender_CloudflareConnectorSkipsNativeExternalDNS(t *testing.T) {
+// Without its api_token credential the cloudflare connector must skip (fail-closed);
+// with it, external-dns renders provider cloudflare + the token env and NO cloud
+// identity annotation (the connector needs no IRSA/WI).
+func TestRender_CloudflareConnector(t *testing.T) {
 	vc := cfg("aws")
 	vc.DNS.Provider = "cloudflare"
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
 		"eks_cluster_name": "eks-demo",
 	}, vc))
-	assertNoExternalDNS(t, files, "cloudflare connector manages records")
+	assertNoExternalDNS(t, files, "cloudflare connector without a credential")
+
+	vc.ConnectorCredentials = []types.ConnectorCredential{{
+		Category: "dns", Slug: "cloudflare",
+		Credentials: map[string]string{"api_token": "cf-tok"},
+	}}
+	files = renderAll(t, BuildFromOutputs(map[string]interface{}{
+		"eks_cluster_name": "eks-demo",
+	}, vc))
+	dns, ok := files["external-dns.yaml"]
+	if !ok {
+		t.Fatalf("external-dns should render with the cloudflare credential present")
+	}
+	if !strings.Contains(dns, "provider: cloudflare") {
+		t.Errorf("expected provider: cloudflare:\n%s", dns)
+	}
+	if !strings.Contains(dns, "CF_API_TOKEN") || !strings.Contains(dns, "external-dns-cloudflare") {
+		t.Errorf("expected the CF_API_TOKEN secret env wiring:\n%s", dns)
+	}
+	if strings.Contains(dns, "eks.amazonaws.com/role-arn") {
+		t.Errorf("cloudflare-backed external-dns must not carry the IRSA annotation:\n%s", dns)
+	}
+	if strings.Contains(dns, "cf-tok") {
+		t.Errorf("the token itself must NEVER appear in a rendered manifest:\n%s", dns)
+	}
 }
 
-func TestRender_Hetzner(t *testing.T) {
+// Hetzner renders the official webhook sidecar when the Cloud API token is present.
+func TestRender_HetznerWebhookExternalDNS(t *testing.T) {
+	t.Setenv("HCLOUD_TOKEN", "hz-tok")
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
 		"talos_cluster_name": "talos-demo",
 	}, cfg("hetzner")))
-	assertNoExternalDNS(t, files, "no external-dns backend on hetzner yet")
+	dns, ok := files["external-dns.yaml"]
+	if !ok {
+		t.Fatalf("external-dns should render on hetzner with HCLOUD_TOKEN present")
+	}
+	for _, want := range []string{
+		"name: webhook",
+		"docker.io/hetzner/external-dns-hetzner-webhook",
+		"HETZNER_TOKEN",
+		"external-dns-hetzner",
+	} {
+		if !strings.Contains(dns, want) {
+			t.Errorf("hetzner webhook render missing %q:\n%s", want, dns)
+		}
+	}
+	if strings.Contains(dns, "hz-tok") {
+		t.Errorf("the token itself must NEVER appear in a rendered manifest:\n%s", dns)
+	}
+}
+
+func TestRender_Hetzner(t *testing.T) {
+	t.Setenv("HCLOUD_TOKEN", "") // no Cloud API token → the webhook backend must skip
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
+		"talos_cluster_name": "talos-demo",
+	}, cfg("hetzner")))
+	assertNoExternalDNS(t, files, "no Cloud API token for the hetzner webhook")
 	for _, awsOnly := range []string{"aws-load-balancer-controller.yaml", "storage-class-gp3.yaml", "karpenter.yaml"} {
 		if _, ok := files[awsOnly]; ok {
 			t.Errorf("%s must NOT render on Hetzner", awsOnly)
