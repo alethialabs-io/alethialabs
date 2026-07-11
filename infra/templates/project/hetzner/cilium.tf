@@ -50,8 +50,16 @@ data "helm_template" "cilium" {
     value = "native"
   }
   set {
+    # The native-routing CIDR is the whole network SUPERNET (pods + services +
+    # nodes are all subnets of it), NOT just the pod CIDR. This matches the
+    # canonical hcloud-k8s cloud config and is what makes cross-node host<->pod
+    # routing work: node IPs stay inside the native-routing CIDR (so pod->node-IP
+    # is native-routed, not dropped as unroutable), and the CP host can route the
+    # apiserver's reply to a remote pod over `network_cidr via <gw> dev eth1`.
+    # A pod-only native-routing CIDR (disjoint from the network) breaks pod->apiserver
+    # across nodes — the apiserver reply has no host route. (Verified on real infra.)
     name  = "ipv4NativeRoutingCIDR"
-    value = var.pod_cidr
+    value = var.network_cidr
   }
   set {
     name  = "kubeProxyReplacement"

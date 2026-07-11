@@ -81,16 +81,25 @@ variable "network_cidr" {
   default     = "10.0.0.0/16"
 }
 
+# Pod + service CIDRs are SUBNETS of network_cidr (Cilium native routing over the
+# Hetzner private network). Keeping pods inside the network supernet — and setting
+# ipv4NativeRoutingCIDR = network_cidr in cilium.tf — is what the canonical
+# hcloud-k8s reference does for a private-network cluster, and it is REQUIRED for
+# cross-node reachability: a control-plane pod (the apiserver) replies to a remote
+# worker pod over the host netns, and the node's `network_cidr via <gw> dev eth1`
+# route only covers the reply when the pod IP is inside network_cidr. Disjoint pod
+# CIDRs (e.g. 10.244.0.0/16) leave the host with no route to remote pods AND fall
+# outside the private-network firewall allow rule → cross-node pod→apiserver breaks.
 variable "pod_cidr" {
-  description = "Pod network CIDR (Cilium). Must not overlap network_cidr or service_cidr."
+  description = "Pod network CIDR (Cilium). Must be a SUBNET of network_cidr and not overlap service_cidr or the node subnet."
   type        = string
-  default     = "10.244.0.0/16"
+  default     = "10.0.128.0/17"
 }
 
 variable "service_cidr" {
-  description = "Service network CIDR. Must not overlap network_cidr or pod_cidr."
+  description = "Service network CIDR. Must be a SUBNET of network_cidr and not overlap pod_cidr or the node subnet."
   type        = string
-  default     = "10.96.0.0/12"
+  default     = "10.0.96.0/19"
 }
 
 # Optional, for the in-cluster hcloud-cloud-controller-manager secret ONLY.
