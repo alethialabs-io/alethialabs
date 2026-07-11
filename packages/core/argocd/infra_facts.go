@@ -16,14 +16,14 @@ import (
 // `{{ if eq .Provider "…" }}` guards. Adding a cloud = a new BuildFromOutputs case +
 // a per-cloud block here + the template branches (see packages/core/cloud/README.md).
 type InfraFacts struct {
-	ProjectName     string
-	Environment     string
-	Region          string
-	Provider        string // aws | gcp | azure | alibaba | hetzner
-	DomainName      string
-	DNSZoneID       string
-	DNSEnabled      bool   // vc.DNS.Enabled — templates must not render DNS-dependent apps without it
-	DNSConnector    string // vc.DNS.Provider — ""/"native" = cloud-native; "cloudflare" = the DNS connector
+	ProjectName  string
+	Environment  string
+	Region       string
+	Provider     string // aws | gcp | azure | alibaba | hetzner
+	DomainName   string
+	DNSZoneID    string
+	DNSEnabled   bool   // vc.DNS.Enabled — templates must not render DNS-dependent apps without it
+	DNSConnector string // vc.DNS.Provider — ""/"native" = cloud-native; "cloudflare" = the DNS connector
 	// DNSCredentialPresent is true when the token the selected DNS backend needs is
 	// actually available (cloudflare connector credential / hetzner HCLOUD_TOKEN).
 	// The token itself NEVER lives on the facts — facts are rendered into templates.
