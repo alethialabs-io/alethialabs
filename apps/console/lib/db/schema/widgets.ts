@@ -12,6 +12,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type {
+	ArtifactSpec,
 	WidgetData,
 	WidgetKind,
 	WidgetMode,
@@ -50,6 +51,11 @@ export const threadWidgets = pgTable(
 		 * lands twice. NULL for user-pinned / exploded-block widgets.
 		 */
 		tool_call_id: text(),
+		/** Set when this widget was materialized from / promoted to a saved artifact —
+		 * agent `update_artifact` edits sync back to every open widget that carries it. */
+		artifact_id: uuid().references(() => agentArtifacts.id, {
+			onDelete: "set null",
+		}),
 		refreshed_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -62,3 +68,25 @@ export const threadWidgets = pgTable(
 
 export type ThreadWidget = typeof threadWidgets.$inferSelect;
 export type NewThreadWidget = typeof threadWidgets.$inferInsert;
+
+// Saved artifacts — a widget or a whole dashboard promoted from a chat's grid into a
+// named, durable, org-scoped object that OTHER chats can @-reference and edit (the
+// agent's list/get/update_artifact tools). `spec` is portable (no row ids), so opening
+// an artifact on a grid materializes fresh thread_widgets rows.
+export const agentArtifacts = pgTable(
+	"agent_artifacts",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		user_id: uuid().notNull(),
+		org_id: uuid(),
+		name: text().notNull(),
+		kind: text().$type<"widget" | "dashboard">().notNull(),
+		spec: jsonb().$type<ArtifactSpec>().notNull(),
+		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [uniqueIndex("uq_agent_artifacts_org_name").on(t.org_id, t.name)],
+);
+
+export type AgentArtifact = typeof agentArtifacts.$inferSelect;
+export type NewAgentArtifact = typeof agentArtifacts.$inferInsert;

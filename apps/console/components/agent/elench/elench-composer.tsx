@@ -8,6 +8,7 @@ import {
 	Boxes,
 	Cpu,
 	KeyRound,
+	LayoutDashboard,
 	type LucideIcon,
 	Loader2,
 	PlugZap,
@@ -45,6 +46,7 @@ const TYPE_ICON: Record<MentionType, LucideIcon> = {
 	job: ScrollText,
 	runner: Cpu,
 	identity: KeyRound,
+	artifact: LayoutDashboard,
 };
 
 /**

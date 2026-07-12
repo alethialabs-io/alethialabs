@@ -24,6 +24,17 @@ interface WidgetGridState {
 	threadId: string | null;
 	widgets: ThreadWidget[];
 	loading: boolean;
+	/** The empty cell showing an inline "describe what goes here…" composer. */
+	cellPrompt: { x: number; y: number } | null;
+	/** A submitted cell request awaiting dispatch into the chat (the conversation
+	 * consumes it: stages `pendingCellTarget`, sends the text, clears this). */
+	pendingCellRequest: { x: number; y: number; text: string } | null;
+	/** The grid cell the NEXT chat request should fill (read fresh by prepareBody). */
+	pendingCellTarget: { x: number; y: number } | null;
+	setCellPrompt: (cell: { x: number; y: number } | null) => void;
+	submitCellPrompt: (text: string) => void;
+	setPendingCellTarget: (cell: { x: number; y: number } | null) => void;
+	clearPendingCellRequest: () => void;
 	/** toolCallIds already pinned this session (client-side auto-pin guard; the DB
 	 * unique upsert is the durable guard). */
 	pinned: Set<string>;
@@ -52,6 +63,19 @@ export const useWidgetGridStore = create<WidgetGridState>((set, get) => ({
 	widgets: [],
 	loading: false,
 	pinned: new Set<string>(),
+	cellPrompt: null,
+	pendingCellRequest: null,
+	pendingCellTarget: null,
+
+	setCellPrompt: (cell) => set({ cellPrompt: cell }),
+	submitCellPrompt: (text) => {
+		const cell = get().cellPrompt;
+		const trimmed = text.trim();
+		if (!cell || !trimmed) return;
+		set({ cellPrompt: null, pendingCellRequest: { ...cell, text: trimmed } });
+	},
+	setPendingCellTarget: (cell) => set({ pendingCellTarget: cell }),
+	clearPendingCellRequest: () => set({ pendingCellRequest: null }),
 
 	hydrate: async (threadId) => {
 		if (get().threadId === threadId && !get().loading) return;

@@ -843,3 +843,20 @@ export interface WidgetData {
 	/** A single generative dashboard block (exploded build_dashboard widgets). */
 	block?: DashboardBlock;
 }
+
+/** One widget inside a saved artifact — a portable thread_widgets row (no ids). */
+export interface ArtifactWidget {
+	kind: WidgetKind;
+	title: string;
+	source: WidgetSource | null;
+	data: WidgetData;
+	mode: WidgetMode;
+	position: { x: number; y: number };
+	size: { colspan: number; rowspan: number };
+}
+
+/** A saved artifact's payload (`agent_artifacts.spec`): widgets + relative layout.
+ * kind "widget" = one entry; "dashboard" = a whole grid, positions normalized. */
+export interface ArtifactSpec {
+	widgets: ArtifactWidget[];
+}
