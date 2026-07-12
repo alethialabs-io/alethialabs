@@ -590,11 +590,23 @@ BEGIN
 END;
 $$;
 
--- Flips stale ONLINE runners to OFFLINE (mirrors recover_stale_jobs's 5-min window)
--- and closes their open session at last_heartbeat (last proof-of-life), so the
--- staleness grace window is not billed. RETURNS the flipped runners so the caller can
--- emit `system.runner.offline` alerts (lib/jobs/recovery.ts) — the state change is the
+-- Flips stale ONLINE **or DRAINING** runners to OFFLINE (mirrors recover_stale_jobs's
+-- 5-min window) and closes their open session at last_heartbeat (last proof-of-life),
+-- so the staleness grace window is not billed. RETURNS the flipped runners so the caller
+-- can emit `system.runner.offline` alerts (lib/jobs/recovery.ts) — the state change is the
 -- durable signal; emit is best-effort.
+--
+-- Why DRAINING is swept too: the fleet controller sets a managed runner DRAINING to retire
+-- it (version roll / scale-down). A live drainer keeps its SSE wake connection, so
+-- runner_present refreshes last_heartbeat every ~10s AND preserves DRAINING — a fresh
+-- heartbeat therefore means "still alive, don't reap" and the `last_heartbeat < now() - 45s`
+-- guard skips it. But if the VM dies HARD (power loss / hard partition) there is no clean
+-- SSE abort, so runner_lost never fires; the runner is stranded DRAINING with a stale
+-- heartbeat and — because the old predicate only matched ONLINE — its open
+-- runner_usage_sessions row was never closed, billing the managed runner FOREVER. Including
+-- DRAINING in the stale predicate closes that session at last_heartbeat exactly like the
+-- ONLINE path (audit #21). The 45s stale window is identical: a draining runner heartbeats
+-- while alive, so 45s of silence = dead regardless of ONLINE vs DRAINING.
 -- DROP first: the return type changed (INTEGER → TABLE), which CREATE OR REPLACE can't do.
 DROP FUNCTION IF EXISTS public.sweep_offline_runners();
 CREATE OR REPLACE FUNCTION public.sweep_offline_runners()
@@ -607,10 +619,11 @@ BEGIN
   WITH stale AS (
     UPDATE public.runners
     SET status = 'OFFLINE'::public.runner_status
-    WHERE status = 'ONLINE'
+    WHERE status IN ('ONLINE', 'DRAINING')
       -- Tightened lease: the SSE wake connection refreshes last_heartbeat every ~10s
-      -- via runner_present, so a 45s gap means the connection is genuinely gone (hard
-      -- partition). Clean drops are caught instantly by runner_lost.
+      -- via runner_present (which preserves DRAINING), so a 45s gap means the connection
+      -- is genuinely gone (hard partition) whether the runner was ONLINE or DRAINING.
+      -- Clean drops are caught instantly by runner_lost.
       AND (last_heartbeat IS NULL OR last_heartbeat < now() - INTERVAL '45 seconds')
     RETURNING id, org_id, name, last_heartbeat
   ),
