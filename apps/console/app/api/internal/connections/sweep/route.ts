@@ -7,6 +7,7 @@
 // shared bearer secret (ALETHIA_CRON_SECRET); fails closed when unset.
 
 import { NextResponse } from "next/server";
+import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { runConnectionSweep } from "@/lib/cloud-providers/sweep";
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -17,7 +18,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 			{ status: 503 },
 		);
 	}
-	if (req.headers.get("authorization") !== `Bearer ${secret}`) {
+	if (!isInternalAuthorized(req)) {
 		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 	}
 
