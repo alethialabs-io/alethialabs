@@ -17,16 +17,7 @@ export type ClaimResult =
 	| { claimed: false; alreadyDone: boolean };
 
 /** Outcome of a serialized exactly-once processing attempt (see {@link runWebhookEventExactlyOnce}). */
-export type WebhookRunOutcome = "handled" | "skipped_done" | "skipped_inflight";
-
-/**
- * Lease after which a still-`processing` row (that we did NOT just claim) is treated as a
- * CRASHED prior attempt rather than a live in-flight one, and re-run. Comfortably exceeds the
- * webhook handler's max runtime (a few Stripe API round-trips + one email), so a genuinely
- * in-flight delivery never trips it. Purely belt-and-suspenders: the advisory lock already
- * serializes true concurrency (see {@link runWebhookEventExactlyOnce}).
- */
-export const WEBHOOK_PROCESSING_LEASE_MS = 2 * 60_000;
+export type WebhookRunOutcome = "handled" | "skipped_done";
 
 /**
  * Claims a Stripe event id for processing. Inserts a `processing` row; if the id
@@ -80,28 +71,23 @@ export async function markWebhookEventDone(
  *
  * Under the lock the row status is re-read and the decision is explicit:
  *  - `done` → skip (idempotent, no email).
- *  - `processing` we did NOT claim and fresher than {@link WEBHOOK_PROCESSING_LEASE_MS} → skip
- *    (a live in-flight delivery — insurance for the rare window where a prior holder released the
- *    lock before its own tx committed; with the xact-scoped lock this should not occur).
- *  - otherwise (our own fresh claim, a stale/crashed `processing` row, or an `error` row Stripe is
- *    retrying) → run the handler and mark `done`.
+ *  - otherwise (our own fresh claim, OR a leftover `processing`/`error` row) → run the handler and
+ *    mark `done`. Because the advisory lock is xact-scoped, a genuinely LIVE concurrent delivery is
+ *    still holding the lock, so it blocks here and only proceeds once the winner has committed `done`
+ *    (→ skipped). A row we find `processing` with the lock FREE therefore means the prior holder
+ *    crashed/rolled back — re-running is exactly the right recovery, no lease heuristic needed.
  *
  * A throw from `handler` rolls back the `done` mark (the separately-committed claim row survives, so
  * the caller can flip it to `error` and 500 for a Stripe retry) and propagates to the caller.
  *
  * @param eventId Stripe event id (`evt_…`) — the PK and the advisory-lock key.
  * @param eventType Event type, used only to re-establish a row deleted by a racing break-glass reset.
- * @param claim The prior {@link claimWebhookEvent} result; `claimed:true` means THIS delivery owns the
- *   fresh row and must run (never skipped as in-flight).
  * @param handler The side-effecting dispatch (e.g. `() => handleStripeEvent(event)`).
- * @param leaseMs In-flight lease override (defaults to {@link WEBHOOK_PROCESSING_LEASE_MS}).
  */
 export async function runWebhookEventExactlyOnce(
 	eventId: string,
 	eventType: string,
-	claim: ClaimResult,
 	handler: () => Promise<void>,
-	leaseMs: number = WEBHOOK_PROCESSING_LEASE_MS,
 ): Promise<WebhookRunOutcome> {
 	return getServiceDb().transaction(async (tx): Promise<WebhookRunOutcome> => {
 		// Serialize concurrent deliveries of THIS event id — auto-released at commit/rollback.
@@ -111,27 +97,13 @@ export async function runWebhookEventExactlyOnce(
 		);
 
 		const [row] = await tx
-			.select({
-				status: stripeWebhookEvent.status,
-				createdAt: stripeWebhookEvent.createdAt,
-			})
+			.select({ status: stripeWebhookEvent.status })
 			.from(stripeWebhookEvent)
 			.where(eq(stripeWebhookEvent.eventId, eventId))
 			.limit(1);
 
 		// Won by a delivery that took the lock first (or a completed prior run) — skip, no re-email.
 		if (row?.status === "done") return "skipped_done";
-
-		// A `processing` row we did NOT claim and that is still within the lease is a live in-flight
-		// delivery: defer to it (Stripe will retry us). The advisory lock already serializes true
-		// concurrency, so this only trips in the rare lock-released-before-commit window.
-		if (
-			row?.status === "processing" &&
-			!claim.claimed &&
-			Date.now() - row.createdAt.getTime() < leaseMs
-		) {
-			return "skipped_inflight";
-		}
 
 		// Defensive: the claim row was deleted by a racing break-glass reset between claim and lock —
 		// re-establish it so the done-mark below has a row to flip.

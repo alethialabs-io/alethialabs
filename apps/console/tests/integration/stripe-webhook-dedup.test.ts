@@ -9,12 +9,13 @@
 // inside it, so a concurrent/retried delivery blocks until the first commits `done` and is skipped.
 // Proven end-to-end against a real database:
 //  1. Two SAME-id deliveries fired CONCURRENTLY (Promise.all), handler stub counts its runs → runs
-//     EXACTLY ONCE; the loser is skipped; the row ends `done`.
+//     EXACTLY ONCE; the loser blocks on the advisory lock, then sees `done` and is skipped; the row
+//     ends `done`.
 //  2. A re-delivery AFTER completion → skipped, handler NOT re-run.
-//  3. A stale `processing` row (createdAt backdated beyond the lease) → treated as a crashed prior
-//     attempt and RE-RUN (crash recovery).
-//  4. A fresh `processing` row we did NOT claim, still within the lease → skipped as in-flight
-//     (the belt-and-suspenders lease insurance) — handler NOT run.
+//  3. A leftover `processing` row (a prior attempt that crashed WITHOUT committing) → RE-RUN. With
+//     the xact-scoped lock, a genuinely-live delivery still holds the lock, so a `processing` row we
+//     find with the lock free means the holder is gone — re-running is the correct recovery (no lease
+//     heuristic needed).
 //
 // Needs `pnpm db:up` (or any migrated Postgres on ALETHIA_DATABASE_URL); skips when unreachable.
 
@@ -25,7 +26,6 @@ import {
 	type ClaimResult,
 	claimWebhookEvent,
 	runWebhookEventExactlyOnce,
-	WEBHOOK_PROCESSING_LEASE_MS,
 	type WebhookRunOutcome,
 } from "@/lib/billing/webhook-events";
 import { getServiceDb } from "@/lib/db";
@@ -67,7 +67,7 @@ async function deliver(
 ): Promise<WebhookRunOutcome> {
 	const claim: ClaimResult = await claimWebhookEvent(eventId, type);
 	if (!claim.claimed && claim.alreadyDone) return "skipped_done";
-	return runWebhookEventExactlyOnce(eventId, type, claim, handler);
+	return runWebhookEventExactlyOnce(eventId, type, handler);
 }
 
 /** A handler stub that counts its invocations after a small delay (to overlap concurrent deliveries). */
@@ -127,54 +127,20 @@ describeIfDb("stripe webhook exactly-once (advisory-lock dedup)", () => {
 		expect((await readRow(eventId))?.status).toBe("done");
 	});
 
-	it("RE-RUNS a stale `processing` row (crashed prior attempt) beyond the lease", async () => {
+	it("RE-RUNS a leftover `processing` row (a prior attempt that crashed before committing)", async () => {
 		const eventId = freshEventId();
-		// Simulate a prior attempt that claimed the row then CRASHED: a lingering `processing` row
-		// whose createdAt is backdated well beyond the lease.
+		// A lingering `processing` row with NO live holder (the lock is free) models a prior attempt
+		// that claimed the row then crashed/rolled back before marking done.
 		await getServiceDb()
 			.insert(stripeWebhookEvent)
-			.values({
-				eventId,
-				type: "invoice.payment_succeeded",
-				status: "processing",
-				createdAt: new Date(Date.now() - WEBHOOK_PROCESSING_LEASE_MS - 60_000),
-			});
+			.values({ eventId, type: "invoice.payment_succeeded", status: "processing" });
 
 		const handler = countingHandler(0);
 		const outcome = await deliver(eventId, "invoice.payment_succeeded", handler.fn);
 
-		// Stale ⇒ crash recovery: the handler re-runs and the row is driven to `done`.
+		// Free lock + `processing` ⇒ crashed holder ⇒ crash recovery: the handler re-runs to `done`.
 		expect(outcome).toBe("handled");
 		expect(handler.runs()).toBe(1);
 		expect((await readRow(eventId))?.status).toBe("done");
-	});
-
-	it("SKIPS a fresh unclaimed `processing` row within the lease (in-flight insurance)", async () => {
-		const eventId = freshEventId();
-		// A row claimed just now by some other in-flight delivery — createdAt is fresh (default now()).
-		await getServiceDb()
-			.insert(stripeWebhookEvent)
-			.values({
-				eventId,
-				type: "invoice.payment_succeeded",
-				status: "processing",
-			});
-
-		// This delivery did NOT win the claim (row already exists) and it is not already done.
-		const claim = await claimWebhookEvent(eventId, "invoice.payment_succeeded");
-		expect(claim).toEqual({ claimed: false, alreadyDone: false });
-
-		const handler = countingHandler(0);
-		const outcome = await runWebhookEventExactlyOnce(
-			eventId,
-			"invoice.payment_succeeded",
-			claim,
-			handler.fn,
-		);
-
-		// Fresh ⇒ deferred to the (assumed) live in-flight holder; handler must NOT run.
-		expect(outcome).toBe("skipped_inflight");
-		expect(handler.runs()).toBe(0);
-		expect((await readRow(eventId))?.status).toBe("processing");
 	});
 });

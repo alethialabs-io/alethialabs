@@ -58,11 +58,8 @@ export async function POST(req: Request): Promise<Response> {
 		// Serialize deliveries of THIS event id under a per-event advisory lock and run the handler
 		// (which sends the non-idempotent email) inside it, so a network-duplicated / retried delivery
 		// that arrives while the first is still IN-FLIGHT blocks and is then skipped — never double-mails.
-		const outcome = await runWebhookEventExactlyOnce(
-			event.id,
-			event.type,
-			claim,
-			() => handleStripeEvent(event),
+		const outcome = await runWebhookEventExactlyOnce(event.id, event.type, () =>
+			handleStripeEvent(event),
 		);
 		if (outcome !== "handled") {
 			return Response.json({ received: true, duplicate: true });
