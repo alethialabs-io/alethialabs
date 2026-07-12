@@ -521,6 +521,17 @@ jobs:
             # Standalone AI subscription prices — unset ⇒ AI Plus/Max stay dark (AI Free needs none).
             emit STRIPE_PRICE_AI_PLUS
             emit STRIPE_PRICE_AI_MAX
+            # Stripe Tax toggle — emit so the vault can flip automatic_tax on WITHOUT editing this
+            # workflow. Unset ⇒ emitted empty ⇒ isStripeTaxEnabled() false (lib/billing/config.ts),
+            # so tax stays off. Set STRIPE_TAX_ENABLED=true in the vault ONLY after the Stripe
+            # account's Tax origin + registrations are configured, else Checkout errors on session create.
+            emit STRIPE_TAX_ENABLED
+            # Odoo фактура (legal invoice-of-record) — both keys must be non-empty for issueFactura()
+            # to post the НАП фактура (lib/billing/odoo-invoice.ts odooConfig). Unset ⇒ emitted empty
+            # ⇒ odooConfig() returns null ⇒ the receipt/mirror fall back to Stripe's PDF. Strictly
+            # safe default-off (needs BOTH URL + token), same "stay dark when unset" semantics as STRIPE_PRICE_AI_*.
+            emit ODOO_INVOICE_URL
+            emit ODOO_INVOICE_TOKEN
             emit ALETHIA_SES_REGION
             emit ALETHIA_SES_ACCESS_KEY_ID
             emit ALETHIA_SES_SECRET_ACCESS_KEY
