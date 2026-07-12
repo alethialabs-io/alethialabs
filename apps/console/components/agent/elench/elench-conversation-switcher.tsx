@@ -55,7 +55,9 @@ export function ElenchConversationSwitcher({
 					type="button"
 					className="flex min-w-0 items-center gap-2 border border-border bg-background px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted"
 				>
-					<span className="truncate">{label}</span>
+					<span title={label} className="min-w-0 truncate">
+						{label}
+					</span>
 					<ChevronDown className="h-3.5 w-3.5 flex-none text-muted-foreground" />
 				</button>
 			</PopoverTrigger>
@@ -89,7 +91,10 @@ export function ElenchConversationSwitcher({
 									}}
 									className="flex w-full items-center justify-between gap-2.5 rounded-none px-2 py-2 text-left transition-colors hover:bg-muted"
 								>
-									<span className="min-w-0 truncate text-[13px] text-foreground">
+									<span
+										title={t.title}
+										className="min-w-0 flex-1 truncate text-[13px] text-foreground"
+									>
 										{t.title}
 									</span>
 									<span className="flex-none font-mono text-[11px] text-muted-foreground">

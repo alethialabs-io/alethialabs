@@ -6,7 +6,6 @@ import type { ToolUIPart } from "ai";
 import { PanelRight, Telescope } from "lucide-react";
 import Link from "next/link";
 import { z } from "zod";
-import { AgentToolCard } from "@/components/agent/agent-chat";
 import type { RenderToolPart } from "@/components/agent/agent-chat";
 import {
 	TOOL_VIEW_TYPES,
@@ -14,7 +13,7 @@ import {
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
 import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
-import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
+import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { proposeOperationInputSchema } from "@/lib/ai/operation";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
@@ -34,33 +33,35 @@ interface OrgToolPartsDeps {
 /**
  * The org-agent tool-render lanes: `propose_operation` → approval card, repo scan →
  * "Open in canvas", project/job/plan results → "Open in panel" (artifact panel), and
- * polished tables/chips for list_* + catalog tools. Extracted from the agent page so
- * the shared Elench surface can select it by context.
+ * framed tables/one-liners for list_* + catalog tools. Every lane renders inside the
+ * shared `ToolResultFrame` so multi-tool turns read as a uniform captioned stack.
+ * Extracted from the agent page so the shared Elench surface can select it by context.
  */
 export function orgRenderToolPart({
 	openArtifact,
 	addToolResult,
 }: OrgToolPartsDeps): RenderToolPart {
-	// eslint-disable-next-line react/display-name
 	return function renderOrgToolPart(part: ToolUIPart) {
-		// HITL proposal (no execute): pending while its input streams, then the approval
-		// card — which feeds the outcome back via addToolResult so the model continues.
+		// HITL proposal (no execute): the frame's live marker while its input streams,
+		// then the approval card — which feeds the outcome back via addToolResult.
 		if (part.type === "tool-propose_operation") {
 			if (part.state === "input-streaming")
-				return <ToolPending label="Preparing operation" />;
+				return <ToolResultFrame part={part} title="Proposal" />;
 			const parsed = proposeOperationInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
 			return (
-				<ApprovalCard
-					proposal={{ id: part.toolCallId, ...parsed.data }}
-					onResolve={(output) =>
-						addToolResult({
-							tool: "propose_operation",
-							toolCallId: part.toolCallId,
-							output,
-						})
-					}
-				/>
+				<ToolResultFrame part={part} title="Proposal">
+					<ApprovalCard
+						proposal={{ id: part.toolCallId, ...parsed.data }}
+						onResolve={(output) =>
+							addToolResult({
+								tool: "propose_operation",
+								toolCallId: part.toolCallId,
+								output,
+							})
+						}
+					/>
+				</ToolResultFrame>
 			);
 		}
 
@@ -70,37 +71,40 @@ export function orgRenderToolPart({
 			part.state === "output-available"
 		) {
 			return (
-				<DashboardReadyCard
-					part={part}
-					openArtifact={openArtifact}
-					context="org"
-				/>
+				<ToolResultFrame part={part}>
+					<DashboardReadyCard
+						part={part}
+						openArtifact={openArtifact}
+						context="org"
+					/>
+				</ToolResultFrame>
 			);
 		}
 
-		// Repo scan ready → an "Open in canvas" link to review the proposed project.
+		// Repo scan ready → an "Open in canvas" action to review the proposed project.
 		if (
 			part.type === "tool-get_scan_result" &&
 			part.state === "output-available"
 		) {
 			const parsed = scanResultSchema.safeParse(part.output);
 			if (parsed.success && parsed.data.openInCanvasUrl) {
-				const url = parsed.data.openInCanvasUrl;
 				return (
-					<div className="flex flex-col gap-1.5">
-						<AgentToolCard part={part} />
-						<Button
-							asChild
-							variant="outline"
-							size="sm"
-							className="w-fit gap-1.5 rounded-none"
-						>
-							<Link href={url}>
-								<Telescope className="h-3 w-3" />
-								Open in canvas
-							</Link>
-						</Button>
-					</div>
+					<ToolResultFrame
+						part={part}
+						actions={
+							<Button
+								asChild
+								variant="outline"
+								size="sm"
+								className="h-6 gap-1.5 rounded-none px-2 text-[11px]"
+							>
+								<Link href={parsed.data.openInCanvasUrl}>
+									<Telescope className="h-3 w-3" />
+									Open in canvas
+								</Link>
+							</Button>
+						}
+					/>
 				);
 			}
 		}
@@ -125,22 +129,24 @@ export function orgRenderToolPart({
 		}
 		if (onOpen) {
 			return (
-				<div className="flex flex-col gap-1.5">
-					<AgentToolCard part={part} />
-					<Button
-						variant="outline"
-						size="sm"
-						className="w-fit gap-1.5 rounded-none"
-						onClick={onOpen}
-					>
-						<PanelRight className="h-3 w-3" />
-						Open in panel
-					</Button>
-				</div>
+				<ToolResultFrame
+					part={part}
+					actions={
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-6 gap-1.5 rounded-none px-2 text-[11px]"
+							onClick={onOpen}
+						>
+							<PanelRight className="h-3 w-3" />
+							Open in panel
+						</Button>
+					}
+				/>
 			);
 		}
 
-		// Polished tables/chips for list_* + catalog/CIDR tools; else default card.
+		// Framed tables/one-liners for list_* + catalog/CIDR tools; else the generic frame.
 		if (TOOL_VIEW_TYPES.has(part.type)) return <ToolView part={part} />;
 		return undefined;
 	};

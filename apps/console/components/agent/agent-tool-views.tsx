@@ -16,7 +16,7 @@ import {
 } from "@repo/ui/table";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { cn } from "@repo/ui/utils";
-import { AgentToolCard } from "./agent-chat";
+import { ToolResultFrame } from "./tool-result-frame";
 
 /** Tool result types this module renders specially (tables / chips). */
 export const TOOL_VIEW_TYPES = new Set<string>([
@@ -100,18 +100,6 @@ function ConnectAction({
 	);
 }
 
-/** Compact one-line tool result. */
-function ToolChip({ label, value }: { label: string; value: string }) {
-	return (
-		<div className="flex w-fit items-center gap-2 border border-border px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
-			<span className="h-1.5 w-1.5 flex-none rounded-full bg-foreground" />
-			<span className="text-foreground">{label}</span>
-			<span>·</span>
-			<span>{value}</span>
-		</div>
-	);
-}
-
 function Status({ v }: { v: string | null | undefined }) {
 	return (
 		<span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -124,50 +112,60 @@ function Status({ v }: { v: string | null | undefined }) {
 const TH = "vx-eyebrow h-auto py-2 text-[9px]";
 const TD = "py-1.5 text-[12px]";
 
+/** Marker-line row count for a framed table ("4 rows", "1 row"). */
+function rowsDetail(n: number): string {
+	return `${n} ${n === 1 ? "row" : "rows"}`;
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
 	return <div className="overflow-hidden border border-border">{children}</div>;
 }
 
 /**
- * Polished tool-result renderings for the agent transcript — inline tables for the
- * list_* reads (projects/jobs clickable → artifact panel) and compact chips for the
- * catalog/CIDR tools. Falls back to the default tool card for anything else.
+ * Polished tool-result renderings for the agent transcript — every result inside the
+ * shared `ToolResultFrame` (a labeled marker line): framed tables for the list_* reads
+ * (projects/jobs clickable → artifact panel), marker-only frames for the catalog/CIDR
+ * one-liners, and the generic collapsible frame for anything else.
  */
 export function ToolView({ part }: { part: ToolUIPart }) {
 	const open = useArtifactStore((s) => s.open);
-	if (part.state !== "output-available") return <AgentToolCard part={part} />;
+	// Streaming/running states render the frame's live status marker.
+	if (part.state !== "output-available") return <ToolResultFrame part={part} />;
 
 	switch (part.type) {
 		case "tool-cidr_for_hosts": {
 			const p = cidrOut.safeParse(part.output);
 			return p.success ? (
-				<ToolChip
-					label="cidr_for_hosts"
-					value={`${p.data.cidr}${p.data.totalAddresses ? ` · ${p.data.totalAddresses} IPs` : ""}`}
+				<ToolResultFrame
+					part={part}
+					detail={`${p.data.cidr}${p.data.totalAddresses ? ` · ${p.data.totalAddresses} IPs` : ""}`}
 				/>
 			) : (
-				<AgentToolCard part={part} />
+				<ToolResultFrame part={part} />
 			);
 		}
 		case "tool-list_services":
-			return <ToolChip label="list_services" value="catalog loaded" />;
+			return <ToolResultFrame part={part} detail="catalog loaded" />;
 		case "tool-list_service_options":
-			return <ToolChip label="list_service_options" value="options loaded" />;
+			return <ToolResultFrame part={part} detail="options loaded" />;
 
 		case "tool-connect_cloud": {
 			const p = connectOut.safeParse(part.output);
 			return p.success ? (
-				<ConnectAction provider={p.data.provider} alreadyConnected={p.data.alreadyConnected} />
+				<ToolResultFrame part={part}>
+					<ConnectAction provider={p.data.provider} alreadyConnected={p.data.alreadyConnected} />
+				</ToolResultFrame>
 			) : (
-				<AgentToolCard part={part} />
+				<ToolResultFrame part={part} />
 			);
 		}
 
 		case "tool-list_projects": {
 			const p = projectsOut.safeParse(part.output);
-			if (!p.success) return <AgentToolCard part={part} />;
+			if (!p.success) return <ToolResultFrame part={part} />;
 			return (
-				<Shell>
+				<ToolResultFrame part={part} detail={rowsDetail(p.data.projects.length)}>
+					<Shell>
 					<Table>
 						<TableHeader>
 							<TableRow>
@@ -195,14 +193,16 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 						</TableBody>
 					</Table>
 				</Shell>
+				</ToolResultFrame>
 			);
 		}
 
 		case "tool-list_jobs": {
 			const p = jobsOut.safeParse(part.output);
-			if (!p.success) return <AgentToolCard part={part} />;
+			if (!p.success) return <ToolResultFrame part={part} />;
 			return (
-				<Shell>
+				<ToolResultFrame part={part} detail={rowsDetail(p.data.jobs.length)}>
+					<Shell>
 					<Table>
 						<TableHeader>
 							<TableRow>
@@ -228,14 +228,16 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 						</TableBody>
 					</Table>
 				</Shell>
+				</ToolResultFrame>
 			);
 		}
 
 		case "tool-list_clusters": {
 			const p = clustersOut.safeParse(part.output);
-			if (!p.success) return <AgentToolCard part={part} />;
+			if (!p.success) return <ToolResultFrame part={part} />;
 			return (
-				<Shell>
+				<ToolResultFrame part={part} detail={rowsDetail(p.data.clusters.length)}>
+					<Shell>
 					<Table>
 						<TableHeader>
 							<TableRow>
@@ -259,14 +261,16 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 						</TableBody>
 					</Table>
 				</Shell>
+				</ToolResultFrame>
 			);
 		}
 
 		case "tool-list_connectors": {
 			const p = connectorsOut.safeParse(part.output);
-			if (!p.success) return <AgentToolCard part={part} />;
+			if (!p.success) return <ToolResultFrame part={part} />;
 			return (
-				<Shell>
+				<ToolResultFrame part={part} detail={rowsDetail(p.data.connectors.length)}>
+					<Shell>
 					<Table>
 						<TableHeader>
 							<TableRow>
@@ -288,10 +292,11 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 						</TableBody>
 					</Table>
 				</Shell>
+				</ToolResultFrame>
 			);
 		}
 
 		default:
-			return <AgentToolCard part={part} />;
+			return <ToolResultFrame part={part} />;
 	}
 }

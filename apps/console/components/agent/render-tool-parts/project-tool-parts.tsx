@@ -6,7 +6,6 @@ import type { ToolUIPart } from "ai";
 import { Check, Telescope } from "lucide-react";
 import Link from "next/link";
 import { z } from "zod";
-import { AgentToolCard } from "@/components/agent/agent-chat";
 import type { RenderToolPart } from "@/components/agent/agent-chat";
 import {
 	TOOL_VIEW_TYPES,
@@ -14,7 +13,7 @@ import {
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
 import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
-import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
+import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
@@ -78,7 +77,6 @@ export function projectRenderToolPart({
 	addToolResult,
 	openArtifact,
 }: ProjectToolPartsDeps): RenderToolPart {
-	// eslint-disable-next-line react/display-name
 	return function renderProjectToolPart(part: ToolUIPart) {
 		// Generative dashboard ready → an "Open dashboard" card opening the split pane.
 		if (
@@ -86,11 +84,13 @@ export function projectRenderToolPart({
 			part.state === "output-available"
 		) {
 			return (
-				<DashboardReadyCard
-					part={part}
-					openArtifact={openArtifact}
-					context="project"
-				/>
+				<ToolResultFrame part={part}>
+					<DashboardReadyCard
+						part={part}
+						openArtifact={openArtifact}
+						context="project"
+					/>
+				</ToolResultFrame>
 			);
 		}
 
@@ -98,12 +98,13 @@ export function projectRenderToolPart({
 		// accepted outcome back so the model continues).
 		if (part.type === "tool-propose_changes") {
 			if (part.state === "input-streaming")
-				return <ToolPending label="Preparing changes" />;
+				return <ToolResultFrame part={part} title="Changes" />;
 			const parsed = proposeChangesInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
 			const proposal = { id: part.toolCallId, ...parsed.data };
 			const isAccepted = accepted[proposal.id];
 			return (
+				<ToolResultFrame part={part} title="Changes">
 				<div className="flex w-full items-center justify-between border border-border px-2.5 py-1.5">
 					<span className="font-mono text-xs">{proposal.label}</span>
 					{isAccepted ? (
@@ -131,6 +132,7 @@ export function projectRenderToolPart({
 						</Button>
 					)}
 				</div>
+				</ToolResultFrame>
 			);
 		}
 
@@ -138,20 +140,22 @@ export function projectRenderToolPart({
 		// then feeds the outcome back so the model continues).
 		if (part.type === "tool-propose_operation") {
 			if (part.state === "input-streaming")
-				return <ToolPending label="Preparing operation" />;
+				return <ToolResultFrame part={part} title="Proposal" />;
 			const parsed = proposeOperationInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
 			return (
-				<ApprovalCard
-					proposal={{ id: part.toolCallId, ...parsed.data }}
-					onResolve={(output) =>
-						addToolResult({
-							tool: "propose_operation",
-							toolCallId: part.toolCallId,
-							output,
-						})
-					}
-				/>
+				<ToolResultFrame part={part} title="Proposal">
+					<ApprovalCard
+						proposal={{ id: part.toolCallId, ...parsed.data }}
+						onResolve={(output) =>
+							addToolResult({
+								tool: "propose_operation",
+								toolCallId: part.toolCallId,
+								output,
+							})
+						}
+					/>
+				</ToolResultFrame>
 			);
 		}
 
@@ -164,10 +168,9 @@ export function projectRenderToolPart({
 			const parsed = planResultSchema.safeParse(part.output);
 			if (parsed.success && parsed.data.verify_result) {
 				return (
-					<div className="flex flex-col gap-1.5">
-						<AgentToolCard part={part} />
+					<ToolResultFrame part={part}>
 						<VerifyBlock report={parsed.data.verify_result} />
-					</div>
+					</ToolResultFrame>
 				);
 			}
 		}
@@ -180,20 +183,22 @@ export function projectRenderToolPart({
 			const parsed = scanResultSchema.safeParse(part.output);
 			if (parsed.success && parsed.data.openInCanvasUrl) {
 				return (
-					<div className="flex flex-col gap-1.5">
-						<AgentToolCard part={part} />
-						<Button
-							asChild
-							variant="outline"
-							size="sm"
-							className="w-fit gap-1.5 rounded-none"
-						>
-							<Link href={parsed.data.openInCanvasUrl}>
-								<Telescope className="h-3 w-3" />
-								Review proposed project
-							</Link>
-						</Button>
-					</div>
+					<ToolResultFrame
+						part={part}
+						actions={
+							<Button
+								asChild
+								variant="outline"
+								size="sm"
+								className="h-6 gap-1.5 rounded-none px-2 text-[11px]"
+							>
+								<Link href={parsed.data.openInCanvasUrl}>
+									<Telescope className="h-3 w-3" />
+									Review proposed project
+								</Link>
+							</Button>
+						}
+					/>
 				);
 			}
 		}

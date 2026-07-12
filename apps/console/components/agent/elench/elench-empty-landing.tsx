@@ -130,9 +130,14 @@ export function ElenchModalLanding({
 								key={t.id}
 								type="button"
 								onClick={() => onOpenThread(t.id)}
-								className="flex min-h-[68px] flex-1 flex-col justify-between border border-border bg-background p-4 text-left transition-colors hover:bg-muted"
+								className="flex min-h-[68px] min-w-0 flex-1 flex-col justify-between border border-border bg-background p-4 text-left transition-colors hover:bg-muted"
 							>
-								<span className="text-[13px] text-foreground">{t.title}</span>
+								<span
+									title={t.title}
+									className="line-clamp-2 min-w-0 break-words text-[13px] text-foreground"
+								>
+									{t.title}
+								</span>
 								<span className="mt-4 font-mono text-[11px] text-muted-foreground">
 									{relTime(new Date(t.updated_at))}
 								</span>
