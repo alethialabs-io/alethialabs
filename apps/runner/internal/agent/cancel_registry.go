@@ -14,8 +14,8 @@ import (
 // the runner posts CANCELLED, not FAILED, when the cancelled context surfaces as an error)
 // and which of those may have left orphaned cloud resources (a mid-apply cancel).
 //
-// All state is mutex-guarded: the wake goroutine calls cancel() while the claim goroutine
-// register()s / unregister()s concurrently.
+// All state is mutex-guarded: the wake/heartbeat goroutines call cancel()/cancelIfRunning()
+// while the claim goroutine register()s / reap()s concurrently.
 type cancelRegistry struct {
 	mu        sync.Mutex
 	cancels   map[string]context.CancelFunc
@@ -37,15 +37,6 @@ func (r *cancelRegistry) register(jobID string, cancel context.CancelFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cancels[jobID] = cancel
-}
-
-// unregister drops a job's cancel function (called when the job finishes). It intentionally
-// leaves the cancelled/orphan flags in place until reap() so the completion path can still
-// read them after the cancel function is gone.
-func (r *cancelRegistry) unregister(jobID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.cancels, jobID)
 }
 
 // reap clears every trace of a job once its status has been posted, so the maps don't grow
