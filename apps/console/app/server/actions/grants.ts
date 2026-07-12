@@ -8,7 +8,7 @@ import { listCustomRoles } from "@/app/server/actions/roles";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getEntitlements } from "@/lib/authz/entitlements";
-import { currentActor } from "@/lib/authz/guard";
+import { authorize } from "@/lib/authz/guard";
 import {
 	BUILTIN_ROLE_IDS,
 	type BuiltInRole,
@@ -28,9 +28,14 @@ import {
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
-/** Managing access (grants) is an Enterprise feature; enforce it server-side. */
+/**
+ * Gate for mutating access grants. Enforces `member:manage_members` via the PDP FIRST
+ * (a viewer/operator without it is denied and the denial is recorded), THEN the
+ * Enterprise (customRoles) entitlement — mirroring the CLI route
+ * (app/api/cli/grants). Both gates must pass; returns the resolved actor.
+ */
 async function requireAccessAdmin() {
-	const actor = await currentActor();
+	const actor = await authorize("manage_members", { type: "member" });
 	if (!getEntitlements(actor).customRoles) {
 		throw new Error("Access management requires an Enterprise license.");
 	}
@@ -50,7 +55,9 @@ export interface GrantOptions {
 
 /** Everything the "Grant access" builder needs, in one round-trip. */
 export async function getGrantOptions(): Promise<GrantOptions> {
-	const actor = await currentActor();
+	// Reading the access model requires `member:view` (viewers keep parity; non-members
+	// are denied) — mirrors the CLI GET /api/cli/grants gate.
+	const actor = await authorize("view", { type: "member" });
 	const db = getServiceDb();
 	const [members, teamRows, projectRows, runnerRows, idRows, custom] =
 		await Promise.all([
@@ -200,7 +207,9 @@ export interface AccessGrantRow {
  * project-scoped Access surface; without it, every org grant is returned.
  */
 export async function listAccessGrants(projectId?: string): Promise<AccessGrantRow[]> {
-	const actor = await currentActor();
+	// Enumerating grants requires `member:view` (viewers keep parity; non-members are
+	// denied) — mirrors the CLI GET /api/cli/grants gate.
+	const actor = await authorize("view", { type: "member" });
 	const rows = await getServiceDb()
 		.select({
 			id: grants.id,
