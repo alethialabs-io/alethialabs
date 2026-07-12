@@ -26,9 +26,46 @@ export const FLEET_LOOP_ID = "fleet-scaler";
 
 const globalForScaler = globalThis as unknown as {
 	__alethiaFleetScaler?: ReturnType<typeof setInterval>;
+	/** The single in-flight reconcile pass (null when idle). Its presence is the serializer's mutex. */
+	__alethiaFleetTickInFlight?: Promise<void> | null;
+	/** A wake arrived while a pass was running → run exactly one follow-up after it, no matter how many. */
+	__alethiaFleetTickQueued?: boolean;
 };
 
 const surplus: SurplusState = new Map();
+
+/**
+ * Serialize the reconcile tick so at most ONE pass is ever in flight. Every entry point (the 60s
+ * interval and the fire-on-enqueue `wakeFleetScaler`, called from ~15 sites) routes through here.
+ * If a pass is already running, this wake COALESCES into a single follow-up — it never launches a
+ * second concurrent read-plan-act pass. That matters because `reconcilePool` reads the live
+ * instance list, plans against it, then creates VMs (a lock-free read→plan→act): two overlapping
+ * passes would each read the same stale snapshot and both create for the same backlog, over-
+ * provisioning past the pool max (billable orphan VMs). Coalescing (not merely dropping the wake)
+ * guarantees a signal that arrived mid-pass — a new QUEUED job or pool edit the running pass may
+ * have already read past — still triggers exactly one follow-up, so the pool converges without a
+ * wake-storm fanning out N parallel passes. `superviseLoop` never rejects (it swallows every
+ * throw), so the `.finally` always runs → the mutex is always released → the chain can never
+ * deadlock or permanently skip. State lives on `globalThis` so it stays a singleton across dev HMR.
+ */
+function scheduleTick(): void {
+	if (globalForScaler.__alethiaFleetTickInFlight) {
+		globalForScaler.__alethiaFleetTickQueued = true;
+		return;
+	}
+	const run = (): void => {
+		globalForScaler.__alethiaFleetTickInFlight = superviseLoop(FLEET_LOOP_ID, tick)
+			.then(() => undefined)
+			.finally(() => {
+				globalForScaler.__alethiaFleetTickInFlight = null;
+				if (globalForScaler.__alethiaFleetTickQueued) {
+					globalForScaler.__alethiaFleetTickQueued = false;
+					run();
+				}
+			});
+	};
+	run();
+}
 
 /** Starts the periodic fleet controller. Pools now live in the DB (read fresh each tick),
  *  so the loop runs whenever a database is configured — a tick with zero enabled pools is
@@ -40,14 +77,16 @@ export function startFleetScaler(): void {
 
 	registerLoop(FLEET_LOOP_ID, { intervalMs: TICK_INTERVAL_MS });
 	globalForScaler.__alethiaFleetScaler = setInterval(() => {
-		void superviseLoop(FLEET_LOOP_ID, tick);
+		scheduleTick();
 	}, TICK_INTERVAL_MS);
 }
 
-/** Run one reconcile pass immediately (enqueue wake / presence / pool edit → fast converge). */
+/** Run one reconcile pass immediately (enqueue wake / presence / pool edit → fast converge). Routed
+ *  through the serializer so a wake during an in-flight pass coalesces into one follow-up rather than
+ *  racing a second concurrent pass (which would double-provision off a stale instance snapshot). */
 export function wakeFleetScaler(): void {
 	if (!globalForScaler.__alethiaFleetScaler) return;
-	void superviseLoop(FLEET_LOOP_ID, tick);
+	scheduleTick();
 }
 
 async function tick(): Promise<void> {
