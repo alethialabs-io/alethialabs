@@ -13,18 +13,30 @@ import (
 	"time"
 )
 
-// These run a REAL container and are gated behind ALETHIA_SANDBOX_DOCKER_TEST=1 (they need
-// docker). They prove the security-critical properties of the backend end-to-end: the
-// child gets ONLY the allowlisted env (no parent theft-targets), it lives in its own PID
-// namespace (cannot read the parent's /proc), the RO cred-dir mount resolves, and a
-// no-egress stage has no network to reach the metadata service.
+// These run a REAL container to PROVE the sandbox blocks the escapes it is designed to
+// block: the untrusted child gets ONLY the allowlisted env (no parent theft-targets), it
+// lives in its own PID namespace (cannot read the parent's /proc/1), the RO cred-dir mount
+// resolves, and a no-egress stage has no network to reach the metadata service (IMDS).
+//
+// Gating (the anti-vacuity contract):
+//   - ALETHIA_SANDBOX_E2E=1 → these MUST run: if docker is missing the test FAILS (never a
+//     silent skip). This is the security-CI mode — a green run guarantees the canaries
+//     actually executed against a real container.
+//   - ALETHIA_SANDBOX_DOCKER_TEST=1 (legacy opt-in) → run when docker is present, else skip.
+//   - neither set → skip cleanly (bare `go test` on a dev box stays green).
+//
+// See docs/compliance/security-e2e-matrix.md (CC6.1 tenant/credential isolation).
 
 func dockerGate(t *testing.T) {
 	t.Helper()
-	if os.Getenv("ALETHIA_SANDBOX_DOCKER_TEST") != "1" {
-		t.Skip("set ALETHIA_SANDBOX_DOCKER_TEST=1 (needs docker) to run the container canary")
+	mustRun := os.Getenv("ALETHIA_SANDBOX_E2E") == "1"
+	if !mustRun && os.Getenv("ALETHIA_SANDBOX_DOCKER_TEST") != "1" {
+		t.Skip("set ALETHIA_SANDBOX_E2E=1 (or ALETHIA_SANDBOX_DOCKER_TEST=1) with docker to run the sandbox-escape canaries")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
+		if mustRun {
+			t.Fatal("ALETHIA_SANDBOX_E2E=1 but docker is not on PATH — refusing to silently skip a mandated security canary")
+		}
 		t.Skip("docker not on PATH")
 	}
 }
@@ -49,7 +61,10 @@ func runCanary(t *testing.T, spec Spec, canary string) string {
 	return string(out)
 }
 
-func TestContainerCanary_EnvAllowlistAndProcIsolation(t *testing.T) {
+// TestSandboxEscape_ParentSecretsAndProc1Isolation proves parent runner secrets are stripped
+// from the child env AND are unreachable via /proc/1 (separate PID namespace) — the two
+// credential-theft escape paths. (Was TestContainerCanary_EnvAllowlistAndProcIsolation.)
+func TestSandboxEscape_ParentSecretsAndProc1Isolation(t *testing.T) {
 	dockerGate(t)
 
 	// Poison the parent env with theft-targets + allowlisted creds.
@@ -87,7 +102,10 @@ printf 'MOUNT=%s\n' "$(cat '` + filepath.Join(credDir, "config") + `' 2>/dev/nul
 	assertLine(t, out, "MOUNT=CANARY-CRED-FILE")                   // RO cred-dir mount resolved
 }
 
-func TestContainerCanary_NoEgressHasNoNetwork(t *testing.T) {
+// TestSandboxEscape_NoEgressBlocksIMDS proves a no-egress stage has no route to the cloud
+// metadata service (169.254.169.254) — the SSRF/IMDS credential-theft escape.
+// (Was TestContainerCanary_NoEgressHasNoNetwork.)
+func TestSandboxEscape_NoEgressBlocksIMDS(t *testing.T) {
 	dockerGate(t)
 
 	spec := Spec{
