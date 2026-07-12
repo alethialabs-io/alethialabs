@@ -107,7 +107,7 @@ PY
 APP_ID="$(cat "$OUT/app_id")"
 SLUG="$(cat "$OUT/slug" 2>/dev/null || true)"
 
-info "Storing credentials as secrets on $SECRETS_REPO…"
+info "Storing credentials as secrets on ${SECRETS_REPO} ..."
 gh secret set TAP_APP_ID --repo "$SECRETS_REPO" --body "$APP_ID"
 gh secret set TAP_APP_PRIVATE_KEY --repo "$SECRETS_REPO" < "$OUT/app.pem"
 
