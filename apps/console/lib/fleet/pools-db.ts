@@ -48,9 +48,14 @@ export async function loadFleetPools(): Promise<FleetTarget[]> {
 }
 
 /** Physically remove soft-deleted (`deleting = true`) pools once fully torn down: their VMs are
- *  all gone (provider.list empty) AND no live managed runner still maps to the provider (guards
- *  the list-race where a VM is destroyed but its runner row hasn't retired yet). Called after each
- *  reconcile pass; a still-draining pool is left for a later tick. Idempotent. */
+ *  all gone (provider.list empty) AND no ONLINE/DRAINING managed runner still maps to the provider
+ *  (an online/draining runner still holds an open metered session; guards the list-race where a VM
+ *  is destroyed but its runner hasn't been observed/retired yet). We must NOT gate on ALL runner
+ *  rows: a retired VM leaves an OFFLINE runner row whose session is already closed (by
+ *  sweep_offline_runners), and nothing GCs those rows — gating on them would keep the tombstone row
+ *  forever, list()-ing it every tick. Once the runner is OFFLINE its session is closed, so it no
+ *  longer blocks reaping. Called after each reconcile pass; a still-draining pool waits for a later
+ *  tick. Idempotent (delete targets the specific row id). */
 export async function reapDeletedPools(provider: FleetProvider): Promise<void> {
 	const rows = await getServiceDb()
 		.select()
@@ -59,8 +64,10 @@ export async function reapDeletedPools(provider: FleetProvider): Promise<void> {
 	for (const row of rows) {
 		const instances = await provider.list(rowToProject(row));
 		if (instances.length > 0) continue; // VMs still draining/destroying
-		const live = await managedRunnersByInstance(row.provider);
-		if (live.size > 0) continue; // a runner row hasn't retired yet — wait
+		const runners = await managedRunnersByInstance(row.provider);
+		// Only ONLINE/DRAINING runners still bill (open session); OFFLINE = already retired + closed.
+		const stillLive = [...runners.values()].some((r) => r.status !== "offline");
+		if (stillLive) continue; // a runner hasn't retired/closed its session yet — wait
 		await getServiceDb().delete(fleetPools).where(eq(fleetPools.id, row.id));
 		flog.info("removed torn-down pool", { pool_id: row.id, provider: row.provider });
 	}

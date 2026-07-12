@@ -31,6 +31,7 @@ import {
 import { reconcilePool } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
 import { loadFleetPools, reapDeletedPools, rowToProject } from "@/lib/fleet/pools-db";
+import { retireRunner } from "@/lib/fleet/queue";
 import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 import { provisionedHoursByProvider } from "@/lib/queries/runner-usage";
 import { describeIfDb } from "./db";
@@ -185,19 +186,26 @@ describeIfDb("fleet pool teardown (cost-leak fix)", () => {
 		expect(closedTo2h).toBeLessThan(1.2);
 	});
 
-	it("reapDeletedPools waits for the runner to be gone, then physically removes the drained row", async () => {
+	it("reapDeletedPools keeps the pool while a runner is ONLINE, then reaps once it's retired (OFFLINE)", async () => {
 		const db = getServiceDb();
-		// Provider is now empty (VM destroyed). But the retired runner row still carries the cloud
-		// instance id, so the list-race guard must KEEP the pool (don't reap yet).
+		// The list-race window: the VM is destroyed (provider empty) but the runner hasn't been
+		// observed/retired yet — force it ONLINE to model that. Its session is still open, so the
+		// guard must KEEP the pool.
+		await db
+			.update(runners)
+			.set({ status: "ONLINE" })
+			.where(eq(runners.id, RUNNER_ID));
 		await reapDeletedPools(new MemProvider([]));
 		const stillThere = await db
 			.select()
 			.from(fleetPools)
 			.where(eq(fleetPools.provider, PROVIDER));
-		expect(stillThere).toHaveLength(1); // guarded: a runner row still maps to it
+		expect(stillThere).toHaveLength(1); // guarded: an ONLINE runner still holds an open session
 
-		// Once the offline runner row is pruned (the runner-row GC), the empty pool is reaped.
-		await db.delete(runners).where(eq(runners.id, RUNNER_ID));
+		// Once the runner is retired (OFFLINE + session closed — retireRunner / sweep_offline_runners),
+		// the empty pool is reaped WITHOUT any runner-ROW GC (there is none — an OFFLINE row lingers
+		// harmlessly). Regression guard for the bug where OFFLINE rows blocked the reap forever.
+		await retireRunner(RUNNER_ID);
 		await reapDeletedPools(new MemProvider([]));
 		const gone = await db.select().from(fleetPools).where(eq(fleetPools.provider, PROVIDER));
 		expect(gone).toHaveLength(0); // pool row physically removed
