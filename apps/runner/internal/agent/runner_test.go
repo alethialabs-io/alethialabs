@@ -14,15 +14,16 @@ import (
 )
 
 type mockAPI struct {
-	mu             sync.Mutex
-	statusUpdates  []statusUpdate
-	logChunks      []logEntry
-	heartbeatCount int
-	claimResponse  *ClaimResponse
-	claimErr       error
-	claimCount     int
-	jobs           map[string]*Job
-	wakeEvents     []WakeEvent // extra events StreamWake replays after the initial wake
+	mu               sync.Mutex
+	statusUpdates    []statusUpdate
+	logChunks        []logEntry
+	heartbeatCount   int
+	heartbeatCancels []string // ids the mock heartbeat reports as server-side-cancelled
+	claimResponse    *ClaimResponse
+	claimErr         error
+	claimCount       int
+	jobs             map[string]*Job
+	wakeEvents       []WakeEvent // extra events StreamWake replays after the initial wake
 }
 
 type statusUpdate struct {
@@ -80,11 +81,11 @@ func (m *mockAPI) SendLog(jobID, chunk, streamType, traceparent string) error {
 	return nil
 }
 
-func (m *mockAPI) Heartbeat() error {
+func (m *mockAPI) Heartbeat() ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.heartbeatCount++
-	return nil
+	return m.heartbeatCancels, nil
 }
 
 func (m *mockAPI) GetJob(jobID string) (*Job, error) {
@@ -159,6 +160,32 @@ func (m *mockAPI) getLogChunks() []logEntry {
 	result := make([]logEntry, len(m.logChunks))
 	copy(result, m.logChunks)
 	return result
+}
+
+// TestApplyHeartbeatCancels proves the fallback cancel delivery: when the heartbeat reports a
+// server-side-cancelled job that this runner is still running (the wake-stream cancel was missed),
+// applyHeartbeatCancels tears it down; ids it isn't running are ignored.
+func TestApplyHeartbeatCancels(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.cancels.register("hb-job", cancel)
+
+	w.applyHeartbeatCancels([]string{"hb-job", "not-running-here"})
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("a heartbeat-reported running job should be cancelled via the fallback")
+	}
+	if !w.cancels.wasCancelled("hb-job") {
+		t.Error("hb-job should be marked cancelled")
+	}
+	if w.cancels.wasCancelled("not-running-here") {
+		t.Error("a job not running here must not be marked cancelled by the heartbeat fallback")
+	}
 }
 
 func TestSnapshotToProjectConfig(t *testing.T) {

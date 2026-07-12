@@ -54,6 +54,37 @@ func TestCancelRegistry_CancelUnknownJob(t *testing.T) {
 	}
 }
 
+// TestCancelRegistry_CancelIfRunning proves the heartbeat-fallback path: it tears down a job
+// that IS running here, and is a pure no-op (no cancelled-flag leak) for a job it isn't running —
+// so re-reporting the same server-side-cancelled id on every heartbeat can't grow the maps.
+func TestCancelRegistry_CancelIfRunning(t *testing.T) {
+	r := newCancelRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.register("live", cancel)
+
+	if !r.cancelIfRunning("live") {
+		t.Fatal("cancelIfRunning(live) should cancel a running job")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("live context should be cancelled")
+	}
+	if !r.wasCancelled("live") {
+		t.Error("a running job cancelled via the fallback should be marked cancelled")
+	}
+
+	// A job this runner isn't running: no teardown, and crucially NO cancelled-flag recorded (so a
+	// heartbeat re-reporting many finished/foreign ids doesn't leak a bool per id into the map).
+	if r.cancelIfRunning("not-here") {
+		t.Error("cancelIfRunning of a job not running here should return false")
+	}
+	if r.wasCancelled("not-here") {
+		t.Error("cancelIfRunning must NOT record a cancelled flag for a job it isn't running")
+	}
+}
+
 // TestCancelRegistry_OrphanRisk covers the orphan-risk flag lifecycle.
 func TestCancelRegistry_OrphanRisk(t *testing.T) {
 	r := newCancelRegistry()

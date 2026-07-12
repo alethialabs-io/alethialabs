@@ -112,19 +112,22 @@ export async function PUT(
 					});
 				}
 				// A cancelled DEPLOY leaves the env in an indeterminate (partially provisioned)
-				// state → FAILED so it surfaces as needing attention (best-effort).
+				// state → FAILED so it surfaces as needing attention (best-effort). Route through the
+				// env-status CAS (deployFailed: QUEUED|PROVISIONING → FAILED) rather than a naked
+				// update, so a cancel that lost the race to a real terminal outcome (the deploy already
+				// reached ACTIVE, or a DESTROY already moved it on) can't clobber that state back to
+				// FAILED — transitionEnv logs + alerts on a rejected transition and never throws.
 				if (
 					job.job_type === "DEPLOY" &&
 					job.project_id &&
 					job.environment_id
 				) {
-					await db
-						.update(projectEnvironments)
-						.set({ status: "FAILED" })
-						.where(eq(projectEnvironments.id, job.environment_id))
-						.catch((err) =>
-							jlog.error("set env FAILED on cancel error", { err }),
-						);
+					await transitionEnv(db, job.environment_id, "deployFailed", jobId, {
+						orgId: job.org_id,
+						projectId: job.project_id,
+					}).catch((err) =>
+						jlog.error("set env FAILED on cancel error", { err }),
+					);
 				}
 			}
 

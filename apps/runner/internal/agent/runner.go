@@ -135,8 +135,10 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	if err := w.api.Heartbeat(); err != nil {
+	if cancelled, err := w.api.Heartbeat(); err != nil {
 		Log().Error("initial heartbeat failed", "err", err.Error())
+	} else {
+		w.applyHeartbeatCancels(cancelled)
 	}
 
 	for {
@@ -144,9 +146,24 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := w.api.Heartbeat(); err != nil {
+			if cancelled, err := w.api.Heartbeat(); err != nil {
 				Log().Error("heartbeat failed", "err", err.Error())
+			} else {
+				w.applyHeartbeatCancels(cancelled)
 			}
+		}
+	}
+}
+
+// applyHeartbeatCancels is the fallback cancel path: for each job the console reports as
+// server-side-cancelled, tear it down IF it's still running here. This catches a cancel that was
+// missed on the wake stream (its pg_notify dropped because the SSE was reconnecting). cancelIfRunning
+// is a no-op for jobs this runner isn't running, so re-reporting the same id each tick is harmless.
+func (w *Runner) applyHeartbeatCancels(jobIDs []string) {
+	for _, jobID := range jobIDs {
+		if w.cancels.cancelIfRunning(jobID) {
+			Log().Warn("cancelling job via heartbeat fallback (wake-stream cancel was missed)",
+				"job_id", jobID)
 		}
 	}
 }

@@ -178,7 +178,7 @@ func TestHeartbeat_Success(t *testing.T) {
 	defer server.Close()
 
 	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
-	err := client.Heartbeat()
+	_, err := client.Heartbeat()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestHeartbeat_Failure(t *testing.T) {
 	defer server.Close()
 
 	client := NewRunnerAPIClient(server.URL, "w1", "bad-token")
-	err := client.Heartbeat()
+	_, err := client.Heartbeat()
 	if err == nil {
 		t.Fatal("expected error for 401 response")
 	}

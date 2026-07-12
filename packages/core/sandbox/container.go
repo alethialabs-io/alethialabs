@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -136,9 +137,17 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	// managed fleets should prefer podman (ALETHIA_SANDBOX_RUNTIME=podman) so a grace-exceeded
 	// SIGKILL actually tears the container down rather than leaking it daemon-side.
 	grace := cancelGracePeriod()
+	// killTimer is set by Cancel (on a mid-flight cancel) and Stop()ed after the process exits, so
+	// the deferred SIGKILL can't fire against a reused pgid after a clean early exit. Guarded because
+	// Cancel runs on the stdlib's goroutine while the main goroutine stops it post-Run.
+	var killTimerMu sync.Mutex
+	var killTimer *time.Timer
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
-			interruptThenKill(cmd.Process.Pid, grace, syscall.Kill)
+			t := interruptThenKill(cmd.Process.Pid, grace, syscall.Kill)
+			killTimerMu.Lock()
+			killTimer = t
+			killTimerMu.Unlock()
 		}
 		return nil
 	}
@@ -147,6 +156,14 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	cmd.WaitDelay = grace + 5*time.Second
 
 	runErr := cmd.Run()
+
+	// The process has exited; a pending escalation SIGKILL (if Cancel fired) is no longer needed —
+	// stop it so it can't land on a reused pgid later.
+	killTimerMu.Lock()
+	if killTimer != nil {
+		killTimer.Stop()
+	}
+	killTimerMu.Unlock()
 
 	// The child writes result.json (with an Error field on stage failure). Surface its
 	// error if present; otherwise fall back to the process exit error.
@@ -180,10 +197,12 @@ func cancelGracePeriod() time.Duration {
 // schedules a SIGKILL of the group after grace, giving a foreground container runtime time
 // to forward the interrupt to its workload and shut down cleanly. `kill` is injected so the
 // escalation sequence is unit-testable without spawning a real process. A SIGKILL to an
-// already-exited group is a harmless ESRCH.
-func interruptThenKill(pid int, grace time.Duration, kill func(pid int, sig syscall.Signal) error) {
+// already-exited group is a harmless ESRCH. It returns the escalation timer so the caller can
+// Stop() it once the process has exited — otherwise a clean early exit still leaves a pending
+// SIGKILL that could, after the pgid is reused, land on an unrelated process group.
+func interruptThenKill(pid int, grace time.Duration, kill func(pid int, sig syscall.Signal) error) *time.Timer {
 	_ = kill(-pid, syscall.SIGINT)
-	time.AfterFunc(grace, func() {
+	return time.AfterFunc(grace, func() {
 		_ = kill(-pid, syscall.SIGKILL)
 	})
 }

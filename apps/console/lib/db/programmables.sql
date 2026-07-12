@@ -297,6 +297,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
         RAISE EXCEPTION 'Unauthorized runner';
     END IF;
+    -- Terminal-state guard: never overwrite an already-terminal status. This makes a CANCELLED job
+    -- STICK — if the console cancelled a job (e.g. via cancelJob) but the pg_notify cancel didn't
+    -- reach the runner (its wake SSE was down) and the job ran to completion, the runner's late
+    -- SUCCESS/FAILED post must NOT revert CANCELLED back to a success. SUCCESS/FAILED are likewise
+    -- terminal, so a duplicate terminal callback is a benign no-op rather than a status flip.
     UPDATE public.jobs
     SET status = p_status::public.provision_job_status,
         error_message = COALESCE(p_error_message, error_message),
@@ -305,8 +310,17 @@ BEGIN
         started_at = CASE WHEN p_status = 'PROCESSING' AND started_at IS NULL THEN now() ELSE started_at END,
         completed_at = CASE WHEN p_status IN ('SUCCESS', 'FAILED', 'CANCELLED') THEN now() ELSE completed_at END,
         updated_at = now()
-    WHERE id = p_job_id AND runner_id = p_runner_id;
-    IF NOT FOUND THEN RAISE EXCEPTION 'Job not found or not owned by this runner'; END IF;
+    WHERE id = p_job_id AND runner_id = p_runner_id
+      AND status NOT IN ('SUCCESS', 'FAILED', 'CANCELLED');
+    IF NOT FOUND THEN
+        -- Distinguish a benign already-terminal job (owned by this runner but the guard blocked the
+        -- overwrite) from a genuine ownership/existence error. The former is a no-op (the runner
+        -- learns the job is terminal on its next heartbeat/claim); only the latter raises.
+        IF EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
+            RETURN;
+        END IF;
+        RAISE EXCEPTION 'Job not found or not owned by this runner';
+    END IF;
 END;
 $$;
 
@@ -964,6 +978,13 @@ BEGIN
     RETURN FOUND;
 END;
 $$;
+
+-- force_release is a break-glass / operator action, NOT part of the normal tofu-state lock
+-- lifecycle (acquire/validate/release). Postgres grants EXECUTE to PUBLIC by default, so without
+-- this REVOKE the least-privilege runtime role (alethia_app, used by the RLS + tofu-state-proxy
+-- paths) could force-release a live lock and fence a running apply. The superuser service role
+-- (getServiceDb → forceReleaseStateLock) owns the function and is unaffected by the revoke.
+REVOKE EXECUTE ON FUNCTION public.force_release_tofu_state_lock(TEXT) FROM PUBLIC;
 
 -- Per-VM fleet bootstrap token redemption (E0 0b). Atomic + instance-bound + reusable-within-TTL:
 -- the first redeem binds instance_id; the SAME instance may re-redeem (restart / lost-response

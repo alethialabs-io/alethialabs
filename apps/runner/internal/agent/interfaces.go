@@ -12,7 +12,9 @@ type JobAPI interface {
 	StreamWake(ctx context.Context, onEvent func(WakeEvent)) error
 	UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error
 	SendLog(jobID, logChunk, streamType, traceparent string) error
-	Heartbeat() error
+	// Heartbeat reports liveness and returns this runner's server-side-cancelled job ids, so a
+	// cancel missed on the wake stream (SSE disconnected at notify time) is still delivered.
+	Heartbeat() ([]string, error)
 	GetJob(jobID string) (*Job, error)
 	FetchGitToken(jobID string) (string, error)
 	// FetchStateToken mints the per-job tofu-state token for the http state backend;

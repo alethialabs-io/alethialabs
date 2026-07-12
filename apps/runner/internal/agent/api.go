@@ -111,27 +111,36 @@ func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
 }
 
-func (c *RunnerAPIClient) Heartbeat() error {
+func (c *RunnerAPIClient) Heartbeat() ([]string, error) {
 	payload, _ := json.Marshal(map[string]any{
 		"version":   version.Version,
 		"providers": c.providers, // nil → JSON null → server keeps existing (claims any)
 	})
 	req, err := http.NewRequest("POST", c.baseURL+"/runners/heartbeat", bytes.NewBuffer(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("heartbeat request failed: %w", err)
+		return nil, fmt.Errorf("heartbeat request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
 	}
-	return nil
+	// The body carries the runner's server-side-cancelled job ids (fallback cancel delivery). An
+	// older console omits the field → empty slice → no fallback cancels, which is fine.
+	var body struct {
+		CancelledJobIDs []string `json:"cancelled_job_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		// A malformed/empty body must not fail liveness — the heartbeat itself succeeded.
+		return nil, nil
+	}
+	return body.CancelledJobIDs, nil
 }
 
 func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {

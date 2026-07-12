@@ -72,6 +72,23 @@ func (r *cancelRegistry) cancel(jobID string) bool {
 	return false
 }
 
+// cancelIfRunning cancels a job ONLY if it is currently in-flight here (registered). Unlike
+// cancel(), it does not record a cancelled flag for a job it isn't running — so it is safe to call
+// on every heartbeat with the full set of server-side-cancelled ids without leaking a bool per id
+// into the cancelled map. Returns true when it cancelled a live job. This is the fallback path: if
+// the pushed wake-stream cancel was missed (SSE disconnected at notify time), the heartbeat loop
+// still tears the job down within one heartbeat interval.
+func (r *cancelRegistry) cancelIfRunning(jobID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cancel, ok := r.cancels[jobID]; ok {
+		r.cancelled[jobID] = true
+		cancel()
+		return true
+	}
+	return false
+}
+
 // wasCancelled reports whether the job was cancelled via a cancel signal (as opposed to
 // failing on its own or timing out).
 func (r *cancelRegistry) wasCancelled(jobID string) bool {
