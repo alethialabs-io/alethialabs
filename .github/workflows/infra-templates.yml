@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cloud: [aws, gcp, azure, hetzner, alibaba]
+        cloud: [aws, gcp, azure, hetzner, alibaba, local]
     steps:
       - uses: actions/checkout@v4
       - uses: opentofu/setup-opentofu@v1
