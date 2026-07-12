@@ -89,6 +89,10 @@ services:
     environment:
       ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}"
+      # So a migration failure reports to PostHog Error Tracking (scripts/migrate.mjs) — the migrate
+      # one-shot isn't the Next app, so it's otherwise invisible on any dashboard. No-ops when unset.
+      NEXT_PUBLIC_POSTHOG_KEY: "${NEXT_PUBLIC_POSTHOG_KEY:-}"
+      NEXT_PUBLIC_POSTHOG_HOST: "${NEXT_PUBLIC_POSTHOG_HOST:-}"
     depends_on:
       postgres:
         condition: service_healthy

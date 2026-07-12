@@ -37,7 +37,40 @@ const sql = postgres(url, { max: 1, onnotice: () => {} });
 // the baseline migration over a populated volume.
 const ALREADY_EXISTS_CODES = new Set(["42710", "42P07", "42712"]);
 
+/**
+ * Best-effort: report a migration failure to PostHog Error Tracking. The migrate one-shot is NOT the
+ * Next app — it never loads instrumentation.ts — so without this its failures are invisible on any
+ * dashboard and you'd have to read the container logs on the box. No-ops without
+ * NEXT_PUBLIC_POSTHOG_KEY and never throws (telemetry must not change the migrate exit path). Mirrors
+ * the client shape in apps/console/lib/analytics/server.ts (real cloud host, flush-per-capture).
+ */
+async function reportMigrateFailure(error, phase) {
+	const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+	if (!key) return;
+	try {
+		const { PostHog } = await import("posthog-node");
+		const rawHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+		const host =
+			rawHost && rawHost.startsWith("http")
+				? rawHost.replace(/\/$/, "")
+				: "https://eu.i.posthog.com";
+		const ph = new PostHog(key, { host, flushAt: 1, flushInterval: 0 });
+		ph.captureException(error, `migrate:${process.env.ALETHIA_DEPLOYMENT_MODE || "local"}`, {
+			source: "console-migrate",
+			phase,
+		});
+		await ph.flush();
+		await ph.shutdown();
+	} catch {
+		/* telemetry must never break the migrate exit path */
+	}
+}
+
+// Which step is running — attached to the PostHog report so a failure is triaged without the logs.
+let phase = "startup";
+
 try {
+	phase = "schema-migrations";
 	console.log("→ applying schema migrations…");
 	try {
 		await migrate(drizzle(sql), { migrationsFolder });
@@ -48,20 +81,24 @@ try {
 					"  (this happens when the baseline migration was regenerated over an existing volume).\n" +
 					"  Run `pnpm db:reset` for a clean slate, or drop the conflicting objects.\n",
 			);
+			await reportMigrateFailure(migrateErr, "schema-migrations:journal-conflict");
 			await sql.end({ timeout: 1 }).catch(() => {});
 			process.exit(1);
 		}
 		throw migrateErr;
 	}
 
+	phase = "programmables";
 	console.log("→ applying programmables (functions, triggers, RLS)…");
 	await sql.unsafe(readFileSync(programmablesPath, "utf8"));
 
+	phase = "connectors-seed";
 	console.log("→ seeding connectors catalog (pluggable connectors)…");
 	await sql.unsafe(readFileSync(connectorsSeedPath, "utf8"));
 
 	const appPassword = process.env.ALETHIA_APP_DB_PASSWORD;
 	if (appPassword) {
+		phase = "app-role-password";
 		console.log("→ setting app role login password…");
 		await sql.unsafe(
 			`ALTER ROLE alethia_app LOGIN PASSWORD ${sqlLiteral(appPassword)}`,
@@ -76,8 +113,9 @@ try {
 	await sql.end();
 	process.exit(0);
 } catch (err) {
-	console.error("\n✗ migration failed:\n");
+	console.error(`\n✗ migration failed (phase: ${phase}):\n`);
 	console.error(err);
+	await reportMigrateFailure(err, phase);
 	await sql.end({ timeout: 1 }).catch(() => {});
 	process.exit(1);
 }
