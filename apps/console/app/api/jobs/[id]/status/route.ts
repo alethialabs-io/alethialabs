@@ -63,9 +63,21 @@ export async function PUT(
 
 		const db = getServiceDb();
 
-		await db.execute(
-			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
+		const [updateRow] = await db.execute<{ applied: boolean }>(
+			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb) as applied`,
 		);
+		// FALSE = the update was a no-op because the job is already terminal in a DIFFERENT state
+		// (e.g. the console cancelled it while this callback was in flight). The DB status is
+		// authoritative, so skip ALL terminal side-effects — env→ACTIVE via finalizeDeployment, the
+		// success alert, usage billing — that would otherwise run off the stale request `status` and
+		// resurrect/bill a cancelled job. (A same-status re-post applies, so the runner's CANCELLED
+		// teardown post still flows through below with its orphan_risk metadata.)
+		if (!updateRow?.applied) {
+			jlog.info("job-status callback was a no-op (job already terminal); skipping side-effects", {
+				attempted_status: status,
+			});
+			return NextResponse.json({ success: true, applied: false });
+		}
 
 		if (
 			status === "PROCESSING" ||

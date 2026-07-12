@@ -292,16 +292,18 @@ $$;
 CREATE OR REPLACE FUNCTION public.update_job_status(
     p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_status TEXT,
     p_error_message TEXT DEFAULT NULL, p_execution_metadata JSONB DEFAULT NULL
-) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+) RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
         RAISE EXCEPTION 'Unauthorized runner';
     END IF;
-    -- Terminal-state guard: never overwrite an already-terminal status. This makes a CANCELLED job
-    -- STICK — if the console cancelled a job (e.g. via cancelJob) but the pg_notify cancel didn't
-    -- reach the runner (its wake SSE was down) and the job ran to completion, the runner's late
-    -- SUCCESS/FAILED post must NOT revert CANCELLED back to a success. SUCCESS/FAILED are likewise
-    -- terminal, so a duplicate terminal callback is a benign no-op rather than a status flip.
+    -- Terminal-state guard: never CHANGE an already-terminal status to a DIFFERENT one. This makes a
+    -- CANCELLED job STICK — if the console cancelled it (cancelJob) but the pg_notify cancel didn't
+    -- reach the runner (wake SSE down) and it ran to completion, the runner's late SUCCESS/FAILED must
+    -- NOT revert CANCELLED. A SAME-status re-post IS allowed, so the runner's second CANCELLED post
+    -- (which cancelJob's flip precedes) still merges its orphan_risk metadata. Returns whether a row
+    -- moved: FALSE = the update was a no-op on an already-terminal job, so the caller must skip the
+    -- terminal side-effects (billing / success alert / env→ACTIVE) for that stale callback.
     UPDATE public.jobs
     SET status = p_status::public.provision_job_status,
         error_message = COALESCE(p_error_message, error_message),
@@ -311,16 +313,17 @@ BEGIN
         completed_at = CASE WHEN p_status IN ('SUCCESS', 'FAILED', 'CANCELLED') THEN now() ELSE completed_at END,
         updated_at = now()
     WHERE id = p_job_id AND runner_id = p_runner_id
-      AND status NOT IN ('SUCCESS', 'FAILED', 'CANCELLED');
-    IF NOT FOUND THEN
-        -- Distinguish a benign already-terminal job (owned by this runner but the guard blocked the
-        -- overwrite) from a genuine ownership/existence error. The former is a no-op (the runner
-        -- learns the job is terminal on its next heartbeat/claim); only the latter raises.
-        IF EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
-            RETURN;
-        END IF;
-        RAISE EXCEPTION 'Job not found or not owned by this runner';
+      AND (status NOT IN ('SUCCESS', 'FAILED', 'CANCELLED')
+           OR status = p_status::public.provision_job_status);
+    IF FOUND THEN RETURN true; END IF;
+    -- Not applied. Distinguish a benign already-terminal job (owned by this runner, the guard blocked
+    -- a status CHANGE) from a genuine ownership/existence error. The former returns false (the caller
+    -- skips side-effects; the runner learns the job is terminal on its next heartbeat); only the
+    -- latter raises.
+    IF EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
+        RETURN false;
     END IF;
+    RAISE EXCEPTION 'Job not found or not owned by this runner';
 END;
 $$;
 
