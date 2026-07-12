@@ -49,11 +49,17 @@ function hasSourceSibling(dir) {
 	return entries.some((n) => /\.go$/.test(n) && !/_test\.go$/.test(n));
 }
 
-// A file declares a test entry point.
-const TEST_FUNC_RE = /func\s+(Test|Benchmark|Fuzz|Example)[A-Z_0-9]/;
+// A file declares a fail-by-assertion test entry point. Example* is deliberately
+// EXCLUDED — Go example tests are validated by their `// Output:` comment, not by
+// t.Error*, so requiring an assertion in them is a false positive.
+const TEST_FUNC_RE = /func\s+(Test|Benchmark|Fuzz)[A-Z_0-9]/;
 // A file contains a real, failing assertion (the thing that makes a test able to fail).
 const ASSERT_RE =
 	/\b[tbf]\.(Error|Errorf|Fatal|Fatalf|Fail|FailNow)\b|\b(require|assert)\.[A-Z]/;
+// A shared assertion helper: `func check(t *testing.T, …)` style entrypoints delegate
+// their assertions to a helper elsewhere in the package, so a Test that calls one is not
+// vacuous even without an inline t.Error. Scan the package's other _test.go files too.
+const HELPER_ASSERT_RE = ASSERT_RE;
 
 const offenders = [];
 for (const root of ROOTS) {
@@ -64,7 +70,19 @@ for (const root of ROOTS) {
 			continue;
 		}
 		if (TEST_FUNC_RE.test(src) && !ASSERT_RE.test(src)) {
-			offenders.push([file, "declares a test but contains no assertion (t.Error*/t.Fatal*/require/assert) — it can never fail"]);
+			// Before flagging, check whether a SAME-DIRECTORY (same Go package) _test.go holds
+			// a shared assertion helper (table tests commonly factor assertions out). Same-dir
+			// only — a helper in a subpackage is a different package and wouldn't apply.
+			const dir = dirname(file);
+			const pkgHasHelper = readdirSync(dir).some(
+				(name) =>
+					/_test\.go$/.test(name) &&
+					join(dir, name) !== file &&
+					HELPER_ASSERT_RE.test(readFileSync(join(dir, name), "utf8")),
+			);
+			if (!pkgHasHelper) {
+				offenders.push([file, "declares a test but contains no assertion (t.Error*/t.Fatal*/require/assert) and no sibling assertion helper — it can never fail"]);
+			}
 		}
 	}
 }

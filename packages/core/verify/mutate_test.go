@@ -113,6 +113,23 @@ func TestMutationFlipsVerdict(t *testing.T) {
 			},
 		},
 		{
+			// The MANAGED-POLICY-ATTACHMENT sub-path is a distinct branch from the inline
+			// widen above (isAdminManagedPolicy over policy_arn). Attaching AdministratorAccess
+			// is the most common real over-privilege pattern; without this a regression in the
+			// attach detector slips past the inline mutator + the (KEYLESS-over-determined)
+			// corpus plan.
+			name:      "LEASTPRIV-001/attach-administrator-access",
+			base:      "aws_pass_keyless_least_priv.json",
+			controlID: "LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "aws_iam_role_policy_attachment.admin", "aws_iam_role_policy_attachment", "aws",
+					map[string]any{
+						"role":       "app",
+						"policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess",
+					}, map[string]any{})
+			},
+		},
+		{
 			name:      "GCP-KEYLESS-001/inject-sa-key",
 			base:      "gcp_pass.json",
 			controlID: "GCP-KEYLESS-001",
