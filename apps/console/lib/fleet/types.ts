@@ -69,11 +69,23 @@ export interface Observed {
 	surplusTicks: number;
 }
 
-/** Minimal, idempotent actions the controller applies to converge toward the project. */
+/** Why the planner emitted an action — recorded verbatim onto the fleet_actions ledger so an
+ *  operator can reconstruct why the fleet grew/shrank at 3am. Each maps to a branch in plan.ts. */
+export type FleetActionReason =
+	| "scale-up-demand" // create: bring live capacity up to the demand-driven target
+	| "min-per-location" // create: satisfy a per-location floor
+	| "rollout-surge" // create: surge a replacement up during a version rollout
+	| "rollout-drain" // drain: retire an outdated instance during a version rollout
+	| "reap-dead" // destroy: a dead / never-registered (past boot-grace) instance
+	| "reap-drained" // destroy: a drained instance whose in-flight job has finished
+	| "scale-down-idle"; // destroy: idle surplus past the scale-down grace window
+
+/** Minimal, idempotent actions the controller applies to converge toward the project. Each carries
+ *  the `reason` it was emitted for, which the controller records to the fleet_actions ledger. */
 export type FleetAction =
-	| { type: "create"; location: string; version: string | null }
-	| { type: "drain"; runnerId: string; instanceId: string }
-	| { type: "destroy"; instanceId: string };
+	| { type: "create"; location: string; version: string | null; reason: FleetActionReason }
+	| { type: "drain"; runnerId: string; instanceId: string; reason: FleetActionReason }
+	| { type: "destroy"; instanceId: string; reason: FleetActionReason };
 
 /**
  * Cloud capacity primitives. The controller owns all diff logic; the provider just

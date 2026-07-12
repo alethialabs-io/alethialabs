@@ -357,6 +357,17 @@ export interface RunnerMetadata {
 	cloud_instance_id?: string | null;
 }
 
+// fleet_actions.metadata — forensic context the fleet controller attaches to a ledger row
+// (all optional; the load-bearing columns are provider/action/reason/queue_depth/pool_size).
+export interface FleetActionMetadata {
+	/** Location the create targeted / the affected instance lives in. */
+	location?: string;
+	/** Cloud instance id (drain/destroy) the action pertained to. */
+	instance_id?: string;
+	/** Image/version a create was launched at, when known. */
+	version?: string | null;
+}
+
 // jobs.execution_metadata — written by the runner via update_job_status. Known
 // shape (deploy outputs + cached cloud resources from CONNECTION_TEST/FETCH jobs).
 export interface ExecutionMetadata {
