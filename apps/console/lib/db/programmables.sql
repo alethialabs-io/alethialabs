@@ -240,6 +240,10 @@ $$;
 -- instead of requeued forever. The function RETURNS the jobs it failed terminally so the caller
 -- (lib/jobs/recovery.ts) can drive each one's environment status through the env-status CAS
 -- (deployFailed / destroyFailed / planFailed) — a terminal job must not leave its env stuck.
+-- Return type changed INTEGER -> TABLE(...): Postgres can't change a function's return type via
+-- CREATE OR REPLACE on an existing DB (error 42P13), so drop the old signature first — same pattern as
+-- update_job_status / sweep_offline_runners above. IF EXISTS keeps it idempotent on a fresh DB.
+DROP FUNCTION IF EXISTS public.recover_stale_jobs();
 CREATE OR REPLACE FUNCTION public.recover_stale_jobs()
 RETURNS TABLE(job_id UUID, job_type public.provision_job_type, environment_id UUID, org_id UUID, project_id UUID)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
