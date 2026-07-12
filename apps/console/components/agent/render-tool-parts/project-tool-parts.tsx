@@ -12,7 +12,7 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
-import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
+import { DashboardPinnedCard } from "@/components/agent/render-tool-parts/dashboard-pinned";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
@@ -61,8 +61,10 @@ interface ProjectToolPartsDeps {
 	setAccepted: (updater: (a: Record<string, boolean>) => Record<string, boolean>) => void;
 	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
 	addToolResult: AddToolResult;
-	/** Open the artifact panel (dashboard/config/plan/logs) — used by build_dashboard. */
+	/** Open the inspector panel (config/plan/cost/logs) for a project/job. */
 	openArtifact: (artifact: Artifact, tab: ArtifactTab) => void;
+	/** Reveal the split pane's widget grid (maximizing a docked panel first). */
+	openGrid: () => void;
 }
 
 /**
@@ -76,22 +78,16 @@ export function projectRenderToolPart({
 	setAccepted,
 	addToolResult,
 	openArtifact,
+	openGrid,
 }: ProjectToolPartsDeps): RenderToolPart {
 	return function renderProjectToolPart(part: ToolUIPart) {
-		// Generative dashboard ready → an "Open dashboard" card opening the split pane.
+		// Generative dashboard ready → its blocks auto-pin to the grid; the transcript
+		// shows the framed receipt with an "Open grid" action.
 		if (
 			part.type === "tool-build_dashboard" &&
 			part.state === "output-available"
 		) {
-			return (
-				<ToolResultFrame part={part}>
-					<DashboardReadyCard
-						part={part}
-						openArtifact={openArtifact}
-						context="project"
-					/>
-				</ToolResultFrame>
-			);
+			return <DashboardPinnedCard part={part} openGrid={openGrid} />;
 		}
 
 		// Design proposal → accept lane (HITL: applies to the canvas, then feeds the

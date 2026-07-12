@@ -42,6 +42,7 @@ const IN_APP_ONLY = [
 	"propose_changes",
 	"propose_operation",
 	"scan_repo",
+	"pin_widget",
 ];
 
 // The read-only surface that SHOULD be externally projectable.

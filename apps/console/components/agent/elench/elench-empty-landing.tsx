@@ -166,9 +166,9 @@ export function ElenchModalLanding({
 					className="flex-none gap-1.5 rounded-none"
 					onClick={() => {
 						track("elench_try_now_used", { context });
-						// Open the split pane immediately in the pending dashboard state; the model's
-						// build_dashboard result fills it via the DashboardReadyCard → openArtifact lane.
-						useArtifactStore.getState().open({ dashboard: null }, "dashboard");
+						// Open the split pane's widget grid immediately (its empty state is the
+						// composing hint); the model's build_dashboard blocks auto-pin into it.
+						useArtifactStore.getState().openGrid();
 						onSend(tryNowPrompt(context));
 					}}
 				>

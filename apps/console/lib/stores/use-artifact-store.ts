@@ -2,59 +2,47 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { create } from "zustand";
-import type { DashboardSpec } from "@/types/jsonb.types";
 
-export type ArtifactTab = "config" | "plan" | "cost" | "logs" | "dashboard";
+export type ArtifactTab = "config" | "plan" | "cost" | "logs";
 
-/** What the agent's artifact panel is currently showing. */
+/** What the agent's inspector panel is currently showing. */
 export interface Artifact {
 	projectId?: string;
 	jobId?: string;
-	/**
-	 * A generative dashboard (from the `build_dashboard` tool). `null` = the pane was opened
-	 * ahead of the result (e.g. the landing's "Try now") and is awaiting the spec — the panel
-	 * renders a loading state until the live-sync effect (or an "Open dashboard" click)
-	 * replaces it with the built spec.
-	 */
-	dashboard?: DashboardSpec | null;
-	/**
-	 * toolCallId of the `build_dashboard` call that produced/owns this dashboard. Lets the
-	 * live-sync effect fill ONLY a pending panel or refresh the same call's spec — never
-	 * clobber a dashboard the user opened from a different (older) result.
-	 */
-	dashboardSourceId?: string;
-	/** Streaming progress for a pending dashboard (parsed off the in-flight tool input). */
-	dashboardProgress?: { title?: string; blocks: number };
 }
 
 interface ArtifactState {
+	/** The project/job the inspector overlays the grid with (null = grid only). */
 	artifact: Artifact | null;
 	tab: ArtifactTab;
-	/**
-	 * Open an artifact in the panel; defaults the tab to Dashboard (when a spec is
-	 * present), else Config (project) or Logs (job-only).
-	 */
+	/** Whether the split pane's base layer — the per-chat widget grid — is open. */
+	gridOpen: boolean;
+	/** Open a project/job in the inspector; defaults the tab to Config or Logs. */
 	open: (artifact: Artifact, tab?: ArtifactTab) => void;
 	setTab: (tab: ArtifactTab) => void;
+	/** Close the inspector (falls back to the grid when it's open). */
 	close: () => void;
+	openGrid: () => void;
+	closeGrid: () => void;
 }
 
-/** Pick the default tab for an artifact from what it carries (a pending `null` dashboard
- * still defaults to the Dashboard tab so the loading state is visible). */
+/** Pick the default tab for an artifact from what it carries. */
 function defaultTab(artifact: Artifact): ArtifactTab {
-	if (artifact.dashboard !== undefined) return "dashboard";
 	return artifact.projectId ? "config" : "logs";
 }
 
 /**
- * Holds the agent's active artifact (a project and/or a job, or a generative
- * dashboard). Tool-result cards call `open(...)`; the artifact panel reads it and
- * renders Dashboard / Config / Plan / Cost / Logs.
+ * Drives the modal's split pane, which is LAYERED: the per-chat widget grid is the
+ * persistent base view (`gridOpen`), and a project/job inspector (`artifact`) overlays
+ * it on demand. Tool-result frames call `open(...)`; widget auto-pin calls `openGrid`.
  */
 export const useArtifactStore = create<ArtifactState>((set) => ({
 	artifact: null,
 	tab: "config",
+	gridOpen: false,
 	open: (artifact, tab) => set({ artifact, tab: tab ?? defaultTab(artifact) }),
 	setTab: (tab) => set({ tab }),
 	close: () => set({ artifact: null }),
+	openGrid: () => set({ gridOpen: true }),
+	closeGrid: () => set({ gridOpen: false }),
 }));

@@ -59,6 +59,9 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	// Generative dashboard — client-rendered viz (spec passthrough), in-app only.
 	build_dashboard: "in-app",
 
+	// Widget grid — client-placed pin (spec passthrough), in-app only (no MCP UI).
+	pin_widget: "in-app",
+
 	// Operations — HITL plan/deploy proposals (multi-turn approval).
 	propose_operation: "in-app",
 

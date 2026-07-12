@@ -80,6 +80,7 @@ function renderChat(messages: UIMessage[], status: "streaming" | "ready" = "read
 			onSend={() => {}}
 			renderToolPart={orgRenderToolPart({
 				openArtifact: vi.fn(),
+				openGrid: vi.fn(),
 				addToolResult: vi.fn(),
 			})}
 		/>,
