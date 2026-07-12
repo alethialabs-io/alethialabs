@@ -40,6 +40,13 @@ external agent (read-only at launch). `assertAudienceCoverage` (tested in
 
 ## PROPOSE — HITL, client-applied (no server write)
 - ✅ `propose_changes` — emits `AiProposal` → `applyProposal` (add_node / set_identity / update_config).
+- ✅ `pin_widget` — validated passthrough (in-app): the client lane persists ONE widget (a composed
+  dashboard block or a read-tool source) to the chat's bento grid via the PDP-gated `pinWidget`
+  server action; first-fit placement unless a `position` is given.
+- ✅ `list_artifacts` / `get_artifact` / `update_artifact` (in-app) — saved org-scoped widget/
+  dashboard specs promoted from chat grids; @-mentionable from any chat. `update_artifact` writes
+  server-side (display spec only, org RLS — the scan_repo in-app-write precedent); the client lane
+  syncs open widgets after an edit.
 - ▢ `propose_project` (Milestone B) — repo-scan → a right-sized `ProjectConfig` proposal (no parallel schema).
 - ▢ `compare_providers` (B) — provider cost/feature comparison via Infracost + `duplicateProjectForProvider`.
 

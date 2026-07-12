@@ -4,11 +4,27 @@
 // Unit tests for the observability substrate: the W3C traceparent minting/parsing and the
 // structured pino logger (field carrying via child + level gating).
 
-import { describe, expect, it } from "vitest";
+import {
+	InMemorySpanExporter,
+	NodeTracerProvider,
+	SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-node";
+import { trace } from "@opentelemetry/api";
+import { afterEach, describe, expect, it } from "vitest";
 import { createLogger } from "@/lib/observability/log";
 import {
+	outcomeFromStatus,
+	recordClaimLatency,
+	recordFleetSize,
+	recordProvision,
+	recordQueueDepth,
+	recordScalerAction,
+} from "@/lib/observability/metrics";
+import {
+	markJobSpan,
 	newTraceparent,
 	traceIdFromTraceparent,
+	withJobSpan,
 } from "@/lib/observability/trace";
 
 const TRACEPARENT_RE = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
@@ -96,5 +112,91 @@ describe("createLogger", () => {
 		expect(lines).toHaveLength(0);
 		log.info("kept");
 		expect(lines).toHaveLength(1);
+	});
+});
+
+// The OTLP endpoint is unset in the test env, so startOtel() is never called → the
+// global tracer + meter stay the OTel API's built-in no-op. These assert the whole
+// telemetry surface is a SAFE no-op in that state: no throw, no error, no side effect
+// (exactly the Umami/OpenReplay analytics-gating contract — telemetry is never a hard
+// dependency and never backpressures a provision).
+describe("telemetry is a safe no-op when no OTLP endpoint is configured", () => {
+	it("metric record helpers do not throw with the no-op global meter", () => {
+		expect(() => {
+			recordQueueDepth("aws", 3);
+			recordFleetSize("gcp", 2);
+			recordScalerAction("hetzner", "create");
+			recordScalerAction(null, "drain");
+			recordClaimLatency("azure", 4.2);
+			recordClaimLatency("aws", -1); // clock-skew guard: silently ignored
+			recordProvision({
+				provider: "aws",
+				jobType: "DEPLOY",
+				outcome: "success",
+				seconds: 120,
+			});
+			recordProvision({
+				provider: null,
+				jobType: "PLAN",
+				outcome: "fail",
+				seconds: 5,
+			});
+		}).not.toThrow();
+	});
+
+	it("span helpers do not throw and pass values through with the no-op tracer", async () => {
+		const tp = newTraceparent();
+		expect(() =>
+			markJobSpan("console.job.claim", tp, { provider: "aws" }),
+		).not.toThrow();
+		// A malformed traceparent must degrade, not throw.
+		expect(() => markJobSpan("x", "not-a-traceparent", {})).not.toThrow();
+
+		const out = await withJobSpan("console.job.callback", tp, {}, () => 42);
+		expect(out).toBe(42);
+		// The wrapper re-throws the inner error (and ends the span) — must not swallow.
+		await expect(
+			withJobSpan("boom", tp, {}, () => {
+				throw new Error("inner");
+			}),
+		).rejects.toThrow("inner");
+	});
+
+	it("maps terminal statuses to the low-cardinality outcome dimension", () => {
+		expect(outcomeFromStatus("SUCCESS")).toBe("success");
+		expect(outcomeFromStatus("CANCELLED")).toBe("cancel");
+		expect(outcomeFromStatus("FAILED")).toBe("fail");
+	});
+});
+
+// Proves the console↔runner JOIN mechanism on the TS side: a console span started from a
+// job's traceparent lands in the SAME trace-id as the traceparent. (The Go side asserts
+// the runner half — see slog_test.go / obs.) Registers a real in-memory provider so a
+// span is actually produced, then resets the global tracer.
+describe("console spans join the trace carried by a job's traceparent", () => {
+	afterEach(() => {
+		trace.disable(); // reset the global tracer provider between tests
+	});
+
+	it("a span from a traceparent inherits that traceparent's trace-id", () => {
+		const exporter = new InMemorySpanExporter();
+		const provider = new NodeTracerProvider({
+			spanProcessors: [new SimpleSpanProcessor(exporter)],
+		});
+		provider.register();
+
+		const tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+		markJobSpan("console.job.claim", tp, { provider: "aws" });
+
+		const spans = exporter.getFinishedSpans();
+		expect(spans).toHaveLength(1);
+		// The span's trace-id MUST equal the traceparent's trace-id (the join), and its
+		// parent MUST be the traceparent's span-id (child of the enqueue root).
+		expect(spans[0].spanContext().traceId).toBe(
+			"0af7651916cd43dd8448eb211c80319c",
+		);
+		expect(spans[0].parentSpanContext?.spanId).toBe("b7ad6b7169203331");
+		expect(spans[0].name).toBe("console.job.claim");
+		expect(spans[0].attributes.provider).toBe("aws");
 	});
 });

@@ -59,18 +59,38 @@ export async function sweepDriftSchedule(
 		}
 	}
 
+	// Anti-stampede: an env with a DETECT_DRIFT job still in flight (QUEUED/CLAIMED/PROCESSING) must
+	// NOT get a second one. The cadence check keys off the LATEST drift job's created_at regardless of
+	// status, so a check that was queued a full cadence ago but is still running (a slow/stuck runner)
+	// would otherwise re-enqueue a duplicate each pass and pile up. Exclude those envs here.
+	const inFlightDriftRows = await db
+		.select({ environment_id: jobs.environment_id })
+		.from(jobs)
+		.where(
+			and(
+				eq(jobs.job_type, "DETECT_DRIFT"),
+				inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
+				inArray(jobs.environment_id, envIds),
+			),
+		);
+	const inFlightDriftEnvs = new Set(
+		inFlightDriftRows.map((r) => r.environment_id).filter((id): id is string => id !== null),
+	);
+
 	const stageRows = await db
 		.select({ id: projectEnvironments.id, stage: projectEnvironments.stage })
 		.from(projectEnvironments)
 		.where(inArray(projectEnvironments.id, envIds));
 	const stageById = new Map(stageRows.map((e) => [e.id, e.stage]));
 
-	const candidates: DriftCandidate[] = envIds.map((id) => ({
-		environmentId: id,
-		projectId: latestDeployByEnv.get(id)?.project_id ?? "",
-		tier: tierForStage(stageById.get(id)),
-		lastCheckedAt: lastDriftByEnv.get(id) ?? null,
-	}));
+	const candidates: DriftCandidate[] = envIds
+		.filter((id) => !inFlightDriftEnvs.has(id))
+		.map((id) => ({
+			environmentId: id,
+			projectId: latestDeployByEnv.get(id)?.project_id ?? "",
+			tier: tierForStage(stageById.get(id)),
+			lastCheckedAt: lastDriftByEnv.get(id) ?? null,
+		}));
 
 	const due = selectDueForDrift(candidates, now);
 

@@ -33,7 +33,9 @@ export function ChatTopBar({
 
 	return (
 		<header className="flex h-[52px] flex-none items-center gap-3 border-b border-border px-5">
-			<span className="truncate text-sm font-medium">{title}</span>
+			<span title={title} className="min-w-0 truncate text-sm font-medium">
+				{title}
+			</span>
 
 			<div className="ml-auto flex flex-none items-center gap-2.5">
 				<div className="flex border border-border">

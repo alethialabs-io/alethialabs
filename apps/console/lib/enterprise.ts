@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { enforceDecision, recordActivity } from "@/lib/authz/activity";
-import { checksFor } from "@/lib/authz/fga-mapping";
+import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
 import {
 	expandGrant,
@@ -92,6 +92,7 @@ export interface CoreContext {
 		teamMemberTuple: typeof teamMemberTuple;
 		rolePermissionKeys: typeof rolePermissionKeys;
 		checksFor: typeof checksFor;
+		denyChecksFor: typeof denyChecksFor;
 		enforceDecision: typeof enforceDecision;
 		listOrgResourceIds: typeof listOrgResourceIds;
 		isEnabled: typeof isOpenFgaEnabled;
@@ -162,6 +163,7 @@ function loadEnterprise(): void {
 				teamMemberTuple,
 				rolePermissionKeys,
 				checksFor,
+				denyChecksFor,
 				enforceDecision,
 				listOrgResourceIds,
 				isEnabled: isOpenFgaEnabled,

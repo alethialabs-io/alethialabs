@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Unit tests for the Anthropic-native providerOptions helpers (lib/ai/provider-options):
-// the prompt-caching system-message wrapper and the advisor-step adaptive-thinking gate.
+// the prompt-caching system-message wrapper and the per-model extended-thinking options
+// (adaptive for Sonnet/Opus, fixed budget for Haiku, none for non-Anthropic).
 
 import { describe, expect, it } from "vitest";
 import {
-	advisorThinkingOptions,
 	cachedSystemMessage,
+	thinkingOptions,
 } from "@/lib/ai/provider-options";
 import { resolveModel } from "@/lib/config/ai";
 
@@ -27,21 +28,23 @@ describe("cachedSystemMessage", () => {
 	});
 });
 
-describe("advisorThinkingOptions", () => {
-	it("enables adaptive thinking for a distinct Anthropic advisor (plus/max)", () => {
-		expect(advisorThinkingOptions(SONNET, HAIKU)).toEqual({
+describe("thinkingOptions", () => {
+	it("enables adaptive thinking for Sonnet/Opus (the tier advisors)", () => {
+		expect(thinkingOptions(SONNET)).toEqual({
 			anthropic: { thinking: { type: "adaptive" } },
 		});
-		expect(advisorThinkingOptions(OPUS, HAIKU)).toEqual({
+		expect(thinkingOptions(OPUS)).toEqual({
 			anthropic: { thinking: { type: "adaptive" } },
 		});
 	});
 
-	it("is undefined when the advisor IS the executor (ai_free — no distinct advisor)", () => {
-		expect(advisorThinkingOptions(HAIKU, HAIKU)).toBeUndefined();
+	it("gives Haiku a bounded fixed budget (no adaptive support) — the free tier thinks too", () => {
+		expect(thinkingOptions(HAIKU)).toEqual({
+			anthropic: { thinking: { type: "enabled", budgetTokens: 3072 } },
+		});
 	});
 
-	it("is undefined for a non-Anthropic advisor (thinking is Anthropic-only)", () => {
-		expect(advisorThinkingOptions(OPENAI, HAIKU)).toBeUndefined();
+	it("is undefined for a non-Anthropic model (thinking is Anthropic-only)", () => {
+		expect(thinkingOptions(OPENAI)).toBeUndefined();
 	});
 });

@@ -5,7 +5,7 @@
 import type { ToolUIPart } from "ai";
 import { useCallback } from "react";
 import { AgentChat } from "@/components/agent/agent-chat";
-import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
+import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
 import { SupportCaseApprovalCard } from "@/components/support/ask/support-case-approval-card";
 import { createSupportCaseInputSchema } from "@/lib/ai/support/case";
@@ -40,24 +40,26 @@ export function SupportAskChat({ orgSlug }: { orgSlug: string }) {
 		(part: ToolUIPart) => {
 			if (part.type === "tool-create_support_case") {
 				if (part.state === "input-streaming")
-					return <ToolPending label="Preparing case" />;
+					return <ToolResultFrame part={part} title="Support case" />;
 				const parsed = createSupportCaseInputSchema.safeParse(part.input);
 				if (!parsed.success) return null;
 				return (
-					<SupportCaseApprovalCard
-						proposal={{ id: part.toolCallId, ...parsed.data }}
-						orgSlug={orgSlug}
-						onResolve={(output) =>
-							addToolResult({
-								tool: "create_support_case",
-								toolCallId: part.toolCallId,
-								output,
-							})
-						}
-					/>
+					<ToolResultFrame part={part} title="Support case">
+						<SupportCaseApprovalCard
+							proposal={{ id: part.toolCallId, ...parsed.data }}
+							orgSlug={orgSlug}
+							onResolve={(output) =>
+								addToolResult({
+									tool: "create_support_case",
+									toolCallId: part.toolCallId,
+									output,
+								})
+							}
+						/>
+					</ToolResultFrame>
 				);
 			}
-			// Everything else (read tools) falls back to the default tool card.
+			// Everything else (read tools) falls back to the default framed result.
 			return undefined;
 		},
 		[orgSlug, addToolResult],

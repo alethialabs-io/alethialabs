@@ -26,6 +26,9 @@ const STATIC_RESERVED_SLUGS = [
 	"_next",
 	"blog",
 	"docs",
+	// PostHog reverse-proxy path (next.config.ts rewrites /ingest/* → eu.i.posthog.com). The rewrites
+	// only match a subpath, so reserve the bare segment too — no org can be slugged `ingest`.
+	"ingest",
 ];
 
 /** Org-segment values that must never be a real org slug — the static console/sibling

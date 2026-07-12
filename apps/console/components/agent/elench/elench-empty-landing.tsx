@@ -130,9 +130,14 @@ export function ElenchModalLanding({
 								key={t.id}
 								type="button"
 								onClick={() => onOpenThread(t.id)}
-								className="flex min-h-[68px] flex-1 flex-col justify-between border border-border bg-background p-4 text-left transition-colors hover:bg-muted"
+								className="flex min-h-[68px] min-w-0 flex-1 flex-col justify-between border border-border bg-background p-4 text-left transition-colors hover:bg-muted"
 							>
-								<span className="text-[13px] text-foreground">{t.title}</span>
+								<span
+									title={t.title}
+									className="line-clamp-2 min-w-0 break-words text-[13px] text-foreground"
+								>
+									{t.title}
+								</span>
 								<span className="mt-4 font-mono text-[11px] text-muted-foreground">
 									{relTime(new Date(t.updated_at))}
 								</span>
@@ -161,9 +166,9 @@ export function ElenchModalLanding({
 					className="flex-none gap-1.5 rounded-none"
 					onClick={() => {
 						track("elench_try_now_used", { context });
-						// Open the split pane immediately in the pending dashboard state; the model's
-						// build_dashboard result fills it via the DashboardReadyCard → openArtifact lane.
-						useArtifactStore.getState().open({ dashboard: null }, "dashboard");
+						// Open the split pane's widget grid immediately (its empty state is the
+						// composing hint); the model's build_dashboard blocks auto-pin into it.
+						useArtifactStore.getState().openGrid();
 						onSend(tryNowPrompt(context));
 					}}
 				>

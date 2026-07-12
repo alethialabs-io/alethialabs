@@ -59,6 +59,14 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	// Generative dashboard — client-rendered viz (spec passthrough), in-app only.
 	build_dashboard: "in-app",
 
+	// Widget grid — client-placed pin (spec passthrough), in-app only (no MCP UI).
+	pin_widget: "in-app",
+
+	// Saved artifacts — named widget/dashboard specs; grid-bound UI, in-app only.
+	list_artifacts: "in-app",
+	get_artifact: "in-app",
+	update_artifact: "in-app",
+
 	// Operations — HITL plan/deploy proposals (multi-turn approval).
 	propose_operation: "in-app",
 

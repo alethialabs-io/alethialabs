@@ -84,7 +84,7 @@ irm https://get.alethialabs.io/install.ps1 | iex
 **Homebrew** (macOS / Linux):
 
 ```bash
-brew install alethialabs-io/alethialabs/alethia
+brew install alethialabs-io/tap/alethia
 ```
 
 **Docker**:

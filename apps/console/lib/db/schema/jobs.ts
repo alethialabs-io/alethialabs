@@ -7,6 +7,7 @@ import {
 	bigint,
 	boolean,
 	index,
+	integer,
 	jsonb,
 	pgTable,
 	smallint,
@@ -78,6 +79,17 @@ export const jobs = pgTable(
 		claimed_at: timestamp({ withTimezone: true }),
 		started_at: timestamp({ withTimezone: true }),
 		completed_at: timestamp({ withTimezone: true }),
+		// Poison-job cap. recover_stale_jobs increments `attempts` each time it requeues a
+		// stale job (dead runner OR stalled-but-alive); once attempts >= max_attempts it fails
+		// the job TERMINAL instead of requeuing forever — a job that repeatedly kills its runner
+		// no longer churns the queue indefinitely.
+		attempts: integer().notNull().default(0),
+		max_attempts: integer().notNull().default(5),
+		// Progress heartbeat — distinct from runner LIVENESS (runners.last_heartbeat). The runner
+		// stamps this as it makes real forward progress (a stage transition / log flush, via
+		// update_job_status + insert_job_log). A runner that heartbeats but hangs mid-apply leaves
+		// progress_at stale; recover_stale_jobs treats a long progress stall as recoverable.
+		progress_at: timestamp({ withTimezone: true }),
 		// When this job's managed-runner minutes were reported to the billing meter
 		// (Stripe). Set once on terminal status → idempotent (never double-billed).
 		usage_reported_at: timestamp({ withTimezone: true }),

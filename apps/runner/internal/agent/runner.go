@@ -15,10 +15,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/obs"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Config struct {
@@ -137,6 +142,7 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 
 	if cancelled, err := w.api.Heartbeat(); err != nil {
 		Log().Error("initial heartbeat failed", "err", err.Error())
+		captureError(err, map[string]string{"op": "heartbeat", "runner_id": w.config.RunnerID})
 	} else {
 		w.applyHeartbeatCancels(cancelled)
 	}
@@ -148,6 +154,7 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			if cancelled, err := w.api.Heartbeat(); err != nil {
 				Log().Error("heartbeat failed", "err", err.Error())
+				captureError(err, map[string]string{"op": "heartbeat", "runner_id": w.config.RunnerID})
 			} else {
 				w.applyHeartbeatCancels(cancelled)
 			}
@@ -210,6 +217,7 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			claim, err := w.api.ClaimJob()
 			if err != nil {
 				Log().Error("failed to claim job", "err", err.Error())
+				captureError(err, map[string]string{"op": "claim", "runner_id": w.config.RunnerID})
 				break
 			}
 			if claim.Job == nil {
@@ -276,13 +284,38 @@ func (w *Runner) wakeLoop(ctx context.Context, onEvent func(WakeEvent)) {
 	}
 }
 
-func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
+func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr error) {
 	job := claim.Job
 	traceparent := job.Traceparent
 	traceID := traceIDFromTraceparent(traceparent)
 	// Operational logger for this job's lifetime — structured JSON to stderr carrying
 	// the correlation ids so a runner line joins the console trace.
 	jlog := LogWith(w.config.RunnerID, traceID, job.ID)
+
+	// Anchor this job's work to the traceparent minted at enqueue, then open the runner's
+	// per-job span. The console started the root at enqueue and stamped the traceparent on
+	// the job; by re-anchoring to the SAME traceparent here, this span (and the provisioner
+	// stage spans nested under it via ctx) share ONE trace-id with the console spans — the
+	// console↔runner JOIN. No-op when no OTLP endpoint is configured. job_id lives as a span
+	// ATTRIBUTE (fine — spans are high-cardinality), never as a metric label.
+	provider := ""
+	if claim.CloudIdentity != nil {
+		provider = claim.CloudIdentity.Provider
+	}
+	ctx = obs.ContextFromTraceparent(ctx, traceparent)
+	ctx, span := obs.Tracer().Start(ctx, "job.execute",
+		trace.WithAttributes(
+			attribute.String("alethia.job_id", job.ID),
+			attribute.String("alethia.job_type", job.JobType),
+			attribute.String("provider", provider),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
 
 	// Customer-facing job streams (STDOUT/STDERR) — trace-stamped so each log line
 	// correlates. SYSTEM ships the runner's OPERATIONAL failures to the console (they
@@ -301,6 +334,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", nil); err != nil {
 		jlog.Error("failed to update job status to PROCESSING", "err", err.Error())
 		fmt.Fprintf(sysLogger, "Failed to update job status to PROCESSING: %v\n", err)
+		captureError(err, map[string]string{
+			"op": "update_status", "runner_id": w.config.RunnerID, "job_id": job.ID, "trace_id": traceID,
+		})
 	}
 
 	if claim.CloudIdentity != nil {
@@ -405,11 +441,6 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		}
 	}
 
-	provider := ""
-	if claim.CloudIdentity != nil {
-		provider = claim.CloudIdentity.Provider
-	}
-
 	var execErr error
 	// Switch on the generated types.JobType so `exhaustive` (golangci-lint) forces a
 	// case for every provision_job_type value — adding a job type here is mandatory,
@@ -435,6 +466,10 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeIacScan:
 		execErr = w.executeIacScan(ctx, job, stdoutLogger, stderrLogger)
+	case types.JobTypeStateSurgery:
+		// Break-glass privileged state surgery — ships INERT (fail-closed); performs no state
+		// mutation. See state_surgery.go.
+		execErr = w.executeStateSurgery(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -460,6 +495,14 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			return execErr
 		}
 		jlog.Error("job execution failed", "job_type", job.JobType, "err", execErr.Error())
+		// The real provisioning-failure capture (credential-activation + per-job-type errors all
+		// funnel here). Guarded above by wasCancelled, so a user cancel is never reported as an error.
+		captureError(execErr, map[string]string{
+			"job_type":  job.JobType,
+			"job_id":    job.ID,
+			"trace_id":  traceID,
+			"runner_id": w.config.RunnerID,
+		})
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
 		stderrLogger.Close()
 		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
@@ -624,54 +667,65 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
 	}
 	if result != nil {
-		metadata := map[string]any{}
-		if result.ClusterName != "" {
-			metadata["cluster_name"] = result.ClusterName
-		}
-		if result.ClusterEndpoint != "" {
-			metadata["cluster_endpoint"] = result.ClusterEndpoint
-		}
-		if result.ClusterReady {
-			// The reachability gate confirmed the API server answered + nodes are Ready —
-			// "SUCCESS" means a working cluster, not just that `tofu apply` exited 0.
-			metadata["cluster_ready"] = true
-		}
-		if result.ArgocdURL != "" {
-			metadata["argocd_url"] = result.ArgocdURL
-		}
-		if result.ArgocdAdminPassword != "" {
-			metadata["argocd_admin_password"] = result.ArgocdAdminPassword
-		}
-		// Persist outputs to the console, but scrub credential-bearing outputs (full
-		// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
-		// so they never land in execution_metadata (console Postgres). The pipeline already
-		// consumed the full outputs in-process above.
-		if scrubbed := scrubSensitiveOutputs(result.Outputs); len(scrubbed) > 0 {
-			metadata["outputs"] = scrubbed
-		}
-		if result.VerifyReport != nil {
-			metadata["verify_result"] = result.VerifyReport
-		}
-		if result.VerifyReceipt != nil {
-			metadata["verify_receipt"] = result.VerifyReceipt
-		}
-		if len(result.AddOnStatus) > 0 {
-			metadata["addon_status"] = result.AddOnStatus
-		}
-		if len(result.InfraServices) > 0 {
-			// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
-			// Non-sensitive, safe to persist to the console alongside addon_status.
-			metadata["infra_services"] = result.InfraServices
-		}
-		if result.SecurityPosture != nil {
-			metadata["security_report"] = result.SecurityPosture
-		}
-		if len(metadata) > 0 {
+		if metadata := buildDeployMetadata(result); len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 		}
 	}
 
 	return nil
+}
+
+// buildDeployMetadata assembles the execution_metadata the runner persists to the console
+// (Postgres) from a completed deploy's PlanResult. Extracted as a pure function so the
+// secret-non-leakage regression test can assert directly on the persisted surface: the
+// full cluster credentials (kubeconfigs / client keys) in `result.Outputs` are consumed
+// in-process by the deploy pipeline, but only a SCRUBBED copy may cross into the console
+// metadata (which lands in DB backups/replicas and is readable by cross-tenant support
+// staff). See scrubSensitiveOutputs + docs/compliance/security-e2e-matrix.md (CC6.7).
+func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
+	metadata := map[string]any{}
+	if result.ClusterName != "" {
+		metadata["cluster_name"] = result.ClusterName
+	}
+	if result.ClusterEndpoint != "" {
+		metadata["cluster_endpoint"] = result.ClusterEndpoint
+	}
+	if result.ClusterReady {
+		// The reachability gate confirmed the API server answered + nodes are Ready —
+		// "SUCCESS" means a working cluster, not just that `tofu apply` exited 0.
+		metadata["cluster_ready"] = true
+	}
+	if result.ArgocdURL != "" {
+		metadata["argocd_url"] = result.ArgocdURL
+	}
+	if result.ArgocdAdminPassword != "" {
+		metadata["argocd_admin_password"] = result.ArgocdAdminPassword
+	}
+	// Persist outputs to the console, but scrub credential-bearing outputs (full
+	// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
+	// so they never land in execution_metadata (console Postgres). The pipeline already
+	// consumed the full outputs in-process above.
+	if scrubbed := scrubSensitiveOutputs(result.Outputs); len(scrubbed) > 0 {
+		metadata["outputs"] = scrubbed
+	}
+	if result.VerifyReport != nil {
+		metadata["verify_result"] = result.VerifyReport
+	}
+	if result.VerifyReceipt != nil {
+		metadata["verify_receipt"] = result.VerifyReceipt
+	}
+	if len(result.AddOnStatus) > 0 {
+		metadata["addon_status"] = result.AddOnStatus
+	}
+	if len(result.InfraServices) > 0 {
+		// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
+		// Non-sensitive, safe to persist to the console alongside addon_status.
+		metadata["infra_services"] = result.InfraServices
+	}
+	if result.SecurityPosture != nil {
+		metadata["security_report"] = result.SecurityPosture
+	}
+	return metadata
 }
 
 func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {

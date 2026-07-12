@@ -23,7 +23,7 @@ package: **never report a pass on something we could not inspect.** Such cases a
 `not_evaluable` with a plain-language `coverage` note. A silent pass on an un-inspectable
 resource is exactly the false-PASS the verification claim must never make.
 
-## Controls (catalog `elench-controls-0.1.0`)
+## Controls (catalog `elench-controls-0.2.0`)
 
 `Evaluate` detects **every** recognized cloud present in the plan and runs the **union** of those
 providers' control sets — a single OpenTofu plan can mix clouds (an AWS EKS cluster alongside an Azure
@@ -33,6 +33,36 @@ it is scoped to only that provider's resources. A plan with **no** recognized cl
 sets (the fail-closed default — never zero checks). `Report.Provider` is the detected set: a single
 cloud by name (`aws`), a multi-cloud plan as a `+`-joined set (`aws+azure`), or `unknown`. Each control
 records its own `provider` so a uniform UI can't imply coverage a control doesn't have.
+
+**The fail-closed scope backstop (`SCOPE-001`).** Every control filters to its own resource types, so a
+plan whose resources belong to no controlled provider would otherwise run every control set to a
+"nothing in scope" vacuous **pass** — a silent hole for any provider the gate can't reason about (a
+typo'd/custom provider, or AWS Cloud Control `awscc_`, whose resources the `aws_` controls never match).
+`SCOPE-001` closes it: a plan is **evaluable** iff every managed resource belongs to a provider that is
+either **controlled** (`aws`/`google`/`azurerm`/`azuread`) or on the **supported-no-controls allowlist**
+— clouds with no keyless/OIDC/least-priv surface *by design* (**Hetzner** `hcloud` is token-auth, the
+token is the ceiling; **Cloudflare**), the **cluster-layer** providers that co-occur in every real
+cluster plan and carry no cloud-authority surface (`talos`/`imager`/`minio`/`helm`/`kubernetes`/
+`kubectl` — they configure the cluster, not a cloud IAM identity), plus the utility providers that
+create no cloud authority (`random`/`tls`/`null`/`local`/`time`/`external`). Those legitimately stay a
+**pass** — Alethia's shipped Hetzner/Talos template is `hcloud`+`talos`+`imager`+`minio`+`helm`, so
+without the cluster-layer group a real Hetzner provision would wrongly flip to not_evaluable. Any
+resource from a provider outside that union makes the report **`not_evaluable`** (with an honest
+per-resource note naming the unrecognized provider) rather than a pass — the gate never implies it
+checked infrastructure it cannot see. It does **not** blanket-deny: a controlled cloud's real violation
+still hard-fails (fail precedence over not_evaluable), and an unrecognized provider only demotes an
+otherwise-clean plan from pass to not_evaluable. The control is emitted only when it fires (a
+fully-recognized plan keeps its exact control list) and is deliberately kept out of the corpus
+fail-coverage/mutation gates since it never emits `fail`.
+
+**This is an evidence-integrity backstop, not a deny-gate.** `not_evaluable` is non-blocking (like
+every other honest `not_evaluable` — computed IAM policies, opaque role-def ids): it stops the gate
+forging a *verified/pass* receipt on a plan it could not inspect, but it does **not** by itself block
+`tofu apply` (only a hard `fail` does). So an all-unrecognized-provider plan still applies — with an
+honest "not evaluated" receipt rather than a false pass. **Alibaba** (`alicloud`) is a managed cloud but
+has no authored control set yet, so it is deliberately **off** the allowlist (it has RAM/OIDC authority
+— it must eventually get real controls, not a no-controls pass): an Alibaba plan is honestly
+`not_evaluable` until those controls exist. This closed a prior silent false-PASS on Alibaba.
 
 **AWS**
 

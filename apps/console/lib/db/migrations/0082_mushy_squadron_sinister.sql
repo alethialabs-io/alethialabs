@@ -1,0 +1,1 @@
+CREATE INDEX "idx_fleet_actions_created_at" ON "fleet_actions" USING btree ("created_at");

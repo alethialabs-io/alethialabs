@@ -61,6 +61,15 @@ func EvaluateWithOptions(ctx context.Context, plan *tfjson.Plan, opts Options) (
 	rep.Provider = providerLabel(providers)
 	rep.Controls = selectControls(providers, planned)
 
+	// Fail-closed scope backstop: if the plan contains a resource from a provider we
+	// neither control nor recognize as a legitimate no-control cloud, the controls
+	// above never saw it — SCOPE-001 records that and demotes the report to
+	// not_evaluable so an all-unknown plan can no longer be a vacuous PASS. Appended
+	// only when it fires, so fully-recognized plans keep their exact control list.
+	if scope := controlEvaluableScope(planned); scope.Status == StatusNotEvaluable {
+		rep.Controls = append(rep.Controls, scope)
+	}
+
 	// Access Analyzer corroboration is AWS-only and opt-in (needs a checker). Run it
 	// whenever AWS resources are present — including in a multi-cloud plan — or when
 	// no cloud was recognized at all (the fail-closed default that runs every set).

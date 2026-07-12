@@ -8,11 +8,35 @@
 
 import { plan, targetCount } from "@/lib/fleet/plan";
 import type {
+	FleetAction,
+	FleetActionReason,
 	FleetProvider,
 	FleetTarget,
 	ObservedInstance,
 } from "@/lib/fleet/types";
+import type { CloudProvider } from "@/lib/db/schema";
+import type { FleetActionMetadata } from "@/types/jsonb.types";
+
+/** One durable fleet-action record the controller appends to the fleet_actions ledger — the WHY
+ *  behind a create/drain/destroy, plus the decision inputs (queue depth + observed pool size). */
+export interface FleetActionRecord {
+	provider: CloudProvider;
+	action: FleetAction["type"];
+	reason: FleetActionReason;
+	/** Correlated runner (drain/destroy); null for a create (its runner self-registers later). */
+	runnerId: string | null;
+	/** QUEUED backlog for the provider at decision time. */
+	queueDepth: number;
+	/** Observed online (claimable) pool size at decision time. */
+	poolSize: number;
+	metadata?: FleetActionMetadata;
+}
 import { log } from "@/lib/observability/log";
+import {
+	recordFleetSize,
+	recordQueueDepth,
+	recordScalerAction,
+} from "@/lib/observability/metrics";
 
 const flog = log.child({ component: "fleet" });
 
@@ -46,6 +70,10 @@ export interface ControllerDeps {
 	bootGraceSeconds: number;
 	/** Mints + records a per-VM bootstrap token (E0 0b); returns the plaintext for the VM cloud-init. */
 	mintBootstrapToken(): Promise<string>;
+	/** Append one row to the durable fleet_actions ledger (why a VM was created/drained/destroyed).
+	 *  Best-effort by contract — the controller wraps every call so a ledger write can NEVER break a
+	 *  reconcile (the ledger is observability, not a correctness dependency). */
+	recordAction(record: FleetActionRecord): Promise<void>;
 }
 
 /** Per-provider hysteresis carried across ticks (surplus-over-target counter). */
@@ -109,6 +137,12 @@ export async function reconcilePool(
 	const surplusTicks = onlineNow > target ? (surplus.get(project.provider) ?? 0) + 1 : 0;
 	surplus.set(project.provider, surplusTicks);
 
+	// Telemetry (no-op unless an OTLP endpoint is configured): sample the per-provider
+	// queue depth + online fleet size each tick. Labels are the low-cardinality provider
+	// only — never a job_id / runner_id.
+	recordQueueDepth(project.provider, backlog);
+	recordFleetSize(project.provider, onlineNow);
+
 	const actions = plan(resolved, {
 		instances: observedInstances,
 		backlog,
@@ -118,7 +152,29 @@ export async function reconcilePool(
 	});
 
 	const byInstance = new Map(observedInstances.map((i) => [i.instanceId, i]));
+
+	/** Append one ledger row, best-effort: a fleet_actions write must NEVER break a reconcile. */
+	const record = async (
+		a: FleetAction,
+		runnerId: string | null,
+		metadata: FleetActionMetadata,
+	): Promise<void> => {
+		await deps
+			.recordAction({
+				provider: project.provider,
+				action: a.type,
+				reason: a.reason,
+				runnerId,
+				queueDepth: backlog,
+				poolSize: onlineNow,
+				metadata,
+			})
+			.catch((err) => console.error("[fleet] recordAction failed:", err));
+	};
+
 	for (const a of actions) {
+		// Count the scaler action (no-op unless telemetry is on) — provider + action only.
+		recordScalerAction(project.provider, a.type);
 		if (a.type === "create") {
 			// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
 			// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.
@@ -128,12 +184,18 @@ export async function reconcilePool(
 				version: a.version,
 				bootstrapToken,
 			});
+			await record(a, null, { location: a.location, version: a.version });
 		} else if (a.type === "drain") {
 			await deps.drain(a.runnerId);
+			await record(a, a.runnerId, { instance_id: a.instanceId });
 		} else {
 			await provider.destroy(a.instanceId);
-			const runnerId = byInstance.get(a.instanceId)?.runnerId;
+			const runnerId = byInstance.get(a.instanceId)?.runnerId ?? null;
 			if (runnerId) await deps.retire(runnerId);
+			await record(a, runnerId, {
+				instance_id: a.instanceId,
+				location: byInstance.get(a.instanceId)?.location,
+			});
 		}
 	}
 	return actions.length;

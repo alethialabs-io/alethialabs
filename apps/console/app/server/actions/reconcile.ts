@@ -80,22 +80,26 @@ export async function maybeAutoHeal(
 		.limit(1);
 	if (!lastDeploy) return;
 
-	// Move the env to QUEUED through the CAS FIRST (lib/db/env-status.ts). If it lost the race — a
-	// concurrent transition moved the env out of a healable state between the SELECT above and here —
-	// bail before queuing an orphan auto-heal job that would deploy onto a torn-down / in-flight env.
-	const moved = await transitionEnv(db, environmentId, "enqueueAutoHeal", null, {
-		orgId: env.org_id,
-		projectId,
-	});
-	if (!moved) return;
-	await db
-		.update(projectEnvironments)
-		.set({ last_auto_heal_at: new Date() })
-		.where(eq(projectEnvironments.id, environmentId));
-
-	const [job] = await db
-		.insert(jobs)
-		.values({
+	// Enqueue atomically: the env-status CAS (env → QUEUED), the heal-timestamp bump, and the DEPLOY
+	// job insert are ONE transaction. Previously these ran as three separate statements on the service
+	// Db, so a failure of the job insert AFTER the CAS had already moved the env to QUEUED left the env
+	// stuck QUEUED with no job behind it (an orphaned in-flight state the scaler would never clear).
+	// Wrapping them means either all three land or none do — the CAS rolls back with the insert.
+	//
+	// The CAS runs FIRST inside the tx so a lost race (a concurrent transition moved the env out of a
+	// healable state between the guard SELECT above and here) aborts before we queue an orphan auto-heal
+	// job that would deploy onto a torn-down / in-flight env.
+	const enqueued = await db.transaction(async (tx) => {
+		const moved = await transitionEnv(tx, environmentId, "enqueueAutoHeal", null, {
+			orgId: env.org_id,
+			projectId,
+		});
+		if (!moved) return false;
+		await tx
+			.update(projectEnvironments)
+			.set({ last_auto_heal_at: new Date() })
+			.where(eq(projectEnvironments.id, environmentId));
+		await tx.insert(jobs).values({
 			user_id: env.user_id,
 			org_id: env.org_id ?? undefined,
 			project_id: projectId,
@@ -106,10 +110,11 @@ export async function maybeAutoHeal(
 			status: "QUEUED",
 			// An auto-heal re-apply is a fresh operation → a new trace root.
 			traceparent: newTraceparent(),
-		})
-		.returning({ id: jobs.id });
-	void job;
-	notifyScaler();
+		});
+		return true;
+	});
+	// Only wake the scaler once the whole enqueue committed (a rolled-back tx queued nothing).
+	if (enqueued) notifyScaler();
 }
 
 /** Per-environment reconcile state for the console's stability badges. */

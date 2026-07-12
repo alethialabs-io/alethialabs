@@ -28,18 +28,31 @@ export class OpenFgaPdp implements Pdp {
 		action: Action,
 		resource: ResourceRef,
 	): Promise<Decision> {
-		const checks = this.core.fga.checksFor(resource.type, action, {
-			id: resource.id,
-			orgId: actor.orgId,
-		});
+		const opts = { id: resource.id, orgId: actor.orgId };
+		const allowChecks = this.core.fga.checksFor(resource.type, action, opts);
+		const denyChecks = this.core.fga.denyChecksFor(resource.type, action, opts);
 		const user = `user:${actor.userId}`;
-		// 1–2 checks ORed: the instance grant and/or the org-wide capability.
-		const results = await Promise.all(
-			checks.map((c) =>
-				this.client.check({ user, relation: c.relation, object: c.object }),
+		// Explicit-deny-wins (IAM-style, matching PostgresRbacPDP.decide): the actor is
+		// allowed ⇔ SOME allow check passes AND NO deny check passes. The allow half ORs
+		// the instance grant and/or the raw org-wide capability; the deny half VETOES on a
+		// per-instance/org deny. Without this veto the raw org capability would silently
+		// override a per-instance deny (the community↔enterprise parity bug this closes).
+		const [allowResults, denyResults] = await Promise.all([
+			Promise.all(
+				allowChecks.map((c) =>
+					this.client.check({ user, relation: c.relation, object: c.object }),
+				),
 			),
-		);
-		return results.some((r) => r.allowed === true)
+			Promise.all(
+				denyChecks.map((c) =>
+					this.client.check({ user, relation: c.relation, object: c.object }),
+				),
+			),
+		]);
+		if (denyResults.some((r) => r.allowed === true)) {
+			return { allowed: false, reason: "explicit_deny" };
+		}
+		return allowResults.some((r) => r.allowed === true)
 			? { allowed: true }
 			: { allowed: false, reason: "no_grant" };
 	}
@@ -64,16 +77,43 @@ export class OpenFgaPdp implements Pdp {
 	): Promise<string[]> {
 		const user = `user:${actor.userId}`;
 		// Org-wide capability ⇒ every instance of the type in the org (matches the
-		// PostgresRbacPDP org-wide path).
+		// PostgresRbacPDP org-wide path). This must be DENY-AWARE, exactly like that
+		// engine — else "allow the org except this project/except this action" silently
+		// over-permits here (the same explicit-deny-wins parity `can()` enforces).
 		const orgCap = await this.client.check({
 			user,
 			relation: `${resourceType}_${action}`,
 			object: `org:${actor.orgId}`,
 		});
 		if (orgCap.allowed === true) {
-			return this.core.fga.listOrgResourceIds(resourceType, actor.orgId);
+			// An org-wide deny on this permission removes everything (Postgres returns []).
+			const orgDeny = await this.client.check({
+				user,
+				relation: `${resourceType}_deny_${action}`,
+				object: `org:${actor.orgId}`,
+			});
+			if (orgDeny.allowed === true) return [];
+			// Otherwise: every org instance MINUS the ones the actor is explicitly denied.
+			// `deny_<action>` = a direct per-instance `perm_deny` (no parent edge needed)
+			// OR a deny inherited down the hierarchy — so listObjects captures per-instance
+			// and descendant-of-denied-container denials, mirroring Postgres' deny subtraction.
+			const [allIds, deniedRes] = await Promise.all([
+				this.core.fga.listOrgResourceIds(resourceType, actor.orgId),
+				this.client.listObjects({
+					user,
+					relation: `deny_${action}`,
+					type: resourceType,
+				}),
+			]);
+			const denied = new Set(
+				(deniedRes.objects ?? [])
+					.map((o) => o.split(":")[1])
+					.filter((id): id is string => Boolean(id)),
+			);
+			return allIds.filter((id) => !denied.has(id));
 		}
-		// Otherwise the instances the actor can act on directly (scoped grants).
+		// Otherwise the instances the actor can act on directly (scoped grants). `can_<action>`
+		// is itself deny-aware in the model (allow MINUS deny), so this path needs no subtraction.
 		const res = await this.client.listObjects({
 			user,
 			relation: `can_${action}`,

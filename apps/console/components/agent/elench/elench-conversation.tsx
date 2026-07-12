@@ -18,6 +18,8 @@ import {
 	type ArtifactTab,
 	useArtifactStore,
 } from "@/lib/stores/use-artifact-store";
+import { useWidgetAutoPin } from "@/components/agent/widgets/use-widget-auto-pin";
+import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import { elenchChatId, useElenchStore } from "@/lib/stores/use-elench-store";
 import { ElenchComposer } from "./elench-composer";
 import {
@@ -94,6 +96,7 @@ export function ElenchConversation({
 							model: s.model,
 							mentions: s.pendingMentions,
 							deepReasoning: s.deepReasoning,
+							cellTarget: useWidgetGridStore.getState().pendingCellTarget,
 						};
 					}
 				: () => ({
@@ -136,6 +139,16 @@ export function ElenchConversation({
 		if (initialMessages.at(-1)?.role === "user") void resumeStream();
 	}, [epoch, initialMessages, resumeStream]);
 
+	// The per-chat widget grid: hydrate it for the active thread and auto-pin matching
+	// tool results (registry reads + exploded build_dashboard blocks + pin_widget).
+	const hydrateGrid = useWidgetGridStore((s) => s.hydrate);
+	const resetGrid = useWidgetGridStore((s) => s.reset);
+	useEffect(() => {
+		if (activeId) void hydrateGrid(activeId);
+		else resetGrid();
+	}, [activeId, hydrateGrid, resetGrid]);
+	useWidgetAutoPin(messages, activeId);
+
 	const setPendingMentions = useElenchStore((s) => s.setPendingMentions);
 
 	const onSend = useCallback(
@@ -167,32 +180,54 @@ export function ElenchConversation({
 		setSeedPrompt(null);
 	}, [seedPrompt, messages.length, onSend, setSeedPrompt]);
 
+	// Empty-cell prompt dispatch: a submitted cell composer stages the target cell
+	// (prepareBody reads it fresh at send time → the route hints the model to fill
+	// exactly that cell) and sends the text as a normal, visible chat message.
+	const pendingCellRequest = useWidgetGridStore((s) => s.pendingCellRequest);
+	useEffect(() => {
+		if (!pendingCellRequest) return;
+		const grid = useWidgetGridStore.getState();
+		grid.clearPendingCellRequest();
+		grid.setPendingCellTarget({ x: pendingCellRequest.x, y: pendingCellRequest.y });
+		void (async () => {
+			await onSend(pendingCellRequest.text);
+			useWidgetGridStore.getState().setPendingCellTarget(null);
+		})();
+	}, [pendingCellRequest, onSend]);
+
 	// Tool-render lanes by context. Org routes artifacts through the panel; if the
 	// artifact opens while docked (panel view), maximize to the modal first (the
 	// artifact panel needs the modal's room).
 	const artifactOpen = useArtifactStore((s) => s.open);
 	const openArtifact = useCallback(
 		(artifact: Artifact, tab: ArtifactTab) => {
-			// The artifact panel (incl. a generative dashboard) needs the modal's room —
-			// maximize a docked panel first so the split pane has somewhere to open.
+			// The inspector needs the modal's room — maximize a docked panel first so the
+			// split pane has somewhere to open.
 			if (useElenchStore.getState().view === "panel")
 				useElenchStore.getState().maximize();
 			artifactOpen(artifact, tab);
 		},
 		[artifactOpen],
 	);
+	const openGrid = useCallback(() => {
+		if (useElenchStore.getState().view === "panel")
+			useElenchStore.getState().maximize();
+		useArtifactStore.getState().openGrid();
+		track("elench_grid_opened", { context: isOrg ? "org" : "project" });
+	}, [isOrg]);
 	const [accepted, setAccepted] = useState<Record<string, boolean>>({});
 	const renderToolPart = useMemo(
 		() =>
 			isOrg
-				? orgRenderToolPart({ openArtifact, addToolResult })
+				? orgRenderToolPart({ openArtifact, openGrid, addToolResult })
 				: projectRenderToolPart({
 						accepted,
 						setAccepted,
 						addToolResult,
 						openArtifact,
+						openGrid,
 					}),
-		[isOrg, openArtifact, accepted, addToolResult],
+		[isOrg, openArtifact, openGrid, accepted, addToolResult],
 	);
 
 	// Empty only once the thread list has resolved (while loading, the chrome shows the

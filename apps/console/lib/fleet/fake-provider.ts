@@ -6,7 +6,11 @@
 // the runner lifecycle (create→booting→online, drain, crash). Tests drive it through
 // reconcile ticks and assert convergence + the warmMin invariant. See dataroom/spec/mvp/26.
 
-import type { ControllerDeps, RunnerState } from "@/lib/fleet/controller";
+import type {
+	ControllerDeps,
+	FleetActionRecord,
+	RunnerState,
+} from "@/lib/fleet/controller";
 import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 
 interface FakeInstance {
@@ -28,6 +32,8 @@ export class FakeFleet implements FleetProvider {
 	bootGraceSeconds = 180;
 	/** Records persistObserved calls so tests can assert location was written back. */
 	readonly persisted = new Map<string, { location: string; version: string | null }>();
+	/** Records recordAction calls so tests can assert the ledger captured each action + reason. */
+	readonly recorded: FleetActionRecord[] = [];
 
 	/** Seed an already-running instance (for mid-state tests). */
 	seed(over: Partial<FakeInstance> & { version: string | null; location: string }): string {
@@ -102,6 +108,9 @@ export class FakeFleet implements FleetProvider {
 			},
 			bootGraceSeconds: this.bootGraceSeconds,
 			mintBootstrapToken: async () => `fake-boot-${this.idc}`,
+			recordAction: async (record) => {
+				this.recorded.push(record);
+			},
 		};
 	}
 

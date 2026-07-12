@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { listArtifacts } from "@/app/server/actions/artifacts";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
@@ -19,6 +20,7 @@ const TYPE_RANK: Record<MentionType, number> = {
 	connector: 3,
 	runner: 4,
 	identity: 5,
+	artifact: 6,
 };
 
 /** Resolve one source to mention rows; a failing source contributes nothing. */
@@ -39,7 +41,7 @@ async function safe(fn: () => Promise<MentionResult[]>): Promise<MentionResult[]
  * merged list so the popover stays tight.
  */
 export async function searchMentions(query = ""): Promise<MentionResult[]> {
-	const [projects, clusters, jobs, connectors, runners, identities] =
+	const [projects, clusters, jobs, connectors, runners, identities, artifacts] =
 		await Promise.all([
 			safe(async () =>
 				(await getProjects()).map((p) => ({
@@ -95,6 +97,14 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 					sublabel: i.provider,
 				})),
 			),
+			safe(async () =>
+				(await listArtifacts()).map((a) => ({
+					id: a.id,
+					type: "artifact" as const,
+					label: a.name,
+					sublabel: `${a.kind} · ${a.spec.widgets.length} widgets`,
+				})),
+			),
 		]);
 
 	const all: MentionResult[] = [
@@ -104,6 +114,7 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 		...connectors,
 		...runners,
 		...identities,
+		...artifacts,
 	];
 
 	const needle = query.trim().toLowerCase();

@@ -45,7 +45,27 @@ const nextConfig: NextConfig = {
 	// package is absent) doesn't try to resolve it.
 	// pino resolves its transport/worker files at runtime — keep it external so the
 	// bundler doesn't try to statically trace those dynamic requires.
-	serverExternalPackages: ["@alethia/ee", "pino"],
+	// The OpenTelemetry SDK (traces + metrics, wired in instrumentation.ts) similarly
+	// resolves exporters/context managers at runtime and is node-only — keep it external
+	// so the server bundle doesn't statically trace it (and so an OTLP-less build carries
+	// no telemetry weight in the client/edge graphs).
+	serverExternalPackages: [
+		"@alethia/ee",
+		"pino",
+		// Sentry error tracking is server-only (booted in instrumentation.ts, DSN-gated). Keep it
+		// external — like the OTel packages below — so it is not statically bundled into the
+		// client/edge graphs and a DSN-less build carries no error-tracking weight there.
+		"@sentry/nextjs",
+		"@opentelemetry/api",
+		"@opentelemetry/resources",
+		"@opentelemetry/sdk-trace-node",
+		"@opentelemetry/sdk-metrics",
+		"@opentelemetry/exporter-trace-otlp-http",
+		"@opentelemetry/exporter-metrics-otlp-http",
+		"@opentelemetry/api-logs",
+		"@opentelemetry/sdk-logs",
+		"@opentelemetry/exporter-logs-otlp-http",
+	],
 	async rewrites() {
 		// Serve the CLI install script at the root of get.alethialabs.io
 		// (`curl -fsSL https://get.alethialabs.io | sh`). install.ps1 is reached

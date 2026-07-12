@@ -1,0 +1,244 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# T2 — the real-infra nightly provisioning proof.
+#
+# Where T1 (ci.yml → provision-e2e) drives the real runner against a hermetic local
+# `kind` cluster (no cloud, no cost, merge-queue-gated), T2 drives the SAME spine
+# against a REAL cloud: a real runner binary claims a real DEPLOY job from a real
+# Postgres-backed control plane and provisions a genuine ephemeral cluster from
+# infra/templates/project/<provider>, then asserts the same RunDeployV2 outcomes
+# (SUCCESS + cluster_ready + a signed ed25519 receipt + shipped logs + a Ready node),
+# captures a committable proof, and GUARANTEES teardown.
+#
+# ─────────────────────────  Maintainer-gated (opt-in)  ─────────────────────────
+# This provisions REAL, billable infrastructure, so it is OFF until a maintainer
+# wires the cloud secret. When the required secret is absent the job SKIPS cleanly
+# with a loud warning (never a false red); when the secret is present, any break is a
+# HARD FAIL (never a false green). To enable Hetzner: add the repo secret
+# `HCLOUD_TOKEN` (a scoped Hetzner Cloud API token). Cost per run is a single tiny
+# Talos cluster (1 control plane + 1 worker, cheapest cax11 ARM) up for ~15–25 min,
+# torn down at the end — on the order of a few euro-cents. See demos/proofs/README.md.
+#
+# SAFETY: the Hetzner account is shared with prod. Teardown is guaranteed and always
+# label-scoped to THIS run's unique cluster — never an account-wide delete (see
+# scripts/e2e/hcloud-cleanup.sh and the scope-destructive-cloud-ops memory).
+
+name: E2E Nightly (T2 · real cloud)
+
+on:
+  schedule:
+    # 03:17 UTC nightly (off the hour to avoid the cron stampede).
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Cloud provider to prove (only hetzner today; aws/azure later)."
+        type: choice
+        options:
+          - hetzner
+        default: hetzner
+      region:
+        description: "Cloud region/location (hetzner: nbg1/fsn1/hel1)."
+        type: string
+        default: nbg1
+
+# Serialize: never let two nightly runs provision into the SHARED account at once.
+# cancel-in-progress:false so an in-flight run finishes (and tears down) before the
+# next starts — a cancelled mid-apply run would leak, and though the always() cleanup
+# would catch it, not racing is safer.
+concurrency:
+  group: e2e-nightly-${{ github.event.inputs.provider || 'hetzner' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: Provision + verify + teardown (real cloud)
+    runs-on: ubuntu-latest
+    # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Hetzner first (cheapest, token-auth). aws/azure slot in here later — each
+        # needs its own secret wired into the gate step's `case` below.
+        provider: [hetzner]
+    services:
+      # Mirrors ci.yml's integration/provision-e2e jobs: a throwaway Postgres that
+      # db:migrate turns into the real control-plane schema + programmables
+      # (claim_next_job / update_job_status / insert_job_log) the runner exercises.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The gated cloud secret. Empty when a maintainer hasn't opted in → the gate
+      # skips the real work. Also read directly by the T2 runner process (HCLOUD_TOKEN
+      # is the env var the hcloud/imager/talos providers authenticate from).
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # A missing prerequisite/token, once we've decided to run, is a HARD FAIL — never
+      # a green skip. (The gate below decides WHETHER to run; this makes the run honest.)
+      ALETHIA_E2E_T2_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Secret gate: decide whether the real proof runs. Absent secret ⇒ skip
+      #    cleanly with a LOUD warning (never red). Present ⇒ run for real. Secrets
+      #    can't be used in a job-level `if:`, so we gate every heavy step on this
+      #    step's output instead. ──
+      - name: Gate on the provider secret
+        id: gate
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          case "$PROVIDER" in
+            hetzner) TOKEN="$HCLOUD_TOKEN"; SECRET_NAME="HCLOUD_TOKEN" ;;
+            # aws)   TOKEN="$AWS_ROLE_ARN";  SECRET_NAME="AWS_ROLE_ARN"  ;;
+            # azure) TOKEN="$AZURE_CREDS";   SECRET_NAME="AZURE_CREDS"   ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          if [ -n "$TOKEN" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::T2 real-cloud proof ENABLED for $PROVIDER ($SECRET_NAME present) — provisioning a real ephemeral cluster."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. See demos/proofs/README.md."
+          fi
+
+      # ── Deterministic, unique-per-run cluster identity. `<project>-<env>` is exactly
+      #    the `cluster` label the template stamps on every resource, and exactly what
+      #    the teardown filters on — so the belt-and-suspenders cleanup can only ever
+      #    match THIS run. ──
+      - name: Compute unique cluster name
+        if: steps.gate.outputs.run == 'true'
+        env:
+          REGION_INPUT: ${{ github.event.inputs.region }}
+        run: |
+          PROJECT="alethia-nl"
+          ENVNAME="${{ github.run_id }}-${{ github.run_attempt }}"
+          {
+            echo "E2E_PROJECT=$PROJECT"
+            echo "E2E_ENV=$ENVNAME"
+            echo "E2E_CLUSTER=$PROJECT-$ENVNAME"
+            echo "E2E_REGION=${REGION_INPUT:-nbg1}"
+          } >> "$GITHUB_ENV"
+          echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME (region ${REGION_INPUT:-nbg1})"
+
+      - uses: pnpm/action-setup@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          go-version: "1.25"
+      - uses: opentofu/setup-opentofu@v1
+        if: steps.gate.outputs.run == 'true'
+        with:
+          tofu_version: "1.9.0"
+      - uses: azure/setup-helm@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          version: v3.16.4
+      - uses: azure/setup-kubectl@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - name: Install hcloud CLI (belt-and-suspenders teardown)
+        if: steps.gate.outputs.run == 'true'
+        env:
+          HCLOUD_CLI_VERSION: v1.49.1
+        run: |
+          curl -fsSL "https://github.com/hetznercloud/cli/releases/download/${HCLOUD_CLI_VERSION}/hcloud-linux-amd64.tar.gz" \
+            | tar -xz hcloud
+          sudo mv hcloud /usr/local/bin/hcloud
+          hcloud version
+
+      - name: Install workspace deps
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Migrate the control-plane database (schema + programmables/RLS + app role)
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm -F console db:migrate
+
+      # ── The real proof. A finer step-level timeout than the job cap so a hung apply
+      #    is KILLED here (the step fails) and the always() teardown below still runs
+      #    normally — rather than the whole job hitting its cap. ──
+      - name: T2 — real runner provisions a real cloud cluster
+        id: t2
+        if: steps.gate.outputs.run == 'true'
+        timeout-minutes: 40
+        working-directory: test/e2e
+        env:
+          ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
+          ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+          ALETHIA_E2E_HCLOUD_REGION: ${{ env.E2E_REGION }}
+          ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
+        run: |
+          GOWORK=off go test -tags=e2e_t2 ./... \
+            -run TestT2RealCloudProvisioning -count=1 -timeout 45m -v
+
+      # ── Capture the committable proof from the SUCCESSFUL run (before teardown).
+      #    The runner wrote a host-usable kubeconfig to $HOME/.alethia/kubeconfig. ──
+      - name: Capture E1/T2 proof
+        if: steps.gate.outputs.run == 'true' && steps.t2.outcome == 'success'
+        run: |
+          export KUBECONFIG="$HOME/.alethia/kubeconfig"
+          if [ ! -f "$KUBECONFIG" ]; then
+            echo "::warning::runner kubeconfig not found at $KUBECONFIG — skipping capture"
+            exit 0
+          fi
+          ./demos/proofs/capture-e1.sh "${{ matrix.provider }}" "nightly-${{ github.run_id }}"
+
+      - name: Upload proof artifact
+        if: steps.gate.outputs.run == 'true' && steps.t2.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
+          path: demos/proofs/e1-${{ matrix.provider }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload runner log
+        if: steps.gate.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/t2-runner.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # ── GUARANTEED teardown. Runs on ANY outcome of the proof (pass/fail/timeout/
+      #    cancel) as long as we actually started provisioning. The graceful
+      #    `tofu destroy` already ran in-process on the normal path; this label-scoped
+      #    hcloud sweep is the guarantee for a hard-killed test process. It only ever
+      #    deletes resources labelled `cluster=$E2E_CLUSTER` — never account-wide. ──
+      - name: Guaranteed teardown (label-scoped hcloud cleanup)
+        if: steps.gate.outputs.run == 'true' && always()
+        run: |
+          if [ -z "${E2E_CLUSTER:-}" ]; then
+            echo "::error::E2E_CLUSTER is unset — refusing to run an unscoped cleanup."
+            exit 1
+          fi
+          ./scripts/e2e/hcloud-cleanup.sh "$E2E_CLUSTER"

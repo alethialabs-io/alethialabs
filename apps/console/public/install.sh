@@ -9,7 +9,7 @@
 #   curl -fsSL https://get.alethialabs.io | ALETHIA_INSTALL_DIR=/usr/local/bin sh
 #
 # Honors: ALETHIA_VERSION (e.g. v0.2.0 or 0.2.0), ALETHIA_INSTALL_DIR,
-#         GITHUB_TOKEN/GH_TOKEN (for installing from a private repo before launch).
+#         GITHUB_TOKEN/GH_TOKEN (optional — raises the GitHub API rate limit).
 
 main() {
 	set -eu
@@ -78,7 +78,7 @@ main() {
 			| sort -t. -k1,1n -k2,2n -k3,3n \
 			| tail -n1
 		)"
-		[ -n "$_ver" ] || err "could not resolve the latest release (private repo? set GITHUB_TOKEN). You can also pin ALETHIA_VERSION=vX.Y.Z"
+		[ -n "$_ver" ] || err "could not resolve the latest release (GitHub API rate-limited? set GITHUB_TOKEN). You can also pin ALETHIA_VERSION=vX.Y.Z"
 		TAG="cli-v$_ver"
 	fi
 

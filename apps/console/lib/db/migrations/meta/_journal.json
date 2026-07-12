@@ -540,6 +540,48 @@
       "when": 1783843705455,
       "tag": "0076_volatile_may_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1783851981990,
+      "tag": "0077_futuristic_tag",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1783852012420,
+      "tag": "0078_redundant_power_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1783864818027,
+      "tag": "0079_peaceful_brood",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1783868014599,
+      "tag": "0080_bizarre_nocturne",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1783868774128,
+      "tag": "0081_thick_dreaming_celestial",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1783870563365,
+      "tag": "0082_mushy_squadron_sinister",
+      "breakpoints": true
     }
   ]
 }

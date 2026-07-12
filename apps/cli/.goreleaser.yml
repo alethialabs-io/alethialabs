@@ -68,7 +68,7 @@ brews:
       commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
       repository:
           owner: "alethialabs-io"
-          name: "homebrew-alethialabs"
+          name: "homebrew-tap"
           branch: main
           token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
 
@@ -94,6 +94,39 @@ brews:
 
       test: |
           system "#{bin}/alethia", "--version"
+
+# Windows package manager. GoReleaser publishes the manifest to the scoop bucket;
+# users install with `scoop bucket add alethia <url> && scoop install alethia`.
+scoops:
+    - name: alethia
+      repository:
+          owner: "alethialabs-io"
+          name: "scoop-bucket"
+          branch: main
+          token: "{{ .Env.SCOOP_TAP_GITHUB_TOKEN }}"
+      commit_msg_template: "Scoop update for {{ .ProjectName }} version {{ .Tag }}"
+      commit_author:
+          name: alethialabs-io
+          email: contact@borislav.me
+      homepage: "https://alethialabs.io"
+      description: "Alethia CLI for managing multi-cloud Kubernetes infrastructure."
+      license: "AGPL-3.0-only"
+
+# Linux distro packages (.deb / .rpm / .apk) attached to the GitHub Release, so
+# users can `dpkg -i` / `rpm -i` / `apk add` the CLI. Built from the linux archives.
+nfpms:
+    - id: alethia
+      package_name: alethia
+      vendor: "Alethia Labs"
+      homepage: "https://alethialabs.io"
+      maintainer: "Alethia Labs <contact@alethialabs.io>"
+      description: "Alethia CLI for managing multi-cloud Kubernetes infrastructure."
+      license: "AGPL-3.0-only"
+      formats:
+          - deb
+          - rpm
+          - apk
+      bindir: /usr/bin
 
 dockers:
     - image_templates:

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getServiceDb } from "@/lib/db";
+import { fleetActions } from "@/lib/db/schema";
 import type { CloudProvider } from "@/lib/db/schema";
-import type { RunnerState } from "@/lib/fleet/controller";
+import type { FleetActionRecord, RunnerState } from "@/lib/fleet/controller";
 import { sql } from "drizzle-orm";
 
 type CountRow = { n: number };
@@ -161,6 +162,22 @@ export async function markRunnerDraining(runnerId: string): Promise<void> {
 		update public.runners set status = 'DRAINING'::public.runner_status, updated_at = now()
 		where id = ${runnerId}::uuid and status = 'ONLINE'
 	`);
+}
+
+/** Append one row to the durable fleet_actions ledger. A drizzle typed insert (not raw sql) so the
+ *  enum/column types are checked. Global platform table (no org_id / no RLS) → getServiceDb. */
+export async function insertFleetAction(record: FleetActionRecord): Promise<void> {
+	await getServiceDb()
+		.insert(fleetActions)
+		.values({
+			provider: record.provider,
+			action: record.action,
+			runner_id: record.runnerId,
+			reason: record.reason,
+			queue_depth: record.queueDepth,
+			pool_size: record.poolSize,
+			metadata: record.metadata,
+		});
 }
 
 /** Mark a removed runner OFFLINE and close its open usage session at now(). */

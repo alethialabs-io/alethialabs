@@ -11,6 +11,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Merge queue: the heavy real-runner provisioning keystone (job `provision-e2e`)
+  # runs ONLY on merge_group events (see its `if:`), so a kind boot + provider/image
+  # pulls don't tax every PR. Adding this trigger also lets the required per-PR checks
+  # re-validate the queued merge result — standard merge-queue behavior.
+  merge_group:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
   workflow_dispatch:
@@ -97,6 +102,12 @@ jobs:
       # A DISTINCT app-role URL so the RLS isolation assertion actually runs (not skipped).
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # OpenFGA (started as a step below — service containers can't override the image command, and
+      # OpenFGA needs `run`). Makes the community↔enterprise PDP-parity suite actually execute
+      # per-commit; REQUIRE=1 turns an OpenFGA-absent skip into a hard failure so parity can't
+      # silently go dark (SOC2 CC6.1).
+      OPENFGA_TEST_API_URL: http://localhost:8082
+      ALETHIA_PDP_PARITY_REQUIRE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -107,10 +118,102 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # In-memory OpenFGA for the PDP-parity test (it provisions its own store/model/tuples and
+      # deletes them after — no datastore migration needed). Started via docker run so we can pass
+      # the `run` command; HTTP 8080 → host 8082 (what OPENFGA_TEST_API_URL points at).
+      - name: Start OpenFGA (in-memory) for PDP parity
+        run: |
+          docker run -d --name openfga -p 8082:8080 \
+            -e OPENFGA_DATASTORE_ENGINE=memory openfga/openfga:v1.8.4 run
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:8082/healthz && { echo "openfga up"; break; }
+            [ "$i" = "40" ] && { echo "::error::OpenFGA did not become healthy"; docker logs openfga; exit 1; }
+            sleep 1
+          done
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -F console db:migrate
-      - name: Integration tests (real SQL query builders + RLS isolation)
+      - name: Integration tests (real SQL query builders + RLS isolation + PDP parity)
         run: pnpm -F console test:integration
+
+  e2e-browser:
+    name: E2E (browser · Playwright hero path)
+    runs-on: ubuntu-latest
+    # Own parallel job, OFF the fast path: builds + boots the real console against a real Postgres
+    # and drives the sellable happy-path in a headless browser (sign-in → org → connect-a-cloud
+    # surface → design → Deploy/pending-changes → evidence/clusters). Fully hermetic: email-OTP with
+    # the code scraped from the console log — no SES, no OAuth, no cloud creds. OpenFGA is left UNSET
+    # so the community PostgresRbacPDP is the authz engine (no extra service). Same postgres:17 +
+    # db:migrate as the Integration job above.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Real Postgres service (superuser + least-priv app role created by db:migrate, for RLS).
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # Auth: a non-secret placeholder + same-origin base URL. Email-OTP only (no OAuth, no SES) →
+      # the OTP is logged, which is the hermetic seam the spec reads.
+      BETTER_AUTH_SECRET: e2e-browser-placeholder-secret
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # Storage placeholders (the S3 client connects lazily; the hero path uploads nothing).
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
+      DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      - name: Build the console (production image the browser drives)
+        run: pnpm -F console build
+      - name: Install Playwright (Chromium + OS deps)
+        run: pnpm -F console exec playwright install --with-deps chromium
+      # Guard against a vacuous green: if the hero spec is ever renamed without updating the
+      # project's testMatch, `playwright test --project=hero` would match 0 tests and could exit 0.
+      # Fail loudly instead.
+      - name: Guard — hero project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=hero --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=hero matched 0 tests (testMatch drift?)"; exit 1; }
+      - name: Run the hero happy-path (Playwright boots `next start` via webServer)
+        run: pnpm -F console exec playwright test --project=hero
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/console/playwright-report/
+          retention-days: 7
 
   coverage-badge:
     name: Coverage badge (self-hosted)
@@ -220,6 +323,14 @@ jobs:
         if: matrix.module == 'packages/core'
         working-directory: ${{ matrix.module }}
         run: go vet -tags=e2e_local ./provisioner/
+      # Compile-check the T1 harness (test/e2e — a SEPARATE module outside go.work, run only
+      # by the merge-queue provision-e2e job). Without this, a break in controlplane.go /
+      # t1_provision_test.go would escape every per-PR check and only surface in the merge
+      # queue, blocking it for everyone rather than failing the offending PR (parity with the
+      # e2e_local keystone above).
+      - name: Vet e2e_t1 harness (compile check)
+        if: matrix.module == 'packages/core'
+        run: cd test/e2e && GOWORK=off go vet -tags=e2e_t1 ./...
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}
@@ -229,6 +340,76 @@ jobs:
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
+
+  provision-e2e:
+    name: Provisioning E2E (T1 · real runner → kind)
+    # MERGE-QUEUE ONLY. A real runner PROCESS claims a QUEUED job from a real
+    # Postgres-backed control plane and drives the full RunDeployV2 spine against a
+    # genuine `kind` cluster — kind boot + provider/image pulls are heavy, so this
+    # keystone runs when a PR enters the merge queue, not on every push. The `e2e_t1`
+    # build tag keeps it out of the fast per-PR Go suite; ALETHIA_E2E_T1_REQUIRE=1
+    # turns a missing prerequisite (docker/kind/tofu) into a HARD FAIL, never a green
+    # skip, so the signal can't hollow out. Extends the in-process T0 (which stays in
+    # the `go` job as a compile check).
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    services:
+      # Mirrors the `integration` job: a throwaway Postgres that db:migrate turns into
+      # the real control-plane schema + programmables (claim_next_job / update_job_status
+      # / insert_job_log) the runner's claim + callbacks + log-shipping exercise.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # kind is slower than the in-process T0 — give the reachability gate room.
+      ALETHIA_CLUSTER_READY_TIMEOUT: 3m
+      # In the merge queue a missing prerequisite is a HARD FAIL, never a green skip.
+      ALETHIA_E2E_T1_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.9.0"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - uses: azure/setup-kubectl@v4
+      - name: Install kind CLI (independent kubeconfig + cluster-leak cleanup)
+        run: |
+          go install sigs.k8s.io/kind@v0.30.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the control-plane database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      - name: T1 — real runner claims from the control plane and provisions kind
+        working-directory: test/e2e
+        run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 20m -v
+      - name: Teardown any leaked kind clusters (safety net)
+        if: always()
+        run: kind delete clusters --all || true
 
   go-coverage-badge:
     name: Go coverage badge (self-hosted)

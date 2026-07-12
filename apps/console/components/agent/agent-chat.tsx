@@ -40,31 +40,15 @@ import {
 	PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import { ToolResultFrame } from "@/components/agent/tool-result-frame";
+import { Marker, MarkerContent } from "@/components/ui/marker";
 import {
-	Tool,
-	ToolContent,
-	ToolHeader,
-	ToolInput,
-	ToolOutput,
-} from "@/components/ai-elements/tool";
+	AGENT_STEP_PART_TYPE,
+	agentStepDataSchema,
+} from "@/lib/ai/agent-steps";
 import { cn } from "@repo/ui/utils";
 
 export type AgentChatStatus = "submitted" | "streaming" | "ready" | "error";
-
-/** The default collapsible tool-call card (AI Elements `<Tool>`). Exported so surfaces
- * can compose it — e.g. wrap it with an "Open in panel" action — without duplicating it. */
-export function AgentToolCard({ part }: { part: ToolUIPart }) {
-	return (
-		<Tool>
-			<ToolHeader type={part.type} state={part.state} />
-			<ToolContent>
-				{(part.state === "input-available" ||
-					part.state === "output-available") && <ToolInput input={part.input} />}
-				<ToolOutput output={part.output} errorText={part.errorText} />
-			</ToolContent>
-		</Tool>
-	);
-}
 
 export interface AgentToolRenderContext {
 	messageId: string;
@@ -176,7 +160,18 @@ export function AgentChat({
 			<MessageScrollerProvider autoScroll defaultScrollPosition="end">
 				<MessageScroller className="flex-1">
 					<MessageScrollerViewport>
-						<MessageScrollerContent className="p-4">
+						{/* The primitive pins a new user turn to the top by growing its trailing spacer
+						    to the viewport-bottom overshoot — but never shrinks it back, leaving a
+						    permanent blank region under short replies. Cap it to the viewport while a
+						    turn is in flight (non-binding, keeps the pinned-question UX) and collapse
+						    it once the turn settles. */}
+						<MessageScrollerContent
+							className="p-4"
+							spacerClassName={cn(
+								"transition-[max-height] duration-300 ease-out",
+								pending ? "max-h-[100dvh]" : "max-h-0",
+							)}
+						>
 							{messages.length === 0 &&
 								(emptyState ??
 									(suggestions && suggestions.length > 0 ? (
@@ -205,13 +200,31 @@ export function AgentChat({
 											<Reasoning
 												key={key}
 												className="w-full"
+												// Part-accurate: shimmer/auto-collapse track THIS part's
+												// stream state, not the whole turn (a turn can keep
+												// streaming tools long after the thinking finished).
 												isStreaming={
-													status === "streaming" && m.id === lastMessageId
+													part.state === "streaming" && status === "streaming"
 												}
 											>
 												<ReasoningTrigger />
 												<ReasoningContent>{part.text}</ReasoningContent>
 											</Reasoning>
+										);
+									}
+
+									// Orchestration step marker — a hairline separator naming the
+									// phase + model (`PLAN · Claude Sonnet 4.6`), streamed by the
+									// route at each model boundary of the turn.
+									if (part.type === AGENT_STEP_PART_TYPE) {
+										const parsed = agentStepDataSchema.safeParse(part.data);
+										if (!parsed.success) return null;
+										return (
+											<Marker key={key} variant="separator" className="my-1">
+												<MarkerContent className="font-mono text-[10px] uppercase tracking-wide">
+													{parsed.data.phase} · {parsed.data.label}
+												</MarkerContent>
+											</Marker>
 										);
 									}
 
@@ -235,7 +248,7 @@ export function AgentChat({
 										if (custom !== undefined)
 											return <Fragment key={key}>{custom}</Fragment>;
 
-										return <AgentToolCard key={key} part={part} />;
+										return <ToolResultFrame key={key} part={part} />;
 									}
 
 									return null;

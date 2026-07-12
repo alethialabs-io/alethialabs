@@ -8,6 +8,7 @@ import type { ControllerDeps } from "@/lib/fleet/controller";
 import {
 	backlogByProvider,
 	countInflightForProvider,
+	insertFleetAction,
 	latestReleaseVersion,
 	managedRunnersByInstance,
 	markRunnerDraining,
@@ -32,5 +33,6 @@ export function makeDbDeps(): ControllerDeps {
 			setRunnerObserved(runnerId, patch.location, patch.version),
 		bootGraceSeconds: BOOT_GRACE_SECONDS,
 		mintBootstrapToken: () => mintBootstrapToken(),
+		recordAction: (record) => insertFleetAction(record),
 	};
 }

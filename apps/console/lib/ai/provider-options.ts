@@ -32,17 +32,21 @@ export function cachedSystemMessage(system: string): ModelMessage {
 }
 
 /**
- * Provider options for the ADVISOR planning step: Anthropic adaptive extended thinking —
- * the current Sonnet 4.6 / Opus 4.8 thinking mode (adaptive, not a fixed token budget).
- * Returns undefined unless the advisor is a DISTINCT Anthropic model (so thinking is never
- * forced on the executor — including `ai_free`, where the advisor IS the Haiku executor —
- * nor on an OpenAI advisor). Attach only on step 0 via `prepareStep`.
+ * Anthropic extended-thinking options for a resolved model, so reasoning parts actually
+ * stream to the transcript: adaptive thinking (the Sonnet 4.6 / Opus 4.8 mode) for
+ * Anthropic models, a small fixed budget for Haiku (which doesn't support adaptive),
+ * undefined for non-Anthropic providers. Attach on the planning step via `prepareStep`
+ * (every tier — the free tier's Haiku advisor thinks too) and top-level on single-model
+ * runs (explicit client pick, agent-identity route). Thinking tokens bill as output
+ * tokens, so the per-step usage ledger needs no change.
  */
-export function advisorThinkingOptions(
-	advisor: ResolvedModel,
-	executor: ResolvedModel,
+export function thinkingOptions(
+	model: ResolvedModel,
 ): ProviderOptionsBag | undefined {
-	if (advisor.provider !== "anthropic") return undefined;
-	if (advisor.key === executor.key) return undefined;
+	if (model.provider !== "anthropic") return undefined;
+	// Haiku rejects `adaptive` — give it a bounded fixed budget instead.
+	if (model.key.includes("haiku")) {
+		return { anthropic: { thinking: { type: "enabled", budgetTokens: 3072 } } };
+	}
 	return { anthropic: { thinking: { type: "adaptive" } } };
 }
