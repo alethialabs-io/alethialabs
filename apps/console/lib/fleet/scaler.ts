@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Fleet Controller's loop host. A sibling to the stale-job recovery loop: each app
-// instance runs the 60s tick (idempotent + convergent, so concurrent replicas are
-// safe). Also runs on demand (wakeFleetController) when a job is enqueued. Default
-// (no FLEET_POOLS) → no-op. See dataroom/spec/mvp/26.
+// instance runs the 60s tick, plus an on-demand wake (wakeFleetScaler) when a job is enqueued.
+// Default (no FLEET_POOLS) → no-op. See dataroom/spec/mvp/26.
+//
+// Concurrency: the tick is a lock-free read→plan→create, so two overlapping passes over-provision.
+// scheduleTick() serializes passes WITHIN a process (bounding the ~15 fire-and-forget wakes — the
+// bug this guards). It is NOT cross-replica: the state is per-process, so >1 replica can still run
+// concurrent passes against the same pool. True multi-replica safety needs a DB advisory lock
+// (e.g. pg_advisory_xact_lock around reconcilePool's read→plan→act). Today prod is a single box, so
+// this is not live exposure — but the reconcile is only "convergent" across replicas over TIME, not
+// free of a transient same-tick over-provision.
 
 import { reconcileAll, type SurplusState } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
@@ -46,7 +53,9 @@ const surplus: SurplusState = new Map();
  * have already read past — still triggers exactly one follow-up, so the pool converges without a
  * wake-storm fanning out N parallel passes. `superviseLoop` never rejects (it swallows every
  * throw), so the `.finally` always runs → the mutex is always released → the chain can never
- * deadlock or permanently skip. State lives on `globalThis` so it stays a singleton across dev HMR.
+ * deadlock or permanently skip. State lives on `globalThis` so it stays a singleton across dev HMR
+ * — and, being per-process, this serializer bounds IN-PROCESS re-entrancy only (see the file header
+ * for the multi-replica ceiling / advisory-lock note).
  */
 function scheduleTick(): void {
 	if (globalForScaler.__alethiaFleetTickInFlight) {
