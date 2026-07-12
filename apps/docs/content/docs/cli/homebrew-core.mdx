@@ -30,10 +30,13 @@ to core once the repo clears the notability bar.
 ## Recommended: submit from a dedicated CLI repo
 
 homebrew-core maintainers dislike formulae that download a **large monorepo tarball** and build a
-subdirectory. When you're ready to submit, the clean vehicle is a dedicated public repo
-(`alethialabs-io/alethia`) that contains just the CLI with normal `vX.Y.Z` tags — see the
-"read-only mirror" phase in the repo strategy. It gives a small tarball, a root-level `go build`,
-and a focused star count that helps clear the notability bar.
+subdirectory. The clean vehicle is the dedicated public repo
+[`alethialabs-io/alethia`](https://github.com/alethialabs-io/alethia) — it already exists as a
+read-only mirror of the CLI with `vX.Y.Z` tags (see the "read-only mirror" phase in the repo
+strategy). Today it mirrors the `apps/cli/` subdirectory verbatim; the one remaining prep before a
+core submission is to **flatten it to a root-level Go module** (so the formula does a plain
+root-level `go build` on a small tarball). A focused star count on that repo also helps clear the
+notability bar.
 
 ## The formula (build-from-source)
 
