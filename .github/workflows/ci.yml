@@ -11,6 +11,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Merge queue: the heavy real-runner provisioning keystone (job `provision-e2e`)
+  # runs ONLY on merge_group events (see its `if:`), so a kind boot + provider/image
+  # pulls don't tax every PR. Adding this trigger also lets the required per-PR checks
+  # re-validate the queued merge result — standard merge-queue behavior.
+  merge_group:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
   workflow_dispatch:
@@ -229,6 +234,76 @@ jobs:
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
+
+  provision-e2e:
+    name: Provisioning E2E (T1 · real runner → kind)
+    # MERGE-QUEUE ONLY. A real runner PROCESS claims a QUEUED job from a real
+    # Postgres-backed control plane and drives the full RunDeployV2 spine against a
+    # genuine `kind` cluster — kind boot + provider/image pulls are heavy, so this
+    # keystone runs when a PR enters the merge queue, not on every push. The `e2e_t1`
+    # build tag keeps it out of the fast per-PR Go suite; ALETHIA_E2E_T1_REQUIRE=1
+    # turns a missing prerequisite (docker/kind/tofu) into a HARD FAIL, never a green
+    # skip, so the signal can't hollow out. Extends the in-process T0 (which stays in
+    # the `go` job as a compile check).
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    services:
+      # Mirrors the `integration` job: a throwaway Postgres that db:migrate turns into
+      # the real control-plane schema + programmables (claim_next_job / update_job_status
+      # / insert_job_log) the runner's claim + callbacks + log-shipping exercise.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # kind is slower than the in-process T0 — give the reachability gate room.
+      ALETHIA_CLUSTER_READY_TIMEOUT: 3m
+      # In the merge queue a missing prerequisite is a HARD FAIL, never a green skip.
+      ALETHIA_E2E_T1_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.9.0"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - uses: azure/setup-kubectl@v4
+      - name: Install kind CLI (independent kubeconfig + cluster-leak cleanup)
+        run: |
+          go install sigs.k8s.io/kind@v0.30.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the control-plane database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      - name: T1 — real runner claims from the control plane and provisions kind
+        working-directory: test/e2e
+        run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 20m -v
+      - name: Teardown any leaked kind clusters (safety net)
+        if: always()
+        run: kind delete clusters --all || true
 
   go-coverage-badge:
     name: Go coverage badge (self-hosted)
