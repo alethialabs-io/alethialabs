@@ -48,7 +48,13 @@ const REAPABLE_STATUSES = ["ACTIVE", "FAILED"] as const;
  * Max consecutive DESTROY re-enqueue attempts before the reaper gives up on an env and flags it for
  * manual intervention. Tunable via ALETHIA_MAX_REAP_ATTEMPTS (default 6 → ~10m,20m,40m,80m,160m,320m).
  */
-export const MAX_REAP_ATTEMPTS = Number(process.env.ALETHIA_MAX_REAP_ATTEMPTS) || 6;
+/** Parse the cap defensively: an unset/blank/NaN value → 6, and a non-positive misconfig (e.g. "-5"
+ *  or "0") is clamped to at least 1 so an env is ALWAYS attempted at least once — a 0/negative cap
+ *  would make decideReap give up on the first pass and leak every expired cluster (never destroyed). */
+export const MAX_REAP_ATTEMPTS = (() => {
+	const parsed = Math.trunc(Number(process.env.ALETHIA_MAX_REAP_ATTEMPTS));
+	return Number.isFinite(parsed) && parsed >= 1 ? parsed : 6;
+})();
 /** Base backoff between reap retries; doubles per attempt up to the cap. */
 const REAP_BACKOFF_BASE_MS = 5 * 60_000;
 /** Upper bound on the backoff so a long-lived failing env still retries at least daily. */
