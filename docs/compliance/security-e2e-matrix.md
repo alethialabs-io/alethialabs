@@ -81,15 +81,24 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
 
 ## Follow-up (not built here)
 
-- **PDP engine divergence on org-wide-allow + same-action instance-deny.** The parity suite
-  deliberately does not combine an *org-wide ALLOW* with a *per-instance DENY of the same action*,
-  because the two engines **genuinely diverge** there: `PostgresRbacPDP` honours deny-wins
-  (denies), but the OpenFGA engine's `checksFor` ORs the org-wide capability, which cannot be
-  subtracted by the instance-level deny (allows). This was verified empirically. It is a real
-  ReBAC-model gap — the org capability should be expressed as `allow MINUS org-wide-deny` (or the
-  `checksFor` OR should not include the org capability when an instance deny exists). Until it is
-  closed, "allow the org except this one project" behaves differently on the two tiers. Track and
-  fix before the OpenFGA engine is the default for any tenant that uses instance-scoped denies.
+- **PDP engine divergence on org-wide-allow + same-action instance-deny — CLOSED.** The parity
+  suite now combines an *org-wide ALLOW* with a *per-instance DENY of the same action* (PROJ_A3 in
+  `pdp-parity.test.ts`) and asserts **both engines DENY** it (deny-wins). Root cause: the OpenFGA
+  engine's `can()` ORed `checksFor` — whose org-wide `<type>_<action>` capability is the RAW org
+  grant, not deny-aware — so the org allow overrode the instance deny. Fix: `OpenFgaPdp.can`
+  (`ee/src/openfga-pdp.ts`) is now **explicit-deny-wins** — it evaluates `denyChecksFor`
+  (`lib/authz/fga-mapping.ts`) alongside `checksFor` and VETOES on any deny before honouring the
+  allow, exactly like `PostgresRbacPDP.decide`. `denyChecksFor` reuses the model's existing
+  `deny_<action>` (instance, per-instance OR inherited) and `<type>_deny_<action>` (org-wide
+  fallback) relations — no model or tuple-sync change (deny tuples were already expanded by
+  `expandGrant`). The **sibling read-path, `OpenFgaPdp.listAccessible`, is fixed in the same PR**:
+  its org-wide branch previously returned every org instance via `listOrgResourceIds` with NO deny
+  subtraction (the same deny-blind bug class as `can()`), so an "allow the org except this project"
+  or an org-wide deny was silently ignored when *enumerating* accessible ids. It now returns `[]` on
+  an org-wide deny and subtracts per-instance denies (`listObjects deny_<action>`), matching
+  `PostgresRbacPDP.listAccessible`; `pdp-parity.test.ts` asserts this on the org-wide `deploy` path
+  (PROJ_A3 excluded). So "allow the org except this one project" now behaves identically on both
+  tiers across **decide (`can`/`enforce`/`bulkCheck`) AND enumerate (`listAccessible`)**.
 - **T0 secret non-leakage over the real deploy spine.** `secret_nonleak_test.go` drives the
   persisted-metadata assembly directly. Routing a real `RunDeployV2` (kind + a SENTINEL
   `HCLOUD_TOKEN`) and asserting the token never reaches the job-log surface end-to-end depends on

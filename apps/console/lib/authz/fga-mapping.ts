@@ -65,10 +65,16 @@ export function toCheck(
 }
 
 /**
- * The OpenFGA checks to OR for an authorization question. Org-level/create/no-id ⇒
+ * The OpenFGA ALLOW checks to OR for an authorization question. Org-level/create/no-id ⇒
  * just the org capability. A per-instance action ⇒ the instance's `can_<action>` (a
  * scoped grant on it, or container inheritance) OR the org-wide `<type>_<action>`
  * capability — so org-wide grants authorize per-instance checks without leaf edges.
+ *
+ * NOTE: this is the ALLOW half of the decision only. A deny-wins engine MUST also
+ * evaluate {@link denyChecksFor} and VETO on any deny — because the org-wide
+ * `<type>_<action>` capability here is the RAW org grant, which (unlike the instance's
+ * `can_<action>`, whose model already subtracts deny) is not deny-aware. ORing it in
+ * without the deny veto silently ignores a per-instance/org deny (the parity bug).
  */
 export function checksFor(
 	resourceType: Resource,
@@ -83,5 +89,36 @@ export function checksFor(
 	return [
 		{ object: `${resourceType}:${opts.id}`, relation: `can_${action}` },
 		orgCheck,
+	];
+}
+
+/**
+ * The OpenFGA DENY checks whose truth VETOES the allow (explicit-deny-wins, IAM-style —
+ * matching the community `PostgresRbacPDP`'s `decide`). Any of these being true means
+ * "denied", regardless of the allow half. Mirrors the two-tier structure of
+ * {@link checksFor}:
+ *   • org-level/create/no-id ⇒ the org-wide `<type>_deny_<action>` capability.
+ *   • per-instance ⇒ the instance's effective `deny_<action>` (a per-instance deny OR
+ *     one inherited down the Org→instance hierarchy) OR the org-wide
+ *     `<type>_deny_<action>` (the fallback when the instance carries no `parent` leaf
+ *     edge, exactly like the raw org allow in {@link checksFor}).
+ *
+ * This is why the org-wide-allow + per-instance-deny case can now DENY on OpenFGA: the
+ * raw org allow makes {@link checksFor} true, but the instance `deny_<action>` here is
+ * true, so the veto wins — the same answer the Postgres engine gives.
+ */
+export function denyChecksFor(
+	resourceType: Resource,
+	action: Action,
+	opts: { id?: string; orgId: string },
+): FgaCheck[] {
+	const orgDeny: FgaCheck = {
+		object: `org:${opts.orgId}`,
+		relation: `${resourceType}_deny_${action}`,
+	};
+	if (isOrgLevel(resourceType, action) || !opts.id) return [orgDeny];
+	return [
+		{ object: `${resourceType}:${opts.id}`, relation: `deny_${action}` },
+		orgDeny,
 	];
 }
