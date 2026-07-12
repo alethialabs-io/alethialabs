@@ -82,9 +82,16 @@ export async function recoverStaleJobs(db: ReturnType<typeof getServiceDb>): Pro
 }
 
 // In-app replacement for the AWS-Lambda cron that requeued stale jobs. Each app
-// instance runs the interval; recover_stale_jobs() is idempotent (FOR UPDATE
-// SKIP LOCKED semantics make concurrent runs across instances safe), so the
+// instance runs the interval; recover_stale_jobs() is safe under concurrent runs
+// across instances — it's a plain UPDATE over CLAIMED/PROCESSING rows (disjoint from
+// claim_next_job's QUEUED set), and the row-lock + READ COMMITTED re-check (EvalPlanQual)
+// collapse two concurrent recoveries of the same row to a single requeue. So the
 // self-host bundle needs no Lambda. See dataroom/spec/mvp/06-self-hosting-architecture.md.
+//
+// Residual (narrow): the stalled-but-alive path keys off progress_at, refreshed via the
+// log-ingest endpoint. If that endpoint is partitioned from a runner for >30min while its
+// heartbeat still lands, a genuinely-live apply can be requeued; the attempts cap bounds the
+// blast radius and the tofu state-lock guards against a concurrent second apply.
 
 const RECOVERY_INTERVAL_MS = 60_000;
 
