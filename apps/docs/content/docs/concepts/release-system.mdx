@@ -83,12 +83,26 @@ The tap/bucket repos (`alethialabs-io/homebrew-tap`, `alethialabs-io/scoop-bucke
 exist, and the source repo is already **public** (so anonymous brew/scoop/curl/docker
 downloads work the moment a release exists).
 
-1. **Publish credentials.** The cross-repo publishes (formula, scoop manifest, CLI mirror)
-   use one token in the `HOMEBREW_TAP_GITHUB_TOKEN` repo secret — a **PAT** with write
-   access to `homebrew-tap`, `scoop-bucket`, and `alethia`. A classic PAT with the `repo`
-   scope covers all three; a fine-grained PAT must list those repos with **Contents: Read
-   and write**. (`release-cli.yml` feeds it to GoReleaser as both `HOMEBREW_TAP_GITHUB_TOKEN`
-   and `SCOOP_TAP_GITHUB_TOKEN`; `mirror-cli.yml` uses the same secret to push the mirror.)
+1. **Publish credentials (GitHub App).** The cross-repo publishes (formula, scoop manifest,
+   CLI mirror) authenticate as a **GitHub App** — CI mints a short-lived token per run via
+   `create-github-app-token`, scoped to just the target repo. The App's id + private key live
+   in the `TAP_APP_ID` / `TAP_APP_PRIVATE_KEY` repo secrets.
+
+   **Easy path** — run the helper once (you must be an `alethialabs-io` org owner, logged into `gh`):
+   ```bash
+   bash scripts/setup-release-github-app.sh
+   ```
+   It creates the App with the right permissions (**Contents: Read and write**, no webhook) via
+   GitHub's manifest flow and sets both secrets automatically. Then click the printed **Install**
+   link → select `homebrew-tap`, `scoop-bucket`, `alethia`.
+
+   **Manual path** (fallback): Org → **Settings → Developer settings → GitHub Apps → New GitHub
+   App** → permissions **Contents: Read and write** (+ Metadata: read), uncheck the webhook →
+   **Create** → **Generate a private key** → **Install App** on those three repos → set
+   `TAP_APP_ID` (the App id) and `TAP_APP_PRIVATE_KEY` (the whole `.pem`) as repo secrets.
+
+   *(The App replaces the old `HOMEBREW_TAP_GITHUB_TOKEN` PAT, which can be deleted once the App
+   is installed.)*
 2. **Wire `get.alethialabs.io`** (for `curl … | sh` / `irm … | iex`): `tofu apply`
    `infra/cp-hetzner` (creates the `get` CNAME + tunnel ingress), then redeploy prod so
    Caddy picks up the `@get` host route in `deploy/prod/Caddyfile.tunnel`.
