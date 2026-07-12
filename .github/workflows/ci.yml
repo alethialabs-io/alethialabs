@@ -179,6 +179,14 @@ jobs:
         run: pnpm -F console build
       - name: Install Playwright (Chromium + OS deps)
         run: pnpm -F console exec playwright install --with-deps chromium
+      # Guard against a vacuous green: if the hero spec is ever renamed without updating the
+      # project's testMatch, `playwright test --project=hero` would match 0 tests and could exit 0.
+      # Fail loudly instead.
+      - name: Guard — hero project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=hero --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=hero matched 0 tests (testMatch drift?)"; exit 1; }
       - name: Run the hero happy-path (Playwright boots `next start` via webServer)
         run: pnpm -F console exec playwright test --project=hero
       - name: Upload Playwright report

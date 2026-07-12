@@ -39,7 +39,9 @@ test.describe("Hero happy-path", () => {
 		// 2. Org overview — the first-run "Get started" setup guide is the sellable onboarding surface.
 		//    Opening it proves the org exists and surfaces the "Connect a cloud" step.
 		await page.getByRole("button", { name: /setup guide/i }).click();
-		await expect(page.getByText(/connect a cloud/i)).toBeVisible();
+		// .first(): the "connect a cloud" copy appears in several components; the visible one here is
+		// the setup-guide step title. Pin to the first match to stay strict-mode-safe if others mount.
+		await expect(page.getByText(/connect a cloud/i).first()).toBeVisible();
 		await page.keyboard.press("Escape");
 
 		// 3. The connect-a-cloud surface. We assert the connector browser renders and a real cloud

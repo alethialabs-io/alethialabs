@@ -19,7 +19,12 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Current byte size of the log — capture this BEFORE requesting a code so stale ones are ignored. */
+/**
+ * Current byte size of the log — capture BEFORE requesting a code to skip already-logged codes. NB:
+ * correctness against a cross-test race comes from the per-recipient `email` match in waitForOtp (each
+ * signup uses a unique address); this cursor is only a best-effort skip of prior content, and it is a
+ * BYTE offset (sliced byte-accurately below), not a string index.
+ */
 export async function logCursor(): Promise<number> {
 	return stat(LOG_PATH)
 		.then((s) => s.size)
@@ -53,8 +58,12 @@ export async function waitForOtp(
 
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const text = await readFile(LOG_PATH, "utf8").catch(() => "");
-		const matches = [...text.slice(cursor).matchAll(pattern())];
+		// Read as raw bytes and slice at the BYTE cursor before decoding: `cursor` is a byte offset
+		// (stat().size), so slicing the utf8-decoded string by it would drift on multi-byte chars
+		// (the OTP line itself carries `—`/`→`) and could skip past a fresh code.
+		const buf = await readFile(LOG_PATH).catch(() => Buffer.alloc(0));
+		const text = buf.subarray(cursor).toString("utf8");
+		const matches = [...text.matchAll(pattern())];
 		const last = matches.at(-1);
 		if (last) return last[1];
 		await new Promise((r) => setTimeout(r, intervalMs));
