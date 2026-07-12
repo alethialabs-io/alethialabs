@@ -6,9 +6,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getEntitlements } from "@/lib/authz/entitlements";
-import { currentActor } from "@/lib/authz/guard";
+import { authorizeQuiet } from "@/lib/authz/guard";
 import { PERMISSIONS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import type { Actor } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { role, rolePermission } from "@/lib/db/schema";
 
@@ -25,18 +26,27 @@ function sanitize(keys: string[]): string[] {
 	return [...new Set(keys.filter((k) => VALID_KEYS.has(k)))];
 }
 
-/** Authoring custom roles is an Enterprise feature; enforce it server-side. */
-async function requireCustomRoles() {
-	const actor = await currentActor();
+/**
+ * Gate for authoring custom roles. Enforces `member:manage_members` via the PDP FIRST — these are
+ * `"use server"` actions imported by a client component, so without a PDP check any org member could
+ * POST createRole/updateRole/deleteRole directly and rewrite (or destroy) the org's roles, including
+ * self-granting every permission by rewriting a role's key set. THEN the Enterprise (customRoles)
+ * entitlement. Uses `authorizeQuiet` (can(), not enforce()) because each mutation already records its
+ * own governance Activity + alert event; enforce() would double-write. Mirrors grants.ts / the CLI
+ * grants route. Both gates must pass; returns the resolved actor.
+ */
+async function requireCustomRoles(): Promise<Actor> {
+	const actor = await authorizeQuiet("manage_members", { type: "member" });
 	if (!getEntitlements(actor).customRoles) {
 		throw new Error("Custom roles require an Enterprise license.");
 	}
 	return actor;
 }
 
-/** The active org's custom (non-built-in) roles with their permission keys. */
+/** The active org's custom (non-built-in) roles with their permission keys. Reading the role config
+ *  requires `member:view` (roles are member-management config; non-members are denied). */
 export async function listCustomRoles(): Promise<CustomRole[]> {
-	const actor = await currentActor();
+	const actor = await authorizeQuiet("view", { type: "member" });
 	const db = getServiceDb();
 	const roles = await db
 		.select({ id: role.id, name: role.name })

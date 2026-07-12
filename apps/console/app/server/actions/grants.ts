@@ -7,14 +7,21 @@ import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
 import {
 	BUILTIN_ROLE_IDS,
 	type BuiltInRole,
+	isPermissionKey,
+	type PermissionDef,
+	type PermissionKey,
 	PERMISSIONS,
 } from "@/lib/authz/registry";
+import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import type { Actor } from "@/lib/authz/types";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -27,6 +34,52 @@ import {
 } from "@/lib/db/schema";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
+
+/** Every permission key → its (resource, action) split, for the privilege-ceiling check. */
+const PERMISSION_BY_KEY: ReadonlyMap<PermissionKey, PermissionDef> = new Map(
+	PERMISSIONS.map((p): [PermissionKey, PermissionDef] => [p.key, p]),
+);
+
+/**
+ * Privilege-ceiling check (grill finding F1): an actor may only *delegate* (allow-grant) a role or
+ * permission that is a SUBSET of what the actor themselves effectively holds. Without this, an
+ * access-admin who holds `member:manage_members` but not billing (i.e. an admin) could self-grant the
+ * OWNER role — which carries billing — and escalate; likewise for any single permission above their
+ * ceiling.
+ *
+ * The target is expanded to its permission-key set (a role via its `role_permission` rows — built-in
+ * or custom; a single permission to itself) and each key is checked against the actor's EFFECTIVE
+ * permissions via the PDP at org scope (`getPdp().can`, no side-effects). "Effective permissions" are
+ * exactly what the PDP grants the actor: an owner holds every permission (org-wide `*`) → passes every
+ * key → may grant anything; an admin holds all-except-billing → the billing keys of the owner role
+ * fail → admin→owner is denied, while admin→viewer (all keys ⊆ admin) is allowed. An empty target set
+ * (a permissionless custom role) is trivially a subset ⇒ allowed. Keys absent from the registry grant
+ * no capability and are skipped.
+ *
+ * Checked at org scope (no resource id) deliberately: delegation requires holding the capability as
+ * an org-wide capability. The only principals who reach here (owner/admin — they hold
+ * `member:manage_members`) hold their roles org-wide, so this never over-denies a legitimate grantor.
+ */
+async function actorCanGrant(
+	actor: Actor,
+	roleId: string | null,
+	permissionKey: string | null,
+): Promise<boolean> {
+	const keys = roleId
+		? await rolePermissionKeys(roleId)
+		: permissionKey
+			? [permissionKey]
+			: [];
+	const pdp = getPdp();
+	for (const key of keys) {
+		if (!isPermissionKey(key)) continue; // not a real permission → grants no capability
+		const def = PERMISSION_BY_KEY.get(key);
+		if (!def) continue;
+		const decision = await pdp.can(actor, def.action, { type: def.resource });
+		if (!decision.allowed) return false;
+	}
+	return true;
+}
 
 /**
  * Gate for mutating access grants. Enforces `member:manage_members` via the PDP FIRST
@@ -109,6 +162,18 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	}
 	if (input.permissionKey && !VALID_KEYS.has(input.permissionKey)) {
 		throw new Error("Unknown permission.");
+	}
+	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
+	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
+	if (
+		input.effect === "allow" &&
+		!(await actorCanGrant(actor, input.roleId ?? null, input.permissionKey ?? null))
+	) {
+		throw new ForbiddenError(
+			"manage_members",
+			{ type: "member" },
+			"exceeds_grantor_privilege",
+		);
 	}
 	const resourceId = input.resourceId ?? null;
 	// Org-wide grants are stored on the org resource type.

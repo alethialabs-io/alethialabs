@@ -10,6 +10,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
+vi.mock("@/lib/authz/role-permissions", () => ({ rolePermissionKeys: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn() }));
 vi.mock("@/app/server/actions/roles", () => ({ listCustomRoles: vi.fn() }));
@@ -26,9 +28,11 @@ import {
 import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { getPdp } from "@/lib/authz";
 import { recordActivity } from "@/lib/authz/activity";
 import { authorize } from "@/lib/authz/guard";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
@@ -91,6 +95,9 @@ function mockDb(rows: unknown[] = [], byTable?: Map<unknown, unknown[]>) {
 
 const syncScopedGrant = vi.fn().mockResolvedValue(undefined);
 const removeScopedGrant = vi.fn().mockResolvedValue(undefined);
+// The privilege-ceiling PDP probe; defaults to "actor holds everything" (owner) so the persistence
+// paths run — the dedicated ceiling suite flips it to a deny to prove the check is load-bearing.
+const can = vi.fn().mockResolvedValue({ allowed: true });
 
 /** An actor that passes the Enterprise (customRoles) entitlement gate. */
 const ADMIN_ACTOR = {
@@ -103,6 +110,9 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	syncScopedGrant.mockResolvedValue(undefined);
 	removeScopedGrant.mockResolvedValue(undefined);
+	can.mockResolvedValue({ allowed: true });
+	vi.mocked(getPdp).mockReturnValue({ can } as never);
+	vi.mocked(rolePermissionKeys).mockResolvedValue([]);
 	vi.mocked(getTupleSync).mockReturnValue({
 		syncScopedGrant,
 		removeScopedGrant,
@@ -179,6 +189,57 @@ describe("PDP gate (authorize) — denied actor is blocked before any DB write",
 				new ForbiddenError("view", { type: "member" }, "no_grant"),
 			);
 		await expect(getGrantOptions()).rejects.toThrow(ForbiddenError);
+	});
+});
+
+describe("privilege ceiling — a grant above the actor's own permissions is blocked", () => {
+	// The actor passes requireAccessAdmin (member:manage_members), but the PDP reports they do NOT
+	// hold the permission being granted (e.g. an admin granting billing) → ForbiddenError, no insert.
+	// The real-PDP proof is tests/integration/grants-actions-authz.test.ts.
+	it("assignGrant rejects a single permission the actor lacks and never inserts", async () => {
+		const { insertSpy } = mockDb();
+		can.mockResolvedValue({ allowed: false, reason: "no_grant" });
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "billing:manage_billing",
+				resourceType: "org",
+			}),
+		).rejects.toThrow(ForbiddenError);
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+	});
+
+	it("assignGrant rejects a role carrying a permission the actor lacks", async () => {
+		const { insertSpy } = mockDb();
+		vi.mocked(rolePermissionKeys).mockResolvedValue(["billing:manage_billing"]);
+		can.mockResolvedValue({ allowed: false, reason: "no_grant" });
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.owner,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(ForbiddenError);
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("a DENY grant skips the ceiling (a deny can't escalate the grantee)", async () => {
+		const { insertSpy } = mockDb();
+		can.mockResolvedValue({ allowed: false, reason: "no_grant" }); // would block an allow …
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny", // … but a deny is never ceiling-checked
+			permissionKey: "billing:manage_billing",
+			resourceType: "org",
+		});
+		expect(insertSpy).toHaveBeenCalledTimes(1);
+		expect(can).not.toHaveBeenCalled();
 	});
 });
 
