@@ -8,18 +8,17 @@ import {
 	type ToolSet,
 	type UIMessage,
 } from "ai";
-import { eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
-import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
-import { withOwnerScope } from "@/lib/db";
+import { withScope } from "@/lib/db";
 import { agentIdentities } from "@/lib/db/schema";
 
 // Node runtime: the tools reach postgres-js + the actor seam uses AsyncLocalStorage.
@@ -44,24 +43,39 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ agentId: string }> },
 ): Promise<Response> {
-	const owner = await getOwner();
-	if (!owner) return new Response("Unauthorized", { status: 401 });
+	// Resolve the actor first so the agent lookup is scoped to the caller's tenancy.
+	const actor = await currentActor().catch(() => null);
+	if (!actor) return new Response("Unauthorized", { status: 401 });
 	if (!isAiConfigured()) {
 		return new Response("AI is not configured.", { status: 503 });
 	}
 
 	const { agentId } = await params;
-	const agent = await withOwnerScope(owner, async (tx) => {
-		const [a] = await tx
-			.select()
-			.from(agentIdentities)
-			.where(eq(agentIdentities.id, agentId))
-			.limit(1);
-		return a ?? null;
-	});
+	// Scope the lookup to the actor's tenancy (own user rows OR the active org's): an
+	// agent id belonging to another org resolves to nothing → 404, so its persona/mission
+	// never enters the system prompt. agent_identities has no RLS backstop yet, so this
+	// explicit org predicate — not RLS — is the enforcement point (fixes the IDOR).
+	const agent = await withScope(
+		{ ownerId: actor.userId, orgId: actor.orgId },
+		async (tx) => {
+			const [a] = await tx
+				.select()
+				.from(agentIdentities)
+				.where(
+					and(
+						eq(agentIdentities.id, agentId),
+						or(
+							eq(agentIdentities.user_id, actor.userId),
+							eq(agentIdentities.org_id, actor.orgId),
+						),
+					),
+				)
+				.limit(1);
+			return a ?? null;
+		},
+	);
 	if (!agent) return new Response("Agent not found", { status: 404 });
 
-	const actor = await currentActor();
 	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return e;
 		throw e;

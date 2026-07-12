@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { memoryNamespace } from "@/lib/agent/memory-path";
-import { requireOwner } from "@/lib/auth/owner";
-import { withOwnerScope } from "@/lib/db";
+import { currentActor } from "@/lib/authz/guard";
+import { withScope } from "@/lib/db";
 import { type AgentIdentity, agentIdentities } from "@/lib/db/schema";
 
 /** Input for creating a scoped agent (elench). */
@@ -27,14 +27,17 @@ export interface CreateAgentInput {
 export async function createAgent(input: CreateAgentInput): Promise<AgentIdentity> {
 	if (!input.persona.trim()) throw new Error("persona is required");
 	if (!input.mission.trim()) throw new Error("mission is required");
-	const owner = await requireOwner();
-	const namespace = memoryNamespace(owner, input.projectId ?? undefined);
-	return withOwnerScope(owner, async (tx) => {
+	const actor = await currentActor();
+	// Tenancy is the caller's active org: the row is stamped with both the creating
+	// user and the org so the org-scoped read predicate (see getAgent/listAgents) can
+	// find it, and the memory namespace is keyed by the org (never another tenant's).
+	const namespace = memoryNamespace(actor.orgId, input.projectId ?? undefined);
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
 		const [agent] = await tx
 			.insert(agentIdentities)
 			.values({
-				user_id: owner,
-				org_id: owner,
+				user_id: actor.userId,
+				org_id: actor.orgId,
 				project_id: input.projectId ?? null,
 				persona: input.persona.trim(),
 				mission: input.mission.trim(),
@@ -46,22 +49,49 @@ export async function createAgent(input: CreateAgentInput): Promise<AgentIdentit
 	});
 }
 
-/** List the owner's agents, newest first. RLS scopes the rows. */
+/**
+ * List the caller's agents, newest first. Explicitly scoped to the actor's tenancy
+ * (own user rows OR the active org's rows) so another org's agents are never
+ * returned — agent_identities has no RLS backstop yet, so this predicate is the
+ * enforcement point.
+ */
 export async function listAgents(): Promise<AgentIdentity[]> {
-	const owner = await requireOwner();
-	return withOwnerScope(owner, async (tx) =>
-		tx.select().from(agentIdentities).orderBy(desc(agentIdentities.created_at)),
+	const actor = await currentActor();
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) =>
+		tx
+			.select()
+			.from(agentIdentities)
+			.where(
+				or(
+					eq(agentIdentities.user_id, actor.userId),
+					eq(agentIdentities.org_id, actor.orgId),
+				),
+			)
+			.orderBy(desc(agentIdentities.created_at)),
 	);
 }
 
-/** Load one agent identity. */
+/**
+ * Load one agent identity, scoped to the caller's tenancy. A request for another
+ * org's agent id resolves to null (→ 404 at the call site), never that org's
+ * persona/mission. The org predicate is enforced in the query itself (no reliance
+ * on RLS, which agent_identities does not yet carry).
+ */
 export async function getAgent(id: string): Promise<AgentIdentity | null> {
-	const owner = await requireOwner();
-	return withOwnerScope(owner, async (tx) => {
+	const actor = await currentActor();
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
 		const [agent] = await tx
 			.select()
 			.from(agentIdentities)
-			.where(eq(agentIdentities.id, id))
+			.where(
+				and(
+					eq(agentIdentities.id, id),
+					or(
+						eq(agentIdentities.user_id, actor.userId),
+						eq(agentIdentities.org_id, actor.orgId),
+					),
+				),
+			)
 			.limit(1);
 		return agent ?? null;
 	});
