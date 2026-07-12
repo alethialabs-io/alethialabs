@@ -32,6 +32,11 @@ export interface FleetActionRecord {
 	metadata?: FleetActionMetadata;
 }
 import { log } from "@/lib/observability/log";
+import {
+	recordFleetSize,
+	recordQueueDepth,
+	recordScalerAction,
+} from "@/lib/observability/metrics";
 
 const flog = log.child({ component: "fleet" });
 
@@ -132,6 +137,12 @@ export async function reconcilePool(
 	const surplusTicks = onlineNow > target ? (surplus.get(project.provider) ?? 0) + 1 : 0;
 	surplus.set(project.provider, surplusTicks);
 
+	// Telemetry (no-op unless an OTLP endpoint is configured): sample the per-provider
+	// queue depth + online fleet size each tick. Labels are the low-cardinality provider
+	// only — never a job_id / runner_id.
+	recordQueueDepth(project.provider, backlog);
+	recordFleetSize(project.provider, onlineNow);
+
 	const actions = plan(resolved, {
 		instances: observedInstances,
 		backlog,
@@ -162,6 +173,8 @@ export async function reconcilePool(
 	};
 
 	for (const a of actions) {
+		// Count the scaler action (no-op unless telemetry is on) — provider + action only.
+		recordScalerAction(project.provider, a.type);
 		if (a.type === "create") {
 			// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
 			// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.

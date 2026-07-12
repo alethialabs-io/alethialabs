@@ -6,6 +6,12 @@ export async function register() {
 	if (process.env.NEXT_RUNTIME !== "nodejs") return;
 	const { log } = await import("@/lib/observability/log");
 	const startupLog = log.child({ component: "instrumentation" });
+	// Boot the OTel traces + metrics SDK FIRST so the global tracer/meter are registered
+	// before any loop or request records a span/metric. Endpoint-gated: unset ⇒ a complete
+	// no-op (no provider registered), so this never adds cost or a dependency. It patches
+	// nothing (no auto-instrumentations), so the sibling loops below are unaffected.
+	const { startOtel } = await import("@/lib/observability/otel");
+	startOtel();
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
 	// In-app fleet controller (sibling loop). Pools live in the DB; import any legacy

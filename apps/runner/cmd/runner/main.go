@@ -9,8 +9,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/agent"
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/obs"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 )
 
@@ -77,6 +79,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: ALETHIA_RUNNER_ID and ALETHIA_RUNNER_TOKEN environment variables are required.")
 		os.Exit(1)
 	}
+
+	// OpenTelemetry traces + metrics (endpoint-gated: a complete no-op unless
+	// OTEL_EXPORTER_OTLP_ENDPOINT is set). Never fatal — a telemetry setup error is logged
+	// and the runner provisions on without it. The deferred shutdown flushes buffered spans
+	// on a clean drain (SIGTERM → the agent returns nil → this defer runs).
+	otelShutdown, otelErr := obs.Setup(context.Background(), version.Version)
+	if otelErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: OpenTelemetry setup failed; continuing without telemetry: %v\n", otelErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = otelShutdown(shutdownCtx)
+	}()
 
 	// Concurrency: a single logical runner can run N jobs as N worker subprocesses.
 	// A worker child (or the default single-slot runner) runs the agent loop in-process;
