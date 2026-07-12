@@ -108,11 +108,27 @@ function wrap(p: pino.Logger): Logger {
  * used by tests to capture output (production writes to stdout). No DB enum backs
  * the level — the deliberately-dropped `logs_level` type is never reintroduced.
  */
+/** pino's built-in levels (+ `silent`). An out-of-set default level throws at construction. */
+const PINO_LEVELS = new Set([
+	"trace",
+	"debug",
+	"info",
+	"warn",
+	"error",
+	"fatal",
+	"silent",
+]);
+
 export function createLogger(opts?: {
 	level?: string;
 	destination?: pino.DestinationStream;
 }): Logger {
-	const level = opts?.level ?? process.env.ALETHIA_LOG_LEVEL ?? "info";
+	// `??` does NOT fall back on an empty string, and the prod deploy emits ALETHIA_LOG_LEVEL even when
+	// unset → "". An empty/blank/unknown level makes pino throw at construction ("default level: must be
+	// included in custom levels"); since this runs at module load (instrumentation.ts), that crash 500s
+	// the whole server. So normalize: blank or unrecognized → "info".
+	const requested = (opts?.level ?? process.env.ALETHIA_LOG_LEVEL ?? "").trim();
+	const level = PINO_LEVELS.has(requested) ? requested : "info";
 	const options: pino.LoggerOptions = {
 		level,
 		// Drop pid/hostname noise; correlation fields carry the useful context.
