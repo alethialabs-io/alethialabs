@@ -94,7 +94,10 @@ type Report struct {
 	Verdict Status `json:"verdict"`
 	// CatalogVersion records which control set produced this report.
 	CatalogVersion string `json:"catalog_version"`
-	// Provider is the primary cloud evaluated (best-effort from the plan).
+	// Provider is the cloud(s) evaluated, from the plan's resource prefixes: a
+	// single cloud by name ("aws"), a multi-cloud plan as a deterministic "+"-joined
+	// set ("aws+azure") — every provider present has its controls run — or "unknown"
+	// when no recognized cloud is found.
 	Provider string          `json:"provider"`
 	Controls []ControlResult `json:"controls"`
 	Summary  Summary         `json:"summary"`
