@@ -428,6 +428,11 @@ jobs:
             # host defaults to eu.i.posthog.com. When set, the console runs PostHog (leave Umami unset).
             emit NEXT_PUBLIC_POSTHOG_KEY
             emit NEXT_PUBLIC_POSTHOG_HOST
+            # Structured logs → PostHog Logs over OTLP (lib/observability/otel.ts). Unset ⇒ emitted empty
+            # ⇒ the logs provider never registers (the pino→OTel bridge stays a no-op). Endpoint is
+            # https://eu.i.posthog.com/i/v1/logs; headers carry `Authorization=Bearer <phc_ project key>`.
+            emit OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            emit OTEL_EXPORTER_OTLP_LOGS_HEADERS
             # --- Operability suite (the ~19-PR program). Every one is OFF unless its value is set in the
             # vault: unset ⇒ emitted empty ⇒ the code's gate treats it as disabled (like the AI keys /
             # analytics above). Without these lines the vault vars could never reach the box's .env, so
