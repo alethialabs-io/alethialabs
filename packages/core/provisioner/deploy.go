@@ -685,11 +685,18 @@ func shortHash(h string) string {
 
 func resolveArgoTemplatesDir() string {
 	candidates := []string{
+		// Explicit override — a runner image with a non-default layout, or an
+		// in-process E2E driving the real spine from an arbitrary CWD, can point
+		// directly at the baked templates.
+		os.Getenv("ALETHIA_ARGOCD_TEMPLATES_DIR"),
 		"/home/runner/argocd-templates",
 		"argocd-templates",
 		"../../infra/templates/argocd",
 	}
 	for _, d := range candidates {
+		if d == "" {
+			continue
+		}
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
 			return d
 		}
