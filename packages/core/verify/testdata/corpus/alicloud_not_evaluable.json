@@ -1,0 +1,33 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "_comment": "Alibaba Cloud (alicloud_) is one of Alethia's four managed clouds but has NO authored control set yet, and it carries RAM/OIDC authority — so it is deliberately OFF the supported-no-controls allowlist. An all-alicloud plan is honestly not_evaluable (SCOPE-001), NOT a vacuous pass. This closes a real prior false-PASS. When alicloud controls are authored, this becomes fail/pass on its own merits.",
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_role.cluster",
+      "mode": "managed",
+      "type": "alicloud_ram_role",
+      "name": "cluster",
+      "provider_name": "registry.terraform.io/aliyun/alicloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "cluster-role" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "alicloud_cs_managed_kubernetes.k8s",
+      "mode": "managed",
+      "type": "alicloud_cs_managed_kubernetes",
+      "name": "k8s",
+      "provider_name": "registry.terraform.io/aliyun/alicloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "alethia" },
+        "after_unknown": {}
+      }
+    }
+  ]
+}

@@ -149,8 +149,20 @@ var controlledProviderTokens = map[string]bool{
 //   - Clouds without a control set BY DESIGN. Hetzner (hcloud) is token-auth — the
 //     token is the ceiling, there is no OIDC/federation to bind, so the keyless
 //     controls do not apply (see the Hetzner posture). Cloudflare likewise.
+//   - CLUSTER-LAYER providers that create NO cloud-authority surface — the K8s
+//     bootstrap + in-cluster resources that co-occur in every real cluster plan
+//     (talos_, imager_, minio_, helm_, kubernetes_, kubectl_). None of them create a
+//     cloud IAM identity / keyless-federation / least-priv surface (the only thing the
+//     controls audit); they configure the cluster itself. Alethia's shipped Hetzner
+//     template is hcloud_ + talos_ + imager_ + minio_ + helm_, so WITHOUT this group a
+//     real Hetzner/Talos provision would wrongly flip pass → not_evaluable.
 //   - Utility providers that create no cloud authority at all: random_, tls_, null_,
 //     local_, time_, external_.
+//
+// NB this is a CLOUD-AUTHORITY allowlist, not a managed-cloud allowlist: `alicloud` is a
+// managed cloud but has NO authored control set yet, so it is deliberately LEFT OFF —
+// an Alibaba plan is honestly not_evaluable until alicloud controls exist (it has RAM/OIDC
+// authority, so it must eventually get real controls, not this allowlist).
 //
 // This allowlist is what makes the fail-closed backstop (controlEvaluableScope) safe:
 // it must NOT flip these legitimate plans to not_evaluable, only genuinely
@@ -158,6 +170,10 @@ var controlledProviderTokens = map[string]bool{
 // fail-closed default) so an unknown cloud is surfaced rather than silently passed.
 var supportedNoControlProviderTokens = map[string]bool{
 	"hcloud": true, "cloudflare": true,
+	// cluster-layer, no cloud-authority surface (co-occur in every real cluster plan):
+	"talos": true, "imager": true, "minio": true,
+	"helm": true, "kubernetes": true, "kubectl": true,
+	// pure utility:
 	"random": true, "tls": true, "null": true,
 	"local": true, "time": true, "external": true,
 }

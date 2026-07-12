@@ -1,6 +1,7 @@
 {
   "format_version": "1.2",
   "terraform_version": "1.9.0",
+  "_comment": "A REALISTIC Alethia Hetzner/Talos provision plan: hcloud_ (VMs) + talos_ (k8s bootstrap) + imager_ (image factory) + minio_ (in-cluster S3) + helm_ (CNI/CSI) + random_. None of these carry a cloud-authority surface (no IAM identity / keyless federation / least-priv role), so the plan is honestly a PASS — the fail-closed backstop (SCOPE-001) must NOT flip it to not_evaluable.",
   "resource_changes": [
     {
       "address": "hcloud_server.node",
@@ -11,7 +12,59 @@
       "change": {
         "actions": ["create"],
         "before": null,
-        "after": { "server_type": "cpx21", "location": "nbg1", "image": "ubuntu-24.04" },
+        "after": { "server_type": "cpx21", "location": "nbg1" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "imager_image.talos",
+      "mode": "managed",
+      "type": "imager_image",
+      "name": "talos",
+      "provider_name": "registry.terraform.io/siderolabs/imager",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "version": "v1.9.0" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "talos_machine_configuration_apply.cp",
+      "mode": "managed",
+      "type": "talos_machine_configuration_apply",
+      "name": "cp",
+      "provider_name": "registry.terraform.io/siderolabs/talos",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {},
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "helm_release.cilium",
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "cilium",
+      "provider_name": "registry.terraform.io/hashicorp/helm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "chart": "cilium", "namespace": "kube-system" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "minio_iam_user.app",
+      "mode": "managed",
+      "type": "minio_iam_user",
+      "name": "app",
+      "provider_name": "registry.terraform.io/aminueza/minio",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "app" },
         "after_unknown": {}
       }
     },
@@ -25,32 +78,6 @@
         "actions": ["create"],
         "before": null,
         "after": { "byte_length": 4 },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "tls_private_key.talos",
-      "mode": "managed",
-      "type": "tls_private_key",
-      "name": "talos",
-      "provider_name": "registry.terraform.io/hashicorp/tls",
-      "change": {
-        "actions": ["create"],
-        "before": null,
-        "after": { "algorithm": "ED25519" },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "null_resource.wait",
-      "mode": "managed",
-      "type": "null_resource",
-      "name": "wait",
-      "provider_name": "registry.terraform.io/hashicorp/null",
-      "change": {
-        "actions": ["create"],
-        "before": null,
-        "after": {},
         "after_unknown": {}
       }
     }
