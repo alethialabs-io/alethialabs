@@ -7,7 +7,7 @@ import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
 import { costToCredits } from "@/lib/billing/ai-credits";
-import { captureAiGeneration } from "@/lib/analytics/server";
+import { type AiMessage, captureAiGeneration } from "@/lib/analytics/server";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 
 export type AiUsageKind = "scan" | "agent" | "support";
@@ -251,6 +251,23 @@ export async function recordAiUsage(input: {
 	inputTokens?: number;
 	outputTokens?: number;
 	cachedInputTokens?: number;
+	/**
+	 * Optional LLM-observability enrichment — forwarded verbatim to the PostHog `$ai_generation`
+	 * mirror only (never touches the billing ledger). Lets call sites light up Traces / Sessions /
+	 * Tools / Errors / Sentiment without changing the metering contract.
+	 */
+	cacheCreationInputTokens?: number;
+	latencyMs?: number;
+	sessionId?: string;
+	input?: AiMessage[];
+	outputChoices?: AiMessage[];
+	tools?: string[];
+	isError?: boolean;
+	error?: string;
+	stopReason?: string;
+	stream?: boolean;
+	temperature?: number;
+	maxTokens?: number;
 }): Promise<void> {
 	const costMicros = input.model
 		? aiCostMicros({
@@ -295,6 +312,19 @@ export async function recordAiUsage(input: {
 			outputTokens: input.outputTokens,
 			cachedInputTokens: input.cachedInputTokens,
 			costMicros,
+			// Optional observability enrichment (undefined at unenriched call sites → same as before).
+			cacheCreationInputTokens: input.cacheCreationInputTokens,
+			latencyMs: input.latencyMs,
+			sessionId: input.sessionId,
+			input: input.input,
+			outputChoices: input.outputChoices,
+			tools: input.tools,
+			isError: input.isError,
+			error: input.error,
+			stopReason: input.stopReason,
+			stream: input.stream,
+			temperature: input.temperature,
+			maxTokens: input.maxTokens,
 		});
 	}
 

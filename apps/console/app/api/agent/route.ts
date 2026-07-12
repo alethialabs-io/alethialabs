@@ -21,10 +21,12 @@ import {
 	cachedSystemMessage,
 	thinkingOptions,
 } from "@/lib/ai/provider-options";
+import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
+import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
 import {
@@ -183,6 +185,13 @@ export async function POST(req: Request) {
 
 	const modelMessages = await convertToModelMessages(messages);
 
+	// LLM-observability enrichment (PostHog): thread = session, prompt = input, the mode's tool set
+	// powers the Tools view, wall-clock latency around the turn. Hoisted so onFinish/onError reuse them.
+	const agentTools = buildAgentTools({ mode });
+	const aiInput = uiMessagesToAiInput(messages);
+	const toolNames = Object.keys(agentTools);
+	const startedAt = Date.now();
+
 	// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
 	// parts) interleave with the model's own parts — the transcript renders them as
 	// PLAN/EXECUTE separators showing which model owns each phase.
@@ -196,7 +205,7 @@ export async function POST(req: Request) {
 				// Our own system prompt (cached) is intentionally a system message; user turns are
 				// never system-role, so this is not a prompt-injection surface.
 				allowSystemInMessages: true,
-				tools: buildAgentTools({ mode }),
+				tools: agentTools,
 				stopWhen: stepCountIs(8),
 				// A forced pick runs one model on every step — it thinks throughout.
 				providerOptions: clientPick ? thinkingOptions(base) : undefined,
@@ -224,7 +233,7 @@ export async function POST(req: Request) {
 						: {};
 				},
 				// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
-				onFinish: ({ steps }) => {
+				onFinish: ({ steps, text, finishReason }) => {
 					void recordAgentTurnUsage({
 						orgId: actor.orgId,
 						userId: actor.userId,
@@ -239,6 +248,33 @@ export async function POST(req: Request) {
 								cachedInputTokens: s.usage.cachedInputTokens,
 							},
 						})),
+						// Turn-level PostHog enrichment (rides the primary generation; session on all rows).
+						turn: {
+							sessionId: threadId,
+							input: aiInput,
+							outputChoices: textToAiOutput(text),
+							tools: toolNames,
+							latencyMs: Date.now() - startedAt,
+							stopReason: finishReason,
+						},
+					});
+				},
+				// A failed turn still shows in PostHog's Errors view (no per-model steps on error).
+				onError: ({ error }) => {
+					void recordAiUsage({
+						orgId: actor.orgId,
+						userId: actor.userId,
+						kind: "agent",
+						source: charge.source,
+						refId: threadId,
+						model: base.key,
+						latencyMs: Date.now() - startedAt,
+						sessionId: threadId,
+						input: aiInput,
+						tools: toolNames,
+						stream: true,
+						isError: true,
+						error: error instanceof Error ? error.message : String(error),
 					});
 				},
 			});

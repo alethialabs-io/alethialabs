@@ -11,6 +11,7 @@ import {
 import { eq } from "drizzle-orm";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
+import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
@@ -78,6 +79,12 @@ export async function POST(
 		buildAgentTools({ mode }),
 		agent.tool_scope,
 	) as ToolSet;
+	// LLM-observability enrichment (PostHog): the thread is the "session", the prompt is the input,
+	// and the scoped tool set is what powers the Tools view. Latency is wall-clock around the stream.
+	const sessionId = threadId ?? agentId;
+	const aiInput = uiMessagesToAiInput(messages);
+	const toolNames = Object.keys(tools);
+	const startedAt = Date.now();
 
 	const result = streamText({
 		model: model.model,
@@ -93,18 +100,43 @@ export async function POST(
 		stopWhen: stepCountIs(8),
 		// Single-model run — extended thinking on every step so reasoning streams.
 		providerOptions: thinkingOptions(model),
-		onFinish: ({ usage }) => {
+		onFinish: ({ usage, text, finishReason }) => {
 			void recordAiUsage({
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
 				// Metered → omit credits; settled from this row's real cost-of-serve.
 				source: charge.source,
-				refId: threadId ?? agentId,
+				refId: sessionId,
 				model: model.key,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
 				cachedInputTokens: usage.cachedInputTokens,
+				latencyMs: Date.now() - startedAt,
+				sessionId,
+				input: aiInput,
+				outputChoices: textToAiOutput(text),
+				tools: toolNames,
+				stopReason: finishReason,
+				stream: true,
+			});
+		},
+		onError: ({ error }) => {
+			// Record the failed generation so it shows in PostHog's Errors view (no tokens on error).
+			void recordAiUsage({
+				orgId: actor.orgId,
+				userId: actor.userId,
+				kind: "agent",
+				source: charge.source,
+				refId: sessionId,
+				model: model.key,
+				latencyMs: Date.now() - startedAt,
+				sessionId,
+				input: aiInput,
+				tools: toolNames,
+				stream: true,
+				isError: true,
+				error: error instanceof Error ? error.message : String(error),
 			});
 		},
 	});
