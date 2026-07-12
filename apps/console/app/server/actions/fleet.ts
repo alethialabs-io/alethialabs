@@ -65,7 +65,8 @@ export interface FleetPoolView {
 	provider: CloudProvider;
 	/** Optional display label; falls back to the provider name in the UI. */
 	name: string | null;
-	/** False = paused: the controller skips it, but its runners still show while draining. */
+	/** False = paused: the controller reconciles it as a teardown target (drains its VMs to zero +
+	 *  closes their usage sessions), and its runners still show while draining. Resume rebuilds. */
 	enabled: boolean;
 	/** Always-warm floor (the meter's slot count). */
 	target: number;
@@ -209,9 +210,12 @@ export async function getFleetPoolViews(): Promise<FleetOverview> {
 	// Non-throwing capability probe (no activity write) — gates the create/edit/delete UI.
 	const canManageFleet = (await getPdp().can(actor, "create", { type: "fleet" })).allowed;
 
+	// Exclude pools being torn down (deleting = true): they're draining to zero and are neither
+	// editable nor a live capacity target, so the sidebar shouldn't show them.
 	const pools = await getServiceDb()
 		.select()
 		.from(fleetPools)
+		.where(eq(fleetPools.deleting, false))
 		.orderBy(asc(fleetPools.provider));
 	const fleetProviderActive = process.env.FLEET_PROVIDER === "hcloud";
 	if (pools.length === 0) return { pools: [], fleetProviderActive, canManageFleet };
@@ -231,7 +235,12 @@ export async function getFleetPoolViews(): Promise<FleetOverview> {
 export async function listFleetPoolConfigs(): Promise<FleetPool[]> {
 	assertFleetOperable();
 	await authorize("view", { type: "fleet" });
-	return getServiceDb().select().from(fleetPools).orderBy(asc(fleetPools.provider));
+	// A tearing-down pool (deleting = true) must not be shown/editable in the editor.
+	return getServiceDb()
+		.select()
+		.from(fleetPools)
+		.where(eq(fleetPools.deleting, false))
+		.orderBy(asc(fleetPools.provider));
 }
 
 /** Map a validated create input to the insert row (camelCase project → snake_case columns). */
@@ -306,7 +315,9 @@ export async function updateFleetPool(
 	return row;
 }
 
-/** Pause/resume a pool. Paused pools are skipped by the controller (its runners drain). */
+/** Pause/resume a pool. A paused pool is reconciled as a teardown target — the controller drains
+ *  its warm VMs to zero (closing each runner's usage session) rather than merely skipping it, so
+ *  pausing never leaves billable orphans; resuming rebuilds the warm floor over a few ticks. */
 export async function setFleetPoolEnabled(id: string, enabled: boolean): Promise<FleetPool> {
 	assertFleetOperable();
 	await authorize("edit", { type: "fleet", id });
@@ -320,11 +331,23 @@ export async function setFleetPoolEnabled(id: string, enabled: boolean): Promise
 	return row;
 }
 
-/** Delete a pool. The controller then drains + reaps its runners on the next tick. */
+/**
+ * Delete a pool. This is a SOFT delete: it marks the row `deleting = true` (and pauses it) rather
+ * than removing it, so the controller keeps seeing the pool and reconciles it as a teardown target
+ * — draining every VM to zero and closing each runner's usage session (retireRunner) before
+ * `reapDeletedPools` physically removes the empty row on a later tick. A hard DELETE (the old
+ * behavior) removed the row instantly, so the scaler no longer knew about the pool and never
+ * destroyed its VMs (perpetual Hetzner spend) or closed their metered sessions (billed forever).
+ * The partial unique index on `provider` (WHERE deleting = false) lets a fresh pool for the same
+ * provider be created while the old one still drains.
+ */
 export async function deleteFleetPool(id: string): Promise<{ success: true }> {
 	assertFleetOperable();
 	await authorize("destroy", { type: "fleet", id });
-	await getServiceDb().delete(fleetPools).where(eq(fleetPools.id, id));
+	await getServiceDb()
+		.update(fleetPools)
+		.set({ deleting: true, enabled: false, updated_at: new Date() })
+		.where(eq(fleetPools.id, id));
 	wakeFleetScaler();
 	revalidatePath("/dashboard/runners");
 	return { success: true };

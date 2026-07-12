@@ -8,7 +8,8 @@
 import { getServiceDb } from "@/lib/db";
 import { fleetPools, type FleetPool, type NewFleetPool } from "@/lib/db/schema";
 import { getFleetPools } from "@/lib/fleet/config";
-import type { FleetTarget } from "@/lib/fleet/types";
+import { managedRunnersByInstance } from "@/lib/fleet/queue";
+import type { FleetProvider, FleetTarget } from "@/lib/fleet/types";
 import { log } from "@/lib/observability/log";
 import { eq } from "drizzle-orm";
 
@@ -32,13 +33,37 @@ export function rowToProject(row: FleetPool): FleetTarget {
 	};
 }
 
-/** Load the enabled pools as controller projects. Disabled (paused) pools are skipped. */
+/** Load EVERY pool as a controller project — including paused (`enabled = false`) and
+ *  soft-deleted (`deleting = true`) rows, so the controller can drain their VMs to zero and close
+ *  the runners' usage sessions instead of orphaning them. A disabled OR deleting row maps to a
+ *  TEARDOWN target (target → 0, destroy every instance, never create); a normal enabled row maps
+ *  1:1 as before. (Previously this filtered to `enabled = true`, so a deleted/paused pool vanished
+ *  from the controller and its VMs + sessions leaked forever.) */
 export async function loadFleetPools(): Promise<FleetTarget[]> {
+	const rows = await getServiceDb().select().from(fleetPools);
+	return rows.map((row) => {
+		const target = rowToProject(row);
+		return !row.enabled || row.deleting ? { ...target, teardown: true } : target;
+	});
+}
+
+/** Physically remove soft-deleted (`deleting = true`) pools once fully torn down: their VMs are
+ *  all gone (provider.list empty) AND no live managed runner still maps to the provider (guards
+ *  the list-race where a VM is destroyed but its runner row hasn't retired yet). Called after each
+ *  reconcile pass; a still-draining pool is left for a later tick. Idempotent. */
+export async function reapDeletedPools(provider: FleetProvider): Promise<void> {
 	const rows = await getServiceDb()
 		.select()
 		.from(fleetPools)
-		.where(eq(fleetPools.enabled, true));
-	return rows.map(rowToProject);
+		.where(eq(fleetPools.deleting, true));
+	for (const row of rows) {
+		const instances = await provider.list(rowToProject(row));
+		if (instances.length > 0) continue; // VMs still draining/destroying
+		const live = await managedRunnersByInstance(row.provider);
+		if (live.size > 0) continue; // a runner row hasn't retired yet — wait
+		await getServiceDb().delete(fleetPools).where(eq(fleetPools.id, row.id));
+		flog.info("removed torn-down pool", { pool_id: row.id, provider: row.provider });
+	}
 }
 
 /** Map a FleetTarget back to an insert row (for the env → DB seed). */

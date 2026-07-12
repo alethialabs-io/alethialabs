@@ -18,7 +18,11 @@ vi.mock("@/lib/fleet/controller", async (importOriginal) => {
 	return { ...actual, reconcileAll: vi.fn(async () => {}) };
 });
 vi.mock("@/lib/fleet/db-deps", () => ({ makeDbDeps: vi.fn(() => ({ deps: true })) }));
-vi.mock("@/lib/fleet/pools-db", () => ({ loadFleetPools: vi.fn(async () => []) }));
+vi.mock("@/lib/fleet/pools-db", () => ({
+	loadFleetPools: vi.fn(async () => []),
+	// The tick also reaps fully-drained soft-deleted pools; stub it so the loop stays hermetic.
+	reapDeletedPools: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/fleet/provider", () => ({ getFleetProvider: vi.fn(() => ({ provider: true })) }));
 // The tick also GC's bootstrap tokens (real → DB); stub it so the loop stays hermetic in tests.
 vi.mock("@/lib/runners/bootstrap-token", () => ({ sweepBootstrapTokens: vi.fn(async () => {}) }));

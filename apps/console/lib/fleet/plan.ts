@@ -40,6 +40,37 @@ function classify(i: ObservedInstance, bootGraceSeconds: number): Bucket {
  * controller applies them idempotently. Pure — no I/O, deterministic.
  */
 export function plan(project: FleetTarget, o: Observed): FleetAction[] {
+	// TEARDOWN: the pool is being deleted or paused. Reconcile the target to zero and destroy
+	// EVERY instance regardless of version/label — never create. This is deliberately version-
+	// agnostic: the normal scale-down path only fires once `outdated.length === 0` (all online
+	// instances on the target version), so a naive "set target=0" leaves any off-version instance
+	// untouched forever — orphaning its VM and leaving its runner_usage_session open (billing
+	// forever). A busy online instance is DRAINED (stops claiming, finishes its in-flight job) so
+	// next tick it is idle → destroyed → controller.retire closes its session; everything else is
+	// destroyed now. Emitted only when `teardown` is set (undefined for all normal pools), so
+	// normal reconciliation below is byte-identical.
+	if (project.teardown) {
+		const out: FleetAction[] = [];
+		for (const i of o.instances) {
+			const bucket = classify(i, o.bootGraceSeconds);
+			if (bucket === "online") {
+				if (i.busy && i.runnerId) {
+					// Let the in-flight job finish; draining stops it claiming new work.
+					out.push({ type: "drain", runnerId: i.runnerId, instanceId: i.instanceId, reason: "teardown" });
+				} else {
+					out.push({ type: "destroy", instanceId: i.instanceId, reason: "teardown" });
+				}
+			} else if (bucket === "draining") {
+				// Already draining: destroy once its job has finished (idle); leave a busy one to finish.
+				if (!i.busy) out.push({ type: "destroy", instanceId: i.instanceId, reason: "teardown" });
+			} else {
+				// booting or dead → destroy (no job can be running).
+				out.push({ type: "destroy", instanceId: i.instanceId, reason: "teardown" });
+			}
+		}
+		return out;
+	}
+
 	const actions: FleetAction[] = [];
 	const target = targetCount(project, o.backlog, o.recentPeak);
 	const maxInstances = project.max + project.surge;

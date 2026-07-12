@@ -15,7 +15,7 @@
 
 import { reconcileAll, type SurplusState } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
-import { loadFleetPools } from "@/lib/fleet/pools-db";
+import { loadFleetPools, reapDeletedPools } from "@/lib/fleet/pools-db";
 import { getFleetProvider } from "@/lib/fleet/provider";
 import {
 	registerLoop,
@@ -101,6 +101,12 @@ export function wakeFleetScaler(): void {
 async function tick(): Promise<void> {
 	const projects = await loadFleetPools();
 	await reconcileAll(projects, getFleetProvider(), makeDbDeps(), surplus);
+	// Reap soft-deleted pools whose VMs have fully drained (and their runners retired). Runs AFTER
+	// reconcileAll so a teardown pool's destroys are issued first; a still-draining pool is left for
+	// a later tick. Best-effort — a reap hiccup must never break the reconcile loop.
+	await reapDeletedPools(getFleetProvider()).catch((err) =>
+		flog.error("reapDeletedPools failed", { err }),
+	);
 	// Best-effort GC of spent/expired per-VM bootstrap tokens (past a retry grace).
 	await sweepBootstrapTokens().catch((err) =>
 		flog.error("bootstrap-token sweep failed", { err }),

@@ -320,11 +320,17 @@ describe("setFleetPoolEnabled", () => {
 });
 
 describe("deleteFleetPool", () => {
-	it("deletes the pool, wakes the scaler, and returns success", async () => {
-		mockDb([]);
+	it("SOFT-deletes (deleting=true, paused) so the controller drains first, wakes the scaler", async () => {
+		const { setSpy } = mockDb([]);
 		const r = await deleteFleetPool("p1");
 		expect(authorize).toHaveBeenCalledWith("destroy", { type: "fleet", id: "p1" });
 		expect(r).toEqual({ success: true });
+		// It must be a soft-delete UPDATE (deleting=true + enabled=false), NOT a hard row delete —
+		// a hard delete would orphan the pool's VMs + leave their usage sessions billing forever.
+		const patch = setSpy.mock.calls[0][0];
+		expect(patch.deleting).toBe(true);
+		expect(patch.enabled).toBe(false);
+		expect(patch.updated_at).toBeInstanceOf(Date);
 		expect(wakeFleetScaler).toHaveBeenCalledTimes(1);
 		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/runners");
 	});
