@@ -152,6 +152,7 @@ CREATE OR REPLACE FUNCTION public.claim_next_job(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
     v_job_id UUID;
+    v_org UUID;
     v_operator public.runner_operator;
     v_providers public.cloud_provider[];
     v_status public.runner_status;
@@ -194,24 +195,61 @@ BEGIN
         IF v_operator = 'managed' THEN
             -- Shared pool: priority, then fair across orgs (fewest in-flight), then
             -- oldest; skip orgs already at their plan concurrency cap.
-            UPDATE public.jobs
-            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
-            WHERE id = (
-                SELECT j.id FROM public.jobs j
-                WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
-                  -- Self-managed token clouds: only the customer's self-hosted runner
-                  -- has the credential. A managed runner must never claim these.
-                  AND j.requires_self_runner = false
-                  AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
-                  AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
-                  AND (
-                    public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
-                    OR public.org_managed_inflight(j.org_id)
-                       < public.plan_max_concurrency(public.org_effective_plan(j.org_id))
-                  )
-                ORDER BY j.priority DESC, public.org_managed_inflight(j.org_id) ASC, j.created_at ASC
-                LIMIT 1 FOR UPDATE SKIP LOCKED
-            ) RETURNING id INTO v_job_id;
+            --
+            -- TOCTOU FIX: the cap gate below (org_managed_inflight < plan_max_concurrency)
+            -- counts CLAIMED/PROCESSING rows, but FOR UPDATE SKIP LOCKED locks only the
+            -- candidate JOB row, not the org's in-flight set. Under READ COMMITTED a concurrent
+            -- claimer's not-yet-committed CLAIMED row is invisible to that count, and the
+            -- broadcast wake (jobs_runner_wake -> /api/runners/wake fan-out to the whole pool)
+            -- makes N managed runners fire claim within milliseconds -- so without serialization
+            -- every claimer snapshots inflight < cap and admits, blowing past the per-org cap.
+            --
+            -- Admission is serialized PER ORG with a transaction-scoped advisory lock, and the
+            -- cap re-verified while holding it. The winning org isn't known until the fairness
+            -- SELECT runs, so: (1) pick + row-lock the candidate (FOR UPDATE SKIP LOCKED),
+            -- (2) take the org-keyed advisory lock, (3) re-check the cap, (4) claim. A concurrent
+            -- same-org claimer blocks at (2) until we COMMIT, at which point our CLAIMED row is
+            -- visible to its recount -- so the re-check is authoritative (a plain post-UPDATE
+            -- recheck WITHOUT this lock would NOT close the race: the uncommitted row stays
+            -- invisible under READ COMMITTED). The key is per-org (hashtext of org_id), so
+            -- different orgs never contend the same lock -- no cross-org serialization. Lock
+            -- ordering is always candidate-row-lock then org-advisory-lock (single key per claim),
+            -- so no deadlock; the xact-scoped lock releases when this one-statement claim commits.
+            SELECT j.id, j.org_id INTO v_job_id, v_org
+              FROM public.jobs j
+              WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
+                -- Self-managed token clouds: only the customer's self-hosted runner
+                -- has the credential. A managed runner must never claim these.
+                AND j.requires_self_runner = false
+                AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
+                AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
+                AND (
+                  public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
+                  OR public.org_managed_inflight(j.org_id)
+                     < public.plan_max_concurrency(public.org_effective_plan(j.org_id))
+                )
+              ORDER BY j.priority DESC, public.org_managed_inflight(j.org_id) ASC, j.created_at ASC
+              LIMIT 1 FOR UPDATE SKIP LOCKED;
+
+            IF v_job_id IS NOT NULL THEN
+                -- Serialize same-org admission, then re-verify the cap under the lock.
+                PERFORM pg_advisory_xact_lock(hashtext('alethia:claim:managed:' || v_org::text)::bigint);
+                IF (
+                     public.plan_max_concurrency(public.org_effective_plan(v_org)) IS NULL
+                     OR public.org_managed_inflight(v_org)
+                        < public.plan_max_concurrency(public.org_effective_plan(v_org))
+                   ) THEN
+                    UPDATE public.jobs
+                    SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(),
+                        progress_at = now(), updated_at = now()
+                    WHERE id = v_job_id;
+                ELSE
+                    -- Org filled to its cap between the SELECT and acquiring the lock: do not
+                    -- claim. The candidate stays QUEUED (its row lock releases at commit); the
+                    -- broadcast wake / next poll re-offers it once an in-flight job finishes.
+                    v_job_id := NULL;
+                END IF;
+            END IF;
         ELSE
             -- Self/dedicated runner: STRICTLY its own org's jobs; priority then oldest, uncapped.
             -- The org_id predicate is the cross-tenant guard: without it a self runner
