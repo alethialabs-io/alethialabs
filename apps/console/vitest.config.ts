@@ -59,6 +59,12 @@ export default defineConfig({
 				"lib/fleet/pools-db.ts",
 				"lib/authz/postgres-rbac-pdp.ts",
 				"lib/authz/seed.ts",
+				// B2c reconcilers: real-SQL convergence/reap/GC verified by tests/integration/
+				// reconcile-b2c.test.ts (real Postgres). The loop host + heartbeat seam stay in scope
+				// (unit-covered by tests/lib/reconcile/*).
+				"lib/reconcile/converge.ts",
+				"lib/reconcile/reap.ts",
+				"lib/reconcile/gc.ts",
 			],
 			// Thresholds are report-only for now; ratchet up as suites land (see TESTING.md).
 		},

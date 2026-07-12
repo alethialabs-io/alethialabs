@@ -1095,3 +1095,60 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO alethia_app;
+
+-- ── Retention GC (B2c reconcile loop) ───────────────────────────────────────────────
+-- Bounded, best-effort garbage collection wired into the supervised reconcile loop
+-- (lib/reconcile/gc.ts). Each call deletes at most p_limit rows so it can NEVER take a
+-- table-wide lock or run long — the loop calls it every tick, so a backlog drains over
+-- several passes and then no-ops. FOR UPDATE SKIP LOCKED makes concurrent app instances
+-- safe: two loops racing the same window claim disjoint rows instead of blocking.
+
+-- Delete job_logs older than the retention window (default 30d). The oldest rows first
+-- (job_logs.id is a monotonic identity, so id-order == insert-order). job_logs has a FK
+-- to jobs ON DELETE CASCADE, but we only delete the log rows themselves here.
+CREATE OR REPLACE FUNCTION public.gc_job_logs(
+    p_age INTERVAL DEFAULT INTERVAL '30 days', p_limit INTEGER DEFAULT 5000
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    WITH doomed AS (
+        SELECT jl.id
+        FROM public.job_logs jl
+        WHERE jl.created_at < now() - p_age
+        ORDER BY jl.id
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM public.job_logs jl
+    USING doomed d
+    WHERE jl.id = d.id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.gc_job_logs(INTERVAL, INTEGER) TO alethia_app;
+
+-- Delete fleet_actions ledger rows older than the retention window (default 90d). The
+-- #345 durable fleet-actions ledger has no GC of its own; unbounded it grows forever.
+-- Oldest first by created_at (the (provider, created_at) index and small batch keep it cheap).
+CREATE OR REPLACE FUNCTION public.gc_fleet_actions(
+    p_age INTERVAL DEFAULT INTERVAL '90 days', p_limit INTEGER DEFAULT 5000
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    WITH doomed AS (
+        SELECT fa.id
+        FROM public.fleet_actions fa
+        WHERE fa.created_at < now() - p_age
+        ORDER BY fa.created_at
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM public.fleet_actions fa
+    USING doomed d
+    WHERE fa.id = d.id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.gc_fleet_actions(INTERVAL, INTEGER) TO alethia_app;
