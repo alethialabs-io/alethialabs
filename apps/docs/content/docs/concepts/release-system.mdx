@@ -83,12 +83,12 @@ The tap/bucket repos (`alethialabs-io/homebrew-tap`, `alethialabs-io/scoop-bucke
 exist, and the source repo is already **public** (so anonymous brew/scoop/curl/docker
 downloads work the moment a release exists).
 
-1. **Publish credentials.** Install the tap GitHub App on both `homebrew-tap` and
-   `scoop-bucket`, and set the `TAP_APP_ID` / `TAP_APP_PRIVATE_KEY` repo secrets —
-   `release-cli.yml` mints a scoped token via `create-github-app-token`
-   (`repositories: homebrew-tap`, `scoop-bucket`) and passes it as both
-   `HOMEBREW_TAP_GITHUB_TOKEN` and `SCOOP_TAP_GITHUB_TOKEN`. (A classic PAT with
-   `public_repo` in those env vars also works.)
+1. **Publish credentials.** The cross-repo publishes (formula, scoop manifest, CLI mirror)
+   use one token in the `HOMEBREW_TAP_GITHUB_TOKEN` repo secret — a **PAT** with write
+   access to `homebrew-tap`, `scoop-bucket`, and `alethia`. A classic PAT with the `repo`
+   scope covers all three; a fine-grained PAT must list those repos with **Contents: Read
+   and write**. (`release-cli.yml` feeds it to GoReleaser as both `HOMEBREW_TAP_GITHUB_TOKEN`
+   and `SCOOP_TAP_GITHUB_TOKEN`; `mirror-cli.yml` uses the same secret to push the mirror.)
 2. **Wire `get.alethialabs.io`** (for `curl … | sh` / `irm … | iex`): `tofu apply`
    `infra/cp-hetzner` (creates the `get` CNAME + tunnel ingress), then redeploy prod so
    Caddy picks up the `@get` host route in `deploy/prod/Caddyfile.tunnel`.
