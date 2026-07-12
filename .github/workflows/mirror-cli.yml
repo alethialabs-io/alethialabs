@@ -1,0 +1,95 @@
+name: Mirror CLI
+
+# Publishes a read-only mirror of the CLI (apps/cli + its shared packages/core) to the public
+# alethialabs-io/alethia repo. Development happens here in the monorepo; the mirror is a browsable
+# front door + focused issue target. Source-only — releases stay on the monorepo (GoReleaser →
+# tap/scoop/packages). See docs/concepts/release-system.mdx and the repo-strategy notes.
+#
+# The two dirs keep their monorepo-relative layout, so apps/cli/go.mod's
+# `replace …/packages/core => ../../packages/core` resolves with zero file edits — the mirror is a
+# pure copy, not a transform.
+
+on:
+  push:
+    branches: [main]
+    tags: ['cli-v*']
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-cli
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout monorepo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: apps/cli/go.sum
+
+      - name: Mint mirror token (GitHub App)
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethia
+
+      - name: Build staging tree
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/mirror"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/apps/cli" "$STAGE/packages/core"
+          rsync -a --delete apps/cli/ "$STAGE/apps/cli/"
+          rsync -a --delete packages/core/ "$STAGE/packages/core/"
+          cp .github/mirror/README.md "$STAGE/README.md"
+          cp .github/mirror/CONTRIBUTING.md "$STAGE/CONTRIBUTING.md"
+          cp LICENSE "$STAGE/LICENSE"
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      - name: Sanity build (the mirror must compile standalone)
+        run: |
+          set -euo pipefail
+          cd "$STAGE/apps/cli"
+          go build ./...
+
+      - name: Push to mirror
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/alethialabs-io/alethia.git" "$RUNNER_TEMP/repo"
+          cd "$RUNNER_TEMP/repo"
+          # Replace the working tree with the staging snapshot (keep .git).
+          find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
+          cp -a "$STAGE/." .
+          git config user.name "alethialabs-io"
+          git config user.email "contact@borislav.me"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Mirror already up to date — nothing to push."
+          else
+            git commit -m "Sync from alethialabs-io/alethialabs@${GITHUB_SHA:0:12}"
+            git push origin HEAD:main
+          fi
+          # On a cli-v* tag, publish the matching clean vX.Y.Z tag on the mirror.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            case "${GITHUB_REF_NAME}" in
+              cli-v*)
+                V="${GITHUB_REF_NAME#cli-}"
+                git tag -f "$V"
+                git push -f origin "refs/tags/$V"
+                echo "Tagged mirror $V"
+                ;;
+            esac
+          fi
