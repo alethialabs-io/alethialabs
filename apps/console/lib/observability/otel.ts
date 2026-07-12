@@ -13,9 +13,15 @@
 // error. OTel is NEVER a hard dependency and NEVER backpressures a provision.
 
 import { metrics } from "@opentelemetry/api";
+import { logs } from "@opentelemetry/api-logs";
+import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
+import {
+	BatchLogRecordProcessor,
+	LoggerProvider,
+} from "@opentelemetry/sdk-logs";
 import {
 	MeterProvider,
 	PeriodicExportingMetricReader,
@@ -37,22 +43,56 @@ export const OTEL_SERVICE_NAME = "alethia-console";
 
 let tracerProvider: NodeTracerProvider | undefined;
 let meterProvider: MeterProvider | undefined;
+let loggerProvider: LoggerProvider | undefined;
 
 /**
- * Boots the OTel Node trace + metric SDKs, but ONLY when an OTLP endpoint is
- * configured. Unset ⇒ a complete no-op (no providers registered → the global
- * tracer/meter stay no-op). Idempotent, and never throws: any setup failure is
- * logged and swallowed so a bad collector URL can't crash the console at startup.
- * Returns true iff a provider was registered.
+ * Boots the OTel Node trace + metric + log SDKs, each ONLY when its OTLP endpoint is configured.
+ * Traces/metrics ride `OTEL_EXPORTER_OTLP_ENDPOINT`; logs ride the per-signal
+ * `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (falling back to the general endpoint) so structured logs can be
+ * shipped to PostHog's log product while traces/metrics keep any own-collector destination. Unset ⇒ a
+ * complete no-op (no provider registered → the global tracer/meter/logger stay no-op). Idempotent, and
+ * never throws: any setup failure is logged and swallowed so a bad URL can't crash the console at
+ * startup. Returns true iff at least one provider was registered.
  */
 export function startOtel(): boolean {
-	if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) return false;
-	if (tracerProvider) return true; // already started
+	const tracesMetricsOn = !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+	const logsOn = !!(
+		process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ||
+		process.env.OTEL_EXPORTER_OTLP_ENDPOINT
+	);
+	if (!tracesMetricsOn && !logsOn) return false;
+	if (tracerProvider || loggerProvider) return true; // already started
 	try {
 		const resource = resourceFromAttributes({
 			[ATTR_SERVICE_NAME]: OTEL_SERVICE_NAME,
 			[ATTR_SERVICE_VERSION]: process.env.ALETHIA_VERSION ?? "dev",
 		});
+		// Logs: a batched processor (same drop-on-full, non-blocking discipline as spans) shipping the
+		// structured pino lines (bridged in lib/observability/log.ts) to the OTLP logs endpoint. The
+		// exporter reads OTEL_EXPORTER_OTLP_LOGS_ENDPOINT/_HEADERS from env, so pointing logs at PostHog
+		// is pure config. Registered globally so `logs.getLogger()` in log.ts stops being a no-op.
+		if (logsOn) {
+			loggerProvider = new LoggerProvider({
+				resource,
+				processors: [
+					new BatchLogRecordProcessor(new OTLPLogExporter(), {
+						maxQueueSize: 2048,
+						maxExportBatchSize: 512,
+						scheduledDelayMillis: 5000,
+						exportTimeoutMillis: 30000,
+					}),
+				],
+			});
+			logs.setGlobalLoggerProvider(loggerProvider);
+		}
+		if (!tracesMetricsOn) {
+			olog.info("OpenTelemetry logs enabled", {
+				endpoint:
+					process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ??
+					process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+			});
+			return true;
+		}
 
 		// Traces: a BATCHED span processor with a bounded queue. When the queue is full
 		// (e.g. the collector is down) spans are DROPPED, never buffered unboundedly and
@@ -92,6 +132,7 @@ export function startOtel(): boolean {
 
 		olog.info("OpenTelemetry traces + metrics enabled", {
 			endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+			logs: logsOn,
 		});
 		return true;
 	} catch (err) {
@@ -110,7 +151,9 @@ export async function shutdownOtel(): Promise<void> {
 	await Promise.allSettled([
 		tracerProvider?.shutdown(),
 		meterProvider?.shutdown(),
+		loggerProvider?.shutdown(),
 	]);
 	tracerProvider = undefined;
 	meterProvider = undefined;
+	loggerProvider = undefined;
 }

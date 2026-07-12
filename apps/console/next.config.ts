@@ -62,6 +62,9 @@ const nextConfig: NextConfig = {
 		"@opentelemetry/sdk-metrics",
 		"@opentelemetry/exporter-trace-otlp-http",
 		"@opentelemetry/exporter-metrics-otlp-http",
+		"@opentelemetry/api-logs",
+		"@opentelemetry/sdk-logs",
+		"@opentelemetry/exporter-logs-otlp-http",
 	],
 	async rewrites() {
 		// Serve the CLI install script at the root of get.alethialabs.io
