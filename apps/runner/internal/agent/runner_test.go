@@ -443,6 +443,97 @@ func TestExecuteJob_CancelledPostsCancelled(t *testing.T) {
 	}
 }
 
+// TestExecuteJob_FailedWithOrphanRiskFlags proves a NON-cancel mid-apply interruption (the 2h
+// jobCtx deadline, a shutdown-drain SIGKILL, or a crash-recovery) whose orphan risk was marked
+// posts FAILED (not CANCELLED) carrying orphan_risk=true. The job is NOT cancelled here
+// (wasCancelled=false), so it takes the FAILED branch — mirroring a runner torn down mid-apply
+// by something other than an explicit user cancel. Without the fix the FAILED branch posts nil
+// metadata, silently dropping the orphan signal.
+func TestExecuteJob_FailedWithOrphanRiskFlags(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+	// Interrupted mid-apply by a non-cancel cause: only the orphan-risk marker is set (the
+	// deploy path sets it whenever ctx.Err()!=nil at/after the apply phase — see executeDeploy).
+	w.cancels.markOrphanRisk("job-fail-orphan")
+
+	claim := &ClaimResponse{
+		Job: &Job{ID: "job-fail-orphan", JobType: "BOGUS_TYPE", ConfigSnapshot: map[string]any{}},
+	}
+	_ = w.executeJob(t.Context(), claim)
+
+	var found bool
+	for _, u := range api.getStatusUpdates() {
+		if u.status == "FAILED" {
+			found = true
+			if u.metadata == nil || u.metadata["orphan_risk"] != true {
+				t.Errorf("expected orphan_risk=true in FAILED metadata, got %v", u.metadata)
+			}
+			if u.metadata != nil {
+				if _, ok := u.metadata["orphan_risk_reason"].(string); !ok {
+					t.Errorf("expected orphan_risk_reason string in FAILED metadata, got %v", u.metadata["orphan_risk_reason"])
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a FAILED status update")
+	}
+}
+
+// TestExecuteJob_FailedWithoutOrphanRiskNilMeta proves the regression guard: a plain FAILED
+// (no orphan risk marked — e.g. a normal tofu apply error that never cancelled the context)
+// carries NO orphan_risk, so it does not over-alert.
+func TestExecuteJob_FailedWithoutOrphanRiskNilMeta(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+
+	claim := &ClaimResponse{
+		Job: &Job{ID: "job-fail-clean", JobType: "BOGUS_TYPE", ConfigSnapshot: map[string]any{}},
+	}
+	_ = w.executeJob(t.Context(), claim)
+
+	var found bool
+	for _, u := range api.getStatusUpdates() {
+		if u.status == "FAILED" {
+			found = true
+			if u.metadata != nil && u.metadata["orphan_risk"] == true {
+				t.Errorf("did not expect orphan_risk on a plain failure, got %v", u.metadata)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a FAILED status update")
+	}
+}
+
+// TestShouldMarkOrphanRisk covers the pure interruption-decision helper used by executeDeploy:
+// any context cancellation (user cancel, 2h deadline, shutdown-drain) at/after the apply phase
+// flags orphan risk; a plain apply failure (ctx still live) and a pre-apply interruption do not.
+func TestShouldMarkOrphanRisk(t *testing.T) {
+	cases := []struct {
+		name      string
+		phase     string
+		wasCancel bool
+		ctxErr    error
+		want      bool
+	}{
+		{"apply+user-cancel", "apply", true, nil, true},
+		{"apply+deadline", "apply", false, context.DeadlineExceeded, true},
+		{"apply+ctx-canceled", "apply", false, context.Canceled, true},
+		{"apply+clean-failure", "apply", false, nil, false},
+		{"pre-apply+deadline", "", false, context.DeadlineExceeded, false},
+		{"pre-apply+user-cancel", "", true, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldMarkOrphanRisk(tc.phase, tc.wasCancel, tc.ctxErr); got != tc.want {
+				t.Errorf("shouldMarkOrphanRisk(%q, %v, %v) = %v, want %v",
+					tc.phase, tc.wasCancel, tc.ctxErr, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestExecuteJob_CancelledWithOrphanRiskFlags proves a cancelled job whose apply had started
 // posts CANCELLED with orphan_risk=true.
 func TestExecuteJob_CancelledWithOrphanRiskFlags(t *testing.T) {

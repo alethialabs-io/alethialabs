@@ -504,8 +504,22 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			"runner_id": w.config.RunnerID,
 		})
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
+		// A non-cancel mid-apply interruption (the 2h jobCtx deadline, a shutdown-drain SIGKILL,
+		// or a crash-recovery) fails rather than cancels, but may still have left cloud resources
+		// outside tofu state. When the deploy path flagged that (see shouldMarkOrphanRisk), attach
+		// the SAME orphan_risk signal the cancel path posts so the terminal metadata honestly
+		// records that an operator must reconcile. reap() runs only after executeJob returns
+		// (claimLoop), and UpdateJobStatus posts context-free, so the flag survives a drain here.
+		var failMeta map[string]any
+		if w.cancels.orphanRisk(job.ID) {
+			failMeta = map[string]any{
+				"orphan_risk":        true,
+				"orphan_risk_reason": "apply was interrupted (timeout or runner shutdown) before tofu state was persisted; cloud resources may exist outside tofu state and need reconciliation",
+			}
+			fmt.Fprintln(stderrLogger, "Apply interrupted — cloud resources may have been left outside tofu state (orphan risk). An operator should reconcile.")
+		}
 		stderrLogger.Close()
-		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
+		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), failMeta)
 		return execErr
 	}
 
@@ -652,11 +666,15 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}, func(ctx context.Context) error {
 		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
 	}); err != nil {
-		// On a mid-flight cancel, decide whether the killed work had reached the apply
+		// On a mid-flight interruption, decide whether the killed work had reached the apply
 		// (state-mutating) phase. RunDeployV2 writes "apply" to workDir/phase just before
-		// `tofu apply`; if we cancelled at or after that point, orphaned cloud resources may
-		// exist. Read it BEFORE the deferred RemoveAll(workDir) so the marker is still there.
-		if w.cancels.wasCancelled(job.ID) && readDeployPhase(workDir) == "apply" {
+		// `tofu apply`; if we were torn down at or after that point, orphaned cloud resources
+		// may exist. The interruption may be an explicit user cancel OR a non-cancel cause —
+		// the 2h jobCtx deadline (line ~232) or the shutdown-drain cancelling the root ctx
+		// (line ~123-126) — all of which surface here as ctx.Err()!=nil. A plain `tofu apply`
+		// failure leaves ctx live, so it stays (correctly) unflagged. Read the marker BEFORE
+		// the deferred RemoveAll(workDir) so it is still there.
+		if shouldMarkOrphanRisk(readDeployPhase(workDir), w.cancels.wasCancelled(job.ID), ctx.Err()) {
 			w.cancels.markOrphanRisk(job.ID)
 		}
 		return err
@@ -945,6 +963,21 @@ func resolveAccountID(identity *CloudIdentity) string {
 // the writer (stage.go → DeployParams.PhaseFile) and reader agree.
 func deployPhaseFile(workDir string) string {
 	return filepath.Join(workDir, "phase")
+}
+
+// shouldMarkOrphanRisk decides whether a mid-flight deploy interruption may have left orphaned
+// cloud resources (state-mutating `tofu apply` had started but its state was never persisted).
+// It is fail-safe: it flags orphan risk on ANY interruption at/after the apply phase, whether
+// the interruption was an explicit user cancel (wasCancelled) or a non-cancel context
+// cancellation (ctxErr != nil — the 2h jobCtx deadline or a shutdown-drain SIGTERM cancelling
+// the root ctx). A plain apply failure leaves the context live (ctxErr == nil) and is NOT a
+// cancel, so it stays unflagged — normal failures do not over-alert. A pre-apply interruption
+// (phase != "apply") never mutated cloud state, so it is not flagged either.
+func shouldMarkOrphanRisk(phase string, wasCancelled bool, ctxErr error) bool {
+	if phase != "apply" {
+		return false
+	}
+	return wasCancelled || ctxErr != nil
 }
 
 // readDeployPhase returns the provisioning phase RunDeployV2 recorded ("apply" once the

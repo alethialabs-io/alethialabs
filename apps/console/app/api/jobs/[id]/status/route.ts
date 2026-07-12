@@ -196,6 +196,21 @@ export async function PUT(
 						severity: "critical",
 						...base,
 					});
+					// A non-cancel mid-apply interruption (the runner's 2h deadline or a
+					// shutdown-drain SIGKILL) posts FAILED — not CANCELLED — but can still leave
+					// cloud resources outside tofu state. When the runner flagged orphan risk,
+					// raise the SAME distinct critical alert the cancel path raises so an operator
+					// reconciles cloud vs state. The env already moved to FAILED via deployFailed
+					// below, so no additional env-state change is needed here.
+					if (job.execution_metadata?.orphan_risk === true) {
+						emitAlertEventSafe(job.org_id, "system.project.orphan_risk", {
+							title: "Possible orphaned resources after interrupted apply",
+							summary:
+								"An apply was interrupted mid-flight (timeout or runner shutdown); cloud resources may exist outside tofu state and need reconciliation.",
+							severity: "critical",
+							...base,
+						});
+					}
 				} else {
 					emitAlertEventSafe(job.org_id, "system.job.succeeded", {
 						title: `Job succeeded: ${job.job_type}`,
