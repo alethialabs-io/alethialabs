@@ -57,6 +57,21 @@ describe("isInternalAuthorized", () => {
 		expect(isInternalAuthorized(reqWith("Bearer "))).toBe(false);
 		expect(isInternalAuthorized(reqWith())).toBe(false);
 	});
+
+	// The `if (!secret) return false` guard in bearerMatches is LOAD-BEARING and is NOT
+	// backed up by timingSafeStrEqual's own `!b` guard: with the secret unset, the template
+	// `Bearer ${secret}` interpolates to the literal — and TRUTHY — string "Bearer undefined",
+	// which timingSafeStrEqual would happily compare as a real expected value. Drop the guard
+	// and `Authorization: Bearer undefined` AUTHORIZES every cron/cloud-events route. The
+	// generic "Bearer anything" cases above do NOT catch that (the mutant survives them), so
+	// pin the exact interpolation.
+	it("fail-closed: the literal interpolation of an unset secret must not authorize", () => {
+		delete process.env.ALETHIA_CRON_SECRET;
+		expect(isInternalAuthorized(reqWith("Bearer undefined"))).toBe(false);
+		expect(bearerMatches(reqWith("Bearer undefined"), undefined)).toBe(false);
+		expect(bearerMatches(reqWith("Bearer null"), null)).toBe(false);
+		expect(bearerMatches(reqWith("Bearer "), "")).toBe(false);
+	});
 });
 
 describe("timingSafeStrEqual", () => {
