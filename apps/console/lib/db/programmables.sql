@@ -174,11 +174,18 @@ BEGIN
     PERFORM public.open_runner_session(p_runner_id);
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
+    -- Even an EXPLICIT assignment must respect org boundaries for a self runner: assigned_runner_id
+    -- is set from a caller-supplied value at enqueue (projects.ts / the DESTROY_RUNNER route) and is
+    -- NOT validated to be same-org, so a user authorized on org X's project could queue an org-X job
+    -- (carrying org X's decrypted cloud_identity) bound to a self runner they own in another org.
+    -- The (managed OR same-org) guard is the fail-closed backstop: managed runners legitimately serve
+    -- every org (org_id NULL, shared pool); a self runner may only take an assigned job in its OWN org.
     UPDATE public.jobs
     SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
+          AND (v_operator = 'managed' OR j.org_id = v_runner_org_id)
         ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
     ) RETURNING id INTO v_job_id;
 
