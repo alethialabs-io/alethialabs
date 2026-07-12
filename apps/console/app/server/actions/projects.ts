@@ -5,7 +5,11 @@
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { withOwnerScope } from "@/lib/db";
+import { type Tx, withOwnerScope } from "@/lib/db";
+import {
+	type EnvTransitionContext,
+	transitionEnv,
+} from "@/lib/db/env-status";
 import {
 	auditLog,
 	cloudIdentities,
@@ -1095,6 +1099,26 @@ async function resolveTargetEnvironment(
 	return env;
 }
 
+/**
+ * Routes an enqueue path's env→QUEUED write through the CAS (lib/db/env-status.ts). Throws — rolling
+ * back the enclosing withOwnerScope tx, including the just-inserted job — if the env isn't in a legal
+ * from-state, so a synchronous user action never queues an orphan job against an in-flight or
+ * torn-down env. (Runner status callbacks, by contrast, never throw on a lost race; see env-status.ts.)
+ */
+async function enqueueEnvTransition(
+	tx: Tx,
+	envId: string,
+	context: EnvTransitionContext,
+	jobId: string,
+	meta: { orgId: string; projectId: string },
+): Promise<void> {
+	const moved = await transitionEnv(tx, envId, context, jobId, meta);
+	if (!moved)
+		throw new Error(
+			"Environment is not in a valid state for this operation — a job may already be in progress.",
+		);
+}
+
 export async function planProject(
 	projectId: string,
 	runnerId?: string | null,
@@ -1124,10 +1148,10 @@ export async function planProject(
 			})
 			.returning({ id: jobs.id });
 
-		await tx
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, environment.id));
+		await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
 		return { jobId: job.id };
 	});
 
@@ -1166,10 +1190,10 @@ export async function provisionProject(
 			})
 			.returning({ id: jobs.id });
 
-		await tx
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, environment.id));
+		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
 
 		await tx.insert(auditLog).values({
 			project_id: projectId,
@@ -1262,10 +1286,10 @@ export async function destroyProject(
 			})
 			.returning({ id: jobs.id });
 
-		await tx
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, environment.id));
+		await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
 
 		await tx.insert(auditLog).values({
 			project_id: projectId,
