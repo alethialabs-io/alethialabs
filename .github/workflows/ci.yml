@@ -181,6 +181,8 @@ jobs:
             || { echo "::error::Go enum constants are stale — run 'pnpm -F console gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
       - name: Tests exercise real source (anti-vacuous-test tripwire)
         run: node scripts/check-test-imports.mjs
+      - name: Go tests exercise real source (anti-vacuous-test tripwire, verify + runner)
+        run: node scripts/check-go-test-imports.mjs
       - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
         run: node scripts/check-connector-assets.mjs
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
