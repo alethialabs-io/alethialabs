@@ -21,6 +21,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectEnvironments } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export async function PUT(
@@ -32,6 +33,11 @@ export async function PUT(
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
+	const jlog = log.child({
+		component: "job-status",
+		job_id: jobId,
+		runner_id: runnerId,
+	});
 
 	try {
 		const { status, error_message, execution_metadata } = await req.json();
@@ -126,18 +132,18 @@ export async function PUT(
 						await setEnvStatus("FAILED");
 						// A promotion's deploy failed → mark the promotion FAILED (no-op otherwise).
 						await failPromotionForJob(jobId).catch((err) =>
-							console.error("Fail promotion (deploy) error:", err),
+							jlog.error("fail promotion (deploy) error", { err }),
 						);
 					} else if (status === "SUCCESS") {
 						try {
 							await finalizeDeployment(jobId);
 						} catch (err) {
-							console.error("Finalize deployment error:", err);
+							jlog.error("finalize deployment error", { err });
 							await setEnvStatus("FAILED");
 						}
 						// Mark a promotion SUCCEEDED if this deploy was one (no-op otherwise).
 						await finalizePromotionOnDeploy(jobId).catch((err) =>
-							console.error("Finalize promotion error:", err),
+							jlog.error("finalize promotion error", { err }),
 						);
 					}
 				} else if (job.job_type === "DESTROY") {
@@ -146,20 +152,20 @@ export async function PUT(
 					// no-ops for template envs). Best-effort: never fail the status update.
 					if (status === "SUCCESS") {
 						await finalizeDeployment(jobId).catch((err) =>
-							console.error("Finalize destroy error:", err),
+							jlog.error("finalize destroy error", { err }),
 						);
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
 						await setEnvStatus("FAILED");
 						await failPromotionForJob(jobId).catch((err) =>
-							console.error("Fail promotion (plan) error:", err),
+							jlog.error("fail promotion (plan) error", { err }),
 						);
 					} else if (status === "SUCCESS") {
 						await setEnvStatus("DRAFT");
 						// If this PLAN backs a promotion, evaluate its gates now (deploy / await / block).
 						await advancePromotionOnPlan(jobId).catch((err) =>
-							console.error("Advance promotion error:", err),
+							jlog.error("advance promotion error", { err }),
 						);
 					}
 				}
@@ -188,13 +194,13 @@ export async function PUT(
 							scannedAt: posture.scanned_at ?? new Date().toISOString(),
 						});
 					} catch (err) {
-						console.error("Persist drift posture error:", err);
+						jlog.error("persist drift posture error", { err });
 					}
 					// Day-2 reconcile: if the env drifted, consider auto-healing it (opt-in;
 					// prod stays approval-gated; guarded by backoff + circuit breaker).
 					if (!posture.in_sync && job.environment_id) {
 						await maybeAutoHeal(job.project_id, job.environment_id).catch(
-							(err) => console.error("Auto-heal error:", err),
+							(err) => jlog.error("auto-heal error", { err }),
 						);
 					}
 				}
@@ -210,7 +216,7 @@ export async function PUT(
 							job.environment_id,
 							addonStatus,
 						).catch((err) =>
-							console.error("Persist add-on health (drift) error:", err),
+							jlog.error("persist add-on health (drift) error", { err }),
 						);
 					}
 					const security = job.execution_metadata?.security_report;
@@ -220,7 +226,7 @@ export async function PUT(
 							job.environment_id,
 							security,
 						).catch((err) =>
-							console.error("Persist security posture (drift) error:", err),
+							jlog.error("persist security posture (drift) error", { err }),
 						);
 					}
 				}
@@ -229,7 +235,7 @@ export async function PUT(
 			// CHART_SCAN: write the chart-safety verify.Report back onto the chart row (done/failed).
 			if (job?.job_type === "CHART_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
 				await finalizeChartScan(jobId).catch((err) =>
-					console.error("Finalize chart scan error:", err),
+					jlog.error("finalize chart scan error", { err }),
 				);
 			}
 
@@ -237,7 +243,7 @@ export async function PUT(
 			// pin the scanned commit (done/failed).
 			if (job?.job_type === "IAC_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
 				await finalizeIacScan(jobId).catch((err) =>
-					console.error("Finalize IaC scan error:", err),
+					jlog.error("finalize IaC scan error", { err }),
 				);
 			}
 
@@ -249,7 +255,7 @@ export async function PUT(
 			try {
 				await reportJobUsageOnce(jobId);
 			} catch (err) {
-				console.error("Usage metering failed:", err);
+				jlog.error("usage metering failed", { err });
 			}
 		}
 

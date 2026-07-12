@@ -22,11 +22,16 @@ const h = vi.hoisted(() => {
 			return state.listenReject ? Promise.reject(state.listenReject) : Promise.resolve();
 		}),
 	}));
-	return { registrations, state, postgresMock };
+	// A structured-logger spy: the LISTEN-failure path logs via log.child(...).error.
+	const logErrorSpy = vi.fn();
+	return { registrations, state, postgresMock, logErrorSpy };
 });
-const { registrations, state, postgresMock } = h;
+const { registrations, state, postgresMock, logErrorSpy } = h;
 
 vi.mock("postgres", () => ({ default: h.postgresMock }));
+vi.mock("@/lib/observability/log", () => ({
+	log: { child: () => ({ error: h.logErrorSpy }) },
+}));
 vi.mock("@/lib/config/database", () => ({
 	getDatabaseConfig: vi.fn(() => ({
 		serviceUrl: "postgres://svc:secret@db:5432/alethia",
@@ -196,7 +201,6 @@ describe("job_logs subscribe/unsubscribe bookkeeping", () => {
 
 describe("getRealtimeTransport — retry after a failed LISTEN", () => {
 	it("re-opens the connection on the next subscribe when LISTEN rejects", async () => {
-		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		state.listenReject = new Error("boom");
 
 		const rt = getRealtimeTransport();
@@ -206,7 +210,7 @@ describe("getRealtimeTransport — retry after a failed LISTEN", () => {
 		// Let the rejected LISTEN promise's .catch run (resets `started`).
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(errSpy).toHaveBeenCalled();
+		expect(logErrorSpy).toHaveBeenCalled();
 
 		state.listenReject = null;
 		rt.subscribe("job-2", () => {});
@@ -256,7 +260,6 @@ describe("getWakeTransport — singleton, fan-out, bookkeeping", () => {
 	});
 
 	it("re-opens runner_wake on the next subscribe when LISTEN rejects", async () => {
-		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 		state.listenReject = new Error("wake-boom");
 
 		const wt = getWakeTransport();
@@ -265,7 +268,7 @@ describe("getWakeTransport — singleton, fan-out, bookkeeping", () => {
 
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(errSpy).toHaveBeenCalled();
+		expect(logErrorSpy).toHaveBeenCalled();
 
 		state.listenReject = null;
 		wt.subscribe(() => {});

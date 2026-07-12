@@ -32,9 +32,10 @@ type statusUpdate struct {
 }
 
 type logEntry struct {
-	jobID      string
-	chunk      string
-	streamType string
+	jobID       string
+	chunk       string
+	streamType  string
+	traceparent string
 }
 
 func (m *mockAPI) ClaimJob() (*ClaimResponse, error) {
@@ -65,10 +66,10 @@ func (m *mockAPI) UpdateJobStatus(jobID, status, errMsg string, metadata map[str
 	return nil
 }
 
-func (m *mockAPI) SendLog(jobID, chunk, streamType string) error {
+func (m *mockAPI) SendLog(jobID, chunk, streamType, traceparent string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.logChunks = append(m.logChunks, logEntry{jobID, chunk, streamType})
+	m.logChunks = append(m.logChunks, logEntry{jobID, chunk, streamType, traceparent})
 	return nil
 }
 
@@ -303,6 +304,36 @@ func TestExecuteJob_UnknownType(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected FAILED status update for unknown job type")
+	}
+}
+
+// TestExecuteJob_CarriesClaimTraceparent asserts the traceparent minted at enqueue and
+// returned in the claim response is threaded onto the job's shipped log chunks — the
+// enqueue → claim → runner correlation hop.
+func TestExecuteJob_CarriesClaimTraceparent(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self", RunnerID: "r-1"}, api)
+
+	tp := "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	claim := &ClaimResponse{
+		Job: &Job{
+			ID:             "job-trace",
+			JobType:        "BOGUS_TYPE",
+			ConfigSnapshot: map[string]any{},
+			Traceparent:    tp,
+		},
+	}
+
+	_ = w.executeJob(t.Context(), claim)
+
+	chunks := api.getLogChunks()
+	if len(chunks) == 0 {
+		t.Fatal("expected shipped log chunks")
+	}
+	for _, c := range chunks {
+		if c.traceparent != tp {
+			t.Errorf("log chunk (stream %s) traceparent = %q, want %q", c.streamType, c.traceparent, tp)
+		}
 	}
 }
 

@@ -46,8 +46,11 @@ type Job struct {
 	CompletedAt       *time.Time     `json:"completed_at"`
 	ErrorMessage      *string        `json:"error_message"`
 	ExecutionMetadata map[string]any `json:"execution_metadata"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	// Traceparent is the W3C traceparent minted at enqueue (`00-<trace-id>-<span-id>-01`).
+	// Carried enqueue → claim → runner so the runner's logs/spans join the console trace.
+	Traceparent string    `json:"traceparent"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type CloudIdentity struct {
@@ -222,10 +225,15 @@ func (c *RunnerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, ex
 	return nil
 }
 
-func (c *RunnerAPIClient) SendLog(jobID, logChunk, streamType string) error {
+func (c *RunnerAPIClient) SendLog(jobID, logChunk, streamType, traceparent string) error {
 	payload := map[string]string{
 		"log_chunk":   logChunk,
 		"stream_type": streamType,
+	}
+	// Carry the job's trace so the console stamps job_logs.traceparent (insert_job_log
+	// falls back to the job's own traceparent when this is absent).
+	if traceparent != "" {
+		payload["traceparent"] = traceparent
 	}
 
 	body, err := json.Marshal(payload)

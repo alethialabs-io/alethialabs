@@ -103,22 +103,27 @@ func (w *Runner) Run(ctx context.Context) error {
 
 	var draining atomic.Bool
 
+	// Bind runner_id onto the process-wide operational logger for every job-less line.
+	InitAgentLogger(w.config.RunnerID)
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\nReceived shutdown signal, finishing current job...")
+		Log().Info("received shutdown signal, finishing current job")
 		draining.Store(true)
 		time.AfterFunc(10*time.Minute, func() {
-			fmt.Println("Grace period expired, forcing shutdown...")
+			Log().Warn("grace period expired, forcing shutdown")
 			cancel()
 		})
 	}()
 
 	go w.heartbeatLoop(ctx)
 
-	fmt.Printf("Runner started (id=%s, operator=%s, version=%s)\n", w.config.RunnerID, w.config.Operator, version.Version)
-	fmt.Printf("Connected to %s; waiting for jobs (push wake + safety poll)...\n", w.config.AlethiaURL)
+	Log().Info("runner started",
+		"operator", w.config.Operator,
+		"version", version.Version,
+		"alethia_url", w.config.AlethiaURL)
 
 	return w.claimLoop(ctx, &draining)
 }
@@ -128,7 +133,7 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	if err := w.api.Heartbeat(); err != nil {
-		fmt.Fprintf(os.Stderr, "Initial heartbeat failed: %v\n", err)
+		Log().Error("initial heartbeat failed", "err", err.Error())
 	}
 
 	for {
@@ -137,7 +142,7 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := w.api.Heartbeat(); err != nil {
-				fmt.Fprintf(os.Stderr, "Heartbeat failed: %v\n", err)
+				Log().Error("heartbeat failed", "err", err.Error())
 			}
 		}
 	}
@@ -166,7 +171,7 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 
 	for {
 		if draining.Load() {
-			fmt.Println("Draining: no more jobs will be claimed. Exiting.")
+			Log().Info("draining: no more jobs will be claimed, exiting")
 			return nil
 		}
 
@@ -184,19 +189,22 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			}
 			claim, err := w.api.ClaimJob()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to claim job: %v\n", err)
+				Log().Error("failed to claim job", "err", err.Error())
 				break
 			}
 			if claim.Job == nil {
 				break
 			}
 
-			fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
+			traceID := traceIDFromTraceparent(claim.Job.Traceparent)
+			LogWith(w.config.RunnerID, traceID, claim.Job.ID).Info("claimed job",
+				"job_type", claim.Job.JobType)
 			// PLAN/DEPLOY/DESTROY provision real infra, so they keep a long timeout.
 			jobTimeout := 2 * time.Hour
 			jobCtx, jobCancel := context.WithTimeout(ctx, jobTimeout)
 			if err := w.executeJob(jobCtx, claim); err != nil {
-				fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
+				LogWith(w.config.RunnerID, traceID, claim.Job.ID).Error("job failed",
+					"err", err.Error())
 			}
 			jobCancel()
 		}
@@ -217,7 +225,8 @@ func (w *Runner) wakeLoop(ctx context.Context, trigger func()) {
 			return
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Wake stream disconnected (%v); reconnecting in %s\n", err, backoff)
+			Log().Warn("wake stream disconnected; reconnecting",
+				"err", err.Error(), "backoff", backoff.String())
 		}
 		sleepCtx(ctx, backoff)
 		backoff *= 2
@@ -229,18 +238,29 @@ func (w *Runner) wakeLoop(ctx context.Context, trigger func()) {
 
 func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	job := claim.Job
+	traceparent := job.Traceparent
+	traceID := traceIDFromTraceparent(traceparent)
+	// Operational logger for this job's lifetime — structured JSON to stderr carrying
+	// the correlation ids so a runner line joins the console trace.
+	jlog := LogWith(w.config.RunnerID, traceID, job.ID)
 
-	stdoutLogger := NewJobLogger(w.api, job.ID, "STDOUT")
-	stderrLogger := NewJobLogger(w.api, job.ID, "STDERR")
+	// Customer-facing job streams (STDOUT/STDERR) — trace-stamped so each log line
+	// correlates. SYSTEM ships the runner's OPERATIONAL failures to the console (they
+	// would otherwise die on the runner's stderr).
+	stdoutLogger := NewJobLoggerWithTrace(w.api, job.ID, "STDOUT", traceparent)
+	stderrLogger := NewJobLoggerWithTrace(w.api, job.ID, "STDERR", traceparent)
+	sysLogger := NewSystemLogger(w.api, job.ID, traceparent)
 	defer stdoutLogger.Close()
 	defer stderrLogger.Close()
+	defer sysLogger.Close()
 
 	// Emit immediately so the user sees activity within ~100ms of claim — before
 	// credential setup and tofu init — instead of waiting on the first real step.
 	fmt.Fprintln(stdoutLogger, "▸ Job claimed — preparing workspace…")
 
 	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", nil); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to update job status to PROCESSING: %v\n", err)
+		jlog.Error("failed to update job status to PROCESSING", "err", err.Error())
+		fmt.Fprintf(sysLogger, "Failed to update job status to PROCESSING: %v\n", err)
 	}
 
 	if claim.CloudIdentity != nil {
@@ -380,6 +400,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	if execErr != nil {
+		jlog.Error("job execution failed", "job_type", job.JobType, "err", execErr.Error())
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
 		stderrLogger.Close()
 		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
@@ -387,7 +408,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	_ = w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
-	fmt.Printf("Job %s completed successfully\n", job.ID)
+	jlog.Info("job completed successfully")
 	return nil
 }
 

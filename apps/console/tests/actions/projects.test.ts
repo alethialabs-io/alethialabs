@@ -436,6 +436,10 @@ describe("planProject", () => {
 			environment_stage: "production",
 			region: "us-east-1",
 		});
+		// A fresh W3C traceparent is minted at enqueue (the correlation-trace root).
+		expect(jobVals.traceparent).toMatch(
+			/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/,
+		);
 
 		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
 		expect(notifyScaler).toHaveBeenCalledTimes(1);

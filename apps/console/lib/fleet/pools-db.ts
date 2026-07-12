@@ -9,7 +9,10 @@ import { getServiceDb } from "@/lib/db";
 import { fleetPools, type FleetPool, type NewFleetPool } from "@/lib/db/schema";
 import { getFleetPools } from "@/lib/fleet/config";
 import type { FleetTarget } from "@/lib/fleet/types";
+import { log } from "@/lib/observability/log";
 import { eq } from "drizzle-orm";
+
+const flog = log.child({ component: "fleet" });
 
 /** Map a stored pool row to the controller's FleetTarget (a pinned `version` wins; else the
  *  controller resolves `channel` → latest release). */
@@ -69,5 +72,5 @@ export async function seedFleetPoolsFromEnv(): Promise<void> {
 		.insert(fleetPools)
 		.values(envPools.map(projectToRow))
 		.onConflictDoNothing({ target: fleetPools.provider });
-	console.log(`[fleet] seeded ${envPools.length} pool(s) from FLEET_POOLS env`);
+	flog.info("seeded pools from FLEET_POOLS env", { pool_count: envPools.length });
 }

@@ -102,6 +102,8 @@ export const jobWire = createSelectSchema(jobs, {
 	environment_id: true,
 	// Internal elench waiver input (set by console authz) — never on the CLI wire.
 	verify_override: true,
+	// Internal W3C trace correlation — carried enqueue → claim → runner, not CLI-facing.
+	traceparent: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */

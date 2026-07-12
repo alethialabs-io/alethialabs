@@ -150,7 +150,7 @@ func TestSendLog_Success(t *testing.T) {
 	defer server.Close()
 
 	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
-	err := client.SendLog("job-123", "hello world", "STDOUT")
+	err := client.SendLog("job-123", "hello world", "STDOUT", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,6 +159,9 @@ func TestSendLog_Success(t *testing.T) {
 	}
 	if receivedPayload["stream_type"] != "STDOUT" {
 		t.Errorf("expected STDOUT stream type")
+	}
+	if receivedPayload["traceparent"] != "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" {
+		t.Errorf("expected traceparent in payload, got %q", receivedPayload["traceparent"])
 	}
 }
 

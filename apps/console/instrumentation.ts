@@ -4,13 +4,15 @@
 /** Next.js server-startup hook. Runs once per app instance on the Node runtime. */
 export async function register() {
 	if (process.env.NEXT_RUNTIME !== "nodejs") return;
+	const { log } = await import("@/lib/observability/log");
+	const startupLog = log.child({ component: "instrumentation" });
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
 	// In-app fleet controller (sibling loop). Pools live in the DB; import any legacy
 	// FLEET_POOLS env config once, then run the loop (a no-op tick when no pools exist).
 	const { seedFleetPoolsFromEnv } = await import("@/lib/fleet/pools-db");
 	await seedFleetPoolsFromEnv().catch((err) =>
-		console.error("[fleet] pool seed failed:", err),
+		startupLog.error("pool seed failed", { component: "fleet", err }),
 	);
 	const { startFleetScaler } = await import("@/lib/fleet/scaler");
 	startFleetScaler();
@@ -23,13 +25,17 @@ export async function register() {
 	startConnectionSweeper();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
-	await seedAuthz().catch((err) => console.error("[authz] seed failed:", err));
+	await seedAuthz().catch((err) =>
+		startupLog.error("seed failed", { component: "authz", err }),
+	);
 	// Mirror the model + grants into OpenFGA when the enterprise engine is active;
 	// a no-op in the community build. Runs after the registry seed so grants exist.
 	const { getTupleSync } = await import("@/lib/authz/tuple-sync");
 	void getTupleSync()
 		.backfill()
-		.catch((err) => console.error("[authz] FGA backfill failed:", err));
+		.catch((err) =>
+			startupLog.error("FGA backfill failed", { component: "authz", err }),
+		);
 }
 
 /**
@@ -44,9 +50,14 @@ export async function onRequestError(
 	context: { routePath?: string; routeType?: string },
 ): Promise<void> {
 	const e = error as { message?: string; stack?: string; digest?: string };
-	console.error(
-		`[onRequestError] ${request.method ?? "?"} ${request.path ?? context.routePath ?? "?"} (${context.routeType ?? "?"}) digest=${e?.digest ?? "-"}\n${e?.stack ?? e?.message ?? String(error)}`,
-	);
+	const { log } = await import("@/lib/observability/log");
+	log.child({ component: "onRequestError" }).error("uncaught request error", {
+		method: request.method ?? "?",
+		path: request.path ?? context.routePath ?? "?",
+		route_type: context.routeType ?? "?",
+		digest: e?.digest ?? "-",
+		stack: e?.stack ?? e?.message ?? String(error),
+	});
 	// Also forward to PostHog Error Tracking so server-side throws (Route Handlers, Server Actions,
 	// Server Components) are visible in prod — not just stdout. Node-only (posthog-node); best-effort:
 	// captureServerException no-ops without the PostHog key and never throws. Fire-and-forget so it

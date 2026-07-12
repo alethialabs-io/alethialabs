@@ -33,6 +33,7 @@ export function makeJob(overrides: Partial<JobWithMeta> = {}): JobWithMeta {
 		error_message: null,
 		execution_metadata: null,
 		verify_override: null,
+		traceparent: null,
 		created_at: new Date("2026-06-30T00:00:00.000Z"),
 		updated_at: new Date("2026-06-30T00:00:00.000Z"),
 		project_name: "web",
