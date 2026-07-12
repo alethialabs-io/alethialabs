@@ -289,6 +289,10 @@ BEGIN
 END;
 $$;
 
+-- Return type changed VOID -> BOOLEAN (terminal-state guard). Postgres can't change a function's
+-- return type via CREATE OR REPLACE (error 42P13), so drop the old signature first on an existing
+-- DB — same as insert_job_log above. IF EXISTS keeps it idempotent on a fresh DB.
+DROP FUNCTION IF EXISTS public.update_job_status(UUID, TEXT, UUID, TEXT, TEXT, JSONB);
 CREATE OR REPLACE FUNCTION public.update_job_status(
     p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_status TEXT,
     p_error_message TEXT DEFAULT NULL, p_execution_metadata JSONB DEFAULT NULL
