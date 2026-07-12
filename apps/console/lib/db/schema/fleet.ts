@@ -100,6 +100,11 @@ export const fleetActions = pgTable(
 	(t) => [
 		// The read path is "recent actions for a provider" (the later dashboard) — newest first.
 		index("idx_fleet_actions_provider_time").on(t.provider, t.created_at.desc()),
+		// The retention GC (gc_fleet_actions) filters + orders by created_at ALONE (no provider
+		// predicate), so the (provider, created_at) index above can't serve it — its leading column is
+		// unconstrained. This created_at-leading btree (ascending, matching `ORDER BY created_at`) turns
+		// the GC's range scan + ordered LIMIT into an index scan instead of a seq-scan + sort.
+		index("idx_fleet_actions_created_at").on(t.created_at),
 	],
 );
 
