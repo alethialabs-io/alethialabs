@@ -18,6 +18,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/obs"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"go.opentelemetry.io/otel/attribute"
@@ -648,54 +649,65 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
 	}
 	if result != nil {
-		metadata := map[string]any{}
-		if result.ClusterName != "" {
-			metadata["cluster_name"] = result.ClusterName
-		}
-		if result.ClusterEndpoint != "" {
-			metadata["cluster_endpoint"] = result.ClusterEndpoint
-		}
-		if result.ClusterReady {
-			// The reachability gate confirmed the API server answered + nodes are Ready —
-			// "SUCCESS" means a working cluster, not just that `tofu apply` exited 0.
-			metadata["cluster_ready"] = true
-		}
-		if result.ArgocdURL != "" {
-			metadata["argocd_url"] = result.ArgocdURL
-		}
-		if result.ArgocdAdminPassword != "" {
-			metadata["argocd_admin_password"] = result.ArgocdAdminPassword
-		}
-		// Persist outputs to the console, but scrub credential-bearing outputs (full
-		// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
-		// so they never land in execution_metadata (console Postgres). The pipeline already
-		// consumed the full outputs in-process above.
-		if scrubbed := scrubSensitiveOutputs(result.Outputs); len(scrubbed) > 0 {
-			metadata["outputs"] = scrubbed
-		}
-		if result.VerifyReport != nil {
-			metadata["verify_result"] = result.VerifyReport
-		}
-		if result.VerifyReceipt != nil {
-			metadata["verify_receipt"] = result.VerifyReceipt
-		}
-		if len(result.AddOnStatus) > 0 {
-			metadata["addon_status"] = result.AddOnStatus
-		}
-		if len(result.InfraServices) > 0 {
-			// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
-			// Non-sensitive, safe to persist to the console alongside addon_status.
-			metadata["infra_services"] = result.InfraServices
-		}
-		if result.SecurityPosture != nil {
-			metadata["security_report"] = result.SecurityPosture
-		}
-		if len(metadata) > 0 {
+		if metadata := buildDeployMetadata(result); len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 		}
 	}
 
 	return nil
+}
+
+// buildDeployMetadata assembles the execution_metadata the runner persists to the console
+// (Postgres) from a completed deploy's PlanResult. Extracted as a pure function so the
+// secret-non-leakage regression test can assert directly on the persisted surface: the
+// full cluster credentials (kubeconfigs / client keys) in `result.Outputs` are consumed
+// in-process by the deploy pipeline, but only a SCRUBBED copy may cross into the console
+// metadata (which lands in DB backups/replicas and is readable by cross-tenant support
+// staff). See scrubSensitiveOutputs + docs/compliance/security-e2e-matrix.md (CC6.7).
+func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
+	metadata := map[string]any{}
+	if result.ClusterName != "" {
+		metadata["cluster_name"] = result.ClusterName
+	}
+	if result.ClusterEndpoint != "" {
+		metadata["cluster_endpoint"] = result.ClusterEndpoint
+	}
+	if result.ClusterReady {
+		// The reachability gate confirmed the API server answered + nodes are Ready —
+		// "SUCCESS" means a working cluster, not just that `tofu apply` exited 0.
+		metadata["cluster_ready"] = true
+	}
+	if result.ArgocdURL != "" {
+		metadata["argocd_url"] = result.ArgocdURL
+	}
+	if result.ArgocdAdminPassword != "" {
+		metadata["argocd_admin_password"] = result.ArgocdAdminPassword
+	}
+	// Persist outputs to the console, but scrub credential-bearing outputs (full
+	// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
+	// so they never land in execution_metadata (console Postgres). The pipeline already
+	// consumed the full outputs in-process above.
+	if scrubbed := scrubSensitiveOutputs(result.Outputs); len(scrubbed) > 0 {
+		metadata["outputs"] = scrubbed
+	}
+	if result.VerifyReport != nil {
+		metadata["verify_result"] = result.VerifyReport
+	}
+	if result.VerifyReceipt != nil {
+		metadata["verify_receipt"] = result.VerifyReceipt
+	}
+	if len(result.AddOnStatus) > 0 {
+		metadata["addon_status"] = result.AddOnStatus
+	}
+	if len(result.InfraServices) > 0 {
+		// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
+		// Non-sensitive, safe to persist to the console alongside addon_status.
+		metadata["infra_services"] = result.InfraServices
+	}
+	if result.SecurityPosture != nil {
+		metadata["security_report"] = result.SecurityPosture
+	}
+	return metadata
 }
 
 func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
