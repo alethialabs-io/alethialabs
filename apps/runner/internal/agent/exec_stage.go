@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 )
@@ -19,7 +21,16 @@ import (
 // run*Stage functions the parent's Passthrough closure calls, and writes result.json back
 // for the parent to read. The child IS the isolation boundary — there is no nested sandbox
 // and it never holds the runner API client or the parent's theft-target secrets.
-func RunExecStage(ctx context.Context) error {
+func RunExecStage(parent context.Context) error {
+	// Graceful cancellation across the container boundary: a mid-flight cancel sends SIGINT
+	// to the runtime CLI, which (foreground `docker|podman run` + --init) forwards it here,
+	// to the container's main process. Translate that into ctx cancellation so the tofu it
+	// runs is SIGINT'd gracefully (finish in-flight resource, write state, release the lock)
+	// rather than the Go default of an abrupt process exit that would SIGKILL tofu via
+	// Pdeathsig. A second signal within the runtime's grace window still hard-kills the tree.
+	ctx, stop := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	workDir := os.Getenv("ALETHIA_STAGE_WORKDIR")
 	if workDir == "" {
 		return fmt.Errorf("ALETHIA_STAGE_WORKDIR is required in exec-stage mode")

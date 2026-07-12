@@ -117,6 +117,21 @@ function routeJobLog(payload: unknown): { key: string; value: number } | null {
 }
 
 /**
+ * Parses a `runner_cancel` notify into {key: runnerId, value: jobId}. Keyed by the
+ * runner id so ONLY the SSE connection for the runner that owns the job receives the
+ * cancel. Returns null (ignored) for a malformed payload or one missing either uuid.
+ */
+function routeRunnerCancel(payload: unknown): { key: string; value: string } | null {
+	if (typeof payload !== "object" || payload === null) return null;
+	if (!("runner_id" in payload) || !("job_id" in payload)) return null;
+	const runnerId = payload.runner_id;
+	const jobId = payload.job_id;
+	if (typeof runnerId !== "string" || runnerId.length === 0) return null;
+	if (typeof jobId !== "string" || jobId.length === 0) return null;
+	return { key: runnerId, value: jobId };
+}
+
+/**
  * Parses a `support_messages` notify into {key: caseId, value: messageId}. Returns
  * null (ignored) for a malformed payload or one missing the two uuid string fields.
  */
@@ -143,6 +158,7 @@ const globalForRealtime = globalThis as unknown as {
 	__alethiaRealtime?: RealtimeTransport;
 	__alethiaWake?: WakeTransport;
 	__alethiaSupport?: ChannelTransport<string>;
+	__alethiaCancel?: ChannelTransport<string>;
 };
 
 /** The process-wide job-log realtime transport (HMR/instance-safe singleton). */
@@ -169,6 +185,22 @@ export function getSupportMessageTransport(): ChannelTransport<string> {
 		);
 	}
 	return globalForRealtime.__alethiaSupport;
+}
+
+/**
+ * The process-wide runner-cancel transport (HMR/instance-safe singleton).
+ * `subscribe(runnerId, cb)` delivers the jobId of each job the console wants that runner
+ * to cancel mid-flight. Emitted by notifyRunnerCancel (pg_notify 'runner_cancel'); the
+ * runner's wake SSE route forwards it as a typed cancel event to that runner only.
+ */
+export function getCancelTransport(): ChannelTransport<string> {
+	if (!globalForRealtime.__alethiaCancel) {
+		globalForRealtime.__alethiaCancel = new PgListenTransport<string>(
+			"runner_cancel",
+			routeRunnerCancel,
+		);
+	}
+	return globalForRealtime.__alethiaCancel;
 }
 
 // ── Runner wake fan-out ──────────────────────────────────────────────────────

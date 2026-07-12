@@ -7,9 +7,9 @@ import "context"
 
 type JobAPI interface {
 	ClaimJob() (*ClaimResponse, error)
-	// StreamWake holds the push-dispatch SSE connection, calling onWake per wake
-	// event; blocks until the stream ends or ctx is cancelled.
-	StreamWake(ctx context.Context, onWake func()) error
+	// StreamWake holds the push-dispatch SSE connection, calling onEvent per typed
+	// event (wake / cancel); blocks until the stream ends or ctx is cancelled.
+	StreamWake(ctx context.Context, onEvent func(WakeEvent)) error
 	UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error
 	SendLog(jobID, logChunk, streamType, traceparent string) error
 	Heartbeat() error

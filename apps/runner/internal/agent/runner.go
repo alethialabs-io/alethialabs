@@ -36,16 +36,19 @@ type Runner struct {
 	// default is a no-isolation Passthrough (today's behavior); an isolating backend
 	// is swapped in behind a flag once proven (see the E0 plan). Never nil.
 	sandbox sandbox.Sandbox
+	// cancels tracks in-flight jobs so a cancel event pushed over the wake stream can
+	// tear down the right job mid-flight (and mark it CANCELLED, not FAILED).
+	cancels *cancelRegistry
 }
 
 func New(cfg Config) *Runner {
 	client := NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken)
 	client.providers = cfg.Providers
-	return &Runner{config: cfg, api: client, sandbox: selectSandbox(cfg)}
+	return &Runner{config: cfg, api: client, sandbox: selectSandbox(cfg), cancels: newCancelRegistry()}
 }
 
 func NewWithAPI(cfg Config, api JobAPI) *Runner {
-	return &Runner{config: cfg, api: api, sandbox: selectSandbox(cfg)}
+	return &Runner{config: cfg, api: api, sandbox: selectSandbox(cfg), cancels: newCancelRegistry()}
 }
 
 // selectSandbox picks the isolation backend from ALETHIA_SANDBOX_BACKEND. Default is the
@@ -162,7 +165,7 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 		}
 	}
 
-	go w.wakeLoop(ctx, trigger)
+	go w.wakeLoop(ctx, func(ev WakeEvent) { w.dispatchWakeEvent(ev, trigger) })
 
 	safety := time.NewTicker(safetyInterval)
 	defer safety.Stop()
@@ -202,25 +205,45 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			// PLAN/DEPLOY/DESTROY provision real infra, so they keep a long timeout.
 			jobTimeout := 2 * time.Hour
 			jobCtx, jobCancel := context.WithTimeout(ctx, jobTimeout)
+			// Register the cancel function so a cancel event over the wake stream can
+			// tear THIS job down mid-flight; reap the registry entry once it's done.
+			w.cancels.register(claim.Job.ID, jobCancel)
 			if err := w.executeJob(jobCtx, claim); err != nil {
 				LogWith(w.config.RunnerID, traceID, claim.Job.ID).Error("job failed",
 					"err", err.Error())
 			}
 			jobCancel()
+			w.cancels.reap(claim.Job.ID)
 		}
 	}
 }
 
+// dispatchWakeEvent routes a push-dispatch event: a wake triggers a claim drain; a cancel
+// tears down the targeted in-flight job (a no-op if it isn't running on this runner — e.g. a
+// QUEUED job the console cancelled DB-only, or one already finished).
+func (w *Runner) dispatchWakeEvent(ev WakeEvent, trigger func()) {
+	switch ev.Type {
+	case "cancel":
+		if ev.JobID != "" {
+			if w.cancels.cancel(ev.JobID) {
+				Log().Info("cancel signal received; tearing down job", "job_id", ev.JobID)
+			}
+		}
+	default: // "wake"
+		trigger()
+	}
+}
+
 // wakeLoop maintains the push-dispatch SSE connection, reconnecting with backoff.
-// Each wake event triggers a claim attempt in claimLoop.
-func (w *Runner) wakeLoop(ctx context.Context, trigger func()) {
+// Each event is dispatched via onEvent (wake → claim attempt; cancel → job teardown).
+func (w *Runner) wakeLoop(ctx context.Context, onEvent func(WakeEvent)) {
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		err := w.api.StreamWake(ctx, trigger)
+		err := w.api.StreamWake(ctx, onEvent)
 		if ctx.Err() != nil {
 			return
 		}
@@ -400,6 +423,25 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	if execErr != nil {
+		// A user cancel surfaces as a context-cancelled error from the stage. Post
+		// CANCELLED (not FAILED) so the terminal state reflects the intent, and flag
+		// orphan risk when the teardown killed a mid-apply (cloud resources may exist
+		// outside tofu state → an operator must reconcile; see markOrphanRisk).
+		if w.cancels.wasCancelled(job.ID) {
+			jlog.Info("job cancelled", "job_type", job.JobType)
+			var meta map[string]any
+			if w.cancels.orphanRisk(job.ID) {
+				meta = map[string]any{
+					"orphan_risk":        true,
+					"orphan_risk_reason": "apply was interrupted by a cancel; cloud resources may exist outside tofu state and need reconciliation",
+				}
+				fmt.Fprintln(stderrLogger, "Cancelled during apply — cloud resources may have been left outside tofu state (orphan risk). An operator should reconcile.")
+			}
+			fmt.Fprintln(stdoutLogger, "▸ Job cancelled — teardown complete.")
+			stderrLogger.Close()
+			_ = w.api.UpdateJobStatus(job.ID, "CANCELLED", "Cancelled by user", meta)
+			return execErr
+		}
 		jlog.Error("job execution failed", "job_type", job.JobType, "err", execErr.Error())
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
 		stderrLogger.Close()
@@ -550,6 +592,13 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}, func(ctx context.Context) error {
 		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
 	}); err != nil {
+		// On a mid-flight cancel, decide whether the killed work had reached the apply
+		// (state-mutating) phase. RunDeployV2 writes "apply" to workDir/phase just before
+		// `tofu apply`; if we cancelled at or after that point, orphaned cloud resources may
+		// exist. Read it BEFORE the deferred RemoveAll(workDir) so the marker is still there.
+		if w.cancels.wasCancelled(job.ID) && readDeployPhase(workDir) == "apply" {
+			w.cancels.markOrphanRisk(job.ID)
+		}
 		return err
 	}
 
@@ -818,6 +867,23 @@ func resolveAccountID(identity *CloudIdentity) string {
 	default:
 		return identity.AccountID
 	}
+}
+
+// deployPhaseFile is the path RunDeployV2 writes the provisioning phase to (under the
+// per-job workdir, so it survives the container-sandbox boundary). Kept in one place so
+// the writer (stage.go → DeployParams.PhaseFile) and reader agree.
+func deployPhaseFile(workDir string) string {
+	return filepath.Join(workDir, "phase")
+}
+
+// readDeployPhase returns the provisioning phase RunDeployV2 recorded ("apply" once the
+// state-mutating apply started), or "" if none was written (pre-apply, or a non-deploy stage).
+func readDeployPhase(workDir string) string {
+	b, err := os.ReadFile(deployPhaseFile(workDir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {

@@ -67,7 +67,12 @@ export async function PUT(
 			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
 		);
 
-		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
+		if (
+			status === "PROCESSING" ||
+			status === "SUCCESS" ||
+			status === "FAILED" ||
+			status === "CANCELLED"
+		) {
 			const [job] = await db
 				.select({
 					job_type: jobs.job_type,
@@ -80,6 +85,48 @@ export async function PUT(
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
 				.limit(1);
+
+			// Cancelled (torn down mid-flight by the runner after a user cancel). Alert on the
+			// cancellation, and — when the runner flagged orphan risk (apply was interrupted) —
+			// raise a distinct, higher-severity alert so an operator reconciles cloud vs state,
+			// and mark the environment FAILED (its infra is in an unknown, partially-applied state).
+			if (job?.org_id && status === "CANCELLED") {
+				const orphanRisk = job.execution_metadata?.orphan_risk === true;
+				emitAlertEventSafe(job.org_id, "system.job.cancelled", {
+					title: `Job cancelled: ${job.job_type}`,
+					summary: error_message || undefined,
+					severity: "warning",
+					job_id: jobId,
+					job_type: job.job_type,
+					project_id: job.project_id ?? undefined,
+				});
+				if (orphanRisk) {
+					emitAlertEventSafe(job.org_id, "system.project.orphan_risk", {
+						title: "Possible orphaned resources after cancel",
+						summary:
+							"An apply was interrupted mid-flight; cloud resources may exist outside tofu state and need reconciliation.",
+						severity: "critical",
+						job_id: jobId,
+						job_type: job.job_type,
+						project_id: job.project_id ?? undefined,
+					});
+				}
+				// A cancelled DEPLOY leaves the env in an indeterminate (partially provisioned)
+				// state → FAILED so it surfaces as needing attention (best-effort).
+				if (
+					job.job_type === "DEPLOY" &&
+					job.project_id &&
+					job.environment_id
+				) {
+					await db
+						.update(projectEnvironments)
+						.set({ status: "FAILED" })
+						.where(eq(projectEnvironments.id, job.environment_id))
+						.catch((err) =>
+							jlog.error("set env FAILED on cancel error", { err }),
+						);
+				}
+			}
 
 			// Ops alerts (free in core): job start, terminal state, project destroy.
 			if (job?.org_id && status === "PROCESSING") {

@@ -47,6 +47,13 @@ type DeployParams struct {
 	// StateBackend points project tofu state at the console's per-job http proxy
 	// (no storage master key in the workdir). Required for RunDeployV2.
 	StateBackend *cloud.HTTPBackendConfig
+	// PhaseFile, when set, is an absolute path RunDeployV2 writes the current provisioning
+	// phase to ("apply" is written immediately before `tofu apply`). The runner reads it
+	// after a mid-flight cancel to decide whether the killed work had reached the apply
+	// (state-mutating) phase — i.e. whether orphaned cloud resources may exist. It lives
+	// under the per-job workdir so it is visible across the container-sandbox boundary
+	// (the child writes it into the RW-mounted workdir; the parent reads it after exit).
+	PhaseFile    string
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ApiClient    *api.Client
@@ -91,6 +98,16 @@ type PlanResult struct {
 	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
 	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
 	InfraServices []argocd.InfraServiceDecision
+}
+
+// writePhase records the current provisioning phase to the job's phase file (best-effort;
+// a no-op when path is empty). The runner reads it after a mid-flight cancel to decide
+// whether apply had started (→ possible orphaned cloud resources). See DeployParams.PhaseFile.
+func writePhase(path, phase string) {
+	if path == "" {
+		return
+	}
+	_ = os.WriteFile(path, []byte(phase), 0o600)
 }
 
 // applyBootstrapManifests applies a self-managed cluster's CNI + cloud-integration
@@ -454,6 +471,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// Seal the evidence receipt for this apply (records any applied override as an
 	// exception) before mutating any infrastructure.
 	attachReceipt(&result, planFile, planJSON, params.VerifyOverride, stdout)
+
+	// Mark the apply phase BEFORE mutating any infrastructure. A mid-flight cancel from
+	// here on may leave cloud resources not yet recorded in state, so the runner reads
+	// this marker to flag orphan risk on the cancelled job. Best-effort — a write failure
+	// only loses precision (the runner defaults to "no orphan risk"), never blocks apply.
+	writePhase(params.PhaseFile, "apply")
 
 	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {

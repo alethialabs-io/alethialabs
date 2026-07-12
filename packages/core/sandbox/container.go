@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Container runs a job's untrusted work in a fresh per-job container by re-exec'ing
@@ -115,16 +117,34 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	cmd := exec.CommandContext(ctx, c.Runtime, args...)
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr
-	// New process group so a ctx cancel kills the runtime CLI + its container-monitor
-	// child; --rm + the runtime's own SIGKILL tear down the untrusted process tree
-	// (tofu + its provider subprocesses) inside the container.
+	// New process group so a ctx cancel signals the runtime CLI + its container-monitor
+	// child as a group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Stage-aware graceful cancellation. On a mid-flight cancel we send SIGINT (not an
+	// immediate SIGKILL) to the runtime-CLI process group and escalate to SIGKILL only
+	// after a grace window. A foreground `docker|podman run` (with --init → tini as PID 1)
+	// FORWARDS SIGINT to the container's main process, which is the re-exec'd runner child;
+	// that child traps SIGINT (see RunExecStage) and cancels the ctx it passes to tofu, so
+	// tofu finishes the in-flight resource, writes state, and releases the state lock before
+	// exiting — a clean stop that avoids orphans + a stranded lock.
+	//
+	// CAVEAT (docker vs podman): podman runs the container as a direct child of the CLI, so
+	// the group signal + forwarding stop it reliably. The docker CLI talks to a daemon, so
+	// SIGKILLing the *client* does NOT stop the daemon-side container — only the forwarded
+	// SIGINT/SIGTERM (delivered while the client is alive) reaches the workload. We therefore
+	// signal INT first (forwarded) and only hard-kill the client after the grace window;
+	// managed fleets should prefer podman (ALETHIA_SANDBOX_RUNTIME=podman) so a grace-exceeded
+	// SIGKILL actually tears the container down rather than leaking it daemon-side.
+	grace := cancelGracePeriod()
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			interruptThenKill(cmd.Process.Pid, grace, syscall.Kill)
 		}
 		return nil
 	}
+	// Backstop: if the runtime CLI itself ignores SIGINT/SIGKILL, WaitDelay bounds how long
+	// Wait blocks after Cancel before the stdlib force-kills the direct child process.
+	cmd.WaitDelay = grace + 5*time.Second
 
 	runErr := cmd.Run()
 
@@ -137,6 +157,35 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 		return fmt.Errorf("container sandbox: %s run failed: %w", c.Runtime, runErr)
 	}
 	return nil
+}
+
+// DefaultCancelGracePeriod is the SIGINT→SIGKILL grace window for a mid-flight cancel of
+// the container-sandbox runtime CLI (mirrors tofu.DefaultCancelGracePeriod so the outer
+// group signal and the inner tofu WaitDelay use the same budget). Tunable via
+// ALETHIA_CANCEL_GRACE_SECONDS.
+const DefaultCancelGracePeriod = 120 * time.Second
+
+// cancelGracePeriod resolves the grace window from ALETHIA_CANCEL_GRACE_SECONDS, defaulting
+// to DefaultCancelGracePeriod. A value of 0 means SIGKILL immediately after SIGINT.
+func cancelGracePeriod() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_CANCEL_GRACE_SECONDS")); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return DefaultCancelGracePeriod
+}
+
+// interruptThenKill sends SIGINT to the process GROUP (negative pid) immediately and
+// schedules a SIGKILL of the group after grace, giving a foreground container runtime time
+// to forward the interrupt to its workload and shut down cleanly. `kill` is injected so the
+// escalation sequence is unit-testable without spawning a real process. A SIGKILL to an
+// already-exited group is a harmless ESRCH.
+func interruptThenKill(pid int, grace time.Duration, kill func(pid int, sig syscall.Signal) error) {
+	_ = kill(-pid, syscall.SIGINT)
+	time.AfterFunc(grace, func() {
+		_ = kill(-pid, syscall.SIGKILL)
+	})
 }
 
 // containerName is the deterministic per-job container name (for observability + a

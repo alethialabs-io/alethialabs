@@ -944,6 +944,27 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     );
 $$;
 
+-- Staff/system-only force-unlock for a stranded state lock (e.g. after a cancelled apply's
+-- runner was SIGKILLed before it could UNLOCK). It must NEVER be a naive DELETE: a zombie
+-- writer from the killed apply could still be mid-flight, and its state-write POST presents
+-- the OLD lock_id as the fencing token. So we ROTATE lock_id (invalidating that fence — the
+-- zombie's ?ID= now fails validate_tofu_state_lock) and BUMP the monotonic generation (the
+-- same steal invariant acquire_tofu_state_lock uses), then expire the row so a fresh apply
+-- can immediately steal it. Returns whether a lock existed for the key. Not a customer action
+-- (no alethia_app GRANT) — invoked by the service role from a staff/system path.
+CREATE OR REPLACE FUNCTION public.force_release_tofu_state_lock(p_state_key TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    UPDATE public.tofu_state_locks
+       SET generation = generation + 1,
+           lock_id = 'force-released-' || gen_random_uuid()::text,
+           info = COALESCE(info, '{}'::jsonb) || jsonb_build_object('force_released_at', now()),
+           expires_at = now() - INTERVAL '1 second'
+     WHERE state_key = p_state_key;
+    RETURN FOUND;
+END;
+$$;
+
 -- Per-VM fleet bootstrap token redemption (E0 0b). Atomic + instance-bound + reusable-within-TTL:
 -- the first redeem binds instance_id; the SAME instance may re-redeem (restart / lost-response
 -- retry), a DIFFERENT instance or an expired token is rejected (ok=false). Returns the currently
