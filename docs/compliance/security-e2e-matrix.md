@@ -98,3 +98,9 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
 - **Cross-tenant deny at the action/route boundary.** The isolation tests bite at the RLS/PDP
   layer; an end-to-end test that drives a real server action as a user-in-org-B against a
   resource-in-org-A (asserting a 403 through `authorize`) would close the last gap.
+- **Secret non-leakage is a keyname DENYLIST, not a value detector.** `output_scrub` scrubs by a
+  fixed list of key substrings (`kubeconfig`, `client_key`, `private_key`, …), so a *novel*
+  credential-bearing output under an unmatched key (e.g. `admin_token`, `bootstrap_credentials`)
+  would leak into `execution_metadata` and `secret_nonleak_test.go` (which plants sentinels only in
+  denylisted keys) would not catch it. A value-shaped detector or an output *allowlist* is strictly
+  stronger — track alongside the T0 log-surface item.

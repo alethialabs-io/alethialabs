@@ -53,6 +53,18 @@ async function fgaUp(): Promise<boolean> {
 	}
 }
 const FGA_UP = DB_UP ? await fgaUp() : false;
+
+// A SILENT skip would let a green run hide that PDP↔PDP parity never ran (the community↔enterprise
+// authz agreement, SOC2 CC6.1). Make the OpenFGA-absent skip LOUD, and let CI make it a HARD FAILURE
+// via ALETHIA_PDP_PARITY_REQUIRE=1 (mirrors the sandbox canaries' assert-not-skip) once the CI
+// integration lane provisions an OpenFGA service.
+if (DB_UP && !FGA_UP) {
+	const msg = `[pdp-parity] OpenFGA unreachable at ${FGA_URL} — the community↔enterprise PDP parity suite is SKIPPING. Start OpenFGA (pnpm dev:up) to run it.`;
+	if (process.env.ALETHIA_PDP_PARITY_REQUIRE === "1") {
+		throw new Error(`${msg} (ALETHIA_PDP_PARITY_REQUIRE=1 → refusing to silently skip)`);
+	}
+	console.warn(msg);
+}
 const describeParity = DB_UP && FGA_UP ? describe : describe.skip;
 
 // ── Minimal typed OpenFGA HTTP client (real server = real ReBAC evaluation) ──────────
