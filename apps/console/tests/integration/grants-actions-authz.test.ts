@@ -38,6 +38,7 @@ import { describeIfDb } from "./db";
 // Stable per-run fixture ids (unique → never collide with other rows / parallel runs).
 const ORG = randomUUID();
 const OWNER = randomUUID(); // holds the owner role org-wide (member:manage_members ✓)
+const ADMIN = randomUUID(); // holds the admin role org-wide (manage_members ✓, but NO billing)
 const VIEWER = randomUUID(); // holds the viewer role org-wide (member:view ✓, manage_members ✗)
 const OUTSIDER = randomUUID(); // in the org but NO grants at all (not even member:view)
 const TARGET = randomUUID(); // an innocent principal an owner may grant a role to
@@ -104,6 +105,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 		await seedAuthz();
 		await db.insert(user).values([
 			{ id: OWNER, email: `it-grants-owner-${OWNER}@example.test` },
+			{ id: ADMIN, email: `it-grants-admin-${ADMIN}@example.test` },
 			{ id: VIEWER, email: `it-grants-viewer-${VIEWER}@example.test` },
 			{ id: OUTSIDER, email: `it-grants-outsider-${OUTSIDER}@example.test` },
 			{ id: TARGET, email: `it-grants-target-${TARGET}@example.test` },
@@ -114,6 +116,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 	beforeEach(async () => {
 		// Base membership grants (re-seeded each test since afterEach wipes org grants).
 		await seedRoleGrant(OWNER, BUILTIN_ROLE_IDS.owner);
+		await seedRoleGrant(ADMIN, BUILTIN_ROLE_IDS.admin);
 		await seedRoleGrant(VIEWER, BUILTIN_ROLE_IDS.viewer);
 	});
 
@@ -126,7 +129,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 		await db.delete(grants).where(eq(grants.org_id, ORG));
 		await db.delete(authzActivityLog).where(eq(authzActivityLog.org_id, ORG));
 		await db.delete(organization).where(eq(organization.id, ORG));
-		await db.delete(user).where(inArray(user.id, [OWNER, VIEWER, OUTSIDER, TARGET]));
+		await db.delete(user).where(inArray(user.id, [OWNER, ADMIN, VIEWER, OUTSIDER, TARGET]));
 	});
 
 	it("DENIES a viewer's self-escalation to org owner — throws ForbiddenError, writes NO row", async () => {
@@ -207,5 +210,67 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 		await expect(
 			runWithActor(actorFor(OUTSIDER), () => getGrantOptions()),
 		).rejects.toBeInstanceOf(ForbiddenError);
+	});
+
+	// ── Privilege ceiling (grill finding F1) ────────────────────────────────────────────────
+	// An admin holds member:manage_members, so requireAccessAdmin() passes — but the OWNER role
+	// carries billing:* / org:manage_billing, which an admin does NOT hold. Without a ceiling an
+	// admin could self-grant owner and gain billing. The ceiling denies any grant of a permission
+	// set the grantor doesn't themselves hold.
+
+	it("DENIES an admin self-granting the OWNER role — throws, no owner grant lands", async () => {
+		await expect(
+			runWithActor(actorFor(ADMIN), () =>
+				assignGrant({
+					principalType: "user",
+					principalId: ADMIN, // grant MYSELF …
+					effect: "allow",
+					roleId: BUILTIN_ROLE_IDS.owner, // … the owner role (adds billing the admin lacks)
+					resourceType: "org",
+				}),
+			),
+		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await countGrants(ADMIN, BUILTIN_ROLE_IDS.owner)).toBe(0);
+	});
+
+	it("DENIES an admin granting a single permission above their ceiling (billing)", async () => {
+		await expect(
+			runWithActor(actorFor(ADMIN), () =>
+				assignGrant({
+					principalType: "user",
+					principalId: TARGET,
+					effect: "allow",
+					permissionKey: "billing:manage_billing", // admin does not hold billing
+					resourceType: "org",
+				}),
+			),
+		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await countGrants(TARGET)).toBe(0);
+	});
+
+	it("ALLOWS an owner to grant the OWNER role (owner holds everything)", async () => {
+		await runWithActor(actorFor(OWNER), () =>
+			assignGrant({
+				principalType: "user",
+				principalId: TARGET,
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.owner,
+				resourceType: "org",
+			}),
+		);
+		expect(await countGrants(TARGET, BUILTIN_ROLE_IDS.owner)).toBe(1);
+	});
+
+	it("ALLOWS an admin to grant a SUBSET role (viewer ⊆ admin)", async () => {
+		await runWithActor(actorFor(ADMIN), () =>
+			assignGrant({
+				principalType: "user",
+				principalId: TARGET,
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.viewer,
+				resourceType: "org",
+			}),
+		);
+		expect(await countGrants(TARGET, BUILTIN_ROLE_IDS.viewer)).toBe(1);
 	});
 });

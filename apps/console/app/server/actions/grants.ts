@@ -7,6 +7,7 @@ import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { actorCanGrant } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
 import {
@@ -15,6 +16,8 @@ import {
 	PERMISSIONS,
 } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import type { Actor } from "@/lib/authz/types";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -109,6 +112,18 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	}
 	if (input.permissionKey && !VALID_KEYS.has(input.permissionKey)) {
 		throw new Error("Unknown permission.");
+	}
+	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
+	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
+	if (
+		input.effect === "allow" &&
+		!(await actorCanGrant(actor, input.roleId ?? null, input.permissionKey ?? null))
+	) {
+		throw new ForbiddenError(
+			"manage_members",
+			{ type: "member" },
+			"exceeds_grantor_privilege",
+		);
 	}
 	const resourceId = input.resourceId ?? null;
 	// Org-wide grants are stored on the org resource type.

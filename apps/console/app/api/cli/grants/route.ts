@@ -4,11 +4,19 @@
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { getPdp } from "@/lib/authz";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { recordActivity } from "@/lib/authz/activity";
-import { PERMISSIONS } from "@/lib/authz/registry";
+import {
+	isPermissionKey,
+	type PermissionDef,
+	type PermissionKey,
+	PERMISSIONS,
+} from "@/lib/authz/registry";
+import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import type { Actor } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { grants, role } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
@@ -19,6 +27,39 @@ import {
 } from "@/lib/validations/cli-contract";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
+
+/** Every permission key → its (resource, action) split, for the privilege-ceiling check. */
+const PERMISSION_BY_KEY: ReadonlyMap<PermissionKey, PermissionDef> = new Map(
+	PERMISSIONS.map((p): [PermissionKey, PermissionDef] => [p.key, p]),
+);
+
+/**
+ * Privilege-ceiling check (grill finding F1) — the CLI mirror of assignGrant's `actorCanGrant`. An
+ * allow-grant may only delegate a role/permission the actor themselves effectively holds, so an admin
+ * (who holds `member:manage_members` but not billing) can't self-grant the OWNER role and escalate.
+ * The target is expanded to its permission-key set and each key is checked against the actor's
+ * effective permissions via the PDP at org scope (no side-effects). Empty set ⇒ allowed.
+ */
+async function callerCanGrant(
+	actor: Actor,
+	roleId: string | null,
+	permissionKey: string | null,
+): Promise<boolean> {
+	const keys = roleId
+		? await rolePermissionKeys(roleId)
+		: permissionKey
+			? [permissionKey]
+			: [];
+	const pdp = getPdp();
+	for (const key of keys) {
+		if (!isPermissionKey(key)) continue;
+		const def = PERMISSION_BY_KEY.get(key);
+		if (!def) continue;
+		const decision = await pdp.can(actor, def.action, { type: def.resource });
+		if (!decision.allowed) return false;
+	}
+	return true;
+}
 
 /** Body of POST /api/cli/grants — bind a principal to EXACTLY one of a role or a
  * single permission, at a resource scope, as allow or deny. resource_id omitted =
@@ -123,6 +164,17 @@ export async function POST(req: Request) {
 	}
 	if (input.permission_key && !VALID_KEYS.has(input.permission_key)) {
 		return NextResponse.json({ error: "Unknown permission." }, { status: 400 });
+	}
+	// Privilege ceiling: an allow-grant may not exceed the caller's own effective permissions
+	// (a deny only removes access, so it can't escalate the grantee — skip it).
+	if (
+		input.effect === "allow" &&
+		!(await callerCanGrant(actor, input.role_id ?? null, input.permission_key ?? null))
+	) {
+		return NextResponse.json(
+			{ error: "A grant may not exceed your own permissions." },
+			{ status: 403 },
+		);
 	}
 
 	const resourceId = input.resource_id ?? null;
