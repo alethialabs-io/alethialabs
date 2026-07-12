@@ -41,6 +41,20 @@ export async function releaseStateLock(
 	return !!rows[0]?.release_tofu_state_lock;
 }
 
+/**
+ * Force-releases a stranded state lock (staff/system only) — e.g. after a cancelled apply's
+ * runner was hard-killed before it could UNLOCK. Rotates the lock_id + bumps the fencing
+ * `generation` (never a naive delete) so a zombie writer from the killed apply is fenced out,
+ * then expires the row so a fresh apply can acquire. Returns whether a lock existed.
+ */
+export async function forceReleaseStateLock(stateKey: string): Promise<boolean> {
+	const db = getServiceDb();
+	const rows = await db.execute<{ force_release_tofu_state_lock: boolean }>(
+		sql`select force_release_tofu_state_lock(${stateKey}) as force_release_tofu_state_lock`,
+	);
+	return !!rows[0]?.force_release_tofu_state_lock;
+}
+
 /** The fence: true iff a LIVE lock with this exact id is held for the state key. */
 export async function validateStateLock(
 	stateKey: string,

@@ -8,7 +8,7 @@
 // grouping/filtering by our ids isolates the assertions from other orgs' rows. Cleans up by id.
 
 import { randomUUID } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -57,6 +57,7 @@ describeIfDb("classification usage counts", () => {
 				key: `env-${DIM_SINGLE.slice(0, 6)}`,
 				label: "Environment",
 				multi: false,
+				applies_to: ["project_environment"],
 			},
 		]);
 		await db.insert(classificationValue).values([
@@ -120,5 +121,19 @@ describeIfDb("classification usage counts", () => {
 			{ resource_kind: "cloud_kubernetes_cluster", count: 1 },
 			{ resource_kind: "runner", count: 1 },
 		]);
+	});
+
+	it("persists a dimension's applies_to resource-kind scope", async () => {
+		const db = getServiceDb();
+		const [scoped] = await db
+			.select({ applies_to: classificationDimension.applies_to })
+			.from(classificationDimension)
+			.where(eq(classificationDimension.id, DIM_SINGLE));
+		const [unscoped] = await db
+			.select({ applies_to: classificationDimension.applies_to })
+			.from(classificationDimension)
+			.where(eq(classificationDimension.id, DIM_MULTI));
+		expect(scoped.applies_to).toEqual(["project_environment"]);
+		expect(unscoped.applies_to).toEqual([]); // default = all kinds
 	});
 });

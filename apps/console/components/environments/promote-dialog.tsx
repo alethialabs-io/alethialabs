@@ -162,9 +162,18 @@ export function PromoteDialog({
 								These environments are already aligned — nothing to promote.
 							</p>
 						) : (
-							<ScrollArea className="max-h-56 rounded-md border border-border">
-								<ul className="divide-y divide-border">
-									{shown?.map((c: ComponentChange, i) => {
+							<div>
+								<div className="mb-2 flex items-baseline justify-between">
+									<span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-tertiary">
+										Plan preview
+									</span>
+									<span className="font-mono text-[11px] text-text-secondary">
+										{diff.summary.join(" · ")}
+									</span>
+								</div>
+								<ScrollArea className="max-h-56 rounded-md border border-border">
+									<ul className="divide-y divide-border">
+										{shown?.map((c: ComponentChange, i) => {
 										const meta = OP_META[c.op];
 										const Icon = meta.icon;
 										return (
@@ -187,8 +196,9 @@ export function PromoteDialog({
 											</li>
 										);
 									})}
-								</ul>
-							</ScrollArea>
+									</ul>
+								</ScrollArea>
+							</div>
 						)
 					) : (
 						<p className="text-xs text-muted-foreground">

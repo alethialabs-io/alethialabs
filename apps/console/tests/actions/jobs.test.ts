@@ -12,6 +12,9 @@ vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+vi.mock("@/lib/runners/cancel-signal", () => ({
+	notifyRunnerCancel: vi.fn().mockResolvedValue(undefined),
+}));
 
 import {
 	cancelJob,
@@ -25,6 +28,7 @@ import {
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { withOwnerScope } from "@/lib/db";
+import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
 import { notifyScaler } from "@/lib/scaler";
 
 /**
@@ -220,8 +224,8 @@ describe("rerunJob", () => {
 });
 
 describe("cancelJob", () => {
-	it("cancels a QUEUED job by writing the CANCELLED state", async () => {
-		const { setSpy } = mockDb([[{ status: "QUEUED" }], []]);
+	it("cancels a QUEUED job DB-only (no runner to signal)", async () => {
+		const { setSpy } = mockDb([[{ status: "QUEUED", runner_id: null }], []]);
 		await cancelJob("job-1");
 		expect(authorize).toHaveBeenCalledWith("edit", { type: "job", id: "job-1" });
 		expect(setSpy).toHaveBeenCalledWith(
@@ -231,17 +235,39 @@ describe("cancelJob", () => {
 				completed_at: expect.any(Date),
 			}),
 		);
+		// A QUEUED job has no assigned runner → no mid-flight signal.
+		expect(notifyRunnerCancel).not.toHaveBeenCalled();
 	});
 
-	it("throws when the job is missing (no write)", async () => {
+	it("signals the owning runner for a PROCESSING job (not just a DB flip)", async () => {
+		const { setSpy } = mockDb([
+			[{ status: "PROCESSING", runner_id: "runner-7" }],
+			[],
+		]);
+		await cancelJob("job-run");
+		expect(setSpy).toHaveBeenCalledWith(
+			expect.objectContaining({ status: "CANCELLED" }),
+		);
+		expect(notifyRunnerCancel).toHaveBeenCalledWith("runner-7", "job-run");
+	});
+
+	it("signals the owning runner for a CLAIMED job", async () => {
+		mockDb([[{ status: "CLAIMED", runner_id: "runner-9" }], []]);
+		await cancelJob("job-claimed");
+		expect(notifyRunnerCancel).toHaveBeenCalledWith("runner-9", "job-claimed");
+	});
+
+	it("throws when the job is missing (no write, no signal)", async () => {
 		const { setSpy } = mockDb([[]]);
 		await expect(cancelJob("job-x")).rejects.toThrow(/Job not found/);
 		expect(setSpy).not.toHaveBeenCalled();
+		expect(notifyRunnerCancel).not.toHaveBeenCalled();
 	});
 
 	it("refuses to cancel a job in a terminal status", async () => {
-		const { setSpy } = mockDb([[{ status: "DONE" }]]);
+		const { setSpy } = mockDb([[{ status: "DONE", runner_id: null }]]);
 		await expect(cancelJob("job-1")).rejects.toThrow(/Cannot cancel job with status DONE/);
 		expect(setSpy).not.toHaveBeenCalled();
+		expect(notifyRunnerCancel).not.toHaveBeenCalled();
 	});
 });

@@ -12,6 +12,8 @@ import {
 	runners,
 } from "@/lib/db/schema";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { newTraceparent } from "@/lib/observability/trace";
+import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
 import { notifyScaler } from "@/lib/scaler";
 import { desc, eq } from "drizzle-orm";
 
@@ -140,6 +142,8 @@ export async function rerunJob(jobId: string) {
 				cloud_identity_id: original.cloud_identity_id,
 				project_id: original.project_id,
 				status: "QUEUED",
+				// A rerun is a fresh operation → a new trace root (not the original's).
+				traceparent: newTraceparent(),
 			})
 			.returning({ id: jobs.id });
 
@@ -148,13 +152,20 @@ export async function rerunJob(jobId: string) {
 	});
 }
 
-/** Cancels a queued, claimed, or processing job. */
+/**
+ * Cancels a queued, claimed, or processing job. Flips the DB to CANCELLED and, when the job
+ * is already running on a runner (CLAIMED/PROCESSING with a runner_id), SIGNALS that runner
+ * to tear it down mid-flight — the runner SIGINTs the in-flight `tofu apply` so it finishes
+ * the current resource, writes state, and releases the state lock (a clean stop), then
+ * re-posts CANCELLED (with an orphan-risk flag if the apply had started). A QUEUED job has no
+ * runner yet, so it stays a pure DB flip (claim_next_job never claims a CANCELLED job).
+ */
 export async function cancelJob(jobId: string) {
 	const actor = await authorize("edit", { type: "job", id: jobId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	const signal = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
-			.select({ status: jobs.status })
+			.select({ status: jobs.status, runner_id: jobs.runner_id })
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
 			.limit(1);
@@ -174,7 +185,20 @@ export async function cancelJob(jobId: string) {
 				completed_at: new Date(),
 			})
 			.where(eq(jobs.id, jobId));
+
+		// A running job (claimed by a runner) must be torn down mid-flight, not just flipped
+		// in the DB. Return the runner to signal AFTER the transaction commits.
+		return job.runner_id && (job.status === "CLAIMED" || job.status === "PROCESSING")
+			? job.runner_id
+			: null;
 	});
+
+	// Fire-and-forget: signal the owning runner to abort the in-flight tofu run. The DB is
+	// already CANCELLED, so a delivery failure only means the runner's job runs to its
+	// natural end (or the 2h timeout) — never a failed cancel.
+	if (signal) {
+		await notifyRunnerCancel(signal, jobId).catch(() => {});
+	}
 }
 
 /**

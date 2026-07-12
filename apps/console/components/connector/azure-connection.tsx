@@ -149,7 +149,6 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 
 	return (
 		<ConnectSheetShell
-			title="Connect Azure"
 			intro="You grant Alethia's multi-tenant app a role in your own Azure subscription; it trusts Alethia's issuer via a federated credential. Alethia signs in with a short-lived, minted token — no client secret is ever created, shared, or stored."
 			howItWorks={
 				<>
@@ -197,7 +196,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 			/>
 
 			{method === "cli" ? (
-				<div className="space-y-8">
+				<div className="space-y-6">
 					<Step n={1} title="Open Azure Cloud Shell">
 						<p className="max-w-sm text-muted-foreground text-xs">
 							Click below to open Azure Cloud Shell in your browser. No local tooling
@@ -217,7 +216,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 								onClick={handleDownload}
 								variant="outline"
 								size="sm"
-								className="h-8 border-border/50 font-medium text-xs"
+								className="h-8 border-border/60 font-medium text-xs"
 								type="button"
 							>
 								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
@@ -231,7 +230,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 							<b className="font-medium text-foreground">YOUR_SUBSCRIPTION_ID</b> with your
 							Azure subscription ID.
 						</p>
-						<div className="flex items-start gap-2 rounded-md border border-border/40 bg-muted/30 p-3 font-mono text-[11px] text-foreground">
+						<div className="flex items-start gap-2 rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[11px] text-foreground">
 							<span className="min-w-0 break-all">{cloudShellCmd}</span>
 							<CopyButton
 								text={cloudShellCmd}
@@ -248,13 +247,13 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 					</Step>
 				</div>
 			) : (
-				<div className="space-y-8">
+				<div className="space-y-6">
 					<Step n={1} title="Apply Terraform Module">
 						<p className="max-w-sm text-muted-foreground text-xs">
 							Set your subscription ID and the Alethia app id in the Terraform variables and
 							apply:
 						</p>
-						<div className="mt-1 space-y-1 overflow-x-auto rounded-md border border-border/40 bg-muted/30 p-3 font-mono text-[11px] text-foreground">
+						<div className="mt-1 space-y-1 overflow-x-auto rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[11px] text-foreground">
 							<div>terraform init && terraform apply \</div>
 							<div className="pl-4">-var &quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot; \</div>
 							<div className="pl-4">
@@ -344,7 +343,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 									<FormControl>
 										<Input
 											placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-											className="h-9 border-border/50 font-mono text-sm"
+											className="h-9 border-border/60 font-mono text-sm"
 											{...field}
 											onPaste={handleFieldPaste}
 										/>
@@ -369,7 +368,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 									<FormControl>
 										<Input
 											placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-											className="h-9 border-border/50 font-mono text-sm"
+											className="h-9 border-border/60 font-mono text-sm"
 											{...field}
 											onPaste={handleFieldPaste}
 										/>

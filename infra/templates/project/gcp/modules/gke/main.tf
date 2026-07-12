@@ -178,13 +178,11 @@ resource "google_container_node_pool" "default" {
 }
 
 ################################################################################
-# Workload Identity IAM (optional, for the default node pool service account)
+# Workload Identity IAM
 ################################################################################
-
-resource "google_project_iam_member" "workload_identity_user" {
-  count = var.enable_autopilot ? 0 : 1
-
-  project = var.project_id
-  role    = "roles/iam.workloadIdentityUser"
-  member  = "serviceAccount:${var.project_id}.svc.id.goog[kube-system/default]"
-}
+# NOTE (least-privilege): the former project-level roles/iam.workloadIdentityUser
+# binding for kube-system/default was removed. GKE Workload Identity works via the
+# per-GSA google_service_account_iam_member bindings (each add-on's GSA↔KSA pair,
+# e.g. workload-identity.tf's external_dns_wi); this project-scoped grant to the
+# default KSA was legacy/no-op and forced the provisioner to hold project setIamPolicy
+# (owner-equivalent). Add-ons that need WI bind their own GSA at the GSA scope.

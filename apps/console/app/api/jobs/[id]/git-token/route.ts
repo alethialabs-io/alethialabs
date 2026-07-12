@@ -56,12 +56,25 @@ export async function POST(
 					.limit(1)
 			: [];
 
-		// ANALYZE_REPO jobs have no project — the target repo is in config_snapshot.
+		// ANALYZE_REPO / CHART_SCAN / IAC_SCAN jobs have no project row — the target repo is the
+		// flat config_snapshot.repo_url.
 		const scanRepoUrl =
 			typeof job.config_snapshot?.repo_url === "string"
 				? job.config_snapshot.repo_url
 				: "";
-		const repoUrl = repos?.apps_destination_repo || scanRepoUrl || "";
+		// BYO IaC PLAN/DEPLOY/DESTROY jobs: the customer's module repo rides the snapshot under
+		// iac_source — it's the repo the runner clones (replace mode), so it wins over the
+		// project's GitOps destination repo for provider detection.
+		const snapIacSource = job.config_snapshot?.iac_source;
+		const iacRepoUrl =
+			typeof snapIacSource === "object" &&
+			snapIacSource !== null &&
+			"repo_url" in snapIacSource &&
+			typeof snapIacSource.repo_url === "string"
+				? snapIacSource.repo_url
+				: "";
+		const repoUrl =
+			iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
 		const gitProvider: PublicGitProvider = repoUrl.includes("gitlab")
 			? "gitlab"
 			: repoUrl.includes("bitbucket")

@@ -5,6 +5,8 @@ package provisioner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,6 +47,13 @@ type DeployParams struct {
 	// StateBackend points project tofu state at the console's per-job http proxy
 	// (no storage master key in the workdir). Required for RunDeployV2.
 	StateBackend *cloud.HTTPBackendConfig
+	// PhaseFile, when set, is an absolute path RunDeployV2 writes the current provisioning
+	// phase to ("apply" is written immediately before `tofu apply`). The runner reads it
+	// after a mid-flight cancel to decide whether the killed work had reached the apply
+	// (state-mutating) phase — i.e. whether orphaned cloud resources may exist. It lives
+	// under the per-job workdir so it is visible across the container-sandbox boundary
+	// (the child writes it into the RW-mounted workdir; the parent reads it after exit).
+	PhaseFile    string
 	Stdout       io.Writer
 	Stderr       io.Writer
 	ApiClient    *api.Client
@@ -84,6 +93,60 @@ type PlanResult struct {
 	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
 	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
 	SecurityPosture *argocd.SecurityPosture
+	// InfraServices is the machine-readable per-service install/skip decision set for the
+	// post-apply infra services (external-dns, external-secrets store, ingress, storage
+	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
+	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
+	InfraServices []argocd.InfraServiceDecision
+}
+
+// writePhase records the current provisioning phase to the job's phase file (best-effort;
+// a no-op when path is empty). The runner reads it after a mid-flight cancel to decide
+// whether apply had started (→ possible orphaned cloud resources). See DeployParams.PhaseFile.
+func writePhase(path, phase string) {
+	if path == "" {
+		return
+	}
+	_ = os.WriteFile(path, []byte(phase), 0o600)
+}
+
+// applyBootstrapManifests applies a self-managed cluster's CNI + cloud-integration
+// manifests — the `bootstrap_manifests` tofu output (Talos/Hetzner emits it; managed
+// EKS/GKE/AKS don't, so this is a no-op there). Talos ships CNI=none, so nodes stay
+// NotReady until these are applied. The template renders them offline and emits them as
+// an output (rather than applying them in-tofu via a cluster-wired kubectl provider), so
+// `tofu plan -out` stays resolvable and the machine config stays under Hetzner's 32 KiB
+// user_data limit. Retries a few times for CRD-before-CR ordering / API warm-up.
+func applyBootstrapManifests(ctx context.Context, outputs map[string]interface{}, stdout, stderr io.Writer) error {
+	raw, _ := outputs["bootstrap_manifests"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return nil // managed cluster — CNI comes from the cloud
+	}
+	dir, err := os.MkdirTemp("", "alethia-bootstrap-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "bootstrap.yaml")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Bootstrapping cluster CNI + cloud integration (self-managed)...")
+	// Server-side apply handles CRDs + their CRs in one pass more gracefully than a plain apply.
+	cmd := fmt.Sprintf("kubectl apply --server-side --force-conflicts -f %s", path)
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if lastErr = utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); lastErr == nil {
+			return nil
+		}
+		fmt.Fprintf(stderr, "CNI bootstrap attempt %d/4 failed (API/CRD not ready yet): %v\n", attempt, lastErr)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(15 * time.Second):
+		}
+	}
+	return fmt.Errorf("kubectl apply of bootstrap manifests failed after retries: %w", lastErr)
 }
 
 // clusterReadyTimeout is how long the reachability gate waits for the cluster (default 15m;
@@ -115,11 +178,17 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("ProjectConfig is required for RunDeployV2")
 	}
 
+	byoIac := vc.IacSource != nil
+
 	// Enforce placement discipline before anything else: a CORE resource on a
 	// foreign cloud is a hot cross-cloud edge we can't provision yet. Fires on
-	// dry-run (plan) too, so the user never reaches apply.
-	if err := ValidatePlacement(vc); err != nil {
-		return nil, err
+	// dry-run (plan) too, so the user never reaches apply. SKIPPED for BYO IaC —
+	// placement is a template/catalog-model concept; a customer's own module owns
+	// its resource graph.
+	if !byoIac {
+		if err := ValidatePlacement(vc); err != nil {
+			return nil, err
+		}
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
@@ -155,15 +224,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	defer os.RemoveAll(tmpRoot)
 
 	var tfDir string
-	if params.TemplatesDir != "" {
+	// byoTfvars holds the customer's coerced var_values on the BYO path (nil otherwise).
+	var byoTfvars map[string]interface{}
+	switch {
+	case byoIac:
+		// BRING-YOUR-OWN IaC: clone the customer's module at its pinned commit, run
+		// the fail-closed static gate inline, write the backend override, and publish
+		// the frozen TF_VAR_alethia_* context. No bundled template, no provider
+		// tfvars, no brownfield injection, no connector composition — the module is
+		// self-contained.
+		cloneDir := filepath.Join(tmpRoot, "clone")
+		var restore func()
+		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(vc, params.GitAccessToken, cloneDir, stdout, stderr)
+		if err != nil {
+			return nil, err
+		}
+		defer restore()
+	case params.TemplatesDir != "":
 		fmt.Fprintf(stdout, "Using bundled templates from %s\n", params.TemplatesDir)
 		workDir := filepath.Join(tmpRoot, "work")
 		if err := copyDir(params.TemplatesDir, workDir); err != nil {
 			return nil, fmt.Errorf("failed to copy templates: %w", err)
 		}
 		tfDir = workDir
-	} else {
-		return nil, fmt.Errorf("git-based deployment not yet supported in V2; use TemplatesDir")
+	default:
+		return nil, fmt.Errorf("no IaC source: set ProjectConfig.IacSource (BYO) or DeployParams.TemplatesDir")
 	}
 
 	tf, err := tofu.NewTofuCLI(ctx, vc.IacVersion, tfDir, stdout, stderr)
@@ -171,53 +256,60 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 
-	tfvars := provider.ProviderTfvars(vc)
+	var tfvars map[string]interface{}
+	if byoIac {
+		// Only the customer's coerced var_values — the platform context rides on
+		// TF_VAR_alethia_* env (set by prepareByoIacWorkdir).
+		tfvars = byoTfvars
+	} else {
+		tfvars = provider.ProviderTfvars(vc)
 
-	// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
-	// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
-	// subnet in-region (keeps the per-cloud subnet nuance in HCL). See infra/templates/project/*.
-	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" {
-		switch provider.Name() {
-		case "aws":
-			tfvars["vpc_id"] = vc.Network.NetworkID
-			fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
-			ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
-			if ec2Err != nil {
-				fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
-			} else {
-				subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
-				if subErr != nil {
-					fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+		// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
+		// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
+		// subnet in-region (keeps the per-cloud subnet nuance in HCL). See infra/templates/project/*.
+		if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" {
+			switch provider.Name() {
+			case "aws":
+				tfvars["vpc_id"] = vc.Network.NetworkID
+				fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
+				ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
+				if ec2Err != nil {
+					fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 				} else {
-					privateIDs := make([]string, 0)
-					publicIDs := make([]string, 0)
-					for _, s := range subnets {
-						if s.MapPublicIpOnLaunch {
-							publicIDs = append(publicIDs, s.ID)
-						} else {
-							privateIDs = append(privateIDs, s.ID)
+					subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
+					if subErr != nil {
+						fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+					} else {
+						privateIDs := make([]string, 0)
+						publicIDs := make([]string, 0)
+						for _, s := range subnets {
+							if s.MapPublicIpOnLaunch {
+								publicIDs = append(publicIDs, s.ID)
+							} else {
+								privateIDs = append(privateIDs, s.ID)
+							}
 						}
+						if len(publicIDs) == 0 {
+							publicIDs = privateIDs
+						}
+						if len(privateIDs) == 0 {
+							privateIDs = publicIDs
+						}
+						tfvars["vpc_private_subnet_ids"] = privateIDs
+						tfvars["vpc_public_subnet_ids"] = publicIDs
+						fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 					}
-					if len(publicIDs) == 0 {
-						publicIDs = privateIDs
-					}
-					if len(privateIDs) == 0 {
-						privateIDs = publicIDs
-					}
-					tfvars["vpc_private_subnet_ids"] = privateIDs
-					tfvars["vpc_public_subnet_ids"] = publicIDs
-					fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 				}
+			case "gcp":
+				// Self-link (projects/…/global/networks/…). The template data-sources the network + a
+				// subnetwork in var.region (with its pod/service secondary ranges).
+				tfvars["network_id"] = vc.Network.NetworkID
+				fmt.Fprintf(stdout, "Using existing VPC network %s — the template resolves a subnet in %s.\n", vc.Network.NetworkID, vc.Region)
+			case "azure":
+				// VNet resource id. The template data-sources the VNet + a subnet for AKS.
+				tfvars["vnet_id"] = vc.Network.NetworkID
+				fmt.Fprintf(stdout, "Using existing VNet %s — the template resolves an AKS subnet.\n", vc.Network.NetworkID)
 			}
-		case "gcp":
-			// Self-link (projects/…/global/networks/…). The template data-sources the network + a
-			// subnetwork in var.region (with its pod/service secondary ranges).
-			tfvars["network_id"] = vc.Network.NetworkID
-			fmt.Fprintf(stdout, "Using existing VPC network %s — the template resolves a subnet in %s.\n", vc.Network.NetworkID, vc.Region)
-		case "azure":
-			// VNet resource id. The template data-sources the VNet + a subnet for AKS.
-			tfvars["vnet_id"] = vc.Network.NetworkID
-			fmt.Fprintf(stdout, "Using existing VNet %s — the template resolves an AKS subnet.\n", vc.Network.NetworkID)
 		}
 	}
 
@@ -242,10 +334,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// Docker Hub, observability). This merges their tfvars (including decrypted
 	// secrets resolved at claim time), copies the modules into the work dir, and
 	// sets the native-guard vars so the cluster cloud skips its native resource.
-	if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
-		return nil, fmt.Errorf("connector composition failed: %w", composeErr)
-	} else if composed > 0 {
-		fmt.Fprintf(stdout, "Composed %d pluggable connector module(s).\n", composed)
+	// SKIPPED for BYO IaC — a customer's own module owns its full resource graph;
+	// the platform composes nothing into it.
+	if !byoIac {
+		if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
+			return nil, fmt.Errorf("connector composition failed: %w", composeErr)
+		} else if composed > 0 {
+			fmt.Fprintf(stdout, "Composed %d pluggable connector module(s).\n", composed)
+		}
 	}
 
 	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)
@@ -376,6 +472,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// exception) before mutating any infrastructure.
 	attachReceipt(&result, planFile, planJSON, params.VerifyOverride, stdout)
 
+	// Mark the apply phase BEFORE mutating any infrastructure. A mid-flight cancel from
+	// here on may leave cloud resources not yet recorded in state, so the runner reads
+	// this marker to flag orphan risk on the cancelled job. Best-effort — a write failure
+	// only loses precision (the runner defaults to "no orphan risk"), never blocks apply.
+	writePhase(params.PhaseFile, "apply")
+
 	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {
 		return nil, fmt.Errorf("tofu apply failed: %w", err)
@@ -396,11 +498,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, stdout); err != nil {
 			return nil, fmt.Errorf("kubeconfig configuration failed — the cluster was provisioned but is unreachable: %w", err)
 		}
-		// Reachability gate: prove the API server answers and nodes reach Ready before we
-		// call this a working cluster (was: SUCCESS meant only that `tofu apply` exited 0).
 		if !params.DryRun {
+			// Bootstrap CNI + cloud integration for SELF-MANAGED clusters (Talos ships
+			// CNI=none, so nodes stay NotReady until this is applied). The template emits
+			// these as the `bootstrap_manifests` output — rendered offline, applied here via
+			// kubectl rather than in-tofu, which keeps `tofu plan -out` resolvable (no
+			// cluster-wired provider) AND stays under Hetzner's 32 KiB cloud-init user_data
+			// limit (Cilium alone busts it as a Talos inlineManifest). No-op for managed
+			// clusters, which get CNI from the cloud and emit no such output.
+			if err := applyBootstrapManifests(ctx, outputs, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to bootstrap cluster CNI/cloud integration: %w", err)
+			}
+			// Reachability gate: prove the API server answers and nodes reach Ready before we
+			// call this a working cluster (was: SUCCESS meant only that `tofu apply` exited 0).
 			if err := k8s.WaitClusterReady(ctx, clusterReadyTimeout(), clusterReadyRequireNode(), stdout); err != nil {
 				return nil, fmt.Errorf("cluster provisioned but not reachable: %w", err)
+			}
+			// Datapath gate: WaitClusterReady probes the API from the RUNNER (node public IP) and
+			// counts Ready nodes — it cannot see whether an ordinary POD can reach the apiserver
+			// across the cluster network. A broken pod datapath (e.g. cross-node pod->apiserver)
+			// passes the checks above yet breaks every real workload. Only meaningful with a node
+			// to schedule on (skip Karpenter-only / node-less clusters).
+			if clusterReadyRequireNode() {
+				if err := k8s.WaitPodToAPIServer(ctx, clusterReadyTimeout(), stdout); err != nil {
+					return nil, fmt.Errorf("cluster provisioned but its pod network is broken: %w", err)
+				}
 			}
 			result.ClusterReady = true
 		}
@@ -437,6 +559,23 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			return nil, fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
 		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
+		// Record the honest per-service install/skip decisions from the SAME gates the
+		// render below uses, so the console/CLI can show what shipped (and why a service
+		// was skipped) instead of guessing from output presence.
+		result.InfraServices = argocd.InfraServiceDecisions(facts)
+		// Connector-backed external-dns providers read a token Secret that must exist
+		// before the Application's first sync (mirrors ensureArgoRedisSecret's pre-seed).
+		switch facts.DNSProvider() {
+		case "cloudflare":
+			token := vc.ConnectorCredentialFor("dns", "cloudflare")["api_token"]
+			if err := argocd.EnsureExternalDNSSecret("external-dns-cloudflare", "apiToken", token, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the cloudflare external-dns secret: %w", err)
+			}
+		case "webhook":
+			if err := argocd.EnsureExternalDNSSecret("external-dns-hetzner", "token", os.Getenv("HCLOUD_TOKEN"), stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the hetzner external-dns secret: %w", err)
+			}
+		}
 		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
 		if renderErr != nil {
 			return nil, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
@@ -445,6 +584,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
 			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
+		// Remove infra-service objects earlier deploys applied but this render skipped
+		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
+		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
 
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
@@ -566,11 +708,18 @@ func shortHash(h string) string {
 
 func resolveArgoTemplatesDir() string {
 	candidates := []string{
+		// Explicit override — a runner image with a non-default layout, or an
+		// in-process E2E driving the real spine from an arbitrary CWD, can point
+		// directly at the baked templates.
+		os.Getenv("ALETHIA_ARGOCD_TEMPLATES_DIR"),
 		"/home/runner/argocd-templates",
 		"argocd-templates",
 		"../../infra/templates/argocd",
 	}
 	for _, d := range candidates {
+		if d == "" {
+			continue
+		}
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
 			return d
 		}
@@ -584,6 +733,17 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
 	if err := utils.ExecuteCommand(addRepoCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to add ArgoCD helm repo: %w", err)
+	}
+
+	// Pre-seed the argocd-redis secret BEFORE the chart's pre-install `redis-secret-init` hook
+	// runs. That hook (`argocd admin redis-initial-password`) crash-looped with exit 20 on Talos —
+	// argocd's generic-error exit on the first K8s API call from the hook pod (RBAC/hook-ordering
+	// race, or the hook pod on a node whose datapath wasn't ready) — which blocks the WHOLE chart
+	// install so `helm --wait` hangs then fails. Seeding the secret first makes the hook's Create a
+	// no-op (AlreadyExists) and its Get succeed. Redis keeps a strong random auth. Idempotent: we
+	// never overwrite an existing secret (that would desync running redis from its clients).
+	if err := ensureArgoRedisSecret(stdout, stderr); err != nil {
+		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
 	installCmd := "helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version 7.1.3 --wait --timeout 5m"
@@ -603,6 +763,10 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					" --set 'server.ingress.hosts[0]=%s'",
 				certArn, argoHost)
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
+			// The URL is only real when the ingress above is actually configured (AWS
+			// ALB+ACM today). Setting it from DomainName alone reported a URL that
+			// resolves nowhere on every other cloud.
+			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 		}
 	}
 
@@ -620,11 +784,70 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		result.ArgocdAdminPassword = strings.TrimSpace(password)
 	}
 
-	if vc.DNS.DomainName != "" {
-		result.ArgocdURL = fmt.Sprintf("https://argocd.%s", vc.DNS.DomainName)
+	if result.ArgocdURL != "" {
+		fmt.Fprintf(stdout, "ArgoCD ready. URL: %s\n", result.ArgocdURL)
+	} else {
+		fmt.Fprintln(stdout, "ArgoCD ready (no ingress on this cloud yet — access via port-forward or the admin password).")
+	}
+	return nil
+}
+
+// ensureArgoRedisSecret creates the `argocd-redis` Secret (key `auth`) with a strong random
+// password BEFORE the argo-cd helm install, but ONLY if it does not already exist. The chart's
+// pre-install `redis-secret-init` hook otherwise races/fails on Talos (E1 finding, exit 20),
+// blocking the whole install. Idempotent by design — never overwrite an existing auth, or a
+// running redis desyncs from its clients. The secret carries Helm ownership metadata so the chart
+// ADOPTS it (without these, Helm errors "invalid ownership metadata").
+func ensureArgoRedisSecret(stdout, stderr io.Writer) error {
+	// Ensure the namespace exists (the helm install also uses --create-namespace, but we seed first).
+	nsCmd := "kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
+	if err := utils.ExecuteCommand(nsCmd, ".", nil, stdout, stderr); err != nil {
+		return fmt.Errorf("ensure argocd namespace: %w", err)
 	}
 
-	fmt.Fprintf(stdout, "ArgoCD ready. URL: %s\n", result.ArgocdURL)
+	// Idempotency guard: never regenerate an existing password.
+	if out, err := utils.ExecuteCommandWithOutput(
+		"kubectl get secret argocd-redis -n argocd -o jsonpath={.data.auth}", ".", nil); err == nil && strings.TrimSpace(out) != "" {
+		fmt.Fprintln(stdout, "argocd-redis secret already present; leaving its auth untouched.")
+		return nil
+	}
+
+	buf := make([]byte, 32) // 256-bit password
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Errorf("generate redis password: %w", err)
+	}
+	auth := hex.EncodeToString(buf)
+
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-redis
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-redis
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: argo-cd
+    meta.helm.sh/release-namespace: argocd
+type: Opaque
+stringData:
+  auth: %s
+`, auth)
+
+	dir, err := os.MkdirTemp("", "alethia-argocd-redis-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "argocd-redis.yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		return err
+	}
+	if err := utils.ExecuteCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); err != nil {
+		return fmt.Errorf("apply argocd-redis secret: %w", err)
+	}
+	fmt.Fprintln(stdout, "Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).")
 	return nil
 }
 

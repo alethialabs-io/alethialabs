@@ -10,6 +10,9 @@ import { getServiceDb } from "@/lib/db";
 import type { CloudProvider } from "@/lib/db/schema";
 import { getHcloudFleetProvider } from "@/lib/fleet/hcloud";
 import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
+import { log } from "@/lib/observability/log";
+
+const flog = log.child({ component: "fleet" });
 import { sql } from "drizzle-orm";
 
 export type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
@@ -41,14 +44,16 @@ class ManualFleetProvider implements FleetProvider {
 		project: FleetTarget,
 		opts: { location: string; version: string | null; bootstrapToken?: string },
 	): Promise<void> {
-		console.log(
-			`[fleet] ${project.provider}: would create a runner (loc=${opts.location} ver=${opts.version}) ` +
-				`— manual provider, run a worker to match.`,
+		flog.info(
+			`${project.provider}: would create a runner — manual provider, run a worker to match.`,
+			{ provider: project.provider, location: opts.location, version: opts.version },
 		);
 	}
 
 	async destroy(instanceId: string): Promise<void> {
-		console.log(`[fleet] would destroy instance ${instanceId} — manual provider, stop the worker.`);
+		flog.info("would destroy instance — manual provider, stop the worker.", {
+			instance_id: instanceId,
+		});
 	}
 }
 

@@ -1,0 +1,22 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "azuread_application_federated_identity_credential.gh",
+      "mode": "managed",
+      "type": "azuread_application_federated_identity_credential",
+      "name": "gh",
+      "provider_name": "registry.terraform.io/hashicorp/azuread",
+      "change": { "actions": ["create"], "before": null, "after": { "subject": "repo:acme/infra:ref:refs/heads/main", "issuer": "https://token.actions.githubusercontent.com" }, "after_unknown": {} }
+    },
+    {
+      "address": "azurerm_role_assignment.reader",
+      "mode": "managed",
+      "type": "azurerm_role_assignment",
+      "name": "reader",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": { "actions": ["create"], "before": null, "after": { "role_definition_name": "Reader", "scope": "/subscriptions/abc/resourceGroups/rg1" }, "after_unknown": {} }
+    }
+  ]
+}

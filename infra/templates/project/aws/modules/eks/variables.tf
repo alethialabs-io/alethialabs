@@ -179,3 +179,8 @@ variable "secrets_kms_key_arns" {
   description = "List of Customer Managed KMS Key ARNs for the external secrets service account IAM policy"
   type        = list(string)
 }
+
+variable "secret_resource_arns" {
+  description = "Secrets Manager secret ARNs (exact or prefix-wildcard) the external-secrets operator may read — scopes its IRSA policy to the project's secrets instead of \"*\""
+  type        = list(string)
+}

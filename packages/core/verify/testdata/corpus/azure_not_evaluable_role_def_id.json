@@ -1,0 +1,14 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "azurerm_role_assignment.by_id",
+      "mode": "managed",
+      "type": "azurerm_role_assignment",
+      "name": "by_id",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": { "actions": ["create"], "before": null, "after": { "role_definition_id": "/subscriptions/abc/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000000", "scope": "/subscriptions/abc/resourceGroups/rg1" }, "after_unknown": {} }
+    }
+  ]
+}

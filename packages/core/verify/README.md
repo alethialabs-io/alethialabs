@@ -25,9 +25,14 @@ resource is exactly the false-PASS the verification claim must never make.
 
 ## Controls (catalog `elench-controls-0.1.0`)
 
-`Evaluate` detects the plan's cloud and runs that provider's control set (a mixed/unknown plan runs
-all of them, so nothing is silently skipped). Each control records its `provider` so a uniform UI can't
-imply coverage a control doesn't have.
+`Evaluate` detects **every** recognized cloud present in the plan and runs the **union** of those
+providers' control sets — a single OpenTofu plan can mix clouds (an AWS EKS cluster alongside an Azure
+role assignment, a cross-cloud migration, …), and picking one provider would silently skip the others'
+keyless / least-privilege / OIDC-sub checks. Each control already filters to its own resource types, so
+it is scoped to only that provider's resources. A plan with **no** recognized cloud runs all control
+sets (the fail-closed default — never zero checks). `Report.Provider` is the detected set: a single
+cloud by name (`aws`), a multi-cloud plan as a `+`-joined set (`aws+azure`), or `unknown`. Each control
+records its own `provider` so a uniform UI can't imply coverage a control doesn't have.
 
 **AWS**
 

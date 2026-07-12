@@ -64,6 +64,16 @@ resource "google_project_service" "apis" {
     "container.googleapis.com",
     "dns.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    # Enabled up-front so the least-privileged provisioner (no serviceUsageAdmin)
+    # never has to turn an API on mid-apply — the audit's most-likely silent breakage.
+    "sqladmin.googleapis.com",
+    "redis.googleapis.com",
+    "secretmanager.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "pubsub.googleapis.com",
+    "firestore.googleapis.com",
+    "storage.googleapis.com",
   ])
 
   service            = each.value
@@ -78,9 +88,32 @@ resource "google_service_account" "alethia" {
   depends_on = [google_project_service.apis]
 }
 
-resource "google_project_iam_member" "alethia_editor" {
+# Least-privilege: the enumerated predefined roles covering exactly the services
+# Alethia's project templates provision — in place of the account-wide roles/editor.
+# NOTE: the templates were refactored to resource-level IAM bindings (zone-scoped
+# external-dns; no project workloadIdentityUser), so the provisioner needs NO
+# resourcemanager.projectIamAdmin (which would be owner-equivalent). Tighten or
+# extend to match the Projects you run.
+resource "google_project_iam_member" "alethia_provisioner" {
+  for_each = toset([
+    "roles/container.admin",                 # GKE clusters + node pools
+    "roles/compute.networkAdmin",            # VPC, subnets, router, NAT, global addresses
+    "roles/compute.securityAdmin",           # firewall rules, Cloud Armor, SSL certs
+    "roles/servicenetworking.networksAdmin", # private-services peering (Cloud SQL / Memorystore)
+    "roles/cloudsql.admin",                  # Cloud SQL
+    "roles/redis.admin",                     # Memorystore
+    "roles/dns.admin",                       # Cloud DNS managed zones
+    "roles/artifactregistry.admin",          # Artifact Registry
+    "roles/secretmanager.admin",             # Secret Manager
+    "roles/storage.admin",                   # GCS buckets + bucket IAM
+    "roles/datastore.owner",                 # Firestore (uses Datastore IAM)
+    "roles/pubsub.admin",                    # Pub/Sub
+    "roles/iam.serviceAccountAdmin",         # create the add-on GSAs (e.g. external-dns)
+    "roles/iam.serviceAccountUser",          # actAs the node/add-on SAs
+    "roles/browser",                         # data.google_project / client-config reads
+  ])
   project = var.project_id
-  role    = "roles/editor"
+  role    = each.value
   member  = "serviceAccount:${google_service_account.alethia.email}"
 }
 

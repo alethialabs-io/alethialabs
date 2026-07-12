@@ -107,6 +107,31 @@ export async function POST(req: Request) {
 						);
 					}
 				}
+				// Hetzner Object Storage S3 keys (distinct from the Cloud API token) — decrypted
+				// here so the plaintext only ever leaves to the runner, which exports them as
+				// HETZNER_S3_ACCESS_KEY / HETZNER_S3_SECRET_KEY for the minio provider.
+				let s3AccessKey = "";
+				let s3SecretKey = "";
+				if (c.s3_access_key) {
+					try {
+						s3AccessKey = decryptSecret(c.s3_access_key).access_key ?? "";
+					} catch (e) {
+						console.error(
+							`Failed to decrypt S3 access key for identity ${job.cloud_identity_id}:`,
+							e,
+						);
+					}
+				}
+				if (c.s3_secret_key) {
+					try {
+						s3SecretKey = decryptSecret(c.s3_secret_key).secret_key ?? "";
+					} catch (e) {
+						console.error(
+							`Failed to decrypt S3 secret key for identity ${job.cloud_identity_id}:`,
+							e,
+						);
+					}
+				}
 				cloud_identity = {
 					provider: identity.provider,
 					role_arn: c.role_arn ?? "",
@@ -121,6 +146,9 @@ export async function POST(req: Request) {
 					client_id: c.client_id ?? "",
 					subscription_id: c.subscription_id ?? "",
 					api_token: apiToken,
+					// Hetzner Object Storage S3 keys (empty for non-Hetzner or token-only Hetzner).
+					s3_access_key: s3AccessKey,
+					s3_secret_key: s3SecretKey,
 					// Self-managed: no token stored here; the self-hosted runner reads it
 					// from its own env (HCLOUD_TOKEN / CIVO_TOKEN / DIGITALOCEAN_ACCESS_TOKEN).
 					self_managed: c.self_managed ?? false,

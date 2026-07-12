@@ -39,6 +39,7 @@ module "eks" {
 
   kms_key_users        = var.eks_kms_key_users
   secrets_kms_key_arns = length(local.secrets_kms_key_arns) > 0 ? local.secrets_kms_key_arns : ["*"]
+  secret_resource_arns = local.eso_secret_arns
 
   allow_long_names = var.allow_long_names
 }

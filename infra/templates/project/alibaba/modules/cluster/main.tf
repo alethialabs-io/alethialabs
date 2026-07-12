@@ -30,6 +30,13 @@ resource "alicloud_cs_managed_kubernetes" "this" {
 
   deletion_protection = false
 
+  # RRSA (RAM Roles for Service Accounts) — ACK's workload identity. Creates the
+  # cluster's OIDC issuer + RAM OIDC provider so in-cluster components (e.g. the
+  # external-secrets operator) can assume least-privilege RAM roles per service
+  # account instead of sharing the node instance role. In-place on existing
+  # clusters (>= 1.22) per Alibaba docs; verify no replacement in a live plan.
+  enable_rrsa = true
+
   tags = var.tags
 }
 

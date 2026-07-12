@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Copy, FileStack } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { addEnvironment, duplicateEnvironment } from "@/app/server/actions/projects";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
@@ -43,6 +43,7 @@ export function NewEnvironmentDialog({
 	onOpenChange,
 	projectId,
 	envs,
+	defaultBaseId,
 	onCreated,
 }: {
 	open: boolean;
@@ -51,6 +52,8 @@ export function NewEnvironmentDialog({
 	projectId: string;
 	/** The project's existing environments — the Duplicate base options. */
 	envs: SwitcherEnv[];
+	/** When opened via an env's "Duplicate" action, preselects that env as the base. */
+	defaultBaseId?: string;
 	/** Called with the created environment's name after a successful create. */
 	onCreated: (name: string) => void | Promise<void>;
 }) {
@@ -59,6 +62,15 @@ export function NewEnvironmentDialog({
 	const [mode, setMode] = useState<Mode>("duplicate");
 	const [baseId, setBaseId] = useState<string>(defaultBase?.id ?? "");
 	const [submitting, setSubmitting] = useState(false);
+
+	// When (re)opened, seed the base from `defaultBaseId` (the duplicated env) if given.
+	useEffect(() => {
+		if (open) {
+			setMode("duplicate");
+			setBaseId(defaultBaseId ?? defaultBase?.id ?? "");
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, defaultBaseId]);
 
 	/** Resets the form to its defaults (called on close + after a successful create). */
 	function reset() {

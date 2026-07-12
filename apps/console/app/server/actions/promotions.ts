@@ -11,6 +11,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { transitionEnv } from "@/lib/db/env-status";
 import {
 	environmentDrift,
 	environmentPromotions,
@@ -19,6 +20,7 @@ import {
 	member,
 	projectEnvironments,
 	promotionApprovals,
+	user,
 } from "@/lib/db/schema";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import type { Actor } from "@/lib/authz/types";
@@ -30,11 +32,17 @@ import {
 	structuralHash,
 } from "@/lib/promotions/diff";
 import {
+	applyClassificationEnforcement,
 	evaluateGates,
 	type GateContext,
 	type PromotionRules,
 } from "@/lib/promotions/gates";
-import type { ApproverSpec, PromotionDiff } from "@/types/jsonb.types";
+import { getEnforcingValuesFor } from "@/lib/queries/classification";
+import type {
+	ApproverSpec,
+	GateResult,
+	PromotionDiff,
+} from "@/types/jsonb.types";
 import {
 	getProjectAsFormData,
 	planProject,
@@ -65,6 +73,36 @@ const OPEN_RULES: PromotionRules = {
 	soak_minutes: null,
 	cost_delta_threshold: null,
 };
+
+/** Projects a protection-rule row onto the toggleable rule subset the gate engine reads. */
+function toRules(rulesRow: ProtectionRow): PromotionRules {
+	return {
+		require_predecessor: rulesRow.require_predecessor,
+		require_verify_pass: rulesRow.require_verify_pass,
+		require_approval: rulesRow.require_approval,
+		soak_minutes: rulesRow.soak_minutes,
+		cost_delta_threshold: rulesRow.cost_delta_threshold,
+	};
+}
+
+/**
+ * The effective number of approval slots for a promotion into `envId` = the strictest of the env's
+ * own `min_count` and every enforcing classification value's `min_approvals`. Shared by the gate
+ * context and slot materialization so a classification-forced approval creates the right slot count.
+ */
+async function effectiveMinApprovals(
+	db: ServiceDb,
+	envId: string,
+	rulesRow: ProtectionRow | null,
+): Promise<number> {
+	const enforcing = await getEnforcingValuesFor(db, "project_environment", envId);
+	const { minApprovals } = applyClassificationEnforcement(
+		rulesRow ? toRules(rulesRow) : OPEN_RULES,
+		rulesRow?.approvers ?? null,
+		enforcing,
+	);
+	return Math.max(1, minApprovals);
+}
 
 /**
  * Promotes `sourceEnvId`'s structural design onto `targetEnvId`: writes the merged candidate into the
@@ -348,6 +386,123 @@ export async function getPromotion(promotionId: string) {
 	return { promotion, approvals };
 }
 
+/** One approval slot, enriched with the approver's display name for the UI. */
+export interface PromotionApprovalSlot {
+	id: string;
+	status: "pending" | "approved" | "rejected";
+	/** Approver display name; null while the slot is still pending. */
+	name: string | null;
+	initials: string | null;
+	requiredRole: string | null;
+	comment: string | null;
+	decidedAt: string | null;
+}
+
+/** A promotion hydrated for the redesigned panel + detail overlay. */
+export interface PromotionDetail {
+	id: string;
+	status: string;
+	sourceName: string;
+	targetName: string;
+	/** Per-gate results from the stored evaluation ([] until the plan has run). */
+	gates: GateResult[];
+	overall: string | null;
+	approvals: PromotionApprovalSlot[];
+	approved: number;
+	required: number;
+	diff: PromotionDiff | null;
+	initiator: string | null;
+	createdAt: string;
+}
+
+/** Two-letter initials from a display name (e.g. "Ivo Karadzhov" → "IK"). */
+function initialsOf(name: string): string {
+	const parts = name.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return "?";
+	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/**
+ * A promotion hydrated for the UI — gate results (from the stored evaluation), approval slots with
+ * the approver's name, the source/target env names, the diff, and the initiator. Gates on project
+ * `view`. Used by the active-promotion panel and the detail overlay.
+ */
+export async function getPromotionDetail(
+	promotionId: string,
+): Promise<PromotionDetail> {
+	const db = getServiceDb();
+	const [promotion] = await db
+		.select()
+		.from(environmentPromotions)
+		.where(eq(environmentPromotions.id, promotionId))
+		.limit(1);
+	if (!promotion) throw new Error("Promotion not found");
+	await authorize("view", { type: "project", id: promotion.project_id });
+
+	const [envs, approvalRows] = await Promise.all([
+		db
+			.select({ id: projectEnvironments.id, name: projectEnvironments.name })
+			.from(projectEnvironments)
+			.where(
+				inArray(projectEnvironments.id, [
+					promotion.source_environment_id,
+					promotion.target_environment_id,
+				]),
+			),
+		db
+			.select({
+				id: promotionApprovals.id,
+				status: promotionApprovals.status,
+				required_role: promotionApprovals.required_role,
+				comment: promotionApprovals.comment,
+				decided_at: promotionApprovals.decided_at,
+				approver_name: user.name,
+				approver_email: user.email,
+			})
+			.from(promotionApprovals)
+			.leftJoin(user, eq(user.id, promotionApprovals.decided_by))
+			.where(eq(promotionApprovals.promotion_id, promotionId)),
+	]);
+	const nameOf = (id: string) => envs.find((e) => e.id === id)?.name ?? "—";
+
+	const [initiator] = promotion.user_id
+		? await db
+				.select({ name: user.name, email: user.email })
+				.from(user)
+				.where(eq(user.id, promotion.user_id))
+				.limit(1)
+		: [];
+
+	const approvals: PromotionApprovalSlot[] = approvalRows.map((a) => {
+		const display = a.approver_name || a.approver_email || null;
+		return {
+			id: a.id,
+			status: a.status,
+			name: display,
+			initials: display ? initialsOf(display) : null,
+			requiredRole: a.required_role,
+			comment: a.comment,
+			decidedAt: a.decided_at ? a.decided_at.toISOString() : null,
+		};
+	});
+
+	return {
+		id: promotion.id,
+		status: promotion.status,
+		sourceName: nameOf(promotion.source_environment_id),
+		targetName: nameOf(promotion.target_environment_id),
+		gates: promotion.gate_evaluations?.results ?? [],
+		overall: promotion.gate_evaluations?.overall ?? null,
+		approvals,
+		approved: approvals.filter((a) => a.status === "approved").length,
+		required: approvals.length,
+		diff: promotion.diff_summary ?? null,
+		initiator: initiator?.name || initiator?.email || null,
+		createdAt: promotion.created_at.toISOString(),
+	};
+}
+
 // --- internals ------------------------------------------------------------------------------------
 
 /** Loads a promotion + its target rules for a decision action, authorizing the caller for the project. */
@@ -399,15 +554,20 @@ async function buildGateContext(
 		.from(environmentProtectionRules)
 		.where(eq(environmentProtectionRules.environment_id, promotion.target_environment_id))
 		.limit(1);
-	const rules: PromotionRules = rulesRow
-		? {
-				require_predecessor: rulesRow.require_predecessor,
-				require_verify_pass: rulesRow.require_verify_pass,
-				require_approval: rulesRow.require_approval,
-				soak_minutes: rulesRow.soak_minutes,
-				cost_delta_threshold: rulesRow.cost_delta_threshold,
-			}
-		: OPEN_RULES;
+	const rawRules: PromotionRules = rulesRow ? toRules(rulesRow) : OPEN_RULES;
+
+	// Fold in classification-driven gates: a value tagged on the TARGET env (e.g. Environment=
+	// production) can force approval/verify on top of the env's own rules — the label is the policy.
+	const enforcing = await getEnforcingValuesFor(
+		db,
+		"project_environment",
+		promotion.target_environment_id,
+	);
+	const {
+		rules,
+		minApprovals,
+		reasons: enforcedReasons,
+	} = applyClassificationEnforcement(rawRules, rulesRow?.approvers ?? null, enforcing);
 
 	// Predecessor = the source env this promotion came from.
 	const [src] = await db
@@ -444,8 +604,8 @@ async function buildGateContext(
 		.from(promotionApprovals)
 		.where(eq(promotionApprovals.promotion_id, promotion.id));
 	const approved = approvalRows.filter((a) => a.status === "approved").length;
-	const min = rulesRow?.approvers?.min_count ?? 1;
-	const required = rules.require_approval ? min : 0;
+	// Effective count already accounts for require_approval (0 when off) + enforcing values' min.
+	const required = minApprovals;
 
 	const ctx: GateContext = {
 		rules,
@@ -456,6 +616,7 @@ async function buildGateContext(
 		// prior cost is available; the rule remains toggleable and wires in once cost data flows.
 		costDelta: null,
 		approvals: { approved, required },
+		enforcedReasons,
 		nowMs: Date.now(),
 	};
 	return { ctx, rulesRow: rulesRow ?? null };
@@ -471,6 +632,19 @@ async function applyGateDecision(
 ): Promise<void> {
 	const now = new Date();
 	if (evaluation.overall === "pass") {
+		// Move the target env to QUEUED through the CAS FIRST (lib/db/env-status.ts). This runs on the
+		// service DB from a runner-callback chain (advancePromotionOnPlan) — NOT a transaction — so on a
+		// lost race (the env moved out of a deployable state under the promotion) we must not insert an
+		// orphan DEPLOY job: bail without advancing the promotion. transitionEnv logged + alerted, and
+		// the B2c reconciler backstop converges any stranded promotion.
+		const moved = await transitionEnv(
+			db,
+			promotion.target_environment_id,
+			"enqueueDeploy",
+			null,
+			{ orgId: promotion.org_id, projectId: promotion.project_id },
+		);
+		if (!moved) return;
 		// Reuse the plan job's frozen snapshot for an idempotent DEPLOY of the candidate.
 		const [job] = await db
 			.insert(jobs)
@@ -487,10 +661,6 @@ async function applyGateDecision(
 			})
 			.returning({ id: jobs.id });
 		await db
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, promotion.target_environment_id));
-		await db
 			.update(environmentPromotions)
 			.set({ status: "DEPLOYING", deploy_job_id: job.id, gate_evaluations: evaluation, updated_at: now })
 			.where(eq(environmentPromotions.id, promotion.id));
@@ -499,21 +669,29 @@ async function applyGateDecision(
 	}
 
 	if (evaluation.overall === "pending_approval") {
-		// Materialize approval slots the first time a manual-approval gate parks the promotion.
-		if (rulesRow?.require_approval) {
+		// Materialize approval slots the first time a manual-approval gate parks the promotion. The
+		// requirement may come from the env's own rule OR a classification value that forced it, so
+		// key off the evaluated gate (not just rulesRow.require_approval, which misses classification).
+		const approvalPending = evaluation.results.some(
+			(r) => r.type === "manual_approval" && r.status === "pending",
+		);
+		if (approvalPending) {
 			const existing = await db
 				.select({ id: promotionApprovals.id })
 				.from(promotionApprovals)
 				.where(eq(promotionApprovals.promotion_id, promotion.id));
 			if (existing.length === 0) {
-				const spec = rulesRow.approvers;
-				const count = Math.max(1, spec?.min_count ?? 1);
+				const count = await effectiveMinApprovals(
+					db,
+					promotion.target_environment_id,
+					rulesRow,
+				);
 				await db.insert(promotionApprovals).values(
 					Array.from({ length: count }, () => ({
 						promotion_id: promotion.id,
 						project_id: promotion.project_id,
 						org_id: promotion.org_id ?? undefined,
-						required_role: spec?.role ?? null,
+						required_role: rulesRow?.approvers?.role ?? null,
 					})),
 				);
 			}

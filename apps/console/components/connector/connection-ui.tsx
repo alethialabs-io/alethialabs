@@ -4,12 +4,11 @@
 
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
-import { Card, CardContent } from "@repo/ui/card";
 import { FieldHelp } from "@repo/ui/field-help";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import {
-	AlertCircle,
 	CheckCircle2,
 	HelpCircle,
 	KeyRound,
@@ -25,35 +24,23 @@ import type {
 	VerifyStatus,
 } from "./use-connection-test";
 
+// Design system: grayscale, hairline borders, no shadowed cards, no colored status fills.
+// Status is a dot/icon + label, never hue. Mirrors components/connectors/connector-detail-sheet.tsx.
+
 type CalloutVariant = "success" | "pending" | "error";
 
-const VARIANT_STYLES: Record<
-	CalloutVariant,
-	{ box: string; icon: ReactNode; title: string }
-> = {
-	success: {
-		box: "bg-muted/50 border-border",
-		icon: <CheckCircle2 className="size-5 shrink-0 text-foreground" />,
-		title: "text-foreground",
-	},
-	pending: {
-		box: "bg-muted/30 border-border/40",
-		icon: (
-			<Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" />
-		),
-		title: "text-foreground",
-	},
-	error: {
-		box: "bg-destructive/5 border-destructive/20",
-		icon: <XCircle className="mt-0.5 size-4 shrink-0 text-destructive" />,
-		title: "text-destructive",
-	},
+const VARIANT_ICON: Record<CalloutVariant, ReactNode> = {
+	success: <CheckCircle2 className="size-4 shrink-0 text-foreground" />,
+	pending: (
+		<Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+	),
+	error: <XCircle className="mt-0.5 size-4 shrink-0 text-foreground" />,
 };
 
 /**
- * The status banner shown inside a connect flow while saving / after a
- * verification attempt. Shared across every provider connection component so the
- * success / pending / error states look identical everywhere.
+ * The status banner shown while saving / after a verification attempt. Hairline row,
+ * grayscale — the state reads from the icon + title, not a colored fill. Shared across
+ * every provider connection component so the states look identical everywhere.
  */
 export function StatusCallout({
 	variant,
@@ -64,19 +51,19 @@ export function StatusCallout({
 	title: string;
 	children: ReactNode;
 }) {
-	const s = VARIANT_STYLES[variant];
 	return (
 		<div
 			className={cn(
-				"flex gap-3 rounded-md border p-4",
+				"flex gap-3 rounded-md border border-border/60 bg-muted/20 p-3.5",
 				variant === "error" ? "items-start" : "items-center",
-				s.box,
 			)}
 		>
-			{s.icon}
-			<div>
-				<p className={cn("text-sm font-medium", s.title)}>{title}</p>
-				<p className="mt-0.5 text-xs text-muted-foreground">{children}</p>
+			{VARIANT_ICON[variant]}
+			<div className="min-w-0">
+				<p className="font-medium text-foreground text-sm">{title}</p>
+				<p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">
+					{children}
+				</p>
 			</div>
 		</div>
 	);
@@ -123,7 +110,6 @@ export function ConnectionTestStatus({
 		);
 	}
 
-	// `saving` — the save + server-side verify happen in one round trip; it resolves near-instantly.
 	return (
 		<div className="space-y-3">
 			<StatusCallout variant="pending" title="Verifying connection…">
@@ -134,7 +120,7 @@ export function ConnectionTestStatus({
 					type="button"
 					variant="outline"
 					size="sm"
-					className="h-8 border-border/50 text-xs"
+					className="h-8 border-border/60 text-xs"
 					onClick={onCancel}
 				>
 					Cancel
@@ -144,23 +130,16 @@ export function ConnectionTestStatus({
 	);
 }
 
-/**
- * The muted "how your credentials are handled" footnote shown at the bottom of a
- * connect flow. Shared so the security reassurance reads consistently.
- */
+/** The muted "how your credentials are handled" footnote. Shared. */
 export function InfoNote({ children }: { children: ReactNode }) {
 	return (
-		<div className="flex items-start gap-2.5 rounded-md border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground">
-			<AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-			<p className="leading-relaxed">{children}</p>
-		</div>
+		<p className="text-[11px] text-muted-foreground leading-relaxed">{children}</p>
 	);
 }
 
 /**
- * The "How this works" popover shown in a connect sheet's header — a labelled trigger (vs the icon-only
- * FieldHelp) that opens a plain-language explanation of the keyless trust model. Reassures a non-expert
- * user before they touch their cloud console.
+ * The "How this works" popover — a quiet labelled trigger that opens a plain-language explanation of
+ * the keyless trust model. Reassures a non-expert user before they touch their cloud console.
  */
 function HowItWorks({ children }: { children: ReactNode }) {
 	return (
@@ -168,7 +147,7 @@ function HowItWorks({ children }: { children: ReactNode }) {
 			<PopoverTrigger asChild>
 				<button
 					type="button"
-					className="inline-flex items-center gap-1 rounded-md border border-border/50 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+					className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
 				>
 					<HelpCircle className="size-3.5" />
 					How this works
@@ -185,10 +164,10 @@ function HowItWorks({ children }: { children: ReactNode }) {
 }
 
 /**
- * The shared connect-sheet frame: a reassuring header (title + "Keyless" badge + a "How this works"
- * popover + a one-line intro) above a card that holds the provider-specific body. Used by every cloud
- * connect sheet so they read consistently and non-threateningly. Self-contained — no dependency on the
- * Sheet wrapper, so it works inside the create-project flow too.
+ * The shared connect-sheet frame. The Sheet header (ConnectSheetHeader) already carries the provider
+ * name + icon, so this renders only a lead-in — a keyless/encrypted badge, the one-line intro, and a
+ * quiet "How this works" — a hairline rule, then the provider-specific body. No card, no shadow: flat
+ * hairline sections in the grayscale system. Self-contained so it also works in the create-project flow.
  */
 export function ConnectSheetShell({
 	title,
@@ -197,41 +176,31 @@ export function ConnectSheetShell({
 	badgeLabel = "Keyless",
 	children,
 }: {
-	title: string;
+	/** Retained for API compatibility; the Sheet header shows the title, so it's not repeated here. */
+	title?: string;
 	intro: ReactNode;
 	howItWorks: ReactNode;
-	/** The reassurance pill — "Keyless" for the federated clouds, e.g. "Encrypted" for token clouds. */
+	/** The reassurance pill — "Keyless" for the federated clouds, "Encrypted" for token clouds. */
 	badgeLabel?: string;
 	children: ReactNode;
 }) {
 	return (
-		<div className="mx-auto w-full max-w-200 space-y-4">
-			<div className="rounded-lg border border-border/40 bg-muted/20 px-4 py-3.5">
-				<div className="flex items-start justify-between gap-3">
-					<div className="min-w-0">
-						<div className="flex items-center gap-2">
-							<ShieldCheck className="size-4 shrink-0 text-muted-foreground" />
-							<span className="font-medium text-foreground text-sm">{title}</span>
-							<Badge
-								variant="secondary"
-								className="h-5 gap-1 px-1.5 font-medium text-[10px]"
-							>
-								<CheckCircle2 className="size-3" />
-								{badgeLabel}
-							</Badge>
-						</div>
-						<p className="mt-1.5 text-muted-foreground text-xs leading-relaxed">
-							{intro}
-						</p>
-					</div>
-					<div className="shrink-0">
-						<HowItWorks>{howItWorks}</HowItWorks>
-					</div>
+		<div className="space-y-6">
+			<div className="space-y-2.5">
+				<div className="flex items-center justify-between gap-3">
+					<Badge
+						variant="secondary"
+						className="h-5 gap-1 px-1.5 font-medium text-[10px]"
+					>
+						<ShieldCheck className="size-3" />
+						{badgeLabel}
+					</Badge>
+					<HowItWorks>{howItWorks}</HowItWorks>
 				</div>
+				<p className="text-foreground/80 text-sm leading-relaxed">{intro}</p>
 			</div>
-			<Card className="border-border/40 bg-background shadow-sm">
-				<CardContent className="space-y-6 pt-6">{children}</CardContent>
-			</Card>
+			<Separator />
+			{children}
 		</div>
 	);
 }
@@ -245,9 +214,8 @@ export interface MethodTab {
 }
 
 /**
- * The setup-method selector (e.g. CloudFormation vs Terraform), with a "?" popover next to the row that
- * explains how to choose. Kept above the tabs (not inside each button) so there's no nested-interactive
- * markup. Replaces the copy that was hand-rolled in every cloud sheet.
+ * The setup-method selector (e.g. CloudFormation vs Terraform) — a compact segmented control with a
+ * "?" popover explaining how to choose. Replaces the two oversized bordered cards.
  */
 export function MethodTabs({
 	tabs,
@@ -265,10 +233,12 @@ export function MethodTabs({
 	return (
 		<div className="space-y-2">
 			<div className="flex items-center gap-1.5">
-				<span className="font-medium text-muted-foreground text-xs">{label}</span>
+				<span className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">
+					{label}
+				</span>
 				{help && <FieldHelp title={label}>{help}</FieldHelp>}
 			</div>
-			<div className="flex gap-3">
+			<div className="inline-flex rounded-md border border-border/60 p-0.5">
 				{tabs.map((t) => {
 					const active = value === t.id;
 					return (
@@ -277,30 +247,14 @@ export function MethodTabs({
 							type="button"
 							onClick={() => onChange(t.id)}
 							className={cn(
-								"flex-1 rounded-lg border p-3 text-left transition-all duration-200",
+								"flex items-center gap-1.5 rounded px-3 py-1.5 font-medium text-xs transition-colors",
 								active
-									? "border-foreground bg-muted/20"
-									: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10",
+									? "bg-foreground text-background"
+									: "text-muted-foreground hover:text-foreground",
 							)}
 						>
-							<div className="flex items-center gap-2.5">
-								<div
-									className={cn(
-										"rounded-md border p-1.5",
-										active
-											? "border-foreground bg-foreground text-background"
-											: "border-border/50 bg-background text-muted-foreground",
-									)}
-								>
-									{t.icon}
-								</div>
-								<div>
-									<div className="font-medium text-foreground text-sm">
-										{t.label}
-									</div>
-									<div className="text-[11px] text-muted-foreground">{t.sub}</div>
-								</div>
-							</div>
+							{t.icon}
+							{t.label}
 						</button>
 					);
 				})}
@@ -309,7 +263,7 @@ export function MethodTabs({
 	);
 }
 
-/** A numbered setup step. Shared across every connect sheet. */
+/** A numbered setup step. Flat hairline chip + title + body. Shared across every connect sheet. */
 export function Step({
 	n,
 	title,
@@ -320,11 +274,11 @@ export function Step({
 	children?: ReactNode;
 }) {
 	return (
-		<div className="flex gap-4">
-			<div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border/50 bg-muted font-medium text-foreground text-xs">
+		<div className="flex gap-3.5">
+			<div className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border/60 font-medium text-[11px] text-muted-foreground">
 				{n}
 			</div>
-			<div className="min-w-0 flex-1 space-y-3">
+			<div className="min-w-0 flex-1 space-y-2.5 pt-0.5">
 				<div className="font-medium text-foreground text-sm">{title}</div>
 				{children}
 			</div>
@@ -335,7 +289,7 @@ export function Step({
 /**
  * The verify section + form. While the instant server-side verify is in flight it shows the shared
  * verifying/success status (with Cancel); on idle/failure it shows the provider-specific form
- * (`children`). Shared across every connect sheet.
+ * (`children`). A hairline rule separates it from the steps above.
  */
 export function VerifySection({
 	state,
@@ -352,7 +306,7 @@ export function VerifySection({
 }) {
 	const inFlight = state.phase === "success" || state.phase === "saving";
 	return (
-		<div className="border-border/40 border-t pt-6">
+		<div className="space-y-4 border-border/60 border-t pt-6">
 			{inFlight ? (
 				<ConnectionTestStatus
 					phase={state.phase}
@@ -365,11 +319,9 @@ export function VerifySection({
 			) : (
 				<>
 					{state.phase === "failed" && (
-						<div className="mb-4">
-							<StatusCallout variant="error" title="Verification failed">
-								{state.error}
-							</StatusCallout>
-						</div>
+						<StatusCallout variant="error" title="Verification failed">
+							{state.error}
+						</StatusCallout>
 					)}
 					{children}
 				</>
@@ -379,8 +331,8 @@ export function VerifySection({
 }
 
 /**
- * The reassurance footer shown at the bottom of a connect flow: exactly what Alethia keeps, and how to cut
- * access. Replaces the ad-hoc InfoNote text so the "we store almost nothing" promise reads consistently.
+ * The reassurance footer: exactly what Alethia keeps, and how to cut access. One subtle inset so the
+ * "we store almost nothing" promise reads consistently.
  */
 export function StoredNote({
 	stored,
@@ -390,7 +342,7 @@ export function StoredNote({
 	revoke: ReactNode;
 }) {
 	return (
-		<div className="mt-5 grid gap-2 rounded-md border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground">
+		<div className="grid gap-2 rounded-md border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground">
 			<div className="flex items-start gap-2">
 				<Lock className="mt-0.5 size-3.5 shrink-0" />
 				<p className="leading-relaxed">

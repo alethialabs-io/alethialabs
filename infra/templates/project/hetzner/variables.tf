@@ -81,16 +81,25 @@ variable "network_cidr" {
   default     = "10.0.0.0/16"
 }
 
+# Pod + service CIDRs are SUBNETS of network_cidr (Cilium native routing over the
+# Hetzner private network). Keeping pods inside the network supernet — and setting
+# ipv4NativeRoutingCIDR = network_cidr in cilium.tf — is what the canonical
+# hcloud-k8s reference does for a private-network cluster, and it is REQUIRED for
+# cross-node reachability: a control-plane pod (the apiserver) replies to a remote
+# worker pod over the host netns, and the node's `network_cidr via <gw> dev eth1`
+# route only covers the reply when the pod IP is inside network_cidr. Disjoint pod
+# CIDRs (e.g. 10.244.0.0/16) leave the host with no route to remote pods AND fall
+# outside the private-network firewall allow rule → cross-node pod→apiserver breaks.
 variable "pod_cidr" {
-  description = "Pod network CIDR (Cilium). Must not overlap network_cidr or service_cidr."
+  description = "Pod network CIDR (Cilium). Must be a SUBNET of network_cidr and not overlap service_cidr or the node subnet."
   type        = string
-  default     = "10.244.0.0/16"
+  default     = "10.0.128.0/17"
 }
 
 variable "service_cidr" {
-  description = "Service network CIDR. Must not overlap network_cidr or pod_cidr."
+  description = "Service network CIDR. Must be a SUBNET of network_cidr and not overlap pod_cidr or the node subnet."
   type        = string
-  default     = "10.96.0.0/12"
+  default     = "10.0.96.0/19"
 }
 
 # Optional, for the in-cluster hcloud-cloud-controller-manager secret ONLY.
@@ -101,6 +110,51 @@ variable "service_cidr" {
 # still created empty and can be patched out-of-band later.
 variable "hcloud_token" {
   description = "Hetzner token for the in-cluster hcloud CCM secret (optional; env HCLOUD_TOKEN drives the providers)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# ── Object Storage (S3-compatible) — see buckets.tf ────────────────────────────────
+
+variable "buckets" {
+  description = <<-EOT
+    Object Storage buckets to provision via the aminueza/minio provider. Empty = none
+    (the minio provider is then never exercised). `cors_origins` is IGNORED on Hetzner
+    (the provider does not apply CORS to a non-MinIO backend); `encryption_enabled` is
+    informational (Hetzner encrypts at rest automatically, no per-bucket toggle).
+  EOT
+  type = list(object({
+    name               = string
+    versioning         = optional(bool, false)
+    encryption_enabled = optional(bool, true)
+    public_access      = optional(bool, false)
+    cors_origins       = optional(list(string), [])
+  }))
+  default = []
+}
+
+variable "hetzner_s3_endpoint" {
+  description = "Hetzner Object Storage S3 endpoint HOST, no scheme (e.g. fsn1.your-objectstorage.com). Only used when var.buckets is non-empty."
+  type        = string
+  default     = "fsn1.your-objectstorage.com"
+}
+
+variable "hetzner_s3_region" {
+  description = "Hetzner Object Storage location/region (fsn1, nbg1, hel1)."
+  type        = string
+  default     = "fsn1"
+}
+
+variable "hetzner_s3_access_key" {
+  description = "Hetzner Object Storage S3 access key (distinct from the Cloud API token; manually generated in the Hetzner Console). Empty when no buckets are provisioned."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "hetzner_s3_secret_key" {
+  description = "Hetzner Object Storage S3 secret key. Empty when no buckets are provisioned."
   type        = string
   default     = ""
   sensitive   = true

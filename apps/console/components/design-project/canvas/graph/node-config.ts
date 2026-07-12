@@ -5,7 +5,7 @@ import type { CanvasNodeData } from "./types";
 
 /**
  * The human name a node carries in its config: array kinds (database/cache/queue/
- * topic/nosql/secret) use `name`, the project root uses `project_name`; the rest
+ * topic/nosql/secret/bucket/registry) use `name`, the project root uses `project_name`; the rest
  * (network/cluster/dns/repositories) have no name. Narrows on the discriminant so
  * each branch reads a fully-typed config — no casts.
  */
@@ -19,6 +19,8 @@ export function configName(data: CanvasNodeData): string | undefined {
 		case "topic":
 		case "nosql":
 		case "secret":
+		case "bucket":
+		case "registry":
 			return data.config.name;
 		case "chart":
 			return data.config.id;

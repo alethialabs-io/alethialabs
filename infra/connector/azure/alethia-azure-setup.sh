@@ -55,23 +55,62 @@ else
 fi
 
 echo ""
-echo "==> Assigning Contributor role on subscription..."
+echo "==> Creating the least-privilege 'Alethia Provisioner' custom role..."
+# Enumerates only the actions Alethia's project templates need — in place of Contributor
+# (which is both over-broad AND lacks roleAssignments/write the templates require). Parity
+# with infra/connector/azure/main.tf.
+ROLE_NAME="Alethia Provisioner"
+ROLE_JSON="$(mktemp)"
+cat > "${ROLE_JSON}" <<JSON
+{
+  "Name": "${ROLE_NAME}",
+  "Description": "Least-privilege provisioning role for Alethia — scoped to the services Alethia creates.",
+  "Actions": [
+    "Microsoft.Resources/subscriptions/resourceGroups/read","Microsoft.Resources/subscriptions/resourceGroups/write","Microsoft.Resources/subscriptions/resourceGroups/delete","Microsoft.Resources/subscriptions/read","Microsoft.Resources/subscriptions/resourceGroups/resources/read","Microsoft.Resources/deployments/*","*/register/action",
+    "Microsoft.ContainerService/managedClusters/*","Microsoft.ContainerService/locations/*/read",
+    "Microsoft.Network/virtualNetworks/*","Microsoft.Network/networkSecurityGroups/*","Microsoft.Network/publicIPAddresses/*","Microsoft.Network/natGateways/*","Microsoft.Network/routeTables/*","Microsoft.Network/dnsZones/*","Microsoft.Network/privateDnsZones/*","Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/*",
+    "Microsoft.DBforPostgreSQL/flexibleServers/*","Microsoft.Cache/redis/*","Microsoft.ContainerRegistry/registries/*","Microsoft.Storage/storageAccounts/*","Microsoft.ServiceBus/namespaces/*","Microsoft.DocumentDB/databaseAccounts/*",
+    "Microsoft.ManagedIdentity/userAssignedIdentities/*",
+    "Microsoft.KeyVault/vaults/*","Microsoft.KeyVault/locations/deletedVaults/purge/action","Microsoft.KeyVault/locations/operationResults/read",
+    "Microsoft.Authorization/roleAssignments/read","Microsoft.Authorization/roleAssignments/write","Microsoft.Authorization/roleAssignments/delete","Microsoft.Authorization/roleDefinitions/read"
+  ],
+  "DataActions": ["Microsoft.KeyVault/vaults/secrets/*"],
+  "NotActions": [],
+  "AssignableScopes": ["/subscriptions/${SUBSCRIPTION_ID}"]
+}
+JSON
+if az role definition list --name "${ROLE_NAME}" --query "[0].roleName" -o tsv 2>/dev/null | grep -q .; then
+  az role definition update --role-definition "${ROLE_JSON}" -o none
+else
+  az role definition create --role-definition "${ROLE_JSON}" -o none
+fi
+rm -f "${ROLE_JSON}"
+echo "    Custom role ready."
+
+echo ""
+echo "==> Assigning it (constrained: may only grant DNS Zone Contributor, no self-escalation)..."
+# ABAC condition: the SP can create/delete role assignments ONLY for DNS Zone Contributor
+# (befefa01-2a29-4197-83a8-272ff33ce314) — the external-dns identity the templates create —
+# and nothing else (no path to Owner).
+DNS_ZONE_CONTRIB="befefa01-2a29-4197-83a8-272ff33ce314"
+CONDITION="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${DNS_ZONE_CONTRIB}})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${DNS_ZONE_CONTRIB}}))"
 EXISTING_ROLE=$(az role assignment list \
   --assignee "${SP_OBJECT_ID}" \
-  --role "Contributor" \
+  --role "${ROLE_NAME}" \
   --scope "/subscriptions/${SUBSCRIPTION_ID}" \
   --query "[0].id" -o tsv 2>/dev/null || true)
-
 if [ -n "${EXISTING_ROLE}" ]; then
   echo "    Role assignment already exists, skipping."
 else
   az role assignment create \
     --assignee-object-id "${SP_OBJECT_ID}" \
     --assignee-principal-type ServicePrincipal \
-    --role "Contributor" \
+    --role "${ROLE_NAME}" \
     --scope "/subscriptions/${SUBSCRIPTION_ID}" \
+    --condition "${CONDITION}" \
+    --condition-version "2.0" \
     -o none
-  echo "    Contributor role assigned."
+  echo "    Least-privilege role assigned."
 fi
 
 echo ""

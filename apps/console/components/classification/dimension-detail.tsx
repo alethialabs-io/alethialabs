@@ -62,13 +62,6 @@ function ValueRow({
 			{reorderable && (
 				<GripVertical className="size-3 shrink-0 cursor-grab text-text-disabled" aria-hidden />
 			)}
-			<span
-				className="size-2.5 shrink-0 rounded-full"
-				style={{
-					background: value.color ?? "transparent",
-					border: value.color ? undefined : "1.5px solid var(--border-strong)",
-				}}
-			/>
 			<div className="w-[190px] min-w-0">
 				<div className="truncate text-[13px] font-medium text-text-primary">
 					{value.label}
@@ -78,11 +71,8 @@ function ValueRow({
 			<div className="flex min-w-0 flex-1 items-center gap-2.5">
 				<div className="h-[5px] max-w-[180px] flex-1 overflow-hidden rounded-full border bg-surface-sunken">
 					<div
-						className="h-full rounded-full"
-						style={{
-							width: `${pct}%`,
-							background: value.color ?? "var(--text-tertiary)",
-						}}
+						className="h-full rounded-full bg-text-tertiary"
+						style={{ width: `${pct}%` }}
 					/>
 				</div>
 				<button
@@ -131,29 +121,37 @@ function CoverageByKind({ dim }: { dim: DimensionDTO }) {
 	const rows = data ?? [];
 	const max = rows.reduce((n, r) => Math.max(n, r.count), 0);
 
+	// No signal yet — a quiet one-liner instead of an empty chart. (Wait for the lazy load
+	// before deciding, so it doesn't flash.)
+	if (!isPending && dim.resourceCount === 0) {
+		return (
+			<div className="border-t bg-surface-sunken px-5 py-3.5">
+				<span className="font-mono text-[11px] text-text-tertiary">
+					Not applied to any resource yet.
+				</span>
+			</div>
+		);
+	}
+
 	return (
 		<div className="border-t bg-surface-sunken px-5 pb-[18px] pt-[15px]">
 			<div className="mb-3 flex items-center gap-2">
 				<span className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
-					Coverage by resource kind
+					Applied to, by resource kind
 				</span>
 				<InfoHint>
-					Distinct resources of each kind that carry any value of this dimension. Shows
-					where the axis is adopted — and where it isn{"'"}t.
+					How many distinct resources of each kind carry a value of this dimension — the
+					rows are resource kinds (e.g. Environment = a project environment), not values.
 				</InfoHint>
 				<div className="h-px flex-1 bg-border" />
 				<span className="font-mono text-[10.5px] text-text-secondary">
-					{dim.resourceCount} resources
+					{dim.resourceCount} {dim.resourceCount === 1 ? "resource" : "resources"}
 				</span>
 			</div>
 			{isPending ? (
 				<div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
 					<Skeleton className="h-4 w-full" />
 					<Skeleton className="h-4 w-full" />
-				</div>
-			) : rows.length === 0 ? (
-				<div className="font-mono text-[11px] text-text-tertiary">
-					Not yet assigned to any resource.
 				</div>
 			) : (
 				<div className="grid grid-cols-1 gap-x-[26px] gap-y-2.5 sm:grid-cols-2">
@@ -291,7 +289,18 @@ export function DimensionDetail({
 						<h2 className="m-0 font-display text-[17px] font-semibold tracking-tight">
 							{dim.label}
 						</h2>
-						<div className="mt-1 font-mono text-[11px] text-text-tertiary">{dim.key}</div>
+						<div className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-text-tertiary">
+							<span>{dim.key}</span>
+							<span className="text-text-disabled">·</span>
+							<span>
+								Applies to{" "}
+								{dim.appliesTo.length === 0
+									? "all resources"
+									: dim.appliesTo.length <= 3
+										? dim.appliesTo.map(kindLabel).join(", ")
+										: `${dim.appliesTo.length} resource kinds`}
+							</span>
+						</div>
 						{dim.description && (
 							<p className="m-0 mt-2 max-w-[60ch] text-[12.5px] leading-relaxed text-text-secondary">
 								{dim.description}

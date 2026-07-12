@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Read-only classification chips for a resource. Renders one squared outline Badge per
-// assigned value; a value's optional `color` shows as a small leading dot (the label stays
-// grayscale to match the design system). Always query-backed (so a picker's optimistic
+// assigned value (grayscale — no color). Always query-backed (so a picker's optimistic
 // mutation reflects instantly); pass `initialAssignments` from a batched `assignmentsForKind`
 // hydration to seed the cache and avoid a per-row fetch.
 
@@ -14,21 +13,15 @@ import type { ResourceKind } from "@/lib/db/schema/enums";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { useAssignmentsQuery } from "@/lib/query/use-classification-query";
 
-/** One squared chip: an optional colour dot + the value label. */
+/** One squared chip: the dimension + value label. */
 function Chip({ chip }: { chip: AssignedValue }) {
 	return (
 		<Badge
 			variant="outline"
-			className="gap-1.5 font-normal text-muted-foreground"
+			className="gap-1 font-normal text-muted-foreground"
 			title={`${chip.dimension_label}: ${chip.value_label}`}
 		>
-			{chip.color ? (
-				<span
-					aria-hidden
-					className="size-1.5 shrink-0 rounded-full"
-					style={{ backgroundColor: chip.color }}
-				/>
-			) : null}
+			<span className="text-text-tertiary">{chip.dimension_label}</span>
 			<span className="text-foreground">{chip.value_label}</span>
 		</Badge>
 	);

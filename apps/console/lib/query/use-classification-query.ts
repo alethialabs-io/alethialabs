@@ -117,6 +117,7 @@ export function useAssignmentMutations(
 					value: v.value,
 					value_label: v.label,
 					color: v.color,
+					enforcement: v.enforcement,
 				};
 			}
 		}

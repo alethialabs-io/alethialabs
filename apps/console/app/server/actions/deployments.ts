@@ -5,6 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
+import { transitionEnv } from "@/lib/db/env-status";
 import {
 	jobs,
 	projectCaches,
@@ -12,6 +13,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectIacSources,
 	projectNosqlTables,
 	projectQueues,
 	projectSecrets,
@@ -59,9 +61,24 @@ const deployMetaSchema = z.object({
 		.catch(undefined),
 });
 
+// The BYO-IaC slice of a job's config_snapshot — the only key finalizeDeployment reads from it.
+// Lenient: unknown keys are stripped and a malformed snapshot yields {} (never throws).
+const iacSnapshotSchema = z
+	.object({
+		iac_source: z
+			.object({ commit_sha: z.string().nullish().catch(null) })
+			.optional(),
+	})
+	.catch({});
+
 /**
  * After a DEPLOY job succeeds, persist terraform outputs to the project component
  * tables. Service path — runs on the BYPASSRLS connection (runner-triggered).
+ *
+ * Also tracks BYO-IaC (E3) deployed state on the env's project_iac_sources row: a successful
+ * DEPLOY records the commit it applied (so DESTROY can later tear down THAT exact module, and
+ * detach stays blocked while live BYO infra exists); a successful DESTROY clears it. No-op for
+ * template envs (no iac source row matches the update).
  */
 export async function finalizeDeployment(jobId: string) {
 	const db = getServiceDb();
@@ -69,9 +86,11 @@ export async function finalizeDeployment(jobId: string) {
 	const [job] = await db
 		.select({
 			status: jobs.status,
+			org_id: jobs.org_id,
 			project_id: jobs.project_id,
 			environment_id: jobs.environment_id,
 			job_type: jobs.job_type,
+			config_snapshot: jobs.config_snapshot,
 			execution_metadata: jobs.execution_metadata,
 		})
 		.from(jobs)
@@ -80,9 +99,34 @@ export async function finalizeDeployment(jobId: string) {
 
 	if (!job) return;
 	if (job.status !== "SUCCESS") return;
-	if (job.job_type !== "DEPLOY") return;
 	if (!job.project_id) return;
 	if (!job.environment_id) return;
+
+	// BYO-IaC deployed-commit tracking runs BEFORE the DEPLOY-only / metadata guards below so it
+	// also fires for DESTROY (which carries no tofu outputs). DEPLOY pins the commit it applied so
+	// a later DESTROY tears down THAT exact module (and detach stays blocked while live BYO infra
+	// exists); DESTROY clears the pin. Only BYO envs carry `iac_source` in the snapshot, so a
+	// template env skips this entirely (no stray write).
+	if (job.job_type === "DEPLOY" || job.job_type === "DESTROY") {
+		const snap = iacSnapshotSchema.parse(job.config_snapshot ?? {});
+		if (snap.iac_source) {
+			await db
+				.update(projectIacSources)
+				.set({
+					deployed_commit_sha:
+						job.job_type === "DEPLOY" ? (snap.iac_source.commit_sha ?? null) : null,
+					updated_at: new Date(),
+				})
+				.where(
+					and(
+						eq(projectIacSources.project_id, job.project_id),
+						eq(projectIacSources.environment_id, job.environment_id),
+					),
+				);
+		}
+	}
+
+	if (job.job_type !== "DEPLOY") return;
 	if (!job.execution_metadata) return;
 
 	const projectId = job.project_id;
@@ -98,13 +142,37 @@ export async function finalizeDeployment(jobId: string) {
 	const meta = deployMetaSchema.parse(job.execution_metadata);
 	const outputs = meta.outputs;
 
+	// Gate the ENTIRE deploy writeback — the env row AND every child component row (cluster / db /
+	// cache status + live endpoints), addon health, and security posture — on the env-status CAS,
+	// hoisted here so it runs BEFORE any write. `deploySuccess` is legal only from PROVISIONING|QUEUED,
+	// so a late DEPLOY-SUCCESS arriving after a DESTROY already tore the env down (env=DESTROYED)
+	// rejects and we write NOTHING. Previously only the env row was CAS-protected; the child rows were
+	// written unconditionally, so a straggler resurrected a `cluster_endpoint`/argocd_url onto a
+	// destroyed env — the more visible half of the last-writer-wins bug. transitionEnv logged + emitted
+	// a status-conflict alert on the reject; we just bail.
+	// Ordering note: because the env is moved to ACTIVE up front, if a *component write below* throws,
+	// the status route's catch → deployFailed is a no-op (ACTIVE ∉ deployFailed.from) and the env stays
+	// ACTIVE. That is intentional and correct: the runner reported SUCCESS, so the infra genuinely
+	// exists — a metadata-writeback error must not flip a live deploy to FAILED (it only warns).
+	if (environmentId) {
+		const moved = await transitionEnv(db, environmentId, "deploySuccess", jobId, {
+			orgId: job.org_id,
+			projectId,
+		});
+		if (!moved) return;
+	}
+
 	const clusterUpdate: Partial<typeof projectCluster.$inferInsert> = {
 		status: "ACTIVE",
 	};
 	if (meta.cluster_name) clusterUpdate.cluster_name = meta.cluster_name;
 	if (meta.cluster_endpoint)
 		clusterUpdate.cluster_endpoint = meta.cluster_endpoint;
-	if (meta.argocd_url) clusterUpdate.argocd_url = meta.argocd_url;
+	// argocd_url reflects THIS deploy: the runner reports it only when an ingress was
+	// actually configured, so an absent key on a successful deploy means "no reachable
+	// URL" and must CLEAR any previously persisted one (older deploys wrote a bogus
+	// https://argocd.<domain> on clouds where no ingress exists).
+	clusterUpdate.argocd_url = meta.argocd_url ?? null;
 	if (meta.argocd_admin_password)
 		clusterUpdate.argocd_admin_password = meta.argocd_admin_password;
 	if (outputs) {
@@ -240,20 +308,20 @@ export async function finalizeDeployment(jobId: string) {
 		}
 	}
 
-	// M1: mark the targeted environment ACTIVE (status moved off projects) and stamp the day-2
-	// governance fields: the deployed design's structural fingerprint + timestamp (predecessor gate,
-	// soak timer, config-vs-desired divergence), and reset the auto-heal failure counter.
-	if (job.environment_id) {
+	// M1: stamp the day-2 governance fields on the now-ACTIVE env: the deployed design's structural
+	// fingerprint + timestamp (predecessor gate, soak timer, config-vs-desired divergence), and reset
+	// the auto-heal failure counter. The env→ACTIVE CAS ran at the top of the DEPLOY block and we
+	// returned early if it was rejected, so reaching here means the env legitimately moved to ACTIVE.
+	if (environmentId) {
 		const deployedHash = await deployedStructuralHash(db, projectId, environmentId);
 		await db
 			.update(projectEnvironments)
 			.set({
-				status: "ACTIVE",
 				deployed_config_hash: deployedHash,
 				last_deployed_at: new Date(),
 				auto_heal_failures: 0,
 			})
-			.where(eq(projectEnvironments.id, job.environment_id));
+			.where(eq(projectEnvironments.id, environmentId));
 	}
 }
 
@@ -349,6 +417,9 @@ async function deployedStructuralHash(
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
 		})),
+		// Not structural inputs to the hash — inert, present only to satisfy the shape.
+		storage_buckets: [],
+		container_registries: [],
 	};
 	return structuralHash(design);
 }

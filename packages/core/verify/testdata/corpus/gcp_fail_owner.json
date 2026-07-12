@@ -1,0 +1,22 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "google_iam_workload_identity_pool_provider.gh",
+      "mode": "managed",
+      "type": "google_iam_workload_identity_pool_provider",
+      "name": "gh",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": { "actions": ["create"], "before": null, "after": { "attribute_condition": "assertion.repository == 'acme/infra'" }, "after_unknown": {} }
+    },
+    {
+      "address": "google_project_iam_member.owner",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "owner",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": { "actions": ["create"], "before": null, "after": { "role": "roles/owner", "member": "serviceAccount:ci@proj.iam" }, "after_unknown": {} }
+    }
+  ]
+}

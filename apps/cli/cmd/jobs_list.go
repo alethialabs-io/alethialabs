@@ -39,6 +39,7 @@ var jobTypeLabels = map[string]string{
 	string(types.JobTypeUpdateRunner):  "Update Runner",
 	string(types.JobTypeDestroyRunner): "Destroy Runner",
 	string(types.JobTypeChartScan):     "Chart Scan",
+	string(types.JobTypeIacScan):       "IaC Scan",
 }
 
 var jobsListCmd = &cobra.Command{

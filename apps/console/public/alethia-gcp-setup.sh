@@ -60,12 +60,32 @@ else
 fi
 
 echo ""
-echo "==> Granting roles/editor to the service account..."
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/editor" \
-  --condition=None \
-  --quiet
+echo "==> Granting least-privilege provisioning roles to the service account..."
+# Enumerated predefined roles covering exactly the services Alethia provisions —
+# in place of account-wide roles/editor. Matches infra/connector/gcp/main.tf.
+for ROLE in \
+  roles/container.admin \
+  roles/compute.networkAdmin \
+  roles/compute.securityAdmin \
+  roles/servicenetworking.networksAdmin \
+  roles/cloudsql.admin \
+  roles/redis.admin \
+  roles/dns.admin \
+  roles/artifactregistry.admin \
+  roles/secretmanager.admin \
+  roles/storage.admin \
+  roles/datastore.owner \
+  roles/pubsub.admin \
+  roles/iam.serviceAccountAdmin \
+  roles/iam.serviceAccountUser \
+  roles/browser; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="${ROLE}" \
+    --condition=None \
+    --quiet >/dev/null
+done
+echo "    Granted ${PROJECT_ID} provisioning roles."
 
 echo ""
 echo "==> Creating Workload Identity Pool..."
@@ -124,6 +144,13 @@ echo ""
 echo "============================================================"
 echo "  Setup complete! (keyless, direct-OIDC)"
 echo "============================================================"
+echo ""
+echo "  Enter these two values in the Alethia connect sheet:"
+echo ""
+echo "    Project ID:      ${PROJECT_ID}"
+echo "    Project Number:  ${PROJECT_NUMBER}"
+echo ""
+echo "  (Advanced / Terraform: the full credential config is below and in ${OUTPUT_FILE}.)"
 echo ""
 echo "--- START CONFIG (copy everything below until END CONFIG) ---"
 cat "${OUTPUT_FILE}"

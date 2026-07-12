@@ -36,6 +36,9 @@ interface DesignProjectWorkbenchProps {
 	dockInShell?: boolean;
 	/** Whether bring-your-own Helm charts are enabled (server flag) — gates the ⌘K "Sources" entry. */
 	byoHelmEnabled?: boolean;
+	/** Whether bring-your-own IaC is enabled (server flag) — gates the ⌘K "Bring your own IaC" entry
+	 * + the external-IaC overlay. */
+	byoIacEnabled?: boolean;
 }
 
 /**
@@ -52,6 +55,7 @@ export function DesignProjectWorkbench({
 	environmentId,
 	dockInShell,
 	byoHelmEnabled,
+	byoIacEnabled,
 }: DesignProjectWorkbenchProps) {
 	const form = useForm<ProjectFormInput, unknown, ProjectFormData>({
 		resolver: zodResolver(projectFormSchema),
@@ -85,6 +89,7 @@ export function DesignProjectWorkbench({
 						environmentId={environmentId}
 						dockInShell={dockInShell}
 						byoHelmEnabled={byoHelmEnabled}
+						byoIacEnabled={byoIacEnabled}
 					/>
 				</FormProvider>
 			</RepositoryProvider>

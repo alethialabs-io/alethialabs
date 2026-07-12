@@ -3,7 +3,7 @@
 
 import { sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
-import { getWakeTransport } from "@/lib/realtime";
+import { getCancelTransport, getWakeTransport } from "@/lib/realtime";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export const dynamic = "force-dynamic";
@@ -33,25 +33,36 @@ export async function GET(req: Request) {
 	const encoder = new TextEncoder();
 	let closed = false;
 	let unsubscribe = () => {};
+	let unsubscribeCancel = () => {};
 	let heartbeat: ReturnType<typeof setInterval> | undefined;
 	const teardown = () => {
 		if (closed) return;
 		closed = true;
 		if (heartbeat) clearInterval(heartbeat);
 		unsubscribe();
+		unsubscribeCancel();
 		lost(); // connection gone → mark the runner lost immediately
 	};
 
 	const stream = new ReadableStream({
 		start(controller) {
-			const wake = () => {
+			const send = (payload: Record<string, unknown>) => {
 				if (closed) return;
-				controller.enqueue(encoder.encode("data: wake\n\n"));
+				controller.enqueue(
+					encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
+				);
 			};
+			// A wake tells the runner to attempt a claim; a cancel tells it to tear down a
+			// specific in-flight job. Both are typed so the runner can dispatch on `type`.
+			const wake = () => send({ type: "wake" });
+			const cancel = (jobId: string) => send({ type: "cancel", job_id: jobId });
 
 			wake(); // drain any backlog on connect
 			present(); // mark ONLINE + start the presence lease
 			unsubscribe = getWakeTransport().subscribe(wake);
+			// Cancel fan-out is keyed by runnerId, so this connection only receives cancels
+			// for jobs THIS runner owns.
+			unsubscribeCancel = getCancelTransport().subscribe(runnerId, cancel);
 
 			// ~10s ping doubles as the lease refresh; a 45s gap → sweep marks OFFLINE.
 			heartbeat = setInterval(() => {

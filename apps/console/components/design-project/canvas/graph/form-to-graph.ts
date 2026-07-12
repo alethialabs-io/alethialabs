@@ -93,7 +93,15 @@ export function formToGraph(
 	// Array kinds laid out in rows below the cluster. Each call correlates the literal
 	// kind with its matching item array, so `makeNode` stays fully typed per kind.
 	const pushItems = <
-		K extends "database" | "cache" | "queue" | "topic" | "nosql" | "secret",
+		K extends
+			| "database"
+			| "cache"
+			| "queue"
+			| "topic"
+			| "nosql"
+			| "secret"
+			| "bucket"
+			| "registry",
 	>(
 		kind: K,
 		items: NodeConfigMap[K][],
@@ -111,6 +119,8 @@ export function formToGraph(
 	pushItems("topic", form.topics ?? [], 3);
 	pushItems("nosql", form.nosql_tables ?? [], 4);
 	pushItems("secret", form.secrets ?? [], 5);
+	pushItems("bucket", form.storage_buckets ?? [], 6);
+	pushItems("registry", form.container_registries ?? [], 7);
 
 	return { nodes };
 }

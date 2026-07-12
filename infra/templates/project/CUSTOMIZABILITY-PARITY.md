@@ -18,6 +18,26 @@ dedicated Go field. So **full customizability already exists for any variable th
 passthrough can't reach an undeclared knob. So the real parity gap is *declared-variable coverage*, not
 the plumbing.
 
+## Full escape hatch — Bring Your Own IaC (E3)
+
+Declared-variable coverage is the parity story for the **built-in templates**. When a customer needs a
+knob no template declares — or an entirely different resource graph — the full escape hatch is
+**bring-your-own IaC**: attach a git repo holding your **own OpenTofu root module** to a project
+environment and Alethia provisions from *your* module instead of the built-in template (v1 = **replace**
+mode). This is the ultimate customizability ceiling — arbitrary OpenTofu, subject only to the fail-closed
+`iacsafety` static gate (provider allowlist, no `provisioner`/`external`, no remote module sources, no
+override files) and the sandbox/verify controls.
+
+- Contract: platform context is injected as frozen `TF_VAR_alethia_*` variables (`alethia_project`,
+  `_environment`, `_region`, `_project_id`, `_environment_id`); the `alethia_` var namespace is reserved.
+- State: the customer backend block is overridden to Alethia's per-job console HTTP state proxy.
+- Cluster wiring: a module that outputs `cluster_name` / `cluster_endpoint` opportunistically gets the
+  reachability gate + ArgoCD; one that doesn't degrades gracefully.
+- Availability: flag-gated (`ALETHIA_BYO_IAC_ENABLED`), GA on **self** runners; **managed** stays
+  trusted-only until the container-sandbox isolation canary passes.
+
+Full detail: [Bring Your Own IaC](../../../apps/docs/content/docs/concepts/bring-your-own-iac.mdx).
+
 ## Current declared-variable coverage
 
 | Template | root variables |
@@ -57,6 +77,33 @@ parity is delivered at the cluster layer:
 - **Pluggable observability connectors** (`packages/core/categories`): Datadog / Grafana Cloud / Prometheus.
 
 So there is no observability template gap to close — it runs on every cluster regardless of cloud.
+
+## Cloud-inherent skips (not gaps)
+
+Some per-cloud differences are **not** parity gaps to close — the cloud simply has no analogue, so
+the honest thing is to record the skip (and its alternative), not paper over it. These are surfaced
+as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, forwarded on
+`execution_metadata["infra_services"]`) and in the [cloud-abstraction docs](../../../apps/docs/content/docs/concepts/cloud-abstraction.mdx#infra-services-post-apply):
+
+- **Alibaba Database `IamAuth`** — ApsaraDB RDS has no IAM-database-authentication analogue, so the
+  shared `iam_auth` toggle is a no-op on Alibaba (AWS Aurora / GCP Cloud SQL / Azure DB support it).
+- **Aurora-only `rds_scaling_config`** — serverless-v2 min/max ACU capacity is an Aurora concept; GCP
+  Cloud SQL / Azure Database use fixed vCPU/vCore tiers, so the scaling-config block is AWS-only.
+- **`ClusterAdmins` on gcp / alibaba / hetzner** — cluster-admin binding is granted **outside** the
+  template on these clouds (GKE via IAM, ACK via RAM, Talos via the emitted `talosconfig`/kubeconfig),
+  so there is no in-template `cluster_admins` knob to wire there.
+- **external-dns on Alibaba** — the alibabacloud external-dns provider has **no RRSA support upstream**
+  ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); external-dns is
+  skipped on Alibaba until that lands. Manage AliDNS records outside the cluster meanwhile.
+- **External secrets store on Hetzner** — Hetzner has no cloud secret manager; there is no
+  ClusterSecretStore to install. Source secrets via the **Vault connector** instead.
+
+### One real backlog item (a genuine analogue worth adding)
+
+- **Azure `ClusterAdmins` → `admin_group_object_ids`** — unlike gcp/alibaba/hetzner above, AKS **does**
+  have a native in-template analogue: AAD RBAC via `azurerm_kubernetes_cluster.azure_active_directory_role_based_access_control.admin_group_object_ids`.
+  Wiring the shared `cluster_admins` list to it would give Azure genuine cluster-admin parity. Backlog
+  (Phase A.2), not a cloud-inherent skip.
 
 ## Status
 

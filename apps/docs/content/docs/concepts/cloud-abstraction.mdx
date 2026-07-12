@@ -1,32 +1,55 @@
 ---
 title: Cloud Provider Abstraction
-description: How the platform abstracts AWS, GCP, and Azure behind a unified interface.
+description: What Alethia can provision, and how it abstracts AWS, GCP, Azure, Alibaba Cloud, and Hetzner behind one interface.
 ---
 
 # Cloud Provider Abstraction
 
-The platform supports AWS, GCP, and Azure with full feature parity. A single form, a single CLI, and a single Runner agent work across all three providers. This is achieved through a multi-layered abstraction.
+Alethia provisions across **five providers** — AWS, GCP, Azure, and Alibaba Cloud (full managed clouds) plus Hetzner (a lean, self-managed Talos Kubernetes cluster on cheap VMs). A single form, a single CLI, and a single Runner agent work across all of them, through a multi-layered abstraction.
 
 <img src="/docs/diagrams/concepts/cloud-abstraction.svg" alt="Cloud Abstraction" />
 
-## Provider Registry
+## What Alethia can provision
 
-The registry (`lib/cloud-providers/registry.ts`) maps each provider to its cloud-native service names:
+Alethia models a cloud-indifferent set of **capability categories** (the `ProjectConfig` service model in `packages/core/types/project_config.go`). Each maps to a concrete resource per provider and is gated by a `create_*`/`provision_*` toggle the Runner emits from your Project config:
 
-| Capability | AWS | GCP | Azure |
-|-----------|-----|-----|-------|
-| Kubernetes | EKS | GKE | AKS |
-| Network | VPC | VPC Network | VNet |
-| Database | Aurora | Cloud SQL | Azure Database |
-| Cache | ElastiCache | Memorystore | Azure Cache for Redis |
-| NoSQL | DynamoDB | Firestore | Cosmos DB |
-| Queue | SQS | Pub/Sub | Service Bus |
-| Topic | SNS | Pub/Sub | Service Bus |
-| DNS | Route 53 | Cloud DNS | Azure DNS |
-| Secrets | Secrets Manager | Secret Manager | Key Vault |
-| Container Registry | ECR | Artifact Registry | ACR |
-| WAF | AWS WAFv2 | Cloud Armor | Azure WAF |
-| Certificate | ACM | Managed Certificate | App Service Certificate |
+Kubernetes cluster · VPC/network · managed SQL database · managed Redis/cache · message queue · pub/sub topic · object storage · NoSQL table · container registry · DNS zone · secrets manager · WAF · CDN / managed TLS certificate — plus the cluster autoscaler and the [pluggable-connector seam](/concepts/connectors) (swap the cloud-native DNS/secrets/registry for a tool you already run).
+
+## Provider capability matrix
+
+The registry (`lib/cloud-providers/registry.ts`) maps each capability to the provider's cloud-native service. The **four managed clouds are at feature parity** across every category; **Hetzner is intentionally lean** — it provisions a cluster + private network only, and managed-service categories are covered **in-cluster** (bring-your-own via the [add-on marketplace](/console/add-ons), e.g. a Postgres/Redis/MinIO Helm chart) rather than as managed cloud services.
+
+| Capability | AWS | GCP | Azure | Alibaba | Hetzner |
+|-----------|-----|-----|-------|---------|---------|
+| Kubernetes | EKS | GKE | AKS | ACK | Talos (self-managed) |
+| Network | VPC | VPC Network | VNet | VPC | Private Network |
+| Database | Aurora | Cloud SQL | Azure Database | ApsaraDB RDS | in-cluster (BYO) |
+| Cache | ElastiCache | Memorystore | Azure Cache for Redis | ApsaraDB for Redis | in-cluster (BYO) |
+| NoSQL | DynamoDB | Firestore | Cosmos DB | Tablestore | in-cluster (BYO) |
+| Queue | SQS | Pub/Sub | Service Bus | MNS | in-cluster (BYO) |
+| Topic | SNS | Pub/Sub | Service Bus | MNS | in-cluster (BYO) |
+| Object storage | S3 | Cloud Storage | Blob Storage | OSS | in-cluster (BYO) |
+| Container registry | ECR | Artifact Registry | ACR | ACR | external |
+| DNS | Route 53 | Cloud DNS | Azure DNS | AliDNS | external |
+| Secrets | Secrets Manager | Secret Manager | Key Vault | KMS | external |
+| WAF | AWS WAFv2 | Cloud Armor | Azure WAF | Alibaba WAF | — |
+| Certificate / CDN | ACM + CloudFront | Managed Certificate | App Service Certificate | Managed Certificate | — |
+
+## Infra services (post-apply)
+
+After `tofu apply`, the Runner wires a set of **in-cluster infra services** over ArgoCD (external-dns, the external-secrets store, ingress, the default storage class, the ArgoCD URL). Not every service maps cleanly to every cloud — some are cloud-inherent gaps, not bugs. Rather than silently omit a service (or ship it broken), the pipeline records a **machine-readable per-service decision** with an honest reason — the same `not_evaluable`/"honest N/A" discipline the [verify gate](/concepts/security) applies to the plan.
+
+The decisions come from `argocd.InfraServiceDecisions` (`packages/core/argocd/decisions.go`), computed from the **same gates** the templates render against (`InfraFacts.DNSProvider()`, the per-cloud ClusterSecretStore conditions), so a recorded decision can never drift from what actually shipped. The Runner forwards them on `execution_metadata["infra_services"]` (status + reason only — non-sensitive), and the console renders them alongside the add-on status.
+
+| Infra service | AWS | GCP | Azure | Alibaba | Hetzner |
+|---------------|-----|-----|-------|---------|---------|
+| external-dns | installed (Route 53, IRSA) | installed when Workload Identity SA present | installed when managed-identity present | **N/A** — alibabacloud provider has no RRSA support upstream ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); manage AliDNS outside the cluster | installed (Hetzner webhook) when a Cloud API token is connected |
+| external-secrets store | installed (Secrets Manager, IRSA) | installed (Secret Manager, WI) | installed (Key Vault, WI) | installed (KMS Secrets Manager, RRSA) | **N/A** — no cloud secret store; use the [Vault connector](/concepts/connectors) |
+| ingress | installed (ALB controller) | skipped — cloud LB available; install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on |
+| storage class | installed (gp3, default) | built-in default (standard-rwo) | built-in default (managed-csi) | verify a default-annotated alicloud-disk class | installed (hcloud-volumes, default) |
+| ArgoCD URL | installed (ALB ingress, ACM cert) | skipped — no managed ingress yet; port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password |
+
+Each cell above is exactly what the pipeline records per deploy: an `installed`/`skipped` status plus a human-readable reason. A skip always states **why** and the **alternative** — so an operator never has to guess whether a missing service is a gap or a deliberate cloud-inherent N/A.
 
 ## Region Mapping
 
@@ -90,11 +113,13 @@ All form fields reset to provider-appropriate defaults. See [Multi-Cloud Convers
 
 Each provider has its own set of Terraform templates:
 
-- `infra/templates/project/aws/` — EKS, Aurora, ElastiCache, DynamoDB, etc.
-- `infra/templates/project/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, etc.
-- `infra/templates/project/azure/` — AKS, Azure Database, Azure Cache, Cosmos DB, etc.
+- `infra/templates/project/aws/` — EKS, Aurora, ElastiCache, DynamoDB, S3, ECR, etc.
+- `infra/templates/project/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, GCS, Artifact Registry, etc.
+- `infra/templates/project/azure/` — AKS, Azure Database, Azure Cache, Cosmos DB, Blob Storage, ACR, etc.
+- `infra/templates/project/alibaba/` — ACK, ApsaraDB RDS, KVStore, Tablestore, OSS, CR, etc.
+- `infra/templates/project/hetzner/` — Talos Kubernetes + private network (Cilium CNI, hcloud CCM/CSI).
 
-The Runner selects the correct template directory based on the Project's cloud provider and generates `terraform.tfvars` from the Project configuration.
+The Runner selects the correct template directory based on the Project's cloud provider and generates `terraform.tfvars` from the Project configuration (`packages/core/cloud/<cloud>_provider.go` `ProviderTfvars`).
 
 ## Pluggable connectors
 

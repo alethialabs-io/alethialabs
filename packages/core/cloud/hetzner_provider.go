@@ -95,6 +95,24 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		tfvars["hcloud_token"] = tok
 	}
 
+	// Object Storage (S3-compatible) buckets via the aminueza/minio provider against Hetzner's
+	// S3 endpoint. Buckets are periphery: always emit the list (empty => the minio provider is
+	// declared but never exercised, so a bucket-free cluster still plans clean with empty S3
+	// creds). The S3 endpoint host derives from the region; Object Storage lives only in
+	// fsn1/nbg1/hel1, so compute-only regions fall back to fsn1. The S3 keys are DISTINCT from
+	// the Cloud API token (Hetzner has no API to mint them — the customer generates them by
+	// hand); the runner exports them as HETZNER_S3_ACCESS_KEY / HETZNER_S3_SECRET_KEY at claim.
+	tfvars["buckets"] = buildHetznerBuckets(config.StorageBuckets)
+	s3Region := hetznerS3Region(orDefault(resolveRegion("hetzner", config.Region), "fsn1"))
+	tfvars["hetzner_s3_region"] = s3Region
+	tfvars["hetzner_s3_endpoint"] = s3Region + ".your-objectstorage.com"
+	if ak := os.Getenv("HETZNER_S3_ACCESS_KEY"); ak != "" {
+		tfvars["hetzner_s3_access_key"] = ak
+	}
+	if sk := os.Getenv("HETZNER_S3_SECRET_KEY"); sk != "" {
+		tfvars["hetzner_s3_secret_key"] = sk
+	}
+
 	// Generic passthrough: any provider_config key that names a template variable
 	// flows through verbatim (talos_version consumed above under the same name is
 	// merge-if-absent, so it isn't duplicated).
@@ -161,6 +179,49 @@ func outputString(outputs map[string]interface{}, key string) string {
 		return s
 	}
 	return ""
+}
+
+// hetznerS3Locations are the Hetzner Object Storage locations (a strict subset of the
+// hcloud compute regions — Object Storage is not offered in ash/hil/sin).
+var hetznerS3Locations = map[string]bool{"fsn1": true, "nbg1": true, "hel1": true}
+
+// hetznerS3Region maps a cluster region to a valid Object Storage location. Compute-only
+// regions (ash/hil/sin) have no Object Storage, so they fall back to fsn1.
+func hetznerS3Region(region string) string {
+	if hetznerS3Locations[region] {
+		return region
+	}
+	return "fsn1"
+}
+
+// buildHetznerBuckets maps the cloud-indifferent bucket configs to the shape the hetzner
+// template's `buckets` tfvar (and the minio provider) consumes. CORS is intentionally
+// carried through but the aminueza/minio provider does NOT apply it against Hetzner
+// (s3_compat_mode skips CORS) — it is ignored, never a failure. `encryption_enabled` is
+// likewise informational: Hetzner Object Storage encrypts at rest automatically and the
+// provider exposes no per-bucket toggle.
+func buildHetznerBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(buckets))
+	for _, b := range buckets {
+		result = append(result, map[string]interface{}{
+			"name":               b.Name,
+			"versioning":         b.Versioning,
+			"encryption_enabled": b.EncryptionEnabled,
+			"public_access":      b.PublicAccess,
+			"cors_origins":       ensureStringSlice(b.CorsOrigins),
+		})
+	}
+	return result
+}
+
+// ensureStringSlice returns a non-nil slice so the emitted tfvar is a JSON [] rather than
+// null (the minio template's optional(list(string), []) default only kicks in when the
+// key is absent, not when it is JSON null).
+func ensureStringSlice(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 var _ CloudProvider = (*hetznerProvider)(nil)

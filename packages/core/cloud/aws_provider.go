@@ -114,6 +114,9 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"s3_create":            len(config.StorageBuckets) > 0,
 		"bucket_configuration": buildS3Buckets(config.StorageBuckets),
 
+		// ECR (container registry)
+		"provision_ecr": len(config.ContainerRegistries) > 0,
+
 		// RDS
 		"create_rds": len(config.Databases) > 0,
 	}

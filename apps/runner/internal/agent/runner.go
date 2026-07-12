@@ -36,16 +36,19 @@ type Runner struct {
 	// default is a no-isolation Passthrough (today's behavior); an isolating backend
 	// is swapped in behind a flag once proven (see the E0 plan). Never nil.
 	sandbox sandbox.Sandbox
+	// cancels tracks in-flight jobs so a cancel event pushed over the wake stream can
+	// tear down the right job mid-flight (and mark it CANCELLED, not FAILED).
+	cancels *cancelRegistry
 }
 
 func New(cfg Config) *Runner {
 	client := NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken)
 	client.providers = cfg.Providers
-	return &Runner{config: cfg, api: client, sandbox: selectSandbox(cfg)}
+	return &Runner{config: cfg, api: client, sandbox: selectSandbox(cfg), cancels: newCancelRegistry()}
 }
 
 func NewWithAPI(cfg Config, api JobAPI) *Runner {
-	return &Runner{config: cfg, api: api, sandbox: selectSandbox(cfg)}
+	return &Runner{config: cfg, api: api, sandbox: selectSandbox(cfg), cancels: newCancelRegistry()}
 }
 
 // selectSandbox picks the isolation backend from ALETHIA_SANDBOX_BACKEND. Default is the
@@ -70,8 +73,11 @@ func selectSandbox(cfg Config) sandbox.Sandbox {
 	if err == nil {
 		return c
 	}
-	if cfg.Operator == "managed" {
-		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on managed runner: %v — refusing jobs (fail-closed)\n", err)
+	// Fail-closed for anything that is not an EXPLICIT self operator: an empty/unknown
+	// operator string must NOT downgrade to a lenient Passthrough when the container backend
+	// was requested but is unavailable — only "self" (customer's own cloud) is lenient.
+	if cfg.Operator != "self" {
+		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on non-self runner (operator=%q): %v — refusing jobs (fail-closed)\n", cfg.Operator, err)
 		return sandbox.Passthrough{Operator: cfg.Operator, EnforceManaged: true}
 	}
 	fmt.Fprintf(os.Stderr, "sandbox: container backend unavailable (%v); using Passthrough (operator=%s)\n", err, cfg.Operator)
@@ -100,22 +106,27 @@ func (w *Runner) Run(ctx context.Context) error {
 
 	var draining atomic.Bool
 
+	// Bind runner_id onto the process-wide operational logger for every job-less line.
+	InitAgentLogger(w.config.RunnerID)
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\nReceived shutdown signal, finishing current job...")
+		Log().Info("received shutdown signal, finishing current job")
 		draining.Store(true)
 		time.AfterFunc(10*time.Minute, func() {
-			fmt.Println("Grace period expired, forcing shutdown...")
+			Log().Warn("grace period expired, forcing shutdown")
 			cancel()
 		})
 	}()
 
 	go w.heartbeatLoop(ctx)
 
-	fmt.Printf("Runner started (id=%s, operator=%s, version=%s)\n", w.config.RunnerID, w.config.Operator, version.Version)
-	fmt.Printf("Connected to %s; waiting for jobs (push wake + safety poll)...\n", w.config.AlethiaURL)
+	Log().Info("runner started",
+		"operator", w.config.Operator,
+		"version", version.Version,
+		"alethia_url", w.config.AlethiaURL)
 
 	return w.claimLoop(ctx, &draining)
 }
@@ -124,8 +135,10 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	if err := w.api.Heartbeat(); err != nil {
-		fmt.Fprintf(os.Stderr, "Initial heartbeat failed: %v\n", err)
+	if cancelled, err := w.api.Heartbeat(); err != nil {
+		Log().Error("initial heartbeat failed", "err", err.Error())
+	} else {
+		w.applyHeartbeatCancels(cancelled)
 	}
 
 	for {
@@ -133,9 +146,24 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := w.api.Heartbeat(); err != nil {
-				fmt.Fprintf(os.Stderr, "Heartbeat failed: %v\n", err)
+			if cancelled, err := w.api.Heartbeat(); err != nil {
+				Log().Error("heartbeat failed", "err", err.Error())
+			} else {
+				w.applyHeartbeatCancels(cancelled)
 			}
+		}
+	}
+}
+
+// applyHeartbeatCancels is the fallback cancel path: for each job the console reports as
+// server-side-cancelled, tear it down IF it's still running here. This catches a cancel that was
+// missed on the wake stream (its pg_notify dropped because the SSE was reconnecting). cancelIfRunning
+// is a no-op for jobs this runner isn't running, so re-reporting the same id each tick is harmless.
+func (w *Runner) applyHeartbeatCancels(jobIDs []string) {
+	for _, jobID := range jobIDs {
+		if w.cancels.cancelIfRunning(jobID) {
+			Log().Warn("cancelling job via heartbeat fallback (wake-stream cancel was missed)",
+				"job_id", jobID)
 		}
 	}
 }
@@ -154,7 +182,7 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 		}
 	}
 
-	go w.wakeLoop(ctx, trigger)
+	go w.wakeLoop(ctx, func(ev WakeEvent) { w.dispatchWakeEvent(ev, trigger) })
 
 	safety := time.NewTicker(safetyInterval)
 	defer safety.Stop()
@@ -163,7 +191,7 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 
 	for {
 		if draining.Load() {
-			fmt.Println("Draining: no more jobs will be claimed. Exiting.")
+			Log().Info("draining: no more jobs will be claimed, exiting")
 			return nil
 		}
 
@@ -181,40 +209,64 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			}
 			claim, err := w.api.ClaimJob()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to claim job: %v\n", err)
+				Log().Error("failed to claim job", "err", err.Error())
 				break
 			}
 			if claim.Job == nil {
 				break
 			}
 
-			fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
+			traceID := traceIDFromTraceparent(claim.Job.Traceparent)
+			LogWith(w.config.RunnerID, traceID, claim.Job.ID).Info("claimed job",
+				"job_type", claim.Job.JobType)
 			// PLAN/DEPLOY/DESTROY provision real infra, so they keep a long timeout.
 			jobTimeout := 2 * time.Hour
 			jobCtx, jobCancel := context.WithTimeout(ctx, jobTimeout)
+			// Register the cancel function so a cancel event over the wake stream can
+			// tear THIS job down mid-flight; reap the registry entry once it's done.
+			w.cancels.register(claim.Job.ID, jobCancel)
 			if err := w.executeJob(jobCtx, claim); err != nil {
-				fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
+				LogWith(w.config.RunnerID, traceID, claim.Job.ID).Error("job failed",
+					"err", err.Error())
 			}
 			jobCancel()
+			w.cancels.reap(claim.Job.ID)
 		}
 	}
 }
 
+// dispatchWakeEvent routes a push-dispatch event: a wake triggers a claim drain; a cancel
+// tears down the targeted in-flight job (a no-op if it isn't running on this runner — e.g. a
+// QUEUED job the console cancelled DB-only, or one already finished).
+func (w *Runner) dispatchWakeEvent(ev WakeEvent, trigger func()) {
+	switch ev.Type {
+	case "cancel":
+		if ev.JobID != "" {
+			if w.cancels.cancel(ev.JobID) {
+				Log().Info("cancel signal received; tearing down job", "job_id", ev.JobID)
+			}
+		}
+	default: // "wake"
+		trigger()
+	}
+}
+
 // wakeLoop maintains the push-dispatch SSE connection, reconnecting with backoff.
-// Each wake event triggers a claim attempt in claimLoop.
-func (w *Runner) wakeLoop(ctx context.Context, trigger func()) {
+// Each event is dispatched via onEvent (wake → claim attempt; cancel → job teardown).
+func (w *Runner) wakeLoop(ctx context.Context, onEvent func(WakeEvent)) {
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		err := w.api.StreamWake(ctx, trigger)
+		err := w.api.StreamWake(ctx, onEvent)
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Wake stream disconnected (%v); reconnecting in %s\n", err, backoff)
+			Log().Warn("wake stream disconnected; reconnecting",
+				"err", err.Error(), "backoff", backoff.String())
 		}
 		sleepCtx(ctx, backoff)
 		backoff *= 2
@@ -226,18 +278,29 @@ func (w *Runner) wakeLoop(ctx context.Context, trigger func()) {
 
 func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	job := claim.Job
+	traceparent := job.Traceparent
+	traceID := traceIDFromTraceparent(traceparent)
+	// Operational logger for this job's lifetime — structured JSON to stderr carrying
+	// the correlation ids so a runner line joins the console trace.
+	jlog := LogWith(w.config.RunnerID, traceID, job.ID)
 
-	stdoutLogger := NewJobLogger(w.api, job.ID, "STDOUT")
-	stderrLogger := NewJobLogger(w.api, job.ID, "STDERR")
+	// Customer-facing job streams (STDOUT/STDERR) — trace-stamped so each log line
+	// correlates. SYSTEM ships the runner's OPERATIONAL failures to the console (they
+	// would otherwise die on the runner's stderr).
+	stdoutLogger := NewJobLoggerWithTrace(w.api, job.ID, "STDOUT", traceparent)
+	stderrLogger := NewJobLoggerWithTrace(w.api, job.ID, "STDERR", traceparent)
+	sysLogger := NewSystemLogger(w.api, job.ID, traceparent)
 	defer stdoutLogger.Close()
 	defer stderrLogger.Close()
+	defer sysLogger.Close()
 
 	// Emit immediately so the user sees activity within ~100ms of claim — before
 	// credential setup and tofu init — instead of waiting on the first real step.
 	fmt.Fprintln(stdoutLogger, "▸ Job claimed — preparing workspace…")
 
 	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", nil); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to update job status to PROCESSING: %v\n", err)
+		jlog.Error("failed to update job status to PROCESSING", "err", err.Error())
+		fmt.Fprintf(sysLogger, "Failed to update job status to PROCESSING: %v\n", err)
 	}
 
 	if claim.CloudIdentity != nil {
@@ -320,6 +383,13 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer cleanup()
+			// Hetzner Object Storage: export the (optional) S3 key pair for the minio provider.
+			if types.CloudProvider(claim.CloudIdentity.Provider) == types.CloudProviderHetzner &&
+				claim.CloudIdentity.S3AccessKey != "" && claim.CloudIdentity.S3SecretKey != "" {
+				fmt.Fprintln(stdoutLogger, "Activating Hetzner Object Storage S3 credentials...")
+				s3Cleanup := ActivateHetznerS3(claim.CloudIdentity.S3AccessKey, claim.CloudIdentity.S3SecretKey)
+				defer s3Cleanup()
+			}
 		case types.CloudProviderAlibaba:
 			// Keyless: the alicloud provider runs an anonymous AssumeRoleWithOIDC from a token file — no
 			// AccessKey on the runner (the retired platform RAM key).
@@ -363,11 +433,33 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeChartScan:
 		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
+	case types.JobTypeIacScan:
+		execErr = w.executeIacScan(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
 
 	if execErr != nil {
+		// A user cancel surfaces as a context-cancelled error from the stage. Post
+		// CANCELLED (not FAILED) so the terminal state reflects the intent, and flag
+		// orphan risk when the teardown killed a mid-apply (cloud resources may exist
+		// outside tofu state → an operator must reconcile; see markOrphanRisk).
+		if w.cancels.wasCancelled(job.ID) {
+			jlog.Info("job cancelled", "job_type", job.JobType)
+			var meta map[string]any
+			if w.cancels.orphanRisk(job.ID) {
+				meta = map[string]any{
+					"orphan_risk":        true,
+					"orphan_risk_reason": "apply was interrupted by a cancel; cloud resources may exist outside tofu state and need reconciliation",
+				}
+				fmt.Fprintln(stderrLogger, "Cancelled during apply — cloud resources may have been left outside tofu state (orphan risk). An operator should reconcile.")
+			}
+			fmt.Fprintln(stdoutLogger, "▸ Job cancelled — teardown complete.")
+			stderrLogger.Close()
+			_ = w.api.UpdateJobStatus(job.ID, "CANCELLED", "Cancelled by user", meta)
+			return execErr
+		}
+		jlog.Error("job execution failed", "job_type", job.JobType, "err", execErr.Error())
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
 		stderrLogger.Close()
 		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
@@ -375,7 +467,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	_ = w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
-	fmt.Printf("Job %s completed successfully\n", job.ID)
+	jlog.Info("job completed successfully")
 	return nil
 }
 
@@ -441,6 +533,12 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
+
+	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
+	// unless the egress-enforced container sandbox is active. Fail-closed, before any work.
+	if err := w.byoManagedGate(vc, "DEPLOY"); err != nil {
+		return err
+	}
 
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
 		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
@@ -511,6 +609,13 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}, func(ctx context.Context) error {
 		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
 	}); err != nil {
+		// On a mid-flight cancel, decide whether the killed work had reached the apply
+		// (state-mutating) phase. RunDeployV2 writes "apply" to workDir/phase just before
+		// `tofu apply`; if we cancelled at or after that point, orphaned cloud resources may
+		// exist. Read it BEFORE the deferred RemoveAll(workDir) so the marker is still there.
+		if w.cancels.wasCancelled(job.ID) && readDeployPhase(workDir) == "apply" {
+			w.cancels.markOrphanRisk(job.ID)
+		}
 		return err
 	}
 
@@ -553,6 +658,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if len(result.AddOnStatus) > 0 {
 			metadata["addon_status"] = result.AddOnStatus
 		}
+		if len(result.InfraServices) > 0 {
+			// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
+			// Non-sensitive, safe to persist to the console alongside addon_status.
+			metadata["infra_services"] = result.InfraServices
+		}
 		if result.SecurityPosture != nil {
 			metadata["security_report"] = result.SecurityPosture
 		}
@@ -579,6 +689,12 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
+
+	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
+	// unless the egress-enforced container sandbox is active. Fail-closed, before any work.
+	if err := w.byoManagedGate(vc, "PLAN"); err != nil {
+		return err
+	}
 
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
@@ -691,6 +807,12 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
+	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
+	// unless the egress-enforced container sandbox is active. Fail-closed, before any work.
+	if err := w.byoManagedGate(vc, "DESTROY"); err != nil {
+		return err
+	}
+
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {
 		return err
@@ -764,11 +886,87 @@ func resolveAccountID(identity *CloudIdentity) string {
 	}
 }
 
+// deployPhaseFile is the path RunDeployV2 writes the provisioning phase to (under the
+// per-job workdir, so it survives the container-sandbox boundary). Kept in one place so
+// the writer (stage.go → DeployParams.PhaseFile) and reader agree.
+func deployPhaseFile(workDir string) string {
+	return filepath.Join(workDir, "phase")
+}
+
+// readDeployPhase returns the provisioning phase RunDeployV2 recorded ("apply" once the
+// state-mutating apply started), or "" if none was written (pre-apply, or a non-deploy stage).
+func readDeployPhase(workDir string) string {
+	b, err := os.ReadFile(deployPhaseFile(workDir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func sleepCtx(ctx context.Context, d time.Duration) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
+}
+
+// byoManagedGate is the E0 isolation boundary for bring-your-own IaC on a MANAGED-operator
+// runner. BYO PLAN/DEPLOY/DESTROY/DETECT_DRIFT execute UNTRUSTED customer OpenTofu — an RCE
+// surface: provider plugins run at init/validate/plan, and `local-exec`/`remote-exec`
+// provisioners + `external` data sources run arbitrary commands. A managed runner federates
+// into customer clouds AND sits in the platform account, so that untrusted code must NEVER
+// run outside an egress-enforced container sandbox — otherwise it reaches 169.254.169.254
+// and recovers the fleet's storage master key + bootstrap token (the metadata firehose).
+//
+// The gate has two separable halves:
+//   - the "is this untrusted BYO?" decision (a non-nil IacSource) lives HERE, and
+//   - the "managed requires an egress-enforced container" enforcement lives in
+//     requireManagedContainerSandbox, so the SAME enforcement can be applied by callers
+//     whose job is untrusted-BYO by definition and carries no ProjectConfig (IAC_SCAN).
+//
+// SELF operators run BYO IaC in the customer's OWN cloud with their own creds — their risk
+// boundary — so they are always allowed. A nil IacSource (trusted Alethia templates) is
+// unaffected. When the gate PASSES, the untrusted work still runs THROUGH the container
+// sandbox (the deploy/plan/destroy/drift paths all call w.sandbox.Run) — the gate guarantees
+// that backend is the active one, so managed BYO IaC can never execute outside the container.
+func (w *Runner) byoManagedGate(vc *types.ProjectConfig, kind string) error {
+	if vc == nil || vc.IacSource == nil {
+		return nil // trusted (non-BYO) template path — unaffected
+	}
+	return w.requireManagedContainerSandbox(kind)
+}
+
+// requireManagedContainerSandbox is the enforcement half of the E0 boundary: it refuses to
+// run untrusted BYO work unless the runner is an explicit SELF operator OR the egress-enforced
+// container sandbox is active with managed-enforcement on. It presumes the caller has already
+// established the work is untrusted BYO — byoManagedGate calls it only when IacSource != nil,
+// and executeIacScan calls it UNCONDITIONALLY (an IAC_SCAN is untrusted BYO by definition).
+//
+// It is FAIL-CLOSED. Work is allowed ONLY when either:
+//   - w.config.Operator == "self" — the customer's OWN cloud + creds are their risk boundary; OR
+//   - all of: the active backend is the Container backend (ALETHIA_SANDBOX_BACKEND=container),
+//     that backend confirms egress enforcement (EgressEnforced, from
+//     ALETHIA_SANDBOX_EGRESS_ENFORCED=1 — default-deny net + IMDS block + squid allowlist), AND
+//     ALETHIA_SANDBOX_ENFORCE_MANAGED=1 (the post-canary managed-enforcement flip, which the
+//     maintainer sets fleet-wide AFTER the real-VM 3b canary; see memory e0-isolation-runtime).
+//
+// Crucially only an EXPLICIT "self" operator takes the allow path — an empty/miscased/unknown
+// operator string ("", "Managed", typo) is treated as managed-strict and MUST pass through the
+// container requirement, so a mis-set operator can never fail OPEN into unsandboxed execution.
+func (w *Runner) requireManagedContainerSandbox(kind string) error {
+	if w.config.Operator == "self" {
+		return nil // self operator: customer's own cloud + creds = their risk boundary
+	}
+	c, ok := w.sandbox.(sandbox.Container)
+	if ok && c.EgressEnforced && envTrue("ALETHIA_SANDBOX_ENFORCE_MANAGED") {
+		return nil // egress-enforced container sandbox is active + managed-enforcement on
+	}
+	return fmt.Errorf(
+		"refusing to run bring-your-own IaC %s on a managed runner without the egress-enforced container sandbox: "+
+			"this executes untrusted customer OpenTofu (provider plugins + provisioners run arbitrary code) and is only "+
+			"permitted inside the E0 isolation boundary — set ALETHIA_SANDBOX_BACKEND=container, "+
+			"ALETHIA_SANDBOX_EGRESS_ENFORCED=1 and ALETHIA_SANDBOX_ENFORCE_MANAGED=1 on the managed fleet (post 3b canary)",
+		kind)
 }
 
 // envTrue reports whether an env var is set to a truthy value (1/true/yes/on).

@@ -35,11 +35,13 @@ import {
 	type DimensionInput,
 	dimensionInputSchema,
 } from "@/lib/validations/classification";
+import type { ResourceKind } from "@/lib/db/schema/enums";
 import {
 	CLASSIFICATION_TEMPLATES,
 	type ClassificationTemplate,
 } from "./classification-templates";
 import { InfoHint, Spinner } from "./classification-ui";
+import { RESOURCE_KIND_LABELS } from "./resource-kind-labels";
 
 /** Lowercases + hyphenates a label into a slug candidate. */
 function slugify(input: string): string {
@@ -73,7 +75,7 @@ export function DimensionEditorSheet({
 
 	const form = useForm<DimensionInput>({
 		resolver: zodResolver(dimensionInputSchema),
-		defaultValues: { key: "", label: "", description: "", multi: false, position: 0 },
+		defaultValues: { key: "", label: "", description: "", multi: false, applies_to: [], position: 0 },
 	});
 
 	// Apply a template's fields + stage its values (create mode only).
@@ -83,6 +85,7 @@ export function DimensionEditorSheet({
 			label: t.label,
 			description: t.description,
 			multi: t.multi,
+			applies_to: [],
 			position: 0,
 		});
 		setStaged(t.values);
@@ -91,7 +94,7 @@ export function DimensionEditorSheet({
 
 	// Deselect the active template, back to a blank form.
 	const clearTemplate = () => {
-		form.reset({ key: "", label: "", description: "", multi: false, position: 0 });
+		form.reset({ key: "", label: "", description: "", multi: false, applies_to: [], position: 0 });
 		setStaged([]);
 		setTemplateKey(null);
 	};
@@ -105,6 +108,7 @@ export function DimensionEditorSheet({
 				label: dimension.label,
 				description: dimension.description ?? "",
 				multi: dimension.multi,
+				applies_to: dimension.appliesTo,
 				position: dimension.position,
 			});
 			setStaged([]);
@@ -116,7 +120,7 @@ export function DimensionEditorSheet({
 			if (t) {
 				applyTemplate(t);
 			} else {
-				form.reset({ key: "", label: "", description: "", multi: false, position: 0 });
+				form.reset({ key: "", label: "", description: "", multi: false, applies_to: [], position: 0 });
 				setStaged([]);
 				setTemplateKey(null);
 			}
@@ -126,6 +130,17 @@ export function DimensionEditorSheet({
 	}, [open, dimension, initialTemplateKey]);
 
 	const multi = form.watch("multi");
+	const appliesTo = form.watch("applies_to") ?? [];
+	const toggleKind = (kind: ResourceKind) => {
+		const set = new Set(appliesTo);
+		if (set.has(kind)) set.delete(kind);
+		else set.add(kind);
+		form.setValue("applies_to", [...set]);
+	};
+	const KIND_ENTRIES = Object.entries(RESOURCE_KIND_LABELS) as [
+		ResourceKind,
+		string,
+	][];
 
 	const addStaged = () => {
 		const label = addLabel.trim();
@@ -135,7 +150,7 @@ export function DimensionEditorSheet({
 			setAddLabel("");
 			return;
 		}
-		setStaged((s) => [...s, { value, label, color: null }]);
+		setStaged((s) => [...s, { value, label }]);
 		setAddLabel("");
 	};
 
@@ -269,6 +284,40 @@ export function DimensionEditorSheet({
 							/>
 						</div>
 
+						{/* applies-to scope */}
+						<div>
+							<div className="mb-1.5 flex items-center gap-1.5">
+								<label className="text-xs font-medium">Applies to</label>
+								<InfoHint>
+									Which resource kinds can carry this dimension. Leave all unchecked to
+									apply everywhere; otherwise it only appears on the kinds you pick.
+								</InfoHint>
+								<span className="ml-auto font-mono text-[10.5px] text-text-tertiary">
+									{appliesTo.length === 0 ? "All resources" : `${appliesTo.length} kinds`}
+								</span>
+							</div>
+							<div className="flex flex-wrap gap-1.5">
+								{KIND_ENTRIES.map(([kind, label]) => {
+									const on = appliesTo.includes(kind);
+									return (
+										<button
+											key={kind}
+											type="button"
+											onClick={() => toggleKind(kind)}
+											className={cn(
+												"rounded-[2px] border px-2 py-1 text-[11.5px] transition-colors",
+												on
+													? "border-ring bg-surface-muted text-text-primary"
+													: "border-border-strong text-text-tertiary hover:bg-surface-muted",
+											)}
+										>
+											{label}
+										</button>
+									);
+								})}
+							</div>
+						</div>
+
 						{/* staged values (create only) */}
 						{!isEdit && (
 							<div>
@@ -285,12 +334,6 @@ export function DimensionEditorSheet({
 												key={v.value}
 												className="inline-flex items-center gap-1.5 rounded-[2px] border bg-surface-sunken px-2 py-1 text-[12px]"
 											>
-												{v.color && (
-													<span
-														className="size-2 rounded-full"
-														style={{ background: v.color }}
-													/>
-												)}
 												{v.label}
 												<button
 													type="button"
@@ -332,7 +375,7 @@ export function DimensionEditorSheet({
 									</Button>
 								</div>
 								<p className="mt-2 text-[11px] text-text-tertiary">
-									You can add, edit colors, and reorder values after creating.
+									You can edit and reorder values after creating.
 								</p>
 							</div>
 						)}

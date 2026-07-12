@@ -84,10 +84,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"create_firestore":    len(config.NosqlTables) > 0,
 		"firestore_databases": buildFirestoreDatabases(config.NosqlTables),
 
-		// Artifact Registry
-		// TODO: enable when ProjectConfig gains a ContainerRegistries field
-		// "provision_artifact_registry": len(config.ContainerRegistries) > 0,
-		"provision_artifact_registry": false,
+		// Artifact Registry (container registry)
+		"provision_artifact_registry": len(config.ContainerRegistries) > 0,
 
 		// Cloud Storage
 		"create_cloud_storage":  len(config.StorageBuckets) > 0,

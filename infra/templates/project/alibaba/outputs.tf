@@ -21,6 +21,21 @@ output "kubeconfig" {
   sensitive   = true
 }
 
+output "rrsa_oidc_issuer_url" {
+  description = "OIDC issuer URL of the cluster's RRSA identity (workload identity for in-cluster components)"
+  value       = var.provision_ack ? module.cluster[0].rrsa_oidc_issuer_url : ""
+}
+
+output "rrsa_oidc_provider_arn" {
+  description = "RAM OIDC provider ARN that RRSA workload-identity roles trust"
+  value       = var.provision_ack ? module.cluster[0].rrsa_oidc_provider_arn : ""
+}
+
+output "external_secrets_ram_role_arn" {
+  description = "RRSA RAM role ARN for the external-secrets operator (gates the alibaba ClusterSecretStore render)"
+  value       = local.eso_rrsa_enabled ? alicloud_ram_role.external_secrets[0].arn : ""
+}
+
 #########################################################################
 ##                     Networking Outputs                              ##
 #########################################################################

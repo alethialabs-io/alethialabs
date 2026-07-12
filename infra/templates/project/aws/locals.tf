@@ -46,6 +46,18 @@ locals {
     length(module.elasticache) > 0 ? module.elasticache[0].redis_secret_kms_key_arn : null
   ])
 
+  # Secrets the external-secrets operator may read: the project's custom secrets (their names all
+  # share the awssm-passgen prefix, see custom_secrets.tf — the trailing * also covers the random
+  # 6-char suffix Secrets Manager appends to every ARN) plus the RDS credential secrets. This
+  # scopes the operator's IRSA policy to the project's secrets — never account-wide "*".
+  eso_secret_arns = concat(
+    ["arn:aws:secretsmanager:${var.region}:${var.aws_account_id}:secret:${local.aws_regions_short[var.region]}-${var.environment}-${var.project_name}-*"],
+    compact([
+      length(module.rds_maindb) > 0 ? module.rds_maindb[0].rds_master_credentials_secret_arn : null,
+      length(module.rds_maindb) > 0 ? module.rds_maindb[0].rds_extra_credentials_secret_arn : null,
+    ])
+  )
+
   karpenter_queue_name           = "queue-${var.region}-${var.environment}-karpenter"
   karpenter_namespace            = "karpenter"
   karpenter_service_account_name = "karpenter"

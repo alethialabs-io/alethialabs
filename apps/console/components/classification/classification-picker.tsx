@@ -15,7 +15,9 @@ import {
 	PopoverTrigger,
 } from "@repo/ui/popover";
 import { cn } from "@repo/ui/utils";
-import { Check, Tags } from "lucide-react";
+import { ArrowRight, Check, Tags } from "lucide-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
 import type { ResourceKind } from "@/lib/db/schema/enums";
@@ -29,12 +31,10 @@ import {
 /** A single selectable value row inside a dimension section. */
 function ValueRow({
 	label,
-	color,
 	selected,
 	onSelect,
 }: {
 	label: string;
-	color: string | null;
 	selected: boolean;
 	onSelect: () => void;
 }) {
@@ -50,13 +50,6 @@ function ValueRow({
 			<Check
 				className={cn("size-3.5 shrink-0", selected ? "opacity-100" : "opacity-0")}
 			/>
-			{color ? (
-				<span
-					aria-hidden
-					className="size-1.5 shrink-0 rounded-full"
-					style={{ backgroundColor: color }}
-				/>
-			) : null}
 			<span className="truncate">{label}</span>
 		</button>
 	);
@@ -80,9 +73,14 @@ export function ClassificationPicker({
 	align?: "start" | "center" | "end";
 	initialAssignments?: AssignedValue[];
 }) {
+	const { org } = useParams<{ org: string }>();
 	const dimensionsQuery = useDimensionsQuery();
 	const assignmentsQuery = useAssignmentsQuery(kind, id, initialAssignments);
-	const dimensions = dimensionsQuery.data ?? [];
+	const allDimensions = dimensionsQuery.data ?? [];
+	// Only dimensions scoped to this resource kind (empty applies_to ⇒ all kinds).
+	const dimensions = allDimensions.filter(
+		(d) => d.appliesTo.length === 0 || d.appliesTo.includes(kind),
+	);
 	const { assign, unassign } = useAssignmentMutations(kind, id, dimensions);
 
 	const selectedValueIds = new Set(
@@ -111,10 +109,22 @@ export function ClassificationPicker({
 			<PopoverContent align={align} className="w-64 p-0">
 				<div className="max-h-80 overflow-y-auto">
 					{dimensions.length === 0 ? (
-						<p className="px-3 py-4 text-sm text-muted-foreground">
-							No classification dimensions yet. An admin can create them in
-							Settings → Classification.
-						</p>
+						<div className="px-3 py-4">
+							<p className="mb-2 text-sm text-muted-foreground">
+								{allDimensions.length === 0
+									? "No classification dimensions yet."
+									: "No dimensions apply to this resource."}
+							</p>
+							<Link
+								href={`/${org}/~/settings/classification`}
+								className="inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+							>
+								{allDimensions.length === 0
+									? "Create dimensions"
+									: "Manage classification"}
+								<ArrowRight className="size-3.5" />
+							</Link>
+						</div>
 					) : (
 						dimensions.map((dimension) => (
 							<div
@@ -141,7 +151,6 @@ export function ClassificationPicker({
 										<ValueRow
 											key={value.id}
 											label={value.label}
-											color={value.color}
 											selected={selectedValueIds.has(value.id)}
 											onSelect={() => toggle(dimension, value.id)}
 										/>

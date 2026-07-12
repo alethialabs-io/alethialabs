@@ -1119,6 +1119,86 @@ func (c *Client) DeleteRole(roleID string) error {
 	return nil
 }
 
+// ClassificationValue is one allowed value on a dimension.
+type ClassificationValue struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// ClassificationDimension is a classification axis with its values and resource-kind scope.
+type ClassificationDimension struct {
+	ID          string                `json:"id"`
+	Key         string                `json:"key"`
+	Label       string                `json:"label"`
+	Description string                `json:"description"`
+	Multi       bool                  `json:"multi"`
+	AppliesTo   []string              `json:"applies_to"`
+	Values      []ClassificationValue `json:"values"`
+}
+
+// ClassificationAssignment is a value assigned to a resource.
+type ClassificationAssignment struct {
+	DimensionKey   string `json:"dimension_key"`
+	DimensionLabel string `json:"dimension_label"`
+	Value          string `json:"value"`
+	ValueLabel     string `json:"value_label"`
+}
+
+// ListClassificationDimensions returns the org's classification taxonomy.
+func (c *Client) ListClassificationDimensions() ([]ClassificationDimension, error) {
+	endpoint := fmt.Sprintf("%s/cli/classification/dimensions", c.baseURL)
+	var resp struct {
+		Dimensions []ClassificationDimension `json:"dimensions"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list classification dimensions: %w", err)
+	}
+	return resp.Dimensions, nil
+}
+
+// GetResourceClassifications returns the values assigned to a resource.
+func (c *Client) GetResourceClassifications(kind, id string) ([]ClassificationAssignment, error) {
+	endpoint := fmt.Sprintf("%s/cli/classification/assignments?kind=%s&id=%s",
+		c.baseURL, url.QueryEscape(kind), url.QueryEscape(id))
+	var resp struct {
+		Assignments []ClassificationAssignment `json:"assignments"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get classifications: %w", err)
+	}
+	return resp.Assignments, nil
+}
+
+// AssignClassification pins a value (by dimension key + value slug) to a resource and returns
+// the resource's updated assignments.
+func (c *Client) AssignClassification(kind, id, dimensionKey, valueSlug string) ([]ClassificationAssignment, error) {
+	endpoint := fmt.Sprintf("%s/cli/classification/assignments", c.baseURL)
+	payload := map[string]interface{}{
+		"kind":          kind,
+		"id":            id,
+		"dimension_key": dimensionKey,
+		"value_slug":    valueSlug,
+	}
+	var resp struct {
+		Assignments []ClassificationAssignment `json:"assignments"`
+	}
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to assign classification: %w", err)
+	}
+	return resp.Assignments, nil
+}
+
+// UnassignClassification clears a value (by slug) from a resource.
+func (c *Client) UnassignClassification(kind, id, valueSlug string) error {
+	endpoint := fmt.Sprintf("%s/cli/classification/assignments?kind=%s&id=%s&value_slug=%s",
+		c.baseURL, url.QueryEscape(kind), url.QueryEscape(id), url.QueryEscape(valueSlug))
+	if err := c.doDelete(endpoint); err != nil {
+		return fmt.Errorf("failed to unassign classification: %w", err)
+	}
+	return nil
+}
+
 // ListGrants returns the active org's access grants.
 func (c *Client) ListGrants() ([]Grant, error) {
 	endpoint := fmt.Sprintf("%s/cli/grants", c.baseURL)

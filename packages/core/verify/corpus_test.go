@@ -14,25 +14,43 @@ import (
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
-// TestCorpus is the Phase-0 go/no-go measurement harness. It evaluates a corpus
-// of real OpenTofu plan JSONs and reports the verdict distribution, plus — when a
-// `labels.json` ground-truth file is present — the false-PASS and false-DENY
-// rates that decide whether the gate is trustworthy enough to build receipts on.
+// corpusLabel is one plan's ground truth: the overall verdict the engine is
+// expected to produce, plus the control(s) the plan is designed to exercise. The
+// control list powers the coverage assertion (corpus_coverage_test.go) — a control
+// with no fail-labeled plan cannot ship untested.
+type corpusLabel struct {
+	Verdict  Status   `json:"verdict"`
+	Controls []string `json:"controls"`
+}
+
+// corpusDir resolves the corpus directory: an override via ELENCH_CORPUS_DIR (for
+// pointing the harness at a fleet of real captured plans) or the checked-in labeled
+// corpus under testdata/corpus (the default, so this runs in CI).
+func corpusDir() string {
+	if dir := os.Getenv("ELENCH_CORPUS_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join("testdata", "corpus")
+}
+
+// TestCorpus is the compliance go/no-go harness. It evaluates every OpenTofu plan
+// JSON in the labeled corpus and, against the labels.json ground truth, computes
+// the two rates that decide whether the gate is trustworthy:
 //
-// It is skipped by default (no corpus checked in). Point it at a directory of
-// plan JSONs:
+//   - false-PASS = a plan labeled "fail" (a real violation) that the gate did NOT
+//     block. This is a SECURITY HOLE — a bad plan would reach apply — so it FAILS
+//     the test hard (one is one too many).
+//   - false-DENY = a plan labeled pass/warn/not_evaluable that the gate blocked. A
+//     bug (it over-blocks a safe plan) but not a security hole, so it is reported
+//     loudly and counted, not fatal.
+//
+// Unlike the earlier dormant version, this runs by default against the checked-in
+// corpus (no env gating). Point it at a directory of real plans to measure the gate
+// against production traffic:
 //
 //	ELENCH_CORPUS_DIR=/path/to/plans go test ./packages/core/verify -run TestCorpus -v
-//
-// Optional ground truth: a `labels.json` in that dir mapping each plan filename to
-// its expected verdict, e.g. {"prod-eks.json":"pass","legacy.json":"fail"}.
-//   - false-PASS = expected "fail" but the gate did NOT block (pass/warn/not_evaluable)
-//   - false-DENY = expected "pass" but the gate blocked (fail)
 func TestCorpus(t *testing.T) {
-	dir := os.Getenv("ELENCH_CORPUS_DIR")
-	if dir == "" {
-		dir = filepath.Join("testdata", "corpus")
-	}
+	dir := corpusDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) == 0 {
 		t.Skipf("no corpus at %s (set ELENCH_CORPUS_DIR to measure); skipping", dir)
@@ -69,53 +87,64 @@ func TestCorpus(t *testing.T) {
 			continue
 		}
 		dist[rep.Verdict]++
-		t.Logf("%-40s verdict=%-13s (pass=%d fail=%d warn=%d n/e=%d)",
+		t.Logf("%-42s verdict=%-13s (pass=%d fail=%d warn=%d n/e=%d)",
 			name, rep.Verdict, rep.Summary.Pass, rep.Summary.Fail, rep.Summary.Warn, rep.Summary.NotEvaluable)
 
-		if want, ok := labels[name]; ok {
-			labeled++
-			blocked := rep.Blocking()
-			// The corpus golden labels are only pass/fail (a plan is expected to block or
-			// not); warn / not_evaluable are never expected labels here.
-			//exhaustive:ignore
-			switch want {
-			case StatusFail:
-				if !blocked {
-					falsePass++
-					t.Errorf("FALSE-PASS %s: expected the gate to block, got verdict=%s", name, rep.Verdict)
-				}
-			case StatusPass:
-				if blocked {
-					falseDeny++
-					t.Errorf("FALSE-DENY %s: expected the gate to allow, got verdict=%s", name, rep.Verdict)
-				}
+		label, ok := labels[name]
+		if !ok {
+			// An unlabeled corpus plan is untested weight — fail so nobody can slip a
+			// plan into the corpus without declaring what it proves.
+			t.Errorf("UNLABELED %s: every corpus plan must have an entry in labels.json (verdict + controls)", name)
+			continue
+		}
+		labeled++
+		blocked := rep.Blocking()
+
+		// The security-critical direction: a violation MUST block. Labels are
+		// pass/fail/warn/not_evaluable; only fail requires blocking, the rest must not.
+		//exhaustive:ignore
+		switch label.Verdict {
+		case StatusFail:
+			if !blocked {
+				falsePass++
+				t.Errorf("FALSE-PASS %s: labeled fail but the gate did NOT block (verdict=%s) — a bad plan would reach apply", name, rep.Verdict)
 			}
+		default:
+			// pass / warn / not_evaluable are all non-blocking labels.
+			if blocked {
+				falseDeny++
+				t.Logf("FALSE-DENY (non-fatal) %s: labeled %s but the gate blocked (verdict=%s) — over-blocks a safe plan", name, label.Verdict, rep.Verdict)
+			}
+		}
+
+		// Precision check (non-fatal): the exact verdict should match the label. A
+		// mismatch that is not already a false-PASS/false-DENY (e.g. warn vs
+		// not_evaluable) is a labeling or engine drift worth surfacing.
+		if rep.Verdict != label.Verdict {
+			t.Logf("VERDICT-MISMATCH (non-fatal) %s: got %s, labeled %s", name, rep.Verdict, label.Verdict)
 		}
 	}
 
 	t.Logf("corpus verdict distribution: pass=%d warn=%d not_evaluable=%d fail=%d",
 		dist[StatusPass], dist[StatusWarn], dist[StatusNotEvaluable], dist[StatusFail])
-	if labeled > 0 {
-		t.Logf("ground truth over %d labeled plans: false-PASS=%d false-DENY=%d", labeled, falsePass, falseDeny)
-	} else {
-		t.Logf("no labels.json — distribution only (add labels to measure false-PASS/false-DENY)")
+	t.Logf("ground truth over %d labeled plans: false-PASS=%d false-DENY=%d", labeled, falsePass, falseDeny)
+
+	if falsePass > 0 {
+		t.Fatalf("%d false-PASS(es): the gate let a labeled violation through — this is a security regression", falsePass)
 	}
 }
 
-// loadLabels reads optional ground-truth labels; absence is not an error.
-func loadLabels(t *testing.T, path string) map[string]Status {
+// loadLabels reads the corpus ground-truth labels. Absence returns nil (the harness
+// then measures distribution only); a present-but-invalid file is a hard error.
+func loadLabels(t *testing.T, path string) map[string]corpusLabel {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	var raw map[string]string
+	var raw map[string]corpusLabel
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatalf("labels.json is present but invalid: %v", err)
 	}
-	out := make(map[string]Status, len(raw))
-	for k, v := range raw {
-		out[k] = Status(v)
-	}
-	return out
+	return raw
 }

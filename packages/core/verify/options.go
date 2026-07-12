@@ -5,6 +5,7 @@ package verify
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -56,11 +57,14 @@ func EvaluateWithOptions(ctx context.Context, plan *tfjson.Plan, opts Options) (
 	}
 
 	planned := gatherPlanned(plan)
-	rep.Provider = detectProvider(planned)
-	rep.Controls = selectControls(rep.Provider, planned)
+	providers := detectProviders(planned)
+	rep.Provider = providerLabel(providers)
+	rep.Controls = selectControls(providers, planned)
 
-	// Access Analyzer corroboration is AWS-only and opt-in (needs a checker).
-	if opts.PolicyChecker != nil && (rep.Provider == "aws" || rep.Provider == "unknown") {
+	// Access Analyzer corroboration is AWS-only and opt-in (needs a checker). Run it
+	// whenever AWS resources are present — including in a multi-cloud plan — or when
+	// no cloud was recognized at all (the fail-closed default that runs every set).
+	if opts.PolicyChecker != nil && (len(providers) == 0 || slices.Contains(providers, "aws")) {
 		denied := opts.DeniedActions
 		if len(denied) == 0 {
 			denied = DefaultDeniedActions

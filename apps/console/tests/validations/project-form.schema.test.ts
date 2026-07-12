@@ -121,6 +121,51 @@ describe("projectFormSchema", () => {
 		});
 	});
 
+	// In-cluster sizing (compute-only clouds, e.g. Hetzner): the columns are nullable —
+	// NULL/omitted means the mapper defaults apply — and clamped to the inspector's bounds.
+	describe("in-cluster sizing fields (storage_gb / replicas)", () => {
+		it("accepts explicit sizing on databases, caches, and queues", () => {
+			const data = {
+				...validProject,
+				databases: [{ name: "primary", engine_family: "postgres", storage_gb: 50, replicas: 3 }],
+				caches: [{ name: "primary", engine: "valkey", storage_gb: 32 }],
+				queues: [{ name: "jobs", storage_gb: 16 }],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("accepts null / omitted sizing (mapper defaults stay authoritative)", () => {
+			const data = {
+				...validProject,
+				databases: [{ name: "primary", storage_gb: null, replicas: null }],
+				caches: [{ name: "primary" }],
+				queues: [{ name: "jobs", storage_gb: null }],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("rejects negative, zero, fractional, and out-of-bounds sizing", () => {
+			const bad = [
+				{ databases: [{ name: "d", storage_gb: -5 }] },
+				{ databases: [{ name: "d", replicas: 0 }] },
+				{ databases: [{ name: "d", replicas: 6 }] },
+				{ databases: [{ name: "d", storage_gb: 2048 }] },
+				{ databases: [{ name: "d", storage_gb: 10.5 }] },
+				{ caches: [{ name: "c", storage_gb: 0 }] },
+				{ caches: [{ name: "c", storage_gb: 1024 }] },
+				{ queues: [{ name: "q", storage_gb: -1 }] },
+				{ queues: [{ name: "q", storage_gb: 512 }] },
+			];
+			const failures = bad
+				.filter(
+					(overrides) =>
+						projectFormSchema.safeParse({ ...validProject, ...overrides }).success,
+				)
+				.map((overrides) => JSON.stringify(overrides));
+			expect(failures).toEqual([]);
+		});
+	});
+
 	describe("nosql_tables array", () => {
 		it("accepts empty array", () => {
 			const result = projectFormSchema.safeParse({ ...validProject, nosql_tables: [] });
@@ -163,6 +208,92 @@ describe("projectFormSchema", () => {
 			};
 			const result = projectFormSchema.safeParse(data);
 			expect(result.success).toBe(false);
+		});
+	});
+
+	describe("storage_buckets array (S3-safe naming)", () => {
+		it("accepts a valid bucket", () => {
+			const data = {
+				...validProject,
+				storage_buckets: [
+					{
+						name: "my-assets-1",
+						versioning: true,
+						encryption_enabled: true,
+						public_access: false,
+						cors_origins: ["https://app.example.com"],
+					},
+				],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("accepts a minimal 3-char name and a 63-char name", () => {
+			for (const name of ["abc", `a${"b".repeat(61)}c`]) {
+				const data = { ...validProject, storage_buckets: [{ name }] };
+				expect(projectFormSchema.safeParse(data).success).toBe(true);
+			}
+		});
+
+		it("rejects uppercase, too-short, too-long, and hyphen-edged names", () => {
+			const bad = [
+				"MyBucket", // uppercase
+				"ab", // 2 chars
+				"a".repeat(64), // 64 chars
+				"-assets", // leading hyphen
+				"assets-", // trailing hyphen
+				"my_bucket", // underscore
+				"", // empty
+			];
+			const passed = bad.filter(
+				(name) =>
+					projectFormSchema.safeParse({ ...validProject, storage_buckets: [{ name }] })
+						.success,
+			);
+			expect(passed).toEqual([]);
+		});
+
+		it("defaults to [] when omitted", () => {
+			const result = projectFormSchema.safeParse(validProject);
+			expect(result.success).toBe(true);
+			if (result.success) {
+				expect(result.data.storage_buckets).toEqual([]);
+				expect(result.data.container_registries).toEqual([]);
+			}
+		});
+	});
+
+	describe("container_registries array", () => {
+		it("accepts a valid registry with provider knobs", () => {
+			const data = {
+				...validProject,
+				container_registries: [
+					{
+						name: "apps",
+						provider_config: { immutable_tags: true, vulnerability_scanning: true },
+					},
+				],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("rejects a registry with an empty name", () => {
+			const data = { ...validProject, container_registries: [{ name: "" }] };
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
+		});
+
+		it("strips the repository_url output column", () => {
+			const data = {
+				...validProject,
+				container_registries: [
+					{ name: "apps", repository_url: "123.dkr.ecr.amazonaws.com/apps" },
+				],
+			};
+			const result = projectFormSchema.safeParse(data);
+			expect(result.success).toBe(true);
+			if (result.success) {
+				expect(result.data.container_registries[0]).not.toHaveProperty("repository_url");
+			}
 		});
 	});
 

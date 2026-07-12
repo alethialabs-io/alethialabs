@@ -26,6 +26,22 @@ const PAIRS = [
 		"infra/connector/aws/alethia-bootstrap.yaml",
 		"apps/console/public/alethia-bootstrap.yaml",
 	],
+	[
+		"infra/connector/aws/alethia-bootstrap.tf",
+		"apps/console/public/connector-terraform/aws.tf",
+	],
+	[
+		"infra/connector/gcp/main.tf",
+		"apps/console/public/connector-terraform/gcp.tf",
+	],
+	[
+		"infra/connector/azure/main.tf",
+		"apps/console/public/connector-terraform/azure.tf",
+	],
+	[
+		"infra/connector/alibaba/main.tf",
+		"apps/console/public/connector-terraform/alibaba.tf",
+	],
 ];
 
 /** sha256 of a file, or null if it doesn't exist. */

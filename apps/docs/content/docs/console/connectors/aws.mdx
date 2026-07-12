@@ -80,10 +80,24 @@ server-side [asset inventory](/console/connectors/health-and-inventory), not dur
 
 ## IAM Role Permissions
 
-The role is created with the AWS-managed `AdministratorAccess` policy so it can provision every
-Terraform-managed resource type (EC2/VPC, EKS, RDS, ElastiCache, Route 53, Secrets Manager, DynamoDB, SQS/SNS,
-ECR, S3, IAM for IRSA, ACM, WAF). You can attach a tighter policy instead — the trust relationship (who may
-assume the role) is independent of what the role is allowed to do.
+What the role may *do* is independent of *who may assume it* (the OIDC trust above) — a separate axis.
+
+**Exactly what Alethia provisions in your account** (feature-gated — a given Project uses a subset): EC2/VPC
+(subnets, NAT, route tables, security groups, VPC endpoints), EKS (cluster, managed node groups, add-ons, the
+IRSA OIDC provider + controller roles), RDS (Aurora), ElastiCache (Redis/Valkey), Route 53, ACM, Secrets
+Manager, DynamoDB, SQS/SNS, ECR, S3, KMS envelope keys, CloudWatch Logs + Kinesis Firehose, EventBridge
+(Karpenter), Application Auto Scaling, and the in-cluster controller IAM roles (external-dns, AWS Load
+Balancer Controller, EBS CSI, Karpenter).
+
+<Callout type="info">
+**Least-privilege by default — no account admin.** The setup attaches **four scoped policies** instead of
+`AdministratorAccess`: `…-Compute`, `…-Data`, `…-Edge` (each limited to exactly the services above), and an
+action-enumerated `…-IAM` policy. The IAM policy lets the templates create the EKS/IRSA roles they need but
+**explicitly denies** attaching `AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess` to anything, scopes
+`PassRole` to the provisioned services, and denies all `organizations:*`/`account:*` — so the role **cannot
+escalate to admin**. A defence-in-depth **permissions boundary** on the created roles is the next hardening
+increment. The OIDC trust is independent of all this.
+</Callout>
 
 ## What's Stored
 
