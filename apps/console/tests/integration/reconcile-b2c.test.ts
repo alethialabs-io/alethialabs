@@ -59,14 +59,22 @@ async function seedEnv(
 	return e.id;
 }
 
-/** Insert a job for an env with an explicit type/status/timestamp (to control "latest"). */
+/**
+ * Insert a job for an env with an explicit type/status/timestamp (to control "latest"). Terminal jobs
+ * get a `completed_at` (defaults to `createdAt`) — convergence's staleness gate keys off it, so a test
+ * that wants an env converged must give it a completed_at older than the min-age window (the t0-based
+ * timestamps are 11 days in the past, so that holds by default); pass `completedAt: new Date()` to
+ * simulate a FRESH terminal job that convergence must NOT touch.
+ */
 async function seedJob(
 	projectId: string,
 	envId: string,
 	jobType: "DEPLOY" | "DESTROY" | "PLAN" | "DETECT_DRIFT",
 	status: "QUEUED" | "PROCESSING" | "SUCCESS" | "FAILED" | "CANCELLED",
 	createdAt: Date,
+	completedAt?: Date,
 ): Promise<string> {
+	const terminal = status === "SUCCESS" || status === "FAILED" || status === "CANCELLED";
 	const [j] = await db
 		.insert(jobs)
 		.values({
@@ -77,6 +85,7 @@ async function seedJob(
 			status,
 			config_snapshot: { seed: true },
 			created_at: createdAt,
+			completed_at: terminal ? (completedAt ?? createdAt) : null,
 		})
 		.returning({ id: jobs.id });
 	return j.id;
@@ -187,6 +196,30 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 
 		expect(await statusOf(provInFlight)).toBe("PROVISIONING"); // untouched — apply in flight
 		expect(await statusOf(settledActive)).toBe("ACTIVE"); // untouched — not an in-flight state
+	});
+
+	it("convergence: staleness gate — a FRESH terminal job is NOT converged (never races the live path)", async () => {
+		// Env stuck PROVISIONING with a DEPLOY that JUST went terminal (completed_at = now). This is the
+		// sub-second window in which the real status callback settles the env — convergence must stay out
+		// of it, else it races finalizeDeployment (spurious status-conflict alert) or a concurrent
+		// re-enqueue. Only a job terminal for >min-age with the env still stuck is a dropped update.
+		const freshTerminal = await seedEnv(projectId, "conv-fresh", "PROVISIONING");
+		await seedJob(projectId, freshTerminal, "DEPLOY", "SUCCESS", min(2), new Date());
+
+		await convergeEnvStatuses(db);
+
+		expect(await statusOf(freshTerminal)).toBe("PROVISIONING"); // untouched — too fresh to be a drop
+	});
+
+	it("convergence: a cancelled read-only PLAN settles to DRAFT, not FAILED", async () => {
+		// A PLAN changes no infra, so a cancelled plan that stranded the env at QUEUED must converge back
+		// to DRAFT (its success target) — NOT be flagged FAILED (which would trigger spurious remediation).
+		const planCancelled = await seedEnv(projectId, "conv-plan-cancel", "QUEUED");
+		await seedJob(projectId, planCancelled, "PLAN", "CANCELLED", min(2));
+
+		await convergeEnvStatuses(db);
+
+		expect(await statusOf(planCancelled)).toBe("DRAFT"); // read-only plan → DRAFT, not FAILED
 	});
 
 	it("ephemeral reaper: enqueues DESTROY for an expired env, and re-running is a no-op", async () => {

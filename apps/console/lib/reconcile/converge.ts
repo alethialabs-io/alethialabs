@@ -36,6 +36,20 @@ import { log } from "@/lib/observability/log";
 
 const clog = log.child({ component: "reconcile", reconciler: "env-convergence" });
 
+/**
+ * Minimum age (minutes) of a terminal lifecycle job before its env is eligible for convergence. This
+ * is what makes convergence a true BACKSTOP rather than a racer of the live path: in the normal flow
+ * a job goes terminal and its status callback settles the env in the SAME sub-second window, so a
+ * freshly-terminal job is NOT converged (avoiding both a spurious status-conflict alert against a
+ * healthy deploy and a clobber of an env a concurrent enqueue just re-queued). Only a job that went
+ * terminal this many minutes ago with its env STILL stuck in-flight is a genuinely dropped update.
+ * Well beyond any callback latency; env-tunable.
+ */
+const CONVERGE_MIN_AGE_MINUTES = (() => {
+	const raw = Number(process.env.ALETHIA_CONVERGE_MIN_AGE_MINUTES);
+	return Number.isFinite(raw) && raw > 0 ? raw : 5;
+})();
+
 /** A stuck env + the terminal lifecycle job the reconciler should converge it toward. */
 type ConvergeCandidate = {
 	env_id: string;
@@ -49,10 +63,12 @@ type ConvergeCandidate = {
 
 /**
  * Map a terminal lifecycle (job_type × job_status) onto the env-status CAS context that settles its
- * env. SUCCESS routes to the job's success terminal; FAILED/CANCELLED both settle the env to FAILED
- * (a cancelled provisioning job leaves no live infra — FAILED is the honest resting state, and the
- * CAS still guards the from-set). Non-lifecycle job types never reach here (the candidate query only
- * selects DEPLOY/DESTROY/PLAN).
+ * env. SUCCESS routes to the job's success terminal. For DEPLOY/DESTROY a FAILED *or* CANCELLED job
+ * settles the env to FAILED (a cancelled apply/teardown may leave partially-applied infra — FAILED is
+ * the honest "needs attention" resting state). A PLAN is READ-ONLY, so a cancelled plan touched
+ * nothing: it settles back to DRAFT (its success target), not FAILED — only a genuinely FAILED plan
+ * marks the env FAILED. The CAS from-set still guards every move. Non-lifecycle job types never reach
+ * here (the candidate query only selects DEPLOY/DESTROY/PLAN).
  */
 function convergenceContextFor(
 	jobType: ProvisionJobType,
@@ -65,7 +81,9 @@ function convergenceContextFor(
 		case "DESTROY":
 			return success ? "destroySuccess" : "destroyFailed";
 		case "PLAN":
-			return success ? "planSuccess" : "planFailed";
+			// A read-only plan changes no infra — SUCCESS and a benign CANCELLED both rest at DRAFT;
+			// only a real FAILED plan settles FAILED.
+			return jobStatus === "FAILED" ? "planFailed" : "planSuccess";
 		default:
 			return null;
 	}
@@ -90,7 +108,7 @@ async function findCandidates(db: Db): Promise<ConvergeCandidate[]> {
 		       l.status         AS job_status
 		FROM public.project_environments e
 		CROSS JOIN LATERAL (
-		    SELECT j.id, j.job_type, j.status
+		    SELECT j.id, j.job_type, j.status, j.completed_at
 		    FROM public.jobs j
 		    WHERE j.environment_id = e.id
 		      AND j.job_type IN ('DEPLOY', 'DESTROY', 'PLAN')
@@ -99,6 +117,11 @@ async function findCandidates(db: Db): Promise<ConvergeCandidate[]> {
 		) l
 		WHERE e.status IN ('QUEUED', 'PROVISIONING', 'DESTROYING')
 		  AND l.status IN ('SUCCESS', 'FAILED', 'CANCELLED')
+		  -- Staleness gate: only a job that went terminal well outside the live-callback window,
+		  -- with its env STILL stuck, is a genuinely dropped update. Skips the sub-second race
+		  -- against the normal deploy callback and against a concurrent re-enqueue.
+		  AND l.completed_at IS NOT NULL
+		  AND l.completed_at < now() - make_interval(mins => ${CONVERGE_MIN_AGE_MINUTES})
 		  AND NOT EXISTS (
 		    SELECT 1 FROM public.jobs j2
 		    WHERE j2.environment_id = e.id

@@ -10,13 +10,26 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db";
 
+/**
+ * Parse a positive-days retention window from env, falling back to `def` on missing / non-numeric /
+ * ≤0. This guards two footguns: a non-numeric value → NaN → make_interval(days => NaN) errors and GC
+ * silently never runs; and "0" → a zero-day window that would delete EVERYTHING immediately. Floored
+ * at 1 day.
+ */
+function retentionDays(raw: string | undefined, def: number): number {
+	const n = Number(raw);
+	return Number.isFinite(n) && n >= 1 ? n : def;
+}
+
 /** Retention window (days) for job_logs before they're GC'd. Override via env; default 30d. */
-const JOB_LOG_RETENTION_DAYS = Number(
-	process.env.ALETHIA_JOB_LOG_RETENTION_DAYS ?? "30",
+const JOB_LOG_RETENTION_DAYS = retentionDays(
+	process.env.ALETHIA_JOB_LOG_RETENTION_DAYS,
+	30,
 );
 /** Retention window (days) for the fleet_actions ledger. Override via env; default 90d. */
-const FLEET_ACTION_RETENTION_DAYS = Number(
-	process.env.ALETHIA_FLEET_ACTION_RETENTION_DAYS ?? "90",
+const FLEET_ACTION_RETENTION_DAYS = retentionDays(
+	process.env.ALETHIA_FLEET_ACTION_RETENTION_DAYS,
+	90,
 );
 /** Max rows deleted per pass — bounds the delete so it can't lock the table. */
 const GC_BATCH_LIMIT = 5000;
