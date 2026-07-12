@@ -17,5 +17,7 @@
   "azure_fail_owner.json": { "verdict": "fail", "controls": ["AZURE-LEASTPRIV-001"] },
   "azure_fail_fed_wildcard.json": { "verdict": "fail", "controls": ["AZURE-FED-001"] },
   "azure_warn_contributor.json": { "verdict": "warn", "controls": ["AZURE-LEASTPRIV-001"] },
-  "azure_not_evaluable_role_def_id.json": { "verdict": "not_evaluable", "controls": ["AZURE-LEASTPRIV-001"] }
+  "azure_not_evaluable_role_def_id.json": { "verdict": "not_evaluable", "controls": ["AZURE-LEASTPRIV-001"] },
+  "multicloud_aws_clean_azure_owner.json": { "verdict": "fail", "controls": ["AZURE-LEASTPRIV-001"] },
+  "multicloud_aws_azure_clean.json": { "verdict": "pass", "controls": ["OIDC-001", "AZURE-LEASTPRIV-001"] }
 }

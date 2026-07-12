@@ -5,6 +5,7 @@ package verify
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -32,23 +33,37 @@ func Evaluate(ctx context.Context, plan *tfjson.Plan) (*Report, error) {
 	return EvaluateWithOptions(ctx, plan, Options{})
 }
 
-// selectControls runs the control set for the plan's detected cloud. AWS/GCP/Azure
-// each get their own controls; a mixed or unknown plan runs all of them so nothing
-// is silently skipped.
-func selectControls(provider string, planned []plannedResource) []ControlResult {
-	switch provider {
-	case "aws":
-		return awsControls(planned)
-	case "gcp":
-		return gcpControls(planned)
-	case "azure":
-		return azureControls(planned)
-	default:
+// selectControls runs the control sets for EVERY recognized cloud provider present
+// in the plan — not just one. A single OpenTofu plan can mix providers (an AWS EKS
+// cluster alongside an Azure role assignment, a cross-cloud migration, …); picking a
+// single provider would silently skip the other clouds' controls, letting their
+// keyless / least-privilege / OIDC-sub violations through unchecked. So each present
+// provider contributes its own control set, and — because every control already
+// filters to its own resource types — each control is scoped to only that provider's
+// resources. `providers` is the deterministic sorted set from detectProviders.
+//
+// Fail-closed default: when NO provider is recognized (empty set), run all control
+// sets rather than none, so a plan whose cloud we can't identify is never silently
+// waved through with zero checks.
+func selectControls(providers []string, planned []plannedResource) []ControlResult {
+	if len(providers) == 0 {
 		out := awsControls(planned)
 		out = append(out, gcpControls(planned)...)
 		out = append(out, azureControls(planned)...)
 		return out
 	}
+	var out []ControlResult
+	for _, p := range providers { // sorted → deterministic control order
+		switch p {
+		case "aws":
+			out = append(out, awsControls(planned)...)
+		case "gcp":
+			out = append(out, gcpControls(planned)...)
+		case "azure":
+			out = append(out, azureControls(planned)...)
+		}
+	}
+	return out
 }
 
 // awsControls is the AWS control set.
@@ -90,21 +105,42 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 	return out
 }
 
-// detectProvider makes a best-effort guess at the primary cloud from resource
-// type prefixes. Controls are AWS-first in Phase 0; this lets the report state
-// its coverage honestly rather than implying a uniform multi-cloud verdict.
-func detectProvider(planned []plannedResource) string {
+// detectProviders returns the deterministic sorted SET of recognized cloud
+// providers present in the plan (from resource-type prefixes). A plan may span
+// several clouds, so this is a set rather than a single best-effort guess: every
+// provider in it gets its controls run (see selectControls). Resource types with no
+// recognized prefix (utility providers like random_/tls_, or clouds without a
+// control set such as hcloud/cloudflare) contribute nothing here — the engine has no
+// controls to run over them, which the report states honestly rather than implying a
+// pass it never checked.
+func detectProviders(planned []plannedResource) []string {
+	seen := map[string]bool{}
 	for _, r := range planned {
 		switch {
 		case strings.HasPrefix(r.rtype, "aws_"):
-			return "aws"
+			seen["aws"] = true
 		case strings.HasPrefix(r.rtype, "google_"):
-			return "gcp"
+			seen["gcp"] = true
 		case strings.HasPrefix(r.rtype, "azurerm_"), strings.HasPrefix(r.rtype, "azuread_"):
-			return "azure"
+			seen["azure"] = true
 		}
 	}
-	return "unknown"
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// providerLabel renders the detected provider set for the Report.Provider field: a
+// single cloud by name ("aws"), a multi-cloud plan as a deterministic "+"-joined set
+// ("aws+azure"), and a plan with no recognized cloud as "unknown".
+func providerLabel(providers []string) string {
+	if len(providers) == 0 {
+		return "unknown"
+	}
+	return strings.Join(providers, "+")
 }
 
 // controlNoStaticKeys — KEYLESS-001. A long-lived static IAM access key is the
