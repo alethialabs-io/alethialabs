@@ -72,6 +72,15 @@ describe("scrub (Sentry beforeSend)", () => {
 		expect(isSecretKey("path")).toBe(false);
 	});
 
+	it("matches hyphenated HTTP header names against the underscore denylist", () => {
+		// Headers use hyphens; the denylist is underscore-shaped. Normalizing hyphens→underscores
+		// closes the gap so an Authorization-adjacent header can't slip a token through.
+		for (const k of ["x-api-key", "X-Auth-Token", "x-access-key-id"]) {
+			expect(isSecretKey(k)).toBe(true);
+		}
+		expect(isSecretKey("content-type")).toBe(false);
+	});
+
 	it("is cycle-safe", () => {
 		const a: Record<string, unknown> = { name: "x" };
 		a.self = a;

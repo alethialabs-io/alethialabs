@@ -18,9 +18,14 @@
 /**
  * Substring denylist (case-insensitive) identifying secret-bearing KEY names. The first block mirrors
  * the runner's `sensitiveOutputSubstrings`; the rest are the env/credential name shapes.
+ *
+ * This is a deliberate SUPERSET of the runner list (apps/runner/internal/agent/output_scrub.go): the
+ * console handles secret shapes the runner never sees (encryption_key, database_url,
+ * connection_string, authorization, cookie, signing, passwd). The overlap is the true shared set; the
+ * extra entries are console-only and intentional — do NOT assume byte-for-byte parity with the runner.
  */
 const SECRET_KEY_SUBSTRINGS = [
-	// --- kept in sync with apps/runner/internal/agent/output_scrub.go ---
+	// --- overlaps apps/runner/internal/agent/output_scrub.go (the shared set) ---
 	"kubeconfig",
 	"kube_config",
 	"talosconfig",
@@ -51,9 +56,13 @@ const SECRET_KEY_SUBSTRINGS = [
 
 const REDACTED = "[REDACTED]";
 
-/** Reports whether a key name looks like it holds a credential (case-insensitive substring match). */
+/**
+ * Reports whether a key name looks like it holds a credential (case-insensitive substring match).
+ * Hyphens are normalized to underscores so a header like `x-api-key` / `x-auth-token` matches the
+ * underscore-shaped denylist entries (`api_key`, `token`, …) — HTTP header names use hyphens.
+ */
 export function isSecretKey(key: string): boolean {
-	const lower = key.toLowerCase();
+	const lower = key.toLowerCase().replace(/-/g, "_");
 	return SECRET_KEY_SUBSTRINGS.some((s) => lower.includes(s));
 }
 
