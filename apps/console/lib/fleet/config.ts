@@ -3,7 +3,10 @@
 
 import { cloudProvider } from "@/lib/db/schema";
 import type { FleetTarget } from "@/lib/fleet/types";
+import { log } from "@/lib/observability/log";
 import { z } from "zod";
+
+const flog = log.child({ component: "fleet" });
 
 // Declarative pool projects via FLEET_POOLS (a JSON array). Cloud-specific addressing
 // (hcloud server type, image) belongs to the provider impl, not here. Default [] = the
@@ -32,12 +35,12 @@ export function getFleetPools(): FleetTarget[] {
 	try {
 		json = JSON.parse(raw);
 	} catch (err) {
-		console.error("[fleet] FLEET_POOLS is not valid JSON; ignoring:", err);
+		flog.error("FLEET_POOLS is not valid JSON; ignoring", { err });
 		return [];
 	}
 	const parsed = poolsSchema.safeParse(json);
 	if (!parsed.success) {
-		console.error("[fleet] invalid FLEET_POOLS:", parsed.error.message);
+		flog.error("invalid FLEET_POOLS", { err: parsed.error.message });
 		return [];
 	}
 	return parsed.data.map((p) => ({

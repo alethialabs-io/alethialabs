@@ -43,7 +43,9 @@ const nextConfig: NextConfig = {
 	// The enterprise package is loaded at runtime via createRequire (lib/enterprise.ts),
 	// never statically bundled — keep it external so a community build (where the
 	// package is absent) doesn't try to resolve it.
-	serverExternalPackages: ["@alethia/ee"],
+	// pino resolves its transport/worker files at runtime — keep it external so the
+	// bundler doesn't try to statically trace those dynamic requires.
+	serverExternalPackages: ["@alethia/ee", "pino"],
 	async rewrites() {
 		// Serve the CLI install script at the root of get.alethialabs.io
 		// (`curl -fsSL https://get.alethialabs.io | sh`). install.ps1 is reached

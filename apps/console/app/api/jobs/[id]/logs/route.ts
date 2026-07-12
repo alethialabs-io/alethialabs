@@ -18,7 +18,7 @@ export async function POST(
 	const { id: jobId } = await params;
 
 	try {
-		const { log_chunk, stream_type } = await req.json();
+		const { log_chunk, stream_type, traceparent } = await req.json();
 
 		if (!log_chunk) {
 			return NextResponse.json(
@@ -29,7 +29,7 @@ export async function POST(
 
 		const db = getServiceDb();
 		await db.execute(
-			sql`select insert_job_log(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${log_chunk}, ${stream_type || "STDOUT"})`,
+			sql`select insert_job_log(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${log_chunk}, ${stream_type || "STDOUT"}, ${traceparent || null})`,
 		);
 
 		return NextResponse.json({ success: true }, { status: 201 });

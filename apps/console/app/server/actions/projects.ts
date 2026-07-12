@@ -49,6 +49,7 @@ import {
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
@@ -1117,6 +1118,8 @@ export async function planProject(
 				job_type: "PLAN",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this provisioning operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
@@ -1156,6 +1159,8 @@ export async function provisionProject(
 				job_type: "DEPLOY",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this provisioning operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(planJobId ? { plan_job_id: planJobId } : {}),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
@@ -1210,6 +1215,8 @@ export async function queueDriftDetection(
 				job_type: "DETECT_DRIFT",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this drift-detection operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
@@ -1249,6 +1256,8 @@ export async function destroyProject(
 				job_type: "DESTROY",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this teardown operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
@@ -1304,6 +1313,8 @@ export async function detectDrift(
 				job_type: "DETECT_DRIFT",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this drift-detection operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });

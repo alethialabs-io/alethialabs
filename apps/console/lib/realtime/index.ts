@@ -3,6 +3,9 @@
 
 import postgres from "postgres";
 import { getDatabaseConfig } from "@/lib/config/database";
+import { log } from "@/lib/observability/log";
+
+const rtlog = log.child({ component: "realtime" });
 
 // Realtime fan-out over Postgres LISTEN/NOTIFY. A Postgres trigger does
 // pg_notify('<channel>', json) on insert; each app instance holds ONE dedicated LISTEN
@@ -75,7 +78,7 @@ class PgListenTransport<TValue> implements ChannelTransport<TValue> {
 				for (const cb of subs) cb(routed.value);
 			})
 			.catch((err) => {
-				console.error(`[realtime] LISTEN ${this.channel} failed:`, err);
+				rtlog.error("LISTEN failed", { channel: this.channel, err });
 				this.started = false; // allow a retry on the next subscribe
 			});
 	}
@@ -196,7 +199,7 @@ class PgWakeTransport implements WakeTransport {
 				for (const cb of this.subs) cb();
 			})
 			.catch((err) => {
-				console.error("[realtime] LISTEN runner_wake failed:", err);
+				rtlog.error("LISTEN failed", { channel: "runner_wake", err });
 				this.started = false; // allow a retry on the next subscribe
 			});
 	}

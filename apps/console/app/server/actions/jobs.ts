@@ -12,6 +12,7 @@ import {
 	runners,
 } from "@/lib/db/schema";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { desc, eq } from "drizzle-orm";
 
@@ -140,6 +141,8 @@ export async function rerunJob(jobId: string) {
 				cloud_identity_id: original.cloud_identity_id,
 				project_id: original.project_id,
 				status: "QUEUED",
+				// A rerun is a fresh operation → a new trace root (not the original's).
+				traceparent: newTraceparent(),
 			})
 			.returning({ id: jobs.id });
 

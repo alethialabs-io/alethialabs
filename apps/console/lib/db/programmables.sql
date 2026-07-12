@@ -262,8 +262,12 @@ BEGIN
 END;
 $$;
 
+-- Drop the pre-traceparent 5-arg signature so adding the optional p_traceparent
+-- param (a new 6-arg overload) doesn't leave an ambiguous stale function behind.
+DROP FUNCTION IF EXISTS public.insert_job_log(UUID, TEXT, UUID, TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.insert_job_log(
-    p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_log_chunk TEXT, p_stream_type TEXT DEFAULT 'STDOUT'
+    p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_log_chunk TEXT,
+    p_stream_type TEXT DEFAULT 'STDOUT', p_traceparent TEXT DEFAULT NULL
 ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_log_id BIGINT;
 BEGIN
@@ -273,8 +277,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
         RAISE EXCEPTION 'Job not owned by this runner';
     END IF;
-    INSERT INTO public.job_logs (job_id, log_chunk, stream_type)
-    VALUES (p_job_id, p_log_chunk, p_stream_type::public.log_stream_type)
+    -- Carry the trace on the log line. Fall back to the job's own traceparent when the
+    -- runner didn't supply one, so a log always correlates to its trace.
+    INSERT INTO public.job_logs (job_id, log_chunk, stream_type, traceparent)
+    VALUES (p_job_id, p_log_chunk, p_stream_type::public.log_stream_type,
+            COALESCE(p_traceparent, (SELECT traceparent FROM public.jobs WHERE id = p_job_id)))
     RETURNING id INTO v_log_id;
     -- Notify SSE listeners (one LISTEN conn per app instance fans out). IDs only
     -- (8 KB payload cap); the stream route fetches rows since its last seen id.

@@ -10,7 +10,10 @@ import { reconcileAll, type SurplusState } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
 import { loadFleetPools } from "@/lib/fleet/pools-db";
 import { getFleetProvider } from "@/lib/fleet/provider";
+import { log } from "@/lib/observability/log";
 import { sweepBootstrapTokens } from "@/lib/runners/bootstrap-token";
+
+const flog = log.child({ component: "fleet" });
 
 const TICK_INTERVAL_MS = 60_000;
 
@@ -43,6 +46,6 @@ async function tick(): Promise<void> {
 	await reconcileAll(projects, getFleetProvider(), makeDbDeps(), surplus);
 	// Best-effort GC of spent/expired per-VM bootstrap tokens (past a retry grace).
 	await sweepBootstrapTokens().catch((err) =>
-		console.error("[fleet] bootstrap-token sweep failed:", err),
+		flog.error("bootstrap-token sweep failed", { err }),
 	);
 }

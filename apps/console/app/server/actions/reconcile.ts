@@ -13,6 +13,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { environmentDrift, jobs, projectEnvironments } from "@/lib/db/schema";
+import { newTraceparent } from "@/lib/observability/trace";
 import { structuralHash } from "@/lib/promotions/diff";
 import { notifyScaler } from "@/lib/scaler";
 import { getProjectAsFormData } from "./projects";
@@ -86,6 +87,8 @@ export async function maybeAutoHeal(
 			job_type: "DEPLOY",
 			config_snapshot: lastDeploy.config_snapshot,
 			status: "QUEUED",
+			// An auto-heal re-apply is a fresh operation → a new trace root.
+			traceparent: newTraceparent(),
 		})
 		.returning({ id: jobs.id });
 	await db

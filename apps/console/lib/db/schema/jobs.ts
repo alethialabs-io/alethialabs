@@ -86,6 +86,9 @@ export const jobs = pgTable(
 		// Authorized, time-boxed waiver of failing verification controls for this
 		// DEPLOY job (elench). NULL = no waiver (any hard control failure blocks apply).
 		verify_override: jsonb().$type<VerifyOverrideInput>(),
+		// W3C traceparent (`00-<32hex trace-id>-<16hex span-id>-01`) minted at enqueue.
+		// Flows enqueue → claim → runner so console + runner logs/spans share one trace.
+		traceparent: text(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
@@ -112,6 +115,9 @@ export const jobLogs = pgTable(
 			.references(() => jobs.id, { onDelete: "cascade" }),
 		log_chunk: text().notNull(),
 		stream_type: logStreamType().default("STDOUT").notNull(),
+		// W3C traceparent carried from the job (via insert_job_log) so a log line
+		// correlates to its trace without a jobs join.
+		traceparent: text(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [index("idx_job_logs_job_id").on(t.job_id)],
