@@ -4,6 +4,7 @@
 import { getServiceDb } from "@/lib/db";
 import { runnerReleases } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/auth/internal-auth";
 
 /** Returns the Postgres error code if present (e.g. 23505 unique violation). */
 function pgErrorCode(err: unknown): string | undefined {
@@ -15,10 +16,7 @@ function pgErrorCode(err: unknown): string | undefined {
 
 /** CI calls this endpoint to publish a new runner release. */
 export async function POST(req: Request) {
-	const authHeader = req.headers.get("authorization");
-	const expected = process.env.RELEASE_API_SECRET;
-
-	if (!expected || authHeader !== `Bearer ${expected}`) {
+	if (!bearerMatches(req, process.env.RELEASE_API_SECRET)) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 

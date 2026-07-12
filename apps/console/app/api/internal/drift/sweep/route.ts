@@ -7,6 +7,7 @@
 // (ALETHIA_CRON_SECRET); fails closed when unset, mirroring the alerts sweeper.
 
 import { NextResponse } from "next/server";
+import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 			{ status: 503 },
 		);
 	}
-	if (req.headers.get("authorization") !== `Bearer ${secret}`) {
+	if (!isInternalAuthorized(req)) {
 		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 	}
 
