@@ -7,7 +7,7 @@
     irm https://get.alethialabs.io/install.ps1 | iex
     $env:ALETHIA_VERSION="v0.2.0"; irm https://get.alethialabs.io/install.ps1 | iex   # pin
 
-  Honors: ALETHIA_VERSION, ALETHIA_INSTALL_DIR, GITHUB_TOKEN/GH_TOKEN (private repo).
+  Honors: ALETHIA_VERSION, ALETHIA_INSTALL_DIR, GITHUB_TOKEN/GH_TOKEN (optional, raises API rate limit).
 #>
 $ErrorActionPreference = "Stop"
 
@@ -39,7 +39,7 @@ if ($env:ALETHIA_VERSION) {
 		Where-Object { $_ -match '^cli-v\d+\.\d+\.\d+$' } |
 		ForEach-Object { [version]($_ -replace '^cli-v','') } |
 		Sort-Object | Select-Object -Last 1
-	if (-not $latest) { throw "Could not resolve the latest release (private repo? set GITHUB_TOKEN, or pin ALETHIA_VERSION)." }
+	if (-not $latest) { throw "Could not resolve the latest release (GitHub API rate-limited? set GITHUB_TOKEN, or pin ALETHIA_VERSION)." }
 	$tag = "cli-v$latest"
 }
 

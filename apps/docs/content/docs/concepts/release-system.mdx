@@ -76,23 +76,29 @@ release-please merges the CLI release PR → tag cli-v0.2.2
 - `docker run --rm ghcr.io/alethialabs-io/alethia --version`
 - Direct binary download from GitHub Releases
 
-### One-time tap/bucket setup (maintainer)
+### Go-live checklist (maintainer)
 
-GoReleaser pushes the Homebrew formula and Scoop manifest at release time; the target
-repos (`alethialabs-io/homebrew-tap`, `alethialabs-io/scoop-bucket`, both public with a
-`main` branch) already exist. The remaining one-time step is the token:
+Everything is wired in the repo; three one-time steps make the install channels live.
+The tap/bucket repos (`alethialabs-io/homebrew-tap`, `alethialabs-io/scoop-bucket`) already
+exist, and the source repo is already **public** (so anonymous brew/scoop/curl/docker
+downloads work the moment a release exists).
 
-1. **Install the tap GitHub App** on both `homebrew-tap` and `scoop-bucket`, and set the
-   `TAP_APP_ID` / `TAP_APP_PRIVATE_KEY` repo secrets — `release-cli.yml` mints a scoped
-   token via `create-github-app-token` (`repositories: homebrew-tap`, `scoop-bucket`) and
-   passes it as both `HOMEBREW_TAP_GITHUB_TOKEN` and `SCOOP_TAP_GITHUB_TOKEN`. (A classic
-   PAT with `public_repo` in those env vars also works.)
-2. **Wire `get.alethialabs.io`** (for `curl … | sh`): the `get` DNS record + tunnel
-   ingress land via `tofu apply` of `infra/cp-hetzner`, and the Caddy host route is in
-   `deploy/prod/Caddyfile.tunnel`. Apply cp-hetzner once and redeploy.
-3. **Cut a release**: merge a `feat:`/`fix:` commit under `apps/cli/` to `main`, then
-   merge the release-please CLI PR. The `cli-v*` tag runs the pipeline end-to-end and the
-   formula/manifest/packages publish — every install method then works.
+1. **Publish credentials.** Install the tap GitHub App on both `homebrew-tap` and
+   `scoop-bucket`, and set the `TAP_APP_ID` / `TAP_APP_PRIVATE_KEY` repo secrets —
+   `release-cli.yml` mints a scoped token via `create-github-app-token`
+   (`repositories: homebrew-tap`, `scoop-bucket`) and passes it as both
+   `HOMEBREW_TAP_GITHUB_TOKEN` and `SCOOP_TAP_GITHUB_TOKEN`. (A classic PAT with
+   `public_repo` in those env vars also works.)
+2. **Wire `get.alethialabs.io`** (for `curl … | sh` / `irm … | iex`): `tofu apply`
+   `infra/cp-hetzner` (creates the `get` CNAME + tunnel ingress), then redeploy prod so
+   Caddy picks up the `@get` host route in `deploy/prod/Caddyfile.tunnel`.
+3. **Cut the release.** Merge a `feat:`/`fix:` commit under `apps/cli/` to `main`, then merge
+   the release-please CLI PR. The `cli-v*` tag runs the pipeline end-to-end and the
+   archives / formula / scoop manifest / `.deb`/`.rpm`/`.apk` / docker images all publish —
+   every install method then works.
+
+The literal tap-free `brew install alethia` (Homebrew core) is a separate, adoption-gated
+milestone — see the [Homebrew Core runbook](/cli/homebrew-core).
 
 > The last GitHub Release predates the `alethia` rename (its archives are named
 > `grape_*`). The first release after this pipeline lands re-publishes them as

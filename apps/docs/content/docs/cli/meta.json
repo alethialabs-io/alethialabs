@@ -5,6 +5,7 @@
   "pages": [
     "index",
     "installation",
+    "homebrew-core",
     "authentication",
     "identity",
     "commands",
