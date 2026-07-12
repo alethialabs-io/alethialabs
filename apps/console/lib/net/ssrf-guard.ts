@@ -35,6 +35,29 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 /** Maximum number of redirects followed before failing closed. */
 const MAX_REDIRECTS = 3;
 
+/** Timeout for the DNS resolution step (getaddrinfo has no signal — raced against a timer). */
+const DNS_TIMEOUT_MS = 5_000;
+
+/**
+ * DNS-resolves a host with a hard timeout. `dns.lookup` uses libuv's getaddrinfo threadpool and
+ * takes no AbortSignal, so a slow resolver could otherwise hang outside the request budget — race
+ * it against a timer and reject as an `SsrfError` on timeout.
+ */
+async function lookupWithTimeout(host: string): Promise<LookupAddress[]> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(
+			() => reject(new SsrfError(`DNS lookup timed out for host: ${host}`)),
+			DNS_TIMEOUT_MS,
+		);
+	});
+	try {
+		return await Promise.race([dnsLookup(host, { all: true }), timeout]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 /** Error raised when a request is refused by the SSRF guard. */
 export class SsrfError extends Error {
 	/** @param message Human-readable reason the request was refused. */
@@ -169,6 +192,11 @@ function isPublicUnicastV6(bytes: number[]): boolean {
 		return false; // 2001:db8::/32 documentation
 	}
 	if (bytes[0] === 0x01 && bytes[1] === 0x00 && zeros(2, 8)) return false; // 100::/64 discard
+	// Anything else in 0000::/8 is reserved/unroutable — the legitimate ::/8 sub-forms (unspecified,
+	// loopback, IPv4-mapped/-compatible, NAT64) are all decoded and returned above, and global
+	// unicast is 2000::/3 (never a 0x00 leading byte). Fail closed on the remainder (e.g. the odd
+	// `::ffff:0:a.b.c.d` shape) rather than treating it as public.
+	if (bytes[0] === 0x00) return false;
 	return true;
 }
 
@@ -213,8 +241,9 @@ export async function assertSafeUrl(
 
 	let addresses: LookupAddress[];
 	try {
-		addresses = await dnsLookup(host, { all: true });
-	} catch {
+		addresses = await lookupWithTimeout(host);
+	} catch (err) {
+		if (err instanceof SsrfError) throw err; // preserve the timeout reason
 		throw new SsrfError(`Could not resolve host: ${parsed.hostname}`);
 	}
 	if (addresses.length === 0) {

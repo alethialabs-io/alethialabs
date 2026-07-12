@@ -35,6 +35,7 @@ describe("isPublicUnicastIp", () => {
 		["::ffff:169.254.169.254", "IPv4-mapped IPv6 metadata"],
 		["::ffff:127.0.0.1", "IPv4-mapped IPv6 loopback"],
 		["2001:db8::1", "IPv6 documentation"],
+		["::ffff:0:127.0.0.1", "reserved 0000::/8 remainder (not kernel v4-mapped)"],
 		["not-an-ip", "garbage input"],
 	];
 	for (const [ip, why] of rejected) {
