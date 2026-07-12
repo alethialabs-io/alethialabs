@@ -78,6 +78,8 @@ module "iam_assumable_role_external_dns" {
   }
 }
 
+# Least-privilege: read-only on the PROJECT'S secrets only (custom-secrets prefix + the
+# RDS credential secrets the root passes in) — never Resource "*" over the whole account.
 resource "aws_iam_policy" "secrets_operator" {
   name_prefix = "${var.eks_cluster_name}-secrets-operator-policy"
   description = "EKS external-secrets-operator  policy for cluster ${var.eks_cluster_name}"
@@ -86,17 +88,13 @@ resource "aws_iam_policy" "secrets_operator" {
     "Version": "2012-10-17",
     "Statement": [
         {
-            "Sid": "VisualEditor0",
+            "Sid": "ReadProjectSecrets",
             "Effect": "Allow",
             "Action": [
-                "secretsmanager:GetResourcePolicy",
                 "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-                "secretsmanager:ListSecretVersionIds"
+                "secretsmanager:DescribeSecret"
             ],
-            "Resource": [
-                "*"
-            ]
+            "Resource": ${jsonencode(var.secret_resource_arns)}
         },
         {
             "Sid": "KMSDecrypt",

@@ -262,8 +262,12 @@ BEGIN
 END;
 $$;
 
+-- Drop the pre-traceparent 5-arg signature so adding the optional p_traceparent
+-- param (a new 6-arg overload) doesn't leave an ambiguous stale function behind.
+DROP FUNCTION IF EXISTS public.insert_job_log(UUID, TEXT, UUID, TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.insert_job_log(
-    p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_log_chunk TEXT, p_stream_type TEXT DEFAULT 'STDOUT'
+    p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_log_chunk TEXT,
+    p_stream_type TEXT DEFAULT 'STDOUT', p_traceparent TEXT DEFAULT NULL
 ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_log_id BIGINT;
 BEGIN
@@ -273,8 +277,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
         RAISE EXCEPTION 'Job not owned by this runner';
     END IF;
-    INSERT INTO public.job_logs (job_id, log_chunk, stream_type)
-    VALUES (p_job_id, p_log_chunk, p_stream_type::public.log_stream_type)
+    -- Carry the trace on the log line. Fall back to the job's own traceparent when the
+    -- runner didn't supply one, so a log always correlates to its trace.
+    INSERT INTO public.job_logs (job_id, log_chunk, stream_type, traceparent)
+    VALUES (p_job_id, p_log_chunk, p_stream_type::public.log_stream_type,
+            COALESCE(p_traceparent, (SELECT traceparent FROM public.jobs WHERE id = p_job_id)))
     RETURNING id INTO v_log_id;
     -- Notify SSE listeners (one LISTEN conn per app instance fans out). IDs only
     -- (8 KB payload cap); the stream route fetches rows since its last seen id.
@@ -285,11 +292,18 @@ $$;
 CREATE OR REPLACE FUNCTION public.update_job_status(
     p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_status TEXT,
     p_error_message TEXT DEFAULT NULL, p_execution_metadata JSONB DEFAULT NULL
-) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+) RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
         RAISE EXCEPTION 'Unauthorized runner';
     END IF;
+    -- Terminal-state guard: never CHANGE an already-terminal status to a DIFFERENT one. This makes a
+    -- CANCELLED job STICK — if the console cancelled it (cancelJob) but the pg_notify cancel didn't
+    -- reach the runner (wake SSE down) and it ran to completion, the runner's late SUCCESS/FAILED must
+    -- NOT revert CANCELLED. A SAME-status re-post IS allowed, so the runner's second CANCELLED post
+    -- (which cancelJob's flip precedes) still merges its orphan_risk metadata. Returns whether a row
+    -- moved: FALSE = the update was a no-op on an already-terminal job, so the caller must skip the
+    -- terminal side-effects (billing / success alert / env→ACTIVE) for that stale callback.
     UPDATE public.jobs
     SET status = p_status::public.provision_job_status,
         error_message = COALESCE(p_error_message, error_message),
@@ -298,8 +312,18 @@ BEGIN
         started_at = CASE WHEN p_status = 'PROCESSING' AND started_at IS NULL THEN now() ELSE started_at END,
         completed_at = CASE WHEN p_status IN ('SUCCESS', 'FAILED', 'CANCELLED') THEN now() ELSE completed_at END,
         updated_at = now()
-    WHERE id = p_job_id AND runner_id = p_runner_id;
-    IF NOT FOUND THEN RAISE EXCEPTION 'Job not found or not owned by this runner'; END IF;
+    WHERE id = p_job_id AND runner_id = p_runner_id
+      AND (status NOT IN ('SUCCESS', 'FAILED', 'CANCELLED')
+           OR status = p_status::public.provision_job_status);
+    IF FOUND THEN RETURN true; END IF;
+    -- Not applied. Distinguish a benign already-terminal job (owned by this runner, the guard blocked
+    -- a status CHANGE) from a genuine ownership/existence error. The former returns false (the caller
+    -- skips side-effects; the runner learns the job is terminal on its next heartbeat); only the
+    -- latter raises.
+    IF EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
+        RETURN false;
+    END IF;
+    RAISE EXCEPTION 'Job not found or not owned by this runner';
 END;
 $$;
 
@@ -937,6 +961,34 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     );
 $$;
 
+-- Staff/system-only force-unlock for a stranded state lock (e.g. after a cancelled apply's
+-- runner was SIGKILLed before it could UNLOCK). It must NEVER be a naive DELETE: a zombie
+-- writer from the killed apply could still be mid-flight, and its state-write POST presents
+-- the OLD lock_id as the fencing token. So we ROTATE lock_id (invalidating that fence — the
+-- zombie's ?ID= now fails validate_tofu_state_lock) and BUMP the monotonic generation (the
+-- same steal invariant acquire_tofu_state_lock uses), then expire the row so a fresh apply
+-- can immediately steal it. Returns whether a lock existed for the key. Not a customer action
+-- (no alethia_app GRANT) — invoked by the service role from a staff/system path.
+CREATE OR REPLACE FUNCTION public.force_release_tofu_state_lock(p_state_key TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    UPDATE public.tofu_state_locks
+       SET generation = generation + 1,
+           lock_id = 'force-released-' || gen_random_uuid()::text,
+           info = COALESCE(info, '{}'::jsonb) || jsonb_build_object('force_released_at', now()),
+           expires_at = now() - INTERVAL '1 second'
+     WHERE state_key = p_state_key;
+    RETURN FOUND;
+END;
+$$;
+
+-- force_release is a break-glass / operator action, NOT part of the normal tofu-state lock
+-- lifecycle (acquire/validate/release). Postgres grants EXECUTE to PUBLIC by default, so without
+-- this REVOKE the least-privilege runtime role (alethia_app, used by the RLS + tofu-state-proxy
+-- paths) could force-release a live lock and fence a running apply. The superuser service role
+-- (getServiceDb → forceReleaseStateLock) owns the function and is unaffected by the revoke.
+REVOKE EXECUTE ON FUNCTION public.force_release_tofu_state_lock(TEXT) FROM PUBLIC;
+
 -- Per-VM fleet bootstrap token redemption (E0 0b). Atomic + instance-bound + reusable-within-TTL:
 -- the first redeem binds instance_id; the SAME instance may re-redeem (restart / lost-response
 -- retry), a DIFFERENT instance or an expired token is rejected (ok=false). Returns the currently
@@ -956,3 +1008,28 @@ BEGIN
     RETURN NEXT;
 END;
 $$;
+
+-- ----------------------------------------------------------------------------
+-- Guarded env-status transition (compare-and-swap). EVERY write to
+-- project_environments.status routes through here (lib/db/env-status.ts) so a
+-- late / racing runner callback can't clobber a newer terminal state
+-- (last-writer-wins). A single PK-indexed UPDATE gated on the current status ∈
+-- p_expected_from; returns whether a row moved. FALSE = the env wasn't in a legal
+-- from-state → the transition was correctly rejected (the TS caller logs + alerts,
+-- and for runner callbacks never throws: a lost race must not fail a status PUT).
+-- It never raises on a no-op. NOT security-definer — it runs with the caller's RLS
+-- (service role bypasses; an owner-scoped tx is policy-checked), matching how the
+-- sibling env writes are scoped. p_job_id is carry-through context for the caller's
+-- structured log / audit, deliberately not written here.
+CREATE OR REPLACE FUNCTION public.set_env_status(
+    p_env_id UUID, p_expected_from TEXT[], p_to TEXT, p_job_id UUID DEFAULT NULL
+) RETURNS BOOLEAN LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE public.project_environments
+       SET status = p_to::public.project_status, updated_at = now()
+     WHERE id = p_env_id
+       AND status = ANY (p_expected_from::public.project_status[]);
+    RETURN FOUND;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO alethia_app;

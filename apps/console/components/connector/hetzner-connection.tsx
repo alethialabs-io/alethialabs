@@ -24,7 +24,7 @@ import {
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import { ExternalLink, ServerCog } from "lucide-react";
+import { Archive, ExternalLink, ServerCog } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 
@@ -33,13 +33,32 @@ const HETZNER_CONSOLE_URL = "https://console.hetzner.cloud/";
 /** The Alethia connect guide for Hetzner. */
 const HETZNER_DOCS_URL = "/docs/console/connectors/hetzner";
 
-const tokenSchema = z.object({
-	token: z.string().min(16, "Enter a valid Hetzner API token."),
-});
+const tokenSchema = z
+	.object({
+		token: z.string().min(16, "Enter a valid Hetzner API token."),
+		// Optional Object Storage S3 key pair (both-or-neither). Hetzner has no API to mint
+		// these — the customer generates them in the Hetzner Console.
+		s3AccessKey: z.string().optional(),
+		s3SecretKey: z.string().optional(),
+	})
+	.refine((d) => !!d.s3AccessKey?.trim() === !!d.s3SecretKey?.trim(), {
+		message: "Enter both the S3 access key and secret key, or leave both blank.",
+		path: ["s3SecretKey"],
+	});
+
+type HetznerFormValues = z.infer<typeof tokenSchema>;
 
 interface HetznerConnectionProps {
-	/** Persists + server-side-verifies the scoped token (saveTokenCloud → saveTokenCloudIdentity). */
-	onSave: (token: string) => Promise<VerifyOutcome>;
+	/**
+	 * Persists + server-side-verifies the scoped token (saveTokenCloud → saveTokenCloudIdentity).
+	 * The optional Object Storage S3 keys are stored encrypted alongside the token and used only
+	 * to provision buckets on Hetzner.
+	 */
+	onSave: (
+		token: string,
+		s3AccessKey?: string,
+		s3SecretKey?: string,
+	) => Promise<VerifyOutcome>;
 }
 
 /**
@@ -51,9 +70,9 @@ interface HetznerConnectionProps {
  */
 export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 	const { state, run, cancel } = useConnectionTest();
-	const form = useForm<{ token: string }>({
+	const form = useForm<HetznerFormValues>({
 		resolver: zodResolver(tokenSchema),
-		defaultValues: { token: "" },
+		defaultValues: { token: "", s3AccessKey: "", s3SecretKey: "" },
 		mode: "onChange",
 	});
 
@@ -61,7 +80,6 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 
 	return (
 		<ConnectSheetShell
-			title="Connect Hetzner Cloud"
 			badgeLabel="Encrypted"
 			intro="Hetzner Cloud has no role federation, so Alethia connects with a project-scoped API token you create. It's encrypted at rest (AES-GCM) and only decrypted on the runner at provision time — never in a project snapshot. Alethia uses it to provision a self-managed Talos Linux Kubernetes cluster on Hetzner's cheap VMs."
 			howItWorks={
@@ -82,7 +100,7 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 				</>
 			}
 		>
-			<div className="space-y-8">
+			<div className="space-y-6">
 				<Step n={1} title="Create a project-scoped API token">
 					<p className="max-w-md text-muted-foreground text-xs">
 						In the Hetzner Cloud Console, open your project, then{" "}
@@ -137,7 +155,15 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 			>
 				<Form {...form}>
 					<form
-						onSubmit={form.handleSubmit((d) => run(() => onSave(d.token)))}
+						onSubmit={form.handleSubmit((d) =>
+							run(() =>
+								onSave(
+									d.token,
+									d.s3AccessKey?.trim() || undefined,
+									d.s3SecretKey?.trim() || undefined,
+								),
+							),
+						)}
 						className="space-y-4"
 					>
 						<FormField
@@ -157,7 +183,7 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 										<Input
 											type="password"
 											placeholder="Paste your Read & Write API token"
-											className="h-9 border-border/50 font-mono text-sm"
+											className="h-9 border-border/60 font-mono text-sm"
 											{...field}
 										/>
 									</FormControl>
@@ -165,6 +191,64 @@ export function HetznerConnection({ onSave }: HetznerConnectionProps) {
 								</FormItem>
 							)}
 						/>
+
+						{/* Optional Object Storage S3 credentials — for provisioning buckets. */}
+						<div className="space-y-3 rounded-md border border-border/40 bg-muted/10 p-3">
+							<div className="flex items-start gap-2.5">
+								<Archive className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+								<div className="space-y-0.5">
+									<p className="font-medium text-foreground text-xs">
+										Object Storage keys{" "}
+										<span className="font-normal text-muted-foreground">(optional)</span>
+									</p>
+									<p className="text-[11px] text-muted-foreground leading-relaxed">
+										To provision Hetzner Object Storage buckets, paste an S3 key pair. Hetzner
+										has no API to mint these — generate them in the Hetzner Console (Object
+										Storage → your bucket location → S3 credentials). Leave blank if you
+										don&apos;t use buckets. Stored encrypted, decrypted only on the runner.
+									</p>
+								</div>
+							</div>
+							<FormField
+								control={form.control}
+								name="s3AccessKey"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel className="font-medium text-xs">S3 access key</FormLabel>
+										<FormControl>
+											<Input
+												type="password"
+												placeholder="Paste your Object Storage access key"
+												autoComplete="off"
+												className="h-9 border-border/60 font-mono text-sm"
+												{...field}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
+							<FormField
+								control={form.control}
+								name="s3SecretKey"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel className="font-medium text-xs">S3 secret key</FormLabel>
+										<FormControl>
+											<Input
+												type="password"
+												placeholder="Paste your Object Storage secret key"
+												autoComplete="off"
+												className="h-9 border-border/60 font-mono text-sm"
+												{...field}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
+						</div>
+
 						<Button
 							disabled={!form.formState.isValid}
 							type="submit"

@@ -1,0 +1,10 @@
+{
+  "ephemeral": {
+    "vault_kv_secret_v2": {
+      "creds": {
+        "mount": "secret",
+        "name": "app/creds"
+      }
+    }
+  }
+}

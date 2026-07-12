@@ -44,6 +44,17 @@ type fakeClient struct {
 	createdEnv   *api.Environment
 	components   []api.Component
 	createdComp  *api.Component
+	classDims    []api.ClassificationDimension
+	classAssigns []api.ClassificationAssignment
+
+	// recorded classification calls
+	assignedKind    string
+	assignedID      string
+	assignedDim     string
+	assignedValue   string
+	unassignedKind  string
+	unassignedID    string
+	unassignedValue string
 
 	err error // returned by every method when non-nil
 
@@ -203,6 +214,25 @@ func (f *fakeClient) CreateRole(name string, permissionKeys []string) (*api.Role
 
 func (f *fakeClient) DeleteRole(roleID string) error {
 	f.deletedRole = roleID
+	return f.err
+}
+
+func (f *fakeClient) ListClassificationDimensions() ([]api.ClassificationDimension, error) {
+	return f.classDims, f.err
+}
+
+func (f *fakeClient) GetResourceClassifications(kind, id string) ([]api.ClassificationAssignment, error) {
+	return f.classAssigns, f.err
+}
+
+func (f *fakeClient) AssignClassification(kind, id, dimensionKey, valueSlug string) ([]api.ClassificationAssignment, error) {
+	f.assignedKind, f.assignedID = kind, id
+	f.assignedDim, f.assignedValue = dimensionKey, valueSlug
+	return f.classAssigns, f.err
+}
+
+func (f *fakeClient) UnassignClassification(kind, id, valueSlug string) error {
+	f.unassignedKind, f.unassignedID, f.unassignedValue = kind, id, valueSlug
 	return f.err
 }
 

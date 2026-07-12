@@ -60,5 +60,7 @@ export function graphToForm(nodes: CanvasNode[]): Record<string, unknown> {
 		topics: ofKind("topic"),
 		nosql_tables: ofKind("nosql"),
 		secrets: ofKind("secret"),
+		storage_buckets: ofKind("bucket"),
+		container_registries: ofKind("registry"),
 	};
 }

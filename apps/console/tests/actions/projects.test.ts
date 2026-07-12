@@ -9,7 +9,7 @@
 // provider-mapping warnings are genuinely exercised, not re-implemented here. Each test asserts
 // the persisted .values()/.set() payloads, derived return shapes, and the branch outcomes.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
@@ -23,6 +23,7 @@ import {
 	createProject,
 	deleteEnvironment,
 	deleteProject,
+	destroyProject,
 	duplicateProjectForProvider,
 	getProject,
 	getProjectAsFormData,
@@ -43,12 +44,18 @@ import {
 	jobs,
 	projectCaches,
 	projectCluster,
+	projectContainerRegistries,
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectIacSources,
 	projectNetwork,
+	projectNosqlTables,
+	projectQueues,
 	projectRepositories,
 	projectSecrets,
+	projectStorageBuckets,
+	projectTopics,
 	projects,
 	resourceHierarchy,
 } from "@/lib/db/schema";
@@ -68,12 +75,16 @@ function setupDb(cfg: {
 	select?: Map<unknown, RowsResolver>;
 	insert?: Map<unknown, RowsResolver>;
 	default?: Rows;
+	/** Result of the env-status CAS RPC (set_env_status via tx.execute). true = env moved. */
+	envCasUpdated?: boolean;
 }) {
 	const valuesSpy = vi.fn<(table: unknown, payload: unknown) => void>();
 	const setSpy = vi.fn<(table: unknown, payload: unknown) => void>();
 	const insertSpy = vi.fn<(table: unknown) => void>();
 	const updateSpy = vi.fn<(table: unknown) => void>();
 	const deleteSpy = vi.fn<(table: unknown) => void>();
+	const executeSpy = vi.fn<(query: unknown) => void>();
+	const envCasUpdated = cfg.envCasUpdated ?? true;
 	const def = cfg.default ?? [];
 
 	const resolve = (map: Map<unknown, RowsResolver> | undefined, table: unknown): Rows => {
@@ -131,12 +142,17 @@ function setupDb(cfg: {
 			deleteSpy(t);
 			return makeChain("delete", t);
 		},
+		// The enqueue paths route env→QUEUED through the set_env_status CAS (tx.execute).
+		execute: (query: unknown) => {
+			executeSpy(query);
+			return Promise.resolve([{ updated: envCasUpdated }]);
+		},
 	};
 
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
-	return { tx, valuesSpy, setSpy, insertSpy, updateSpy, deleteSpy };
+	return { tx, valuesSpy, setSpy, insertSpy, updateSpy, deleteSpy, executeSpy };
 }
 
 /** Pulls the single `.values()` payload recorded against a given schema table. */
@@ -403,7 +419,7 @@ function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 
 describe("planProject", () => {
 	it("freezes a config snapshot, queues a PLAN job, flips the env to QUEUED, and notifies the scaler", async () => {
-		const { valuesSpy, setSpy } = setupDb({
+		const { valuesSpy, executeSpy } = setupDb({
 			select: snapshotSelect(),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
@@ -429,10 +445,65 @@ describe("planProject", () => {
 			environment_stage: "production",
 			region: "us-east-1",
 		});
+		// A fresh W3C traceparent is minted at enqueue (the correlation-trace root).
+		expect(jobVals.traceparent).toMatch(
+			/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/,
+		);
 
-		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
+		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-1" });
+	});
+
+	it("emits storage_buckets and container_registries in the snapshot with resolved placement", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectStorageBuckets,
+						[
+							{
+								name: "assets",
+								versioning: true,
+								encryption_enabled: true,
+								public_access: false,
+								cloud_identity_id: null,
+								region: null,
+							},
+						],
+					],
+					[
+						projectContainerRegistries,
+						[{ name: "apps", provider: null, cloud_identity_id: null, region: null }],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		// Buckets ride the snapshot (they were previously never selected — the known gap).
+		expect(snapshot.storage_buckets).toEqual([
+			expect.objectContaining({
+				name: "assets",
+				versioning: true,
+				cloud_provider: "aws",
+				cloud_identity_id: "ci-1",
+				region: "us-east-1",
+			}),
+		]);
+		// Registries keep being emitted alongside.
+		expect(snapshot.container_registries).toEqual([
+			expect.objectContaining({
+				name: "apps",
+				cloud_provider: "aws",
+				cloud_identity_id: "ci-1",
+				region: "us-east-1",
+			}),
+		]);
 	});
 
 	it("rejects (no job, no scaler) when the project has no linked cloud identity", async () => {
@@ -461,6 +532,52 @@ describe("planProject", () => {
 		await expect(planProject("p1")).rejects.toThrow(/Cross-cloud database "db1"/);
 	});
 
+	it("fails closed on a non-postgres database on hetzner (no silent chart drop)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[
+						projectDatabases,
+						[{ name: "orders", engine_family: "mysql", cloud_identity_id: null }],
+					],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/MySQL databases can't be provisioned on Hetzner/,
+		);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("queues a hetzner job when databases are postgres (or legacy NULL family)", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[
+						projectDatabases,
+						[
+							{ name: "pg", engine_family: "postgres", cloud_identity_id: null },
+							{ name: "legacy", engine_family: null, cloud_identity_id: null },
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+		// Both databases ride the snapshot as in-cluster CNPG addons (operator + 2 clusters).
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as {
+			addons: { id: string }[];
+		};
+		const addonIds = snapshot.addons.map((a) => a.id);
+		expect(addonIds).toEqual(
+			expect.arrayContaining(["cnpg-operator", "db-pg", "db-legacy"]),
+		);
+	});
+
 	it("rejects when network provisioning is off but no existing network is selected", async () => {
 		setupDb({
 			select: snapshotSelect(
@@ -468,6 +585,91 @@ describe("planProject", () => {
 			),
 		});
 		await expect(planProject("p1")).rejects.toThrow(/no VPC selected/);
+	});
+
+	// ── Fail-closed unsupported-KIND gate (buildConfigSnapshot) ─────────────
+	it("fails closed on a Hetzner topic (kind the template can't provision, no silent drop)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectTopics, [{ name: "events", cloud_identity_id: null }]],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "events" \(topic\) can't be provisioned on Hetzner/,
+		);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("fails closed on a Hetzner nosql table", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectNosqlTables, [{ name: "sessions", cloud_identity_id: null }]],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "sessions" \(nosql\) can't be provisioned on Hetzner/,
+		);
+	});
+
+	it("fails closed on a Hetzner container registry, naming the Harbor alternative", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectContainerRegistries, [{ name: "apps", cloud_identity_id: null }]],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "apps" \(registry\).*Harbor/,
+		);
+	});
+
+	it("queues a Hetzner job when only supported kinds are present (cluster/network/db-pg/cache/queue/secret/dns)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectNetwork, [{ provision_network: true, cloud_identity_id: null }]],
+					[projectCluster, [{ cloud_identity_id: null }]],
+					[projectDns, [{ enabled: true, domain_name: "example.com" }]],
+					[
+						projectDatabases,
+						[{ name: "pg", engine_family: "postgres", cloud_identity_id: null }],
+					],
+					[projectCaches, [{ name: "cache", cloud_identity_id: null }]],
+					[projectQueues, [{ name: "queue", cloud_identity_id: null }]],
+					[projectSecrets, [{ name: "secret", cloud_identity_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+	});
+
+	it("passes a managed cloud (aws) with topic/nosql/registry — supported there", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					// aws is the default identity in snapshotSelect
+					[projectTopics, [{ name: "events", cloud_identity_id: null }]],
+					[projectNosqlTables, [{ name: "sessions", cloud_identity_id: null }]],
+					[projectContainerRegistries, [{ name: "apps", cloud_identity_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot.provider).toBe("aws");
 	});
 
 	it("targets an explicit environment, rejecting when it does not belong to the project", async () => {
@@ -481,9 +683,98 @@ describe("planProject", () => {
 	});
 });
 
+// ============================================================
+// BYO IaC (E3) — snapshot branch + queue gating
+// ============================================================
+
+describe("planProject — BYO IaC source", () => {
+	const OLD_FLAG = process.env.ALETHIA_BYO_IAC_ENABLED;
+	const scannedIacRow = {
+		id: "iac-1",
+		project_id: "p1",
+		environment_id: "env-1",
+		repo_url: "https://github.com/acme/infra.git",
+		ref: "main",
+		path: "stacks/prod",
+		commit_sha: "deadbeef",
+		var_values: { env: "prod" },
+		enabled: true,
+		scan_status: "done",
+	};
+
+	beforeEach(() => {
+		process.env.ALETHIA_BYO_IAC_ENABLED = "true";
+	});
+	afterEach(() => {
+		if (OLD_FLAG === undefined) delete process.env.ALETHIA_BYO_IAC_ENABLED;
+		else process.env.ALETHIA_BYO_IAC_ENABLED = OLD_FLAG;
+	});
+
+	it("snapshots iac_source with the pinned sha and SKIPS the template-model gates", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[projectIacSources, [scannedIacRow]],
+					// Both template gates would throw for a template env — they must be skipped:
+					// a cross-cloud CORE resource + provisioning off with no network selected.
+					[projectDatabases, [{ name: "db1", cloud_identity_id: "ci-OTHER" }]],
+					[projectNetwork, [{ provision_network: false, network_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals.config_snapshot).toMatchObject({
+			iac_source: {
+				repo_url: "https://github.com/acme/infra.git",
+				ref: "main",
+				path: "stacks/prod",
+				commit_sha: "deadbeef",
+				var_values: { env: "prod" },
+			},
+		});
+	});
+
+	it("rejects queueing while the source is unscanned (no pinned commit)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map([
+					[
+						projectIacSources,
+						[{ ...scannedIacRow, commit_sha: null, scan_status: "unscanned" }],
+					],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/hasn't passed a scan/);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("rejects a scanned-but-unpinned source (defense in depth)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map([[projectIacSources, [{ ...scannedIacRow, commit_sha: null }]]]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/hasn't passed a scan/);
+	});
+
+	it("rejects when the flag is off but a row exists (defense in depth)", async () => {
+		delete process.env.ALETHIA_BYO_IAC_ENABLED;
+		setupDb({
+			select: snapshotSelect(new Map([[projectIacSources, [scannedIacRow]]])),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/disabled/);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+});
+
 describe("provisionProject", () => {
 	it("queues a DEPLOY job chained to a plan, audits PROVISIONED, and notifies the scaler", async () => {
-		const { valuesSpy, setSpy } = setupDb({
+		const { valuesSpy, executeSpy } = setupDb({
 			select: snapshotSelect(),
 			insert: new Map([[jobs, [{ id: "job-7" }]]]),
 		});
@@ -505,9 +796,71 @@ describe("provisionProject", () => {
 			action: "PROVISIONED",
 			changes: { job_id: "job-7", environment_id: "env-1" },
 		});
-		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
+		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-7" });
+	});
+});
+
+describe("destroyProject — BYO IaC source", () => {
+	const OLD_FLAG = process.env.ALETHIA_BYO_IAC_ENABLED;
+	// A source that DEPLOYED successfully (deployed_commit_sha set), then had a later re-scan FAIL
+	// (commit_sha cleared, scan_status back off "done"). It must still be destroyable.
+	const deployedIacRow = {
+		id: "iac-1",
+		project_id: "p1",
+		environment_id: "env-1",
+		repo_url: "https://github.com/acme/infra.git",
+		ref: "main",
+		path: "stacks/prod",
+		commit_sha: null,
+		deployed_commit_sha: "cafed00d",
+		var_values: { env: "prod" },
+		enabled: true,
+		scan_status: "failed",
+	};
+
+	beforeEach(() => {
+		process.env.ALETHIA_BYO_IAC_ENABLED = "true";
+	});
+	afterEach(() => {
+		if (OLD_FLAG === undefined) delete process.env.ALETHIA_BYO_IAC_ENABLED;
+		else process.env.ALETHIA_BYO_IAC_ENABLED = OLD_FLAG;
+	});
+
+	it("allows DESTROY after a deploy even when a later re-scan failed — snapshot pins deployed_commit_sha", async () => {
+		const { valuesSpy, executeSpy } = setupDb({
+			select: snapshotSelect(new Map([[projectIacSources, [deployedIacRow]]])),
+			insert: new Map([[jobs, [{ id: "job-9" }]]]),
+		});
+
+		const r = await destroyProject("p1");
+		expect(r).toEqual({ jobId: "job-9" });
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals).toMatchObject({ job_type: "DESTROY", status: "QUEUED" });
+		// Destroy tears down the module that CREATED the state, not the failed fresh scan.
+		expect(jobVals.config_snapshot).toMatchObject({
+			iac_source: { commit_sha: "cafed00d" },
+		});
+		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
+		expect(executeSpy).toHaveBeenCalled();
+		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("rejects DESTROY when the source was never deployed (no deployed_commit_sha)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map([
+					[
+						projectIacSources,
+						[{ ...deployedIacRow, deployed_commit_sha: null, scan_status: "unscanned" }],
+					],
+				]),
+			),
+		});
+		await expect(destroyProject("p1")).rejects.toThrow(/no deployed IaC state/);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 });
 

@@ -74,6 +74,7 @@ describe("AddonConfigSheet", () => {
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
+				provider={null}
 				open
 				onOpenChange={vi.fn()}
 			/>,
@@ -98,6 +99,7 @@ describe("AddonConfigSheet", () => {
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo
+				provider={null}
 				open
 				onOpenChange={vi.fn()}
 			/>,
@@ -118,6 +120,7 @@ describe("AddonConfigSheet", () => {
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
+				provider={null}
 				open
 				onOpenChange={vi.fn()}
 			/>,

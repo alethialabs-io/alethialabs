@@ -380,3 +380,25 @@ func TestContract_Component(t *testing.T) {
 	strictDecode(t, "component.json", &resp)
 	assertNoExtraStructKeys(t, "component.json", resp)
 }
+
+func TestContract_ClassificationDimensions(t *testing.T) {
+	var resp struct {
+		Dimensions []ClassificationDimension `json:"dimensions"`
+	}
+	strictDecode(t, "classification_dimensions.json", &resp)
+	if len(resp.Dimensions) != 1 {
+		t.Fatalf("expected 1 dimension, got %d", len(resp.Dimensions))
+	}
+	assertNoExtraStructKeys(t, "classification_dimensions.json", resp)
+}
+
+func TestContract_ClassificationAssignments(t *testing.T) {
+	var resp struct {
+		Assignments []ClassificationAssignment `json:"assignments"`
+	}
+	strictDecode(t, "classification_assignments.json", &resp)
+	if len(resp.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(resp.Assignments))
+	}
+	assertNoExtraStructKeys(t, "classification_assignments.json", resp)
+}

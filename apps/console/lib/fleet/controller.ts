@@ -12,6 +12,9 @@ import type {
 	FleetTarget,
 	ObservedInstance,
 } from "@/lib/fleet/types";
+import { log } from "@/lib/observability/log";
+
+const flog = log.child({ component: "fleet" });
 
 /** Runner-side state correlated to a cloud instance (by metadata.cloud_instance_id). */
 export interface RunnerState {
@@ -92,7 +95,12 @@ export async function reconcilePool(
 			.map((o) =>
 				deps
 					.persistObserved(o.runnerId as string, { location: o.location, version: o.version })
-					.catch((err) => console.error(`[fleet] persistObserved ${o.instanceId} failed:`, err)),
+					.catch((err) =>
+						flog.error("persistObserved failed", {
+							instance_id: o.instanceId,
+							err,
+						}),
+					),
 			),
 	);
 
@@ -142,7 +150,7 @@ export async function reconcileAll(
 		try {
 			await reconcilePool(project, provider, deps, surplus);
 		} catch (err) {
-			console.error(`[fleet] reconcile failed for ${project.provider}:`, err);
+			flog.error("reconcile failed", { provider: project.provider, err });
 		}
 	}
 }

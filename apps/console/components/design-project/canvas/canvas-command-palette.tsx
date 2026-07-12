@@ -10,7 +10,7 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
-import { ArrowRight, GitBranch } from "lucide-react";
+import { ArrowRight, Boxes, GitBranch } from "lucide-react";
 import {
 	PROVIDERS,
 	getProvider,
@@ -35,6 +35,8 @@ const SERVICE_FIELD: Partial<Record<NodeKind, keyof CloudProviderMeta>> = {
 	nosql: "nosqlService",
 	dns: "dnsService",
 	secret: "secretsService",
+	bucket: "storageService",
+	registry: "registryService",
 };
 
 /** Hand-curated search synonyms so real service names / tech terms match. */
@@ -47,6 +49,8 @@ const SYNONYMS: Partial<Record<NodeKind, string[]>> = {
 	topic: ["pubsub", "events", "fan-out"],
 	nosql: ["dynamodb", "firestore", "cosmos", "document", "key-value"],
 	secret: ["secrets", "credentials", "vault", "password"],
+	bucket: ["s3", "object storage", "storage", "files", "assets", "blob"],
+	registry: ["docker", "ecr", "container images", "oci", "harbor", "images"],
 	network: ["vpc", "vnet", "subnet", "cidr"],
 	repositories: ["repo", "git", "gitops", "argocd", "deploy"],
 };
@@ -78,6 +82,12 @@ interface CanvasCommandPaletteProps {
 	onAskAi: () => void;
 	/** Opens the "bring your own Helm chart" flow. Omitted when the feature is off / no project. */
 	onAttachChart?: () => void;
+	/** Opens the "bring your own IaC" flow. Omitted when the feature is off / no project / a source
+	 * already governs the env. */
+	onAttachIac?: () => void;
+	/** When an IaC source governs the env (replace mode), component-add is meaningless — hide the
+	 * Core/Periphery service groups. */
+	disableComponentAdd?: boolean;
 }
 
 /** ⌘K command menu: search services by name, jump to nodes, run actions. */
@@ -89,6 +99,8 @@ export function CanvasCommandPalette({
 	onFitView,
 	onAskAi,
 	onAttachChart,
+	onAttachIac,
+	disableComponentAdd,
 }: CanvasCommandPaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const openInspector = useCanvasStore((s) => s.openInspector);
@@ -142,29 +154,49 @@ export function CanvasCommandPalette({
 			<CommandList>
 				<CommandEmpty>No results.</CommandEmpty>
 
-				{onAttachChart && (
+				{(onAttachChart || onAttachIac) && (
 					<CommandGroup heading="Sources">
-						<CommandItem
-							value="attach-helm-chart"
-							keywords={["helm", "chart", "byo", "bring your own", "gitops", "argocd", "repo"]}
-							onSelect={() => run(onAttachChart)}
-						>
-							<GitBranch className="h-4 w-4" />
-							<span>Bring your own Helm chart</span>
-							<span className="ml-auto font-mono text-[11px] text-muted-foreground">
-								Helm · GitOps
-							</span>
-							<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-						</CommandItem>
+						{onAttachChart && (
+							<CommandItem
+								value="attach-helm-chart"
+								keywords={["helm", "chart", "byo", "bring your own", "gitops", "argocd", "repo"]}
+								onSelect={() => run(onAttachChart)}
+							>
+								<GitBranch className="h-4 w-4" />
+								<span>Bring your own Helm chart</span>
+								<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+									Helm · GitOps
+								</span>
+								<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+							</CommandItem>
+						)}
+						{onAttachIac && (
+							<CommandItem
+								value="attach-iac-source"
+								keywords={["iac", "tofu", "opentofu", "terraform", "byo", "bring your own", "module", "repo"]}
+								onSelect={() => run(onAttachIac)}
+							>
+								<Boxes className="h-4 w-4" />
+								<span>Bring your own IaC</span>
+								<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+									OpenTofu · replace
+								</span>
+								<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+							</CommandItem>
+						)}
 					</CommandGroup>
 				)}
 
-				<CommandGroup heading="Core services">
-					{coreKinds.map(serviceItem)}
-				</CommandGroup>
-				<CommandGroup heading="Periphery">
-					{peripheryKinds.map(serviceItem)}
-				</CommandGroup>
+				{!disableComponentAdd && (
+					<>
+						<CommandGroup heading="Core services">
+							{coreKinds.map(serviceItem)}
+						</CommandGroup>
+						<CommandGroup heading="Periphery">
+							{peripheryKinds.map(serviceItem)}
+						</CommandGroup>
+					</>
+				)}
 
 				{placedNodes.length > 0 && (
 					<CommandGroup heading="Jump to">

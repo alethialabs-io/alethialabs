@@ -37,12 +37,15 @@ export const dimensionInputSchema = createInsertSchema(classificationDimension, 
 	// Kept `.optional()` (not `.default()`) so the schema's input and output types match —
 	// react-hook-form's resolver needs that. The server actions apply the defaults.
 	multi: z.boolean().optional(),
+	// Resource kinds this dimension applies to; empty/omitted ⇒ all kinds.
+	applies_to: z.array(resourceKindSchema).optional(),
 	position: z.number().int().min(0).optional(),
 }).pick({
 	key: true,
 	label: true,
 	description: true,
 	multi: true,
+	applies_to: true,
 	position: true,
 });
 
@@ -60,16 +63,31 @@ const colorSchema = z
 	)
 	.optional();
 
+/**
+ * The promotion-gate policy a value imposes on envs carrying it (label drives policy).
+ * `null` on the form ⇒ the value enforces nothing (the default).
+ */
+export const enforcementSchema = z.object({
+	require_approval: z.boolean(),
+	require_verify_pass: z.boolean(),
+	min_approvals: z.number().int().min(1).max(10),
+});
+
+export type EnforcementInput = z.infer<typeof enforcementSchema>;
+
 /** Create/update an allowed value on a dimension. */
 export const valueInputSchema = createInsertSchema(classificationValue, {
 	value: slugSchema,
 	label: z.string().min(1).max(80),
 	color: colorSchema,
+	// Optional gate policy; nullable so the form can clear it. Server writes null when absent.
+	enforcement: enforcementSchema.nullable().optional(),
 	position: z.number().int().min(0).optional(),
 }).pick({
 	value: true,
 	label: true,
 	color: true,
+	enforcement: true,
 	position: true,
 });
 

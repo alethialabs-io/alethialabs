@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,30 @@ import (
 // state- and CLI-compatible with the Terraform 1.6 line, so terraform-exec drives
 // it unchanged.
 const DefaultIaCVersion = "1.9.0"
+
+// DefaultCancelGracePeriod is the grace window between the graceful SIGINT and the
+// hard SIGKILL when a running tofu command's context is cancelled (a mid-flight job
+// cancel). terraform-exec sends SIGINT to the `tofu` child the instant ctx is done
+// (its cmd.Cancel = Signal(os.Interrupt)); WaitDelay bounds how long the stdlib then
+// waits before force-killing the child. tofu traps the FIRST SIGINT and finishes the
+// in-flight resource, writes state, and releases the lock — a clean stop — so this
+// window must be long enough to let a single resource's cloud API call complete
+// (killing mid-resource is what orphans infra + strands the state lock). Tunable via
+// ALETHIA_CANCEL_GRACE_SECONDS. Default is deliberately generous: 0 (WaitDelay unset)
+// would wait forever, a too-short window truncates the graceful stop into an orphan.
+const DefaultCancelGracePeriod = 120 * time.Second
+
+// cancelGracePeriod resolves the SIGINT→SIGKILL grace window from
+// ALETHIA_CANCEL_GRACE_SECONDS, falling back to DefaultCancelGracePeriod. A value of 0
+// is honored (immediate SIGKILL after SIGINT — pre-apply stages only, never a real apply).
+func cancelGracePeriod() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_CANCEL_GRACE_SECONDS")); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return DefaultCancelGracePeriod
+}
 
 type TofuCLI struct {
 	tf      *tfexec.Terraform
@@ -61,6 +86,14 @@ func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr i
 		tf.SetStderr(os.Stderr)
 	}
 
+	// Stage-aware graceful cancellation. terraform-exec always SIGINTs the `tofu`
+	// child when ctx is cancelled; setting WaitDelay makes the stdlib escalate to
+	// SIGKILL only after the grace window, so a mid-apply cancel lets tofu finish the
+	// in-flight resource, persist state, and release the state lock before dying.
+	// (SetWaitDelay only errors on Windows, where graceful cancel is unsupported — the
+	// runner is Linux/macOS, so the error is intentionally ignored.)
+	_ = tf.SetWaitDelay(cancelGracePeriod())
+
 	return &TofuCLI{tf: tf, version: tfVersion}, nil
 }
 
@@ -74,6 +107,24 @@ func (t *TofuCLI) Init(ctx context.Context, backendConfig map[string]string, upg
 		opts = append(opts, tfexec.Upgrade(true))
 	}
 	return t.tf.Init(ctx, opts...)
+}
+
+// InitNoBackend runs `tofu init -backend=false`: it installs the module's required
+// providers and any LOCAL child modules WITHOUT configuring or authenticating to a state
+// backend. Used by the bring-your-own-IaC scan so `tofu validate` can resolve provider
+// schemas without touching remote state. It still fetches provider plugins, so it needs
+// network egress (unlike a purely local render).
+func (t *TofuCLI) InitNoBackend(ctx context.Context) error {
+	fmt.Println("Initializing OpenTofu (no backend)...")
+	return t.tf.Init(ctx, tfexec.Reconfigure(true), tfexec.Backend(false))
+}
+
+// Validate runs `tofu validate` over the initialized module and returns the structured
+// result (Valid + Diagnostics). It checks configuration consistency (types, references,
+// provider schema) and mutates nothing.
+func (t *TofuCLI) Validate(ctx context.Context) (*tfjson.ValidateOutput, error) {
+	fmt.Println("Validating OpenTofu configuration...")
+	return t.tf.Validate(ctx)
 }
 
 // InitWithBackendFile runs tofu init using a backend config file (e.g. backend.hcl).

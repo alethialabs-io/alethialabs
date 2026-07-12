@@ -59,6 +59,8 @@ export function buildDefaultFormValues(
 			topics: [],
 			nosql_tables: [],
 			secrets: [],
+			storage_buckets: [],
+			container_registries: [],
 		}
 	);
 }

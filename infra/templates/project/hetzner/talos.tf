@@ -46,8 +46,8 @@ locals {
     }
   }
 
-  # Cluster patch: disable the default CNI + kube-proxy (Cilium owns them),
-  # set pod/service CIDRs, and hand the CCM the Hetzner token + network id.
+  # Cluster patch (base — applied to every node): disable the default CNI + kube-proxy
+  # (Cilium owns them) and set the pod/service CIDRs.
   cluster_patch = {
     cluster = {
       network = {
@@ -65,6 +65,31 @@ locals {
 
   control_plane_patches = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch)]
   worker_patches        = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch)]
+
+  # Bootstrap manifests (CNI + cloud integration), rendered OFFLINE by the `helm_template`
+  # data sources (cilium.tf / csi.tf) and applied POST-APPLY by the runner (`kubectl apply`),
+  # NOT embedded in the Talos machine config. Two reasons this beats Talos inlineManifests
+  # here: (1) the machine config ships as Hetzner cloud-init `user_data`, capped at 32 KiB —
+  # Cilium's rendered manifest alone blows that; (2) it keeps the runner's post-cluster path
+  # consistent with the managed clouds (which apply ArgoCD/add-ons post-apply). It still
+  # avoids the in-tofu `kubectl` provider (the `plan -out` bug), because these are OUTPUTS
+  # (offline data sources), never applied in-tofu. Order: Secret → Cilium (CNI) → CCM → CSI.
+  hcloud_secret_manifest = yamlencode({
+    apiVersion = "v1"
+    kind       = "Secret"
+    metadata   = { name = "hcloud", namespace = "kube-system" }
+    type       = "Opaque"
+    data = {
+      token   = base64encode(var.hcloud_token)
+      network = base64encode(tostring(hcloud_network.this.id))
+    }
+  })
+  bootstrap_manifests = join("\n---\n", [
+    local.hcloud_secret_manifest,
+    data.helm_template.cilium.manifest,
+    data.helm_template.hcloud_ccm.manifest,
+    data.helm_template.hcloud_csi.manifest,
+  ])
 }
 
 data "talos_machine_configuration" "control_plane" {

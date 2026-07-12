@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
+	Archive,
 	Box,
 	Database,
 	GitBranch,
 	Globe,
+	HardDrive,
 	KeyRound,
 	ListOrdered,
 	Megaphone,
 	Network,
+	Package,
 	Server,
 	Table2,
 	Zap,
@@ -23,6 +26,11 @@ import {
 	DEFAULT_K8S_VERSION,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import {
+	HETZNER_CACHE_ENGINES,
+	HETZNER_DB_ENGINES,
+} from "@/lib/cloud-providers/hetzner-services";
+import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
@@ -38,9 +46,48 @@ export type SchemaKey =
 	| "topics"
 	| "nosql_tables"
 	| "secrets"
+	| "storage_buckets"
+	| "container_registries"
 	// Chart nodes are out-of-band (project_addons), never written into ProjectFormData — this key
 	// exists only to satisfy the exhaustive registry; the graph⇄form mappers never read it.
 	| "charts";
+
+/** Display order of the Add-palette groups (mirrors the provisionable service types). */
+export const PALETTE_GROUP_ORDER = [
+	"Data",
+	"Storage",
+	"Messaging",
+	"Security",
+	"Networking",
+	"Compute",
+	"DevOps",
+] as const;
+
+/** One of the Add-palette group headings. */
+export type PaletteGroup = (typeof PALETTE_GROUP_ORDER)[number];
+
+/** A roadmap ("Soon") row in the Add palette — a service with no Terraform module yet,
+ * surfaced disabled in its group so the catalog reads complete. */
+export interface RoadmapItem {
+	id: string;
+	label: string;
+	subtitle: string;
+	group: PaletteGroup;
+	icon: LucideIcon;
+	comingSoon: true;
+}
+
+/** Roadmap entries appended to their palette group after the addable kinds. */
+export const ROADMAP_ITEMS: RoadmapItem[] = [
+	{
+		id: "volume",
+		label: "Volume",
+		subtitle: "Persistent block storage for containers",
+		group: "Storage",
+		icon: HardDrive,
+		comingSoon: true,
+	},
+];
 
 export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	kind: K;
@@ -53,6 +100,9 @@ export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	eyebrow: string;
 	label: string;
 	icon: LucideIcon;
+	/** Add-palette presentation (group + cloud-indifferent subtitle). Present on every
+	 * ADDABLE kind; absent only for the fixed project root and out-of-band chart nodes. */
+	palette?: { group: PaletteGroup; subtitle: string };
 	/** Default config for a freshly-added node, given the effective provider. Typed to the
 	 * kind's ProjectFormData fragment (the schema's optional/defaulted columns may be omitted). */
 	defaultData: (provider: CloudProviderSlug) => NodeConfigMap[K];
@@ -97,6 +147,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Network",
 		label: "Network",
 		icon: Network,
+		palette: { group: "Networking", subtitle: "VPC / VNet & subnets" },
 		defaultData: () => ({
 			provision_network: true,
 			cidr_block: "10.0.0.0/16",
@@ -112,6 +163,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Cluster",
 		label: "Cluster",
 		icon: Server,
+		palette: { group: "Compute", subtitle: "Managed Kubernetes (EKS · GKE · AKS)" },
 		defaultData: (provider) => ({
 			cluster_version: DEFAULT_K8S_VERSION[provider],
 			instance_types: [DEFAULT_INSTANCE_TYPE[provider]],
@@ -130,6 +182,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Database",
 		label: "Database",
 		icon: Database,
+		palette: { group: "Data", subtitle: "PostgreSQL · MySQL" },
 		defaultData: (provider) => {
 			const capacity = DB_CAPACITY[provider];
 			return {
@@ -167,6 +220,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Cache",
 		label: "Cache",
 		icon: Zap,
+		palette: { group: "Data", subtitle: "Redis · Valkey" },
 		defaultData: (provider) => ({
 			name: "primary",
 			engine: "redis",
@@ -199,6 +253,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Queue",
 		label: "Queue",
 		icon: ListOrdered,
+		palette: { group: "Messaging", subtitle: "SQS · Pub/Sub · Service Bus" },
 		defaultData: () => ({
 			name: "queue",
 			ordered: false,
@@ -215,6 +270,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Topic",
 		label: "Topic",
 		icon: Megaphone,
+		palette: { group: "Messaging", subtitle: "Pub/Sub topics & subscriptions" },
 		defaultData: () => ({
 			name: "topic",
 			subscriptions: [],
@@ -229,6 +285,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "NoSQL",
 		label: "NoSQL table",
 		icon: Table2,
+		palette: { group: "Data", subtitle: "DynamoDB · Firestore · Cosmos DB" },
 		defaultData: () => ({
 			name: "table",
 			partition_key: "id",
@@ -247,6 +304,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "DNS",
 		label: "DNS",
 		icon: Globe,
+		palette: { group: "Networking", subtitle: "DNS records, certificates & WAF" },
 		defaultData: () => ({
 			enabled: true,
 			managed_certificate: false,
@@ -263,11 +321,44 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Secret",
 		label: "Secret",
 		icon: KeyRound,
+		palette: { group: "Security", subtitle: "Managed secrets & credentials" },
 		defaultData: () => ({
 			name: "secret",
 			generate: true,
 			length: 32,
 			special_chars: true,
+		}),
+	},
+	bucket: {
+		kind: "bucket",
+		schemaKey: "storage_buckets",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: true,
+		eyebrow: "Bucket",
+		label: "Bucket",
+		icon: Archive,
+		palette: { group: "Storage", subtitle: "Object storage for files and assets" },
+		defaultData: () => ({
+			name: "assets",
+			versioning: false,
+			encryption_enabled: true,
+			public_access: false,
+		}),
+	},
+	registry: {
+		kind: "registry",
+		schemaKey: "container_registries",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: true,
+		eyebrow: "Registry",
+		label: "Container registry",
+		icon: Package,
+		palette: { group: "DevOps", subtitle: "Private container images" },
+		defaultData: () => ({
+			name: "apps",
+			provider_config: {},
 		}),
 	},
 	repositories: {
@@ -279,6 +370,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "GitOps",
 		label: "Repository",
 		icon: GitBranch,
+		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },
 		defaultData: () => ({
 			apps_destination_repo: "",
 		}),
@@ -316,26 +408,53 @@ export const ADDABLE_KINDS: NodeKind[] = [
 	"nosql",
 	"dns",
 	"secret",
+	"bucket",
+	"registry",
 	"repositories",
 ];
 
 /**
- * Node kinds a given cloud can't back. Compute-only Hetzner runs data services as in-cluster
- * Helm charts (Postgres→CloudNativePG, cache→Valkey, queue→RabbitMQ); topic (SNS) and nosql
- * (DynamoDB) have no clean single-chart OSS equal, so they're hidden on Hetzner for now
- * (see lib/cloud-providers/hetzner-services.ts).
+ * The kinds a given cloud's template can't provision live in the single server-safe source of
+ * truth `lib/cloud-providers/unsupported-kinds.ts` (re-exported here for palette callers), so the
+ * deploy-time fail-closed gate in `buildConfigSnapshot` derives from the exact same set the palette
+ * hides — un-hide a kind there and BOTH the palette and the gate follow automatically. Compute-only
+ * Hetzner runs data services as in-cluster Helm charts and provisions buckets natively via Object
+ * Storage; only topic/nosql (no clean single-chart OSS equal) and registry (Harbor add-on covers it)
+ * stay hidden there.
  */
-const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
-	Record<CloudProviderSlug, readonly NodeKind[]>
-> = {
-	hetzner: ["topic", "nosql"],
-};
+export { UNSUPPORTED_KINDS_BY_PROVIDER } from "@/lib/cloud-providers/unsupported-kinds";
 
 /** ADDABLE_KINDS minus the kinds the effective provider can't back (null → all). */
 export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] {
-	const blocked = provider ? UNSUPPORTED_KINDS_BY_PROVIDER[provider] : undefined;
-	if (!blocked || blocked.length === 0) return ADDABLE_KINDS;
+	const blocked = unsupportedKindsFor(provider);
+	if (blocked.length === 0) return ADDABLE_KINDS;
 	return ADDABLE_KINDS.filter((k) => !blocked.includes(k));
+}
+
+/**
+ * Variant values a compute-only Hetzner project can actually back — the in-cluster charts
+ * are engine-fixed (databases → CloudNativePG = PostgreSQL-only, caches → Valkey). Kinds
+ * absent here keep their full variant list.
+ */
+const HETZNER_VARIANT_VALUES: Partial<Record<NodeKind, ReadonlySet<string>>> = {
+	database: new Set<string>(HETZNER_DB_ENGINES),
+	cache: new Set<string>(HETZNER_CACHE_ENGINES),
+};
+
+/**
+ * A kind's variant options filtered to what the effective provider can back. The single
+ * engine gate shared by the Add palette's variant step and the inspector's engine radios,
+ * so a Hetzner project can never pick an engine its in-cluster charts won't deploy
+ * (e.g. Database → MySQL, which the chart mapper would otherwise silently skip).
+ */
+export function variantOptionsFor(
+	kind: NodeKind,
+	provider: CloudProviderSlug | null,
+): { value: string; label: string; description: string }[] {
+	const options = NODE_REGISTRY[kind].variants?.options ?? [];
+	if (provider !== "hetzner") return options;
+	const allowed = HETZNER_VARIANT_VALUES[kind];
+	return allowed ? options.filter((o) => allowed.has(o.value)) : options;
 }
 
 /** Singleton kinds may exist at most once on the canvas. */

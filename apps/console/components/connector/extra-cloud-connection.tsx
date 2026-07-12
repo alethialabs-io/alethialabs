@@ -77,7 +77,7 @@ export function TokenCloudConnection({
 				</>
 			}
 		>
-			<div className="space-y-8">
+			<div className="space-y-6">
 				<Step n={1} title={`Create an API token in ${providerName}`}>
 					<p className="max-w-sm text-muted-foreground text-xs">{tokenHelp}</p>
 					{docsUrl && (
@@ -127,7 +127,7 @@ export function TokenCloudConnection({
 										<Input
 											type="password"
 											placeholder="Paste your scoped API token"
-											className="h-9 border-border/50 font-mono text-sm"
+											className="h-9 border-border/60 font-mono text-sm"
 											{...field}
 										/>
 									</FormControl>
@@ -187,7 +187,6 @@ export function AlibabaConnection({
 
 	return (
 		<ConnectSheetShell
-			title="Connect Alibaba Cloud"
 			intro="You create a RAM OIDC provider + role in your own Alibaba account that trusts Alethia. Alethia signs in with a short-lived, minted token — no Alibaba credentials are ever shared or stored."
 			howItWorks={
 				<>
@@ -206,7 +205,7 @@ export function AlibabaConnection({
 				</>
 			}
 		>
-			<div className="space-y-8">
+			<div className="space-y-6">
 				<Step n={1} title="Create the RAM OIDC provider + role">
 					<p className="max-w-sm text-muted-foreground text-xs">
 						Apply the Terraform module below. It registers a RAM OIDC provider that trusts
@@ -277,7 +276,7 @@ export function AlibabaConnection({
 									<FormControl>
 										<Input
 											placeholder="acs:ram::5123456789012345:role/AlethiaProvisioner"
-											className="h-9 border-border/50 font-mono text-sm"
+											className="h-9 border-border/60 font-mono text-sm"
 											{...field}
 										/>
 									</FormControl>

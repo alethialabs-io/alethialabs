@@ -36,6 +36,42 @@ export async function getProtectionRules(projectId: string, envId: string) {
 	});
 }
 
+/** One environment's protection-rule summary (for the env-card "gates into this env" chips). */
+export interface ProtectionSummary {
+	require_predecessor: boolean;
+	require_verify_pass: boolean;
+	require_approval: boolean;
+	min_count: number | null;
+	soak_minutes: number | null;
+	cost_delta_threshold: number | null;
+}
+
+/** All of a project's environments' protection rules, keyed by environment_id (unset → absent). */
+export async function listProtectionRules(
+	projectId: string,
+): Promise<Record<string, ProtectionSummary>> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	return withOwnerScope(actor.userId, async (tx) => {
+		const rows = await tx
+			.select()
+			.from(environmentProtectionRules)
+			.where(eq(environmentProtectionRules.project_id, projectId));
+		return Object.fromEntries(
+			rows.map((r) => [
+				r.environment_id,
+				{
+					require_predecessor: r.require_predecessor,
+					require_verify_pass: r.require_verify_pass,
+					require_approval: r.require_approval,
+					min_count: r.approvers?.min_count ?? null,
+					soak_minutes: r.soak_minutes,
+					cost_delta_threshold: r.cost_delta_threshold,
+				},
+			]),
+		);
+	});
+}
+
 /** Upserts an environment's protection rules (one row per env). */
 export async function setProtectionRules(
 	projectId: string,

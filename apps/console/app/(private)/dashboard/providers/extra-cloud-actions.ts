@@ -46,12 +46,22 @@ export async function saveTokenCloud(
 	identityId: string,
 	provider: "digitalocean" | "hetzner" | "civo",
 	apiToken: string,
+	// Hetzner-only, optional: the manually-generated Object Storage S3 key pair (both-or-neither).
+	s3AccessKey?: string,
+	s3SecretKey?: string,
 ) {
 	const actor = await authorize("manage_identities", {
 		type: "cloud_identity",
 		id: identityId,
 	});
-	return conn.saveTokenCloudIdentity(actor, identityId, provider, apiToken);
+	return conn.saveTokenCloudIdentity(
+		actor,
+		identityId,
+		provider,
+		apiToken,
+		s3AccessKey,
+		s3SecretKey,
+	);
 }
 
 /** Persists an Alibaba RAM-role ARN and verifies it server-side (STS AssumeRole). */

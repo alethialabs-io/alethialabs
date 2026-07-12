@@ -68,9 +68,14 @@ export const HETZNER_SUPPORTED_DATA_KINDS = ["database", "cache", "queue"] as co
 /** Database engines available on Hetzner (Postgres only in v1 — via CloudNativePG). */
 export const HETZNER_DB_ENGINES = ["postgres"] as const;
 
-/** Minimal, forward-compatible views of the component rows the mapper needs. `storage_gb`
- *  and `replicas` are optional: they become user-tunable inspector fields in a later pass and
- *  default here until then. */
+/** Cache engines available on Hetzner (the in-cluster chart is Valkey — Redis-compatible,
+ *  but offering "Redis" would be dishonest: the deploy always ships Valkey). */
+export const HETZNER_CACHE_ENGINES = ["valkey"] as const;
+
+/** Minimal views of the component rows the mapper needs. `storage_gb` and `replicas` are
+ *  the user-tunable in-cluster sizing columns (Hetzner-gated inspector fields); NULL means
+ *  the defaults here stay authoritative. A cache's explicit `storage_gb` wins over the
+ *  `memory_gb` fallback. */
 interface DatabaseInput {
 	name: string;
 	engine_family?: string | null;
@@ -165,15 +170,24 @@ export function hetznerDataServicesToAddOns(
 	for (const cache of caches) {
 		const nodes = posInt(cache.num_cache_nodes, 1);
 		const storageGb = posInt(cache.storage_gb ?? cache.memory_gb, 8);
+		// Bitnami charts key the PVC class as `persistence.storageClass` (NOT the k8s spec's
+		// `storageClassName`); replicas get the same volume size so the "per node" copy and
+		// the "N GiB × nodes" summary stay true (the chart default would silently be 8Gi).
 		const values: Record<string, unknown> = {
 			architecture: nodes > 1 ? "replication" : "standalone",
 			primary: {
 				persistence: {
 					size: `${storageGb}Gi`,
-					storageClassName: HCLOUD_STORAGE_CLASS,
+					storageClass: HCLOUD_STORAGE_CLASS,
 				},
 			},
-			replica: { replicaCount: Math.max(0, nodes - 1) },
+			replica: {
+				replicaCount: Math.max(0, nodes - 1),
+				persistence: {
+					size: `${storageGb}Gi`,
+					storageClass: HCLOUD_STORAGE_CLASS,
+				},
+			},
 		};
 		if (cache.engine_version) {
 			values.image = { tag: cache.engine_version };
@@ -203,7 +217,7 @@ export function hetznerDataServicesToAddOns(
 				replicaCount: 1,
 				persistence: {
 					size: `${posInt(queue.storage_gb, 8)}Gi`,
-					storageClassName: HCLOUD_STORAGE_CLASS,
+					storageClass: HCLOUD_STORAGE_CLASS,
 				},
 			},
 			syncWave: 1,

@@ -1,0 +1,21 @@
+{
+	"dimensions": [
+		{
+			"id": "00000000-0000-4000-8000-000000000000",
+			"key": "string",
+			"label": "string",
+			"description": "string",
+			"multi": false,
+			"applies_to": [
+				"string"
+			],
+			"values": [
+				{
+					"id": "00000000-0000-4000-8000-000000000000",
+					"value": "string",
+					"label": "string"
+				}
+			]
+		}
+	]
+}

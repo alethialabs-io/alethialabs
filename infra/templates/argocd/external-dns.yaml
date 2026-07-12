@@ -1,3 +1,7 @@
+{{- /* external-dns only renders when DNS is enabled, a domain exists, AND the cloud (or
+       DNS connector) has a working external-dns backend — DNSProvider() returns "" otherwise
+       and the whole app is skipped instead of deploying a broken controller. */ -}}
+{{- if and .DNSEnabled .DomainName .DNSProvider }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,20 +22,47 @@ spec:
         fullnameOverride: external-dns
         interval: 30m
         policy: sync
+        {{- if eq .DNSProvider "webhook" }}
+        {{- /* Hetzner Cloud DNS via the official webhook sidecar; token seeded by the
+               deploy path into the external-dns-hetzner Secret before the app syncs. */}}
+        provider:
+          name: webhook
+          webhook:
+            image:
+              repository: docker.io/hetzner/external-dns-hetzner-webhook
+              tag: v0.3.3
+            env:
+              - name: HETZNER_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: external-dns-hetzner
+                    key: token
+        {{- else }}
         provider: {{ .DNSProvider }}
+        {{- end }}
         registry: txt
         triggerLoopOnEvent: true
+        {{- if eq .DNSProvider "cloudflare" }}
+        {{- /* Connector-backed: the api_token Secret is seeded by the deploy path from
+               the job's connector credential — no cloud identity annotation needed. */}}
+        env:
+          - name: CF_API_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: external-dns-cloudflare
+                key: apiToken
+        {{- end }}
         serviceAccount:
           name: external-dns-sa
           annotations:
-            {{- if eq .Provider "aws" }}
+            {{- if eq .DNSProvider "aws" }}
             eks.amazonaws.com/role-arn: arn:aws:iam::{{ .AWSAccountID }}:role/{{ .ClusterName }}-external-dns
-            {{- else if eq .Provider "gcp" }}
+            {{- else if eq .DNSProvider "google" }}
             iam.gke.io/gcp-service-account: {{ .GCPExternalDNSSA }}
-            {{- else if eq .Provider "azure" }}
+            {{- else if eq .DNSProvider "azure" }}
             azure.workload.identity/client-id: {{ .AzureExternalDNSClient }}
             {{- end }}
-        {{- if eq .Provider "azure" }}
+        {{- if eq .DNSProvider "azure" }}
         podLabels:
           azure.workload.identity/use: "true"
         {{- end }}
@@ -48,3 +79,4 @@ spec:
     syncOptions:
       - CreateNamespace=true
   revisionHistoryLimit: 3
+{{- end }}

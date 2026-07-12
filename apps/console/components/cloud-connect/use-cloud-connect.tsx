@@ -12,6 +12,7 @@ import {
 } from "@/app/(private)/dashboard/providers/azure-actions";
 import {
 	initGcpIdentity,
+	saveGcpFromIds,
 	saveGcpIdentity,
 } from "@/app/(private)/dashboard/providers/gcp-actions";
 import {
@@ -249,6 +250,10 @@ export function useCloudConnect({
 		if (!gcpSetup) throw new Error("GCP setup not initialized");
 		return saveGcpIdentity(gcpSetup.identityId, wifConfigJson);
 	};
+	const handleGcpFromIds = async (projectId: string, projectNumber: string) => {
+		if (!gcpSetup) throw new Error("GCP setup not initialized");
+		return saveGcpFromIds(gcpSetup.identityId, projectId, projectNumber);
+	};
 	const handleAzureConnect = async (
 		tenantId: string,
 		clientId: string,
@@ -261,6 +266,17 @@ export function useCloudConnect({
 		const setup = extraSetup?.[provider];
 		if (!setup) throw new Error(`${provider} setup not initialized`);
 		return saveTokenCloud(setup.identityId, provider, token);
+	};
+	// Hetzner also accepts an optional Object Storage S3 key pair (manual, no mint API),
+	// threaded through the same token-cloud save so bucket provisioning has S3 credentials.
+	const handleHetznerConnect = async (
+		token: string,
+		s3AccessKey?: string,
+		s3SecretKey?: string,
+	) => {
+		const setup = extraSetup?.hetzner;
+		if (!setup) throw new Error("hetzner setup not initialized");
+		return saveTokenCloud(setup.identityId, "hetzner", token, s3AccessKey, s3SecretKey);
 	};
 	const handleAlibabaConnect = async (roleArn: string) => {
 		const setup = extraSetup?.alibaba;
@@ -305,7 +321,12 @@ export function useCloudConnect({
 						description="Set up Workload Identity Federation to allow Alethia to provision infrastructure in your GCP project."
 					/>
 					<div className="px-6 py-6">
-						{gcpSetup && <GcpConnection onComplete={handleGcpConnect} />}
+						{gcpSetup && (
+							<GcpConnection
+								onCompleteFromIds={handleGcpFromIds}
+								onComplete={handleGcpConnect}
+							/>
+						)}
 					</div>
 				</SheetContent>
 			</Sheet>
@@ -363,7 +384,7 @@ export function useCloudConnect({
 							/>
 							<div className="px-6 py-6">
 								{extraSetup?.hetzner && (
-									<HetznerConnection onSave={handleTokenCloudConnect("hetzner")} />
+									<HetznerConnection onSave={handleHetznerConnect} />
 								)}
 							</div>
 						</>

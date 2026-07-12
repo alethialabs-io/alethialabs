@@ -70,3 +70,12 @@ check "s3_buckets_block_public_access" {
     error_message = "Every S3 bucket must keep block_public_acls and restrict_public_buckets non-false (public access blocked)."
   }
 }
+
+# The external-secrets operator's IRSA role must exist whenever EKS is provisioned — without it
+# the AWS ClusterSecretStore is (correctly) not rendered and ExternalSecrets can never sync.
+check "eks_irsa_external_secrets_arn_present" {
+  assert {
+    condition     = !var.provision_eks || length(trimspace(try(module.eks[0].eks_irsa_external_secrets_arn, ""))) > 0
+    error_message = "provision_eks is true but the external-secrets IRSA role reported no ARN — the ESO ClusterSecretStore cannot authenticate."
+  }
+}

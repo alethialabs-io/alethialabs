@@ -22,6 +22,73 @@ func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// externalDNSSecretManifest builds the namespace + token Secret manifest external-dns's
+// connector-backed providers read (cloudflare CF_API_TOKEN / hetzner HETZNER_TOKEN).
+// The namespace is included because the Secret must exist before the Application's first
+// sync creates it via CreateNamespace=true.
+func externalDNSSecretManifest(secretName, key, token string) string {
+	b64 := base64.StdEncoding.EncodeToString
+	return fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: external-dns
+data:
+  %s: %s
+`, secretName, key, b64([]byte(token)))
+}
+
+// EnsureExternalDNSSecret applies the token Secret a connector-backed external-dns needs
+// (idempotent; re-applying refreshes a rotated token on every deploy). Callers must pass a
+// non-empty token — the render gate (DNSCredentialPresent) skips the app otherwise.
+func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Writer) error {
+	if token == "" {
+		return fmt.Errorf("refusing to write an empty %s token secret", secretName)
+	}
+	fmt.Fprintf(stdout, "Seeding external-dns credential secret %s...\n", secretName)
+	return ApplyManifest(externalDNSSecretManifest(secretName, key, token), stdout, stderr)
+}
+
+// CleanupSkippedInfraServices removes infra-service objects that earlier deploys applied but
+// the current facts no longer render. Infra services are plain `kubectl apply` (no label/prune
+// scheme yet), so an app that stops rendering would otherwise be ORPHANED on the cluster —
+// notably the pre-parity external-dns that shipped with `provider: aws` on alibaba/hetzner
+// (crash-looping) and the unguarded AWS ClusterSecretStore applied on every cloud. Deletes are
+// best-effort + idempotent (--ignore-not-found); deleting the Application cascades removal of
+// the controller through its resources-finalizer.
+func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
+	if !facts.DNSEnabled || facts.DomainName == "" || facts.DNSProvider() == "" {
+		cmd := "kubectl delete application external-dns -n argocd --ignore-not-found --timeout=60s"
+		fmt.Fprintln(stdout, "external-dns is not rendered for this configuration — removing any stale install...")
+		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not remove stale external-dns application: %v\n", err)
+		}
+	}
+	// Per-cloud ClusterSecretStores: each gate must mirror external-secrets-operator.yaml's
+	// render conditions — a store whose identity fact disappeared (or that belongs to another
+	// cloud) stops rendering and would otherwise be orphaned in a permanently-broken state.
+	esoStores := map[string]bool{
+		"secretstore-aws":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "",
+		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
+		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
+		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
+	}
+	for name, renders := range esoStores {
+		if renders {
+			continue
+		}
+		cmd := fmt.Sprintf("kubectl delete clustersecretstore %s --ignore-not-found --timeout=60s", name)
+		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not remove stale ClusterSecretStore %s: %v\n", name, err)
+		}
+	}
+}
+
 // ApplyManifest kubectl-applies a single in-memory manifest (e.g. a hardened BYO AppProject) via
 // a temp file, so callers with a rendered string don't need to stage a directory.
 func ApplyManifest(manifest string, stdout, stderr io.Writer) error {

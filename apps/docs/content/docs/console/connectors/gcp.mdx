@@ -16,9 +16,11 @@ ever generated. Alethia signs in with a short-lived token (≤10 min) that GCP v
 anytime** by deleting the pool or unbinding the service account.
 </Callout>
 
-The connect sheet gives you two one-shot paths that create everything for you and print a **credential
-configuration JSON** — you don't hand-build the WIF resources. Both pin the same values the console mints:
-issuer `https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `alethia-connector`.
+The connect sheet gives you two one-shot paths that create everything for you. When they finish, you enter
+just **two values** — your **Project ID** and **Project Number** — and Alethia assembles the WIF credential
+configuration for you (there is no JSON to copy). Both paths pin the same values the console mints: issuer
+`https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `alethia-connector`, and the fixed
+pool `alethia-pool` / provider `alethia-oidc-provider` / service account `alethia-provisioner`.
 
 <Tabs items={["Setup script (Cloud Shell)", "Terraform"]}>
   <Tab value="Setup script (Cloud Shell)">
@@ -30,11 +32,12 @@ issuer `https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `a
     account, a **Workload Identity Pool + OIDC provider** trusting the Alethia issuer, and binds the fixed
     subject `alethia-connector` to the service account.
 
-    ### Copy the credential config
-    The script prints the WIF credential configuration between `--- START CONFIG ---` and `--- END CONFIG ---`.
+    ### Enter the two values it prints
+    When it finishes, the script prints your **Project ID** and **Project Number**. Enter both in the connect
+    sheet — Alethia assembles the credential configuration from them and the fixed pool/provider/SA names.
 
-    ### Paste into Alethia
-    Paste that block into the connect sheet and click "Connect."
+    ### Connect
+    Click **Connect**. Alethia verifies the federation instantly, server-side (see below).
 
     </Steps>
   </Tab>
@@ -45,15 +48,25 @@ issuer `https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `a
     Download the module ("Download module" in the connect sheet) and run `terraform apply` (auth via your
     `gcloud` login). It creates the same pool + OIDC provider + service account + binding.
 
-    ### Copy the output
-    Copy the `credential_config` output (`terraform output credential_config`).
+    ### Enter the outputs
+    Enter the `project_id` and `project_number` outputs in the connect sheet. For custom setups, the sheet's
+    advanced **"Paste raw config JSON instead"** toggle accepts a full `external_account` config — e.g.
+    `terraform output credential_config` — instead of the two IDs.
 
-    ### Paste into Alethia
-    Paste it into the connect sheet and click "Connect."
+    ### Connect
+    Click **Connect**.
 
     </Steps>
   </Tab>
 </Tabs>
+
+<Callout type="info">
+**Why a Project Number and not just the ID?** The WIF audience is keyed on your project's **numeric project
+number** (`//iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/...`), not the
+project ID — and it can't be derived from the ID without already being authenticated (it's needed to build
+the token-exchange request). The project ID separately forms the service-account email. Both are printed by
+the setup script, so it's a two-value copy.
+</Callout>
 
 ## Verification
 
@@ -68,9 +81,9 @@ Existing resources (VPC networks, subnets, DNS zones) are discovered separately 
 
 ## What's Stored
 
-- **GCP Project ID**
-- **WIF configuration** — the credential config JSON you paste (pool + provider audience, the service
-  account impersonation URL, and the token-file credential source). The provisioner service account is
-  referenced by that impersonation URL; there's no separate key field.
+- **GCP Project ID** and **Project Number**
+- **WIF configuration** — assembled by the console from those two IDs: the pool + provider audience, the
+  service account impersonation URL, and the token-file credential source. The provisioner service account
+  is referenced by that impersonation URL; there's no separate key field.
 
 No service account JSON keys. Access is revoked by deleting the WIF pool or unbinding the service account.

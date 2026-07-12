@@ -102,6 +102,8 @@ export const jobWire = createSelectSchema(jobs, {
 	environment_id: true,
 	// Internal elench waiver input (set by console authz) — never on the CLI wire.
 	verify_override: true,
+	// Internal W3C trace correlation — carried enqueue → claim → runner, not CLI-facing.
+	traceparent: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
@@ -439,6 +441,34 @@ export const cliActivityResponse = z.object({ activity: z.array(activityWire) })
 export const cliRolesResponse = z.object({ roles: z.array(roleWire) });
 /** POST /api/cli/roles result. */
 export const cliRoleResponse = z.object({ role: roleWire });
+
+/** A classification dimension + its values (GET /api/cli/classification/dimensions). */
+export const classificationDimensionWire = z.object({
+	id: z.uuid(),
+	key: z.string(),
+	label: z.string(),
+	description: z.string().nullable(),
+	multi: z.boolean(),
+	/** Resource kinds this dimension applies to; empty ⇒ all. */
+	applies_to: z.array(z.string()),
+	values: z.array(
+		z.object({ id: z.uuid(), value: z.string(), label: z.string() }),
+	),
+});
+export const cliClassificationDimensionsResponse = z.object({
+	dimensions: z.array(classificationDimensionWire),
+});
+
+/** A value assigned to a resource (GET/POST /api/cli/classification/assignments). */
+export const classificationAssignmentWire = z.object({
+	dimension_key: z.string(),
+	dimension_label: z.string(),
+	value: z.string(),
+	value_label: z.string(),
+});
+export const cliClassificationAssignmentsResponse = z.object({
+	assignments: z.array(classificationAssignmentWire),
+});
 /** GET /api/cli/grants result. */
 export const cliGrantsResponse = z.object({ grants: z.array(grantWire) });
 /** POST /api/cli/grants result. */
@@ -517,6 +547,8 @@ export const cliContract = {
 	EnvironmentResponse: cliEnvironmentResponse,
 	ComponentsResponse: cliComponentsResponse,
 	ComponentResponse: cliComponentResponse,
+	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
+	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;
 
 export type CliContract = typeof cliContract;

@@ -46,8 +46,11 @@ type Job struct {
 	CompletedAt       *time.Time     `json:"completed_at"`
 	ErrorMessage      *string        `json:"error_message"`
 	ExecutionMetadata map[string]any `json:"execution_metadata"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	// Traceparent is the W3C traceparent minted at enqueue (`00-<trace-id>-<span-id>-01`).
+	// Carried enqueue → claim → runner so the runner's logs/spans join the console trace.
+	Traceparent string    `json:"traceparent"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type CloudIdentity struct {
@@ -65,6 +68,11 @@ type CloudIdentity struct {
 	SubscriptionID      string `json:"subscription_id"`
 	// DigitalOcean / Hetzner / Civo — scoped API token (decrypted at claim time).
 	APIToken string `json:"api_token"`
+	// Hetzner Object Storage (S3-compatible) access/secret key pair — DISTINCT from the
+	// Cloud API token, decrypted at claim. Exported as HETZNER_S3_ACCESS_KEY /
+	// HETZNER_S3_SECRET_KEY for the aminueza/minio provider. Empty when unused.
+	S3AccessKey string `json:"s3_access_key"`
+	S3SecretKey string `json:"s3_secret_key"`
 	// Self-managed: no token was stored in Alethia; this (self-hosted) runner supplies
 	// it from its own environment (HCLOUD_TOKEN / CIVO_TOKEN / DIGITALOCEAN_ACCESS_TOKEN).
 	SelfManaged bool `json:"self_managed"`
@@ -103,27 +111,36 @@ func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
 }
 
-func (c *RunnerAPIClient) Heartbeat() error {
+func (c *RunnerAPIClient) Heartbeat() ([]string, error) {
 	payload, _ := json.Marshal(map[string]any{
 		"version":   version.Version,
 		"providers": c.providers, // nil → JSON null → server keeps existing (claims any)
 	})
 	req, err := http.NewRequest("POST", c.baseURL+"/runners/heartbeat", bytes.NewBuffer(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("heartbeat request failed: %w", err)
+		return nil, fmt.Errorf("heartbeat request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
 	}
-	return nil
+	// The body carries the runner's server-side-cancelled job ids (fallback cancel delivery). An
+	// older console omits the field → empty slice → no fallback cancels, which is fine.
+	var body struct {
+		CancelledJobIDs []string `json:"cancelled_job_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		// A malformed/empty body must not fail liveness — the heartbeat itself succeeded.
+		return nil, nil
+	}
+	return body.CancelledJobIDs, nil
 }
 
 func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {
@@ -151,11 +168,37 @@ func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {
 	return &result, nil
 }
 
-// StreamWake holds an SSE connection to the push-dispatch endpoint and invokes
-// onWake for every wake event (a job became claimable). It blocks until the stream
-// ends or ctx is cancelled, then returns — the caller reconnects with backoff. Uses
-// a no-timeout client (the connection is long-lived); ctx governs its lifetime.
-func (c *RunnerAPIClient) StreamWake(ctx context.Context, onWake func()) error {
+// WakeEvent is a typed push-dispatch event carried on the wake SSE stream. Type "wake"
+// means "a job became claimable" (the runner attempts a claim); type "cancel" targets a
+// specific in-flight job by JobID (the runner tears it down mid-flight). The console emits
+// these as `data: {"type":"…","job_id":"…"}`; a bare legacy `data: wake` line (no JSON) is
+// parsed as a wake for back-compat.
+type WakeEvent struct {
+	Type  string `json:"type"`
+	JobID string `json:"job_id"`
+}
+
+// parseWakeLine parses one SSE line into a WakeEvent. It returns (event, true) only for a
+// "data:" line; comment/blank lines return (_, false). A data payload that isn't the typed
+// JSON object (e.g. the legacy `data: wake`) is treated as a plain wake so an older console
+// still drives claims.
+func parseWakeLine(line string) (WakeEvent, bool) {
+	if !strings.HasPrefix(line, "data:") {
+		return WakeEvent{}, false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	var ev WakeEvent
+	if err := json.Unmarshal([]byte(payload), &ev); err != nil || ev.Type == "" {
+		return WakeEvent{Type: "wake"}, true // legacy `data: wake` (or any non-typed payload)
+	}
+	return ev, true
+}
+
+// StreamWake holds an SSE connection to the push-dispatch endpoint and invokes onEvent for
+// every typed event (a wake, or a cancel targeting one of this runner's jobs). It blocks
+// until the stream ends or ctx is cancelled, then returns — the caller reconnects with
+// backoff. Uses a no-timeout client (the connection is long-lived); ctx governs its lifetime.
+func (c *RunnerAPIClient) StreamWake(ctx context.Context, onEvent func(WakeEvent)) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/runners/wake", nil)
 	if err != nil {
 		return err
@@ -175,9 +218,9 @@ func (c *RunnerAPIClient) StreamWake(ctx context.Context, onWake func()) error {
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		// SSE: "data: …" lines are wakes; ":" comments are heartbeats (ignored).
-		if strings.HasPrefix(scanner.Text(), "data:") {
-			onWake()
+		// SSE: "data: …" lines carry events; ":" comments are heartbeats (ignored).
+		if ev, ok := parseWakeLine(scanner.Text()); ok {
+			onEvent(ev)
 		}
 	}
 	return scanner.Err()
@@ -217,10 +260,15 @@ func (c *RunnerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, ex
 	return nil
 }
 
-func (c *RunnerAPIClient) SendLog(jobID, logChunk, streamType string) error {
+func (c *RunnerAPIClient) SendLog(jobID, logChunk, streamType, traceparent string) error {
 	payload := map[string]string{
 		"log_chunk":   logChunk,
 		"stream_type": streamType,
+	}
+	// Carry the job's trace so the console stamps job_logs.traceparent (insert_job_log
+	// falls back to the job's own traceparent when this is absent).
+	if traceparent != "" {
+		payload["traceparent"] = traceparent
 	}
 
 	body, err := json.Marshal(payload)

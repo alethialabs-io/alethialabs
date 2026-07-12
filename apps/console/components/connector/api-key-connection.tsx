@@ -152,7 +152,7 @@ export function ApiKeyConnection({
 											type={f.secret ? "password" : "text"}
 											autoComplete="off"
 											placeholder={f.help}
-											className="h-9 text-sm border-border/50"
+											className="h-9 text-sm border-border/60"
 											{...field}
 										/>
 									</FormControl>

@@ -15,6 +15,8 @@ import {
 	classificationDimension,
 	classificationValue,
 } from "@/lib/db/schema";
+import type { ResourceKind } from "@/lib/db/schema/enums";
+import type { ClassificationEnforcement } from "@/types/jsonb.types";
 import {
 	type DimensionInput,
 	dimensionInputSchema,
@@ -35,6 +37,8 @@ export interface ValueDTO {
 	value: string;
 	label: string;
 	color: string | null;
+	/** Promotion-gate policy this value imposes on envs carrying it; null ⇒ inert. */
+	enforcement: ClassificationEnforcement | null;
 	position: number;
 	/** How many resources currently carry this value (0 → unused). */
 	assignmentCount: number;
@@ -49,6 +53,8 @@ export interface DimensionDTO {
 	description: string | null;
 	multi: boolean;
 	position: number;
+	/** Resource kinds this dimension applies to; empty ⇒ all kinds. */
+	appliesTo: ResourceKind[];
 	/** Distinct resources carrying any value of this dimension (0 → unused axis). */
 	resourceCount: number;
 	values: ValueDTO[];
@@ -67,6 +73,7 @@ function toDimensionDTO(
 		description: d.description,
 		multi: d.multi,
 		position: d.position,
+		appliesTo: d.applies_to ?? [],
 		resourceCount: byDimension.get(d.id) ?? 0,
 		values: d.values.map((v) => ({
 			id: v.id,
@@ -74,6 +81,7 @@ function toDimensionDTO(
 			value: v.value,
 			label: v.label,
 			color: v.color,
+			enforcement: v.enforcement,
 			position: v.position,
 			assignmentCount: byValue.get(v.id) ?? 0,
 		})),
@@ -118,6 +126,7 @@ export async function createDimension(
 					label: data.label,
 					description: data.description ?? null,
 					multi: data.multi ?? false,
+					applies_to: data.applies_to ?? [],
 					position: data.position ?? 0,
 				})
 				.returning({ id: classificationDimension.id });
@@ -128,7 +137,7 @@ export async function createDimension(
 	return { id };
 }
 
-/** Updates a dimension's presentation + single/multi mode. */
+/** Updates a dimension's presentation, single/multi mode, and resource-kind scope. */
 export async function updateDimension(
 	id: string,
 	input: DimensionInput,
@@ -143,6 +152,7 @@ export async function updateDimension(
 				label: data.label,
 				description: data.description ?? null,
 				multi: data.multi ?? false,
+				applies_to: data.applies_to ?? [],
 				position: data.position ?? 0,
 			})
 			.where(eq(classificationDimension.id, id)),
@@ -187,6 +197,7 @@ export async function createValue(
 					value: data.value,
 					label: data.label,
 					color: data.color ?? null,
+					enforcement: data.enforcement ?? null,
 					position: data.position ?? 0,
 				})
 				.returning({ id: classificationValue.id });
@@ -211,6 +222,7 @@ export async function updateValue(
 				value: data.value,
 				label: data.label,
 				color: data.color ?? null,
+				enforcement: data.enforcement ?? null,
 				position: data.position ?? 0,
 			})
 			.where(eq(classificationValue.id, id)),
@@ -261,6 +273,7 @@ export async function createDimensionWithValues(
 					label: data.label,
 					description: data.description ?? null,
 					multi: data.multi ?? false,
+					applies_to: data.applies_to ?? [],
 					position: data.position ?? 0,
 				})
 				.returning({ id: classificationDimension.id });

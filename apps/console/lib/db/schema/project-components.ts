@@ -29,6 +29,8 @@ import type {
 	ClusterProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
+	IacScanReport,
+	IacVarValues,
 	NodeSize,
 	NosqlProviderConfig,
 	ObservabilityProviderConfig,
@@ -326,6 +328,59 @@ export const projectSourceRepos = pgTable(
 	],
 );
 
+// Bring-your-own IaC (E3): a git repo holding an OpenTofu ROOT MODULE attached to a project
+// environment. When an enabled row exists (and the flag is on), that environment's
+// PLAN/DEPLOY/DESTROY/DETECT_DRIFT jobs run the customer's module instead of the built-in
+// per-cloud template (v1 = REPLACE mode). Patterned on projectSourceRepos (repo coords) +
+// the BYO columns of projectAddons (git credential + scan lifecycle). Singleton per env for
+// v1 (UNIQUE(project_id, environment_id)); `name` exists so multi-stack can relax that later.
+export const projectIacSources = pgTable(
+	"project_iac_sources",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Stack name — reserved for future multi-stack support; v1 always 'default'.
+		name: text().default("default").notNull(),
+		repo_url: text().notNull(),
+		// Branch/tag to scan; NULL = the repo's default branch.
+		ref: text(),
+		// Root-module directory within the repo; "" = repo root.
+		path: text().default("").notNull(),
+		// The commit pinned by the last successful IAC_SCAN — provisioning checks out THIS
+		// sha (never the moving ref), so what was scanned is exactly what applies (TOCTOU
+		// protection). NULL until the first successful scan; provisioning is gated on it.
+		commit_sha: text(),
+		// The commit a successful DEPLOY actually applied (the module that created live
+		// state). Set by finalizeDeployment on DEPLOY success, cleared on DESTROY success.
+		// DESTROY tears down THIS commit's module (not a newer unpinned re-scan), and detach
+		// is blocked while it is set (the env holds live BYO infra).
+		deployed_commit_sha: text(),
+		// The projectGitCredentials row (purpose='infrastructure') used to clone the repo.
+		// NULL = public repo / owner-OAuth fallback (the runner's git-token route).
+		git_credential_id: uuid().references(() => projectGitCredentials.id, {
+			onDelete: "set null",
+		}),
+		// Customer-supplied NON-SECRET tfvars for the root module (scalars only).
+		var_values: jsonb().$type<IacVarValues>().default({}),
+		enabled: boolean().default(true).notNull(),
+		// IaC-safety scan lifecycle: unscanned | scanning | done | failed (projectAddons pattern).
+		scan_status: text().default("unscanned").notNull(),
+		scan_report: jsonb().$type<IacScanReport>(),
+		scanned_at: timestamp({ withTimezone: true }),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_iac_sources_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
+	],
+);
+
 // ── Multi (1:N per project environment, UNIQUE on (project_id, environment_id, name)) ──
 
 export const projectDatabases = pgTable(
@@ -350,6 +405,12 @@ export const projectDatabases = pgTable(
 		instance_class: text(),
 		min_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(0.5),
 		max_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(4),
+		// Cloud-indifferent in-cluster sizing; used by compute-only clouds (e.g. Hetzner,
+		// where a database node deploys as a CloudNativePG cluster instead of a managed
+		// service): persistent-volume size in GiB and instance count. NULL → the in-cluster
+		// mapper's defaults stay authoritative (10Gi / 1 instance).
+		storage_gb: integer(),
+		replicas: integer(),
 		port: integer().default(5432),
 		backup_retention_days: integer().default(7),
 		iam_auth: boolean().default(false),
@@ -391,6 +452,10 @@ export const projectCaches = pgTable(
 		// Cloud-indifferent size in GB; the Go resolver maps it to the nearest provider cache
 		// SKU. Legacy concrete node_type below is the resolver's fallback.
 		memory_gb: numeric({ precision: 8, scale: 2, mode: "number" }),
+		// Cloud-indifferent in-cluster sizing; used by compute-only clouds (e.g. Hetzner,
+		// where a cache node deploys as a Valkey chart): persistent-volume size in GiB.
+		// NULL → the in-cluster mapper falls back to memory_gb, then its default (8Gi).
+		storage_gb: integer(),
 		node_type: text(),
 		num_cache_nodes: integer().default(1),
 		multi_az: boolean().default(false),
@@ -426,6 +491,10 @@ export const projectQueues = pgTable(
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		ordered: boolean().default(false),
+		// Cloud-indifferent in-cluster sizing; used by compute-only clouds (e.g. Hetzner,
+		// where a queue node deploys as a RabbitMQ chart): persistent-volume size in GiB.
+		// NULL → the in-cluster mapper's default stays authoritative (8Gi).
+		storage_gb: integer(),
 		// Cross-cloud: SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline.
 		visibility_timeout: integer().default(30),
 		message_retention: integer().default(345600),

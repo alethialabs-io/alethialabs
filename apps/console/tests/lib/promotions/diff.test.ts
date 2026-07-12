@@ -38,6 +38,8 @@ function mkDesign(overrides: Partial<ProjectFormData> = {}): ProjectFormData {
 		topics: [],
 		nosql_tables: [],
 		secrets: [],
+		storage_buckets: [],
+		container_registries: [],
 	};
 	return { ...base, ...structuredClone(overrides) };
 }

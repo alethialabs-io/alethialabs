@@ -45,7 +45,21 @@ export async function POST(req: Request) {
 		await db.execute(
 			sql`select runner_heartbeat(${runnerId}::uuid, ${tokenHash}, ${runnerVersion}, ${providersLiteral}::cloud_provider[])`,
 		);
-		return NextResponse.json({ success: true });
+		// Fallback cancel delivery: the primary path is a pushed wake-stream cancel event, but that
+		// pg_notify is dropped if the runner's SSE was disconnected at notify time. Return this
+		// runner's recently-CANCELLED jobs so the heartbeat loop can tear down any it's still running
+		// (cancelIfRunning is a no-op for jobs it isn't running). The 30-minute window bounds the set;
+		// a longer-running apply is covered because it's still in-flight and re-reported each tick.
+		const cancelled = await db.execute<{ id: string }>(
+			sql`select id from jobs
+			    where runner_id = ${runnerId}::uuid
+			      and status = 'CANCELLED'
+			      and updated_at > now() - interval '30 minutes'`,
+		);
+		return NextResponse.json({
+			success: true,
+			cancelled_job_ids: cancelled.map((r) => r.id),
+		});
 	} catch (err) {
 		console.error("Heartbeat error:", err);
 		return NextResponse.json(

@@ -33,6 +33,9 @@ type DestroyParams struct {
 	Stderr       io.Writer
 	// ApiClient, when set, unregisters the cluster from Alethia before teardown.
 	ApiClient *api.Client
+	// GitAccessToken authorizes the BYO IaC clone (only used when ProjectConfig
+	// carries an IacSource; falls back to ProjectConfig.GitAccessToken when empty).
+	GitAccessToken string
 }
 
 // RunDestroy tears down a project environment. It rebuilds the tofu workdir from
@@ -47,7 +50,8 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	if params.StateBackend == nil {
 		return fmt.Errorf("StateBackend config is required for state access")
 	}
-	if params.TemplatesDir == "" {
+	byoIac := vc.IacSource != nil
+	if !byoIac && params.TemplatesDir == "" {
 		return fmt.Errorf("TemplatesDir is required")
 	}
 
@@ -85,9 +89,35 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	}
 	defer os.RemoveAll(tmpRoot)
 
-	tfDir := filepath.Join(tmpRoot, "work")
-	if err := copyDir(params.TemplatesDir, tfDir); err != nil {
-		return fmt.Errorf("failed to copy templates: %w", err)
+	var tfDir string
+	var tfvars map[string]interface{}
+	if byoIac {
+		// BYO IaC: destroy MUST run the customer's module at the SAME pinned commit
+		// (destroying with drifted HCL orphans resources). Clone-at-pinned-SHA +
+		// inline fail-closed gate + backend override, exactly like the deploy.
+		token := params.GitAccessToken
+		if token == "" {
+			token = vc.GitAccessToken
+		}
+		cloneDir := filepath.Join(tmpRoot, "clone")
+		var restore func()
+		tfDir, tfvars, restore, err = prepareByoIacWorkdir(vc, token, cloneDir, out, stderr)
+		if err != nil {
+			return err
+		}
+		defer restore()
+	} else {
+		tfDir = filepath.Join(tmpRoot, "work")
+		if err := copyDir(params.TemplatesDir, tfDir); err != nil {
+			return fmt.Errorf("failed to copy templates: %w", err)
+		}
+		// Reconstruct the same tfvars the apply used so the destroy plan resolves the
+		// same variables (greenfield/provisioned-network is the common case; brownfield
+		// subnet re-resolution is a follow-up).
+		tfvars = provider.ProviderTfvars(vc)
+		if _, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, out); composeErr != nil {
+			return fmt.Errorf("connector composition failed: %w", composeErr)
+		}
 	}
 
 	tf, err := tofu.NewTofuCLI(ctx, vc.IacVersion, tfDir, out, stderr)
@@ -95,13 +125,6 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		return fmt.Errorf("failed to initialize OpenTofu CLI: %w", err)
 	}
 
-	// Reconstruct the same tfvars the apply used so the destroy plan resolves the
-	// same variables (greenfield/provisioned-network is the common case; brownfield
-	// subnet re-resolution is a follow-up).
-	tfvars := provider.ProviderTfvars(vc)
-	if _, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, out); composeErr != nil {
-		return fmt.Errorf("connector composition failed: %w", composeErr)
-	}
 	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)
 	if err != nil {
 		return fmt.Errorf("failed to write tfvars: %w", err)

@@ -10,6 +10,7 @@ output "aks_cluster_name" {
 output "aks_cluster_endpoint" {
   description = "Endpoint of the AKS cluster"
   value       = var.provision_aks ? module.aks[0].cluster_endpoint : null
+  sensitive   = true
 }
 
 output "aks_cluster_ca_certificate" {
@@ -93,4 +94,14 @@ output "azure_tenant_id" {
 output "external_dns_client_id" {
   description = "external-dns managed identity client id (Workload Identity)"
   value       = var.provision_aks ? azurerm_user_assigned_identity.external_dns[0].client_id : null
+}
+
+output "external_secrets_client_id" {
+  description = "external-secrets operator managed identity client id (Workload Identity; gates the azurekv ClusterSecretStore render)"
+  value       = var.provision_aks ? azurerm_user_assigned_identity.external_secrets[0].client_id : null
+}
+
+output "key_vault_uri" {
+  description = "URI of the project Key Vault (the azurekv ClusterSecretStore's vaultUrl)"
+  value       = module.key_vault.vault_uri
 }

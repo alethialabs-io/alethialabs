@@ -1,0 +1,19 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "aws_iam_policy.dynamic",
+      "mode": "managed",
+      "type": "aws_iam_policy",
+      "name": "dynamic",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "dynamic" },
+        "after_unknown": { "id": true, "arn": true, "policy": true }
+      }
+    }
+  ]
+}

@@ -505,6 +505,41 @@
       "when": 1783769043334,
       "tag": "0071_strange_leech",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1783786126805,
+      "tag": "0072_huge_ezekiel_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1783796701518,
+      "tag": "0073_black_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1783800032569,
+      "tag": "0074_minor_human_fly",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1783803759293,
+      "tag": "0075_cooing_scarecrow",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1783843705455,
+      "tag": "0076_volatile_may_parker",
+      "breakpoints": true
     }
   ]
 }

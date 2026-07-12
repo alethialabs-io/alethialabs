@@ -19,6 +19,7 @@
     "authentication",
     "multi-cloud-conversion",
     "terraform-state",
-    "gitops-argocd"
+    "gitops-argocd",
+    "bring-your-own-iac"
   ]
 }

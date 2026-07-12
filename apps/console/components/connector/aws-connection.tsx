@@ -101,7 +101,6 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 
 	return (
 		<ConnectSheetShell
-			title="Connect AWS"
 			intro="You create an IAM role in your own AWS account that trusts Alethia's issuer. Alethia signs in with a short-lived, minted token — no access keys and no external id are ever shared or stored."
 			howItWorks={
 				<>
@@ -150,7 +149,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 			/>
 
 			{method === "cloudformation" ? (
-				<div className="space-y-8">
+				<div className="space-y-6">
 					<Step n={1} title="Launch Stack">
 						<p className="max-w-sm text-muted-foreground text-xs">
 							Opens AWS CloudFormation with the template pre-filled. It creates an IAM OIDC
@@ -171,7 +170,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 								onClick={handleDownload}
 								variant="outline"
 								size="sm"
-								className="h-8 border-border/50 font-medium text-xs"
+								className="h-8 border-border/60 font-medium text-xs"
 								type="button"
 							>
 								<CloudIcon className="mr-1.5 h-3.5 w-3.5 opacity-70" />
@@ -188,7 +187,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 					</Step>
 				</div>
 			) : (
-				<div className="space-y-8">
+				<div className="space-y-6">
 					<Step n={1} title="Apply Terraform Module">
 						<p className="max-w-sm text-muted-foreground text-xs">
 							Creates the IAM OIDC provider + role that trust the Alethia issuer. No
@@ -269,7 +268,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 											<FormControl>
 												<Input
 													placeholder="arn:aws:iam::123456789012:role/AlethiaProvisionerRole"
-													className="h-9 border-border/50 text-sm"
+													className="h-9 border-border/60 text-sm"
 													{...field}
 												/>
 											</FormControl>

@@ -5,7 +5,11 @@
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { withOwnerScope } from "@/lib/db";
+import { type Tx, withOwnerScope } from "@/lib/db";
+import {
+	type EnvTransitionContext,
+	transitionEnv,
+} from "@/lib/db/env-status";
 import {
 	auditLog,
 	cloudIdentities,
@@ -21,6 +25,7 @@ import {
 	projectDns,
 	projectEnvironments,
 	projectAddons,
+	projectIacSources,
 	projectNetwork,
 	projectNosqlTables,
 	projectObservability,
@@ -28,18 +33,27 @@ import {
 	projectRepositories,
 	projectSourceRepos,
 	projectSecrets,
+	projectStorageBuckets,
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
+import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
-import { hetznerDataServicesToAddOns } from "@/lib/cloud-providers/hetzner-services";
+import {
+	HETZNER_DB_ENGINES,
+	hetznerDataServicesToAddOns,
+} from "@/lib/cloud-providers/hetzner-services";
+import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
 	convertProjectConfig,
+	getProvider,
 } from "@/lib/cloud-providers";
+import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
@@ -59,6 +73,52 @@ function placementGateError(resourceType: string, name: string): Error {
 			"Hot cross-cloud data-plane edges (compute reaching a primary datastore in another cloud) are on " +
 			"the roadmap and require cross-cloud networking that isn't available yet — move this resource onto " +
 			"the stack's primary cloud, or model it as an independent per-cloud stack.",
+	);
+}
+
+/**
+ * Deploy-time honesty gate (fail-closed), mirroring placementGateError's fail-fast shape:
+ * Hetzner runs databases in-cluster via CloudNativePG, which is PostgreSQL-only. The palette,
+ * inspector, and cross-cloud converter all filter the engine choice, but imported / AI-authored
+ * / legacy configs can still carry another family — and without this gate the chart mapper
+ * silently skips the database, so the deploy reports SUCCESS without it.
+ */
+function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
+	const label = engineFamily === "mysql" ? "MySQL" : `"${engineFamily}"`;
+	return new Error(
+		`Database "${name}": ${label} databases can't be provisioned on Hetzner — the in-cluster ` +
+			"CloudNativePG operator supports PostgreSQL only. Switch the database engine to PostgreSQL " +
+			"or move the stack to a cloud with a managed service for this engine.",
+	);
+}
+
+/**
+ * Deploy-time honesty gate (fail-closed), same shape/placement as hetznerDbEngineGateError:
+ * reject a component whose KIND the target cloud's built-in template can't provision. The palette
+ * hides these kinds per provider (UNSUPPORTED_KINDS_BY_PROVIDER, node-registry.ts), but a
+ * cloud-switch or an AI-composed graph can still carry one — and without this gate the snapshot
+ * mapper silently drops it, so the deploy reports SUCCESS without the component. The blocked set is
+ * derived from the SAME single source the palette uses, so un-hiding a kind there disarms the gate.
+ */
+function unsupportedKindGateError(
+	kind: NodeKind,
+	provider: string,
+	name: string,
+): Error {
+	const cloud = getProvider(provider).name;
+	const hint: Partial<Record<NodeKind, string>> = {
+		registry:
+			"container registries have no native path — deploy the Harbor marketplace add-on for an in-cluster registry, or move the stack to a cloud with a managed registry",
+		bucket:
+			"object storage has no native path — deploy the MinIO marketplace add-on for in-cluster S3-compatible storage, or move the stack to a cloud with managed object storage",
+		topic:
+			"there is no managed pub/sub service — move the stack to a cloud with managed messaging (e.g. AWS SNS)",
+		nosql:
+			"there is no managed NoSQL service — move the stack to a cloud with one (e.g. AWS DynamoDB)",
+	};
+	const detail = hint[kind] ?? `"${kind}" components have no provisioning path here`;
+	return new Error(
+		`Component "${name}" (${kind}) can't be provisioned on ${cloud}: ${detail}.`,
 	);
 }
 
@@ -113,6 +173,11 @@ export interface CreateProjectInput {
 	topics?: ComponentInsert<typeof projectTopics.$inferInsert>[];
 	nosql_tables?: ComponentInsert<typeof projectNosqlTables.$inferInsert>[];
 	secrets?: ComponentInsert<typeof projectSecrets.$inferInsert>[];
+	storage_buckets?: ComponentInsert<typeof projectStorageBuckets.$inferInsert>[];
+	container_registries?: Omit<
+		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
+		"repository_url"
+	>[];
 }
 
 // ============================================================
@@ -177,6 +242,14 @@ async function writeComponents(
 		await tx
 			.insert(projectSecrets)
 			.values(data.secrets.map((s) => ({ ...base, ...s })));
+	if (data.storage_buckets?.length)
+		await tx
+			.insert(projectStorageBuckets)
+			.values(data.storage_buckets.map((b) => ({ ...base, ...b })));
+	if (data.container_registries?.length)
+		await tx
+			.insert(projectContainerRegistries)
+			.values(data.container_registries.map((r) => ({ ...base, ...r })));
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas
@@ -205,6 +278,12 @@ async function clearComponents(
 		.delete(projectNosqlTables)
 		.where(envScope(projectNosqlTables, projectId, environmentId));
 	await tx.delete(projectSecrets).where(envScope(projectSecrets, projectId, environmentId));
+	await tx
+		.delete(projectStorageBuckets)
+		.where(envScope(projectStorageBuckets, projectId, environmentId));
+	await tx
+		.delete(projectContainerRegistries)
+		.where(envScope(projectContainerRegistries, projectId, environmentId));
 }
 
 export async function createProject(data: CreateProjectInput) {
@@ -282,7 +361,7 @@ export async function createProject(data: CreateProjectInput) {
 /**
  * Reconcile an existing project's components to the desired canvas config (the
  * `graphToForm` output). Config is treated as desired-state: each singleton is rewritten
- * and array components (databases/caches/queues/topics/nosql/secrets) are replaced to
+ * and array components (databases/caches/queues/topics/nosql/secrets/buckets/registries) are replaced to
  * match `data`, all in one tx. Provisioned outputs/status repopulate on the next deploy
  * via finalizeDeployment. The canvas persists through this (via applyStagedChanges) so an
  * existing project is *edited* rather than re-created.
@@ -429,6 +508,14 @@ export async function getProject(
 				.select()
 				.from(projectSecrets)
 				.where(envScope(projectSecrets, projectId, envId));
+			const storageBuckets = await tx
+				.select()
+				.from(projectStorageBuckets)
+				.where(envScope(projectStorageBuckets, projectId, envId));
+			const containerRegistries = await tx
+				.select()
+				.from(projectContainerRegistries)
+				.where(envScope(projectContainerRegistries, projectId, envId));
 			return {
 				network: network ?? null,
 				cluster: cluster ?? null,
@@ -441,6 +528,8 @@ export async function getProject(
 				topics,
 				nosql_tables: nosqlTables,
 				secrets,
+				storage_buckets: storageBuckets,
+				container_registries: containerRegistries,
 			};
 		}
 
@@ -458,6 +547,8 @@ export async function getProject(
 					topics: [],
 					nosql_tables: [],
 					secrets: [],
+					storage_buckets: [],
+					container_registries: [],
 				};
 
 		let cloudProvider = "aws";
@@ -513,6 +604,7 @@ async function buildConfigSnapshot(
 	owner: string,
 	projectId: string,
 	environmentId?: string | null,
+	jobKind: "plan" | "deploy" | "destroy" | "drift" = "deploy",
 ) {
 	return withOwnerScope(owner, async (tx) => {
 		const [project] = await tx
@@ -599,6 +691,10 @@ async function buildConfigSnapshot(
 			.select()
 			.from(projectContainerRegistries)
 			.where(envScope(projectContainerRegistries, projectId, envId));
+		const storageBuckets = await tx
+			.select()
+			.from(projectStorageBuckets)
+			.where(envScope(projectStorageBuckets, projectId, envId));
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
@@ -642,12 +738,76 @@ async function buildConfigSnapshot(
 			)
 			.filter((s): s is AddOnInstallSpec => s !== null);
 
+		// Bring-your-own IaC (E3): when the environment has an ENABLED project_iac_sources row,
+		// the customer's OpenTofu root module replaces the built-in per-cloud template for this
+		// environment (v1 replace mode). The snapshot then carries `iac_source` and the
+		// template-model gates below (core placement + network provisioning) are skipped — the
+		// component graph is not the source of truth for what gets provisioned. Components and
+		// add-ons still ride the snapshot (the UI reads them; the Go side skips ProviderTfvars
+		// for a replace-mode job and ignores what it doesn't need).
+		const [iacSource] = await tx
+			.select()
+			.from(projectIacSources)
+			.where(
+				and(
+					envScope(projectIacSources, projectId, envId),
+					eq(projectIacSources.enabled, true),
+				),
+			)
+			.limit(1);
+
+		// Fail-closed KIND gate: reject any present component whose KIND the target cloud's
+		// built-in template can't provision (Hetzner: topic/nosql/bucket/registry). Derived from
+		// the SAME UNSUPPORTED_KINDS_BY_PROVIDER set the Add-palette hides — a cloud-switch or an
+		// AI-composed graph can smuggle a hidden kind past the palette, and the snapshot mapper
+		// would then silently drop it (SUCCESS without the component). Skipped in BYO-IaC replace
+		// mode (like the placement/network gates below): the customer's module, not the component
+		// graph, decides what gets provisioned.
+		if (!iacSource) {
+			const blocked = new Set<NodeKind>(unsupportedKindsFor(identity.provider));
+			if (blocked.size > 0) {
+				const present: Array<{ kind: NodeKind; name: string }> = [
+					...(network ? [{ kind: "network" as const, name: "network" }] : []),
+					...(cluster ? [{ kind: "cluster" as const, name: "cluster" }] : []),
+					...(dns?.enabled
+						? [{ kind: "dns" as const, name: dns.domain_name ?? "dns" }]
+						: []),
+					...databases.map((d) => ({ kind: "database" as const, name: d.name })),
+					...caches.map((c) => ({ kind: "cache" as const, name: c.name })),
+					...queues.map((q) => ({ kind: "queue" as const, name: q.name })),
+					...topics.map((t) => ({ kind: "topic" as const, name: t.name })),
+					...nosqlTables.map((n) => ({ kind: "nosql" as const, name: n.name })),
+					...secrets.map((s) => ({ kind: "secret" as const, name: s.name })),
+					...storageBuckets.map((b) => ({ kind: "bucket" as const, name: b.name })),
+					...containerRegistries.map((r) => ({
+						kind: "registry" as const,
+						name: r.name,
+					})),
+				];
+				for (const c of present) {
+					if (blocked.has(c.kind)) {
+						throw unsupportedKindGateError(c.kind, identity.provider, c.name);
+					}
+				}
+			}
+		}
+
 		// Hetzner is compute-only: canvas database/cache/queue nodes have no managed cloud
 		// service, so they deploy as in-cluster Helm charts (CloudNativePG / Valkey / RabbitMQ).
 		// Map them to install specs and append — the runner renders each as an ArgoCD
 		// Application via the same generic add-on path (packages/core/argocd). The data-component
 		// rows still ride the snapshot for the UI; the Hetzner tofu template ignores them.
 		if (identity.provider === "hetzner") {
+			// Fail-closed engine gate: the mapper only charts what it supports (a NULL
+			// engine_family defaults to postgres), so anything else must throw here rather
+			// than be dropped from the deploy silently. Caches/queues need no gate — the
+			// mapper charts every row (Valkey/RabbitMQ), whatever engine the row carries.
+			const supported = new Set<string>(HETZNER_DB_ENGINES);
+			for (const db of databases) {
+				if (db.engine_family && !supported.has(db.engine_family)) {
+					throw hetznerDbEngineGateError(db.name, db.engine_family);
+				}
+			}
 			addons.push(
 				...hetznerDataServicesToAddOns({ databases, caches, queues }),
 			);
@@ -679,6 +839,7 @@ async function buildConfigSnapshot(
 					...nosqlTables.map((n) => n.cloud_identity_id),
 					...secrets.map((s) => s.cloud_identity_id),
 					...containerRegistries.map((r) => r.cloud_identity_id),
+					...storageBuckets.map((b) => b.cloud_identity_id),
 				].filter(
 					(id): id is string => typeof id === "string" && id !== identity.id,
 				),
@@ -743,22 +904,26 @@ async function buildConfigSnapshot(
 				cid: n.cloud_identity_id,
 			})),
 		];
-		for (const c of coreChecks) {
-			if (c.cid && c.cid !== identity.id) {
-				throw placementGateError(c.type, c.name);
+		// Both template-model gates are skipped in BYO-IaC replace mode (see iacSource above):
+		// the customer's module, not the component graph, decides what gets provisioned.
+		if (!iacSource) {
+			for (const c of coreChecks) {
+				if (c.cid && c.cid !== identity.id) {
+					throw placementGateError(c.type, c.name);
+				}
 			}
-		}
 
-		if (network?.provision_network === false && !network?.network_id) {
-			const netLabel =
-				identity.provider === "azure"
-					? "VNet"
-					: identity.provider === "gcp"
-						? "network"
-						: "VPC";
-			throw new Error(
-				`Cannot plan: no ${netLabel} selected. Edit the project's network settings or enable network provisioning.`,
-			);
+			if (network?.provision_network === false && !network?.network_id) {
+				const netLabel =
+					identity.provider === "azure"
+						? "VNet"
+						: identity.provider === "gcp"
+							? "network"
+							: "VPC";
+				throw new Error(
+					`Cannot plan: no ${netLabel} selected. Edit the project's network settings or enable network provisioning.`,
+				);
+			}
 		}
 
 		const configSnapshot = {
@@ -826,15 +991,75 @@ async function buildConfigSnapshot(
 				...r,
 				...resolvePlacement(r),
 			})),
+			storage_buckets: storageBuckets.map((b) => ({
+				...b,
+				...resolvePlacement(b),
+			})),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
+			// Bring-your-own IaC (E3, replace mode): when present, the runner clones this repo at
+			// the PINNED commit_sha (never the moving ref — TOCTOU protection) and runs the
+			// customer's root module instead of the built-in template. Absent for template envs.
+			// A DESTROY job pins the commit that CREATED the live state (deployed_commit_sha), not
+			// a newer unpinned re-scan — `tofu destroy` must run the module that actually applied.
+			...(iacSource
+				? {
+						iac_source: {
+							repo_url: iacSource.repo_url,
+							ref: iacSource.ref ?? undefined,
+							path: iacSource.path,
+							commit_sha:
+								jobKind === "destroy"
+									? (iacSource.deployed_commit_sha ?? iacSource.commit_sha)
+									: iacSource.commit_sha,
+							var_values: iacSource.var_values ?? {},
+						},
+					}
+				: {}),
 			// Token is fetched at runtime by the runner via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
 		};
 
-		return { project, identity, environment, configSnapshot };
+		return { project, identity, environment, configSnapshot, iacSource: iacSource ?? null };
 	});
+}
+
+/**
+ * Queue gate for BYO-IaC environments: when an enabled IaC source exists, the job may only
+ * queue if the feature flag is on (defense in depth — a row can predate a flag flip). PLAN and
+ * DEPLOY additionally require a fresh scan that pinned the commit to apply. DESTROY does NOT —
+ * it tears down the live state created by the last successful DEPLOY, so it gates on
+ * `deployed_commit_sha` (the commit that CREATED the state) instead: a failed re-scan clears
+ * `commit_sha` but must never trap deployed infra. Template envs (no row) pass through untouched.
+ */
+function assertIacSourceQueueable(
+	iacSource: typeof projectIacSources.$inferSelect | null,
+	kind: "plan" | "deploy" | "destroy",
+): void {
+	if (!iacSource) return;
+	if (!isByoIacEnabled()) {
+		throw new Error(
+			"This environment has a bring-your-own IaC source attached, but the feature is disabled " +
+				"on this instance — set ALETHIA_BYO_IAC_ENABLED=true, or detach the IaC source.",
+		);
+	}
+	if (kind === "destroy") {
+		// Destroy needs the module commit that created the state, not a clean re-scan.
+		if (!iacSource.deployed_commit_sha) {
+			throw new Error(
+				"This environment has no deployed IaC state to destroy — deploy the attached IaC " +
+					"source first (destroy tears down the exact commit that was applied).",
+			);
+		}
+		return;
+	}
+	if (iacSource.scan_status !== "done" || !iacSource.commit_sha) {
+		throw new Error(
+			"The attached IaC source hasn't passed a scan yet — run the IaC scan first (it pins the " +
+				"exact commit that will be applied) before planning or deploying this environment.",
+		);
+	}
 }
 
 /**
@@ -874,6 +1099,26 @@ async function resolveTargetEnvironment(
 	return env;
 }
 
+/**
+ * Routes an enqueue path's env→QUEUED write through the CAS (lib/db/env-status.ts). Throws — rolling
+ * back the enclosing withOwnerScope tx, including the just-inserted job — if the env isn't in a legal
+ * from-state, so a synchronous user action never queues an orphan job against an in-flight or
+ * torn-down env. (Runner status callbacks, by contrast, never throw on a lost race; see env-status.ts.)
+ */
+async function enqueueEnvTransition(
+	tx: Tx,
+	envId: string,
+	context: EnvTransitionContext,
+	jobId: string,
+	meta: { orgId: string; projectId: string },
+): Promise<void> {
+	const moved = await transitionEnv(tx, envId, context, jobId, meta);
+	if (!moved)
+		throw new Error(
+			"Environment is not in a valid state for this operation — a job may already be in progress.",
+		);
+}
+
 export async function planProject(
 	projectId: string,
 	runnerId?: string | null,
@@ -882,8 +1127,9 @@ export async function planProject(
 	const actor = await authorize("plan", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { project, identity, environment, configSnapshot } =
-		await buildConfigSnapshot(owner, projectId, environmentId);
+	const { identity, environment, configSnapshot, iacSource } =
+		await buildConfigSnapshot(owner, projectId, environmentId, "plan");
+	assertIacSourceQueueable(iacSource, "plan");
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -896,14 +1142,16 @@ export async function planProject(
 				job_type: "PLAN",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this provisioning operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
 
-		await tx
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, environment.id));
+		await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
 		return { jobId: job.id };
 	});
 
@@ -920,8 +1168,9 @@ export async function provisionProject(
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { project, identity, environment, configSnapshot } =
-		await buildConfigSnapshot(owner, projectId, environmentId);
+	const { identity, environment, configSnapshot, iacSource } =
+		await buildConfigSnapshot(owner, projectId, environmentId, "deploy");
+	assertIacSourceQueueable(iacSource, "deploy");
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -934,15 +1183,17 @@ export async function provisionProject(
 				job_type: "DEPLOY",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this provisioning operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(planJobId ? { plan_job_id: planJobId } : {}),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
 
-		await tx
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, environment.id));
+		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
 
 		await tx.insert(auditLog).values({
 			project_id: projectId,
@@ -988,6 +1239,8 @@ export async function queueDriftDetection(
 				job_type: "DETECT_DRIFT",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this drift-detection operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
@@ -1012,11 +1265,9 @@ export async function destroyProject(
 	const actor = await authorize("destroy", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		projectId,
-		environmentId,
-	);
+	const { identity, environment, configSnapshot, iacSource } =
+		await buildConfigSnapshot(owner, projectId, environmentId, "destroy");
+	assertIacSourceQueueable(iacSource, "destroy");
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -1029,14 +1280,16 @@ export async function destroyProject(
 				job_type: "DESTROY",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this teardown operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
 
-		await tx
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, environment.id));
+		await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
 
 		await tx.insert(auditLog).values({
 			project_id: projectId,
@@ -1084,6 +1337,8 @@ export async function detectDrift(
 				job_type: "DETECT_DRIFT",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
+				// New trace root for this drift-detection operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
 			})
 			.returning({ id: jobs.id });
@@ -1263,6 +1518,20 @@ export async function getProjectAsFormData(
 			generate: s.generate ?? undefined,
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
+		})),
+		storage_buckets: source.components.storage_buckets.map((b) => ({
+			name: b.name,
+			versioning: b.versioning ?? undefined,
+			encryption_enabled: b.encryption_enabled ?? undefined,
+			public_access: b.public_access ?? undefined,
+			cors_origins: b.cors_origins ?? undefined,
+			provider_config: b.provider_config ?? undefined,
+		})),
+		// Output columns (repository_url) are provisioned state, not design — stripped here.
+		container_registries: source.components.container_registries.map((r) => ({
+			name: r.name,
+			provider: r.provider ?? undefined,
+			provider_config: r.provider_config ?? undefined,
 		})),
 	} as ProjectFormData;
 

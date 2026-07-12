@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Create/edit a classification value — label, slug (auto-derived from the label until edited),
-// and an optional color accent picked from the muted swatch palette, cleared, or set to a custom
-// color. react-hook-form + the shared valueInputSchema; wires createValue / updateValue.
+// Create/edit a classification value — label + slug (auto-derived from the label until edited).
+// react-hook-form + the shared valueInputSchema; wires createValue / updateValue. Grayscale: no
+// color accent (the design system carries no hue).
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -16,10 +17,8 @@ import {
 	DialogTitle,
 } from "@repo/ui/dialog";
 import { Input } from "@repo/ui/input";
-import { Button } from "@repo/ui/button";
-import { cn } from "@repo/ui/utils";
-import { Ban, Check, Pipette } from "lucide-react";
-import { Spinner } from "./classification-ui";
+import { Switch } from "@repo/ui/switch";
+import { Check, ShieldCheck } from "lucide-react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -29,7 +28,7 @@ import {
 	updateValue,
 } from "@/app/server/actions/classification/dimensions";
 import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
-import { SWATCHES } from "./classification-templates";
+import { InfoHint, Spinner } from "./classification-ui";
 
 /** Lowercases + hyphenates a label into a slug candidate. */
 function slugify(input: string): string {
@@ -66,7 +65,7 @@ export function ValueEditor({
 		defaultValues: {
 			value: value?.value ?? "",
 			label: value?.label ?? "",
-			color: value?.color ?? undefined,
+			enforcement: value?.enforcement ?? null,
 			position: value?.position ?? 0,
 		},
 	});
@@ -76,14 +75,26 @@ export function ValueEditor({
 			form.reset({
 				value: value?.value ?? "",
 				label: value?.label ?? "",
-				color: value?.color ?? undefined,
+				enforcement: value?.enforcement ?? null,
 				position: value?.position ?? 0,
 			});
 		}
 	}, [open, value, form]);
 
-	const color = form.watch("color");
 	const label = form.watch("label");
+	const enforcement = form.watch("enforcement");
+	const enforceOn = Boolean(enforcement);
+
+	/** Toggles the enforcement policy on/off, seeding a sensible default (require approval). */
+	const setEnforce = (on: boolean) => {
+		form.setValue(
+			"enforcement",
+			on
+				? { require_approval: true, require_verify_pass: false, min_approvals: 1 }
+				: null,
+			{ shouldDirty: true },
+		);
+	};
 
 	const onSubmit = async (data: ValueInput) => {
 		try {
@@ -140,75 +151,79 @@ export function ValueEditor({
 						</div>
 					</div>
 
-					<div>
-						<div className="mb-2 flex items-center justify-between">
-							<label className="text-xs font-medium">Color accent</label>
-							<span className="font-mono text-[10.5px] text-text-tertiary">
-								{color ?? "neutral"}
-							</span>
-						</div>
-						<div className="flex flex-wrap items-center gap-2">
-							<button
-								type="button"
-								title="Neutral (no accent)"
-								onClick={() => form.setValue("color", undefined)}
-								className={cn(
-									"grid size-[26px] place-items-center rounded-[3px] border transition-colors",
-									!color
-										? "border-ring bg-surface-muted"
-										: "border-border-strong bg-surface-sunken",
-								)}
-							>
-								<Ban className="size-3.5 text-text-tertiary" />
-							</button>
-							{SWATCHES.map((sw) => (
-								<button
-									key={sw}
-									type="button"
-									onClick={() => form.setValue("color", sw)}
-									style={{ backgroundColor: sw }}
-									className={cn(
-										"size-[26px] rounded-[3px] border transition-transform hover:scale-110",
-										color === sw
-											? "border-text-primary ring-2 ring-ring/40"
-											: "border-black/10",
-									)}
-								/>
-							))}
-							<label
-								title="Custom color"
-								className="relative grid size-[26px] cursor-pointer place-items-center overflow-hidden rounded-[3px] border border-border-strong bg-surface-sunken"
-							>
-								<Pipette className="size-3.5 text-text-secondary" />
-								<input
-									type="color"
-									value={typeof color === "string" && color.startsWith("#") ? color : "#5c6b7a"}
-									onChange={(e) => form.setValue("color", e.target.value)}
-									className="absolute inset-0 cursor-pointer opacity-0"
-								/>
-							</label>
-							<span className="flex-1" />
-							<div className="inline-flex items-center gap-1.5 rounded-[2px] border bg-surface-sunken px-2.5 py-1">
-								<span
-									className="size-2.5 rounded-full"
-									style={{
-										background: color ?? "transparent",
-										border: color ? undefined : "1.5px solid var(--border-strong)",
-									}}
-								/>
-								<span className="text-[11.5px] text-text-secondary">
-									{label || "Preview"}
-								</span>
+					{/* Promotion enforcement — the label drives policy. */}
+					<div className="rounded-md border">
+						<div className="flex items-center justify-between gap-4 p-3">
+							<div className="flex items-start gap-2">
+								<ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-text-tertiary" />
+								<div>
+									<div className="flex items-center gap-1.5 text-[12.5px] font-medium">
+										Enforce promotion gates
+										<InfoHint>
+											When an environment is tagged with this value, promotions{" "}
+											<em>into</em> that environment require these gates — on top of the
+											environment{"'"}s own protection rules. The classification becomes
+											the policy.
+										</InfoHint>
+									</div>
+									<p className="mt-0.5 text-[11px] text-text-tertiary">
+										Applies to any environment carrying this value.
+									</p>
+								</div>
 							</div>
+							<Switch checked={enforceOn} onCheckedChange={setEnforce} />
 						</div>
+
+						{enforceOn && enforcement && (
+							<div className="space-y-3 border-t p-3">
+								<div className="flex items-center justify-between gap-4">
+									<div className="text-[12.5px]">Require manual approval</div>
+									<Switch
+										checked={enforcement.require_approval}
+										onCheckedChange={(v) =>
+											form.setValue("enforcement.require_approval", v, {
+												shouldDirty: true,
+											})
+										}
+									/>
+								</div>
+								<div className="flex items-center justify-between gap-4">
+									<div className="flex items-center gap-1.5 text-[12.5px]">
+										Require verify pass
+										<InfoHint>
+											The elench verify gate must pass on the promotion{"'"}s plan (no
+											unwaived hard control failures).
+										</InfoHint>
+									</div>
+									<Switch
+										checked={enforcement.require_verify_pass}
+										onCheckedChange={(v) =>
+											form.setValue("enforcement.require_verify_pass", v, {
+												shouldDirty: true,
+											})
+										}
+									/>
+								</div>
+								{enforcement.require_approval && (
+									<div className="flex items-center justify-between gap-4">
+										<div className="text-[12.5px]">Minimum approvals</div>
+										<Input
+											type="number"
+											min={1}
+											max={10}
+											className="h-8 w-16 text-center text-[12.5px]"
+											{...form.register("enforcement.min_approvals", {
+												valueAsNumber: true,
+											})}
+										/>
+									</div>
+								)}
+							</div>
+						)}
 					</div>
 
 					<DialogFooter>
-						<Button
-							type="button"
-							variant="outline"
-							onClick={() => onOpenChange(false)}
-						>
+						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
 							Cancel
 						</Button>
 						<Button type="submit" disabled={form.formState.isSubmitting || !label}>

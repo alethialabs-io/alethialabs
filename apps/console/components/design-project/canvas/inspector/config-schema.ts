@@ -10,11 +10,13 @@
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
+	getProvider,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
 /**
@@ -58,7 +60,7 @@ export interface FieldDef<C = AnyConfig> {
 	description?: string;
 	/** Monospace text input (names, CIDR, ids). */
 	mono?: boolean;
-	placeholder?: string;
+	placeholder?: Resolvable<string, C>;
 	unit?: Resolvable<string, C>;
 	options?: Resolvable<FieldOption[], C>;
 	min?: Resolvable<number, C>;
@@ -66,12 +68,17 @@ export interface FieldDef<C = AnyConfig> {
 	step?: Resolvable<number, C>;
 	/** Parse numeric input as float (default: int unless a fractional step is set). */
 	float?: boolean;
+	/** Number field backed by a NULLABLE column: clearing the input patches `null`
+	 * ("use the default") instead of 0 — required for `min(1)`-bounded optional sizing
+	 * fields, where 0 would block the save with no way back to the default. */
+	optional?: boolean;
 	/** Field needs an effective cloud provider; renders a notice when none is set. */
 	requiresProvider?: boolean;
 	/** Span the full section width (radio-card/region/repository/switch already do). */
 	full?: boolean;
-	/** Hide the field unless the predicate holds (e.g. only when a toggle is on). */
-	visibleWhen?: (config: C) => boolean;
+	/** Hide the field unless the predicate holds (e.g. only when a toggle is on, or only
+	 * for a given provider via the context). One-arg closures keep working unchanged. */
+	visibleWhen?: (config: C, ctx: FieldCtx<C>) => boolean;
 	/** Normalize raw text input (e.g. lowercasing a name). */
 	transform?: (raw: string) => string;
 	/** Nested read escape hatch (e.g. `instance_types[0]`). */
@@ -109,32 +116,6 @@ const nameField = <C = AnyConfig>(
 	mono: true,
 	transform: transform ?? ((v) => v.toLowerCase()),
 });
-
-const ENGINE_FAMILY: FieldOption[] = [
-	{
-		value: "postgres",
-		label: "PostgreSQL",
-		description: "Broad extension support — the default relational choice.",
-	},
-	{
-		value: "mysql",
-		label: "MySQL",
-		description: "Familiar, with wide tooling and driver compatibility.",
-	},
-];
-
-const CACHE_ENGINE: FieldOption[] = [
-	{
-		value: "redis",
-		label: "Redis",
-		description: "In-memory data store for caching, sessions, and queues.",
-	},
-	{
-		value: "valkey",
-		label: "Valkey",
-		description: "Open-source Redis fork, drop-in compatible.",
-	},
-];
 
 const CAPACITY_MODE_DESC: Record<string, string> = {
 	on_demand: "Pay per request; scales automatically to traffic.",
@@ -325,7 +306,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "engine_family",
 						type: "radio-card",
 						label: "Engine",
-						options: ENGINE_FAMILY,
+						// Provider-filtered via the registry's shared variant gate (Hetzner runs
+						// databases in-cluster via CloudNativePG → postgres only).
+						options: ({ provider }) => variantOptionsFor("database", provider),
 					},
 					{
 						key: "port",
@@ -347,6 +330,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Min capacity",
 						float: true,
 						requiresProvider: true,
+						// Serverless capacity units (ACU/vCPU) are meaningless for the in-cluster
+						// CloudNativePG path — Hetzner sizes via the In-cluster sizing section.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						unit: ({ provider }) => (provider ? DB_CAPACITY[provider].unit : ""),
 						min: ({ provider }) => (provider ? DB_CAPACITY[provider].min : 0),
 						max: ({ provider }) => (provider ? DB_CAPACITY[provider].max : 0),
@@ -358,10 +344,41 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Max capacity",
 						float: true,
 						requiresProvider: true,
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						unit: ({ provider }) => (provider ? DB_CAPACITY[provider].unit : ""),
 						min: ({ provider }) => (provider ? DB_CAPACITY[provider].min : 0),
 						max: ({ provider }) => (provider ? DB_CAPACITY[provider].max : 0),
 						step: ({ provider }) => (provider ? DB_CAPACITY[provider].step : 1),
+					},
+				],
+			},
+			{
+				id: "in-cluster-sizing",
+				title: "In-cluster sizing",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "storage_gb",
+						type: "number",
+						label: "Storage",
+						unit: "GiB",
+						min: 1,
+						max: 1024,
+						optional: true,
+						placeholder: "10",
+						description: "Persistent volume per Postgres instance (CloudNativePG).",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
+					},
+					{
+						key: "replicas",
+						type: "number",
+						label: "Instances",
+						min: 1,
+						max: 5,
+						optional: true,
+						placeholder: "1",
+						description: "Postgres instances in the cluster (1 primary + replicas).",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
 					},
 				],
 			},
@@ -378,10 +395,12 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				],
 			},
 		],
-		summary: (c) =>
-			`${engineLabel(c)} · ${c.min_capacity ?? "?"}–${
-				c.max_capacity ?? "?"
-			}`,
+		summary: (c, provider) =>
+			provider === "hetzner"
+				? `${engineLabel(c)} · ${c.storage_gb ?? 10} GiB × ${c.replicas ?? 1}`
+				: `${engineLabel(c)} · ${c.min_capacity ?? "?"}–${
+						c.max_capacity ?? "?"
+					}`,
 	},
 
 	cache: {
@@ -392,12 +411,22 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				defaultOpen: true,
 				fields: [
 					nameField(),
-					{ key: "engine", type: "radio-card", label: "Engine", options: CACHE_ENGINE },
+					{
+						key: "engine",
+						type: "radio-card",
+						label: "Engine",
+						// Provider-filtered via the registry's shared variant gate (Hetzner's
+						// in-cluster cache chart is Valkey — offering Redis would deploy Valkey).
+						options: ({ provider }) => variantOptionsFor("cache", provider),
+					},
 					{
 						key: "node_type",
 						type: "select",
 						label: "Node type",
 						requiresProvider: true,
+						// No managed cache SKUs on Hetzner — the in-cluster Valkey chart sizes
+						// via storage_gb below.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						options: ({ provider }) =>
 							provider
 								? CACHE_NODE_TYPES[provider].map((n) => ({
@@ -415,18 +444,34 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{ key: "num_cache_nodes", type: "number", label: "Nodes", min: 1, max: 6 },
 					{
+						key: "storage_gb",
+						type: "number",
+						label: "Storage",
+						unit: "GiB",
+						min: 1,
+						max: 512,
+						optional: true,
+						placeholder: ({ config }) => String(config.memory_gb ?? 8),
+						description: "Persistent volume per Valkey node; defaults to the memory size.",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
+					},
+					{
 						key: "multi_az",
 						type: "switch",
 						label: "Multi-AZ",
 						description: "Replicate across availability zones for failover.",
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 				],
 			},
 		],
-		summary: (c) =>
-			`${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
-				c.node_type ?? "—"
-			}`,
+		summary: (c, provider) =>
+			provider === "hetzner"
+				? // The in-cluster chart is always Valkey, whatever engine the config carries.
+					`Valkey · ${c.storage_gb ?? c.memory_gb ?? 8} GiB × ${c.num_cache_nodes ?? 1}`
+				: `${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
+						c.node_type ?? "—"
+					}`,
 	},
 
 	queue: {
@@ -443,18 +488,35 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Visibility timeout (s)",
 						min: 0,
 						max: 43200,
+						// SQS-ism — the in-cluster RabbitMQ path has no visibility timeout.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 					{
 						key: "ordered",
 						type: "switch",
 						label: "Ordered (FIFO) delivery",
 						description: "Guarantee message order at the cost of throughput.",
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+					},
+					{
+						key: "storage_gb",
+						type: "number",
+						label: "Storage",
+						unit: "GiB",
+						min: 1,
+						max: 256,
+						optional: true,
+						placeholder: "8",
+						description: "Persistent volume for the RabbitMQ node.",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
 					},
 				],
 			},
 		],
-		summary: (c) =>
-			`${c.ordered ? "FIFO" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
+		summary: (c, provider) =>
+			provider === "hetzner"
+				? `RabbitMQ · ${c.storage_gb ?? 8} GiB`
+				: `${c.ordered ? "FIFO" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
 	},
 
 	topic: {
@@ -562,6 +624,113 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 		],
 		summary: (c) =>
 			c.generate === false ? "manual value" : `generated · ${c.length ?? 32} chars`,
+	},
+
+	bucket: {
+		sections: [
+			{
+				id: "general",
+				title: "General",
+				defaultOpen: true,
+				fields: [
+					// S3-safe: lowercase letters / digits / hyphens only (validated 3–63 on save).
+					nameField((v) => v.toLowerCase().replace(/[^a-z0-9-]/g, "")),
+					{
+						key: "versioning",
+						type: "switch",
+						label: "Versioning",
+						description: "Keep every version of an object; restore or roll back at any time.",
+					},
+					{
+						key: "encryption_enabled",
+						type: "switch",
+						label: "Encryption at rest",
+						description: "Server-side encryption with the cloud's managed keys.",
+						// Hetzner Object Storage encrypts at rest automatically — there is no
+						// per-bucket toggle in the minio provider, so hide it (always-on).
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+					},
+				],
+			},
+			{
+				id: "access",
+				title: "Access",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "public_access",
+						type: "switch",
+						label: "Public access",
+						description: "Allow unauthenticated reads (static assets). Off keeps the bucket private.",
+					},
+					{
+						key: "cors_origins",
+						type: "text",
+						label: "CORS origins",
+						mono: true,
+						placeholder: "https://app.example.com, https://example.com",
+						description: "Comma-separated origins allowed to read from the browser.",
+						// The aminueza/minio provider does not apply CORS to Hetzner's S3 backend
+						// (s3_compat_mode skips it), so hide the field rather than imply it works.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+						get: (c) => (c.cors_origins ?? []).join(", "),
+						set: (v) => ({
+							cors_origins: String(v)
+								.split(",")
+								.map((s) => s.trim())
+								.filter(Boolean),
+						}),
+					},
+				],
+			},
+		],
+		summary: (c) =>
+			[
+				c.versioning ? "versioned" : null,
+				c.encryption_enabled !== false ? "encrypted" : null,
+				c.public_access ? "public" : "private",
+			]
+				.filter(Boolean)
+				.join(" · "),
+	},
+
+	registry: {
+		sections: [
+			{
+				id: "general",
+				title: "General",
+				defaultOpen: true,
+				fields: [
+					nameField((v) => v.toLowerCase().replace(/[^a-z0-9-]/g, "")),
+					{
+						key: "immutable_tags",
+						type: "switch",
+						label: "Immutable tags",
+						description: "Prevent pushed image tags from being overwritten.",
+						get: (c) => c.provider_config?.immutable_tags ?? false,
+						set: (v, c) => ({
+							provider_config: { ...c.provider_config, immutable_tags: Boolean(v) },
+						}),
+					},
+					{
+						key: "vulnerability_scanning",
+						type: "switch",
+						label: "Vulnerability scanning",
+						description: "Scan pushed images for known CVEs.",
+						get: (c) => c.provider_config?.vulnerability_scanning ?? false,
+						set: (v, c) => ({
+							provider_config: {
+								...c.provider_config,
+								vulnerability_scanning: Boolean(v),
+							},
+						}),
+					},
+				],
+			},
+		],
+		// The provider's registry service name (ECR / Artifact Registry / ACR / …).
+		summary: (c, provider) =>
+			provider ? getProvider(provider).registryService : c.name || "registry",
 	},
 
 	dns: {

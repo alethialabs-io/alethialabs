@@ -22,6 +22,8 @@ export type NodeKind =
 	| "topic"
 	| "nosql"
 	| "secret"
+	| "bucket"
+	| "registry"
 	| "repositories"
 	| "chart";
 
@@ -72,6 +74,8 @@ export type NodeConfigMap = {
 	topic: ProjectFormData["topics"][number];
 	nosql: ProjectFormData["nosql_tables"][number];
 	secret: ProjectFormData["secrets"][number];
+	bucket: ProjectFormData["storage_buckets"][number];
+	registry: ProjectFormData["container_registries"][number];
 	// Out-of-band (not a ProjectFormData fragment) — see ByoChartNodeConfig.
 	chart: ByoChartNodeConfig;
 };

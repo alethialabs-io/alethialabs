@@ -61,6 +61,11 @@ func transformURLToSSH(rawURL string) string {
 	if strings.HasPrefix(rawURL, "git@") {
 		return rawURL
 	}
+	// A file:// transport (used by local-fixture tests and on-box mirrors) is a
+	// real git transport and must pass through untouched — it has no host to SSH to.
+	if strings.HasPrefix(rawURL, "file://") {
+		return rawURL
+	}
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -79,17 +84,41 @@ func transformURLToSSH(rawURL string) string {
 	return sshURL
 }
 
-// transformURLToHTTPS converts an SSH or other URL to HTTPS format.
+// transformURLToHTTPS converts an SSH or scp-like URL to HTTPS format so token (HTTP
+// BasicAuth) clones work. It must NEVER re-prefix a URL that already carries a scheme —
+// the old bug turned a full `ssh://…` URL into `https://ssh://…`, breaking token clones
+// of ssh:// BYO repos (which validateByoRepoURL accepts).
 func transformURLToHTTPS(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	// file:// is a real git transport (local-fixture tests / on-box mirrors); keep it.
+	if strings.HasPrefix(rawURL, "file://") {
+		return rawURL
+	}
 	if strings.HasPrefix(rawURL, "git@") {
-		// git@github.com:owner/repo.git -> https://github.com/owner/repo.git
+		// scp-like shorthand: git@github.com:owner/repo.git -> https://github.com/owner/repo.git
 		rawURL = strings.TrimPrefix(rawURL, "git@")
 		rawURL = strings.Replace(rawURL, ":", "/", 1)
 		return "https://" + rawURL
 	}
+	// A full ssh:// URL (e.g. ssh://git@github.com/owner/repo.git, optionally with a
+	// :port) already has a scheme. Rewrite it to https — keeping host + path, dropping any
+	// user@ and :port — so token BasicAuth authenticates. NEVER fall through to the
+	// "https://" + rawURL branch, which would produce "https://ssh://…".
+	if strings.HasPrefix(rawURL, "ssh://") {
+		if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+			return "https://" + u.Hostname() + u.Path
+		}
+		return rawURL // unparseable ssh:// — leave untouched rather than mangle it
+	}
 	if strings.HasPrefix(rawURL, "https://") || strings.HasPrefix(rawURL, "http://") {
 		return rawURL
 	}
+	// Any other explicit scheme (git://, https+git://, …): return untouched — never
+	// re-prefix a URL that already has a "scheme://".
+	if strings.Contains(rawURL, "://") {
+		return rawURL
+	}
+	// Bare host/path (github.com/owner/repo): assume https.
 	return "https://" + rawURL
 }
 
@@ -182,20 +211,130 @@ func (g *GIT) Clone(branch string, force bool) error {
 
 		repo, err := gogit.PlainClone(g.LocalPath, false, cloneOptions)
 		if err != nil {
-			if errors.Is(err, transport.ErrRepositoryNotFound) {
-				return fmt.Errorf("%w: %s", ErrRepoNotFound, g.RepoURL)
-			}
-			if errors.Is(err, transport.ErrEmptyRemoteRepository) {
-				return fmt.Errorf("%w: %s", ErrRepoEmpty, g.RepoURL)
-			}
-			if errors.Is(err, transport.ErrAuthorizationFailed) || errors.Is(err, transport.ErrAuthenticationRequired) {
-				return fmt.Errorf("%w: %s", ErrAuthFailed, g.RepoURL)
-			}
-			return fmt.Errorf("failed to clone repository '%s': %w", g.RepoURL, err)
+			return mapCloneError(g.RepoURL, err)
 		}
 		g.Repo = repo
 	}
 	return nil
+}
+
+// mapCloneError normalizes go-git clone/transport errors to the package's sentinel
+// errors so callers can distinguish not-found / empty / auth failures.
+func mapCloneError(repoURL string, err error) error {
+	switch {
+	case errors.Is(err, transport.ErrRepositoryNotFound):
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repoURL)
+	case errors.Is(err, transport.ErrEmptyRemoteRepository):
+		return fmt.Errorf("%w: %s", ErrRepoEmpty, repoURL)
+	case errors.Is(err, transport.ErrAuthorizationFailed), errors.Is(err, transport.ErrAuthenticationRequired):
+		return fmt.Errorf("%w: %s", ErrAuthFailed, repoURL)
+	default:
+		return fmt.Errorf("failed to clone repository '%s': %w", repoURL, err)
+	}
+}
+
+// CloneAndCheckoutCommit clones repoURL's branch/tag `ref` with FULL history (no
+// shallow depth) and then checks out the exact pinned commitSHA in DETACHED HEAD.
+//
+// This is the bring-your-own-IaC clone: unlike Clone it fetches full history so any
+// commit reachable from ref — not just its tip — is present, and it FAILS HARD if
+// commitSHA cannot be checked out. The caller must NEVER fall back to the moving
+// branch tip: a ref can advance after the static safety gate pins (and scans) a
+// commit (TOCTOU), so only the pinned bytes may be provisioned.
+func (g *GIT) CloneAndCheckoutCommit(ref, commitSHA string, force bool) error {
+	if strings.TrimSpace(commitSHA) == "" {
+		return fmt.Errorf("commit SHA is required for a pinned checkout of %s", g.RepoURL)
+	}
+	fmt.Printf("Cloning %s (ref %q) and pinning commit %s into %s...\n", g.RepoURL, ref, commitSHA, g.LocalPath)
+
+	auth, authErr := g.getAuth()
+	if authErr != nil {
+		fmt.Printf("Warning: Could not get auth method: %v. Attempting public clone.\n", authErr)
+	}
+
+	// FULL history (no Depth): a shallow clone only carries the ref tip, which would
+	// break a pinned checkout the moment the ref advanced past commitSHA.
+	tryClone := func(refName plumbing.ReferenceName) (*gogit.Repository, error) {
+		_ = os.RemoveAll(g.LocalPath)
+		if err := os.MkdirAll(g.LocalPath, 0755); err != nil {
+			return nil, err
+		}
+		opts := &gogit.CloneOptions{
+			URL:      g.RepoURL,
+			Progress: os.Stdout,
+			Auth:     auth,
+		}
+		if refName != "" {
+			opts.ReferenceName = refName
+			opts.SingleBranch = true
+		}
+		return gogit.PlainClone(g.LocalPath, false, opts)
+	}
+
+	var (
+		repo     *gogit.Repository
+		cloneErr error
+	)
+	switch {
+	case ref != "":
+		// Try the ref as a branch, then a tag; last-resort clone the default branch
+		// (the pinned SHA must still be reachable or Checkout fails hard below).
+		if repo, cloneErr = tryClone(plumbing.NewBranchReferenceName(ref)); cloneErr != nil {
+			if repo, cloneErr = tryClone(plumbing.NewTagReferenceName(ref)); cloneErr != nil {
+				repo, cloneErr = tryClone("")
+			}
+		}
+	default:
+		repo, cloneErr = tryClone("")
+	}
+	if cloneErr != nil {
+		return mapCloneError(g.RepoURL, cloneErr)
+	}
+	g.Repo = repo
+	return g.Checkout(commitSHA)
+}
+
+// Checkout checks out a specific commit by its full SHA in DETACHED HEAD. It
+// FAILS HARD if the commit object is not present in the local clone — the caller
+// must never silently land on the branch tip (TOCTOU: a ref can move after a scan
+// pins the commit). SHA-1 git object ids are 40 hex chars.
+func (g *GIT) Checkout(sha string) error {
+	if g.Repo == nil {
+		return fmt.Errorf("repository not initialized")
+	}
+	trimmed := strings.TrimSpace(sha)
+	if len(trimmed) != 40 {
+		return fmt.Errorf("commit SHA %q must be a full 40-character hex object id", sha)
+	}
+	h := plumbing.NewHash(trimmed)
+	// Confirm the object is present so we fail closed rather than checking out
+	// whatever HEAD happens to be.
+	if _, err := g.Repo.CommitObject(h); err != nil {
+		return fmt.Errorf("pinned commit %s not present in clone of %s (fail-closed; no fallback to ref tip): %w", trimmed, g.RepoURL, err)
+	}
+	w, err := g.Repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+	if err := w.Checkout(&gogit.CheckoutOptions{Hash: h, Force: true}); err != nil {
+		return fmt.Errorf("failed to checkout pinned commit %s: %w", trimmed, err)
+	}
+	fmt.Printf("Checked out pinned commit %s (detached HEAD).\n", trimmed)
+	return nil
+}
+
+// HeadSHA returns the full 40-character commit SHA at the clone's current HEAD. The BYO
+// IaC scan calls it immediately after cloning a ref to PIN the exact commit it scanned,
+// so the later deploy checks out those precise bytes (TOCTOU-safe).
+func (g *GIT) HeadSHA() (string, error) {
+	if g.Repo == nil {
+		return "", fmt.Errorf("repository not initialized")
+	}
+	ref, err := g.Repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve HEAD for %s: %w", g.RepoURL, err)
+	}
+	return ref.Hash().String(), nil
 }
 
 // isCorrectRepo checks if the local path contains the correct repository.

@@ -4,6 +4,9 @@
 import { sql } from "drizzle-orm";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
+import { log } from "@/lib/observability/log";
+
+const rlog = log.child({ component: "job-recovery" });
 
 /** A runner flipped to OFFLINE by the sweep (the durable alert signal). */
 type SweptRunner = {
@@ -42,7 +45,7 @@ export function startStaleJobRecovery(): void {
 		void db
 			.execute(sql`select recover_stale_jobs()`)
 			.catch((err) => {
-				console.error("[job-recovery] recover_stale_jobs failed:", err);
+				rlog.error("recover_stale_jobs failed", { err });
 			});
 		// GC never-saved pending identities. Best-effort.
 		void db
@@ -50,7 +53,7 @@ export function startStaleJobRecovery(): void {
 				sql`select gc_pending_identities(make_interval(hours => ${PENDING_IDENTITY_TTL_H}))`,
 			)
 			.catch((err) => {
-				console.error("[job-recovery] gc_pending_identities failed:", err);
+				rlog.error("gc_pending_identities failed", { err });
 			});
 		void db
 			.execute<SweptRunner>(sql`select * from sweep_offline_runners()`)
@@ -68,7 +71,7 @@ export function startStaleJobRecovery(): void {
 				}
 			})
 			.catch((err) => {
-				console.error("[job-recovery] sweep_offline_runners failed:", err);
+				rlog.error("sweep_offline_runners failed", { err });
 			});
 	}, RECOVERY_INTERVAL_MS);
 }

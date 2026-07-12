@@ -11,14 +11,18 @@ import (
 )
 
 type mockLogSender struct {
-	mu     sync.Mutex
-	chunks []string
+	mu           sync.Mutex
+	chunks       []string
+	streams      []string
+	traceparents []string
 }
 
-func (m *mockLogSender) SendLog(jobID, chunk, streamType string) error {
+func (m *mockLogSender) SendLog(jobID, chunk, streamType, traceparent string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.chunks = append(m.chunks, chunk)
+	m.streams = append(m.streams, streamType)
+	m.traceparents = append(m.traceparents, traceparent)
 	return nil
 }
 

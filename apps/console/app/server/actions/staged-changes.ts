@@ -87,6 +87,16 @@ function diffConfig(
 	rows.push(...diffArray("topic", live?.topics ?? [], desired.topics ?? []));
 	rows.push(...diffArray("nosql", live?.nosql_tables ?? [], desired.nosql_tables ?? []));
 	rows.push(...diffArray("secret", live?.secrets ?? [], desired.secrets ?? []));
+	rows.push(
+		...diffArray("bucket", live?.storage_buckets ?? [], desired.storage_buckets ?? []),
+	);
+	rows.push(
+		...diffArray(
+			"registry",
+			live?.container_registries ?? [],
+			desired.container_registries ?? [],
+		),
+	);
 	return rows;
 }
 

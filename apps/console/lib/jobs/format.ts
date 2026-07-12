@@ -74,6 +74,11 @@ export const JOB_TYPES: Record<
 		icon: ShieldCheck,
 		description: "Scan a bring-your-own Helm chart for security issues (elench verify)",
 	},
+	IAC_SCAN: {
+		label: "IaC Scan",
+		icon: ShieldCheck,
+		description: "Validate a bring-your-own IaC module and pin the commit it deploys from",
+	},
 };
 
 /** Formats an elapsed millisecond span as `42s` or `1m 12s`. */

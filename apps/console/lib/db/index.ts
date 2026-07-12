@@ -7,7 +7,7 @@ import postgres from "postgres";
 import { getDatabaseConfig } from "@/lib/config/database";
 import * as schema from "./schema";
 
-type Db = PostgresJsDatabase<typeof schema>;
+export type Db = PostgresJsDatabase<typeof schema>;
 
 // Cache the postgres-js clients + drizzle instances across HMR / module reloads.
 const globalForDb = globalThis as unknown as {

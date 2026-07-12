@@ -131,3 +131,8 @@ output "external_dns_service_account" {
   description = "external-dns Google service account email (Workload Identity)"
   value       = var.provision_gke ? google_service_account.external_dns[0].email : null
 }
+
+output "external_secrets_service_account" {
+  description = "external-secrets operator Google service account email (Workload Identity; gates the gcpsm ClusterSecretStore render)"
+  value       = var.provision_gke ? google_service_account.external_secrets[0].email : null
+}
