@@ -13,9 +13,10 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import { getServiceDb } from "@/lib/db";
-import { setEnvStatus } from "@/lib/db/env-status";
+import { setEnvStatus, transitionEnv } from "@/lib/db/env-status";
 import {
 	fleetActions,
 	jobLogs,
@@ -25,7 +26,11 @@ import {
 } from "@/lib/db/schema";
 import type { ProjectStatus } from "@/lib/db/schema/enums";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
-import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
+import {
+	MAX_REAP_ATTEMPTS,
+	reapBackoffMs,
+	reapExpiredEphemeralEnvs,
+} from "@/lib/reconcile/reap";
 import { describeIfDb } from "./db";
 
 const USER = randomUUID();
@@ -41,6 +46,9 @@ async function seedEnv(
 		expiresAt?: Date | null;
 		autoHeal?: boolean;
 		stage?: "development" | "staging" | "production";
+		reapAttempts?: number;
+		lastReapAt?: Date | null;
+		reapGaveUpAt?: Date | null;
 	} = {},
 ): Promise<string> {
 	const [e] = await db
@@ -54,9 +62,29 @@ async function seedEnv(
 			lifecycle: opts.lifecycle ?? "persistent",
 			expires_at: opts.expiresAt ?? null,
 			auto_heal: opts.autoHeal ?? false,
+			reap_attempts: opts.reapAttempts ?? 0,
+			last_reap_at: opts.lastReapAt ?? null,
+			reap_gave_up_at: opts.reapGaveUpAt ?? null,
 		})
 		.returning({ id: projectEnvironments.id });
 	return e.id;
+}
+
+/** Read the ephemeral-reaper bookkeeping columns for an env. */
+async function reapStateOf(envId: string): Promise<{
+	reap_attempts: number;
+	last_reap_at: Date | null;
+	reap_gave_up_at: Date | null;
+}> {
+	const [row] = await db
+		.select({
+			reap_attempts: projectEnvironments.reap_attempts,
+			last_reap_at: projectEnvironments.last_reap_at,
+			reap_gave_up_at: projectEnvironments.reap_gave_up_at,
+		})
+		.from(projectEnvironments)
+		.where(eq(projectEnvironments.id, envId));
+	return row;
 }
 
 /**
@@ -249,6 +277,121 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 		// This env has no SUCCESS DEPLOY → not reaped (nothing in the cloud to destroy).
 		expect(await statusOf(envId)).toBe("FAILED");
 		expect(res.reaped).toBe(0);
+	});
+
+	// ── audit #10: bounded retry — a failing DESTROY must NOT be re-enqueued every tick forever.
+	// NB: these three assert the new reap_attempts / last_reap_at / reap_gave_up_at columns
+	// (migration 0083). They pass once that migration is applied to the integration Postgres.
+
+	it("ephemeral reaper: backs off after a failed destroy (no re-enqueue every tick)", async () => {
+		const T = min(0); // the reference "now" for this test
+		const envId = await seedEnv(projectId, "reap-backoff", "ACTIVE", {
+			lifecycle: "ephemeral",
+			expiresAt: min(-100), // long expired
+		});
+		await seedJob(projectId, envId, "DEPLOY", "SUCCESS", min(-50)); // live infra to tear down
+
+		// First reap: enqueues one DESTROY, charges attempt #1, arms the backoff clock.
+		const first = await reapExpiredEphemeralEnvs(db, T);
+		expect(first.reaped).toBe(1);
+		expect(await statusOf(envId)).toBe("QUEUED");
+		expect(await jobCount(envId, "DESTROY")).toBe(1);
+		const afterFirst = await reapStateOf(envId);
+		expect(afterFirst.reap_attempts).toBe(1);
+		expect(afterFirst.last_reap_at).not.toBeNull();
+
+		// Simulate the teardown FAILING: the DESTROY runs then fails, settling the env back to FAILED —
+		// exactly the state that used to be re-enqueued on every 60s tick.
+		await transitionEnv(db, envId, "destroyStart", null, {
+			orgId: null,
+			projectId,
+		});
+		await transitionEnv(db, envId, "destroyFailed", null, {
+			orgId: null,
+			projectId,
+		});
+		expect(await statusOf(envId)).toBe("FAILED");
+
+		// Re-run reap at the SAME now: the backoff window has NOT elapsed → NO new DESTROY (this is the
+		// core regression — the old code re-enqueued here, and at every subsequent call, forever).
+		const blocked = await reapExpiredEphemeralEnvs(db, T);
+		expect(blocked.reaped).toBe(0);
+		expect(await jobCount(envId, "DESTROY")).toBe(1);
+		expect((await reapStateOf(envId)).reap_attempts).toBe(1); // unchanged — nothing enqueued
+
+		// Once the backoff window elapses, the env IS retried (bounded retry, not permanent give-up yet).
+		const later = new Date(T.getTime() + reapBackoffMs(1) + 1_000);
+		const retried = await reapExpiredEphemeralEnvs(db, later);
+		expect(retried.reaped).toBe(1);
+		expect(await jobCount(envId, "DESTROY")).toBe(2);
+		expect((await reapStateOf(envId)).reap_attempts).toBe(2);
+	});
+
+	it("ephemeral reaper: gives up after MAX_REAP_ATTEMPTS and flags for manual intervention (fires once)", async () => {
+		const envId = await seedEnv(projectId, "reap-giveup", "FAILED", {
+			lifecycle: "ephemeral",
+			expiresAt: min(-100),
+			reapAttempts: MAX_REAP_ATTEMPTS, // already at the cap
+			lastReapAt: min(-1),
+		});
+		await seedJob(projectId, envId, "DEPLOY", "SUCCESS", min(-50));
+
+		// At the cap: no new DESTROY, env stays FAILED (visible), and reap_gave_up_at is stamped so the
+		// env drops out of the reapable set permanently.
+		const gave = await reapExpiredEphemeralEnvs(db, min(0));
+		expect(gave.reaped).toBe(0);
+		expect(await jobCount(envId, "DESTROY")).toBe(0);
+		expect(await statusOf(envId)).toBe("FAILED");
+		const afterGiveUp = await reapStateOf(envId);
+		expect(afterGiveUp.reap_gave_up_at).not.toBeNull();
+
+		// Next pass: the env is excluded by the isNull(reap_gave_up_at) predicate → still no work, and
+		// reap_gave_up_at is NOT re-stamped (the alert fires exactly once, no storm).
+		const again = await reapExpiredEphemeralEnvs(db, min(5));
+		expect(again.reaped).toBe(0);
+		expect(await jobCount(envId, "DESTROY")).toBe(0);
+		expect((await reapStateOf(envId)).reap_gave_up_at?.getTime()).toBe(
+			afterGiveUp.reap_gave_up_at?.getTime(),
+		);
+	});
+
+	it("ephemeral reaper: a fresh successful DEPLOY resets the reap budget (re-enqueues again)", async () => {
+		// An env that previously gave up, then gets redeployed (in flight → PROVISIONING). finalizeDeployment
+		// on the DEPLOY SUCCESS clears the reaper bookkeeping — fresh infra = fresh reap budget.
+		const envId = await seedEnv(projectId, "reap-reset", "PROVISIONING", {
+			lifecycle: "ephemeral",
+			expiresAt: min(-100),
+			reapAttempts: MAX_REAP_ATTEMPTS,
+			lastReapAt: min(-1),
+			reapGaveUpAt: min(-1),
+		});
+		const [deployJob] = await db
+			.insert(jobs)
+			.values({
+				user_id: USER,
+				project_id: projectId,
+				environment_id: envId,
+				job_type: "DEPLOY",
+				status: "SUCCESS",
+				config_snapshot: { seed: true },
+				execution_metadata: {}, // minimal — deployMetaSchema is all-optional
+				created_at: min(1),
+				completed_at: min(1),
+			})
+			.returning({ id: jobs.id });
+
+		await finalizeDeployment(deployJob.id);
+
+		expect(await statusOf(envId)).toBe("ACTIVE"); // deploySuccess CAS moved it
+		const reset = await reapStateOf(envId);
+		expect(reset.reap_attempts).toBe(0);
+		expect(reset.last_reap_at).toBeNull();
+		expect(reset.reap_gave_up_at).toBeNull();
+
+		// With a cleared budget the reaper enqueues a fresh DESTROY again (env is expired + ACTIVE).
+		const res = await reapExpiredEphemeralEnvs(db, min(2));
+		expect(res.reaped).toBe(1);
+		expect(await jobCount(envId, "DESTROY")).toBe(1);
 	});
 
 	it("retention GC: gc_job_logs deletes in bounded batches", async () => {

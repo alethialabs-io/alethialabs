@@ -320,6 +320,12 @@ export async function finalizeDeployment(jobId: string) {
 				deployed_config_hash: deployedHash,
 				last_deployed_at: new Date(),
 				auto_heal_failures: 0,
+				// Fresh infra = fresh reap budget: a successful (re)deploy clears any prior ephemeral-reaper
+				// bookkeeping so an env that previously gave up (or was mid-backoff) is reaped normally at
+				// its next expiry, instead of being permanently excluded by the isNull(reap_gave_up_at) gate.
+				reap_attempts: 0,
+				last_reap_at: null,
+				reap_gave_up_at: null,
 			})
 			.where(eq(projectEnvironments.id, environmentId));
 	}

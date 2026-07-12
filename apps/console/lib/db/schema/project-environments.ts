@@ -60,6 +60,16 @@ export const projectEnvironments = pgTable(
 		last_auto_heal_at: timestamp({ withTimezone: true }),
 		// Consecutive auto-heal deploy failures; drives backoff + the circuit breaker.
 		auto_heal_failures: integer().default(0).notNull(),
+		// --- Ephemeral reaper bookkeeping (bounded retry + backoff + give-up) --------------------
+		// Consecutive DESTROY re-enqueue attempts by the ephemeral reaper for this expired env; drives
+		// the exponential backoff and the give-up cap. Reset to 0 on a fresh successful DEPLOY.
+		reap_attempts: integer().default(0).notNull(),
+		// When the reaper last enqueued a DESTROY for this expired env — the backoff clock. NULL = the
+		// reaper has never reaped it (→ no backoff, immediate first teardown).
+		last_reap_at: timestamp({ withTimezone: true }),
+		// Set once the reaper hits MAX_REAP_ATTEMPTS and stops re-enqueuing: the env drops out of the
+		// reapable set permanently (needs manual intervention) until a fresh successful DEPLOY clears it.
+		reap_gave_up_at: timestamp({ withTimezone: true }),
 		// Fingerprint of the config_snapshot last SUCCESSFULLY deployed (set by finalizeDeployment).
 		// Powers the predecessor-healthy gate, the soak timer, and config-vs-desired divergence.
 		deployed_config_hash: text(),
