@@ -125,8 +125,11 @@ export function ThreadRail({
 										activeId === t.id && "border-l-foreground bg-muted",
 									)}
 								>
-									<span className="flex items-center justify-between gap-2">
-										<span className="truncate text-[12.5px] text-foreground">
+									<span className="flex min-w-0 items-center justify-between gap-2">
+										<span
+											title={t.title}
+											className="min-w-0 flex-1 truncate text-[12.5px] text-foreground"
+										>
 											{t.title}
 										</span>
 										<Trash2
