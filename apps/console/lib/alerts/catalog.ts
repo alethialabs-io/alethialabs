@@ -122,7 +122,7 @@ export const CATEGORIES: CatalogCategory[] = [
 		label: "Cost",
 		icon: "CircleDollarSign",
 		events: [
-			ev("budget.threshold", "system.cost.budget_threshold", "Budget threshold crossed", "warning"),
+			ev("budget.threshold", "system.cost.budget_threshold", "Budget threshold crossed", "warning", true),
 			ev("spend.spike", "system.cost.spend_spike", "Spend spike", "warning"),
 			ev("overage.started", "system.cost.overage", "Overage started", "info"),
 		],

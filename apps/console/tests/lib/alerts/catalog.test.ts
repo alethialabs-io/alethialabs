@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	CATEGORIES,
 	eventMatches,
 	isSecurityKey,
 	labelForKey,
@@ -30,6 +31,22 @@ describe("eventMatches", () => {
 	it("rejects on a segment-count mismatch", () => {
 		expect(eventMatches("a.b", "a.b.c")).toBe(false);
 		expect(eventMatches("a.b.c", "a.b")).toBe(false);
+	});
+});
+
+describe("cost-category live flags track real emitters", () => {
+	const cost = CATEGORIES.find((c) => c.id === "cost");
+	const find = (id: string) => cost?.events.find((e) => e.id === id);
+
+	it("marks budget.threshold live — it has a shipped emitter (ai-spend-alert.ts)", () => {
+		// Regression: this fires today via checkAiSpendThreshold → emitAlertEventSafe(
+		// "system.cost.budget_threshold"), so it must NOT be hidden behind live:false.
+		expect(find("budget.threshold")?.live).toBe(true);
+	});
+
+	it("keeps spend.spike / overage.started inert — no emitter exists yet", () => {
+		expect(find("spend.spike")?.live).toBe(false);
+		expect(find("overage.started")?.live).toBe(false);
 	});
 });
 
