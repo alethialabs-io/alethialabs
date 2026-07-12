@@ -78,8 +78,7 @@ func runOpsAction(action, resourceID, reason, approvalID string, input *api.Brea
 
 	ui.Success(result.Detail)
 	if len(result.Data) > 0 && string(result.Data) != "null" {
-		var pretty json.RawMessage = result.Data
-		out, merr := json.MarshalIndent(pretty, "", "  ")
+		out, merr := json.MarshalIndent(result.Data, "", "  ")
 		if merr == nil {
 			fmt.Println(string(out))
 		}
