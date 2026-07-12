@@ -1571,3 +1571,91 @@ func (c *Client) RemoveComponent(project, kind, name string) error {
 	}
 	return nil
 }
+
+// --- Break-glass (privileged incident recovery) ---
+//
+// These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +
+// BREAKGLASS_OPERATORS gate, using the SAME bearer token as the rest of the CLI. The endpoints are
+// cross-tenant and RLS-bypassing, so they do NOT go through the /api/cli namespace — the operator
+// allowlist (not org membership) is the wall.
+
+// BreakglassActionInput is the small, explicit per-action input the backend records + validates.
+type BreakglassActionInput struct {
+	ExpectedFrom   []string `json:"expectedFrom,omitempty"`
+	To             string   `json:"to,omitempty"`
+	StateKey       string   `json:"stateKey,omitempty"`
+	FleetReason    string   `json:"fleetReason,omitempty"`
+	ProjectID      string   `json:"projectId,omitempty"`
+	EnvironmentID  string   `json:"environmentId,omitempty"`
+	SurgeryNote    string   `json:"surgeryNote,omitempty"`
+	SuppressEmails *bool    `json:"suppressEmails,omitempty"`
+}
+
+// BreakglassSession is a newly-opened time-boxed operator session.
+type BreakglassSession struct {
+	SessionID string `json:"sessionId"`
+	ExpiresAt string `json:"expiresAt"`
+	Operator  string `json:"operator"`
+}
+
+// BreakglassApproval is a minted two-person approval token.
+type BreakglassApproval struct {
+	ApprovalID string `json:"approvalId"`
+	Action     string `json:"action"`
+	ResourceID string `json:"resourceId"`
+	ExpiresAt  string `json:"expiresAt"`
+	Approver   string `json:"approver"`
+	Note       string `json:"note"`
+}
+
+// BreakglassResult is the outcome of an executed break-glass action.
+type BreakglassResult struct {
+	OK     bool            `json:"ok"`
+	Detail string          `json:"detail"`
+	Data   json.RawMessage `json:"data"`
+}
+
+// BreakglassExecuteParams is the body for POST /api/breakglass/execute.
+type BreakglassExecuteParams struct {
+	SessionID  string                 `json:"sessionId"`
+	Action     string                 `json:"action"`
+	ResourceID string                 `json:"resourceId,omitempty"`
+	Confirm    string                 `json:"confirm,omitempty"`
+	Reason     string                 `json:"reason"`
+	ApprovalID string                 `json:"approvalId,omitempty"`
+	Input      *BreakglassActionInput `json:"input,omitempty"`
+}
+
+// OpenBreakglassSession opens a time-boxed break-glass session.
+func (c *Client) OpenBreakglassSession(reason string) (*BreakglassSession, error) {
+	endpoint := fmt.Sprintf("%s/breakglass/session", c.baseURL)
+	var out BreakglassSession
+	if err := c.doPost(endpoint, map[string]string{"reason": reason}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// MintBreakglassApproval mints a two-person approval token (called by the SECOND operator).
+func (c *Client) MintBreakglassApproval(action, resourceID, reason string, input *BreakglassActionInput) (*BreakglassApproval, error) {
+	endpoint := fmt.Sprintf("%s/breakglass/approval", c.baseURL)
+	payload := map[string]interface{}{"action": action, "resourceId": resourceID, "reason": reason}
+	if input != nil {
+		payload["input"] = input
+	}
+	var out BreakglassApproval
+	if err := c.doPost(endpoint, payload, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ExecuteBreakglass runs one audited break-glass action.
+func (c *Client) ExecuteBreakglass(params BreakglassExecuteParams) (*BreakglassResult, error) {
+	endpoint := fmt.Sprintf("%s/breakglass/execute", c.baseURL)
+	var out BreakglassResult
+	if err := c.doPost(endpoint, params, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

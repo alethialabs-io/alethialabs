@@ -18,7 +18,7 @@ type OS = "mac" | "linux" | "windows";
 
 /** Install command shown for each operating system. */
 const COMMANDS: Record<OS, { label: string; command: string }> = {
-	mac: { label: "macOS", command: "brew install alethia" },
+	mac: { label: "macOS", command: "brew install alethialabs-io/tap/alethia" },
 	linux: { label: "Linux", command: "curl -fsSL https://get.alethialabs.io | sh" },
 	windows: { label: "Windows", command: "irm https://get.alethialabs.io/install.ps1 | iex" },
 };

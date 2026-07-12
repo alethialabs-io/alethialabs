@@ -46,10 +46,11 @@ number of rows.`,
 	},
 }
 
-var activityColumns = []string{"Time", "Actor", "Action", "Resource", "Decision"}
+var activityColumns = []string{"Time", "Actor", "Action", "Resource", "Decision", "Reason"}
 
 // activityRows projects activity entries into plain table rows. The actor prefers
-// the email (falling back to the actor id); the decision renders allow/deny.
+// the email (falling back to the actor id); the decision renders allow/deny. The
+// Reason column is the point of a deny row, so it is always shown.
 func activityRows(entries []api.ActivityEntry) [][]string {
 	rows := make([][]string, len(entries))
 	for i, e := range entries {
@@ -57,7 +58,15 @@ func activityRows(entries []api.ActivityEntry) [][]string {
 		if actor == "" {
 			actor = e.ActorID
 		}
-		rows[i] = []string{formatCreatedAt(e.Ts), actor, e.Action, e.ResourceType, decisionLabel(e.Decision)}
+		resource := e.ResourceType
+		if e.ResourceID != "" {
+			resource += " " + truncID(e.ResourceID)
+		}
+		reason := e.Reason
+		if reason == "" {
+			reason = ui.SymbolDash
+		}
+		rows[i] = []string{formatCreatedAt(e.Ts), actor, e.Action, resource, decisionLabel(e.Decision), reason}
 	}
 	return rows
 }

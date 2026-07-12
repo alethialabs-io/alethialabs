@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { CanvasContext } from "../canvas-context";
+import { artifactTools } from "./artifacts";
 import { catalogTools, composeTools } from "./compose";
 import { connectTools } from "./connect";
 import { docsTools } from "./docs";
@@ -10,6 +11,7 @@ import { readTools } from "./read";
 import { externalToolsOnly } from "./registry";
 import { scannerTools } from "./scanner";
 import { visualizeTools } from "./visualize";
+import { widgetTools } from "./widgets";
 
 /** Agent chat mode: Ask = read-only; Act = may propose plan/deploy operations. */
 export type AgentMode = "ask" | "act";
@@ -32,6 +34,8 @@ export function buildProjectAgentTools(ctx: CanvasContext | undefined) {
 		...composeTools(ctx),
 		...operationTools(),
 		...visualizeTools(),
+		...widgetTools(),
+		...artifactTools(),
 	};
 }
 
@@ -50,6 +54,8 @@ export function buildAgentTools(opts?: { mode?: AgentMode }) {
 		...scannerTools(),
 		...(opts?.mode === "act" ? operationTools() : {}),
 		...visualizeTools(),
+		...widgetTools(),
+		...artifactTools(),
 	};
 }
 

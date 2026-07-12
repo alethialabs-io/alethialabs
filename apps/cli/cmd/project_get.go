@@ -5,10 +5,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +26,7 @@ var projectGetCmd = &cobra.Command{
 			fail(err)
 		}
 
+		format := outputFormat(cmd)
 		openInBrowser, _ := cmd.Flags().GetBool("open")
 
 		config, err := api.NewClient(token).GetConfiguration(projectName)
@@ -37,23 +39,21 @@ var projectGetCmd = &cobra.Command{
 			return
 		}
 
+		// json/csv are scripting formats: emit the record and skip the
+		// interactive browser prompt entirely.
+		if format != ui.FormatTable {
+			if err := ui.RenderCard(os.Stdout, format, "", projectSummaryRows(*config), config); err != nil {
+				fail(err)
+			}
+			return
+		}
+
 		ui.PrintConfiguration(*config)
 
-		if !openInBrowser {
-			var confirm bool
-			err := ui.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title("Open in Browser").
-						Description("View this project in the Alethia web UI").
-						Affirmative("Yes").
-						Negative("No").
-						Value(&confirm),
-				),
-			).Run()
-			if err == nil {
-				openInBrowser = confirm
-			}
+		// Only offer the browser prompt on an interactive TTY; scripting/piped
+		// invocations get the rendered project and nothing that would block.
+		if !openInBrowser && interactiveTable(cmd) {
+			openInBrowser = confirm("Open in Browser?", "View this project in the Alethia web UI")
 		}
 
 		if openInBrowser {
@@ -64,6 +64,24 @@ var projectGetCmd = &cobra.Command{
 			}
 		}
 	},
+}
+
+// projectSummaryRows returns the scalar summary fields of a project config for
+// the csv projection (json emits the full typed object).
+func projectSummaryRows(c types.Configuration) [][]string {
+	rows := [][]string{
+		{"ID", c.ID},
+		{"Project", c.ProjectName},
+		{"Environment", c.EnvironmentStage},
+		{"Container Platform", c.ContainerPlatform},
+		{"Cloud Account ID", c.CloudAccountID},
+		{"Region", c.Region},
+		{"IaC Version", c.IacVersion},
+	}
+	if !c.UpdatedAt.IsZero() {
+		rows = append(rows, []string{"Last Updated", c.UpdatedAt.Format("2006-01-02 15:04:05")})
+	}
+	return rows
 }
 
 func init() {

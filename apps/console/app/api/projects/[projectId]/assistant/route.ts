@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
+import {
+	convertToModelMessages,
+	createUIMessageStream,
+	createUIMessageStreamResponse,
+	stepCountIs,
+	streamText,
+	type UIMessage,
+} from "ai";
 import { z } from "zod";
 import { saveThreadMessages } from "@/app/server/actions/agent";
+import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
 import {
@@ -12,8 +20,8 @@ import {
 	mentionsSchema,
 } from "@/lib/ai/mentions";
 import {
-	advisorThinkingOptions,
 	cachedSystemMessage,
+	thinkingOptions,
 } from "@/lib/ai/provider-options";
 import { buildProjectAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
@@ -159,51 +167,68 @@ export async function POST(
 		? `${systemPrompt(projectId, canvas)}\n\n${mentionBlock}`
 		: systemPrompt(projectId, canvas);
 
-	const result = streamText({
-		model: executor.model,
-		// Cache the (stable) system prompt so repeated turns read it from cache.
-		messages: [
-			cachedSystemMessage(system),
-			...(await convertToModelMessages(messages)),
-		],
-		// Our own system prompt (cached) is intentionally a system message; user turns are
-		// never system-role, so this is not a prompt-injection surface.
-		allowSystemInMessages: true,
-		tools: buildProjectAgentTools(canvas),
-		stopWhen: stepCountIs(8),
-		// Step 0 runs on the advisor; the rest use the executor. A distinct Anthropic advisor
-		// also gets adaptive extended thinking for the planning step.
-		prepareStep: ({ stepNumber }) =>
-			stepNumber === 0
-				? {
-						model: advisor.model,
-						providerOptions: advisorThinkingOptions(advisor, executor),
+	const modelMessages = await convertToModelMessages(messages);
+
+	// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
+	// parts) interleave with the model's own parts (PLAN/EXECUTE separators).
+	const stream = createUIMessageStream({
+		originalMessages: messages,
+		execute: ({ writer }) => {
+			const result = streamText({
+				model: executor.model,
+				// Cache the (stable) system prompt so repeated turns read it from cache.
+				messages: [cachedSystemMessage(system), ...modelMessages],
+				// Our own system prompt (cached) is intentionally a system message; user turns are
+				// never system-role, so this is not a prompt-injection surface.
+				allowSystemInMessages: true,
+				tools: buildProjectAgentTools(canvas),
+				stopWhen: stepCountIs(8),
+				// Step 0 runs on the advisor; the rest use the executor. The planning step gets
+				// extended thinking on EVERY tier so reasoning streams to the transcript.
+				prepareStep: ({ stepNumber }) => {
+					const marker = agentStepMarker({
+						stepNumber,
+						clientPick: false,
+						advisorKey: advisor.key,
+						executorKey: executor.key,
+						baseKey: executor.key,
+					});
+					if (marker) {
+						writer.write({
+							type: AGENT_STEP_PART_TYPE,
+							id: `step-${stepNumber}`,
+							data: marker,
+						});
 					}
-				: {},
-		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
-		onFinish: ({ steps }) => {
-			void recordAgentTurnUsage({
-				orgId: actor.orgId,
-				userId: actor.userId,
-				kind: "agent",
-				charge,
-				refId: threadId ?? projectId,
-				steps: steps.map((s, i) => ({
-					model: modelForStep(i),
-					usage: {
-						inputTokens: s.usage.inputTokens,
-						outputTokens: s.usage.outputTokens,
-						cachedInputTokens: s.usage.cachedInputTokens,
-					},
-				})),
+					return stepNumber === 0
+						? { model: advisor.model, providerOptions: thinkingOptions(advisor) }
+						: {};
+				},
+				// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
+				onFinish: ({ steps }) => {
+					void recordAgentTurnUsage({
+						orgId: actor.orgId,
+						userId: actor.userId,
+						kind: "agent",
+						charge,
+						refId: threadId ?? projectId,
+						steps: steps.map((s, i) => ({
+							model: modelForStep(i),
+							usage: {
+								inputTokens: s.usage.inputTokens,
+								outputTokens: s.usage.outputTokens,
+								cachedInputTokens: s.usage.cachedInputTokens,
+							},
+						})),
+					});
+				},
 			});
+			writer.merge(result.toUIMessageStream());
+		},
+		onFinish: ({ messages: finished }) => {
+			if (threadId) void saveThreadMessages(threadId, finished);
 		},
 	});
 
-	return result.toUIMessageStreamResponse({
-		originalMessages: messages,
-		onFinish: ({ messages }) => {
-			if (threadId) void saveThreadMessages(threadId, messages);
-		},
-	});
+	return createUIMessageStreamResponse({ stream });
 }

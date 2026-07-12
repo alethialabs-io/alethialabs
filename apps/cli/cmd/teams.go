@@ -53,13 +53,14 @@ var teamsListCmd = &cobra.Command{
 	},
 }
 
-var teamListColumns = []string{"Name", "Members"}
+var teamListColumns = []string{"ID", "Name", "Members"}
 
-// teamRows projects teams into plain table rows.
+// teamRows projects teams into plain table rows. The ID column is included
+// because `teams delete <team_id>` addresses a team by it.
 func teamRows(teams []api.Team) [][]string {
 	rows := make([][]string, len(teams))
 	for i, t := range teams {
-		rows[i] = []string{t.Name, strconv.Itoa(t.MemberCount)}
+		rows[i] = []string{t.ID, t.Name, strconv.Itoa(t.MemberCount)}
 	}
 	return rows
 }

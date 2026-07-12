@@ -428,6 +428,37 @@ jobs:
             # host defaults to eu.i.posthog.com. When set, the console runs PostHog (leave Umami unset).
             emit NEXT_PUBLIC_POSTHOG_KEY
             emit NEXT_PUBLIC_POSTHOG_HOST
+            # Structured logs → PostHog Logs over OTLP (lib/observability/otel.ts). Unset ⇒ emitted empty
+            # ⇒ the logs provider never registers (the pino→OTel bridge stays a no-op). Endpoint is
+            # https://eu.i.posthog.com/i/v1/logs; headers carry `Authorization=Bearer <phc_ project key>`.
+            emit OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            emit OTEL_EXPORTER_OTLP_LOGS_HEADERS
+            # --- Operability suite (the ~19-PR program). Every one is OFF unless its value is set in the
+            # vault: unset ⇒ emitted empty ⇒ the code's gate treats it as disabled (like the AI keys /
+            # analytics above). Without these lines the vault vars could never reach the box's .env, so
+            # the whole suite would be un-enable-able in prod (the prod-env-emit-gaps trap). ---
+            # Self-hosted observability (all no-op when unset): OTel collector, Sentry/GlitchTip errors,
+            # the platform-operator org that background-loop-degraded alerts fan out to, log level.
+            emit OTEL_EXPORTER_OTLP_ENDPOINT
+            emit OTEL_SERVICE_NAME
+            emit SENTRY_DSN
+            emit SENTRY_ENVIRONMENT
+            emit SENTRY_TRACES_SAMPLE_RATE
+            emit ALETHIA_PLATFORM_ALERT_ORG_ID
+            emit ALETHIA_LOG_LEVEL
+            # Break-glass privileged-recovery surface — DEFAULT-OFF (404 unless ENABLED="true"): the master
+            # switch, the operator allowlist (distinct from support staff), the CF-Access proxy secret, and
+            # the orphan-clean arm flag (still 501 even when armed). State-surgery's runner arm flag +
+            # ALETHIA_CANCEL_GRACE_SECONDS live in the runner's env, not the console .env.
+            emit ALETHIA_BREAKGLASS_ENABLED
+            emit BREAKGLASS_OPERATORS
+            emit BREAKGLASS_ACCESS_PROXY_SECRET
+            emit ALETHIA_BREAKGLASS_ORPHAN_CLEAN_ENABLED
+            # Reconcile/GC tunables — safe code defaults (converge 5m; log 30d; fleet_actions 90d), set
+            # only to override.
+            emit ALETHIA_CONVERGE_MIN_AGE_MINUTES
+            emit ALETHIA_JOB_LOG_RETENTION_DAYS
+            emit ALETHIA_FLEET_ACTION_RETENTION_DAYS
             echo "FLEET_PROVIDER=hcloud"
             echo "HCLOUD_TOKEN=$(val HCLOUD_FLEET_TOKEN)"   # runtime fleet token (not the CP token)
             emit HCLOUD_SSH_KEYS
@@ -542,6 +573,18 @@ jobs:
           docker builder prune -af || true
           echo "disk after prune:"; df -h / 2>/dev/null || true
           docker compose $cf pull
-          docker compose $cf up -d --remove-orphans
+          # If `up` fails, the culprit is almost always the one-shot `migrate` service (the app is
+          # gated on it via depends_on: service_completed_successfully). compose only prints an opaque
+          # "didn't complete successfully", so dump the migrate container's logs + service status
+          # BEFORE exiting — makes the real Postgres error visible in the GitHub Actions log (no SSH).
+          if ! docker compose $cf up -d --remove-orphans; then
+            echo "::group::migrate logs (deploy failed)"
+            docker logs alethia-migrate-1 --tail 200 2>&1 || true
+            echo "::endgroup::"
+            echo "::group::compose ps"
+            docker compose $cf ps || true
+            echo "::endgroup::"
+            exit 1
+          fi
           docker image prune -f
           REMOTE

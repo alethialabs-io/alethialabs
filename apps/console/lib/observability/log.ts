@@ -1,7 +1,48 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import pino from "pino";
+
+// Map pino level → OTel severity. Used by the log bridge below.
+const OTEL_SEVERITY: Record<string, SeverityNumber> = {
+	debug: SeverityNumber.DEBUG,
+	info: SeverityNumber.INFO,
+	warn: SeverityNumber.WARN,
+	error: SeverityNumber.ERROR,
+};
+
+/**
+ * Mirror one structured line into the OTel logs pipeline (shipped to PostHog / a collector by
+ * lib/observability/otel.ts). `logs.getLogger()` is the API no-op until a LoggerProvider is
+ * registered (only when an OTLP logs endpoint is configured), so this is free + silent otherwise, and
+ * never throws into the caller. The correlation fields (trace_id/org_id/job_id) ride as attributes so a
+ * log joins its trace. Errors are flattened to string attributes (OTel attrs are primitives).
+ */
+function bridgeToOtel(level: string, msg: string, fields?: LogFields): void {
+	try {
+		const attributes: Record<string, string | number | boolean> = {};
+		for (const [k, v] of Object.entries(fields ?? {})) {
+			if (v == null) continue;
+			if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+				attributes[k] = v;
+			} else if (k === "err" && v instanceof Error) {
+				attributes["error.message"] = v.message;
+				if (v.stack) attributes["error.stack"] = v.stack;
+			} else {
+				attributes[k] = JSON.stringify(v);
+			}
+		}
+		logs.getLogger("alethia-console").emit({
+			severityNumber: OTEL_SEVERITY[level] ?? SeverityNumber.INFO,
+			severityText: level,
+			body: msg,
+			attributes,
+		});
+	} catch {
+		/* the log bridge must never break a log call */
+	}
+}
 
 /**
  * Structured-log fields carried on every line. The four correlation keys
@@ -37,13 +78,26 @@ export interface Logger {
 	child(bindings: LogFields): Logger;
 }
 
-/** Wraps a pino instance so callers get the message-first `(msg, fields)` shape. */
+/** Wraps a pino instance so callers get the message-first `(msg, fields)` shape. Every line is also
+ * mirrored to the OTel logs pipeline (no-op until an OTLP logs endpoint is configured). */
 function wrap(p: pino.Logger): Logger {
 	return {
-		info: (msg, fields) => p.info(fields ?? {}, msg),
-		warn: (msg, fields) => p.warn(fields ?? {}, msg),
-		error: (msg, fields) => p.error(fields ?? {}, msg),
-		debug: (msg, fields) => p.debug(fields ?? {}, msg),
+		info: (msg, fields) => {
+			p.info(fields ?? {}, msg);
+			bridgeToOtel("info", msg, fields);
+		},
+		warn: (msg, fields) => {
+			p.warn(fields ?? {}, msg);
+			bridgeToOtel("warn", msg, fields);
+		},
+		error: (msg, fields) => {
+			p.error(fields ?? {}, msg);
+			bridgeToOtel("error", msg, fields);
+		},
+		debug: (msg, fields) => {
+			p.debug(fields ?? {}, msg);
+			bridgeToOtel("debug", msg, fields);
+		},
 		child: (bindings) => wrap(p.child(bindings)),
 	};
 }

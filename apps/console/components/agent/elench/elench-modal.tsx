@@ -7,6 +7,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import { ArtifactPanel } from "@/components/agent/artifact-panel";
+import { WidgetGrid } from "@/components/agent/widgets/widget-grid";
 import { ThreadRail } from "@/components/agent/thread-rail";
 import type { AgentThread } from "@/lib/db/schema";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
@@ -63,11 +64,14 @@ export function ElenchModal({
 	// Both contexts persist threads now, so the rail shows for project as well as org.
 	const showSidebar = sidebarOpen;
 
-	// The generative-UI split pane is present whenever an artifact is open (both
-	// contexts — a project dashboard opens the split pane too).
+	// The generative-UI split pane is LAYERED: the per-chat widget grid is the base
+	// view (gridOpen) and the project/job inspector (artifact) overlays it on demand.
 	const artifact = useArtifactStore((s) => s.artifact);
+	const gridOpen = useArtifactStore((s) => s.gridOpen);
 	const closeArtifact = useArtifactStore((s) => s.close);
-	const splitOpen = !!artifact;
+	const openGrid = useArtifactStore((s) => s.openGrid);
+	const closeGrid = useArtifactStore((s) => s.closeGrid);
+	const splitOpen = !!artifact || gridOpen;
 
 	// Drag-resize the split pane from its left edge (distance from the modal's right gutter).
 	const [splitW, setSplitW] = useState(SPLIT_DEFAULT);
@@ -161,10 +165,19 @@ export function ElenchModal({
 							<div className="flex flex-1 items-center justify-end gap-1">
 								<button
 									type="button"
-									aria-label={splitOpen ? "Close split view" : "Split view"}
-									onClick={() => splitOpen && closeArtifact()}
-									disabled={!splitOpen}
-									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+									aria-label={splitOpen ? "Close split view" : "Open widget grid"}
+									onClick={() => {
+										if (splitOpen) {
+											closeArtifact();
+											closeGrid();
+										} else {
+											openGrid();
+										}
+									}}
+									className={
+										"flex size-8 items-center justify-center rounded-none transition-colors hover:bg-muted hover:text-foreground " +
+										(splitOpen ? "text-foreground" : "text-muted-foreground")
+									}
 								>
 									<LayoutGrid className="h-4 w-4" />
 								</button>
@@ -196,7 +209,7 @@ export function ElenchModal({
 									style={{ width: splitW }}
 									className="flex-none overflow-hidden"
 								>
-									<ArtifactPanel />
+									{artifact ? <ArtifactPanel /> : <WidgetGrid />}
 								</div>
 							</>
 						)}

@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var clusterListColumns = []string{"Project", "Cluster", "Version", "Status", "Nodes", "Region"}
+var clusterListColumns = []string{"Project", "Cluster", "Version", "Status", "Nodes", "Region", "Cost"}
 
 var clusterListCmd = &cobra.Command{
 	Use:   "list",
@@ -44,7 +44,7 @@ var clusterListCmd = &cobra.Command{
 				return
 			}
 			columns := make([]table.Column, len(clusterListColumns))
-			widths := []int{22, 20, 10, 14, 14, 14}
+			widths := []int{22, 20, 10, 26, 12, 12, 12}
 			for i, title := range clusterListColumns {
 				columns[i] = table.Column{Title: title, Width: widths[i]}
 			}
@@ -83,13 +83,24 @@ func clusterRows(clusters []api.ClusterSummary) [][]string {
 		if c.Environment != "" {
 			projectLabel += " (" + c.Environment + ")"
 		}
+		// Surface the status message inline — it's the actionable detail when a
+		// cluster is FAILED/degraded (the raw field is also in -o json).
+		status := fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status))
+		if c.StatusMessage != "" {
+			status += " — " + c.StatusMessage
+		}
+		cost := ui.SymbolDash
+		if c.EstimatedMonthlyCost != nil {
+			cost = fmt.Sprintf("$%.0f/mo", *c.EstimatedMonthlyCost)
+		}
 		rows[i] = []string{
 			projectLabel,
 			clusterName,
 			version,
-			fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status)),
+			status,
 			nodes,
 			c.Region,
+			cost,
 		}
 	}
 	return rows

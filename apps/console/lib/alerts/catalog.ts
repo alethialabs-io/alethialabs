@@ -147,6 +147,18 @@ export const CATEGORIES: CatalogCategory[] = [
 		],
 	},
 	{
+		id: "platform",
+		label: "Platform health",
+		icon: "Cpu",
+		events: [
+			// Raised by the loop supervisor (lib/observability/heartbeats.ts) when a background loop
+			// stops succeeding within N× its interval; recovered clears it. Routed to the operator org
+			// via ALETHIA_PLATFORM_ALERT_ORG_ID. Throttled to one per degraded episode.
+			ev("platform.loop_degraded", "system.platform.loop_degraded", "Background loop degraded", "critical", true),
+			ev("platform.loop_recovered", "system.platform.loop_recovered", "Background loop recovered", "info", true),
+		],
+	},
+	{
 		id: "support",
 		label: "Support",
 		icon: "LifeBuoy",

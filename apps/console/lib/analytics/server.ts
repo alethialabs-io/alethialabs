@@ -80,6 +80,28 @@ export async function captureServerException(
 	}
 }
 
+/** One LLM message ({role, content}) in PostHog's `$ai_input` / `$ai_output_choices` shape. */
+export interface AiMessage {
+	role: string;
+	content: string;
+}
+
+// Cap the content we ship so a long thread can't blow past PostHog's per-event size limit.
+const AI_CONTENT_MAX_CHARS = 8_000;
+const AI_MESSAGES_MAX = 40;
+
+/** Truncate a message array (count + per-message content) so the event stays well under the size cap. */
+export function truncateAiMessages(messages: AiMessage[]): AiMessage[] {
+	const capped = messages.slice(-AI_MESSAGES_MAX);
+	return capped.map((m) => ({
+		role: m.role,
+		content:
+			m.content.length > AI_CONTENT_MAX_CHARS
+				? `${m.content.slice(0, AI_CONTENT_MAX_CHARS)}… [truncated ${m.content.length - AI_CONTENT_MAX_CHARS} chars]`
+				: m.content,
+	}));
+}
+
 /** Fields for one LLM generation (mirrors recordAiUsage — the single AI chokepoint). */
 export interface AiGenerationInput {
 	userId: string;
@@ -90,14 +112,36 @@ export interface AiGenerationInput {
 	inputTokens?: number;
 	outputTokens?: number;
 	cachedInputTokens?: number;
+	/** Anthropic cache-write tokens (separate from cache reads). */
+	cacheCreationInputTokens?: number;
 	costMicros?: number | null;
 	latencyMs?: number;
+	/** Conversation/thread id — groups a thread's turns into one PostHog LLM "session". */
+	sessionId?: string;
+	/** Prompt messages — powers the Traces conversation view + Sentiment. */
+	input?: AiMessage[];
+	/** Model output messages. */
+	outputChoices?: AiMessage[];
+	/** Tool names available to (or used by) this generation — powers the Tools view. */
+	tools?: string[];
+	/** True when the generation errored (powers the Errors view). */
+	isError?: boolean;
+	/** Error message when `isError`. */
+	error?: string;
+	/** Why the model stopped (end_turn, tool_use, max_tokens, …). */
+	stopReason?: string;
+	/** Whether the response was streamed. */
+	stream?: boolean;
+	temperature?: number;
+	maxTokens?: number;
 }
 
 /**
  * Emit PostHog's reserved `$ai_generation` event so the LLM-analytics product (cost/tokens/latency by
- * model, org, feature) lights up. Uses the `$ai_*` property convention. distinct_id = the acting user so
- * these stitch to their client timeline; attached to the org group. Best-effort; never throws.
+ * model, org, feature, plus Traces/Sessions/Tools/Errors/Sentiment) lights up. Uses the `$ai_*` property
+ * convention. distinct_id = the acting user so these stitch to their client timeline; attached to the org
+ * group. Content ($ai_input/$ai_output_choices) is truncated to stay under PostHog's event size cap.
+ * Best-effort; never throws.
  */
 export async function captureAiGeneration(input: AiGenerationInput): Promise<void> {
 	const ph = getClient();
@@ -113,11 +157,24 @@ export async function captureAiGeneration(input: AiGenerationInput): Promise<voi
 				$ai_input_tokens: input.inputTokens,
 				$ai_output_tokens: input.outputTokens,
 				$ai_cache_read_input_tokens: input.cachedInputTokens,
+				$ai_cache_creation_input_tokens: input.cacheCreationInputTokens,
 				$ai_total_cost_usd:
 					input.costMicros != null ? input.costMicros / 1_000_000 : undefined,
 				$ai_latency: input.latencyMs != null ? input.latencyMs / 1000 : undefined,
 				$ai_trace_id: input.refId,
+				$ai_session_id: input.sessionId,
 				$ai_span_name: input.kind,
+				$ai_input: input.input ? truncateAiMessages(input.input) : undefined,
+				$ai_output_choices: input.outputChoices
+					? truncateAiMessages(input.outputChoices)
+					: undefined,
+				$ai_tools: input.tools?.length ? input.tools : undefined,
+				$ai_is_error: input.isError,
+				$ai_error: input.error,
+				$ai_stop_reason: input.stopReason,
+				$ai_stream: input.stream,
+				$ai_temperature: input.temperature,
+				$ai_max_tokens: input.maxTokens,
 			},
 			groups: { organization: input.orgId },
 		});

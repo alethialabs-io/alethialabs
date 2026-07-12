@@ -87,6 +87,14 @@ export interface EnvStatusMeta {
 	/** Org that owns the env — required to fan out the `system.project.status_conflict` alert. */
 	orgId?: string | null;
 	projectId?: string | null;
+	/**
+	 * Suppress the warn + `system.project.status_conflict` alert on a rejected CAS. For callers
+	 * where a lost race is EXPECTED and benign — the env-status convergence backstop
+	 * (lib/reconcile/converge.ts) speculatively CASes many envs each tick and treats a rejection as
+	 * "already settled / not mine", so it must not alert-storm. User-driven + runner-callback
+	 * transitions leave this off so genuine conflicts stay visible.
+	 */
+	silent?: boolean;
 }
 
 /**
@@ -116,7 +124,7 @@ export async function setEnvStatus(
 	);
 	const updated = Boolean(rows[0]?.updated);
 
-	if (!updated) {
+	if (!updated && !meta?.silent) {
 		log.warn("env-status transition rejected (CAS lost race)", {
 			job_id: jobId ?? undefined,
 			org_id: meta?.orgId ?? undefined,

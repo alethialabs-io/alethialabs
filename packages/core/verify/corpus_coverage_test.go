@@ -74,6 +74,12 @@ func TestCorpusLabelsReferenceRealControls(t *testing.T) {
 	for _, id := range declaredControlIDs() {
 		known[id] = true
 	}
+	// SCOPE-001 is the fail-closed scope backstop: it never emits `fail` (only
+	// not_evaluable), so it is deliberately excluded from declaredControlIDs() (which
+	// drives the fail-plan coverage + mutation gates), yet it is a real control that
+	// not_evaluable corpus plans legitimately reference. Recognize it here so those
+	// labels are not misread as typos. Discrimination is proven in scope_test.go.
+	known["SCOPE-001"] = true
 	for name, label := range labels {
 		for _, id := range label.Controls {
 			if !known[id] {

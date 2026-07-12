@@ -23,12 +23,15 @@ import (
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
+	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 	"github.com/aws/aws-sdk-go-v2/config"
 	tfjson "github.com/hashicorp/terraform-json"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type DeployParams struct {
@@ -172,11 +175,35 @@ func clusterReadyRequireNode() bool {
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
-func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) {
+func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retErr error) {
 	vc := params.ProjectConfig
 	if vc == nil {
 		return nil, fmt.Errorf("ProjectConfig is required for RunDeployV2")
 	}
+
+	// Provisioning-stage spans (plan → verify_gate → apply → kube_configure → argocd →
+	// addons). The stages run strictly sequentially, so a single "current stage" span
+	// walks the sequence: setStage ends the previous span and opens the next, and the
+	// deferred close ends the last one — stamping the function's error onto whichever
+	// stage failed. All are children of ctx's span (the runner's per-job span, anchored
+	// to the job's traceparent), so console + runner spans share ONE trace. No-op spans
+	// when no OTLP endpoint is configured (telemetry reads the global no-op tracer).
+	var curSpan trace.Span
+	setStage := func(name string) {
+		if curSpan != nil {
+			curSpan.End()
+		}
+		_, curSpan = telemetry.StartStage(ctx, name)
+	}
+	defer func() {
+		if curSpan != nil {
+			if retErr != nil {
+				curSpan.RecordError(retErr)
+				curSpan.SetStatus(codes.Error, retErr.Error())
+			}
+			curSpan.End()
+		}
+	}()
 
 	byoIac := vc.IacSource != nil
 
@@ -360,6 +387,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 
+	setStage("plan")
 	if params.PlanFile != "" {
 		fmt.Fprintf(stdout, "Using pre-approved plan file (skipping re-plan)\n")
 		planFile = params.PlanFile
@@ -393,6 +421,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// ENFORCEMENT happens just before apply, below. If the plan JSON could not be
 	// produced we log a coverage gap rather than block (the experiment is about
 	// control correctness, not tooling failures).
+	setStage("verify_gate")
 	if planJSON != nil {
 		// Opt-in AWS IAM Access Analyzer corroboration: provable, automated-reasoning
 		// checks that the planned policies don't grant a sensitive-action denylist.
@@ -459,6 +488,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// disabling the gate wholesale is deliberately not an option here.
 	if result.VerifyReport != nil {
 		if unresolved := result.VerifyReport.Unwaived(params.VerifyOverride); len(unresolved) > 0 {
+			// Metric: a fail-closed gate block (low-cardinality provider label only).
+			telemetry.GateBlocked(ctx, provider.Name())
 			return nil, fmt.Errorf("verification gate BLOCKED apply: failing controls %v (catalog %s) — fix the plan or supply an authorized override to proceed",
 				unresolved, result.VerifyReport.CatalogVersion)
 		}
@@ -478,6 +509,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// only loses precision (the runner defaults to "no orphan risk"), never blocks apply.
 	writePhase(params.PhaseFile, "apply")
 
+	setStage("apply")
 	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {
 		return nil, fmt.Errorf("tofu apply failed: %w", err)
@@ -493,6 +525,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	result.ClusterEndpoint = cloud.ExtractClusterEndpoint(outputs)
 
 	if result.ClusterName != "" {
+		setStage("kube_configure")
 		// Kubeconfig is mandatory: without it the cluster is unreachable, ArgoCD can't
 		// install, and "SUCCESS" would be a lie. Fail the deploy loudly.
 		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, stdout); err != nil {
@@ -536,6 +569,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		// reports success is worse than an honest failure the operator can act on.
 		gitopsRequested := vc.Repositories.AppsDestinationRepo != ""
 
+		setStage("argocd")
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
 			if gitopsRequested {
 				return nil, fmt.Errorf("ArgoCD install failed (GitOps requested for repo %s): %w", vc.Repositories.AppsDestinationRepo, err)
@@ -595,6 +629,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
 
+		setStage("addons")
 		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
 		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and

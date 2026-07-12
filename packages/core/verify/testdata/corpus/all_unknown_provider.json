@@ -1,0 +1,32 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "awscc_s3_bucket.data",
+      "mode": "managed",
+      "type": "awscc_s3_bucket",
+      "name": "data",
+      "provider_name": "registry.terraform.io/hashicorp/awscc",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "bucket_name": "acme-data" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "acmecloud_widget.w",
+      "mode": "managed",
+      "type": "acmecloud_widget",
+      "name": "w",
+      "provider_name": "registry.terraform.io/acme/acmecloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "size": "large" },
+        "after_unknown": {}
+      }
+    }
+  ]
+}

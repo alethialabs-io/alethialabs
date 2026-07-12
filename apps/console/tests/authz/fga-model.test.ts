@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
-import { isOrgLevel, toCheck } from "@/lib/authz/fga-mapping";
+import { denyChecksFor, isOrgLevel, toCheck } from "@/lib/authz/fga-mapping";
 import { PERMISSIONS } from "@/lib/authz/registry";
 
 const model = buildAuthorizationModel();
@@ -53,6 +53,21 @@ describe("OpenFGA model generation", () => {
 				byType.get(objectType)?.relations[relation],
 				`toCheck(${p.key}) → ${objectType}#${relation} not in model`,
 			).toBeDefined();
+		}
+	});
+
+	it("resolves every deny VETO check to a relation that exists on the model", () => {
+		// The deny-wins engine evaluates denyChecksFor alongside checksFor; every relation it
+		// references (instance deny_<action> + org <type>_deny_<action>) must exist in the model.
+		for (const p of PERMISSIONS) {
+			const id = isOrgLevel(p.resource, p.action) ? undefined : "11111111-1111-4111-8111-111111111111";
+			for (const { object, relation } of denyChecksFor(p.resource, p.action, { id, orgId: "o" })) {
+				const objectType = object.split(":")[0];
+				expect(
+					byType.get(objectType)?.relations[relation],
+					`denyChecksFor(${p.key}) → ${objectType}#${relation} not in model`,
+				).toBeDefined();
+			}
 		}
 	});
 

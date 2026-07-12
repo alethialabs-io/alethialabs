@@ -2,8 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
+import type { AiMessage } from "@/lib/analytics/server";
 import type { AiCharge } from "@/lib/billing/ai-guard";
 import { type AiUsageKind, recordAiUsage } from "@/lib/billing/ai-quota";
+
+/**
+ * Turn-level LLM-observability enrichment (PostHog `$ai_generation`). A turn spans multiple per-model
+ * rows, but the conversation content/tools/latency describe the turn as a whole — so they're attached
+ * to the PRIMARY (row 0) generation, while `sessionId` goes on every row so they group as one session.
+ */
+export interface AgentTurnObservability {
+	sessionId?: string;
+	input?: AiMessage[];
+	outputChoices?: AiMessage[];
+	tools?: string[];
+	latencyMs?: number;
+	stopReason?: string;
+	isError?: boolean;
+	error?: string;
+}
 
 // Per-model metering for an agent turn. With advisor + executor orchestration (lib/config/ai.ts),
 // a single turn spans MULTIPLE models — a Sonnet/Opus advisor plans step 0, then a Haiku executor
@@ -69,12 +86,32 @@ export async function recordAgentTurnUsage(input: {
 	charge: AiCharge;
 	refId?: string;
 	steps: AgentStep[];
+	/** Optional PostHog LLM-observability enrichment for the turn (content/tools/latency/session). */
+	turn?: AgentTurnObservability;
 }): Promise<void> {
 	const records = aggregateUsageByModel(input.steps);
 	const charge = input.charge;
+	const turn = input.turn;
 	await Promise.all(
-		records.map((rec, i) =>
-			recordAiUsage({
+		records.map((rec, i) => {
+			// Enrichment only when the caller supplied turn context — otherwise the metering call stays
+			// byte-identical to the un-enriched contract. sessionId groups the turn's per-model
+			// generations into one PostHog session; the heavier content/tools/latency ride the primary
+			// (row 0) generation to avoid duplicating a long transcript across every model row.
+			const enrich = turn
+				? {
+						sessionId: turn.sessionId,
+						stream: true,
+						input: i === 0 ? turn.input : undefined,
+						outputChoices: i === 0 ? turn.outputChoices : undefined,
+						tools: i === 0 ? turn.tools : undefined,
+						latencyMs: i === 0 ? turn.latencyMs : undefined,
+						stopReason: i === 0 ? turn.stopReason : undefined,
+						isError: i === 0 ? turn.isError : undefined,
+						error: i === 0 ? turn.error : undefined,
+					}
+				: {};
+			return recordAiUsage({
 				orgId: input.orgId,
 				userId: input.userId,
 				kind: input.kind,
@@ -86,7 +123,8 @@ export async function recordAgentTurnUsage(input: {
 				inputTokens: rec.inputTokens,
 				outputTokens: rec.outputTokens,
 				cachedInputTokens: rec.cachedInputTokens,
-			}),
-		),
+				...enrich,
+			});
+		}),
 	);
 }

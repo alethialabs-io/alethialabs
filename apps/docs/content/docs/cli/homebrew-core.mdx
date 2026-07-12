@@ -1,0 +1,102 @@
+---
+title: Homebrew Core (bare install)
+description: How and when to get the literal `brew install alethia` with zero tap — via Homebrew core.
+---
+
+# Homebrew Core
+
+Today the CLI installs from our own tap:
+
+```bash
+brew install alethialabs-io/tap/alethia
+# or: brew tap alethialabs-io/tap && brew install alethia
+```
+
+The **literal** bare `brew install alethia` (no tap at all) is only possible once the formula
+lives in [**homebrew-core**](https://github.com/Homebrew/homebrew-core), Homebrew's default tap.
+This page is the runbook for getting there.
+
+## The gate: notability, not engineering
+
+homebrew-core will **reject** a formula whose upstream isn't "notable." The rule of thumb the
+maintainers apply is roughly **>75 stars, or >30 forks, or >30 watchers**, plus: a stable
+tagged release, active maintenance, an [OSI license](https://opensource.org/licenses) (AGPL-3.0
+qualifies), and no duplication of an existing formula. `alethia` is free in core, but at a
+handful of stars a submission will be closed on notability grounds.
+
+**So this is an adoption milestone, not a code task.** Keep the tap as the primary channel; submit
+to core once the repo clears the notability bar.
+
+## Recommended: submit from a dedicated CLI repo
+
+homebrew-core maintainers dislike formulae that download a **large monorepo tarball** and build a
+subdirectory. The clean vehicle is the dedicated public repo
+[`alethialabs-io/alethia`](https://github.com/alethialabs-io/alethia) — it already exists as a
+read-only mirror of the CLI with `vX.Y.Z` tags (see the "read-only mirror" phase in the repo
+strategy). Today it mirrors the `apps/cli/` subdirectory verbatim; the one remaining prep before a
+core submission is to **flatten it to a root-level Go module** (so the formula does a plain
+root-level `go build` on a small tarball). A focused star count on that repo also helps clear the
+notability bar.
+
+## The formula (build-from-source)
+
+homebrew-core builds Go formulae from source. A submit-ready `alethia.rb` (monorepo variant —
+drop the `cd` for a dedicated repo):
+
+```ruby
+class Alethia < Formula
+  desc "CLI for the Alethia multi-cloud Kubernetes control plane"
+  homepage "https://alethialabs.io"
+  url "https://github.com/alethialabs-io/alethialabs/archive/refs/tags/cli-v0.3.0.tar.gz"
+  version "0.3.0"
+  sha256 "<sha256 of the tag tarball>"
+  license "AGPL-3.0-only"
+  head "https://github.com/alethialabs-io/alethialabs.git", branch: "main"
+
+  depends_on "go" => :build
+
+  def install
+    ldflags = "-s -w -X github.com/alethialabs-io/alethialabs/apps/cli/internal/version.Version=#{version}"
+    cd "apps/cli" do
+      system "go", "build", *std_go_args(ldflags:)
+    end
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/alethia --version")
+  end
+end
+```
+
+Notes:
+- The `version` string is set explicitly because the `cli-v*` tag prefix isn't semver — Homebrew
+  can't infer it from the URL.
+- `std_go_args` installs the binary as `alethia` into `bin`; the `ldflags` bake the version, matching
+  `apps/cli/.goreleaser.yml`.
+- The from-source build resolves `packages/core` through the `replace` directive in
+  `apps/cli/go.mod` (verified with `cd apps/cli && GOWORK=off go build`).
+
+## Submission steps
+
+1. Confirm the notability bar is met and there's a stable `cli-v*` (or dedicated-repo `v*`) release.
+2. `brew create --go --set-name alethia <tarball-url>` and paste in the formula above.
+3. Validate locally:
+   ```bash
+   brew install --build-from-source alethia
+   brew test alethia
+   brew audit --new --strict --online alethia
+   ```
+4. Open a PR to [Homebrew/homebrew-core](https://github.com/Homebrew/homebrew-core) adding
+   `Formula/a/alethia.rb`. BrewTestBot builds it on macOS + Linux; maintainers review.
+5. After merge, `brew install alethia` works with zero tap.
+
+## Ongoing version bumps
+
+Once in core, bump with a one-liner (or Homebrew's autobump, if the repo is enabled for it):
+
+```bash
+brew bump-formula-pr --version=X.Y.Z alethia
+```
+
+GoReleaser continues to own the **tap** formula (`alethialabs-io/homebrew-tap`); the core formula
+is maintained via these PRs. Keeping both is fine — core for discoverability, the tap for the latest.

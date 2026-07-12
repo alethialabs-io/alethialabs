@@ -57,7 +57,7 @@ function Hero({ stars }: { stars: number | null }) {
 					nothing: the clusters are yours, and so is the control plane.
 				</p>
 				<div style={{ marginBottom: 26 }}>
-					<Command>curl -fsSL https://alethialabs.io/install.sh | sh</Command>
+					<Command>curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh</Command>
 				</div>
 				<div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
 					<CTA href="/docs/self-hosting" primary><Icon k="book" size={15} /> Read the self-host docs</CTA>

@@ -136,6 +136,7 @@ function mkDeps(over: Partial<ControllerDeps> = {}): ControllerDeps {
 		persistObserved: vi.fn(async () => {}),
 		bootGraceSeconds: 120,
 		mintBootstrapToken: vi.fn(async () => "boot-tok"),
+		recordAction: vi.fn(async () => {}),
 		...over,
 	};
 }
@@ -215,5 +216,52 @@ describe("reconcilePool — correlation, apply + hysteresis edges (mutation hard
 		// target 2 (warmMin 2), 2 online → NOT over target → reset to 0.
 		await reconcilePool(solo({ warmMin: 2 }), onlinePair, correlated, surplus);
 		expect(surplus.get("aws")).toBe(0);
+	});
+});
+
+describe("reconcilePool — fleet_actions ledger recording", () => {
+	it("records one row per action with the reason + decision inputs (cold-start creates)", async () => {
+		const fake = new FakeFleet();
+		fake.backlog = 3;
+		await reconcilePool(project({ warmMin: 2, buffer: 0 }), fake, fake.deps(), new Map());
+		// target = max(warmMin 2, ceil(3/1)+0) = 3 → 3 creates (one per location, then least-loaded).
+		expect(fake.recorded).toHaveLength(3);
+		for (const r of fake.recorded) {
+			expect(r.action).toBe("create");
+			expect(r.provider).toBe("aws");
+			expect(r.runnerId).toBeNull(); // a create has no runner yet
+			expect(r.queueDepth).toBe(3); // backlog captured at decision time
+			expect(r.poolSize).toBe(0); // nothing online at cold start
+			expect(["scale-up-demand", "min-per-location"]).toContain(r.reason);
+			expect(r.metadata?.location).toBeDefined();
+		}
+	});
+
+	it("records a scale-down destroy with the runner id + scale-down-idle reason", async () => {
+		const fake = new FakeFleet();
+		fake.seed({ version: "v2", location: "fsn1", instanceId: "a", runnerId: "ra" });
+		fake.seed({ version: "v2", location: "fsn1", instanceId: "b", runnerId: "rb" });
+		fake.seed({ version: "v2", location: "nbg1", instanceId: "c", runnerId: "rc" });
+		// target 2 (warmMin 2, buffer 0), 3 online, grace elapsed → drop 1 idle from over-min fsn1.
+		const s = project({ warmMin: 2, buffer: 0, minPerLocation: 1 });
+		const surplus: SurplusState = new Map([["aws", 9]]);
+		await reconcilePool(s, fake, fake.deps(), surplus);
+		const destroys = fake.recorded.filter((r) => r.action === "destroy");
+		expect(destroys).toHaveLength(1);
+		expect(destroys[0].reason).toBe("scale-down-idle");
+		expect(destroys[0].runnerId).toBe("ra"); // correlated runner captured
+		expect(destroys[0].poolSize).toBe(3); // 3 online at decision time
+	});
+
+	it("never lets a ledger-write failure break the reconcile (best-effort)", async () => {
+		const fake = new FakeFleet();
+		const deps = fake.deps();
+		deps.recordAction = async () => {
+			throw new Error("ledger down");
+		};
+		// The create still applies despite recordAction throwing.
+		const acted = await reconcilePool(project({ warmMin: 1, minPerLocation: 0, locations: ["fsn1"], buffer: 0 }), fake, deps, new Map());
+		expect(acted).toBe(1);
+		expect(fake.all()).toHaveLength(1); // the VM was created
 	});
 });

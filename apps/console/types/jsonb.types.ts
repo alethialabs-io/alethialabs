@@ -357,6 +357,17 @@ export interface RunnerMetadata {
 	cloud_instance_id?: string | null;
 }
 
+// fleet_actions.metadata — forensic context the fleet controller attaches to a ledger row
+// (all optional; the load-bearing columns are provider/action/reason/queue_depth/pool_size).
+export interface FleetActionMetadata {
+	/** Location the create targeted / the affected instance lives in. */
+	location?: string;
+	/** Cloud instance id (drain/destroy) the action pertained to. */
+	instance_id?: string;
+	/** Image/version a create was launched at, when known. */
+	version?: string | null;
+}
+
 // jobs.execution_metadata — written by the runner via update_job_status. Known
 // shape (deploy outputs + cached cloud resources from CONNECTION_TEST/FETCH jobs).
 export interface ExecutionMetadata {
@@ -774,4 +785,78 @@ export type DashboardBlock =
 export interface DashboardSpec {
 	title: string;
 	blocks: DashboardBlock[];
+}
+
+/**
+ * The recorded `input` of a break-glass action (breakglass_audit.input, and the
+ * approval-binding surface). Deliberately a small, explicit shape — NOT
+ * Record<string, unknown> — so what an operator asked to do is legible in the
+ * immutable audit forever. Every field is optional because the relevant subset
+ * depends on the action (see lib/breakglass/catalog.ts); the dispatcher validates
+ * per-action required fields with zod before writing the row.
+ */
+export interface BreakglassActionInput {
+	/** unstick_env: the explicit CAS precondition — the env must currently be in one of these. */
+	expectedFrom?: string[];
+	/** unstick_env: the target status to move the env to (the CAS `to`). */
+	to?: string;
+	/** force_release_state_lock / state_surgery: the tofu state object key. */
+	stateKey?: string;
+	/** drain_runner / restart_runner: the fleet-action "why" reason token echoed to the ledger. */
+	fleetReason?: string;
+	/** orphan_detect / orphan_clean: the run scope these are constrained to (never account-wide). */
+	projectId?: string;
+	environmentId?: string;
+	/** state_surgery: a free-form operator description of the intended repair (audit only). */
+	surgeryNote?: string;
+	/** replay_webhook: whether the replay suppressed the branded emails (default true). */
+	suppressEmails?: boolean;
+	/**
+	 * replay_webhook: whether the replay suppressed the invoice.payment_failed backup-card retry
+	 * (default true — a replay re-processes state, it must not re-charge a customer unless opted in).
+	 */
+	suppressPaymentRetry?: boolean;
+}
+
+// ── Elench widget grid (per-chat bento canvas) ─────────
+// Structured tool results pin to a 5-column grid next to the chat as widgets
+// (`thread_widgets` rows). A widget either replays a read tool (`source` set) or
+// renders a frozen DashboardBlock (`block` set, from an exploded build_dashboard).
+
+/** The replayable tool call behind a live widget (`null` args = call with no input). */
+export interface WidgetSource {
+	/** Tool name from the AI tool registry (read tools only). */
+	tool: string;
+	args: Record<string, unknown> | null;
+}
+
+/** live = refetches via `source` on an interval; frozen = a pinned snapshot. */
+export type WidgetMode = "live" | "frozen";
+
+/** How a widget renders (drives the body renderer + default size). */
+export type WidgetKind = "table" | "stat" | "bar" | "line" | "keyvalue";
+
+/** The data payload a widget renders: a tool output snapshot or a dashboard block. */
+export interface WidgetData {
+	/** Snapshot of the source tool's output (tool-driven widgets). */
+	output?: unknown;
+	/** A single generative dashboard block (exploded build_dashboard widgets). */
+	block?: DashboardBlock;
+}
+
+/** One widget inside a saved artifact — a portable thread_widgets row (no ids). */
+export interface ArtifactWidget {
+	kind: WidgetKind;
+	title: string;
+	source: WidgetSource | null;
+	data: WidgetData;
+	mode: WidgetMode;
+	position: { x: number; y: number };
+	size: { colspan: number; rowspan: number };
+}
+
+/** A saved artifact's payload (`agent_artifacts.spec`): widgets + relative layout.
+ * kind "widget" = one entry; "dashboard" = a whole grid, positions normalized. */
+export interface ArtifactSpec {
+	widgets: ArtifactWidget[];
 }

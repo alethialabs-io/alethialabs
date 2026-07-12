@@ -37,12 +37,19 @@ const gridBlock = z.object({
 	),
 });
 
+/** One renderable block — mirrors `DashboardBlock` (jsonb.types). Also the payload of
+ * an exploded grid widget (`thread_widgets.data.block`). */
+export const dashboardBlockSchema = z.discriminatedUnion("kind", [
+	statBlock,
+	barBlock,
+	lineBlock,
+	gridBlock,
+]);
+
 /** The full generative-dashboard DSL — mirrors `DashboardSpec` (jsonb.types). */
 export const dashboardSpecSchema = z.object({
 	title: z.string(),
-	blocks: z.array(
-		z.discriminatedUnion("kind", [statBlock, barBlock, lineBlock, gridBlock]),
-	),
+	blocks: z.array(dashboardBlockSchema),
 });
 
 // Compile-time guarantee the Zod schema stays in lockstep with the exported type.

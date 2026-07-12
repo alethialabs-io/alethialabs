@@ -41,33 +41,94 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 3. It creates (or updates) a release PR per component with:
    - Version bump (major/minor/patch based on commit type)
    - Auto-generated CHANGELOG.md entries
-4. When merged, release-please creates a git tag (`alethia-v0.1.8` or `runner-v0.1.0`)
+4. When merged, release-please creates a git tag (`cli-v0.2.2` or `runner-v0.1.0`)
 5. The tag triggers the component's release workflow
 
-## alethia Release Pipeline
+## alethia (CLI) Release Pipeline
 
-**Trigger:** Push to tag matching `alethia-v*`
+**Trigger:** `release-please` cuts a `cli-v*` tag; `release-please.yml` then calls the reusable workflow.
 
-**Workflow:** `.github/workflows/release-alethia.yml`
+**Workflow:** `.github/workflows/release-cli.yml`
 
 ```
-Tag push (alethia-v0.1.8)
+release-please merges the CLI release PR → tag cli-v0.2.2
   └── Checkout + Go setup
-       └── GoReleaser
-            ├── Build: darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
-            ├── Archive: tar.gz per platform
-            ├── GitHub Release: upload archives + checksums
-            └── Homebrew: update formula in alethialabs-io/alethialabs tap
+       └── GoReleaser (-f apps/cli/.goreleaser.yml, --skip=validate)
+            ├── Build: darwin/amd64, darwin/arm64, linux/{amd64,arm64}, windows/{amd64,arm64}
+            ├── Archive: tar.gz per platform (zip on Windows) + checksums
+            ├── nfpm: .deb / .rpm / .apk (linux) → attached to the release
+            ├── GitHub Release: upload archives + packages + checksums
+            ├── Docker: ghcr.io/alethialabs-io/alethia (amd64+arm64 manifest)
+            ├── Homebrew: push Formula/alethia.rb to alethialabs-io/homebrew-tap
+            └── Scoop: push alethia.json to alethialabs-io/scoop-bucket
 ```
 
 **GoReleaser config** (`apps/cli/.goreleaser.yml`):
-- Builds 4 binaries (2 OS x 2 arch)
-- Creates GitHub Release with download links
-- Updates Homebrew tap formula automatically
+- Builds binaries across macOS/Linux/Windows × amd64/arm64 (`project_name: alethia`)
+- Creates a GitHub Release with archives, `.deb`/`.rpm`/`.apk` packages, and checksums
+- Publishes/updates the Homebrew formula and Scoop manifest automatically
 
 **Distribution channels:**
-- `brew install alethialabs-io/alethialabs/alethia` (macOS/Linux via Homebrew)
+- `brew install alethialabs-io/tap/alethia` (macOS/Linux via Homebrew) — or `brew tap alethialabs-io/tap && brew install alethia`
+- `scoop bucket add alethia https://github.com/alethialabs-io/scoop-bucket && scoop install alethia` (Windows)
+- `curl -fsSL https://get.alethialabs.io | sh` (macOS/Linux) · `irm https://get.alethialabs.io/install.ps1 | iex` (Windows)
+- `.deb` / `.rpm` / `.apk` packages attached to each GitHub Release
+- `docker run --rm ghcr.io/alethialabs-io/alethia --version`
 - Direct binary download from GitHub Releases
+
+### CLI mirror (`alethialabs-io/alethia`)
+
+`.github/workflows/mirror-cli.yml` publishes a **read-only mirror** of the CLI — `apps/cli` plus its
+shared `packages/core`, copied verbatim (the relative layout keeps `apps/cli/go.mod`'s `replace`
+valid, so it compiles standalone; the workflow runs `go build` as a gate before pushing) — to the
+public `alethialabs-io/alethia` repo on every `main` push and `cli-v*` tag. It's a browsable front
+door + focused issue target: **releases stay on the monorepo**, and PRs opened on the mirror are
+directed back here (`.github/mirror/` seeds its README + CONTRIBUTING). It uses the same GitHub App.
+
+### Go-live checklist (maintainer)
+
+Everything is wired in the repo; three one-time steps make the install channels live.
+The tap/bucket repos (`alethialabs-io/homebrew-tap`, `alethialabs-io/scoop-bucket`) already
+exist, and the source repo is already **public** (so anonymous brew/scoop/curl/docker
+downloads work the moment a release exists).
+
+1. **Publish credentials (GitHub App).** The cross-repo publishes (formula, scoop manifest,
+   CLI mirror) authenticate as a **GitHub App** — CI mints a short-lived token per run via
+   `create-github-app-token`, scoped to just the target repo. The App's id + private key live
+   in the `TAP_APP_ID` / `TAP_APP_PRIVATE_KEY` repo secrets.
+
+   *This is already provisioned for the hosted alethialabs.io release.* Run the steps below only to
+   set up a fresh pipeline (e.g. a fork), or to rotate the key:
+
+   **Easy path** — run the helper once (you must be an `alethialabs-io` org owner, logged into `gh`):
+   ```bash
+   bash scripts/setup-release-github-app.sh
+   ```
+   It creates the App with the right permissions (**Contents: Read and write**, no webhook) via
+   GitHub's manifest flow and sets both secrets automatically. Then click the printed **Install**
+   link → select `homebrew-tap`, `scoop-bucket`, `alethia`.
+
+   **Manual path** (fallback): Org → **Settings → Developer settings → GitHub Apps → New GitHub
+   App** → permissions **Contents: Read and write** (+ Metadata: read), uncheck the webhook →
+   **Create** → **Generate a private key** → **Install App** on those three repos → set
+   `TAP_APP_ID` (the App id) and `TAP_APP_PRIVATE_KEY` (the whole `.pem`) as repo secrets.
+
+   *(The App replaces the old `HOMEBREW_TAP_GITHUB_TOKEN` PAT, which can be deleted once the App
+   is installed.)*
+2. **Wire `get.alethialabs.io`** (for `curl … | sh` / `irm … | iex`): `tofu apply`
+   `infra/cp-hetzner` (creates the `get` CNAME + tunnel ingress), then redeploy prod so
+   Caddy picks up the `@get` host route in `deploy/prod/Caddyfile.tunnel`.
+3. **Cut the release.** Merge a `feat:`/`fix:` commit under `apps/cli/` to `main`, then merge
+   the release-please CLI PR. The `cli-v*` tag runs the pipeline end-to-end and the
+   archives / formula / scoop manifest / `.deb`/`.rpm`/`.apk` / docker images all publish —
+   every install method then works.
+
+The literal tap-free `brew install alethia` (Homebrew core) is a separate, adoption-gated
+milestone — see the [Homebrew Core runbook](/cli/homebrew-core).
+
+> The last GitHub Release predates the `alethia` rename (its archives are named
+> `grape_*`). The first release after this pipeline lands re-publishes them as
+> `alethia_*` and creates the formula, manifest, and Linux packages.
 
 ## Runner Release Pipeline
 

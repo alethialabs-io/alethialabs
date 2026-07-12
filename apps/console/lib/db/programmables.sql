@@ -172,7 +172,7 @@ BEGIN
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
     UPDATE public.jobs
-    SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+    SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
@@ -185,7 +185,7 @@ BEGIN
             -- Shared pool: priority, then fair across orgs (fewest in-flight), then
             -- oldest; skip orgs already at their plan concurrency cap.
             UPDATE public.jobs
-            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
@@ -205,7 +205,7 @@ BEGIN
         ELSE
             -- Self/dedicated runner: its own org's jobs; priority then oldest, uncapped.
             UPDATE public.jobs
-            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
@@ -221,20 +221,75 @@ BEGIN
 END;
 $$;
 
+-- Recovers stale in-flight jobs, now with a poison-job cap + a progress-stall path. Two staleness
+-- signals, evaluated in ONE atomic UPDATE (so the attempts increment can't race a concurrent claim —
+-- claim_next_job only touches QUEUED rows FOR UPDATE SKIP LOCKED, and a plain UPDATE row-locks the
+-- CLAIMED/PROCESSING rows it matches; a racing second recovery re-checks the WHERE and no-ops):
+--
+--   (A) DEAD RUNNER (liveness): claimed > 15 min ago AND the runner isn't heartbeating (no
+--       last_heartbeat within 5 min, or no runner). The original behaviour.
+--   (B) STALLED-BUT-ALIVE (progress): the runner IS heartbeating (alive within 5 min) but has made
+--       no real progress for a long time (progress_at older than the 30-min stall threshold — set at
+--       claim, refreshed on every stage transition + log flush). A hung-mid-apply runner that the
+--       liveness check can never catch. The threshold is deliberately generous and DISTINCT from the
+--       5-min liveness window: a live tofu apply prints "Still creating… [Ns elapsed]" every ~10s, so
+--       progress_at refreshes constantly — only genuine multi-minute silence trips (B).
+--
+-- Each recovery INCREMENTS attempts. Below the cap the job is requeued (QUEUED, runner cleared).
+-- At the cap (attempts >= max_attempts) it is failed TERMINAL (FAILED + a clear error_message)
+-- instead of requeued forever. The function RETURNS the jobs it failed terminally so the caller
+-- (lib/jobs/recovery.ts) can drive each one's environment status through the env-status CAS
+-- (deployFailed / destroyFailed / planFailed) — a terminal job must not leave its env stuck.
+-- Return type changed INTEGER -> TABLE(...): Postgres can't change a function's return type via
+-- CREATE OR REPLACE on an existing DB (error 42P13), so drop the old signature first — same pattern as
+-- update_job_status / sweep_offline_runners above. IF EXISTS keeps it idempotent on a fresh DB.
+DROP FUNCTION IF EXISTS public.recover_stale_jobs();
 CREATE OR REPLACE FUNCTION public.recover_stale_jobs()
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_count INTEGER;
+RETURNS TABLE(job_id UUID, job_type public.provision_job_type, environment_id UUID, org_id UUID, project_id UUID)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-    UPDATE public.jobs
-    SET status = 'QUEUED', runner_id = NULL, claimed_at = NULL, started_at = NULL, updated_at = now()
-    WHERE status IN ('CLAIMED', 'PROCESSING')
-      AND claimed_at < now() - INTERVAL '15 minutes'
-      AND (runner_id IS NULL OR NOT EXISTS (
-        SELECT 1 FROM public.runners r
-        WHERE r.id = jobs.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes'
-      ));
-    GET DIAGNOSTICS v_count = ROW_COUNT;
-    RETURN v_count;
+    RETURN QUERY
+    WITH updated AS (
+        UPDATE public.jobs j
+        SET attempts = j.attempts + 1,
+            -- At/over the cap → terminal FAILED; otherwise requeue.
+            status = CASE WHEN j.attempts + 1 >= j.max_attempts
+                          THEN 'FAILED'::public.provision_job_status
+                          ELSE 'QUEUED'::public.provision_job_status END,
+            -- Requeue clears the claim; a terminal fail keeps runner_id/claimed_at for forensics.
+            runner_id  = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.runner_id  ELSE NULL END,
+            claimed_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.claimed_at ELSE NULL END,
+            started_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.started_at ELSE NULL END,
+            completed_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN now() ELSE j.completed_at END,
+            error_message = CASE WHEN j.attempts + 1 >= j.max_attempts
+                THEN 'Job exceeded max attempts (' || j.max_attempts
+                     || '): its runner repeatedly died or stalled mid-run. Failed terminally by the '
+                     || 'poison-job cap to protect the queue.'
+                ELSE j.error_message END,
+            updated_at = now()
+        WHERE j.status IN ('CLAIMED', 'PROCESSING')
+          AND (
+            -- (A) dead-runner liveness
+            ( j.claimed_at < now() - INTERVAL '15 minutes'
+              AND (j.runner_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM public.runners r
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes')) )
+            OR
+            -- (B) stalled-but-alive: runner heartbeating, but no forward progress for the stall window
+            ( j.runner_id IS NOT NULL
+              AND j.progress_at IS NOT NULL
+              AND j.progress_at < now() - INTERVAL '30 minutes'
+              AND EXISTS (
+                SELECT 1 FROM public.runners r
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes') )
+          )
+        RETURNING j.id, j.job_type, j.environment_id, j.org_id, j.project_id,
+                  (j.status = 'FAILED') AS terminal
+    )
+    -- Only the terminally-failed jobs need an env-status transition; requeued ones keep their env.
+    SELECT u.id, u.job_type, u.environment_id, u.org_id, u.project_id
+    FROM updated u
+    WHERE u.terminal;
 END;
 $$;
 
@@ -286,9 +341,21 @@ BEGIN
     -- Notify SSE listeners (one LISTEN conn per app instance fans out). IDs only
     -- (8 KB payload cap); the stream route fetches rows since its last seen id.
     PERFORM pg_notify('job_logs', json_build_object('jobId', p_job_id, 'logId', v_log_id)::text);
+    -- Progress heartbeat: a log flush is real forward progress. Stamp progress_at so the
+    -- stalled-but-alive detector resets — but THROTTLE the write to ≤ once/minute per job so a
+    -- chatty apply (log chunks every ~1s) doesn't bloat the jobs row. Minute granularity is ample
+    -- against the 30-min stall threshold.
+    UPDATE public.jobs
+    SET progress_at = now()
+    WHERE id = p_job_id
+      AND (progress_at IS NULL OR progress_at < now() - INTERVAL '55 seconds');
 END;
 $$;
 
+-- Return type changed VOID -> BOOLEAN (terminal-state guard). Postgres can't change a function's
+-- return type via CREATE OR REPLACE (error 42P13), so drop the old signature first on an existing
+-- DB — same as insert_job_log above. IF EXISTS keeps it idempotent on a fresh DB.
+DROP FUNCTION IF EXISTS public.update_job_status(UUID, TEXT, UUID, TEXT, TEXT, JSONB);
 CREATE OR REPLACE FUNCTION public.update_job_status(
     p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_status TEXT,
     p_error_message TEXT DEFAULT NULL, p_execution_metadata JSONB DEFAULT NULL
@@ -310,6 +377,9 @@ BEGIN
         execution_metadata = CASE WHEN p_execution_metadata IS NOT NULL
             THEN COALESCE(execution_metadata, '{}'::jsonb) || p_execution_metadata ELSE execution_metadata END,
         started_at = CASE WHEN p_status = 'PROCESSING' AND started_at IS NULL THEN now() ELSE started_at END,
+        -- Progress heartbeat: a status post to PROCESSING is a stage transition = real forward
+        -- progress. Stamp progress_at so the stalled-but-alive detector (recover_stale_jobs) resets.
+        progress_at = CASE WHEN p_status = 'PROCESSING' THEN now() ELSE progress_at END,
         completed_at = CASE WHEN p_status IN ('SUCCESS', 'FAILED', 'CANCELLED') THEN now() ELSE completed_at END,
         updated_at = now()
     WHERE id = p_job_id AND runner_id = p_runner_id
@@ -609,7 +679,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners', 'support_cases']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners', 'support_cases', 'thread_widgets', 'agent_artifacts']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -629,7 +699,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -1033,3 +1103,110 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO alethia_app;
+
+-- ── Retention GC (B2c reconcile loop) ───────────────────────────────────────────────
+-- Bounded, best-effort garbage collection wired into the supervised reconcile loop
+-- (lib/reconcile/gc.ts). Each call deletes at most p_limit rows so it can NEVER take a
+-- table-wide lock or run long — the loop calls it every tick, so a backlog drains over
+-- several passes and then no-ops. FOR UPDATE SKIP LOCKED makes concurrent app instances
+-- safe: two loops racing the same window claim disjoint rows instead of blocking.
+
+-- Delete job_logs older than the retention window (default 30d). The oldest rows first
+-- (job_logs.id is a monotonic identity, so id-order == insert-order). job_logs has a FK
+-- to jobs ON DELETE CASCADE, but we only delete the log rows themselves here.
+CREATE OR REPLACE FUNCTION public.gc_job_logs(
+    p_age INTERVAL DEFAULT INTERVAL '30 days', p_limit INTEGER DEFAULT 5000
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    WITH doomed AS (
+        SELECT jl.id
+        FROM public.job_logs jl
+        WHERE jl.created_at < now() - p_age
+        ORDER BY jl.id
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM public.job_logs jl
+    USING doomed d
+    WHERE jl.id = d.id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.gc_job_logs(INTERVAL, INTEGER) TO alethia_app;
+
+-- Delete fleet_actions ledger rows older than the retention window (default 90d). The
+-- #345 durable fleet-actions ledger has no GC of its own; unbounded it grows forever.
+-- Oldest first by created_at; the created_at-leading index (idx_fleet_actions_created_at)
+-- serves the range filter + ordered LIMIT as an index scan (the (provider, created_at)
+-- index CANNOT — its leading provider column is unconstrained here), keeping the GC cheap.
+CREATE OR REPLACE FUNCTION public.gc_fleet_actions(
+    p_age INTERVAL DEFAULT INTERVAL '90 days', p_limit INTEGER DEFAULT 5000
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    WITH doomed AS (
+        SELECT fa.id
+        FROM public.fleet_actions fa
+        WHERE fa.created_at < now() - p_age
+        ORDER BY fa.created_at
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM public.fleet_actions fa
+    USING doomed d
+    WHERE fa.id = d.id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.gc_fleet_actions(INTERVAL, INTEGER) TO alethia_app;
+
+-- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
+-- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /
+-- runner_usage_sessions idiom), so the least-privilege alethia_app role — the one behind every
+-- customer request and the tofu-state proxy — can neither read nor write them. Break-glass code
+-- reaches them exclusively through getServiceDb() behind the ALETHIA_BREAKGLASS_ENABLED +
+-- BREAKGLASS_OPERATORS gate. Defense in depth: even if a bug handed alethia_app one of these tables,
+-- RLS denies it.
+ALTER TABLE public.breakglass_session ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.breakglass_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.breakglass_approval ENABLE ROW LEVEL SECURITY;
+
+-- breakglass_audit is APPEND-ONLY and must stay immutable even against the service role (a
+-- compromised/rogue operator path or a careless migration). The customer audit_log relies on RLS
+-- alone (SELECT/INSERT policies, no UPDATE/DELETE) — that only binds the app role, NOT the
+-- BYPASSRLS service role that break-glass uses. So we add a trigger-based WORM guard: any UPDATE,
+-- DELETE, or TRUNCATE raises, regardless of the caller's role. (A superuser could still deliberately
+-- DISABLE the trigger or flip session_replication_role — that is an out-of-band, itself-auditable act,
+-- not something reachable from application code; this closes the in-app tamper path.) The append
+-- INSERT path is unaffected, so the write-before-act invariant still works.
+CREATE OR REPLACE FUNCTION public.breakglass_audit_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'breakglass_audit is append-only: % is not permitted', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS breakglass_audit_no_mutate ON public.breakglass_audit;
+CREATE TRIGGER breakglass_audit_no_mutate
+  BEFORE UPDATE OR DELETE ON public.breakglass_audit
+  FOR EACH ROW EXECUTE FUNCTION public.breakglass_audit_immutable();
+
+DROP TRIGGER IF EXISTS breakglass_audit_no_truncate ON public.breakglass_audit;
+CREATE TRIGGER breakglass_audit_no_truncate
+  BEFORE TRUNCATE ON public.breakglass_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION public.breakglass_audit_immutable();
+
+-- Belt-and-braces: revoke UPDATE/DELETE/TRUNCATE from PUBLIC and the app role outright, so the
+-- privilege isn't even granted (the trigger is the hard stop; this removes the grant too).
+REVOKE UPDATE, DELETE, TRUNCATE ON public.breakglass_audit FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON public.breakglass_audit FROM alethia_app';
+    -- The app role has no business touching any break-glass table at all.
+    EXECUTE 'REVOKE ALL ON public.breakglass_session, public.breakglass_audit, public.breakglass_approval FROM alethia_app';
+  END IF;
+END $$;
