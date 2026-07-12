@@ -66,9 +66,11 @@ variable "provision_aks" {
 }
 
 variable "aks_cluster_version" {
-  type        = string
-  default     = "1.31"
-  description = "Desired Kubernetes version for the AKS cluster"
+  type = string
+  # 1.31's latest patch is now LTS-only on AKS, so a bare "1.31" fails a fresh apply with
+  # K8sVersionNotSupported (verified on real AKS). Pin a current STANDARD-support minor.
+  default     = "1.33"
+  description = "Desired Kubernetes version for the AKS cluster (must be a STANDARD-support minor; LTS-only minors need LTS enabled)"
 }
 
 variable "aks_instance_types" {

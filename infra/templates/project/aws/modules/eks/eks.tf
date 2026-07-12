@@ -27,7 +27,12 @@ module "eks" {
       most_recent = true
     }
     vpc-cni = {
-      most_recent              = true
+      most_recent = true
+      # Configure the CNI BEFORE the managed node group so nodes get the IRSA-backed
+      # vpc-cni at join time. Without this, the node group can come up before the CNI is
+      # reconciled and the vpc-cni/coredns add-ons never reach ACTIVE (20m timeout on a
+      # fresh apply — reproduced on real EKS). Standard fix for terraform-aws-modules/eks.
+      before_compute           = true
       service_account_role_arn = module.vpc_cni_irsa.iam_role_arn
     }
   }
