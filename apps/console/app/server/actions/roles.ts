@@ -5,11 +5,13 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { actorHoldsAllKeys } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorizeQuiet } from "@/lib/authz/guard";
 import { PERMISSIONS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { role, rolePermission } from "@/lib/db/schema";
 
@@ -73,6 +75,11 @@ export async function createRole(
 ): Promise<CustomRole> {
 	const actor = await requireCustomRoles();
 	const keys = sanitize(permissionKeys);
+	// Privilege ceiling: a role may never contain a permission its author doesn't hold, else an
+	// admin could author (or, via updateRole, rewrite) a role to include billing/owner and escalate.
+	if (!(await actorHoldsAllKeys(actor, keys))) {
+		throw new ForbiddenError("manage_members", { type: "member" }, "role_exceeds_author_privilege");
+	}
 	const db = getServiceDb();
 	const [created] = await db
 		.insert(role)
@@ -102,6 +109,12 @@ export async function updateRole(
 ): Promise<void> {
 	const actor = await requireCustomRoles();
 	const keys = sanitize(permissionKeys);
+	// Privilege ceiling: the new key set must be entirely within the editor's own permissions.
+	// This is the load-bearing half — a role is a MUTABLE bundle, so without it an admin could
+	// self-grant an empty role (ceiling passes vacuously) then rewrite it here to add billing/owner.
+	if (!(await actorHoldsAllKeys(actor, keys))) {
+		throw new ForbiddenError("manage_members", { type: "member" }, "role_exceeds_editor_privilege");
+	}
 	const db = getServiceDb();
 	// Only this org's non-built-in roles may be edited.
 	const [target] = await db

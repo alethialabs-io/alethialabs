@@ -41,6 +41,7 @@ import { describeIfDb } from "./db";
 const ORG = randomUUID();
 const OWNER = randomUUID(); // holds the owner role org-wide (member:manage_members ✓)
 const OPERATOR = randomUUID(); // holds the operator role org-wide (manage_members ✗, member:view ✗)
+const ADMIN = randomUUID(); // holds the admin role org-wide (manage_members ✓, but NOT billing:*)
 
 // customRoles=true so the ENTITLEMENT gate always passes → whatever denial we observe is the PDP
 // (member:manage_members), which is precisely the escalation vector under test.
@@ -109,6 +110,7 @@ describeIfDb("custom-role server actions — real PDP gate (P1 escalation fix)",
 		await db.insert(user).values([
 			{ id: OWNER, email: `it-roles-owner-${OWNER}@example.test` },
 			{ id: OPERATOR, email: `it-roles-operator-${OPERATOR}@example.test` },
+			{ id: ADMIN, email: `it-roles-admin-${ADMIN}@example.test` },
 		]);
 		await db.insert(organization).values({ id: ORG, name: `roles-${ORG.slice(0, 8)}` });
 	});
@@ -118,6 +120,7 @@ describeIfDb("custom-role server actions — real PDP gate (P1 escalation fix)",
 		// Membership grants (re-seeded each test since afterEach wipes org grants).
 		await seedRoleGrant(OWNER, BUILTIN_ROLE_IDS.owner);
 		await seedRoleGrant(OPERATOR, BUILTIN_ROLE_IDS.operator);
+		await seedRoleGrant(ADMIN, BUILTIN_ROLE_IDS.admin);
 		// A custom (non-built-in) role with a known key set.
 		customRoleId = randomUUID();
 		await db
@@ -144,7 +147,42 @@ describeIfDb("custom-role server actions — real PDP gate (P1 escalation fix)",
 		await db.delete(role).where(eq(role.organization_id, ORG));
 		await db.delete(authzActivityLog).where(eq(authzActivityLog.org_id, ORG));
 		await db.delete(organization).where(eq(organization.id, ORG));
-		await db.delete(user).where(inArray(user.id, [OWNER, OPERATOR]));
+		await db.delete(user).where(inArray(user.id, [OWNER, OPERATOR, ADMIN]));
+	});
+
+	// The privilege-ceiling half (grill finding on the W1 grants fix): an ADMIN holds
+	// member:manage_members (so it passes requireCustomRoles) but NOT billing:*. Without a
+	// ceiling on the role's key set, the admin escalates to owner-equivalent by rewriting a
+	// role to include a billing permission — the exact 3-call exploit createRole([]) →
+	// assignGrant(self) → updateRole([billing]). These lock the ceiling on BOTH create + update.
+	it("DENIES an admin rewriting a role to add a permission it lacks (billing) — the escalation exploit", async () => {
+		await expect(
+			runWithActor(actorFor(ADMIN), () =>
+				updateRole(customRoleId, "Escalate", ["org:view", "billing:manage_billing"]),
+			),
+		).rejects.toBeInstanceOf(ForbiddenError);
+		// The role's keys are UNCHANGED — no billing leaked in.
+		expect(await permKeysOf(customRoleId)).toEqual(["org:view", "project:view"]);
+	});
+
+	it("DENIES an admin CREATING a role with a permission it lacks (billing)", async () => {
+		await expect(
+			runWithActor(actorFor(ADMIN), () => createRole("Escalate", ["billing:manage_billing"])),
+		).rejects.toBeInstanceOf(ForbiddenError);
+	});
+
+	it("ALLOWS an admin to rewrite a role within its own ceiling (no billing)", async () => {
+		await runWithActor(actorFor(ADMIN), () =>
+			updateRole(customRoleId, "Auditor+", ["project:view", "runner:view"]),
+		);
+		expect(await permKeysOf(customRoleId)).toEqual(["project:view", "runner:view"]);
+	});
+
+	it("ALLOWS an owner to rewrite a role to include billing (holds * → within ceiling)", async () => {
+		await runWithActor(actorFor(OWNER), () =>
+			updateRole(customRoleId, "OwnerEdit", ["billing:manage_billing"]),
+		);
+		expect(await permKeysOf(customRoleId)).toEqual(["billing:manage_billing"]);
 	});
 
 	it("DENIES an operator rewriting a role's permission set — throws, keys UNCHANGED", async () => {
