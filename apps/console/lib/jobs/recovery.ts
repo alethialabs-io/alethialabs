@@ -9,6 +9,10 @@ import {
 	transitionEnv,
 } from "@/lib/db/env-status";
 import type { ProvisionJobType } from "@/lib/db/schema/enums";
+import {
+	registerLoop,
+	superviseLoop,
+} from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 
 const rlog = log.child({ component: "job-recovery" });
@@ -104,29 +108,26 @@ const globalForRecovery = globalThis as unknown as {
 	__alethiaJobRecovery?: ReturnType<typeof setInterval>;
 };
 
-/**
- * Starts the periodic stale-job recovery + offline-runner sweep (idempotent
- * across HMR/instances). sweep_offline_runners() flips dead runners to OFFLINE
- * and closes their open usage sessions (managed-runner metering).
- */
-export function startStaleJobRecovery(): void {
-	if (globalForRecovery.__alethiaJobRecovery) return;
-	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
+/** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
+export const RECOVERY_LOOP_ID = "job-recovery";
 
-	globalForRecovery.__alethiaJobRecovery = setInterval(() => {
-		const db = getServiceDb();
-		void recoverStaleJobs(db).catch((err) => {
-			rlog.error("recover_stale_jobs failed", { err });
-		});
-		// GC never-saved pending identities. Best-effort.
-		void db
-			.execute(
-				sql`select gc_pending_identities(make_interval(hours => ${PENDING_IDENTITY_TTL_H}))`,
-			)
-			.catch((err) => {
-				rlog.error("gc_pending_identities failed", { err });
-			});
-		void db
+/**
+ * One supervised recovery pass: stale-job requeue, pending-identity GC, and the offline-runner sweep.
+ * The three are independent + best-effort, so they run under `allSettled` (one failing never blocks the
+ * others); if any rejected, the pass throws an aggregate so the loop's heartbeat records the failure
+ * (→ DEGRADED after the threshold) rather than silently swallowing it.
+ */
+export async function runRecoveryTick(
+	db: ReturnType<typeof getServiceDb> = getServiceDb(),
+): Promise<void> {
+	const results = await Promise.allSettled([
+		recoverStaleJobs(db),
+		// GC never-saved pending identities.
+		db.execute(
+			sql`select gc_pending_identities(make_interval(hours => ${PENDING_IDENTITY_TTL_H}))`,
+		),
+		// sweep_offline_runners() flips dead runners to OFFLINE + closes their usage sessions.
+		db
 			.execute<SweptRunner>(sql`select * from sweep_offline_runners()`)
 			.then((rows) => {
 				// Emit a `system.runner.offline` alert per flipped runner (best-effort;
@@ -140,9 +141,29 @@ export function startStaleJobRecovery(): void {
 						resource_id: r.runner_id,
 					});
 				}
-			})
-			.catch((err) => {
-				rlog.error("sweep_offline_runners failed", { err });
-			});
+			}),
+	]);
+	const failed = results.filter((r) => r.status === "rejected");
+	if (failed.length > 0) {
+		for (const f of failed) rlog.error("recovery sub-task failed", { err: f.reason });
+		throw new Error(
+			`recovery tick: ${failed.length}/${results.length} sub-tasks failed`,
+		);
+	}
+}
+
+/**
+ * Starts the periodic stale-job recovery + offline-runner sweep (idempotent
+ * across HMR/instances). sweep_offline_runners() flips dead runners to OFFLINE
+ * and closes their open usage sessions (managed-runner metering). Each tick is
+ * heartbeat-supervised (lib/observability/heartbeats.ts) so /health can see it ticking.
+ */
+export function startStaleJobRecovery(): void {
+	if (globalForRecovery.__alethiaJobRecovery) return;
+	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
+
+	registerLoop(RECOVERY_LOOP_ID, { intervalMs: RECOVERY_INTERVAL_MS });
+	globalForRecovery.__alethiaJobRecovery = setInterval(() => {
+		void superviseLoop(RECOVERY_LOOP_ID, () => runRecoveryTick());
 	}, RECOVERY_INTERVAL_MS);
 }

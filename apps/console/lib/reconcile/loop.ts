@@ -13,13 +13,21 @@
 
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import {
+	evaluateHeartbeatAlerts,
+	registerLoop,
+	superviseLoop,
+} from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
-import { isDue, runTask } from "@/lib/reconcile/heartbeat";
+import { getHeartbeats, isDue, runTask } from "@/lib/reconcile/heartbeat";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
 
 const llog = log.child({ component: "reconcile" });
+
+/** Stable supervision id for this loop host (lib/observability/heartbeats.ts). */
+export const RECONCILE_LOOP_ID = "reconcile";
 
 /** How often the host wakes. Individual reconcilers gate themselves off their own interval below. */
 const TICK_INTERVAL_MS = 60_000;
@@ -46,33 +54,59 @@ export function startReconcileLoop(): void {
 	if (globalForReconcile.__alethiaReconcileLoop) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
+	registerLoop(RECONCILE_LOOP_ID, { intervalMs: TICK_INTERVAL_MS });
 	globalForReconcile.__alethiaReconcileLoop = setInterval(() => {
 		void tick();
 	}, TICK_INTERVAL_MS);
 }
 
-/** Run one reconcile pass immediately — useful for tests + an on-demand converge after a known drop. */
+/**
+ * Run one reconcile pass immediately — useful for tests + an on-demand converge after a known drop.
+ * The whole pass is heartbeat-supervised at the loop level: `runTask` still isolates each reconciler
+ * (a throw never aborts siblings), and after the pass we surface any sub-task that failed THIS tick as a
+ * loop-level error so a persistently-failing reconciler flips the reconcile loop to DEGRADED in /health.
+ * The tick then runs the supervisor pass (`evaluateHeartbeatAlerts`) — the real 60s watcher over EVERY
+ * loop (not just this one), independent of any /health probe, that raises the throttled degraded alerts.
+ */
 export async function tick(now: Date = new Date()): Promise<void> {
-	const db = getServiceDb();
+	const tickStartedAt = Date.now();
+	await superviseLoop(RECONCILE_LOOP_ID, async () => {
+		const db = getServiceDb();
 
-	// Env-status convergence backstop (B2a): settle envs stuck in-flight behind a terminal job.
-	if (isDue("env-convergence", INTERVALS["env-convergence"], now)) {
-		await runTask("env-convergence", () => convergeEnvStatuses(db));
-	}
-	// Ephemeral-env reaper: enqueue DESTROY for expired ephemeral envs (idempotent + reconvergent).
-	if (isDue("ephemeral-reaper", INTERVALS["ephemeral-reaper"], now)) {
-		await runTask("ephemeral-reaper", () => reapExpiredEphemeralEnvs(db, now));
-	}
-	// Periodic drift scheduler ("keep proving it"): enqueue DETECT_DRIFT per due ACTIVE env.
-	if (isDue("drift-schedule", INTERVALS["drift-schedule"], now)) {
-		await runTask("drift-schedule", () => sweepDriftSchedule(now));
-	}
-	// Retention GC (best-effort, bounded batch): job_logs + fleet_actions ledger.
-	if (isDue("gc-job-logs", INTERVALS["gc-job-logs"], now)) {
-		await runTask("gc-job-logs", () => gcJobLogs(db));
-	}
-	if (isDue("gc-fleet-actions", INTERVALS["gc-fleet-actions"], now)) {
-		await runTask("gc-fleet-actions", () => gcFleetActions(db));
-	}
-	llog.debug("reconcile tick complete");
+		// Env-status convergence backstop (B2a): settle envs stuck in-flight behind a terminal job.
+		if (isDue("env-convergence", INTERVALS["env-convergence"], now)) {
+			await runTask("env-convergence", () => convergeEnvStatuses(db));
+		}
+		// Ephemeral-env reaper: enqueue DESTROY for expired ephemeral envs (idempotent + reconvergent).
+		if (isDue("ephemeral-reaper", INTERVALS["ephemeral-reaper"], now)) {
+			await runTask("ephemeral-reaper", () => reapExpiredEphemeralEnvs(db, now));
+		}
+		// Periodic drift scheduler ("keep proving it"): enqueue DETECT_DRIFT per due ACTIVE env.
+		if (isDue("drift-schedule", INTERVALS["drift-schedule"], now)) {
+			await runTask("drift-schedule", () => sweepDriftSchedule(now));
+		}
+		// Retention GC (best-effort, bounded batch): job_logs + fleet_actions ledger.
+		if (isDue("gc-job-logs", INTERVALS["gc-job-logs"], now)) {
+			await runTask("gc-job-logs", () => gcJobLogs(db));
+		}
+		if (isDue("gc-fleet-actions", INTERVALS["gc-fleet-actions"], now)) {
+			await runTask("gc-fleet-actions", () => gcFleetActions(db));
+		}
+
+		// Bubble any reconciler that FAILED during this pass up to the loop heartbeat (runTask already
+		// recorded + isolated it per-task). This keeps the loop "alive" for a transient blip but flips it
+		// DEGRADED if a reconciler keeps failing — without ever aborting a sibling in the same tick.
+		const failedThisTick = getHeartbeats().filter(
+			(h) => h.lastErrorAt && new Date(h.lastErrorAt).getTime() >= tickStartedAt,
+		);
+		if (failedThisTick.length > 0) {
+			throw new Error(
+				`reconcile: ${failedThisTick.map((h) => h.task).join(", ")} failed this pass`,
+			);
+		}
+		llog.debug("reconcile tick complete");
+	});
+
+	// Watcher pass: evaluate liveness of EVERY supervised loop and raise throttled degraded alerts.
+	evaluateHeartbeatAlerts(now);
 }
