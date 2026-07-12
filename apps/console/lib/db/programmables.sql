@@ -1129,9 +1129,13 @@ GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO ale
 -- several passes and then no-ops. FOR UPDATE SKIP LOCKED makes concurrent app instances
 -- safe: two loops racing the same window claim disjoint rows instead of blocking.
 
--- Delete job_logs older than the retention window (default 30d). The oldest rows first
--- (job_logs.id is a monotonic identity, so id-order == insert-order). job_logs has a FK
--- to jobs ON DELETE CASCADE, but we only delete the log rows themselves here.
+-- Delete job_logs older than the retention window (default 30d). Oldest first by
+-- created_at; the created_at btree (idx_job_logs_created_at) serves the range filter +
+-- ordered LIMIT as an index scan, so an empty steady-state window costs one index probe
+-- instead of a full pkey/seq scan every 15m (mirrors gc_fleet_actions). Same physical set
+-- as oldest-by-id — id-order == insert-order == created_at-order — so semantics are
+-- unchanged. job_logs has a FK to jobs ON DELETE CASCADE, but we only delete the log rows
+-- themselves here.
 CREATE OR REPLACE FUNCTION public.gc_job_logs(
     p_age INTERVAL DEFAULT INTERVAL '30 days', p_limit INTEGER DEFAULT 5000
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -1141,7 +1145,7 @@ BEGIN
         SELECT jl.id
         FROM public.job_logs jl
         WHERE jl.created_at < now() - p_age
-        ORDER BY jl.id
+        ORDER BY jl.created_at
         LIMIT p_limit
         FOR UPDATE SKIP LOCKED
     )
