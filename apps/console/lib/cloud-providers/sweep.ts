@@ -10,6 +10,10 @@
 import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
+import {
+	registerLoop,
+	superviseLoop,
+} from "@/lib/observability/heartbeats";
 import { hasServerSideHealth, probeHealth } from "./health";
 import {
 	gcRemovedInventory,
@@ -121,6 +125,9 @@ export async function runConnectionSweep(): Promise<{
  * tick just picks up whoever is due (and backfills any connection that was never synced). */
 const SWEEP_INTERVAL_MS = 60_000;
 
+/** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
+export const CONNECTION_SWEEPER_LOOP_ID = "connection-sweeper";
+
 const globalForSweep = globalThis as unknown as {
 	__alethiaConnectionSweeper?: ReturnType<typeof setInterval>;
 };
@@ -129,15 +136,15 @@ const globalForSweep = globalThis as unknown as {
  * Starts the periodic connection sweep in-process (idempotent across HMR/instances) — the reliable
  * backstop that keeps connection health + the asset-inventory baseline fresh and **backfills
  * connections that were never synced** (e.g. made before this shipped). Mirrors `startStaleJobRecovery`.
+ * Each tick is heartbeat-supervised (lib/observability/heartbeats.ts) so /health can see it ticking.
  * The `/api/internal/connections/sweep` route stays available for an external cron on hosted.
  */
 export function startConnectionSweeper(): void {
 	if (globalForSweep.__alethiaConnectionSweeper) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
+	registerLoop(CONNECTION_SWEEPER_LOOP_ID, { intervalMs: SWEEP_INTERVAL_MS });
 	globalForSweep.__alethiaConnectionSweeper = setInterval(() => {
-		void runConnectionSweep().catch((err) => {
-			console.error("[connection-sweep] runConnectionSweep failed:", err);
-		});
+		void superviseLoop(CONNECTION_SWEEPER_LOOP_ID, runConnectionSweep);
 	}, SWEEP_INTERVAL_MS);
 }
