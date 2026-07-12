@@ -443,10 +443,12 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 
 	// ── addons.getProjectAddons ─────────────────────────────────────────────────
 	it("does NOT leak another org's addon install state (ORG_A reads ORG_B's project)", async () => {
-		const view = await asActor(DRIFT_ORG_A, DRIFT_ORG_A, () =>
-			getProjectAddons(projectBId),
-		);
-		expect(view.items.every((i) => i.install === null)).toBe(true);
+		// getProjectAddons resolves the project's active environment first, and that resolution is
+		// now ORG-SCOPED (resolve.ts) — ORG_A cannot resolve ORG_B's environment, so the read
+		// fails closed (throws) rather than returning ORG_B's install state. Either way, no leak.
+		await expect(
+			asActor(DRIFT_ORG_A, DRIFT_ORG_A, () => getProjectAddons(projectBId)),
+		).rejects.toThrow();
 	});
 
 	it("returns the caller's OWN addon install state (non-vacuity)", async () => {
@@ -457,5 +459,16 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 			.filter((i) => i.install !== null)
 			.map((i) => i.id);
 		expect(installed).toEqual(["cert-manager"]);
+	});
+
+	it("returns a teammate's project addons under a Teams org (org-scoped env resolution)", async () => {
+		// Availability half: a Teams teammate (not the project owner) must be able to read the
+		// project's addons. The old personal-scoped resolveActiveEnvironmentId threw "no default
+		// environment" for them; org-scoped resolution finds the org's env, so the read succeeds.
+		const view = await asActor(TEAM_READER, DRIFT_ORG_TEAM, () =>
+			getProjectAddons(projectTId),
+		);
+		expect(view.environmentId).toBeTruthy();
+		expect(Array.isArray(view.items)).toBe(true);
 	});
 });

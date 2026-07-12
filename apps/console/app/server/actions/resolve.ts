@@ -9,6 +9,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { getOwnerScope } from "@/lib/auth/owner";
+import { currentActor } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -85,34 +86,43 @@ export async function resolveActiveEnvironmentId(
 	projectId: string,
 	envId?: string | null,
 ): Promise<string> {
-	const { userId } = await getOwnerScope();
-	return withOwnerScope(userId, async (tx) => {
-		if (envId) {
-			const [named] = await tx
-				.select({ id: projectEnvironments.id })
-				.from(projectEnvironments)
-				.where(
-					and(
-						eq(projectEnvironments.project_id, projectId),
-						eq(projectEnvironments.id, envId),
-					),
-				)
-				.limit(1);
-			if (named) return named.id;
-		}
-		const [def] = await tx
+	// Scoped to the caller's ORG, not the owner user: join to the parent project and filter on
+	// actor.orgId (mirrors the drift/addons reads). The old withOwnerScope(userId) was personal-
+	// scoped — wrong for Teams (a teammate couldn't resolve a project owned by ANOTHER member, so
+	// every addon/BYO read+write threw for them) AND it left those write paths only INCIDENTALLY
+	// cross-tenant-safe (they leaned on this helper throwing for a foreign project). Org scoping is
+	// the real tenancy wall: a foreign project's environment never resolves for this actor.
+	const actor = await currentActor();
+	const db = getServiceDb();
+	if (envId) {
+		const [named] = await db
 			.select({ id: projectEnvironments.id })
 			.from(projectEnvironments)
+			.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
 			.where(
 				and(
 					eq(projectEnvironments.project_id, projectId),
-					eq(projectEnvironments.is_default, true),
+					eq(projectEnvironments.id, envId),
+					eq(projects.org_id, actor.orgId),
 				),
 			)
 			.limit(1);
-		if (!def) throw new Error("Project has no default environment");
-		return def.id;
-	});
+		if (named) return named.id;
+	}
+	const [def] = await db
+		.select({ id: projectEnvironments.id })
+		.from(projectEnvironments)
+		.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
+		.where(
+			and(
+				eq(projectEnvironments.project_id, projectId),
+				eq(projectEnvironments.is_default, true),
+				eq(projects.org_id, actor.orgId),
+			),
+		)
+		.limit(1);
+	if (!def) throw new Error("Project has no default environment");
+	return def.id;
 }
 
 /**
