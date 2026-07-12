@@ -13,9 +13,18 @@ export interface Artifact {
 	/**
 	 * A generative dashboard (from the `build_dashboard` tool). `null` = the pane was opened
 	 * ahead of the result (e.g. the landing's "Try now") and is awaiting the spec — the panel
-	 * renders a loading state until the tool result replaces it with the built spec.
+	 * renders a loading state until the live-sync effect (or an "Open dashboard" click)
+	 * replaces it with the built spec.
 	 */
 	dashboard?: DashboardSpec | null;
+	/**
+	 * toolCallId of the `build_dashboard` call that produced/owns this dashboard. Lets the
+	 * live-sync effect fill ONLY a pending panel or refresh the same call's spec — never
+	 * clobber a dashboard the user opened from a different (older) result.
+	 */
+	dashboardSourceId?: string;
+	/** Streaming progress for a pending dashboard (parsed off the in-flight tool input). */
+	dashboardProgress?: { title?: string; blocks: number };
 }
 
 interface ArtifactState {

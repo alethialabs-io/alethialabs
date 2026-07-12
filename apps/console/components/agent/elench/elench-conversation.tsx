@@ -20,6 +20,7 @@ import {
 } from "@/lib/stores/use-artifact-store";
 import { elenchChatId, useElenchStore } from "@/lib/stores/use-elench-store";
 import { ElenchComposer } from "./elench-composer";
+import { useDashboardLiveSync } from "./use-dashboard-live-sync";
 import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
@@ -135,6 +136,10 @@ export function ElenchConversation({
 		resumedEpoch.current = epoch;
 		if (initialMessages.at(-1)?.role === "user") void resumeStream();
 	}, [epoch, initialMessages, resumeStream]);
+
+	// Fill an awaiting dashboard pane the moment build_dashboard finishes (and surface
+	// streamed progress while it composes) — no "Open dashboard" click required.
+	useDashboardLiveSync(messages);
 
 	const setPendingMentions = useElenchStore((s) => s.setPendingMentions);
 

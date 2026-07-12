@@ -4,7 +4,7 @@
 
 import type { ToolUIPart } from "ai";
 import { LayoutDashboard } from "lucide-react";
-import { AgentToolCard } from "@/components/agent/agent-chat";
+import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import { dashboardSpecSchema } from "@/lib/ai/tools/visualize";
 import { track } from "@/lib/analytics/track";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
@@ -26,7 +26,7 @@ export function DashboardReadyCard({
 	context: "org" | "project";
 }) {
 	const parsed = dashboardSpecSchema.safeParse(part.output);
-	if (!parsed.success) return <AgentToolCard part={part} />;
+	if (!parsed.success) return <ToolResultFrame part={part} />;
 	const spec = parsed.data;
 	return (
 		<div className="flex items-center justify-between gap-2 border border-border px-3 py-2.5">
@@ -41,7 +41,12 @@ export function DashboardReadyCard({
 				size="sm"
 				className="flex-none gap-1.5 rounded-none"
 				onClick={() => {
-					openArtifact({ dashboard: spec }, "dashboard");
+					// Carry the producing call's id so the live-sync effect recognizes (and
+					// never clobbers) a dashboard opened from a different result.
+					openArtifact(
+						{ dashboard: spec, dashboardSourceId: part.toolCallId },
+						"dashboard",
+					);
 					track("elench_dashboard_built", { context });
 				}}
 			>

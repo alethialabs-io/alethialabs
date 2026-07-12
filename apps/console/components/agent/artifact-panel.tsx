@@ -4,6 +4,7 @@
 
 import { Loader2, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 import { getPlanResult } from "@/app/server/actions/jobs";
 import { getProject } from "@/app/server/actions/projects";
@@ -224,7 +225,10 @@ export function ArtifactPanel() {
 						<TabsContent value="dashboard" className="m-0 h-full">
 							<ScrollArea className="h-full">
 								<div className="p-4">
-									<DashboardPane spec={dashboard ?? null} />
+									<DashboardPane
+										spec={dashboard ?? null}
+										progress={artifact?.dashboardProgress}
+									/>
 								</div>
 							</ScrollArea>
 						</TabsContent>
@@ -748,20 +752,38 @@ function DashboardBlockView({ block }: { block: DashboardBlock }) {
  * `build_dashboard` tool) with grayscale primitives: stat/grid blocks as cards,
  * bar blocks as vertical bars, line blocks as sparklines. No charting library.
  * A `null` spec is the pending state (the pane was opened ahead of the result, e.g. the
- * landing's "Try now") — it shows a building affordance until the tool result arrives.
+ * landing's "Try now") — it shows a building affordance, upgraded with live progress
+ * (streamed title + block count) while the tool input streams; the live-sync effect
+ * fills the pane the moment the result lands.
  */
-function DashboardPane({ spec }: { spec: DashboardSpec | null }) {
+function DashboardPane({
+	spec,
+	progress,
+}: {
+	spec: DashboardSpec | null;
+	progress?: { title?: string; blocks: number };
+}) {
 	if (!spec) {
 		return (
 			<div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
 				<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
 				<div className="text-sm font-medium text-foreground">
-					Building your dashboard…
+					{progress?.title ? (
+						<Shimmer duration={1.5}>{progress.title}</Shimmer>
+					) : (
+						"Building your dashboard…"
+					)}
 				</div>
-				<div className="max-w-[220px] text-xs text-muted-foreground">
-					Elench is gathering your data and composing the views. This pane fills in
-					as soon as the result is ready.
-				</div>
+				{progress && progress.blocks > 0 ? (
+					<div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+						{progress.blocks} {progress.blocks === 1 ? "block" : "blocks"} composed
+					</div>
+				) : (
+					<div className="max-w-[220px] text-xs text-muted-foreground">
+						Elench is gathering your data and composing the views. This pane fills
+						in as soon as the result is ready.
+					</div>
+				)}
 			</div>
 		);
 	}

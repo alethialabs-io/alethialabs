@@ -11,7 +11,7 @@ import {
 import { eq } from "drizzle-orm";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
-import { cachedSystemMessage } from "@/lib/ai/provider-options";
+import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -91,6 +91,8 @@ export async function POST(
 		allowSystemInMessages: true,
 		tools,
 		stopWhen: stepCountIs(8),
+		// Single-model run — extended thinking on every step so reasoning streams.
+		providerOptions: thinkingOptions(model),
 		onFinish: ({ usage }) => {
 			void recordAiUsage({
 				orgId: actor.orgId,
