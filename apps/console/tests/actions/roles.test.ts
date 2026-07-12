@@ -10,6 +10,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet: vi.fn() }));
+// The privilege ceiling calls the real PDP (getPdp().can → db); mock it to "within ceiling" by
+// default so these unit tests exercise the gate/DB behavior. The ceiling's own denial is proven
+// against the real PDP in tests/integration/roles-authz.test.ts.
+vi.mock("@/lib/authz/ceiling", () => ({
+	actorHoldsAllKeys: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
