@@ -1,0 +1,51 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "aws_iam_access_key.ci",
+      "mode": "managed",
+      "type": "aws_iam_access_key",
+      "name": "ci",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "user": "ci-user" },
+        "after_unknown": { "id": true, "secret": true }
+      }
+    },
+    {
+      "address": "aws_iam_role.app",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "app",
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Principal\":{\"Service\":\"eks.amazonaws.com\"}}]}"
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "aws_iam_role_policy_attachment.admin",
+      "mode": "managed",
+      "type": "aws_iam_role_policy_attachment",
+      "name": "admin",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "role": "app",
+          "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"
+        },
+        "after_unknown": {}
+      }
+    }
+  ]
+}

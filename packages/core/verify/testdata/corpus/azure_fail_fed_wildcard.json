@@ -1,0 +1,14 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "azuread_application_federated_identity_credential.wild",
+      "mode": "managed",
+      "type": "azuread_application_federated_identity_credential",
+      "name": "wild",
+      "provider_name": "registry.terraform.io/hashicorp/azuread",
+      "change": { "actions": ["create"], "before": null, "after": { "subject": "repo:acme/*", "issuer": "https://token.actions.githubusercontent.com" }, "after_unknown": {} }
+    }
+  ]
+}

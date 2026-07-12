@@ -1,0 +1,14 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "azurerm_role_assignment.contrib",
+      "mode": "managed",
+      "type": "azurerm_role_assignment",
+      "name": "contrib",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": { "actions": ["create"], "before": null, "after": { "role_definition_name": "Contributor", "scope": "/subscriptions/abc/resourceGroups/rg1" }, "after_unknown": {} }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "aws_pass_keyless_least_priv.json": { "verdict": "pass", "controls": ["KEYLESS-001", "OIDC-001", "LEASTPRIV-001"] },
+  "aws_fail_static_key_admin.json": { "verdict": "fail", "controls": ["KEYLESS-001", "LEASTPRIV-001"] },
+  "aws_fail_wildcard_sub.json": { "verdict": "fail", "controls": ["OIDC-001"] },
+  "aws_fail_missing_sub.json": { "verdict": "fail", "controls": ["OIDC-001"] },
+  "aws_fail_notaction.json": { "verdict": "fail", "controls": ["LEASTPRIV-001"] },
+  "aws_warn_sensitive_wildcard.json": { "verdict": "warn", "controls": ["LEASTPRIV-001"] },
+  "aws_not_evaluable_computed_policy.json": { "verdict": "not_evaluable", "controls": ["LEASTPRIV-001"] },
+  "gcp_pass.json": { "verdict": "pass", "controls": ["GCP-KEYLESS-001", "GCP-WIF-001", "GCP-LEASTPRIV-001"] },
+  "gcp_fail_sa_key.json": { "verdict": "fail", "controls": ["GCP-KEYLESS-001"] },
+  "gcp_fail_owner.json": { "verdict": "fail", "controls": ["GCP-LEASTPRIV-001"] },
+  "gcp_fail_wif_unconditioned.json": { "verdict": "fail", "controls": ["GCP-WIF-001"] },
+  "gcp_warn_editor.json": { "verdict": "warn", "controls": ["GCP-LEASTPRIV-001"] },
+  "gcp_not_evaluable_computed_role.json": { "verdict": "not_evaluable", "controls": ["GCP-LEASTPRIV-001"] },
+  "azure_pass.json": { "verdict": "pass", "controls": ["AZURE-KEYLESS-001", "AZURE-FED-001", "AZURE-LEASTPRIV-001"] },
+  "azure_fail_secret.json": { "verdict": "fail", "controls": ["AZURE-KEYLESS-001"] },
+  "azure_fail_owner.json": { "verdict": "fail", "controls": ["AZURE-LEASTPRIV-001"] },
+  "azure_fail_fed_wildcard.json": { "verdict": "fail", "controls": ["AZURE-FED-001"] },
+  "azure_warn_contributor.json": { "verdict": "warn", "controls": ["AZURE-LEASTPRIV-001"] },
+  "azure_not_evaluable_role_def_id.json": { "verdict": "not_evaluable", "controls": ["AZURE-LEASTPRIV-001"] }
+}
