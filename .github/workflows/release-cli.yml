@@ -59,7 +59,10 @@ jobs:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
           owner: alethialabs-io
-          repositories: homebrew-tap
+          # Both publish targets: the Homebrew formula and the Scoop manifest.
+          repositories: |
+            homebrew-tap
+            scoop-bucket
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -70,6 +73,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
+          SCOOP_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
           GORELEASER_CURRENT_TAG: ${{ env.CLI_TAG }}
 
       - name: Configure AWS credentials (OIDC — read the release bearer)
