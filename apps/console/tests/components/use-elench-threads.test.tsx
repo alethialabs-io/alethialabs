@@ -146,6 +146,11 @@ describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 });
 
 describe("useElenchThreads — ready gating", () => {
+	// NOTE: the "resume wedges the surface on its loading skeleton" regression (resuming
+	// flipped the store's threadId → the initial-load effect re-ran → its cleanup cancelled
+	// the in-flight resolve → `ready` never landed) is guarded by the e2e suite
+	// (e2e/elench-ai.spec.ts), not here: it needs React's real render flush to interleave
+	// with the resolve, which this hook double can't reproduce faithfully.
 	it("keeps ready=false until the initial resolve settles", async () => {
 		let resolveList: (v: unknown) => void = () => {};
 		vi.mocked(listThreads).mockImplementation(

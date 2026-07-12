@@ -53,9 +53,23 @@ export function useElenchThreads() {
 		[selectStore],
 	);
 
+	// The thread to resume, mirrored into a ref so the initial-load effect can read it
+	// WITHOUT taking it as a dependency (see the effect below). Declared first so it is
+	// populated before that effect runs on mount.
+	const resumeIdRef = useRef<string | null>(threadId);
+	useEffect(() => {
+		resumeIdRef.current = threadId;
+	}, [threadId]);
+
 	// Initial load: list threads (org-level or this project's) and resume the most recent.
 	// An empty list resolves to an EMPTY ephemeral conversation — nothing is persisted until
 	// the first send (see `startThread`).
+	//
+	// `threadId` must NOT be a dep here: resuming calls `selectStore(id)`, which changes the
+	// store's threadId — as a dep that re-ran this effect, and its cleanup flipped `cancelled`
+	// so `setInitialResolved(true)` never landed, wedging the body on its loading skeleton.
+	// It only reproduces once a thread exists (an empty list never resumes), which is how it
+	// survived until the AI e2e suite drove a second conversation.
 	useEffect(() => {
 		if (!open || initialized.current) return;
 		initialized.current = true;
@@ -64,18 +78,15 @@ export function useElenchThreads() {
 			const list = await listThreads(projectId);
 			if (cancelled) return;
 			setThreads(list);
-			if (threadId) {
-				await loadInto(threadId);
-			} else if (list.length > 0) {
-				await loadInto(list[0].id);
-			}
+			const resume = resumeIdRef.current ?? list[0]?.id;
+			if (resume) await loadInto(resume);
 			// else: leave threadId null + initialMessages empty → the ephemeral landing.
 			if (!cancelled) setInitialResolved(true);
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [open, projectId, threadId, loadInto]);
+	}, [open, projectId, loadInto]);
 
 	// Reset when the surface closes so reopening re-resumes cleanly.
 	useEffect(() => {

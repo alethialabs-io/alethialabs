@@ -6,6 +6,7 @@ import { createOpenAI, type OpenAIProvider } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
 import { env } from "next-runtime-env";
 import type { AiTier } from "@/lib/billing/ai-plan";
+import { isAiMock, mockLanguageModel } from "./ai-mock";
 
 // Direct multi-provider model registry (no Vercel AI Gateway). A model is addressed by a
 // canonical **key** `"provider/native-id"` (e.g. `anthropic/claude-haiku-4-5`); `resolveModel`
@@ -97,6 +98,10 @@ function configuredProviders(): Set<ProviderId> {
  */
 export function resolveModel(key: string): ResolvedModel {
 	const { provider, id } = parseKey(key);
+	// E2E only (ALETHIA_AI_MOCK=1): a scripted model so the whole pipeline — route,
+	// tools, grid, persistence — runs for real against deterministic "AI" responses.
+	// Inert in every real deployment (the env is never set).
+	if (isAiMock()) return { model: mockLanguageModel(id), key, provider };
 	const model =
 		provider === "openai" ? getOpenAiProvider()(id) : getAnthropicProvider()(id);
 	return { model, key, provider };
@@ -160,6 +165,8 @@ export function getAdvisorModel(
  * shows a "not configured" state. (The retired gateway's `AI_GATEWAY_API_KEY` no longer counts.)
  */
 export function isAiConfigured(): boolean {
+	// The scripted E2E model needs no API key.
+	if (isAiMock()) return true;
 	const providers = configuredProviders();
 	if (providers.has("anthropic") && !env("ANTHROPIC_API_KEY")) return false;
 	if (providers.has("openai") && !env("OPENAI_API_KEY")) return false;
