@@ -77,16 +77,43 @@ export class OpenFgaPdp implements Pdp {
 	): Promise<string[]> {
 		const user = `user:${actor.userId}`;
 		// Org-wide capability ⇒ every instance of the type in the org (matches the
-		// PostgresRbacPDP org-wide path).
+		// PostgresRbacPDP org-wide path). This must be DENY-AWARE, exactly like that
+		// engine — else "allow the org except this project/except this action" silently
+		// over-permits here (the same explicit-deny-wins parity `can()` enforces).
 		const orgCap = await this.client.check({
 			user,
 			relation: `${resourceType}_${action}`,
 			object: `org:${actor.orgId}`,
 		});
 		if (orgCap.allowed === true) {
-			return this.core.fga.listOrgResourceIds(resourceType, actor.orgId);
+			// An org-wide deny on this permission removes everything (Postgres returns []).
+			const orgDeny = await this.client.check({
+				user,
+				relation: `${resourceType}_deny_${action}`,
+				object: `org:${actor.orgId}`,
+			});
+			if (orgDeny.allowed === true) return [];
+			// Otherwise: every org instance MINUS the ones the actor is explicitly denied.
+			// `deny_<action>` = a direct per-instance `perm_deny` (no parent edge needed)
+			// OR a deny inherited down the hierarchy — so listObjects captures per-instance
+			// and descendant-of-denied-container denials, mirroring Postgres' deny subtraction.
+			const [allIds, deniedRes] = await Promise.all([
+				this.core.fga.listOrgResourceIds(resourceType, actor.orgId),
+				this.client.listObjects({
+					user,
+					relation: `deny_${action}`,
+					type: resourceType,
+				}),
+			]);
+			const denied = new Set(
+				(deniedRes.objects ?? [])
+					.map((o) => o.split(":")[1])
+					.filter((id): id is string => Boolean(id)),
+			);
+			return allIds.filter((id) => !denied.has(id));
 		}
-		// Otherwise the instances the actor can act on directly (scoped grants).
+		// Otherwise the instances the actor can act on directly (scoped grants). `can_<action>`
+		// is itself deny-aware in the model (allow MINUS deny), so this path needs no subtraction.
 		const res = await this.client.listObjects({
 			user,
 			relation: `can_${action}`,

@@ -91,7 +91,14 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
   allow, exactly like `PostgresRbacPDP.decide`. `denyChecksFor` reuses the model's existing
   `deny_<action>` (instance, per-instance OR inherited) and `<type>_deny_<action>` (org-wide
   fallback) relations — no model or tuple-sync change (deny tuples were already expanded by
-  `expandGrant`). "Allow the org except this one project" now behaves identically on both tiers.
+  `expandGrant`). The **sibling read-path, `OpenFgaPdp.listAccessible`, is fixed in the same PR**:
+  its org-wide branch previously returned every org instance via `listOrgResourceIds` with NO deny
+  subtraction (the same deny-blind bug class as `can()`), so an "allow the org except this project"
+  or an org-wide deny was silently ignored when *enumerating* accessible ids. It now returns `[]` on
+  an org-wide deny and subtracts per-instance denies (`listObjects deny_<action>`), matching
+  `PostgresRbacPDP.listAccessible`; `pdp-parity.test.ts` asserts this on the org-wide `deploy` path
+  (PROJ_A3 excluded). So "allow the org except this one project" now behaves identically on both
+  tiers across **decide (`can`/`enforce`/`bulkCheck`) AND enumerate (`listAccessible`)**.
 - **T0 secret non-leakage over the real deploy spine.** `secret_nonleak_test.go` drives the
   persisted-metadata assembly directly. Routing a real `RunDeployV2` (kind + a SENTINEL
   `HCLOUD_TOKEN`) and asserting the token never reaches the job-log surface end-to-end depends on

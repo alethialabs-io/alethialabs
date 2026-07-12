@@ -25,6 +25,7 @@ import { buildAuthorizationModel } from "@/lib/authz/fga-model";
 import { expandGrant, hierarchyTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Action, Resource } from "@/lib/authz/registry";
+import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
@@ -71,6 +72,7 @@ const describeParity = DB_UP && FGA_UP ? describe : describe.skip;
 const storeSchema = z.object({ id: z.string() });
 const modelSchema = z.object({ authorization_model_id: z.string() });
 const checkSchema = z.object({ allowed: z.boolean().optional() });
+const listObjectsSchema = z.object({ objects: z.array(z.string()).optional() });
 
 async function post(path: string, body: unknown): Promise<unknown> {
 	const res = await fetch(`${FGA_URL}${path}`, {
@@ -236,6 +238,47 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		return allowResults.some((r) => r);
 	}
 
+	/** The OpenFGA engine's `listAccessible`, mirroring `OpenFgaPdp.listAccessible` exactly
+	 * (same reimplement-and-compare style as `fgaAllowed`). The ORG-WIDE path must be
+	 * deny-aware: org-wide deny ⇒ [], else all org instances MINUS the per-instance denies
+	 * (listObjects `deny_<action>`). The scoped path uses `can_<action>`, itself deny-aware. */
+	async function fgaListAccessible(action: Action, resourceType: Resource): Promise<string[]> {
+		const user = `user:${USER_A}`;
+		const listObjects = async (relation: string): Promise<string[]> => {
+			const raw = listObjectsSchema.parse(
+				await post(`/stores/${storeId}/list-objects`, {
+					user,
+					relation,
+					type: resourceType,
+					authorization_model_id: modelId,
+				}),
+			);
+			return (raw.objects ?? [])
+				.map((o) => o.split(":")[1])
+				.filter((id): id is string => Boolean(id));
+		};
+		const orgAllow = await fgaCheck(storeId, modelId, {
+			user,
+			relation: `${resourceType}_${action}`,
+			object: `org:${actor.orgId}`,
+		});
+		if (orgAllow) {
+			const orgDeny = await fgaCheck(storeId, modelId, {
+				user,
+				relation: `${resourceType}_deny_${action}`,
+				object: `org:${actor.orgId}`,
+			});
+			if (orgDeny) return [];
+			const [allIds, deniedIds] = await Promise.all([
+				listOrgResourceIds(resourceType, actor.orgId),
+				listObjects(`deny_${action}`),
+			]);
+			const denied = new Set(deniedIds);
+			return allIds.filter((id) => !denied.has(id));
+		}
+		return listObjects(`can_${action}`);
+	}
+
 	const cases: { name: string; action: Action; id: string; want: boolean }[] = [
 		{ name: "scoped view allow on PROJ_A1", action: "view", id: PROJ_A1, want: true },
 		{ name: "view PROJ_A2 (explicit deny wins over scoped allow)", action: "view", id: PROJ_A2, want: false },
@@ -276,8 +319,7 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		const pgIds = await pg.listAccessible(actor, "view", "project");
 
 		// OpenFGA engine: listObjects for the same relation (no org-wide view grant → scoped path).
-		const listSchema = z.object({ objects: z.array(z.string()).optional() });
-		const raw = listSchema.parse(
+		const raw = listObjectsSchema.parse(
 			await post(`/stores/${storeId}/list-objects`, {
 				user: `user:${USER_A}`,
 				relation: "can_view",
@@ -291,6 +333,25 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		expect(new Set(fgaIds)).toEqual(new Set(pgIds));
 		// Neither engine may ever list a project the actor does not own (cross-tenant).
 		expect(pgIds).not.toContain(PROJ_B1);
+		expect(fgaIds).not.toContain(PROJ_B1);
+	});
+
+	it("listAccessible agrees on the ORG-WIDE path (deny is subtracted, not ignored)", async () => {
+		// `deploy` is org-wide across ORG_A (G4) WITH a per-instance deploy DENY on PROJ_A3 (G5)
+		// — the org-wide analogue of the `can()` deny-wins case. The OpenFGA org-wide branch used
+		// to return EVERY org instance with no deny subtraction (`listOrgResourceIds` verbatim),
+		// so it silently INCLUDED PROJ_A3 while Postgres excluded it: "act on the whole org except
+		// this one project" over-permitted on the enterprise tier. Both engines must now exclude it.
+		const pgIds = await pg.listAccessible(actor, "deploy", "project");
+		const fgaIds = await fgaListAccessible("deploy", "project");
+
+		// Postgres: all ORG_A projects (A1, A2 org-wide) MINUS the per-instance-denied A3.
+		expect(new Set(pgIds)).toEqual(new Set([PROJ_A1, PROJ_A2]));
+		expect(pgIds).not.toContain(PROJ_A3);
+		// The load-bearing assertion: the OpenFGA engine AGREES — deny is subtracted here too.
+		expect(new Set(fgaIds)).toEqual(new Set(pgIds));
+		expect(fgaIds).not.toContain(PROJ_A3);
+		// And never leaks a cross-tenant project.
 		expect(fgaIds).not.toContain(PROJ_B1);
 	});
 });
