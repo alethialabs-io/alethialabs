@@ -11,7 +11,7 @@
 // minApprovals), so a 2-of-2 approval must persist as 2 distinct approved slots — asserted here.
 
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterEach, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -164,5 +164,59 @@ describeIfDb("promotion approval — concurrent claim (lost-update fix)", () => 
 
 		const rows = await approvalsOf(promotionId);
 		expect(rows.filter((r) => r.status === "approved")).toHaveLength(1);
+	});
+
+	it("re-park guard: a stale pending_approval re-park cannot clobber a promotion already DEPLOYING", async () => {
+		// Now that concurrent quorum is reachable (the lost-update fix), a slow approver still
+		// evaluating `pending_approval` must not flip a promotion a faster co-approver already moved
+		// to APPROVED/DEPLOYING back to PENDING_APPROVAL. applyGateDecision's re-park is predecessor-
+		// guarded to PENDING_PLAN/PENDING_APPROVAL; this locks that predicate.
+		const owner = randomUUID();
+		const { projectId, promotionId } = await seedPromotion(owner, 2);
+		seededProjects.push(projectId);
+		const db = getServiceDb();
+
+		// A faster co-approver advanced the promotion past approval.
+		await db
+			.update(environmentPromotions)
+			.set({ status: "DEPLOYING" })
+			.where(eq(environmentPromotions.id, promotionId));
+
+		// The exact predecessor-guarded re-park applyGateDecision issues in the pending_approval branch.
+		const guarded = await db
+			.update(environmentPromotions)
+			.set({ status: "PENDING_APPROVAL" })
+			.where(
+				and(
+					eq(environmentPromotions.id, promotionId),
+					inArray(environmentPromotions.status, ["PENDING_PLAN", "PENDING_APPROVAL"]),
+				),
+			)
+			.returning({ id: environmentPromotions.id });
+
+		// No-op: the DEPLOY stands.
+		expect(guarded).toHaveLength(0);
+		const [after] = await db
+			.select({ status: environmentPromotions.status })
+			.from(environmentPromotions)
+			.where(eq(environmentPromotions.id, promotionId));
+		expect(after.status).toBe("DEPLOYING");
+
+		// Positive control: from a genuine pre-approval state the same guarded re-park DOES apply.
+		await db
+			.update(environmentPromotions)
+			.set({ status: "PENDING_PLAN" })
+			.where(eq(environmentPromotions.id, promotionId));
+		const applied = await db
+			.update(environmentPromotions)
+			.set({ status: "PENDING_APPROVAL" })
+			.where(
+				and(
+					eq(environmentPromotions.id, promotionId),
+					inArray(environmentPromotions.status, ["PENDING_PLAN", "PENDING_APPROVAL"]),
+				),
+			)
+			.returning({ id: environmentPromotions.id });
+		expect(applied).toHaveLength(1);
 	});
 });

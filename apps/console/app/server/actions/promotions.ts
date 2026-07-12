@@ -690,10 +690,21 @@ async function applyGateDecision(
 				);
 			}
 		}
+		// Re-park only from a pre-approval state. Now that concurrent quorum is actually reachable
+		// (the lost-update fix lets two approvers both land), a stale approver that still evaluates
+		// `pending_approval` could otherwise clobber a promotion a faster co-approver already advanced
+		// to APPROVED/DEPLOYING — flipping it back to PENDING_APPROVAL while a DEPLOY is enqueued. The
+		// predecessor guard makes that a no-op (0 rows) so the deploy stands. PENDING_PLAN is the
+		// first-park predecessor; PENDING_APPROVAL is a benign re-eval self-write.
 		await db
 			.update(environmentPromotions)
 			.set({ status: "PENDING_APPROVAL", gate_evaluations: evaluation, updated_at: now })
-			.where(eq(environmentPromotions.id, promotion.id));
+			.where(
+				and(
+					eq(environmentPromotions.id, promotion.id),
+					inArray(environmentPromotions.status, ["PENDING_PLAN", "PENDING_APPROVAL"]),
+				),
+			);
 		return;
 	}
 
