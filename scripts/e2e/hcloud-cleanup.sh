@@ -30,6 +30,10 @@ set -euo pipefail
 
 CLUSTER_NAME="${1:-${ALETHIA_E2E_CLUSTER_NAME:-}}"
 DRY_RUN="${DRY_RUN:-0}"
+# A volume cannot be deleted while attached, and `hcloud server delete` detaches asynchronously —
+# so both a wait and per-item retries are required, else the sweep races the detach and leaks.
+DETACH_TIMEOUT="${DETACH_TIMEOUT:-120}" # seconds to wait for volumes to detach after server delete
+DELETE_RETRIES="${DELETE_RETRIES:-5}"   # per-resource delete attempts (exponential backoff)
 
 # ── Guard 1: a specific cluster name is REQUIRED. No name ⇒ we would have no filter
 #    ⇒ hard refuse (never fall through to an account-wide delete). ──
@@ -87,10 +91,12 @@ list_ids() {
 	hcloud "$1" list --selector "$SELECTOR" -o noheader -o columns=id 2>/dev/null || true
 }
 
-# purge <resource> [human-label] — delete every labelled resource of <resource>.
-# Idempotent: an empty list is a clean no-op. Per-item failures are logged, not fatal,
-# so one stuck resource never blocks the rest (the workflow step stays green on a
-# best-effort sweep; the graceful tofu destroy is the primary path).
+# purge <resource> [human-label] — delete every labelled resource of <resource>, with retries.
+# Idempotent: an empty list is a clean no-op. A delete can legitimately fail transiently — most
+# importantly a volume that is still ATTACHED (the API refuses: "The Volume must not be attached
+# to a Server") because the server's delete detaches ASYNCHRONOUSLY. So retry with backoff rather
+# than logging a single WARN and moving on. Anything still standing at the end is caught by the
+# final verification sweep, which FAILS the step (see verify_swept) — a leak must never exit green.
 purge() {
 	local resource="$1"
 	local label="${2:-$1}"
@@ -109,34 +115,112 @@ purge() {
 			echo "      would delete ${resource} ${id}"
 			continue
 		fi
-		if hcloud "$resource" delete "$id" >/dev/null 2>&1; then
-			echo "      deleted ${resource} ${id}"
-		else
-			echo "      WARN: failed to delete ${resource} ${id} (continuing)" >&2
+		local attempt=1 delay=3 ok=0
+		while [ "$attempt" -le "$DELETE_RETRIES" ]; do
+			if hcloud "$resource" delete "$id" >/dev/null 2>&1; then
+				echo "      deleted ${resource} ${id}"
+				ok=1
+				break
+			fi
+			# Already gone (a concurrent tofu destroy won the race) ⇒ success, not a failure.
+			if ! hcloud "$resource" describe "$id" >/dev/null 2>&1; then
+				echo "      ${resource} ${id} already gone"
+				ok=1
+				break
+			fi
+			echo "      retry ${attempt}/${DELETE_RETRIES}: ${resource} ${id} not deletable yet (waiting ${delay}s)" >&2
+			sleep "$delay"
+			attempt=$((attempt + 1))
+			delay=$((delay * 2))
+		done
+		if [ "$ok" -ne 1 ]; then
+			echo "      WARN: could not delete ${resource} ${id} after ${DELETE_RETRIES} attempts" >&2
 		fi
 	done <<EOF
 $ids
 EOF
 }
 
+# wait_for_volumes_detached — block until no labelled volume reports an attached server.
+# `hcloud server delete` detaches its volumes asynchronously, so deleting a volume immediately
+# after the server races that detach and gets rejected. Poll (selector-scoped, like everything
+# else) until the volumes are free, or give up and let purge's retries + verify_swept handle it.
+wait_for_volumes_detached() {
+	assert_selector
+	[ "$DRY_RUN" = "1" ] && return 0
+	local waited=0 attached
+	while [ "$waited" -lt "$DETACH_TIMEOUT" ]; do
+		# column `server` is empty for a detached volume; count the non-empty ones.
+		attached="$(hcloud volume list --selector "$SELECTOR" -o noheader -o columns=server 2>/dev/null | grep -c '[^[:space:]-]' || true)"
+		if [ "${attached:-0}" -eq 0 ]; then
+			[ "$waited" -gt 0 ] && echo "  · volumes detached after ${waited}s"
+			return 0
+		fi
+		echo "  · waiting for ${attached} volume(s) to detach… (${waited}s/${DETACH_TIMEOUT}s)"
+		sleep 5
+		waited=$((waited + 5))
+	done
+	echo "  WARN: volumes still attached after ${DETACH_TIMEOUT}s — attempting delete anyway" >&2
+}
+
 # Deletion order respects dependencies:
-#   1. servers          — free the network attachments, firewall bindings, primary IPs
+#   1. servers          — free the network attachments, firewall bindings, primary IPs;
+#                         also triggers the ASYNC detach of any attached volume
 #   2. load-balancers   — CCM-created (none for the bare test, but sweep the label)
-#   3. volumes          — CSI-created dynamic PVs that happen to carry our label
-#   4. firewalls        — now unreferenced by any server
-#   5. networks         — now unreferenced by any server
-#   6. primary-ips      — template sets auto_delete=false, so delete explicitly
-#   7. images           — the Talos snapshots the template built (labelled cluster=…)
+#   3. (wait)           — volumes cannot be deleted while attached; wait out the async detach
+#   4. volumes          — CSI-created dynamic PVs, labelled via HCLOUD_VOLUME_EXTRA_LABELS
+#   5. firewalls        — now unreferenced by any server
+#   6. networks         — now unreferenced by any server
+#   7. primary-ips      — template sets auto_delete=false, so delete explicitly
+#   8. images           — the Talos snapshots the template built (labelled cluster=…)
 purge server "servers"
 purge load-balancer "load balancers"
+wait_for_volumes_detached
 purge volume "volumes"
 purge firewall "firewalls"
 purge network "networks"
 purge primary-ip "primary IPs"
 purge image "images (talos snapshots)"
 
-echo "✓ hcloud cleanup pass complete for ${SELECTOR}"
-echo "  Note: dynamically-provisioned CSI volumes (pvc-*) created INSIDE the cluster are"
-echo "  labelled by the CSI driver, not by our template — the graceful 'tofu destroy' and"
-echo "  this label filter may not catch them. The nightly cluster runs no PVC workloads,"
-echo "  but a maintainer should periodically check 'hcloud volume list' for stray pvc-* volumes."
+# ── Final verification: a leak must NEVER exit green. ──
+# The whole point of this script is that nothing bills after the run. Previously a delete that
+# failed (e.g. a still-attached volume) logged a WARN and the script still printed "✓ complete"
+# and exited 0 — so a leaked, billable volume looked exactly like a clean teardown. Re-list every
+# resource type under the SAME selector and fail loudly if anything survived.
+verify_swept() {
+	assert_selector
+	local leaked=0 res ids count
+	for res in server load-balancer volume firewall network primary-ip image; do
+		ids="$(list_ids "$res")"
+		[ -z "$ids" ] && continue
+		count="$(printf '%s\n' "$ids" | grep -c . || true)"
+		echo "  ✗ ${res}: ${count} STILL PRESENT: $(printf '%s' "$ids" | tr '\n' ' ')" >&2
+		leaked=$((leaked + count))
+	done
+	if [ "$leaked" -gt 0 ]; then
+		# ::error:: surfaces it in the GitHub Actions UI rather than burying it in the log.
+		echo "::error::hcloud cleanup INCOMPLETE — ${leaked} resource(s) labelled ${SELECTOR} still exist and are BILLING. Investigate and remove them (stay label-scoped; never delete account-wide)." >&2
+		return 1
+	fi
+	return 0
+}
+
+if [ "$DRY_RUN" = "1" ]; then
+	echo "✓ hcloud DRY RUN complete for ${SELECTOR} (nothing deleted, nothing verified)"
+	exit 0
+fi
+
+echo "→ verifying nothing labelled ${SELECTOR} survived…"
+if ! verify_swept; then
+	exit 1
+fi
+
+# Reached only when verify_swept confirmed NOTHING labelled ${SELECTOR} remains.
+echo "✓ hcloud cleanup verified complete for ${SELECTOR} — no labelled resources remain"
+echo "  CSI volumes: dynamically-provisioned pvc-* volumes are created by the CSI controller"
+echo "  at runtime (not by our template), so 'tofu destroy' cannot reclaim them. They are"
+echo "  stamped with cluster=<name> at the source — the hetzner template sets the driver's"
+echo "  HCLOUD_VOLUME_EXTRA_LABELS (infra/templates/project/hetzner/csi.tf, chart 2.15.0–2.20.2) —"
+echo "  so the label-scoped 'volumes' purge above (after waiting out the async detach) reclaims"
+echo "  them WITHOUT widening this script's blast radius. A pvc-* volume can only leak if it"
+echo "  predates that change or came from an older template; sweep those by hand (never account-wide)."
