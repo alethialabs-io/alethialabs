@@ -186,10 +186,12 @@ output "custom_secret_versions" {
   value = module.custom_secrets_password_module.secret_versions
 }
 
-output "custom_secret_values" {
-  value     = module.custom_secrets_password_module.secret_values
-  sensitive = true
-}
+# NOTE: The plaintext generated secret VALUES are intentionally NOT exported as a root
+# output. The runner harvests root outputs into jobs.execution_metadata (persisted in the
+# console Postgres), so re-exporting `module.custom_secrets_password_module.secret_values`
+# leaked cleartext credentials into the DB. The values already live in AWS Secrets Manager;
+# consumers use `custom_secret_arns` / `custom_secret_names` / `custom_secret_versions` to
+# fetch them. The module keeps its `secret_values` output for in-module version seeding only.
 
 output "region_short" {
   value = local.aws_regions_short[var.region]

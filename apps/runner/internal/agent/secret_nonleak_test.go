@@ -39,10 +39,20 @@ func TestDeployMetadata_ScrubsClusterCredentials(t *testing.T) {
 			"kube_config_raw":  "apiVersion: v1\n# " + credSentinel,
 			"talosconfig":      "context: default\nkey: " + credSentinel,
 			"admin_client_key": "-----BEGIN PRIVATE KEY-----\n" + credSentinel,
+			// Generated credential VALUES re-exported from the tofu root (the P1 leak):
+			// AWS awssm-passgen promotes plaintext generated secrets as `custom_secret_values`,
+			// and any `*_values` map carries raw secret material — must be scrubbed.
+			"custom_secret_values": map[string]any{"db-pass": credSentinel, "api-key": credSentinel},
+			"generated_secret_values": map[string]any{"token": credSentinel},
 			// Non-secret outputs — must survive so the console still shows real status.
 			"eks_cluster_endpoint":       "https://abc.eks.amazonaws.com",
 			"gke_cluster_ca_certificate": "LS0tLS1CRUdJTi==", // CA is public
 			"cluster_name":               "prod-eks",
+			// Non-secret handles to the AWS Secrets Manager entries — must survive
+			// (they carry no plaintext; the console shows them so operators can find secrets).
+			"custom_secret_arns":     map[string]any{"db-pass": "arn:aws:secretsmanager:...:db-pass"},
+			"custom_secret_names":    map[string]any{"db-pass": "prod/db-pass"},
+			"custom_secret_versions": map[string]any{"db-pass": "AWSCURRENT"},
 		},
 	}
 
@@ -73,12 +83,15 @@ func TestDeployMetadata_ScrubsClusterCredentials(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a scrubbed outputs map in metadata, got %T", metadata["outputs"])
 	}
-	for _, keep := range []string{"eks_cluster_endpoint", "gke_cluster_ca_certificate", "cluster_name"} {
+	for _, keep := range []string{
+		"eks_cluster_endpoint", "gke_cluster_ca_certificate", "cluster_name",
+		"custom_secret_arns", "custom_secret_names", "custom_secret_versions",
+	} {
 		if _, present := outputs[keep]; !present {
 			t.Errorf("non-secret output %q was dropped — scrub is over-broad", keep)
 		}
 	}
-	for _, gone := range []string{"kubeconfig", "gke_kubeconfig", "kube_config_raw", "talosconfig", "admin_client_key"} {
+	for _, gone := range []string{"kubeconfig", "gke_kubeconfig", "kube_config_raw", "talosconfig", "admin_client_key", "custom_secret_values", "generated_secret_values"} {
 		if _, present := outputs[gone]; present {
 			t.Errorf("credential-bearing output %q survived into console metadata", gone)
 		}

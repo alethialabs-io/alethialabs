@@ -15,17 +15,24 @@ func TestScrubSensitiveOutputs(t *testing.T) {
 		"kube_config_raw":            "apiVersion: v1...",
 		"gke_kubeconfig":             "apiVersion: v1...",
 		"admin_client_key":           "-----BEGIN PRIVATE KEY-----",
+		// Generated credential VALUES (the AWS P1 leak) — plaintext, must be scrubbed.
+		"custom_secret_values":    map[string]any{"db-pass": "s3cr3t"},
+		"generated_secret_values": map[string]any{"token": "t0ken"},
+		// Non-secret handles — carry no plaintext, must survive (guards vs. over-broad "secret").
+		"custom_secret_arns":     map[string]any{"db-pass": "arn:..."},
+		"custom_secret_names":    map[string]any{"db-pass": "prod/db-pass"},
+		"custom_secret_versions": map[string]any{"db-pass": "AWSCURRENT"},
 	}
 	out := scrubSensitiveOutputs(in)
 
 	// Credential-bearing keys must be gone.
-	for _, k := range []string{"kubeconfig", "talosconfig", "kube_config_raw", "gke_kubeconfig", "admin_client_key"} {
+	for _, k := range []string{"kubeconfig", "talosconfig", "kube_config_raw", "gke_kubeconfig", "admin_client_key", "custom_secret_values", "generated_secret_values"} {
 		if _, ok := out[k]; ok {
 			t.Errorf("expected sensitive key %q to be scrubbed, but it was present", k)
 		}
 	}
-	// Non-secret keys (endpoint, CA, name) must be kept.
-	for _, k := range []string{"eks_cluster_endpoint", "gke_cluster_ca_certificate", "cluster_name"} {
+	// Non-secret keys (endpoint, CA, name, secret handles) must be kept.
+	for _, k := range []string{"eks_cluster_endpoint", "gke_cluster_ca_certificate", "cluster_name", "custom_secret_arns", "custom_secret_names", "custom_secret_versions"} {
 		if _, ok := out[k]; !ok {
 			t.Errorf("expected non-secret key %q to be kept, but it was scrubbed", k)
 		}
@@ -55,10 +62,22 @@ func TestIsSensitiveOutputKey(t *testing.T) {
 		"client_certificate":         true,
 		"private_key":                true,
 		"client_secret":              true,
+		"custom_secret_values":       true,
+		"generated_secret_values":    true,
+		"db_password":                true,
+		"admin_token":                true,
+		"aws_access_key":             true,
+		"aws_secret_key":             true,
 		"eks_cluster_endpoint":       false,
 		"gke_cluster_ca_certificate": false,
 		"cluster_name":               false,
 		"vpc_id":                     false,
+		// Non-secret secret-handle outputs must NOT match (no bare "secret" substring).
+		"custom_secret_arns":                false,
+		"custom_secret_names":               false,
+		"custom_secret_versions":            false,
+		"rds_master_credentials_secret_arn": false,
+		"external_secrets_client_id":        false,
 	}
 	for key, want := range cases {
 		if got := isSensitiveOutputKey(key); got != want {
