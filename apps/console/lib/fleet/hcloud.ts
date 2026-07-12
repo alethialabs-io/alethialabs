@@ -271,15 +271,76 @@ interface HcloudServer {
 	datacenter?: { location?: { name?: string } };
 }
 
+/** Hetzner list-endpoint pagination cursor. The API paginates GET /servers (default per_page=25,
+ *  max 50) and returns `next_page` = the next page number, or `null` on the last page. */
+interface HcloudPagination {
+	next_page: number | null;
+}
+
+/** One page of a GET /servers response: the servers slice + the pagination cursor. */
+interface HcloudServerListResponse {
+	servers: HcloudServer[];
+	nextPage: HcloudPagination["next_page"];
+}
+
+/** Hetzner caps per_page at 50; request the max so a pool pages in as few round-trips as possible. */
+const HCLOUD_LIST_PER_PAGE = 50;
+
+/** Hard runaway stop for the pagination loop (50 * 1000 = 50k servers — far beyond any real pool);
+ *  guards against a misbehaving API that never returns next_page=null. */
+const HCLOUD_LIST_MAX_PAGES = 1000;
+
+/** Narrows an unknown value to an indexable object (so nested fields can be read as `unknown`). */
+function isRecord(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null;
+}
+
+/** Narrows an unknown value to an array of unknowns (avoids `any[]` from Array.isArray). */
+function isUnknownArray(v: unknown): v is unknown[] {
+	return Array.isArray(v);
+}
+
+/** Type-guard for a Hetzner server object — validates only the fields list() maps that must exist;
+ *  optional labels/datacenter are read defensively in the map, so a partial entry is skipped, not thrown. */
+function isHcloudServer(v: unknown): v is HcloudServer {
+	return isRecord(v) && typeof v.id === "number" && typeof v.created === "string";
+}
+
+/** Defensively narrows an unknown Hetzner list body into a typed page. A missing/malformed
+ *  meta.pagination degrades to nextPage=null (treated as the last page — the loop never spins). */
+function parseServerListPage(body: unknown): HcloudServerListResponse {
+	const servers =
+		isRecord(body) && isUnknownArray(body.servers) ? body.servers.filter(isHcloudServer) : [];
+	let nextPage: HcloudPagination["next_page"] = null;
+	if (isRecord(body) && isRecord(body.meta) && isRecord(body.meta.pagination)) {
+		const next = body.meta.pagination.next_page;
+		if (typeof next === "number") nextPage = next;
+	}
+	return { servers, nextPage };
+}
+
 class HcloudFleetProvider implements FleetProvider {
 	private readonly cfg = hcloudConfigFromEnv();
 
 	async list(project: FleetTarget): Promise<ProviderInstance[]> {
-		const res = await this.api(
-			"GET",
-			`/servers?label_selector=${encodeURIComponent(`alethia-pool=${project.provider}`)}`,
-		);
-		const servers = (res as { servers?: HcloudServer[] } | null)?.servers ?? [];
+		const selector = encodeURIComponent(`alethia-pool=${project.provider}`);
+		// Hetzner paginates GET /servers — follow meta.pagination.next_page until it is null so that
+		// plan/reap see EVERY server. A truncated list would under-count the pool (the scaler keeps
+		// emitting scale-up creates unbounded) AND hide servers past page 1 from reaping (permanent
+		// billable orphans). Keep the label selector on every page.
+		const servers: HcloudServer[] = [];
+		let page = 1;
+		for (;;) {
+			const body = await this.api(
+				"GET",
+				`/servers?label_selector=${selector}&per_page=${HCLOUD_LIST_PER_PAGE}&page=${page}`,
+			);
+			const parsed = parseServerListPage(body);
+			servers.push(...parsed.servers);
+			if (parsed.nextPage === null) break;
+			page = parsed.nextPage;
+			if (page > HCLOUD_LIST_MAX_PAGES) break;
+		}
 		const now = Date.now();
 		return servers.map((s) => ({
 			instanceId: String(s.id),
