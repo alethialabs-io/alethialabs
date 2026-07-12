@@ -65,7 +65,7 @@ export async function POST(
 					and(
 						eq(agentIdentities.id, agentId),
 						or(
-							eq(agentIdentities.user_id, actor.userId),
+							eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: agent_identities has no set_org_id trigger and a nullable org_id, so the user_id arm (a globally-unique id → no cross-tenant match) scopes the actor's OWN rows; the org_id arm scopes Teams. Both keys are the caller's.
 							eq(agentIdentities.org_id, actor.orgId),
 						),
 					),
