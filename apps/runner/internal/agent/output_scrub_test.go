@@ -18,6 +18,9 @@ func TestScrubSensitiveOutputs(t *testing.T) {
 		// Generated credential VALUES (the AWS P1 leak) — plaintext, must be scrubbed.
 		"custom_secret_values":    map[string]any{"db-pass": "s3cr3t"},
 		"generated_secret_values": map[string]any{"token": "t0ken"},
+		// Rendered manifests embed credentials — the Hetzner bootstrap_manifests output carries
+		// the base64 hcloud API token; must be scrubbed even though the console never reads it.
+		"bootstrap_manifests": "apiVersion: v1\nkind: Secret\ndata:\n  hcloud: BASE64TOKEN==",
 		// Non-secret handles — carry no plaintext, must survive (guards vs. over-broad "secret").
 		"custom_secret_arns":     map[string]any{"db-pass": "arn:..."},
 		"custom_secret_names":    map[string]any{"db-pass": "prod/db-pass"},
@@ -26,7 +29,7 @@ func TestScrubSensitiveOutputs(t *testing.T) {
 	out := scrubSensitiveOutputs(in)
 
 	// Credential-bearing keys must be gone.
-	for _, k := range []string{"kubeconfig", "talosconfig", "kube_config_raw", "gke_kubeconfig", "admin_client_key", "custom_secret_values", "generated_secret_values"} {
+	for _, k := range []string{"kubeconfig", "talosconfig", "kube_config_raw", "gke_kubeconfig", "admin_client_key", "custom_secret_values", "generated_secret_values", "bootstrap_manifests"} {
 		if _, ok := out[k]; ok {
 			t.Errorf("expected sensitive key %q to be scrubbed, but it was present", k)
 		}
@@ -64,6 +67,7 @@ func TestIsSensitiveOutputKey(t *testing.T) {
 		"client_secret":              true,
 		"custom_secret_values":       true,
 		"generated_secret_values":    true,
+		"bootstrap_manifests":        true,
 		"db_password":                true,
 		"admin_token":                true,
 		"aws_access_key":             true,

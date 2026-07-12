@@ -42,7 +42,7 @@ func TestDeployMetadata_ScrubsClusterCredentials(t *testing.T) {
 			// Generated credential VALUES re-exported from the tofu root (the P1 leak):
 			// AWS awssm-passgen promotes plaintext generated secrets as `custom_secret_values`,
 			// and any `*_values` map carries raw secret material — must be scrubbed.
-			"custom_secret_values": map[string]any{"db-pass": credSentinel, "api-key": credSentinel},
+			"custom_secret_values":    map[string]any{"db-pass": credSentinel, "api-key": credSentinel},
 			"generated_secret_values": map[string]any{"token": credSentinel},
 			// Non-secret outputs — must survive so the console still shows real status.
 			"eks_cluster_endpoint":       "https://abc.eks.amazonaws.com",

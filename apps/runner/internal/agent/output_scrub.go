@@ -36,6 +36,11 @@ var sensitiveOutputSubstrings = []string{
 	"access_key",
 	"password",
 	"_token",
+	// Rendered manifests carry embedded credentials: the Hetzner `bootstrap_manifests` output
+	// (a sensitive=true join of the hcloud Secret + CNI/CCM/CSI YAML) embeds the hcloud API
+	// token as base64(var.hcloud_token) — base64 is encoding, not encryption. The runner
+	// consumes it in-process (applyn) and never needs it in the persisted metadata, so drop it.
+	"manifest", // catches bootstrap_manifests / *_manifests
 }
 
 // isSensitiveOutputKey reports whether an output key names credential material that must
