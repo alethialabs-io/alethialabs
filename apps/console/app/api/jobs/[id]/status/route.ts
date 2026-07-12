@@ -63,11 +63,28 @@ export async function PUT(
 
 		const db = getServiceDb();
 
-		await db.execute(
-			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
+		const [updateRow] = await db.execute<{ applied: boolean }>(
+			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb) as applied`,
 		);
+		// FALSE = the update was a no-op because the job is already terminal in a DIFFERENT state
+		// (e.g. the console cancelled it while this callback was in flight). The DB status is
+		// authoritative, so skip ALL terminal side-effects — env→ACTIVE via finalizeDeployment, the
+		// success alert, usage billing — that would otherwise run off the stale request `status` and
+		// resurrect/bill a cancelled job. (A same-status re-post applies, so the runner's CANCELLED
+		// teardown post still flows through below with its orphan_risk metadata.)
+		if (!updateRow?.applied) {
+			jlog.info("job-status callback was a no-op (job already terminal); skipping side-effects", {
+				attempted_status: status,
+			});
+			return NextResponse.json({ success: true, applied: false });
+		}
 
-		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
+		if (
+			status === "PROCESSING" ||
+			status === "SUCCESS" ||
+			status === "FAILED" ||
+			status === "CANCELLED"
+		) {
 			const [job] = await db
 				.select({
 					job_type: jobs.job_type,
@@ -80,6 +97,51 @@ export async function PUT(
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
 				.limit(1);
+
+			// Cancelled (torn down mid-flight by the runner after a user cancel). Alert on the
+			// cancellation, and — when the runner flagged orphan risk (apply was interrupted) —
+			// raise a distinct, higher-severity alert so an operator reconciles cloud vs state,
+			// and mark the environment FAILED (its infra is in an unknown, partially-applied state).
+			if (job?.org_id && status === "CANCELLED") {
+				const orphanRisk = job.execution_metadata?.orphan_risk === true;
+				emitAlertEventSafe(job.org_id, "system.job.cancelled", {
+					title: `Job cancelled: ${job.job_type}`,
+					summary: error_message || undefined,
+					severity: "warning",
+					job_id: jobId,
+					job_type: job.job_type,
+					project_id: job.project_id ?? undefined,
+				});
+				if (orphanRisk) {
+					emitAlertEventSafe(job.org_id, "system.project.orphan_risk", {
+						title: "Possible orphaned resources after cancel",
+						summary:
+							"An apply was interrupted mid-flight; cloud resources may exist outside tofu state and need reconciliation.",
+						severity: "critical",
+						job_id: jobId,
+						job_type: job.job_type,
+						project_id: job.project_id ?? undefined,
+					});
+				}
+				// A cancelled DEPLOY leaves the env in an indeterminate (partially provisioned)
+				// state → FAILED so it surfaces as needing attention (best-effort). Route through the
+				// env-status CAS (deployFailed: QUEUED|PROVISIONING → FAILED) rather than a naked
+				// update, so a cancel that lost the race to a real terminal outcome (the deploy already
+				// reached ACTIVE, or a DESTROY already moved it on) can't clobber that state back to
+				// FAILED — transitionEnv logs + alerts on a rejected transition and never throws.
+				if (
+					job.job_type === "DEPLOY" &&
+					job.project_id &&
+					job.environment_id
+				) {
+					await transitionEnv(db, job.environment_id, "deployFailed", jobId, {
+						orgId: job.org_id,
+						projectId: job.project_id,
+					}).catch((err) =>
+						jlog.error("set env FAILED on cancel error", { err }),
+					);
+				}
+			}
 
 			// Ops alerts (free in core): job start, terminal state, project destroy.
 			if (job?.org_id && status === "PROCESSING") {

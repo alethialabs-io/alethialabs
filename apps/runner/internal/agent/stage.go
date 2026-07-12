@@ -184,6 +184,10 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		InfracostToken: p.InfracostToken,
 		GitAccessToken: sec.GitToken,
 		StateBackend:   &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		// Record the provisioning phase under the workdir so the runner can tell an
+		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
+		// Passthrough (same process) and container child (RW-mounted workdir) paths.
+		PhaseFile:      deployPhaseFile(workDir),
 		Stdout:         stdout,
 		Stderr:         stderr,
 		VerifyOverride: p.VerifyOverride,

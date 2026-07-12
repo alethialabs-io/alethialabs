@@ -396,6 +396,11 @@ export interface ExecutionMetadata {
 	// IAC_SCAN jobs: the BYO IaC module scan result — finalizeIacScan writes it back onto the
 	// project_iac_sources row (scan_report + pinned commit_sha).
 	iac_scan_result?: IacScanReport;
+	// CANCELLED DEPLOY jobs: set by the runner when a cancel tore down a job that had already
+	// started `tofu apply`, so cloud resources may exist outside tofu state (an operator must
+	// reconcile). The status route raises a `system.project.orphan_risk` alert on this.
+	orphan_risk?: boolean;
+	orphan_risk_reason?: string;
 }
 
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈

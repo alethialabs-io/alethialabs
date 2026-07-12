@@ -14,14 +14,16 @@ import (
 )
 
 type mockAPI struct {
-	mu             sync.Mutex
-	statusUpdates  []statusUpdate
-	logChunks      []logEntry
-	heartbeatCount int
-	claimResponse  *ClaimResponse
-	claimErr       error
-	claimCount     int
-	jobs           map[string]*Job
+	mu               sync.Mutex
+	statusUpdates    []statusUpdate
+	logChunks        []logEntry
+	heartbeatCount   int
+	heartbeatCancels []string // ids the mock heartbeat reports as server-side-cancelled
+	claimResponse    *ClaimResponse
+	claimErr         error
+	claimCount       int
+	jobs             map[string]*Job
+	wakeEvents       []WakeEvent // extra events StreamWake replays after the initial wake
 }
 
 type statusUpdate struct {
@@ -51,10 +53,16 @@ func (m *mockAPI) ClaimJob() (*ClaimResponse, error) {
 	return &ClaimResponse{Job: nil}, nil // queue drained after the first claim
 }
 
-// StreamWake fires one wake immediately (simulating an enqueue), then holds until
-// the context is cancelled.
-func (m *mockAPI) StreamWake(ctx context.Context, onWake func()) error {
-	onWake()
+// StreamWake fires one wake immediately (simulating an enqueue), then replays any
+// pre-seeded events (e.g. a cancel), then holds until the context is cancelled.
+func (m *mockAPI) StreamWake(ctx context.Context, onEvent func(WakeEvent)) error {
+	onEvent(WakeEvent{Type: "wake"})
+	m.mu.Lock()
+	events := append([]WakeEvent(nil), m.wakeEvents...)
+	m.mu.Unlock()
+	for _, ev := range events {
+		onEvent(ev)
+	}
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -73,11 +81,11 @@ func (m *mockAPI) SendLog(jobID, chunk, streamType, traceparent string) error {
 	return nil
 }
 
-func (m *mockAPI) Heartbeat() error {
+func (m *mockAPI) Heartbeat() ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.heartbeatCount++
-	return nil
+	return m.heartbeatCancels, nil
 }
 
 func (m *mockAPI) GetJob(jobID string) (*Job, error) {
@@ -152,6 +160,32 @@ func (m *mockAPI) getLogChunks() []logEntry {
 	result := make([]logEntry, len(m.logChunks))
 	copy(result, m.logChunks)
 	return result
+}
+
+// TestApplyHeartbeatCancels proves the fallback cancel delivery: when the heartbeat reports a
+// server-side-cancelled job that this runner is still running (the wake-stream cancel was missed),
+// applyHeartbeatCancels tears it down; ids it isn't running are ignored.
+func TestApplyHeartbeatCancels(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.cancels.register("hb-job", cancel)
+
+	w.applyHeartbeatCancels([]string{"hb-job", "not-running-here"})
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("a heartbeat-reported running job should be cancelled via the fallback")
+	}
+	if !w.cancels.wasCancelled("hb-job") {
+		t.Error("hb-job should be marked cancelled")
+	}
+	if w.cancels.wasCancelled("not-running-here") {
+		t.Error("a job not running here must not be marked cancelled by the heartbeat fallback")
+	}
 }
 
 func TestSnapshotToProjectConfig(t *testing.T) {
@@ -375,6 +409,65 @@ func TestClaimLoop_DrainsOnWake(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// TestExecuteJob_CancelledPostsCancelled proves a job cancelled via the registry posts
+// CANCELLED (not FAILED) when its execution surfaces an error.
+func TestExecuteJob_CancelledPostsCancelled(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+
+	// Mark the job cancelled (as a cancel event would), then run it. The unknown job type
+	// makes executeJob error; the cancelled branch must convert that to CANCELLED.
+	w.cancels.cancel("job-cancel")
+
+	claim := &ClaimResponse{
+		Job: &Job{ID: "job-cancel", JobType: "BOGUS_TYPE", ConfigSnapshot: map[string]any{}},
+	}
+	_ = w.executeJob(t.Context(), claim)
+
+	var terminal string
+	var meta map[string]any
+	for _, u := range api.getStatusUpdates() {
+		if u.status == "CANCELLED" || u.status == "FAILED" {
+			terminal = u.status
+			meta = u.metadata
+		}
+	}
+	if terminal != "CANCELLED" {
+		t.Fatalf("expected CANCELLED terminal status, got %q", terminal)
+	}
+	// No apply ran (unknown type), so no orphan risk was flagged.
+	if meta != nil && meta["orphan_risk"] == true {
+		t.Error("did not expect orphan_risk without a mid-apply cancel")
+	}
+}
+
+// TestExecuteJob_CancelledWithOrphanRiskFlags proves a cancelled job whose apply had started
+// posts CANCELLED with orphan_risk=true.
+func TestExecuteJob_CancelledWithOrphanRiskFlags(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+	w.cancels.cancel("job-orphan")
+	w.cancels.markOrphanRisk("job-orphan")
+
+	claim := &ClaimResponse{
+		Job: &Job{ID: "job-orphan", JobType: "BOGUS_TYPE", ConfigSnapshot: map[string]any{}},
+	}
+	_ = w.executeJob(t.Context(), claim)
+
+	var found bool
+	for _, u := range api.getStatusUpdates() {
+		if u.status == "CANCELLED" {
+			found = true
+			if u.metadata == nil || u.metadata["orphan_risk"] != true {
+				t.Errorf("expected orphan_risk=true in CANCELLED metadata, got %v", u.metadata)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a CANCELLED status update")
+	}
 }
 
 func TestDeployValidation_PlanNotSuccess(t *testing.T) {

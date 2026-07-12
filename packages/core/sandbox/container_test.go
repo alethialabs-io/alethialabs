@@ -6,8 +6,67 @@ package sandbox
 import (
 	"context"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// TestInterruptThenKill proves the mid-flight cancel escalation: SIGINT to the process
+// group first, then SIGKILL after the grace window (both targeting the negative pgid).
+func TestInterruptThenKill(t *testing.T) {
+	var mu sync.Mutex
+	var calls []struct {
+		pid int
+		sig syscall.Signal
+	}
+	kill := func(pid int, sig syscall.Signal) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, struct {
+			pid int
+			sig syscall.Signal
+		}{pid, sig})
+		return nil
+	}
+
+	interruptThenKill(4242, 20*time.Millisecond, kill)
+
+	// SIGINT is sent synchronously to the process group (negative pid).
+	mu.Lock()
+	if len(calls) != 1 || calls[0].sig != syscall.SIGINT || calls[0].pid != -4242 {
+		mu.Unlock()
+		t.Fatalf("first signal should be SIGINT to -4242; got %+v", calls)
+	}
+	mu.Unlock()
+
+	// SIGKILL follows after the grace window.
+	time.Sleep(60 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 2 {
+		t.Fatalf("expected SIGINT then SIGKILL (2 signals), got %d: %+v", len(calls), calls)
+	}
+	if calls[1].sig != syscall.SIGKILL || calls[1].pid != -4242 {
+		t.Errorf("second signal should be SIGKILL to -4242; got %+v", calls[1])
+	}
+}
+
+// TestCancelGracePeriod covers env parsing + the safe default.
+func TestCancelGracePeriod(t *testing.T) {
+	t.Setenv("ALETHIA_CANCEL_GRACE_SECONDS", "7")
+	if got := cancelGracePeriod(); got != 7*time.Second {
+		t.Errorf("grace = %v, want 7s", got)
+	}
+	t.Setenv("ALETHIA_CANCEL_GRACE_SECONDS", "0")
+	if got := cancelGracePeriod(); got != 0 {
+		t.Errorf("grace = %v, want 0 (immediate SIGKILL after SIGINT)", got)
+	}
+	t.Setenv("ALETHIA_CANCEL_GRACE_SECONDS", "not-a-number")
+	if got := cancelGracePeriod(); got != DefaultCancelGracePeriod {
+		t.Errorf("grace = %v, want default %v on bad input", got, DefaultCancelGracePeriod)
+	}
+}
 
 func envHas(env []string, kv string) bool {
 	for _, e := range env {

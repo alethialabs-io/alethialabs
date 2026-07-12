@@ -111,27 +111,36 @@ func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
 }
 
-func (c *RunnerAPIClient) Heartbeat() error {
+func (c *RunnerAPIClient) Heartbeat() ([]string, error) {
 	payload, _ := json.Marshal(map[string]any{
 		"version":   version.Version,
 		"providers": c.providers, // nil → JSON null → server keeps existing (claims any)
 	})
 	req, err := http.NewRequest("POST", c.baseURL+"/runners/heartbeat", bytes.NewBuffer(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("heartbeat request failed: %w", err)
+		return nil, fmt.Errorf("heartbeat request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
 	}
-	return nil
+	// The body carries the runner's server-side-cancelled job ids (fallback cancel delivery). An
+	// older console omits the field → empty slice → no fallback cancels, which is fine.
+	var body struct {
+		CancelledJobIDs []string `json:"cancelled_job_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		// A malformed/empty body must not fail liveness — the heartbeat itself succeeded.
+		return nil, nil
+	}
+	return body.CancelledJobIDs, nil
 }
 
 func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {
@@ -159,11 +168,37 @@ func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {
 	return &result, nil
 }
 
-// StreamWake holds an SSE connection to the push-dispatch endpoint and invokes
-// onWake for every wake event (a job became claimable). It blocks until the stream
-// ends or ctx is cancelled, then returns — the caller reconnects with backoff. Uses
-// a no-timeout client (the connection is long-lived); ctx governs its lifetime.
-func (c *RunnerAPIClient) StreamWake(ctx context.Context, onWake func()) error {
+// WakeEvent is a typed push-dispatch event carried on the wake SSE stream. Type "wake"
+// means "a job became claimable" (the runner attempts a claim); type "cancel" targets a
+// specific in-flight job by JobID (the runner tears it down mid-flight). The console emits
+// these as `data: {"type":"…","job_id":"…"}`; a bare legacy `data: wake` line (no JSON) is
+// parsed as a wake for back-compat.
+type WakeEvent struct {
+	Type  string `json:"type"`
+	JobID string `json:"job_id"`
+}
+
+// parseWakeLine parses one SSE line into a WakeEvent. It returns (event, true) only for a
+// "data:" line; comment/blank lines return (_, false). A data payload that isn't the typed
+// JSON object (e.g. the legacy `data: wake`) is treated as a plain wake so an older console
+// still drives claims.
+func parseWakeLine(line string) (WakeEvent, bool) {
+	if !strings.HasPrefix(line, "data:") {
+		return WakeEvent{}, false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	var ev WakeEvent
+	if err := json.Unmarshal([]byte(payload), &ev); err != nil || ev.Type == "" {
+		return WakeEvent{Type: "wake"}, true // legacy `data: wake` (or any non-typed payload)
+	}
+	return ev, true
+}
+
+// StreamWake holds an SSE connection to the push-dispatch endpoint and invokes onEvent for
+// every typed event (a wake, or a cancel targeting one of this runner's jobs). It blocks
+// until the stream ends or ctx is cancelled, then returns — the caller reconnects with
+// backoff. Uses a no-timeout client (the connection is long-lived); ctx governs its lifetime.
+func (c *RunnerAPIClient) StreamWake(ctx context.Context, onEvent func(WakeEvent)) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/runners/wake", nil)
 	if err != nil {
 		return err
@@ -183,9 +218,9 @@ func (c *RunnerAPIClient) StreamWake(ctx context.Context, onWake func()) error {
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		// SSE: "data: …" lines are wakes; ":" comments are heartbeats (ignored).
-		if strings.HasPrefix(scanner.Text(), "data:") {
-			onWake()
+		// SSE: "data: …" lines carry events; ":" comments are heartbeats (ignored).
+		if ev, ok := parseWakeLine(scanner.Text()); ok {
+			onEvent(ev)
 		}
 	}
 	return scanner.Err()
