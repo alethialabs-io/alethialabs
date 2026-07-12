@@ -158,7 +158,6 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 | <a name="output_az3"></a> [az3](#output\_az3) | n/a |
 | <a name="output_custom_secret_arns"></a> [custom\_secret\_arns](#output\_custom\_secret\_arns) | n/a |
 | <a name="output_custom_secret_names"></a> [custom\_secret\_names](#output\_custom\_secret\_names) | n/a |
-| <a name="output_custom_secret_values"></a> [custom\_secret\_values](#output\_custom\_secret\_values) | n/a |
 | <a name="output_custom_secret_versions"></a> [custom\_secret\_versions](#output\_custom\_secret\_versions) | n/a |
 | <a name="output_ecr_repository_arn"></a> [ecr\_repository\_arn](#output\_ecr\_repository\_arn) | Full ARN of the repository |
 | <a name="output_ecr_repository_name"></a> [ecr\_repository\_name](#output\_ecr\_repository\_name) | Name of the repository |
