@@ -1,42 +1,67 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Reads the email-OTP code out of the dev console log. In local dev (no SES) the sign-in code
-// is logged by packages/email/src/send.ts as `… (sign-in code: 123456)`; `pnpm dev:up` tees the
-// console output to /tmp/alethia-dev-console.log. This is deliberately the only brittle seam in
-// the e2e auth path — override the path with DEV_CONSOLE_LOG if your stack logs elsewhere.
+// Reads the email-OTP code out of the console's stdout log — the hermetic auth seam. In local
+// dev / CI (no SES configured) the sign-in code is logged by @repo/email/send.ts on a single line:
+//   [email] SES not configured — "…" → <recipient> (sign-in code: 123456)
+// so the recipient address and the code sit together. `pnpm dev:up` tees the console output to
+// /tmp/alethia-dev-console.log; the CI e2e-browser job tees `next start` to $DEV_CONSOLE_LOG.
+// No real email, no external service — the only log-scraping seam in the whole auth path, and it
+// matches per-recipient so parallel signups can never read each other's code.
 
 import { readFile, stat } from "node:fs/promises";
 
-const LOG_PATH = process.env.DEV_CONSOLE_LOG ?? "/tmp/alethia-dev-console.log";
-const CODE_RE = /sign-in code:\s*(\d{6})/g;
+/** Where the console's stdout (incl. the OTP line) is teed. Overridable for CI / non-standard stacks. */
+export const LOG_PATH = process.env.DEV_CONSOLE_LOG ?? "/tmp/alethia-dev-console.log";
 
-/** Current byte size of the log — capture this BEFORE requesting a code so we ignore stale ones. */
+/** Escapes a string for safe embedding in a RegExp (the recipient email carries `.`, `+`, etc.). */
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Current byte size of the log — capture this BEFORE requesting a code so stale ones are ignored. */
 export async function logCursor(): Promise<number> {
 	return stat(LOG_PATH)
 		.then((s) => s.size)
 		.catch(() => 0);
 }
 
+interface WaitForOtpOptions {
+	/** When set, only match a `sign-in code:` on the same log line as this recipient — kills any
+	 * cross-test race when multiple signups interleave in one shared log. */
+	email?: string;
+	timeoutMs?: number;
+	intervalMs?: number;
+}
+
 /**
- * Polls the dev log for the latest `sign-in code:` that appears after `cursor` bytes, returning
- * the 6-digit code. Throws a clear message if none shows up (stack not running, or SES is
- * actually configured so the code never hits the log).
+ * Polls the console log for the newest 6-digit sign-in code appearing after `cursor` bytes (and,
+ * when `email` is given, on a line addressed to that recipient), returning it as a string. Throws
+ * a clear, actionable error if none shows up within the timeout (stack not running, or SES is
+ * configured so the code was emailed instead of logged).
  */
 export async function waitForOtp(
 	cursor = 0,
-	{ timeoutMs = 20_000, intervalMs = 250 } = {},
+	{ email, timeoutMs = 30_000, intervalMs = 250 }: WaitForOtpOptions = {},
 ): Promise<string> {
+	// Per-recipient when we know the email (recipient precedes the code on the warn line); generic
+	// otherwise. Fresh RegExp per read — `g` regexes carry lastIndex state across calls.
+	const pattern = () =>
+		email
+			? new RegExp(`${escapeRegExp(email)}[^\\n]*?sign-in code:\\s*(\\d{6})`, "g")
+			: /sign-in code:\s*(\d{6})/g;
+
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		const text = await readFile(LOG_PATH, "utf8").catch(() => "");
-		const matches = [...text.slice(cursor).matchAll(CODE_RE)];
+		const matches = [...text.slice(cursor).matchAll(pattern())];
 		const last = matches.at(-1);
 		if (last) return last[1];
 		await new Promise((r) => setTimeout(r, intervalMs));
 	}
 	throw new Error(
-		`No "sign-in code:" appeared in ${LOG_PATH} within ${timeoutMs}ms. ` +
-			"Is `pnpm dev:up` running with SES unconfigured (so the OTP is logged)?",
+		`No "sign-in code:"${email ? ` for ${email}` : ""} appeared in ${LOG_PATH} within ${timeoutMs}ms. ` +
+			"Is the console running with SES unconfigured (so the OTP is logged), and is DEV_CONSOLE_LOG " +
+			"pointed at its stdout? Locally: `pnpm dev:up`. In CI: the e2e-browser job tees `next start`.",
 	);
 }
