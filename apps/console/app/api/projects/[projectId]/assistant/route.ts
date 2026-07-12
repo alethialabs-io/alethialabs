@@ -27,6 +27,7 @@ import { buildProjectAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
+import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
 import { getAdvisorModel, getExecutorModel, isAiConfigured } from "@/lib/config/ai";
@@ -220,6 +221,20 @@ export async function POST(
 								cachedInputTokens: s.usage.cachedInputTokens,
 							},
 						})),
+					});
+				},
+				// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
+				onError: ({ error }) => {
+					void recordAiUsage({
+						orgId: actor.orgId,
+						userId: actor.userId,
+						kind: "agent",
+						source: charge.source,
+						holdId: charge.settle ? charge.holdId : undefined,
+						refId: threadId ?? projectId,
+						model: executor.key,
+						isError: true,
+						error: error instanceof Error ? error.message : String(error),
 					});
 				},
 			});

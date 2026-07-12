@@ -119,8 +119,10 @@ export async function POST(
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
-				// Metered → omit credits; settled from this row's real cost-of-serve.
+				// Metered → omit credits; settled from this row's real cost-of-serve. Reconciles the
+				// reserved hold IN PLACE (holdId) so the provisional estimate becomes the real cost.
 				source: charge.source,
+				holdId: charge.settle ? charge.holdId : undefined,
 				refId: sessionId,
 				model: model.key,
 				inputTokens: usage.inputTokens,
@@ -136,12 +138,14 @@ export async function POST(
 			});
 		},
 		onError: ({ error }) => {
-			// Record the failed generation so it shows in PostHog's Errors view (no tokens on error).
+			// Record the failed generation so it shows in PostHog's Errors view (no tokens on error)
+			// and RELEASE the reserved hold (reconciled to 0) so an errored turn never leaks headroom.
 			void recordAiUsage({
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
 				source: charge.source,
+				holdId: charge.settle ? charge.holdId : undefined,
 				refId: sessionId,
 				model: model.key,
 				latencyMs: Date.now() - startedAt,

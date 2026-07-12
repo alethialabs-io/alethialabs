@@ -4,7 +4,9 @@
 // Per-model agent metering (lib/billing/agent-metering.ts). Asserts the pure step→model
 // aggregation and that recordAgentTurnUsage:
 //  - SETTLE charge (metered, the norm): omits `credits` on EVERY model row (each row's
-//    cost-weighted credits are derived from its own cost_micros) and threads the source.
+//    cost-weighted credits are derived from its own cost_micros) and threads the source. The
+//    turn's reserved hold is RECONCILED on the first model row (holdId → UPDATE) and later rows
+//    append; an empty turn (no steps) RELEASES the hold to 0 so it never leaks headroom.
 //  - FIXED charge (reservation): books the credit charge once on the first model row and
 //    records the rest as cost-only rows — no double-charge.
 
@@ -58,7 +60,7 @@ describe("recordAgentTurnUsage — settle (metered) charge", () => {
 			orgId: "org-1",
 			userId: "user-1",
 			kind: "agent",
-			charge: { source: "included", settle: true },
+			charge: { source: "included", settle: true, holdId: "hold-1" },
 			refId: "thread-1",
 			steps: [
 				{ model: SONNET, usage: { inputTokens: 100, outputTokens: 40 } }, // advisor (step 0)
@@ -68,7 +70,8 @@ describe("recordAgentTurnUsage — settle (metered) charge", () => {
 		});
 
 		expect(recordAiUsage).toHaveBeenCalledTimes(2); // one row per distinct model
-		// Advisor row: credits omitted (settled from cost), summed tokens, source threaded.
+		// Advisor row: credits omitted (settled from cost), summed tokens, source threaded. The
+		// reserved hold is reconciled IN PLACE on this first row (holdId).
 		expect(recordAiUsage).toHaveBeenNthCalledWith(1, {
 			orgId: "org-1",
 			userId: "user-1",
@@ -76,12 +79,13 @@ describe("recordAgentTurnUsage — settle (metered) charge", () => {
 			credits: undefined,
 			source: "included",
 			refId: "thread-1",
+			holdId: "hold-1",
 			model: SONNET,
 			inputTokens: 100,
 			outputTokens: 40,
 			cachedInputTokens: 0,
 		});
-		// Executor row: ALSO omits credits (its own cost), summed tokens.
+		// Executor row: ALSO omits credits (its own cost), summed tokens, and appends (no holdId).
 		expect(recordAiUsage).toHaveBeenNthCalledWith(2, {
 			orgId: "org-1",
 			userId: "user-1",
@@ -89,6 +93,7 @@ describe("recordAgentTurnUsage — settle (metered) charge", () => {
 			credits: undefined,
 			source: "included",
 			refId: "thread-1",
+			holdId: undefined,
 			model: HAIKU,
 			inputTokens: 420,
 			outputTokens: 110,
@@ -105,14 +110,47 @@ describe("recordAgentTurnUsage — settle (metered) charge", () => {
 			orgId: "org-1",
 			userId: "user-1",
 			kind: "agent",
-			charge: { source: "purchased", settle: true },
+			charge: { source: "purchased", settle: true, holdId: "hold-2" },
 			steps: [{ model: HAIKU, usage: { inputTokens: 10, outputTokens: 5 } }],
 		});
 		expect(recordAiUsage).toHaveBeenCalledTimes(1);
 		expect(recordAiUsage).toHaveBeenCalledWith(
-			expect.objectContaining({ model: HAIKU, source: "purchased" }),
+			expect.objectContaining({ model: HAIKU, source: "purchased", holdId: "hold-2" }),
 		);
 		expect(vi.mocked(recordAiUsage).mock.calls[0][0].credits).toBeUndefined();
+	});
+
+	it("RELEASES the reserved hold on an empty turn (no steps) — one 0-cost reconcile call", async () => {
+		await recordAgentTurnUsage({
+			orgId: "org-1",
+			userId: "user-1",
+			kind: "agent",
+			charge: { source: "included", settle: true, holdId: "hold-3" },
+			refId: "thread-1",
+			steps: [],
+		});
+		// The hold must be released (reconciled to 0) — a single call carrying only the holdId,
+		// no model/credits, so recordAiUsage updates the row to 0 credits instead of leaking it.
+		expect(recordAiUsage).toHaveBeenCalledTimes(1);
+		expect(recordAiUsage).toHaveBeenCalledWith({
+			orgId: "org-1",
+			userId: "user-1",
+			kind: "agent",
+			source: "included",
+			refId: "thread-1",
+			holdId: "hold-3",
+		});
+	});
+
+	it("no-ops on an empty turn with NO hold (fixed/legacy charge) — nothing to release", async () => {
+		await recordAgentTurnUsage({
+			orgId: "org-1",
+			userId: "user-1",
+			kind: "agent",
+			charge: { source: "included", credits: 0 },
+			steps: [],
+		});
+		expect(recordAiUsage).not.toHaveBeenCalled();
 	});
 });
 

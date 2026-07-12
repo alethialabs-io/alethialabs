@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
+import { and, eq, gte, sql, sum } from "drizzle-orm";
 import {
 	AI_SESSION_WINDOW_MS,
 	aiTierSpec,
@@ -19,6 +20,18 @@ import {
 	sumCreditsForUser,
 } from "@/lib/billing/ai-quota";
 import { isStripeConfigured } from "@/lib/billing/config";
+import { getServiceDb } from "@/lib/db";
+import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
+
+/**
+ * Credits a metered (settle) turn HOLDS while it is in flight (≈$0.10). Written to the ledger
+ * up front as a provisional row so concurrent turns in the same org SEE the reservation and are
+ * denied once the window's cap (outstanding holds included) is reached; the hold is reconciled
+ * to the turn's real cost-of-serve on finish (or released to 0 on error/empty turn). Chosen small
+ * enough that a single legit turn always fits an `ai_free` session/week (130/510), large enough
+ * that N parallel turns can't all slip through the headroom check before any settles.
+ */
+export const METERED_RESERVE_CREDITS = 100;
 
 /** Thrown when an org is out of AI credits; mapped to an upgrade / buy-credits CTA. */
 export class AiBudgetError extends Error {
@@ -44,7 +57,7 @@ export class AiBudgetError extends Error {
  */
 export type AiCharge =
 	| { source: CreditSource; credits: number; settle?: false }
-	| { source: CreditSource; settle: true };
+	| { source: CreditSource; settle: true; holdId: string };
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -133,9 +146,13 @@ export async function isAiSurfaceEnabled(orgId: string): Promise<boolean> {
  *    if `used + cost <= cap`. The returned charge carries that `credits` figure.
  *  - **Metered (`agent`/`support`)** — the real cost-of-serve is only known AFTER the turn, so
  *    the gate checks **headroom** instead: allowed if the window still has ANY room
- *    (`used < cap`). The returned charge is `{ settle: true }`; the caller settles the actual
- *    cost (derived from `cost_micros`) when the turn finishes. A turn that starts with headroom
- *    may overshoot its window by ≤1 turn — standard/accepted; the NEXT turn blocks.
+ *    (`used < cap`). To keep concurrent turns from all reading the same headroom and racing past
+ *    the cap, the metered check runs inside a **per-org advisory-locked transaction** that
+ *    re-reads under the lock and RESERVES a provisional `METERED_RESERVE_CREDITS` hold row — so
+ *    the next turn's re-read sees the reservation. The returned charge is `{ settle: true, holdId }`;
+ *    the caller RECONCILES that hold to the turn's real cost (derived from `cost_micros`) on finish,
+ *    or RELEASES it (to 0) on error. A turn that starts with headroom may overshoot its window by
+ *    ≤1 hold — standard/accepted; the NEXT turn blocks.
  *
  * When `userId` is supplied, an additional **per-seat** session + weekly sub-cap is enforced on
  * top of the org caps (a fraction of the org allowance — see `AiTierSpec.perUser*`), so one
@@ -216,31 +233,133 @@ export async function assertAiAllowed(
 		);
 	}
 
-	// METERED kinds (agent/support): the real cost isn't known yet → gate on HEADROOM. The
-	// turn settles its actual cost-of-serve afterward; overshoot by ≤1 turn is fine.
-	const orgSessionOk = sessionUsed < spec.sessionCredits;
-	const orgWeekOk = weekUsed < spec.weeklyCredits;
-	const userSessionOk = !userId || userSessionUsed < spec.perUserSessionCredits;
-	const userWeekOk = !userId || userWeekUsed < spec.perUserWeeklyCredits;
-
-	if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
-		return { source: "included", settle: true };
-	}
-	// Per-seat fairness cap is the binding limit while the ORG still has included headroom:
-	// block THIS seat (don't silently divert to purchased packs). Fail-closed.
-	if (orgSessionOk && orgWeekOk && (!userSessionOk || !userWeekOk)) {
-		throwPersonalCap(
-			!userWeekOk,
-			!userWeekOk ? weekResetIso : await sessionResetIso(orgId, userId),
+	// METERED kinds (agent/support): the real cost isn't known yet → gate on HEADROOM. The turn
+	// settles its actual cost-of-serve afterward. Because the settle row is written only AFTER the
+	// stream ends, N concurrent turns would otherwise all read the same pre-settle headroom and all
+	// pass (free overspend). So we SERIALIZE per org: take a per-org advisory xact lock, re-read the
+	// window sums INSIDE the lock (prior admitted turns' hold rows are now visible), then RESERVE a
+	// provisional hold row before releasing the lock. The hold is reconciled to real cost on finish.
+	//
+	// The hold row's `user_id` is NOT NULL and every metered call site supplies the actor's id, so
+	// require it here (the org-only, userId-less path is the fixed/scan surface, handled above).
+	if (!userId) {
+		throw new Error(
+			"assertAiAllowed: a metered AI turn requires the actor's userId (the hold row is per-seat).",
 		);
 	}
-	// Org included headroom is gone for this window — settle against purchased top-ups if any,
-	// unless the org's hard-cap policy says to pause at the included allowance instead.
-	if (!hardCap && (await purchasedBalance(orgId)) > 0) {
-		return { source: "purchased", settle: true };
+	const seatId = userId;
+
+	// Decide inside a serialized transaction, then compute reset times / throw OUTSIDE it. Every read
+	// inside the txn uses `tx` (the txn's single connection) — never a second pooled connection — so a
+	// burst of concurrent gate checks (each holding one pool slot while it waits on the advisory lock)
+	// can't deadlock the pool on a nested read. The deny→resetAt reads run after the lock is released.
+	type Decision =
+		| { outcome: "charge"; charge: AiCharge }
+		| { outcome: "personal"; weeklyHit: boolean }
+		| { outcome: "org"; weeklyHit: boolean };
+
+	const decision: Decision = await getServiceDb().transaction(
+		async (tx): Promise<Decision> => {
+			// Serialize every AI-budget gate check for THIS org — auto-released at commit/rollback.
+			// Sub-ms gate checks ⇒ negligible contention; only one org's gate is ever serialized.
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtext('ai_budget'), hashtext(${orgId}))`,
+			);
+
+			/** Σ included credits (org, or one seat) in [since, now) — re-read under the lock. */
+			const usedInWindow = async (
+				since: Date,
+				perSeat: boolean,
+			): Promise<number> => {
+				const [row] = await tx
+					.select({ s: sum(aiUsageLedger.credits) })
+					.from(aiUsageLedger)
+					.where(
+						and(
+							eq(aiUsageLedger.org_id, orgId),
+							eq(aiUsageLedger.source, "included"),
+							gte(aiUsageLedger.created_at, since),
+							perSeat ? eq(aiUsageLedger.user_id, seatId) : undefined,
+						),
+					);
+				return Number(row?.s ?? 0);
+			};
+
+			/** Remaining purchased top-ups, computed on the txn connection (Σ grants − Σ purchased). */
+			const purchasedAvailable = async (): Promise<number> => {
+				const [granted] = await tx
+					.select({ s: sum(aiCreditGrant.credits) })
+					.from(aiCreditGrant)
+					.where(eq(aiCreditGrant.org_id, orgId));
+				const [spent] = await tx
+					.select({ s: sum(aiUsageLedger.credits) })
+					.from(aiUsageLedger)
+					.where(
+						and(
+							eq(aiUsageLedger.org_id, orgId),
+							eq(aiUsageLedger.source, "purchased"),
+						),
+					);
+				return Number(granted?.s ?? 0) - Number(spent?.s ?? 0);
+			};
+
+			const [sUsed, wUsed, uSUsed, uWUsed] = await Promise.all([
+				usedInWindow(sessionSince, false),
+				usedInWindow(weekStart, false),
+				usedInWindow(sessionSince, true),
+				usedInWindow(weekStart, true),
+			]);
+
+			const orgSessionOk = sUsed < spec.sessionCredits;
+			const orgWeekOk = wUsed < spec.weeklyCredits;
+			const userSessionOk = uSUsed < spec.perUserSessionCredits;
+			const userWeekOk = uWUsed < spec.perUserWeeklyCredits;
+
+			/** Write the provisional hold row and return the settle charge that carries its id. */
+			const reserve = async (source: CreditSource): Promise<Decision> => {
+				const [row] = await tx
+					.insert(aiUsageLedger)
+					.values({
+						org_id: orgId,
+						user_id: seatId,
+						kind,
+						credits: METERED_RESERVE_CREDITS,
+						source,
+					})
+					.returning({ id: aiUsageLedger.id });
+				return {
+					outcome: "charge",
+					charge: { source, settle: true, holdId: row.id },
+				};
+			};
+
+			if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
+				return reserve("included");
+			}
+			// Per-seat fairness cap is the binding limit while the ORG still has included headroom:
+			// block THIS seat (don't silently divert to purchased packs). Fail-closed.
+			if (orgSessionOk && orgWeekOk && (!userSessionOk || !userWeekOk)) {
+				return { outcome: "personal", weeklyHit: !userWeekOk };
+			}
+			// Org included headroom is gone for this window — reserve against purchased top-ups if
+			// any, unless the org's hard-cap policy says to pause at the included allowance instead.
+			if (!hardCap && (await purchasedAvailable()) > 0) {
+				return reserve("purchased");
+			}
+			return { outcome: "org", weeklyHit: !orgWeekOk };
+		},
+	);
+
+	// Lock released — safe to spend a pooled connection on the reset-time reads before throwing.
+	if (decision.outcome === "charge") return decision.charge;
+	if (decision.outcome === "personal") {
+		throwPersonalCap(
+			decision.weeklyHit,
+			decision.weeklyHit ? weekResetIso : await sessionResetIso(orgId, seatId),
+		);
 	}
 	throwOrgCap(
-		!orgWeekOk,
-		!orgWeekOk ? weekResetIso : await sessionResetIso(orgId),
+		decision.weeklyHit,
+		decision.weeklyHit ? weekResetIso : await sessionResetIso(orgId),
 	);
 }

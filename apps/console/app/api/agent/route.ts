@@ -281,13 +281,15 @@ export async function POST(req: Request) {
 						},
 					});
 				},
-				// A failed turn still shows in PostHog's Errors view (no per-model steps on error).
+				// A failed turn still shows in PostHog's Errors view (no per-model steps on error) and
+				// RELEASES its reserved hold (reconciled to 0) so an errored turn never leaks headroom.
 				onError: ({ error }) => {
 					void recordAiUsage({
 						orgId: actor.orgId,
 						userId: actor.userId,
 						kind: "agent",
 						source: charge.source,
+						holdId: charge.settle ? charge.holdId : undefined,
 						refId: threadId,
 						model: base.key,
 						latencyMs: Date.now() - startedAt,

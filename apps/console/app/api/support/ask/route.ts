@@ -76,7 +76,8 @@ export async function POST(req: Request) {
 		allowSystemInMessages: true,
 		tools: buildSupportTools(),
 		stopWhen: stepCountIs(8),
-		// Record once the run completes, with the real token usage for cost-of-serve.
+		// Record once the run completes, with the real token usage for cost-of-serve. Reconciles the
+		// reserved hold IN PLACE (holdId) so the provisional estimate becomes the turn's real cost.
 		onFinish: ({ usage }) => {
 			void recordAiUsage({
 				orgId: actor.orgId,
@@ -84,11 +85,26 @@ export async function POST(req: Request) {
 				kind: "support",
 				// Metered → omit credits; settled from this row's real cost-of-serve.
 				source: charge.source,
+				holdId: charge.settle ? charge.holdId : undefined,
 				refId: threadId,
 				model: resolved.key,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
 				cachedInputTokens: usage.cachedInputTokens,
+			});
+		},
+		// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
+		onError: ({ error }) => {
+			void recordAiUsage({
+				orgId: actor.orgId,
+				userId: actor.userId,
+				kind: "support",
+				source: charge.source,
+				holdId: charge.settle ? charge.holdId : undefined,
+				refId: threadId,
+				model: resolved.key,
+				isError: true,
+				error: error instanceof Error ? error.message : String(error),
 			});
 		},
 	});
