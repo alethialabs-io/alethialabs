@@ -80,3 +80,4 @@ apps/runner/argocd-templates/
 
 apps/console/playwright-report/
 apps/console/test-results/
+apps/console/e2e/.auth/

@@ -117,6 +117,86 @@ jobs:
       - name: Integration tests (real SQL query builders + RLS isolation)
         run: pnpm -F console test:integration
 
+  e2e-browser:
+    name: E2E (browser · Playwright hero path)
+    runs-on: ubuntu-latest
+    # Own parallel job, OFF the fast path: builds + boots the real console against a real Postgres
+    # and drives the sellable happy-path in a headless browser (sign-in → org → connect-a-cloud
+    # surface → design → Deploy/pending-changes → evidence/clusters). Fully hermetic: email-OTP with
+    # the code scraped from the console log — no SES, no OAuth, no cloud creds. OpenFGA is left UNSET
+    # so the community PostgresRbacPDP is the authz engine (no extra service). Same postgres:17 +
+    # db:migrate as the Integration job above.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Real Postgres service (superuser + least-priv app role created by db:migrate, for RLS).
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # Auth: a non-secret placeholder + same-origin base URL. Email-OTP only (no OAuth, no SES) →
+      # the OTP is logged, which is the hermetic seam the spec reads.
+      BETTER_AUTH_SECRET: e2e-browser-placeholder-secret
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # Storage placeholders (the S3 client connects lazily; the hero path uploads nothing).
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
+      DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      - name: Build the console (production image the browser drives)
+        run: pnpm -F console build
+      - name: Install Playwright (Chromium + OS deps)
+        run: pnpm -F console exec playwright install --with-deps chromium
+      # Guard against a vacuous green: if the hero spec is ever renamed without updating the
+      # project's testMatch, `playwright test --project=hero` would match 0 tests and could exit 0.
+      # Fail loudly instead.
+      - name: Guard — hero project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=hero --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=hero matched 0 tests (testMatch drift?)"; exit 1; }
+      - name: Run the hero happy-path (Playwright boots `next start` via webServer)
+        run: pnpm -F console exec playwright test --project=hero
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/console/playwright-report/
+          retention-days: 7
+
   coverage-badge:
     name: Coverage badge (self-hosted)
     runs-on: ubuntu-latest
