@@ -43,6 +43,14 @@ func (ov *Override) Covers(id string) bool {
 	if !ov.Expiry.IsZero() && time.Now().After(ov.Expiry) {
 		return false
 	}
+	// The fail-closed apply backstop (ControlPlanUnavailable) may be waived ONLY by an
+	// explicitly time-boxed override. A zero (never-expiring) Expiry would otherwise
+	// disable the backstop FOREVER if a payload merely omitted `expiry` — a silent
+	// permanent hole in the very gate this sentinel protects. Regular controls keep the
+	// Phase-0 "zero Expiry = no expiry" contract; only the backstop demands a bound.
+	if id == ControlPlanUnavailable && ov.Expiry.IsZero() {
+		return false
+	}
 	return slices.Contains(ov.Controls, id)
 }
 

@@ -190,9 +190,16 @@ func gateRequiresReport(dryRun bool, report *verify.Report, ov *verify.Override,
 	if ov.Covers(verify.ControlPlanUnavailable) {
 		return nil
 	}
+	// report==nil is broader than "no plan JSON": the report is also nil when the plan JSON
+	// existed but verify.Evaluate errored. Both are "the gate produced no verdict" → refuse
+	// (fail-closed) — but report the actual cause honestly so the operator fixes the right thing.
+	cause := "the verifier could not evaluate the plan"
+	if showErr != nil {
+		cause = fmt.Sprintf("the plan JSON could not be produced (tofu show error: %v)", showErr)
+	}
 	return fmt.Errorf(
-		"verification gate could not evaluate the plan (no plan JSON: show error=%v) — refusing apply; fix tofu show or supply an authorized override waiving %s",
-		showErr, verify.ControlPlanUnavailable)
+		"verification gate produced no verdict (%s) — refusing apply; fix the underlying error or supply an authorized, time-boxed override waiving %s",
+		cause, verify.ControlPlanUnavailable)
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.

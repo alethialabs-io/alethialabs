@@ -34,6 +34,12 @@ func TestVerifyGateRequiresReport(t *testing.T) {
 		By:       "alice",
 		Expiry:   time.Now().Add(-time.Minute),
 	}
+	unbounded := &verify.Override{
+		Controls: []string{verify.ControlPlanUnavailable},
+		By:       "ops@example.com",
+		// No Expiry: a never-expiring waiver of the backstop sentinel must NOT be honored,
+		// else a payload that merely forgot `expiry` disables the fail-closed gate forever.
+	}
 	wrongControl := &verify.Override{
 		Controls: []string{"LEASTPRIV-001"},
 		By:       "alice",
@@ -52,6 +58,7 @@ func TestVerifyGateRequiresReport(t *testing.T) {
 		{name: "THE BUG: real apply, nil report, no override -> REFUSE", dryRun: false, report: nil, override: nil, wantError: true},
 		{name: "real apply, nil report, override waiving the sentinel -> allowed", dryRun: false, report: nil, override: covering, wantError: false},
 		{name: "real apply, nil report, EXPIRED sentinel override -> REFUSE", dryRun: false, report: nil, override: expired, wantError: true},
+		{name: "real apply, nil report, UNBOUNDED (no-expiry) sentinel override -> REFUSE (backstop needs a time-box)", dryRun: false, report: nil, override: unbounded, wantError: true},
 		{name: "real apply, nil report, override for a different control -> REFUSE", dryRun: false, report: nil, override: wrongControl, wantError: true},
 		{name: "dry-run with a covering override is still allowed (no-op)", dryRun: true, report: nil, override: covering, wantError: false},
 	}
@@ -71,8 +78,8 @@ func TestVerifyGateRequiresReport(t *testing.T) {
 				if !strings.Contains(err.Error(), verify.ControlPlanUnavailable) {
 					t.Errorf("refuse error should name the %s sentinel: %v", verify.ControlPlanUnavailable, err)
 				}
-				if !strings.Contains(err.Error(), "could not evaluate the plan") {
-					t.Errorf("refuse error should explain the gate could not evaluate the plan: %v", err)
+				if !strings.Contains(err.Error(), "produced no verdict") {
+					t.Errorf("refuse error should explain the gate produced no verdict: %v", err)
 				}
 			}
 		})
