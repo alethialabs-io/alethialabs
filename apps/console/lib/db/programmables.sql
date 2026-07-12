@@ -1134,7 +1134,9 @@ GRANT EXECUTE ON FUNCTION public.gc_job_logs(INTERVAL, INTEGER) TO alethia_app;
 
 -- Delete fleet_actions ledger rows older than the retention window (default 90d). The
 -- #345 durable fleet-actions ledger has no GC of its own; unbounded it grows forever.
--- Oldest first by created_at (the (provider, created_at) index and small batch keep it cheap).
+-- Oldest first by created_at; the created_at-leading index (idx_fleet_actions_created_at)
+-- serves the range filter + ordered LIMIT as an index scan (the (provider, created_at)
+-- index CANNOT — its leading provider column is unconstrained here), keeping the GC cheap.
 CREATE OR REPLACE FUNCTION public.gc_fleet_actions(
     p_age INTERVAL DEFAULT INTERVAL '90 days', p_limit INTEGER DEFAULT 5000
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
