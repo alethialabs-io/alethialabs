@@ -103,6 +103,7 @@ func (s *supervisor) superviseSlot(ctx context.Context, index int) {
 				return
 			}
 			fmt.Fprintf(os.Stderr, "[supervisor] worker %d spawn failed: %v; retrying in 2s\n", index, err)
+			captureError(err, map[string]string{"op": "worker_spawn", "worker": fmt.Sprintf("%d", index)})
 			select {
 			case <-time.After(2 * time.Second):
 			case <-ctx.Done():
@@ -123,6 +124,10 @@ func (s *supervisor) superviseSlot(ctx context.Context, index int) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "[supervisor] worker %d exited (%v); restarting\n", index, waitErr)
+		// Only a non-clean exit is an error worth capturing (a clean drain returns nil).
+		if waitErr != nil {
+			captureError(waitErr, map[string]string{"op": "worker_exit", "worker": fmt.Sprintf("%d", index)})
+		}
 	}
 }
 

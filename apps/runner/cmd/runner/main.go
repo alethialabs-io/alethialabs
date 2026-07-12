@@ -94,6 +94,15 @@ func main() {
 		_ = otelShutdown(shutdownCtx)
 	}()
 
+	// Sentry error tracking (DSN-gated: a complete no-op unless SENTRY_DSN is set). Never fatal —
+	// an init error is logged and the runner provisions on without it. The deferred flush ships any
+	// buffered events on a clean drain (SIGTERM → the agent returns → this defer runs).
+	sentryFlush, sentryErr := agent.InitSentry(version.Version)
+	if sentryErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Sentry setup failed; continuing without error tracking: %v\n", sentryErr)
+	}
+	defer sentryFlush()
+
 	// Concurrency: a single logical runner can run N jobs as N worker subprocesses.
 	// A worker child (or the default single-slot runner) runs the agent loop in-process;
 	// otherwise this process supervises the worker pool. Default slots=1 → exactly the

@@ -142,6 +142,7 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 
 	if cancelled, err := w.api.Heartbeat(); err != nil {
 		Log().Error("initial heartbeat failed", "err", err.Error())
+		captureError(err, map[string]string{"op": "heartbeat", "runner_id": w.config.RunnerID})
 	} else {
 		w.applyHeartbeatCancels(cancelled)
 	}
@@ -153,6 +154,7 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			if cancelled, err := w.api.Heartbeat(); err != nil {
 				Log().Error("heartbeat failed", "err", err.Error())
+				captureError(err, map[string]string{"op": "heartbeat", "runner_id": w.config.RunnerID})
 			} else {
 				w.applyHeartbeatCancels(cancelled)
 			}
@@ -215,6 +217,7 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			claim, err := w.api.ClaimJob()
 			if err != nil {
 				Log().Error("failed to claim job", "err", err.Error())
+				captureError(err, map[string]string{"op": "claim", "runner_id": w.config.RunnerID})
 				break
 			}
 			if claim.Job == nil {
@@ -331,6 +334,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", nil); err != nil {
 		jlog.Error("failed to update job status to PROCESSING", "err", err.Error())
 		fmt.Fprintf(sysLogger, "Failed to update job status to PROCESSING: %v\n", err)
+		captureError(err, map[string]string{
+			"op": "update_status", "runner_id": w.config.RunnerID, "job_id": job.ID, "trace_id": traceID,
+		})
 	}
 
 	if claim.CloudIdentity != nil {
@@ -485,6 +491,14 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			return execErr
 		}
 		jlog.Error("job execution failed", "job_type", job.JobType, "err", execErr.Error())
+		// The real provisioning-failure capture (credential-activation + per-job-type errors all
+		// funnel here). Guarded above by wasCancelled, so a user cancel is never reported as an error.
+		captureError(execErr, map[string]string{
+			"job_type":  job.JobType,
+			"job_id":    job.ID,
+			"trace_id":  traceID,
+			"runner_id": w.config.RunnerID,
+		})
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
 		stderrLogger.Close()
 		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
