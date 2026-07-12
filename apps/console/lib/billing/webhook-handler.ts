@@ -28,6 +28,12 @@ import {
 export interface HandleEventOptions {
 	/** When true, skip all branded emails (used by break-glass replay so a re-run never re-mails). */
 	suppressEmails?: boolean;
+	/**
+	 * When true, skip the OUTWARD payment retry (attemptBackupPayment) on invoice.payment_failed. A
+	 * break-glass REPLAY re-processes a stored event's STATE — it must not re-attempt a live charge on
+	 * a customer's backup card. Default-on for replay; an operator can explicitly opt back in.
+	 */
+	suppressPaymentRetry?: boolean;
 }
 
 /** The default payment method id on an invoice (the card that was charged), or null. */
@@ -164,11 +170,14 @@ export async function handleStripeEvent(
 				const customerId =
 					typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 				const failedPm = paymentMethodIdOf(invoice);
-				const paid = invoice.id
-					? await attemptBackupPayment(customerId, invoice.id, failedPm).catch(
-							() => null,
-						)
-					: null;
+				// A replay must not re-attempt a live charge (suppressPaymentRetry); treat it as
+				// unpaid so the state re-syncs without touching the customer's backup card.
+				const paid =
+					invoice.id && !opts.suppressPaymentRetry
+						? await attemptBackupPayment(customerId, invoice.id, failedPm).catch(
+								() => null,
+							)
+						: null;
 				if (!paid) {
 					await trackRevenue(sub, "payment_failed", {
 						amount: invoice.amount_due,

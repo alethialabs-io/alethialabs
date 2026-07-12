@@ -343,9 +343,10 @@ async function restartRunner(runnerId: string): Promise<BreakglassResult> {
 
 /**
  * replay_webhook (blast: low) — re-dispatch a stored Stripe event through the EXACT same idempotent
- * handler the live webhook uses. Emails are suppressed by default (the one non-idempotent side
- * effect), so a replay never re-mails. Resets the exactly-once guard first so an already-`done`
- * event can be re-run, then re-claims + marks done.
+ * handler the live webhook uses. The two NON-idempotent outward side effects — branded emails and the
+ * invoice.payment_failed backup-card retry — are BOTH suppressed by default so a replay re-processes
+ * STATE without re-mailing or re-charging a customer; an operator can explicitly opt either back in.
+ * Resets the exactly-once guard first so an already-`done` event can be re-run, then re-claims + done.
  */
 async function replayWebhook(
 	eventId: string,
@@ -354,13 +355,18 @@ async function replayWebhook(
 	if (!isStripeConfigured()) return refuse(503, "Billing/Stripe is not configured.");
 	const event = await getStripe().events.retrieve(eventId);
 	const suppressEmails = input?.suppressEmails ?? true;
+	const suppressPaymentRetry = input?.suppressPaymentRetry ?? true;
 	await resetWebhookEvent(eventId);
 	await claimWebhookEvent(event.id, event.type);
-	await handleStripeEvent(event, { suppressEmails });
+	await handleStripeEvent(event, { suppressEmails, suppressPaymentRetry });
 	await markWebhookEventDone(event.id);
+	const notes = [
+		suppressEmails ? "emails suppressed" : null,
+		suppressPaymentRetry ? "payment retry suppressed" : null,
+	].filter(Boolean);
 	return {
 		ok: true,
-		detail: `replayed ${event.type} ${event.id}${suppressEmails ? " (emails suppressed)" : ""}`,
+		detail: `replayed ${event.type} ${event.id}${notes.length ? ` (${notes.join(", ")})` : ""}`,
 	};
 }
 

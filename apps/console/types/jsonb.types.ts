@@ -811,4 +811,9 @@ export interface BreakglassActionInput {
 	surgeryNote?: string;
 	/** replay_webhook: whether the replay suppressed the branded emails (default true). */
 	suppressEmails?: boolean;
+	/**
+	 * replay_webhook: whether the replay suppressed the invoice.payment_failed backup-card retry
+	 * (default true — a replay re-processes state, it must not re-charge a customer unless opted in).
+	 */
+	suppressPaymentRetry?: boolean;
 }
