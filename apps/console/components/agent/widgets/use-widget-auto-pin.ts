@@ -9,7 +9,10 @@ import { syncArtifactWidgets } from "@/app/server/actions/artifacts";
 import { pinWidgetOutputSchema } from "@/lib/ai/tools/widgets";
 import { dashboardSpecSchema } from "@/lib/ai/tools/visualize";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
-import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
+import {
+	type PinInput,
+	useWidgetGridStore,
+} from "@/lib/stores/use-widget-grid-store";
 import { blockDefaultSize, WIDGET_REGISTRY, widgetDefForPartType } from "./registry";
 
 const updateArtifactInputSchema = z.object({ artifactId: z.string().uuid() });
@@ -39,7 +42,10 @@ export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null)
 
 	useEffect(() => {
 		if (!threadId || gridThread !== threadId) return;
-		const pins: Array<Promise<boolean>> = [];
+		// Collect the pins, then apply them SEQUENTIALLY (below): each first-fit placement
+		// must see the previous one, or a multi-widget turn (an exploded dashboard) races
+		// and every block lands on the same cell.
+		const pins: PinInput[] = [];
 		for (const m of messages) {
 			if (m.role !== "assistant") continue;
 			for (const part of m.parts) {
@@ -51,19 +57,17 @@ export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null)
 					if (!spec.success) continue;
 					spec.data.blocks.forEach((block, i) => {
 						const size = blockDefaultSize(block.kind);
-						pins.push(
-							pin({
-								threadId,
-								kind: block.kind === "grid" ? "keyvalue" : block.kind,
-								title: block.title,
-								source: null,
-								data: { block },
-								colspan: size.colspan,
-								rowspan: size.rowspan,
-								mode: "frozen",
-								toolCallId: `${part.toolCallId}:${i}`,
-							}),
-						);
+						pins.push({
+							threadId,
+							kind: block.kind === "grid" ? "keyvalue" : block.kind,
+							title: block.title,
+							source: null,
+							data: { block },
+							colspan: size.colspan,
+							rowspan: size.rowspan,
+							mode: "frozen",
+							toolCallId: `${part.toolCallId}:${i}`,
+						});
 					});
 					continue;
 				}
@@ -103,48 +107,49 @@ export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null)
 								? "keyvalue"
 								: w.block.kind
 							: (w.source && WIDGET_REGISTRY[w.source.tool]?.kind) ?? "keyvalue");
-					pins.push(
-						pin({
-							threadId,
-							kind,
-							title: w.title,
-							source: w.source ?? null,
-							data: w.block ? { block: w.block } : {},
-							colspan: size.colspan,
-							rowspan: size.rowspan,
-							posX: w.position?.x,
-							posY: w.position?.y,
-							mode: w.mode ?? "frozen",
-							toolCallId: part.toolCallId,
-						}),
-					);
+					pins.push({
+						threadId,
+						kind,
+						title: w.title,
+						source: w.source ?? null,
+						data: w.block ? { block: w.block } : {},
+						colspan: size.colspan,
+						rowspan: size.rowspan,
+						posX: w.position?.x,
+						posY: w.position?.y,
+						mode: w.mode ?? "frozen",
+						toolCallId: part.toolCallId,
+					});
 					continue;
 				}
 
 				const def = widgetDefForPartType(part.type);
 				if (!def || !def.parses(part.output)) continue;
 				const toolName = part.type.slice("tool-".length);
-				pins.push(
-					pin({
-						threadId,
-						kind: def.kind,
-						title: def.title,
-						source: { tool: toolName, args: toArgs(part.input) },
-						data: { output: part.output },
-						colspan: def.defaultSize.colspan,
-						rowspan: def.defaultSize.rowspan,
-						// Smart defaults: jobs/clusters/connectors/usage land live and keep
-						// refetching on their registry cadence; one-off reads stay frozen.
-						mode: def.liveByDefault ? "live" : "frozen",
-						toolCallId: part.toolCallId,
-					}),
-				);
+				pins.push({
+					threadId,
+					kind: def.kind,
+					title: def.title,
+					source: { tool: toolName, args: toArgs(part.input) },
+					data: { output: part.output },
+					colspan: def.defaultSize.colspan,
+					rowspan: def.defaultSize.rowspan,
+					// Smart defaults: jobs/clusters/connectors/usage land live and keep
+					// refetching on their registry cadence; one-off reads stay frozen.
+					mode: def.liveByDefault ? "live" : "frozen",
+					toolCallId: part.toolCallId,
+				});
 			}
 		}
 		if (pins.length === 0) return;
-		// Reveal the grid pane when something new actually landed (dedupes resolve false).
-		void Promise.all(pins).then((landed) => {
-			if (landed.some(Boolean)) useArtifactStore.getState().openGrid();
-		});
+		// Apply in order — each pin's first-fit sees the ones before it — then reveal the
+		// grid pane if anything new actually landed (dedupes resolve false).
+		void (async () => {
+			let landed = false;
+			for (const input of pins) {
+				if (await pin(input)) landed = true;
+			}
+			if (landed) useArtifactStore.getState().openGrid();
+		})();
 	}, [messages, threadId, gridThread, pin]);
 }

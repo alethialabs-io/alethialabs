@@ -27,6 +27,7 @@
 		"test": "vitest run --coverage",
 		"test:watch": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"test:ai-eval": "vitest run --config vitest.ai-eval.config.ts",
 		"mutate": "stryker run",
 		"mutate:since": "stryker run --since origin/main",
 		"test:e2e": "playwright test",
@@ -36,6 +37,7 @@
 	},
 	"dependencies": {
 		"@ai-sdk/anthropic": "3.0.95",
+		"@ai-sdk/provider": "3.0.13",
 		"@ai-sdk/openai": "3.0.82",
 		"@ai-sdk/react": "^3.0.210",
 		"@alicloud/openapi-client": "^0.4.15",

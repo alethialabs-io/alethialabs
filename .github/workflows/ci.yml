@@ -215,6 +215,82 @@ jobs:
           path: apps/console/playwright-report/
           retention-days: 7
 
+  e2e-elench-ai:
+    name: E2E (browser · Elench AI journeys · scripted model)
+    runs-on: ubuntu-latest
+    # The Elench AI journeys end-to-end with a SCRIPTED model (ALETHIA_AI_MOCK=1 → the
+    # MockLanguageModelV3 in lib/config/ai-mock). Only the model is deterministic: the agent
+    # route, extended thinking, orchestration markers, TOOL EXECUTION (PDP-gated reads against
+    # this real Postgres), metering, transcript persistence, widget auto-pin into thread_widgets,
+    # artifacts and RLS all run for real. No API key, no flake, no cost. The real-model run is
+    # the separate (non-gating) e2e-ai-nightly workflow.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      BETTER_AUTH_SECRET: not-a-secret-e2e-placeholder
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
+      # The scripted model. NEVER set anywhere but an E2E console (unit-tested: the gate is
+      # off by default and only the literal "1" engages it).
+      ALETHIA_AI_MOCK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      - name: Build the console (production image the browser drives)
+        run: pnpm -F console build
+      - name: Install Playwright (Chromium + OS deps)
+        run: pnpm -F console exec playwright install --with-deps chromium
+      # Guard against a vacuous green (renamed spec → testMatch drift → 0 tests → exit 0).
+      - name: Guard — elench-ai project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=elench-ai --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=elench-ai matched 0 tests (testMatch drift?)"; exit 1; }
+      - name: Run the Elench AI journeys (scripted model, real pipeline)
+        run: pnpm -F console exec playwright test --project=elench-ai
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-elench-ai
+          path: apps/console/playwright-report/
+          retention-days: 7
+
   coverage-badge:
     name: Coverage badge (self-hosted)
     runs-on: ubuntu-latest

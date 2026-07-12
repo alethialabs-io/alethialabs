@@ -40,11 +40,39 @@ export default defineConfig({
 			use: { ...devices["Desktop Chrome"] },
 		},
 
+		// The Elench AI journeys against a SCRIPTED model (ALETHIA_AI_MOCK=1 on the console):
+		// the whole server pipeline — route, tools, grid persistence, artifacts, RLS — runs for
+		// real, only the model is deterministic. CI-gated alongside the hero path.
+		// One shared persona (the `setup` project) rather than a signup per test: the AI
+		// journeys are about the chat, and five hermetic signups in a row trip Better Auth's
+		// per-IP rate limit. Each test still gets its own thread (and therefore its own grid).
+		{
+			name: "elench-ai",
+			testMatch: /elench-ai\.spec\.ts/,
+			dependencies: ["setup"],
+			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+		},
+
+		// The Elench AI journeys against a REAL model (needs ANTHROPIC_API_KEY). Loose,
+		// behavior-level assertions — never merge-gating; run by the nightly workflow.
+		{
+			name: "elench-live",
+			testMatch: /elench-live\.spec\.ts/,
+			retries: 2,
+			dependencies: ["setup"],
+			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+		},
+
 		// Everything else (the broader smoke specs) self-signs-up per test via the auth fixture, so
 		// no shared storageState here. Kept separate so `--project=hero` stays clean + fast in CI.
 		{
 			name: "chromium",
-			testIgnore: [/fixtures\/auth\.setup\.ts/, /hero-happy-path\.spec\.ts/],
+			testIgnore: [
+				/fixtures\/auth\.setup\.ts/,
+				/hero-happy-path\.spec\.ts/,
+				/elench-ai\.spec\.ts/,
+				/elench-live\.spec\.ts/,
+			],
 			use: { ...devices["Desktop Chrome"] },
 		},
 	],

@@ -65,8 +65,12 @@ const cellTargetSchema = z
 /** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
 const deepReasoningSchema = z.boolean().catch(false);
 
-/** System prompt for the general Agent page (infra Q&A + project design + Act-mode ops). */
-function systemPrompt(mode: AgentMode): string {
+/**
+ * System prompt for the general Agent page (infra Q&A + project design + Act-mode ops).
+ * Exported so the nightly behavior eval (tests/ai-eval) scores the REAL prompt — the
+ * thing that actually decides whether the model reaches for the right tool.
+ */
+export function systemPrompt(mode: AgentMode): string {
 	const act =
 		mode === "act"
 			? [

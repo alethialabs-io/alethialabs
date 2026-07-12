@@ -1,0 +1,114 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Tier B: the Elench journeys against a REAL model. NOT a merge gate — this is the
+# canary for "does the actual model still behave", which no mock can prove: does it
+# reach for the right tool, does a dashboard request really produce widgets, did a
+# provider/prompt/SDK change quietly break tool-calling.
+#
+# Runs nightly + on demand. Skips cleanly (green, no-op) when the ANTHROPIC_API_KEY
+# secret is absent, so a fork or an unconfigured repo never sees a red X. Pinned to
+# Haiku (the cheapest tool-capable model) — a full run is a few cents.
+
+name: E2E (real model · nightly)
+
+on:
+  schedule:
+    # 04:20 UTC daily — after the day's merges have settled on dev.
+    - cron: "20 4 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/ref to test (defaults to dev)"
+        required: false
+        default: dev
+
+concurrency:
+  group: e2e-ai-nightly
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Preflight (is a key configured?)
+    runs-on: ubuntu-latest
+    outputs:
+      has_key: ${{ steps.check.outputs.has_key }}
+    steps:
+      - id: check
+        run: |
+          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY is not set — skipping the real-model E2E run."
+          fi
+
+  e2e-live:
+    name: E2E (browser · real model)
+    needs: preflight
+    if: needs.preflight.outputs.has_key == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      BETTER_AUTH_SECRET: not-a-secret-e2e-placeholder
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
+      # The real thing. Pinned to the cheapest tool-capable model for both roles so a
+      # nightly run costs cents (the advisor upgrade is a paid-tier feature anyway).
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AI_EXECUTOR_MODEL: anthropic/claude-haiku-4-5
+      AI_ADVISOR_MODEL_PLUS: anthropic/claude-haiku-4-5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'dev' }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        run: pnpm -F console db:migrate
+      - name: Build the console
+        run: pnpm -F console build
+      - name: Install Playwright (Chromium + OS deps)
+        run: pnpm -F console exec playwright install --with-deps chromium
+      - name: Guard — elench-live project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=elench-live --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=elench-live matched 0 tests"; exit 1; }
+      - name: Run the real-model journeys
+        run: pnpm -F console exec playwright test --project=elench-live
+      - name: Behavior eval (tool traces, not prose)
+        run: pnpm -F console test:ai-eval
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-elench-live
+          path: apps/console/playwright-report/
+          retention-days: 14
