@@ -52,7 +52,15 @@ interface AgentBody {
 	 * (the advisor selection guards it); ignored on every other tier.
 	 */
 	deepReasoning?: boolean;
+	/** The grid cell an empty-cell prompt asked to fill (drives the GRID hint). */
+	cellTarget?: { x: number; y: number } | null;
 }
+
+/** Parse the optional empty-cell target off a request body. */
+const cellTargetSchema = z
+	.object({ x: z.number().int().min(0).max(4), y: z.number().int().min(0) })
+	.nullish()
+	.catch(null);
 
 /** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
 const deepReasoningSchema = z.boolean().catch(false);
@@ -138,8 +146,10 @@ export async function POST(req: Request) {
 		model,
 		mentions,
 		deepReasoning: deepReasoningRaw,
+		cellTarget: cellTargetRaw,
 	}: AgentBody = await req.json();
 	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
+	const cellTarget = cellTargetSchema.parse(cellTargetRaw);
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
@@ -179,9 +189,17 @@ export async function POST(req: Request) {
 	const mentionBlock = parsedMentions.success
 		? formatMentionsForPrompt(parsedMentions.data)
 		: "";
-	const system = mentionBlock
-		? `${systemPrompt(mode)}\n\n${mentionBlock}`
-		: systemPrompt(mode);
+	// Empty-cell prompt: the user clicked grid cell (x, y) and described a widget.
+	const cellBlock = cellTarget
+		? [
+				`The user is filling grid cell (x=${cellTarget.x}, y=${cellTarget.y}) of the 5-column`,
+				"bento grid with this request. Satisfy it with ONE read tool, then call `pin_widget`",
+				`with position {x: ${cellTarget.x}, y: ${cellTarget.y}}, sized to fit the content.`,
+			].join(" ")
+		: "";
+	const system = [systemPrompt(mode), mentionBlock, cellBlock]
+		.filter(Boolean)
+		.join("\n\n");
 
 	const modelMessages = await convertToModelMessages(messages);
 

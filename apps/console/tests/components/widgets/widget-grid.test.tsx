@@ -41,6 +41,7 @@ function widget(over: Partial<ThreadWidget>): ThreadWidget {
 		rowspan: 1,
 		mode: "frozen",
 		tool_call_id: null,
+		artifact_id: null,
 		refreshed_at: null,
 		created_at: now,
 		updated_at: now,

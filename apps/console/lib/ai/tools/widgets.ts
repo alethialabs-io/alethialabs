@@ -7,6 +7,23 @@ import { dashboardBlockSchema } from "./visualize";
 
 const KINDS = ["table", "stat", "bar", "line", "keyvalue"] as const;
 
+/**
+ * The ONLY tools a live widget may replay on refresh — exactly the client widget
+ * registry's keys (a lockstep test guards this). Read-only, PDP-gated tools; never
+ * actions/HITL/writes. `refreshWidgetSource` fails closed on anything else.
+ */
+export const REFRESHABLE_TOOLS = new Set<string>([
+	"list_projects",
+	"list_jobs",
+	"list_clusters",
+	"list_connectors",
+	"list_runners",
+	"get_org_usage",
+	"get_ai_usage",
+	"get_billing_summary",
+	"get_drift_posture",
+]);
+
 /** The validated pin_widget payload the CLIENT lane consumes (echoed input). */
 export const pinWidgetOutputSchema = z.object({
 	title: z.string().min(1).max(120),

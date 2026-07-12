@@ -8,12 +8,16 @@ import { ScrollArea } from "@repo/ui/scroll-area";
 import { cn } from "@repo/ui/utils";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import {
+	buildOccupancy,
 	clampToCols,
 	collides,
 	GRID_COLS,
 	type GridRect,
 	occupancyExcluding,
 } from "@/lib/widgets/layout";
+import { useWidgetRefresh } from "@/hooks/use-widget-refresh";
+import { ArtifactBrowser, SaveArtifactButton } from "./artifact-controls";
+import { CellPrompt } from "./cell-prompt";
 import { type DragMode, WidgetCard } from "./widget-card";
 
 /** Fixed row height (px) — pairs with `gap-2` (8px) for the cell math. */
@@ -41,10 +45,16 @@ interface DragState {
 export function WidgetGrid({ className }: { className?: string }) {
 	const widgets = useWidgetGridStore((s) => s.widgets);
 	const loading = useWidgetGridStore((s) => s.loading);
+	const threadId = useWidgetGridStore((s) => s.threadId);
 	const place = useWidgetGridStore((s) => s.place);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [drag, setDrag] = useState<DragState | null>(null);
 	const [liveMsg, setLiveMsg] = useState("");
+	// Live widgets poll on their registry cadence while the tab is visible.
+	const refresh = useWidgetRefresh();
+	const cellPrompt = useWidgetGridStore((s) => s.cellPrompt);
+	const setCellPrompt = useWidgetGridStore((s) => s.setCellPrompt);
+	const maxRow = widgets.reduce((m, w) => Math.max(m, w.pos_y + w.rowspan), 0);
 
 	const announce = useCallback((msg: string) => setLiveMsg(msg), []);
 
@@ -127,6 +137,13 @@ export function WidgetGrid({ className }: { className?: string }) {
 	return (
 		<ScrollArea className={cn("h-full", className)}>
 			<div className="p-4">
+				<div className="mb-2 flex items-center justify-between">
+					<span className="vx-eyebrow text-[9px]">Grid</span>
+					<span className="flex items-center gap-1.5">
+						<ArtifactBrowser threadId={threadId} />
+						<SaveArtifactButton widgets={widgets} kind="dashboard" />
+					</span>
+				</div>
 				{widgets.length === 0 && !loading && (
 					<div className="flex flex-col items-center gap-2 border border-dashed border-border py-16 text-center">
 						<LayoutDashboard className="h-4 w-4 text-muted-foreground" />
@@ -137,11 +154,26 @@ export function WidgetGrid({ className }: { className?: string }) {
 						</div>
 					</div>
 				)}
+				{/* biome-ignore lint: background click opens the cell composer; keyboard users
+			    reach the same flow through the chat composer. */}
 				<div
 					ref={containerRef}
 					data-testid="widget-grid"
 					className="relative grid grid-cols-5 gap-2"
-					style={{ gridAutoRows: `${ROW_H}px` }}
+					style={{
+						gridAutoRows: `${ROW_H}px`,
+						// Keep one clickable empty row below the content so "describe what goes
+						// here…" always has somewhere to land.
+						minHeight: (maxRow + 1) * (ROW_H + GAP),
+					}}
+					onClick={(e) => {
+						// Only clicks on the grid BACKGROUND (not cards) open the composer.
+						if (e.target !== containerRef.current) return;
+						const cell = cellAt(e);
+						const occ = buildOccupancy(rectsOf());
+						if (collides(occ, { ...cell, colspan: 1, rowspan: 1 })) return;
+						setCellPrompt({ x: Math.min(cell.x, GRID_COLS - 1), y: cell.y });
+					}}
 				>
 					{widgets.map((w) => (
 						<WidgetCard
@@ -149,8 +181,10 @@ export function WidgetGrid({ className }: { className?: string }) {
 							widget={w}
 							onDragStart={onDragStart}
 							announce={announce}
+							onRefresh={refresh}
 						/>
 					))}
+					{cellPrompt && <CellPrompt cell={cellPrompt} />}
 					{/* Drop-target ghost while dragging. */}
 					{drag && (
 						<div

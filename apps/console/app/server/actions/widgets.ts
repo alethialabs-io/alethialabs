@@ -4,7 +4,9 @@
 
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { buildAgentTools } from "@/lib/ai/tools";
 import { dashboardBlockSchema } from "@/lib/ai/tools/visualize";
+import { REFRESHABLE_TOOLS } from "@/lib/ai/tools/widgets";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { type ThreadWidget, threadWidgets } from "@/lib/db/schema";
@@ -17,6 +19,18 @@ import type {
 
 const KINDS = ["table", "stat", "bar", "line", "keyvalue"] as const;
 const MODES = ["live", "frozen"] as const;
+
+/** Uniform call shape for replaying a read tool's execute (the tool defs' union of
+ * concrete signatures is uncallable; each input is validated by its own schema first). */
+type ToolExecute = (
+	input: unknown,
+	options: { toolCallId: string; messages: never[] },
+) => Promise<unknown>;
+
+/** Narrow an unknown tool `execute` to the uniform replay signature. */
+function isToolExecute(fn: unknown): fn is ToolExecute {
+	return typeof fn === "function";
+}
 
 const sourceSchema = z
 	.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).nullable() })
@@ -172,5 +186,62 @@ export async function deleteWidget(id: string): Promise<void> {
 	const owner = await requireOwner();
 	await withOwnerScope(owner, async (tx) => {
 		await tx.delete(threadWidgets).where(eq(threadWidgets.id, id));
+	});
+}
+
+/**
+ * Refresh a live widget by replaying its stored `{tool, args}` source. Fail-closed:
+ * only tools on the `REFRESHABLE_TOOLS` allowlist (read-only, PDP-gated — never
+ * actions/HITL/writes) can run, and the args replay through the tool's own zod input
+ * schema. The underlying server actions re-check authorization on every call, so this
+ * adds no authority. Persists the fresh snapshot + refreshed_at and returns the row.
+ */
+export async function refreshWidgetSource(
+	widgetId: string,
+): Promise<ThreadWidget | null> {
+	const parsedId = z.string().uuid().parse(widgetId);
+	const owner = await requireOwner();
+
+	const widget = await withOwnerScope(owner, async (tx) => {
+		const [w] = await tx
+			.select()
+			.from(threadWidgets)
+			.where(eq(threadWidgets.id, parsedId))
+			.limit(1);
+		return w ?? null;
+	});
+	if (!widget?.source) return widget;
+	if (!REFRESHABLE_TOOLS.has(widget.source.tool)) {
+		throw new Error(`Tool "${widget.source.tool}" is not refreshable.`);
+	}
+
+	const tools = buildAgentTools({ mode: "ask" });
+	const def = Object.entries(tools).find(([name]) => name === widget.source?.tool)?.[1];
+	if (!def) throw new Error(`Tool "${widget.source.tool}" is unavailable.`);
+	const execute: unknown = def.execute;
+	if (!isToolExecute(execute)) {
+		throw new Error(`Tool "${widget.source.tool}" is not executable.`);
+	}
+	// Replay through the tool's own input schema (unknown args fail closed).
+	const input =
+		def.inputSchema instanceof z.ZodType
+			? def.inputSchema.parse(widget.source.args ?? {})
+			: (widget.source.args ?? {});
+	const output = await execute(input, {
+		toolCallId: `widget-refresh:${parsedId}`,
+		messages: [],
+	});
+
+	return withOwnerScope(owner, async (tx) => {
+		const [updated] = await tx
+			.update(threadWidgets)
+			.set({
+				data: { output },
+				refreshed_at: sql`now()`,
+				updated_at: sql`now()`,
+			})
+			.where(eq(threadWidgets.id, parsedId))
+			.returning();
+		return updated ?? null;
 	});
 }

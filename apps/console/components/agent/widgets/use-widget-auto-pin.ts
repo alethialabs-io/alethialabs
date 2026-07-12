@@ -3,13 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { isToolUIPart, type UIMessage } from "ai";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { z } from "zod";
+import { syncArtifactWidgets } from "@/app/server/actions/artifacts";
 import { pinWidgetOutputSchema } from "@/lib/ai/tools/widgets";
 import { dashboardSpecSchema } from "@/lib/ai/tools/visualize";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import { blockDefaultSize, WIDGET_REGISTRY, widgetDefForPartType } from "./registry";
+
+const updateArtifactInputSchema = z.object({ artifactId: z.string().uuid() });
 
 const argsSchema = z.record(z.string(), z.unknown());
 
@@ -28,7 +31,11 @@ function toArgs(input: unknown): Record<string, unknown> | null {
  */
 export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null): void {
 	const pin = useWidgetGridStore((s) => s.pin);
+	const hydrate = useWidgetGridStore((s) => s.hydrate);
 	const gridThread = useWidgetGridStore((s) => s.threadId);
+	// update_artifact calls already synced this mount (the server action is itself a
+	// replay no-op via updated_at, so this only avoids redundant round-trips).
+	const syncedRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
 		if (!threadId || gridThread !== threadId) return;
@@ -57,6 +64,21 @@ export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null)
 								toolCallId: `${part.toolCallId}:${i}`,
 							}),
 						);
+					});
+					continue;
+				}
+
+				// Agent edited a saved artifact → sync its open widgets on this grid, then
+				// re-pull the rows so the edit shows.
+				if (part.type === "tool-update_artifact") {
+					if (syncedRef.current.has(part.toolCallId)) continue;
+					const input = updateArtifactInputSchema.safeParse(part.input);
+					if (!input.success) continue;
+					syncedRef.current.add(part.toolCallId);
+					void syncArtifactWidgets(input.data.artifactId, threadId).then(() => {
+						if (useWidgetGridStore.getState().threadId !== threadId) return;
+						useWidgetGridStore.setState({ threadId: null });
+						void hydrate(threadId);
 					});
 					continue;
 				}
@@ -111,7 +133,9 @@ export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null)
 						data: { output: part.output },
 						colspan: def.defaultSize.colspan,
 						rowspan: def.defaultSize.rowspan,
-						mode: "frozen",
+						// Smart defaults: jobs/clusters/connectors/usage land live and keep
+						// refetching on their registry cadence; one-off reads stay frozen.
+						mode: def.liveByDefault ? "live" : "frozen",
 						toolCallId: part.toolCallId,
 					}),
 				);

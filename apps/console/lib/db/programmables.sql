@@ -675,7 +675,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners', 'support_cases', 'thread_widgets']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners', 'support_cases', 'thread_widgets', 'agent_artifacts']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -695,7 +695,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(

@@ -11,6 +11,7 @@ export const MENTION_TYPES = [
 	"job",
 	"runner",
 	"identity",
+	"artifact",
 ] as const;
 
 export type MentionType = (typeof MENTION_TYPES)[number];
@@ -23,6 +24,7 @@ export const MENTION_TOOL: Record<MentionType, string> = {
 	job: "get_job(jobId)",
 	runner: "list_runners",
 	identity: "list_cloud_identities",
+	artifact: "get_artifact(idOrName)",
 };
 
 /** A resolved @-mention attached to a sent message. */

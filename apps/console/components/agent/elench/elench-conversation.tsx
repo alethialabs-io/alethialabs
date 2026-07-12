@@ -96,6 +96,7 @@ export function ElenchConversation({
 							model: s.model,
 							mentions: s.pendingMentions,
 							deepReasoning: s.deepReasoning,
+							cellTarget: useWidgetGridStore.getState().pendingCellTarget,
 						};
 					}
 				: () => ({
@@ -178,6 +179,21 @@ export function ElenchConversation({
 		onSend(seedPrompt);
 		setSeedPrompt(null);
 	}, [seedPrompt, messages.length, onSend, setSeedPrompt]);
+
+	// Empty-cell prompt dispatch: a submitted cell composer stages the target cell
+	// (prepareBody reads it fresh at send time → the route hints the model to fill
+	// exactly that cell) and sends the text as a normal, visible chat message.
+	const pendingCellRequest = useWidgetGridStore((s) => s.pendingCellRequest);
+	useEffect(() => {
+		if (!pendingCellRequest) return;
+		const grid = useWidgetGridStore.getState();
+		grid.clearPendingCellRequest();
+		grid.setPendingCellTarget({ x: pendingCellRequest.x, y: pendingCellRequest.y });
+		void (async () => {
+			await onSend(pendingCellRequest.text);
+			useWidgetGridStore.getState().setPendingCellTarget(null);
+		})();
+	}, [pendingCellRequest, onSend]);
 
 	// Tool-render lanes by context. Org routes artifacts through the panel; if the
 	// artifact opens while docked (panel view), maximize to the modal first (the

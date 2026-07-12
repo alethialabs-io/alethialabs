@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { GripVertical, Move, Scaling, Trash2 } from "lucide-react";
+import { GripVertical, Move, RefreshCw, Scaling, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@repo/ui/utils";
 import type { ThreadWidget } from "@/lib/db/schema";
@@ -14,6 +14,7 @@ import {
 	occupancyExcluding,
 } from "@/lib/widgets/layout";
 import type { DashboardBlock } from "@/types/jsonb.types";
+import { SaveArtifactButton } from "./artifact-controls";
 import { DashboardBlockBody } from "./bodies/blocks";
 import { WIDGET_REGISTRY } from "./registry";
 
@@ -50,13 +51,17 @@ export function WidgetCard({
 	widget,
 	onDragStart,
 	announce,
+	onRefresh,
 }: {
 	widget: ThreadWidget;
 	onDragStart: (e: React.PointerEvent, id: string, mode: DragMode) => void;
 	announce: (msg: string) => void;
+	/** Manual live-refresh (from the grid's polling hook). */
+	onRefresh?: (id: string) => void;
 }) {
 	const place = useWidgetGridStore((s) => s.place);
 	const remove = useWidgetGridStore((s) => s.remove);
+	const setMode = useWidgetGridStore((s) => s.setMode);
 	const widgets = useWidgetGridStore((s) => s.widgets);
 	const [kb, setKb] = useState<{ mode: DragMode; rect: GridRect } | null>(null);
 
@@ -153,12 +158,53 @@ export function WidgetCard({
 				>
 					{widget.title}
 				</span>
-				{widget.mode === "frozen" && (
-					<span className="flex-none font-mono text-[9px] text-muted-foreground/70">
-						frozen
-					</span>
+				{widget.source ? (
+					<button
+						type="button"
+						aria-label={
+							widget.mode === "live"
+								? `Freeze ${widget.title}`
+								: `Make ${widget.title} live`
+						}
+						title={
+							widget.refreshed_at
+								? `refreshed ${new Date(widget.refreshed_at).toLocaleTimeString()}`
+								: undefined
+						}
+						onClick={() =>
+							setMode(widget.id, widget.mode === "live" ? "frozen" : "live")
+						}
+						className={cn(
+							"flex-none font-mono text-[9px] uppercase transition-colors hover:text-foreground",
+							widget.mode === "live" ? "text-foreground" : "text-muted-foreground/70",
+						)}
+					>
+						{widget.mode}
+					</button>
+				) : (
+					widget.mode === "frozen" && (
+						<span className="flex-none font-mono text-[9px] text-muted-foreground/70">
+							frozen
+						</span>
+					)
 				)}
 				<span className="flex flex-none items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/widget:opacity-100">
+					{widget.source && onRefresh && (
+						<button
+							type="button"
+							aria-label={`Refresh ${widget.title}`}
+							className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground"
+							onClick={() => onRefresh(widget.id)}
+						>
+							<RefreshCw className="h-3 w-3" />
+						</button>
+					)}
+					<SaveArtifactButton
+						widgets={[widget]}
+						kind="widget"
+						iconOnly
+						defaultName={widget.title}
+					/>
 					<button
 						type="button"
 						aria-label={`Move ${widget.title} with arrow keys`}
