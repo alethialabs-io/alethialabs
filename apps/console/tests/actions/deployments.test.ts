@@ -207,13 +207,20 @@ describe("finalizeDeployment — success path", () => {
 		expect(writeFor(projectEnvironments)?.set).not.toHaveProperty("status");
 	});
 
-	it("skips the day-2 governance write when the env-status CAS is rejected (lost race)", async () => {
-		// A late DEPLOY-SUCCESS after the env already moved on (e.g. DESTROYED) — the CAS returns
-		// false, so finalizeDeployment must NOT stamp the env's governance fields (no resurrection).
-		const { writeFor, executeCalls } = mockDb([fullJob()], { casUpdated: false });
+	it("writes NOTHING (env + all child rows) when the env-status CAS is rejected (lost race)", async () => {
+		// A late DEPLOY-SUCCESS after the env already moved on (e.g. a DESTROY tore it down) — the CAS
+		// is hoisted to the top of the DEPLOY block and returns false, so finalizeDeployment must write
+		// NOTHING: not the env governance fields AND not the child cluster/db/cache rows (whose live
+		// endpoints are the more visible resurrection). This is the P1-1 fix — previously the child
+		// rows were written unconditionally before the CAS, resurrecting a torn-down env's metadata.
+		const { updates, writeFor, executeCalls } = mockDb([fullJob()], { casUpdated: false });
 		await finalizeDeployment("job-1");
 
-		expect(executeCalls.length).toBeGreaterThan(0);
+		expect(executeCalls.length).toBeGreaterThan(0); // the CAS itself ran
+		expect(updates).toHaveLength(0); // ...and rejected → zero writes
+		expect(writeFor(projectCluster)).toBeUndefined();
+		expect(writeFor(projectDatabases)).toBeUndefined();
+		expect(writeFor(projectCaches)).toBeUndefined();
 		expect(writeFor(projectEnvironments)).toBeUndefined();
 	});
 

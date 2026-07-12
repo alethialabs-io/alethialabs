@@ -123,5 +123,15 @@ describe("ENV_TRANSITIONS table", () => {
 		expect(ENV_TRANSITIONS.deploySuccess.from).not.toContain("DESTROYED");
 		expect(ENV_TRANSITIONS.deployStart.from).not.toContain("DESTROYED");
 		expect(ENV_TRANSITIONS.planSuccess.from).not.toContain("DESTROYED");
+		// A DESTROYED env is terminal — a destroy can't re-start on it either.
+		expect(ENV_TRANSITIONS.destroyStart.from).not.toContain("DESTROYED");
+	});
+
+	it("lets a destroy start from ACTIVE (the destroy-vs-provision race tail)", () => {
+		// If a straggler DEPLOY-SUCCESS resurrects an env to ACTIVE while a DESTROY job is already in
+		// flight, destroyStart must still drive ACTIVE → DESTROYING so the env doesn't get stuck ACTIVE
+		// after the destroy tears its infra down.
+		expect(ENV_TRANSITIONS.destroyStart.from).toContain("ACTIVE");
+		expect(ENV_TRANSITIONS.destroyStart.to).toBe("DESTROYING");
 	});
 });

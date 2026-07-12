@@ -64,7 +64,13 @@ export const ENV_TRANSITIONS = {
 	planFailed: { from: ["QUEUED", "PROVISIONING"], to: "FAILED" },
 
 	// ── DESTROY lifecycle (runner callbacks).
-	destroyStart: { from: ["QUEUED", "PROVISIONING"], to: "DESTROYING" },
+	// ACTIVE is in the from-set to close the destroy-vs-provision race tail: if a straggler
+	// DEPLOY-SUCCESS resurrects an env to ACTIVE (its QUEUED state let deploySuccess win) while a
+	// DESTROY job for it is already in flight, the destroy's PROCESSING callback must still be able to
+	// drive ACTIVE→DESTROYING — otherwise the destroy tears down the infra but leaves the env stuck
+	// ACTIVE with nothing behind it. A destroyStart only ever fires for an env whose DESTROY was
+	// enqueued, so accepting ACTIVE here can't clobber an unrelated live env.
+	destroyStart: { from: ["QUEUED", "PROVISIONING", "ACTIVE"], to: "DESTROYING" },
 	// The clobber fix: DESTROYED is NOT in any deploy*/plan* from-set, so a late DEPLOY-SUCCESS
 	// (deploySuccess: PROVISIONING|QUEUED → ACTIVE) can never move a DESTROYED env back to ACTIVE.
 	destroySuccess: { from: ["DESTROYING", "QUEUED"], to: "DESTROYED" },

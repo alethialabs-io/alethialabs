@@ -142,6 +142,26 @@ export async function finalizeDeployment(jobId: string) {
 	const meta = deployMetaSchema.parse(job.execution_metadata);
 	const outputs = meta.outputs;
 
+	// Gate the ENTIRE deploy writeback — the env row AND every child component row (cluster / db /
+	// cache status + live endpoints), addon health, and security posture — on the env-status CAS,
+	// hoisted here so it runs BEFORE any write. `deploySuccess` is legal only from PROVISIONING|QUEUED,
+	// so a late DEPLOY-SUCCESS arriving after a DESTROY already tore the env down (env=DESTROYED)
+	// rejects and we write NOTHING. Previously only the env row was CAS-protected; the child rows were
+	// written unconditionally, so a straggler resurrected a `cluster_endpoint`/argocd_url onto a
+	// destroyed env — the more visible half of the last-writer-wins bug. transitionEnv logged + emitted
+	// a status-conflict alert on the reject; we just bail.
+	// Ordering note: because the env is moved to ACTIVE up front, if a *component write below* throws,
+	// the status route's catch → deployFailed is a no-op (ACTIVE ∉ deployFailed.from) and the env stays
+	// ACTIVE. That is intentional and correct: the runner reported SUCCESS, so the infra genuinely
+	// exists — a metadata-writeback error must not flip a live deploy to FAILED (it only warns).
+	if (environmentId) {
+		const moved = await transitionEnv(db, environmentId, "deploySuccess", jobId, {
+			orgId: job.org_id,
+			projectId,
+		});
+		if (!moved) return;
+	}
+
 	const clusterUpdate: Partial<typeof projectCluster.$inferInsert> = {
 		status: "ACTIVE",
 	};
@@ -288,35 +308,20 @@ export async function finalizeDeployment(jobId: string) {
 		}
 	}
 
-	// M1: mark the targeted environment ACTIVE (status moved off projects) and stamp the day-2
-	// governance fields: the deployed design's structural fingerprint + timestamp (predecessor gate,
-	// soak timer, config-vs-desired divergence), and reset the auto-heal failure counter.
-	if (job.environment_id) {
+	// M1: stamp the day-2 governance fields on the now-ACTIVE env: the deployed design's structural
+	// fingerprint + timestamp (predecessor gate, soak timer, config-vs-desired divergence), and reset
+	// the auto-heal failure counter. The env→ACTIVE CAS ran at the top of the DEPLOY block and we
+	// returned early if it was rejected, so reaching here means the env legitimately moved to ACTIVE.
+	if (environmentId) {
 		const deployedHash = await deployedStructuralHash(db, projectId, environmentId);
-		// Move the env to ACTIVE through the CAS (lib/db/env-status.ts): deploySuccess is legal only
-		// from PROVISIONING|QUEUED, so a late DEPLOY-SUCCESS can't clobber a DESTROYED (or otherwise
-		// already-terminal) env back to ACTIVE — the last-writer-wins bug this whole change fixes.
-		const moved = await transitionEnv(
-			db,
-			job.environment_id,
-			"deploySuccess",
-			jobId,
-			{ orgId: job.org_id, projectId },
-		);
-		// Only stamp the day-2 governance fields (deployed fingerprint + soak timer + auto-heal
-		// reset) if the env legitimately moved to ACTIVE. If the CAS rejected (a lost race — e.g. a
-		// DESTROY already tore it down), skip these so we don't resurrect a torn-down env's metadata;
-		// transitionEnv already logged + emitted a status-conflict alert.
-		if (moved) {
-			await db
-				.update(projectEnvironments)
-				.set({
-					deployed_config_hash: deployedHash,
-					last_deployed_at: new Date(),
-					auto_heal_failures: 0,
-				})
-				.where(eq(projectEnvironments.id, job.environment_id));
-		}
+		await db
+			.update(projectEnvironments)
+			.set({
+				deployed_config_hash: deployedHash,
+				last_deployed_at: new Date(),
+				auto_heal_failures: 0,
+			})
+			.where(eq(projectEnvironments.id, environmentId));
 	}
 }
 
