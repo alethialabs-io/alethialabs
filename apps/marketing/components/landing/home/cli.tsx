@@ -17,7 +17,7 @@ const CMDS: [string, string][] = [
 	["project destroy", "Tear a Project down safely"],
 ];
 
-const INSTALL = "brew install alethialabs-io/alethia";
+const INSTALL = "brew install alethialabs-io/tap/alethia";
 
 /** 08 · alethia CLI — the terminal is the deploy button. */
 export function Cli() {

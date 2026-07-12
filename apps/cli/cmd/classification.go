@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -67,7 +66,17 @@ func dimensionRows(dims []api.ClassificationDimension) [][]string {
 		if len(d.AppliesTo) > 0 {
 			applies = strings.Join(d.AppliesTo, ", ")
 		}
-		rows[i] = []string{d.Key, d.Label, mode, applies, strconv.Itoa(len(d.Values))}
+		// Show the value slugs, not just a count — `classification assign` takes a
+		// value-slug, so the slugs must be discoverable from this list.
+		values := ui.SymbolDash
+		if len(d.Values) > 0 {
+			slugs := make([]string, len(d.Values))
+			for j, v := range d.Values {
+				slugs[j] = v.Value
+			}
+			values = strings.Join(slugs, ", ")
+		}
+		rows[i] = []string{d.Key, d.Label, mode, applies, values}
 	}
 	return rows
 }

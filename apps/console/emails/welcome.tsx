@@ -21,7 +21,7 @@ const STEPS = [
 	{
 		n: "02",
 		title: "Install the CLI.",
-		body: "Plan, deploy, and destroy from the terminal — brew install alethia.",
+		body: "Plan, deploy, and destroy from the terminal — brew install alethialabs-io/tap/alethia.",
 	},
 	{
 		n: "03",

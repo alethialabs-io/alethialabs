@@ -7,8 +7,17 @@ description: Install Alethia via Homebrew, binary download, or from source.
 
 ## Homebrew (Recommended)
 
+One line, no prior setup:
+
 ```bash
 brew install alethialabs-io/tap/alethia
+```
+
+Or tap once, then install by the short name:
+
+```bash
+brew tap alethialabs-io/tap
+brew install alethia
 ```
 
 Updates via `brew upgrade alethia`. Works on macOS and Linux.
@@ -19,13 +28,14 @@ Pre-built binaries are available on GitHub Releases for every tagged version:
 
 | Platform | Architecture | Archive |
 |----------|-------------|---------|
-| macOS | Intel (amd64) | `alethia_darwin_amd64.tar.gz` |
-| macOS | Apple Silicon (arm64) | `alethia_darwin_arm64.tar.gz` |
-| Linux | amd64 | `alethia_linux_amd64.tar.gz` |
-| Linux | arm64 | `alethia_linux_arm64.tar.gz` |
+| macOS | Intel (amd64) | `alethia_Darwin_x86_64.tar.gz` |
+| macOS | Apple Silicon (arm64) | `alethia_Darwin_arm64.tar.gz` |
+| Linux | amd64 | `alethia_Linux_x86_64.tar.gz` |
+| Linux | arm64 | `alethia_Linux_arm64.tar.gz` |
+| Windows | amd64 | `alethia_Windows_x86_64.zip` |
 
 ```bash
-tar xzf alethia_darwin_arm64.tar.gz
+tar xzf alethia_Darwin_arm64.tar.gz
 mv alethia /usr/local/bin/
 alethia --version
 ```
