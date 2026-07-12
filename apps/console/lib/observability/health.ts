@@ -184,18 +184,39 @@ function aggregate(db: DbHealth, loops: LoopHealthReport[]): HealthStatus {
 	return "healthy";
 }
 
-/** Compute the deep-health document fresh (DB + loops + OTel, in parallel). Never throws. */
+/**
+ * Compute the deep-health document fresh (DB + loops + OTel, in parallel). NEVER throws: the sub-probes
+ * catch internally, and an OUTER guard turns any unexpected fault in the aggregation/loop-report path
+ * (e.g. a malformed heartbeat timestamp) into a fail-closed `unhealthy` document rather than a rejected
+ * promise — a health endpoint that 500s is useless, and readiness should drain a genuinely-unknown
+ * instance.
+ */
 async function buildDeepHealth(now: Date): Promise<DeepHealth> {
-	const [db, otel] = await Promise.all([probeDb(), probeOtel()]);
-	const loops = loopReports(now);
-	return {
-		status: aggregate(db, loops),
-		ts: now.toISOString(),
-		version: process.env.ALETHIA_VERSION ?? "dev",
-		db,
-		loops,
-		otel,
-	};
+	try {
+		const [db, otel] = await Promise.all([probeDb(), probeOtel()]);
+		const loops = loopReports(now);
+		return {
+			status: aggregate(db, loops),
+			ts: now.toISOString(),
+			version: process.env.ALETHIA_VERSION ?? "dev",
+			db,
+			loops,
+			otel,
+		};
+	} catch (err) {
+		return {
+			status: "unhealthy",
+			ts: now.toISOString(),
+			version: process.env.ALETHIA_VERSION ?? "dev",
+			db: {
+				reachable: false,
+				latencyMs: null,
+				error: `health computation failed: ${err instanceof Error ? err.message : String(err)}`,
+			},
+			loops: [],
+			otel: { configured: false, reachable: null },
+		};
+	}
 }
 
 // TTL cache + in-flight coalescing (module-scoped, per server process). Concurrent probes during a

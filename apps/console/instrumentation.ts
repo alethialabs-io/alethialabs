@@ -34,6 +34,12 @@ export async function register() {
 	// each heartbeat-stamped. Sibling to the loops above; idempotent + safe across instances.
 	const { startReconcileLoop } = await import("@/lib/reconcile/loop");
 	startReconcileLoop();
+	// Independent loop-liveness watcher — raises the throttled degraded alerts on its OWN interval, not
+	// hosted in any supervised loop, so a dead loop (incl. reconcile) can't mute alerting for all loops.
+	const { startHeartbeatWatcher } = await import(
+		"@/lib/observability/heartbeats"
+	);
+	startHeartbeatWatcher();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
 	await seedAuthz().catch((err) =>

@@ -19,18 +19,32 @@ import {
 	getLoopHeartbeats,
 	livenessOf,
 	registerLoop,
+	startHeartbeatWatcher,
 	superviseLoop,
 } from "@/lib/observability/heartbeats";
 
 const ORG_ENV = "ALETHIA_PLATFORM_ALERT_ORG_ID";
 const savedOrg = process.env[ORG_ENV];
 
+const globalForWatcher = globalThis as unknown as {
+	__alethiaHeartbeatWatcher?: ReturnType<typeof setInterval>;
+};
+/** Stop + clear the independent watcher interval so it can't leak across tests. */
+function clearWatcher() {
+	if (globalForWatcher.__alethiaHeartbeatWatcher) {
+		clearInterval(globalForWatcher.__alethiaHeartbeatWatcher);
+		delete globalForWatcher.__alethiaHeartbeatWatcher;
+	}
+}
+
 beforeEach(() => {
 	__resetLoopHeartbeats();
+	clearWatcher();
 	emitAlertEventSafe.mockReset();
 	process.env[ORG_ENV] = "org-ops";
 });
 afterEach(() => {
+	clearWatcher();
 	if (savedOrg === undefined) delete process.env[ORG_ENV];
 	else process.env[ORG_ENV] = savedOrg;
 });
@@ -144,5 +158,42 @@ describe("evaluateHeartbeatAlerts — one throttled alert per episode", () => {
 		expect(emitAlertEventSafe).not.toHaveBeenCalled();
 		// …but the degradation is still observable in the registry for /health.
 		expect(livenessOf(getLoopHeartbeats()[0], degradedNow("fleet-scaler"))).toBe("degraded");
+	});
+});
+
+describe("startHeartbeatWatcher (independent)", () => {
+	it("fires evaluateHeartbeatAlerts on its own interval — a dead loop can't mute alerting", () => {
+		vi.useFakeTimers();
+		try {
+			// A loop that's already degraded (registered, never succeeded, aged past its window).
+			const hb = registerLoop("w", { intervalMs: 1_000, degradedMultiplier: 1 });
+			hb.createdAt = new Date(Date.now() - 60_000).toISOString();
+			hb.lastRunAt = hb.createdAt;
+
+			startHeartbeatWatcher(500);
+			expect(emitAlertEventSafe).not.toHaveBeenCalled(); // nothing until the interval fires
+			vi.advanceTimersByTime(500);
+			expect(emitAlertEventSafe).toHaveBeenCalledWith(
+				"org-ops",
+				"system.platform.loop_degraded",
+				expect.objectContaining({ resource_id: "w" }),
+			);
+		} finally {
+			clearWatcher();
+			vi.useRealTimers();
+		}
+	});
+
+	it("is idempotent — a second start does not add a second interval", () => {
+		vi.useFakeTimers();
+		try {
+			startHeartbeatWatcher(500);
+			const first = globalForWatcher.__alethiaHeartbeatWatcher;
+			startHeartbeatWatcher(500);
+			expect(globalForWatcher.__alethiaHeartbeatWatcher).toBe(first);
+		} finally {
+			clearWatcher();
+			vi.useRealTimers();
+		}
 	});
 });

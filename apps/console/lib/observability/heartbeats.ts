@@ -66,7 +66,12 @@ const globalForHeartbeats = globalThis as unknown as {
 	__alethiaLoopHeartbeats?: Map<string, LoopHeartbeat>;
 	/** Per-loop episode latch: true while we've already alerted for the current degraded episode. */
 	__alethiaLoopAlerted?: Map<string, boolean>;
+	/** The independent watcher interval (drives evaluateHeartbeatAlerts), separate from any loop. */
+	__alethiaHeartbeatWatcher?: ReturnType<typeof setInterval>;
 };
+
+/** How often the independent watcher evaluates every loop's liveness (drives the degraded alerts). */
+const WATCHER_INTERVAL_MS = 30_000;
 
 /** The shared registry (one entry per loop id), on globalThis so it survives HMR + is process-wide. */
 function registry(): Map<string, LoopHeartbeat> {
@@ -189,9 +194,30 @@ export function ageMsOf(hb: LoopHeartbeat, now: Date = new Date()): number | nul
 }
 
 /**
+ * Start the INDEPENDENT heartbeat watcher: a dedicated interval that runs `evaluateHeartbeatAlerts` on
+ * its own cadence, deliberately NOT hosted inside any supervised loop — especially not the reconcile
+ * loop it watches. If the watcher lived in the reconcile tick, a dead reconcile loop would silently
+ * mute alerting for EVERY loop (including reconcile's own death). This watcher only reads in-memory
+ * heartbeats + emits alerts (no DB/IO that could wedge it), so it is the most robust host; /health
+ * readiness (degraded surfaced on probe) remains the external backstop if even this dies. Idempotent
+ * across HMR/instances; each pass is wrapped so it can never become an unhandled rejection.
+ */
+export function startHeartbeatWatcher(intervalMs = WATCHER_INTERVAL_MS): void {
+	if (globalForHeartbeats.__alethiaHeartbeatWatcher) return;
+	globalForHeartbeats.__alethiaHeartbeatWatcher = setInterval(() => {
+		try {
+			evaluateHeartbeatAlerts(new Date());
+		} catch (err) {
+			hlog.error("heartbeat watcher pass failed", { err });
+		}
+	}, intervalMs);
+}
+
+/**
  * The supervisor pass: evaluate every loop's liveness and raise a throttled platform alert on the
- * ok→degraded edge (and clear it on degraded→ok). Called by the reconcile watcher tick (a real 60s
- * cadence independent of any probe) — NOT by /health, so reading health has no alerting side effects.
+ * ok→degraded edge (and clear it on degraded→ok). Driven by the INDEPENDENT watcher interval
+ * (`startHeartbeatWatcher`), not by any supervised loop and NOT by /health, so a dead loop can't mute
+ * alerting and reading health has no alerting side effects.
  *
  * Throttling is two-layered: an in-memory episode latch fires AT MOST ONE `loop_degraded` per degraded
  * episode (not once per tick), and the alert rule's own `throttle_seconds` collapses repeats across app

@@ -13,11 +13,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
-import {
-	evaluateHeartbeatAlerts,
-	registerLoop,
-	superviseLoop,
-} from "@/lib/observability/heartbeats";
+import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
@@ -63,13 +59,14 @@ export function startReconcileLoop(): void {
 /**
  * Run one reconcile pass immediately — useful for tests + an on-demand converge after a known drop.
  * The whole pass is heartbeat-supervised at the loop level: `runTask` still isolates each reconciler
- * (a throw never aborts siblings), and after the pass we surface any sub-task that failed THIS tick as a
- * loop-level error so a persistently-failing reconciler flips the reconcile loop to DEGRADED in /health.
- * The tick then runs the supervisor pass (`evaluateHeartbeatAlerts`) — the real 60s watcher over EVERY
- * loop (not just this one), independent of any /health probe, that raises the throttled degraded alerts.
+ * (a throw never aborts siblings), and after the pass we surface any sub-task currently in a FAILED
+ * STATE (its most recent run errored and hasn't since recovered) as a loop-level error — so a
+ * persistently-failing COLD reconciler (e.g. a 15m GC that errors) keeps the reconcile loop DEGRADED
+ * across the intervening 60s ticks, instead of the next not-due tick silently re-stamping success and
+ * hiding it. The independent heartbeat watcher (`startHeartbeatWatcher`), NOT this tick, raises the
+ * throttled degraded alerts — so a dead reconcile loop can't mute alerting for every loop.
  */
 export async function tick(now: Date = new Date()): Promise<void> {
-	const tickStartedAt = Date.now();
 	await superviseLoop(RECONCILE_LOOP_ID, async () => {
 		const db = getServiceDb();
 
@@ -93,20 +90,24 @@ export async function tick(now: Date = new Date()): Promise<void> {
 			await runTask("gc-fleet-actions", () => gcFleetActions(db));
 		}
 
-		// Bubble any reconciler that FAILED during this pass up to the loop heartbeat (runTask already
-		// recorded + isolated it per-task). This keeps the loop "alive" for a transient blip but flips it
-		// DEGRADED if a reconciler keeps failing — without ever aborting a sibling in the same tick.
-		const failedThisTick = getHeartbeats().filter(
-			(h) => h.lastErrorAt && new Date(h.lastErrorAt).getTime() >= tickStartedAt,
+		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already
+		// recorded + isolated it per-task). "Failed state" = the task's most recent run errored and it
+		// hasn't succeeded since — NOT merely "failed this tick". This latches a persistently-broken COLD
+		// task (e.g. a 15m GC erroring) so the reconcile loop stays DEGRADED across the ~15 intervening
+		// 60s ticks (where the task isn't due) until it next succeeds, instead of those not-due ticks
+		// re-stamping the loop healthy and hiding the breakage. A transient one-off failure self-heals on
+		// the task's next successful run. Never aborts a sibling in the same tick.
+		const failed = getHeartbeats().filter(
+			(h) =>
+				h.lastErrorAt &&
+				(!h.lastSuccessAt ||
+					new Date(h.lastErrorAt).getTime() > new Date(h.lastSuccessAt).getTime()),
 		);
-		if (failedThisTick.length > 0) {
+		if (failed.length > 0) {
 			throw new Error(
-				`reconcile: ${failedThisTick.map((h) => h.task).join(", ")} failed this pass`,
+				`reconcile: ${failed.map((h) => h.task).join(", ")} in failed state (last run errored)`,
 			);
 		}
 		llog.debug("reconcile tick complete");
 	});
-
-	// Watcher pass: evaluate liveness of EVERY supervised loop and raise throttled degraded alerts.
-	evaluateHeartbeatAlerts(now);
 }

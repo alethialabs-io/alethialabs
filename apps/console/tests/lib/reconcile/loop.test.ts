@@ -16,6 +16,10 @@ vi.mock("@/lib/reconcile/gc", () => ({
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
 }));
 
+import {
+	__resetLoopHeartbeats,
+	getLoopHeartbeats,
+} from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
@@ -30,6 +34,7 @@ let intervalCalls: number;
 beforeEach(() => {
 	vi.clearAllMocks();
 	__resetHeartbeats();
+	__resetLoopHeartbeats();
 	delete G.__alethiaReconcileLoop;
 	process.env.ALETHIA_DATABASE_URL = "postgres://x";
 	intervalCalls = 0;
@@ -99,5 +104,24 @@ describe("tick — fan-out", () => {
 		expect(sweepDriftSchedule).not.toHaveBeenCalled();
 		expect(gcJobLogs).not.toHaveBeenCalled();
 		expect(gcFleetActions).not.toHaveBeenCalled();
+	});
+
+	it("keeps the loop DEGRADED across not-due ticks while a cold task stays in failed state", async () => {
+		// gc-job-logs (15m) fails on its due tick → it's in a FAILED STATE (last run errored).
+		vi.mocked(gcJobLogs).mockRejectedValueOnce(new Error("gc boom"));
+		await tick(new Date());
+		let loop = getLoopHeartbeats().find((l) => l.id === "reconcile");
+		expect(loop?.lastError).toContain("gc-job-logs");
+		const failuresAfterFirst = loop?.failures ?? 0;
+		expect(failuresAfterFirst).toBeGreaterThan(0);
+
+		// 90s later: GC (15m) is NOT due, so it doesn't re-run — but it's still in a failed state.
+		// The loop must STAY degraded (the tick re-throws off the latched failure), NOT re-stamp healthy.
+		vi.clearAllMocks();
+		await tick(new Date(Date.now() + 90_000));
+		expect(gcJobLogs).not.toHaveBeenCalled(); // proves it's the LATCH, not a re-run failing again
+		loop = getLoopHeartbeats().find((l) => l.id === "reconcile");
+		expect(loop?.lastError).toContain("gc-job-logs");
+		expect(loop?.failures).toBeGreaterThan(failuresAfterFirst);
 	});
 });
