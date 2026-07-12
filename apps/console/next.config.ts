@@ -52,6 +52,10 @@ const nextConfig: NextConfig = {
 	serverExternalPackages: [
 		"@alethia/ee",
 		"pino",
+		// Sentry error tracking is server-only (booted in instrumentation.ts, DSN-gated). Keep it
+		// external — like the OTel packages below — so it is not statically bundled into the
+		// client/edge graphs and a DSN-less build carries no error-tracking weight there.
+		"@sentry/nextjs",
 		"@opentelemetry/api",
 		"@opentelemetry/resources",
 		"@opentelemetry/sdk-trace-node",

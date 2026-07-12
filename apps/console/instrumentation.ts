@@ -12,6 +12,16 @@ export async function register() {
 	// nothing (no auto-instrumentations), so the sibling loops below are unaffected.
 	const { startOtel } = await import("@/lib/observability/otel");
 	startOtel();
+	// Sentry error tracking (DSN-gated: a complete no-op unless SENTRY_DSN is set — @sentry/nextjs is
+	// not even imported). Booted AFTER OTel and configured to NOT install its own tracer/propagator
+	// (skipOpenTelemetrySetup) so the OTel SDK above + the sibling loops below are untouched. Never
+	// throws — a bad DSN degrades to no error tracking, it can't crash startup.
+	if (process.env.SENTRY_DSN) {
+		const { initSentryServer } = await import("@/lib/observability/sentry");
+		await initSentryServer().catch((err) =>
+			startupLog.error("sentry init failed", { component: "sentry", err }),
+		);
+	}
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
 	// In-app fleet controller (sibling loop). Pools live in the DB; import any legacy
@@ -89,5 +99,17 @@ export async function onRequestError(
 				digest: e?.digest ?? "",
 			},
 		});
+		// Also forward to Sentry (→ self-hosted GlitchTip) when SENTRY_DSN is set. DSN-gated no-op
+		// otherwise; fire-and-forget + best-effort so it never blocks or masks the original error.
+		if (process.env.SENTRY_DSN) {
+			const { captureServerError } = await import("@/lib/observability/sentry");
+			void captureServerError(error, {
+				path: request.path,
+				method: request.method,
+				routeType: context.routeType,
+				routePath: context.routePath,
+				digest: e?.digest,
+			});
+		}
 	}
 }
