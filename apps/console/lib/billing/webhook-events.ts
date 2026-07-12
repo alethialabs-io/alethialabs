@@ -51,6 +51,20 @@ export async function markWebhookEventDone(eventId: string): Promise<void> {
 }
 
 /**
+ * Break-glass replay support: forget a stored event id so it can be re-dispatched. The exactly-once
+ * guard short-circuits an already-`done` event, so a deliberate operator replay must first reset the
+ * row. Deletes it (rather than flipping status) so the subsequent claim starts clean; a no-op if the
+ * id was never seen. Returns whether a row existed. Used ONLY by the audited break-glass replay path.
+ */
+export async function resetWebhookEvent(eventId: string): Promise<boolean> {
+	const deleted = await getServiceDb()
+		.delete(stripeWebhookEvent)
+		.where(eq(stripeWebhookEvent.eventId, eventId))
+		.returning({ eventId: stripeWebhookEvent.eventId });
+	return deleted.length > 0;
+}
+
+/**
  * Marks a claimed event as failed (records the error, leaves it re-claimable). The
  * handler returns 500 so Stripe retries the delivery.
  */
