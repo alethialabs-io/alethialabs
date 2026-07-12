@@ -560,6 +560,13 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	if err := tf.Apply(ctx, planFile); err != nil {
 		return nil, fmt.Errorf("tofu apply failed: %w", err)
 	}
+	// Apply returned cleanly ⇒ tofu state is fully persisted, so nothing is orphaned OUTSIDE
+	// state. Reset the phase marker: without this it stays "apply" through every post-apply
+	// stage (kubeconfig, CNI bootstrap, the reachability gate, argocd, addons), and an
+	// interruption there (2h deadline, drain) would FALSELY flag orphan_risk on a deploy whose
+	// resources are all tracked. "apply" must mean strictly "apply in-flight / state maybe not
+	// yet persisted" — the true orphan window.
+	writePhase(params.PhaseFile, "applied")
 
 	outputs, err := tf.Output(ctx)
 	if err != nil {

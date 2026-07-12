@@ -504,12 +504,16 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			"runner_id": w.config.RunnerID,
 		})
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
-		// A non-cancel mid-apply interruption (the 2h jobCtx deadline, a shutdown-drain SIGKILL,
-		// or a crash-recovery) fails rather than cancels, but may still have left cloud resources
-		// outside tofu state. When the deploy path flagged that (see shouldMarkOrphanRisk), attach
-		// the SAME orphan_risk signal the cancel path posts so the terminal metadata honestly
-		// records that an operator must reconcile. reap() runs only after executeJob returns
-		// (claimLoop), and UpdateJobStatus posts context-free, so the flag survives a drain here.
+		// A non-cancel mid-apply interruption that this process still gets to observe — the 2h
+		// jobCtx deadline, or a shutdown-drain that cancels the root ctx after the grace period —
+		// fails rather than cancels, but may have left cloud resources outside tofu state. When the
+		// deploy path flagged that (see shouldMarkOrphanRisk), attach the SAME orphan_risk signal
+		// the cancel path posts so the terminal metadata honestly records that an operator must
+		// reconcile. reap() runs only after executeJob returns (claimLoop), and UpdateJobStatus
+		// posts context-free, so the flag survives a drain here. NOTE: a HARD kill (SIGKILL / panic)
+		// mid-apply never reaches this code, so it can't be flagged here — the server-side stale-job
+		// reconciler is the backstop for that (it settles the env to FAILED; it can't see the
+		// runner-local phase marker, so it's an orphan-blind backstop).
 		var failMeta map[string]any
 		if w.cancels.orphanRisk(job.ID) {
 			failMeta = map[string]any{

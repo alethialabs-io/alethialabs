@@ -196,12 +196,13 @@ export async function PUT(
 						severity: "critical",
 						...base,
 					});
-					// A non-cancel mid-apply interruption (the runner's 2h deadline or a
-					// shutdown-drain SIGKILL) posts FAILED — not CANCELLED — but can still leave
-					// cloud resources outside tofu state. When the runner flagged orphan risk,
-					// raise the SAME distinct critical alert the cancel path raises so an operator
-					// reconciles cloud vs state. The env already moved to FAILED via deployFailed
-					// below, so no additional env-state change is needed here.
+					// A non-cancel mid-apply interruption the runner observed (its 2h deadline or a
+					// graceful shutdown-drain) posts FAILED — not CANCELLED — but can still leave
+					// cloud resources outside tofu state. When the runner flagged orphan risk, raise
+					// the SAME distinct critical alert the cancel path raises so an operator reconciles
+					// cloud vs state. The env already moved to FAILED via deployFailed below, so no
+					// additional env-state change is needed here. (A hard SIGKILL/crash mid-apply is
+					// not flagged by the runner; the server-side stale-job reconciler is the backstop.)
 					if (job.execution_metadata?.orphan_risk === true) {
 						emitAlertEventSafe(job.org_id, "system.project.orphan_risk", {
 							title: "Possible orphaned resources after interrupted apply",

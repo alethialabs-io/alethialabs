@@ -523,6 +523,11 @@ func TestShouldMarkOrphanRisk(t *testing.T) {
 		{"apply+clean-failure", "apply", false, nil, false},
 		{"pre-apply+deadline", "", false, context.DeadlineExceeded, false},
 		{"pre-apply+user-cancel", "", true, nil, false},
+		// Post-apply interruption: apply succeeded (phase reset to "applied"), so tofu state IS
+		// persisted — an interruption during kubeconfig/CNI/reachability/argocd/addons must NOT
+		// falsely flag orphan_risk. This is the over-alert the phase reset closes.
+		{"post-apply+deadline", "applied", false, context.DeadlineExceeded, false},
+		{"post-apply+user-cancel", "applied", true, nil, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
