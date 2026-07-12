@@ -39,7 +39,7 @@ terraform {
     # Pinned explicitly so the keystone is reproducible.
     kind = {
       source  = "tehcyx/kind"
-      version = ">= 0.9, < 1.0"
+      version = "0.11.0"
     }
   }
 }

@@ -199,12 +199,25 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: ${{ matrix.module }}/go.sum
+      # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
+      # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
+      # would make the keystone's per-PR signal hollow. Install it so the test actually runs.
+      - uses: opentofu/setup-opentofu@v1
+        if: matrix.module == 'packages/core'
+        with:
+          tofu_version: "1.9.0"
       - name: Build · vet · test (with coverage)
         working-directory: ${{ matrix.module }}
         run: |
           go build ./...
           go vet ./...
           go test -coverprofile=cover.out ./...
+      # Compile-check the docker-gated e2e_local keystone (it's excluded from the default
+      # build tags, so a break in deploy_e2e_test.go would otherwise escape all of CI).
+      - name: Vet e2e_local keystone (compile check)
+        if: matrix.module == 'packages/core'
+        working-directory: ${{ matrix.module }}
+        run: go vet -tags=e2e_local ./provisioner/
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}

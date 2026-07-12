@@ -143,3 +143,23 @@ variable "hetzner_s3_secret_key" {
   default     = ""
   sensitive   = true
 }
+
+# The hetzner ProviderTfvars also emits these pluggable-connector selectors; declare
+# them so a local apply/destroy is warning-free (they have no effect on a kind cluster).
+variable "dns_provider" {
+  description = "Ignored (no DNS connector for a local cluster)."
+  type        = string
+  default     = ""
+}
+
+variable "registry_provider" {
+  description = "Ignored (no registry connector for a local cluster)."
+  type        = string
+  default     = ""
+}
+
+variable "secrets_provider" {
+  description = "Ignored (no secrets connector for a local cluster)."
+  type        = string
+  default     = ""
+}
