@@ -287,52 +287,65 @@ function pinnedLookup(addresses: LookupAddress[]): LookupFunction {
  * @throws {SsrfError} if the URL, any resolved address, or any redirect target is unsafe.
  */
 export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
-	const timeout = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
-	const signal =
-		init?.signal != null ? AbortSignal.any([init.signal, timeout]) : timeout;
+	// Combine the caller's signal with a request-wide timeout using a plain AbortController —
+	// avoids AbortSignal.any/AbortSignal.timeout, which the jsdom test env (and older runtimes)
+	// don't provide. Cleared in `finally` so the timer never leaks.
+	const controller = new AbortController();
+	const caller = init?.signal ?? null;
+	const onCallerAbort = () => controller.abort();
+	if (caller) {
+		if (caller.aborted) controller.abort();
+		else caller.addEventListener("abort", onCallerAbort, { once: true });
+	}
+	const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 
-	let currentUrl = url;
-	for (let hop = 0; ; hop++) {
-		const { url: parsed, addresses } = await assertSafeUrl(currentUrl);
-		const agent = new Agent({
-			connect: { lookup: pinnedLookup(addresses), timeout: DEFAULT_TIMEOUT_MS },
-		});
+	try {
+		let currentUrl = url;
+		for (let hop = 0; ; hop++) {
+			const { url: parsed, addresses } = await assertSafeUrl(currentUrl);
+			const agent = new Agent({
+				connect: { lookup: pinnedLookup(addresses), timeout: DEFAULT_TIMEOUT_MS },
+			});
 
-		const requestInit: RequestInit = {
-			...init,
-			redirect: "manual",
-			signal,
-			dispatcher: agent,
-		};
+			const requestInit: RequestInit = {
+				...init,
+				redirect: "manual",
+				signal: controller.signal,
+				dispatcher: agent,
+			};
 
-		// NB: undici's own fetch, not Node's global fetch. Node's built-in fetch ships
-		// its own bundled undici, which rejects a dispatcher built from this (separately
-		// installed) undici version — so the pinning dispatcher only works via this fetch.
-		let res: Response;
-		try {
-			res = await undiciFetch(parsed, requestInit);
-		} catch (err) {
-			void agent.close().catch(() => {});
-			throw err;
-		}
-
-		if (isRedirectStatus(res.status)) {
-			const location = res.headers.get("location");
-			if (location) {
-				// Discard this hop's body and reap its connection pool before continuing.
-				await res.body?.cancel().catch(() => {});
+			// NB: undici's own fetch, not Node's global fetch. Node's built-in fetch ships
+			// its own bundled undici, which rejects a dispatcher built from this (separately
+			// installed) undici version — so the pinning dispatcher only works via this fetch.
+			let res: Response;
+			try {
+				res = await undiciFetch(parsed, requestInit);
+			} catch (err) {
 				void agent.close().catch(() => {});
-				if (hop >= MAX_REDIRECTS) {
-					throw new SsrfError(`Too many redirects (>${MAX_REDIRECTS}).`);
-				}
-				// Resolve relative Locations against the current URL; the next loop
-				// iteration re-runs assertSafeUrl, rejecting a redirect to a private host.
-				currentUrl = new URL(location, parsed).toString();
-				continue;
+				throw err;
 			}
+
+			if (isRedirectStatus(res.status)) {
+				const location = res.headers.get("location");
+				if (location) {
+					// Discard this hop's body and reap its connection pool before continuing.
+					await res.body?.cancel().catch(() => {});
+					void agent.close().catch(() => {});
+					if (hop >= MAX_REDIRECTS) {
+						throw new SsrfError(`Too many redirects (>${MAX_REDIRECTS}).`);
+					}
+					// Resolve relative Locations against the current URL; the next loop
+					// iteration re-runs assertSafeUrl, rejecting a redirect to a private host.
+					currentUrl = new URL(location, parsed).toString();
+					continue;
+				}
+			}
+			// Final response: the caller owns the body, so leave the socket to undici's
+			// keep-alive reaper rather than closing the agent out from under it.
+			return res;
 		}
-		// Final response: the caller owns the body, so leave the socket to undici's
-		// keep-alive reaper rather than closing the agent out from under it.
-		return res;
+	} finally {
+		clearTimeout(timer);
+		if (caller) caller.removeEventListener("abort", onCallerAbort);
 	}
 }
