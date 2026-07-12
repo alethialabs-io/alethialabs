@@ -20,7 +20,11 @@ import {
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectEnvironments } from "@/lib/db/schema";
+import {
+	type EnvTransitionContext,
+	transitionEnv,
+} from "@/lib/db/env-status";
+import { jobs } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
@@ -120,26 +124,33 @@ export async function PUT(
 			// environment_id). Legacy / non-project jobs without one simply skip the update.
 			if (job?.project_id && job.environment_id) {
 				const environmentId = job.environment_id;
-				const setEnvStatus = (s: "PROVISIONING" | "FAILED" | "DRAFT") =>
-					db
-						.update(projectEnvironments)
-						.set({ status: s })
-						.where(eq(projectEnvironments.id, environmentId));
+				const envMeta = {
+					orgId: job.org_id,
+					projectId: job.project_id,
+				};
+				// Route EVERY env-status write through the CAS RPC (lib/db/env-status.ts) so a
+				// late/racing runner callback can't clobber a newer terminal state (last-writer-wins).
+				// A rejected transition (a lost race) is logged + alerted inside transitionEnv and
+				// never throws — a status callback must never fail on a lost race. A dropped-but-legal
+				// update surfaces via that alert; converging it is the B2c reconciler backstop.
+				const move = (context: EnvTransitionContext) =>
+					transitionEnv(db, environmentId, context, jobId, envMeta);
 				if (job.job_type === "DEPLOY") {
 					if (status === "PROCESSING") {
-						await setEnvStatus("PROVISIONING");
+						await move("deployStart");
 					} else if (status === "FAILED") {
-						await setEnvStatus("FAILED");
+						await move("deployFailed");
 						// A promotion's deploy failed → mark the promotion FAILED (no-op otherwise).
 						await failPromotionForJob(jobId).catch((err) =>
 							jlog.error("fail promotion (deploy) error", { err }),
 						);
 					} else if (status === "SUCCESS") {
 						try {
+							// finalizeDeployment moves the env to ACTIVE through the same CAS.
 							await finalizeDeployment(jobId);
 						} catch (err) {
 							jlog.error("finalize deployment error", { err });
-							await setEnvStatus("FAILED");
+							await move("deployFailed");
 						}
 						// Mark a promotion SUCCEEDED if this deploy was one (no-op otherwise).
 						await finalizePromotionOnDeploy(jobId).catch((err) =>
@@ -147,22 +158,27 @@ export async function PUT(
 						);
 					}
 				} else if (job.job_type === "DESTROY") {
-					// A successful DESTROY tore down the env's infra — clear the BYO-IaC
-					// deployed-commit pin so the source can be detached again (finalizeDeployment
-					// no-ops for template envs). Best-effort: never fail the status update.
-					if (status === "SUCCESS") {
+					if (status === "PROCESSING") {
+						await move("destroyStart");
+					} else if (status === "FAILED") {
+						await move("destroyFailed");
+					} else if (status === "SUCCESS") {
+						// A successful DESTROY tore down the env's infra — clear the BYO-IaC
+						// deployed-commit pin so the source can be detached again (finalizeDeployment
+						// no-ops for template envs). Best-effort: never fail the status update.
 						await finalizeDeployment(jobId).catch((err) =>
 							jlog.error("finalize destroy error", { err }),
 						);
+						await move("destroySuccess");
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
-						await setEnvStatus("FAILED");
+						await move("planFailed");
 						await failPromotionForJob(jobId).catch((err) =>
 							jlog.error("fail promotion (plan) error", { err }),
 						);
 					} else if (status === "SUCCESS") {
-						await setEnvStatus("DRAFT");
+						await move("planSuccess");
 						// If this PLAN backs a promotion, evaluate its gates now (deploy / await / block).
 						await advancePromotionOnPlan(jobId).catch((err) =>
 							jlog.error("advance promotion error", { err }),

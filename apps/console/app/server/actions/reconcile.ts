@@ -12,6 +12,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { transitionEnv } from "@/lib/db/env-status";
 import { environmentDrift, jobs, projectEnvironments } from "@/lib/db/schema";
 import { newTraceparent } from "@/lib/observability/trace";
 import { structuralHash } from "@/lib/promotions/diff";
@@ -43,8 +44,11 @@ export async function maybeAutoHeal(
 	if (!env || !env.auto_heal) return;
 	// Production is always approval-gated — surface the drift, never auto-apply.
 	if (env.stage === "production") return;
-	// Never apply while another job is touching this env's state (one tofu apply per state).
-	if (["QUEUED", "PROVISIONING", "DESTROYING"].includes(env.status)) return;
+	// Never apply while another job is touching this env's state (one tofu apply per state), and
+	// never resurrect a deliberately torn-down env (DESTROYED). The enqueueAutoHeal CAS below
+	// enforces the same from-set; this early-out just avoids the wasted last-deploy lookup.
+	if (["QUEUED", "PROVISIONING", "DESTROYING", "DESTROYED"].includes(env.status))
+		return;
 	// Circuit breaker: stop retrying after repeated failures (drift is still surfaced for a human).
 	if (env.auto_heal_failures >= MAX_AUTO_HEAL_FAILURES) return;
 	// Exponential backoff since the last auto-heal attempt.
@@ -76,6 +80,19 @@ export async function maybeAutoHeal(
 		.limit(1);
 	if (!lastDeploy) return;
 
+	// Move the env to QUEUED through the CAS FIRST (lib/db/env-status.ts). If it lost the race — a
+	// concurrent transition moved the env out of a healable state between the SELECT above and here —
+	// bail before queuing an orphan auto-heal job that would deploy onto a torn-down / in-flight env.
+	const moved = await transitionEnv(db, environmentId, "enqueueAutoHeal", null, {
+		orgId: env.org_id,
+		projectId,
+	});
+	if (!moved) return;
+	await db
+		.update(projectEnvironments)
+		.set({ last_auto_heal_at: new Date() })
+		.where(eq(projectEnvironments.id, environmentId));
+
 	const [job] = await db
 		.insert(jobs)
 		.values({
@@ -91,10 +108,6 @@ export async function maybeAutoHeal(
 			traceparent: newTraceparent(),
 		})
 		.returning({ id: jobs.id });
-	await db
-		.update(projectEnvironments)
-		.set({ status: "QUEUED", last_auto_heal_at: new Date() })
-		.where(eq(projectEnvironments.id, environmentId));
 	void job;
 	notifyScaler();
 }

@@ -11,6 +11,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { transitionEnv } from "@/lib/db/env-status";
 import {
 	environmentDrift,
 	environmentPromotions,
@@ -631,6 +632,19 @@ async function applyGateDecision(
 ): Promise<void> {
 	const now = new Date();
 	if (evaluation.overall === "pass") {
+		// Move the target env to QUEUED through the CAS FIRST (lib/db/env-status.ts). This runs on the
+		// service DB from a runner-callback chain (advancePromotionOnPlan) — NOT a transaction — so on a
+		// lost race (the env moved out of a deployable state under the promotion) we must not insert an
+		// orphan DEPLOY job: bail without advancing the promotion. transitionEnv logged + alerted, and
+		// the B2c reconciler backstop converges any stranded promotion.
+		const moved = await transitionEnv(
+			db,
+			promotion.target_environment_id,
+			"enqueueDeploy",
+			null,
+			{ orgId: promotion.org_id, projectId: promotion.project_id },
+		);
+		if (!moved) return;
 		// Reuse the plan job's frozen snapshot for an idempotent DEPLOY of the candidate.
 		const [job] = await db
 			.insert(jobs)
@@ -646,10 +660,6 @@ async function applyGateDecision(
 				status: "QUEUED",
 			})
 			.returning({ id: jobs.id });
-		await db
-			.update(projectEnvironments)
-			.set({ status: "QUEUED" })
-			.where(eq(projectEnvironments.id, promotion.target_environment_id));
 		await db
 			.update(environmentPromotions)
 			.set({ status: "DEPLOYING", deploy_job_id: job.id, gate_evaluations: evaluation, updated_at: now })

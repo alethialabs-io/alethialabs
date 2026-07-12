@@ -59,6 +59,7 @@ function setupTx(cfg: {
 }) {
 	const valuesSpy = vi.fn<(table: unknown, payload: unknown) => void>();
 	const setSpy = vi.fn<(table: unknown, payload: unknown) => void>();
+	const executeSpy = vi.fn();
 	const def = cfg.default ?? [];
 
 	const resolve = (map: Map<unknown, RowsResolver> | undefined, table: unknown): Rows => {
@@ -107,12 +108,18 @@ function setupTx(cfg: {
 		insert: (t: unknown) => makeChain("insert", t),
 		update: (t: unknown) => makeChain("update", t),
 		delete: (t: unknown) => makeChain("delete", t),
+		// The enqueue actions route env→QUEUED through the set_env_status CAS (tx.execute); a
+		// truthy `updated` lets the transition succeed so the enqueue commits.
+		execute: (query: unknown) => {
+			executeSpy(query);
+			return Promise.resolve([{ updated: true }]);
+		},
 	};
 
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
-	return { valuesSpy, setSpy };
+	return { valuesSpy, setSpy, executeSpy };
 }
 
 /** Pulls the single `.values()` payload recorded against a given schema table. */
@@ -216,7 +223,7 @@ beforeEach(() => {
 
 describe("POST /api/jobs (CLI queue)", () => {
 	it("PLAN freezes the NESTED console snapshot (provider/environment_stage/cluster/dns), not the flat project_full row", async () => {
-		const { valuesSpy, setSpy } = setupTx({
+		const { valuesSpy, executeSpy } = setupTx({
 			select: snapshotSelect(),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
@@ -264,7 +271,8 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(Array.isArray(snapshot.addons)).toBe(true);
 
 		// Env flipped to QUEUED by the action, scaler notified, plan→apply hash kept.
-		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		// Env flipped to QUEUED via the set_env_status CAS (tx.execute), not a bare .set().
+		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(updateSetSpy).toHaveBeenCalledWith({
 			configuration_hash: expect.stringMatching(/^[0-9a-f]{64}$/),

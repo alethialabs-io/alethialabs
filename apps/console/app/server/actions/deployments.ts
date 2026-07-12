@@ -5,6 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
+import { transitionEnv } from "@/lib/db/env-status";
 import {
 	jobs,
 	projectCaches,
@@ -85,6 +86,7 @@ export async function finalizeDeployment(jobId: string) {
 	const [job] = await db
 		.select({
 			status: jobs.status,
+			org_id: jobs.org_id,
 			project_id: jobs.project_id,
 			environment_id: jobs.environment_id,
 			job_type: jobs.job_type,
@@ -291,15 +293,30 @@ export async function finalizeDeployment(jobId: string) {
 	// soak timer, config-vs-desired divergence), and reset the auto-heal failure counter.
 	if (job.environment_id) {
 		const deployedHash = await deployedStructuralHash(db, projectId, environmentId);
-		await db
-			.update(projectEnvironments)
-			.set({
-				status: "ACTIVE",
-				deployed_config_hash: deployedHash,
-				last_deployed_at: new Date(),
-				auto_heal_failures: 0,
-			})
-			.where(eq(projectEnvironments.id, job.environment_id));
+		// Move the env to ACTIVE through the CAS (lib/db/env-status.ts): deploySuccess is legal only
+		// from PROVISIONING|QUEUED, so a late DEPLOY-SUCCESS can't clobber a DESTROYED (or otherwise
+		// already-terminal) env back to ACTIVE — the last-writer-wins bug this whole change fixes.
+		const moved = await transitionEnv(
+			db,
+			job.environment_id,
+			"deploySuccess",
+			jobId,
+			{ orgId: job.org_id, projectId },
+		);
+		// Only stamp the day-2 governance fields (deployed fingerprint + soak timer + auto-heal
+		// reset) if the env legitimately moved to ACTIVE. If the CAS rejected (a lost race — e.g. a
+		// DESTROY already tore it down), skip these so we don't resurrect a torn-down env's metadata;
+		// transitionEnv already logged + emitted a status-conflict alert.
+		if (moved) {
+			await db
+				.update(projectEnvironments)
+				.set({
+					deployed_config_hash: deployedHash,
+					last_deployed_at: new Date(),
+					auto_heal_failures: 0,
+				})
+				.where(eq(projectEnvironments.id, job.environment_id));
+		}
 	}
 }
 

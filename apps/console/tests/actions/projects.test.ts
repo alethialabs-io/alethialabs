@@ -75,12 +75,16 @@ function setupDb(cfg: {
 	select?: Map<unknown, RowsResolver>;
 	insert?: Map<unknown, RowsResolver>;
 	default?: Rows;
+	/** Result of the env-status CAS RPC (set_env_status via tx.execute). true = env moved. */
+	envCasUpdated?: boolean;
 }) {
 	const valuesSpy = vi.fn<(table: unknown, payload: unknown) => void>();
 	const setSpy = vi.fn<(table: unknown, payload: unknown) => void>();
 	const insertSpy = vi.fn<(table: unknown) => void>();
 	const updateSpy = vi.fn<(table: unknown) => void>();
 	const deleteSpy = vi.fn<(table: unknown) => void>();
+	const executeSpy = vi.fn<(query: unknown) => void>();
+	const envCasUpdated = cfg.envCasUpdated ?? true;
 	const def = cfg.default ?? [];
 
 	const resolve = (map: Map<unknown, RowsResolver> | undefined, table: unknown): Rows => {
@@ -138,12 +142,17 @@ function setupDb(cfg: {
 			deleteSpy(t);
 			return makeChain("delete", t);
 		},
+		// The enqueue paths route env→QUEUED through the set_env_status CAS (tx.execute).
+		execute: (query: unknown) => {
+			executeSpy(query);
+			return Promise.resolve([{ updated: envCasUpdated }]);
+		},
 	};
 
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
-	return { tx, valuesSpy, setSpy, insertSpy, updateSpy, deleteSpy };
+	return { tx, valuesSpy, setSpy, insertSpy, updateSpy, deleteSpy, executeSpy };
 }
 
 /** Pulls the single `.values()` payload recorded against a given schema table. */
@@ -410,7 +419,7 @@ function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 
 describe("planProject", () => {
 	it("freezes a config snapshot, queues a PLAN job, flips the env to QUEUED, and notifies the scaler", async () => {
-		const { valuesSpy, setSpy } = setupDb({
+		const { valuesSpy, executeSpy } = setupDb({
 			select: snapshotSelect(),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
@@ -441,7 +450,8 @@ describe("planProject", () => {
 			/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/,
 		);
 
-		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
+		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-1" });
 	});
@@ -764,7 +774,7 @@ describe("planProject — BYO IaC source", () => {
 
 describe("provisionProject", () => {
 	it("queues a DEPLOY job chained to a plan, audits PROVISIONED, and notifies the scaler", async () => {
-		const { valuesSpy, setSpy } = setupDb({
+		const { valuesSpy, executeSpy } = setupDb({
 			select: snapshotSelect(),
 			insert: new Map([[jobs, [{ id: "job-7" }]]]),
 		});
@@ -786,7 +796,8 @@ describe("provisionProject", () => {
 			action: "PROVISIONED",
 			changes: { job_id: "job-7", environment_id: "env-1" },
 		});
-		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
+		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-7" });
 	});
@@ -819,7 +830,7 @@ describe("destroyProject — BYO IaC source", () => {
 	});
 
 	it("allows DESTROY after a deploy even when a later re-scan failed — snapshot pins deployed_commit_sha", async () => {
-		const { valuesSpy, setSpy } = setupDb({
+		const { valuesSpy, executeSpy } = setupDb({
 			select: snapshotSelect(new Map([[projectIacSources, [deployedIacRow]]])),
 			insert: new Map([[jobs, [{ id: "job-9" }]]]),
 		});
@@ -832,7 +843,8 @@ describe("destroyProject — BYO IaC source", () => {
 		expect(jobVals.config_snapshot).toMatchObject({
 			iac_source: { commit_sha: "cafed00d" },
 		});
-		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
+		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
+		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 

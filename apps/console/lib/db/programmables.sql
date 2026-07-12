@@ -963,3 +963,28 @@ BEGIN
     RETURN NEXT;
 END;
 $$;
+
+-- ----------------------------------------------------------------------------
+-- Guarded env-status transition (compare-and-swap). EVERY write to
+-- project_environments.status routes through here (lib/db/env-status.ts) so a
+-- late / racing runner callback can't clobber a newer terminal state
+-- (last-writer-wins). A single PK-indexed UPDATE gated on the current status ∈
+-- p_expected_from; returns whether a row moved. FALSE = the env wasn't in a legal
+-- from-state → the transition was correctly rejected (the TS caller logs + alerts,
+-- and for runner callbacks never throws: a lost race must not fail a status PUT).
+-- It never raises on a no-op. NOT security-definer — it runs with the caller's RLS
+-- (service role bypasses; an owner-scoped tx is policy-checked), matching how the
+-- sibling env writes are scoped. p_job_id is carry-through context for the caller's
+-- structured log / audit, deliberately not written here.
+CREATE OR REPLACE FUNCTION public.set_env_status(
+    p_env_id UUID, p_expected_from TEXT[], p_to TEXT, p_job_id UUID DEFAULT NULL
+) RETURNS BOOLEAN LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE public.project_environments
+       SET status = p_to::public.project_status, updated_at = now()
+     WHERE id = p_env_id
+       AND status = ANY (p_expected_from::public.project_status[]);
+    RETURN FOUND;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO alethia_app;
