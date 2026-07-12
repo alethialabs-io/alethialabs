@@ -28,18 +28,31 @@ export class OpenFgaPdp implements Pdp {
 		action: Action,
 		resource: ResourceRef,
 	): Promise<Decision> {
-		const checks = this.core.fga.checksFor(resource.type, action, {
-			id: resource.id,
-			orgId: actor.orgId,
-		});
+		const opts = { id: resource.id, orgId: actor.orgId };
+		const allowChecks = this.core.fga.checksFor(resource.type, action, opts);
+		const denyChecks = this.core.fga.denyChecksFor(resource.type, action, opts);
 		const user = `user:${actor.userId}`;
-		// 1–2 checks ORed: the instance grant and/or the org-wide capability.
-		const results = await Promise.all(
-			checks.map((c) =>
-				this.client.check({ user, relation: c.relation, object: c.object }),
+		// Explicit-deny-wins (IAM-style, matching PostgresRbacPDP.decide): the actor is
+		// allowed ⇔ SOME allow check passes AND NO deny check passes. The allow half ORs
+		// the instance grant and/or the raw org-wide capability; the deny half VETOES on a
+		// per-instance/org deny. Without this veto the raw org capability would silently
+		// override a per-instance deny (the community↔enterprise parity bug this closes).
+		const [allowResults, denyResults] = await Promise.all([
+			Promise.all(
+				allowChecks.map((c) =>
+					this.client.check({ user, relation: c.relation, object: c.object }),
+				),
 			),
-		);
-		return results.some((r) => r.allowed === true)
+			Promise.all(
+				denyChecks.map((c) =>
+					this.client.check({ user, relation: c.relation, object: c.object }),
+				),
+			),
+		]);
+		if (denyResults.some((r) => r.allowed === true)) {
+			return { allowed: false, reason: "explicit_deny" };
+		}
+		return allowResults.some((r) => r.allowed === true)
 			? { allowed: true }
 			: { allowed: false, reason: "no_grant" };
 	}

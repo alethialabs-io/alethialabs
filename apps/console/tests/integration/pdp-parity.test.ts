@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { checksFor } from "@/lib/authz/fga-mapping";
+import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
 import { expandGrant, hierarchyTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
@@ -116,6 +116,7 @@ const ORG_B = randomUUID();
 const USER_A = randomUUID(); // actor, member of ORG_A
 const PROJ_A1 = randomUUID(); // in ORG_A, USER_A has a scoped view grant on it
 const PROJ_A2 = randomUUID(); // in ORG_A, no scoped grant (org-wide deploy reaches it)
+const PROJ_A3 = randomUUID(); // in ORG_A, org-wide deploy ALLOW + a per-instance deploy DENY
 const PROJ_B1 = randomUUID(); // in ORG_B — the cross-tenant target
 
 const pg = new PostgresRbacPDP();
@@ -137,6 +138,7 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		await db.insert(projects).values([
 			mkProject(PROJ_A1, ORG_A),
 			mkProject(PROJ_A2, ORG_A),
+			mkProject(PROJ_A3, ORG_A),
 			mkProject(PROJ_B1, ORG_B),
 		]);
 		// Org→Project edges (Postgres hierarchy + the FGA `parent` tuples both need them so an
@@ -144,6 +146,7 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		const edges = [
 			{ childType: "project", childId: PROJ_A1, parentType: "org", parentId: ORG_A },
 			{ childType: "project", childId: PROJ_A2, parentType: "org", parentId: ORG_A },
+			{ childType: "project", childId: PROJ_A3, parentType: "org", parentId: ORG_A },
 			{ childType: "project", childId: PROJ_B1, parentType: "org", parentId: ORG_B },
 		];
 		await db.insert(resourceHierarchy).values(
@@ -156,19 +159,22 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		);
 
 		// The grants, in Postgres — the community engine resolves straight from these rows.
-		// NOTE: explicit-deny is tested on `view` (which has NO org-wide grant), and the
-		// org-wide grant is on `deploy` (which has NO instance deny). We deliberately do not
-		// combine an org-wide ALLOW with an instance DENY of the SAME action: `checksFor`
-		// ORs the org-wide capability, which the OpenFGA engine cannot subtract a per-instance
-		// deny from — the two engines diverge there (documented in the matrix Follow-up).
+		// Explicit-deny is tested BOTH on `view` (scoped allow + scoped deny, no org-wide) AND
+		// on `deploy` in COMBINATION with an org-wide ALLOW of the SAME action (G4 + G5 on
+		// PROJ_A3) — the deny-wins case that used to diverge: `checksFor` ORs the raw org-wide
+		// capability, so the OpenFGA engine must ALSO evaluate `denyChecksFor` and veto on the
+		// per-instance deny to match the Postgres deny-wins engine (see the matrix, now CLOSED).
 		await db.insert(grants).values([
 			// G1: scoped view allow on PROJ_A1.
 			grantRow({ permission_key: "project:view", resource_id: PROJ_A1 }),
 			// G2 + G3: scoped view allow AND deny on PROJ_A2 → explicit-deny-wins (no org-wide view).
 			grantRow({ permission_key: "project:view", resource_id: PROJ_A2 }),
 			grantRow({ permission_key: "project:view", resource_id: PROJ_A2, effect: "deny" }),
-			// G4: org-wide deploy across ORG_A (no per-instance deploy deny anywhere).
+			// G4: org-wide deploy across ORG_A.
 			grantRow({ permission_key: "project:deploy", resource_id: null }),
+			// G5: per-instance deploy DENY on PROJ_A3 → org-wide ALLOW (G4) + instance DENY of the
+			// SAME action ⇒ explicit-deny-wins. THE regression case both engines must now DENY.
+			grantRow({ permission_key: "project:deploy", resource_id: PROJ_A3, effect: "deny" }),
 		]);
 
 		// The SAME grants + edges, expanded to OpenFGA tuples via the production helpers.
@@ -190,6 +196,11 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 				{ orgId: ORG_A, principalType: "user", principalId: USER_A, effect: "allow", resourceType: "org", resourceId: null },
 				["project:deploy"],
 			),
+			// G5: per-instance deploy DENY on PROJ_A3 (the same grant, expanded to a tuple).
+			...expandGrant(
+				{ orgId: ORG_A, principalType: "user", principalId: USER_A, effect: "deny", resourceType: "project", resourceId: PROJ_A3 },
+				["project:deploy"],
+			),
 			...edges.map((e) => hierarchyTuple(e)),
 		];
 		await writeTuples(storeId, tuples);
@@ -209,13 +220,20 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		}
 	});
 
-	/** The OpenFGA engine's decision, exactly as OpenFgaPdp.can computes it. */
+	/** The OpenFGA engine's decision, exactly as OpenFgaPdp.can computes it: SOME allow
+	 * check passes AND NO deny check vetoes (explicit-deny-wins). */
 	async function fgaAllowed(action: Action, resource: { type: Resource; id: string }): Promise<boolean> {
-		const checks = checksFor(resource.type, action, { id: resource.id, orgId: actor.orgId });
-		const results = await Promise.all(
-			checks.map((c) => fgaCheck(storeId, modelId, { user: `user:${USER_A}`, relation: c.relation, object: c.object })),
-		);
-		return results.some((r) => r);
+		const opts = { id: resource.id, orgId: actor.orgId };
+		const runChecks = (checks: ReturnType<typeof checksFor>) =>
+			Promise.all(
+				checks.map((c) => fgaCheck(storeId, modelId, { user: `user:${USER_A}`, relation: c.relation, object: c.object })),
+			);
+		const [allowResults, denyResults] = await Promise.all([
+			runChecks(checksFor(resource.type, action, opts)),
+			runChecks(denyChecksFor(resource.type, action, opts)),
+		]);
+		if (denyResults.some((r) => r)) return false;
+		return allowResults.some((r) => r);
 	}
 
 	const cases: { name: string; action: Action; id: string; want: boolean }[] = [
@@ -224,6 +242,9 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		{ name: "view PROJ_B1 (CROSS-TENANT, scoped grant does not reach)", action: "view", id: PROJ_B1, want: false },
 		{ name: "org-wide deploy on PROJ_A1", action: "deploy", id: PROJ_A1, want: true },
 		{ name: "org-wide deploy on PROJ_A2", action: "deploy", id: PROJ_A2, want: true },
+		// The previously-avoided divergence: org-wide ALLOW + per-instance DENY of the SAME
+		// action. Postgres denies (deny-wins); OpenFGA must now ALSO deny (denyChecksFor veto).
+		{ name: "org-wide deploy ALLOW + per-instance DENY on PROJ_A3 (deny wins)", action: "deploy", id: PROJ_A3, want: false },
 	];
 
 	for (const c of cases) {
