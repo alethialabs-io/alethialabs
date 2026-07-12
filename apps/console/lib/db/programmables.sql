@@ -155,8 +155,11 @@ DECLARE
     v_operator public.runner_operator;
     v_providers public.cloud_provider[];
     v_status public.runner_status;
+    v_runner_org_id UUID;
 BEGIN
-    SELECT operator, supported_providers, status INTO v_operator, v_providers, v_status FROM public.runners
+    SELECT operator, supported_providers, status, org_id
+      INTO v_operator, v_providers, v_status, v_runner_org_id
+      FROM public.runners
       WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF v_operator IS NULL THEN
         RAISE EXCEPTION 'Unauthorized runner';
@@ -203,12 +206,20 @@ BEGIN
                 LIMIT 1 FOR UPDATE SKIP LOCKED
             ) RETURNING id INTO v_job_id;
         ELSE
-            -- Self/dedicated runner: its own org's jobs; priority then oldest, uncapped.
+            -- Self/dedicated runner: STRICTLY its own org's jobs; priority then oldest, uncapped.
+            -- The org_id predicate is the cross-tenant guard: without it a self runner
+            -- registered with cloud_identity_id omitted and supported_providers unset makes the
+            -- cloud_identity/provider filters vacuously true and would claim ANY org's QUEUED job,
+            -- leaking that job's decrypted cloud credential to the wrong tenant's runner. A self
+            -- runner always has user_id NOT NULL, so runners.org_id backfills (set_org_id trigger)
+            -- and is reliably non-null; if it were ever NULL, j.org_id = NULL matches nothing
+            -- (fail-closed). Managed runners (org_id NULL, shared pool) must NOT take this branch.
             UPDATE public.jobs
             SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
+                  AND j.org_id = v_runner_org_id
                   AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
                   AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
