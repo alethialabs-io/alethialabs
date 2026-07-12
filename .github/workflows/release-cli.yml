@@ -52,6 +52,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Mint tap token (GitHub App)
+        id: tap_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          # The GitHub App's short-lived token is scoped to just the publish targets.
+          repositories: |
+            homebrew-tap
+            scoop-bucket
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -60,11 +72,11 @@ jobs:
           args: release --clean --skip=validate -f apps/cli/.goreleaser.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # A single PAT with write access to the homebrew-tap + scoop-bucket repos
-          # pushes the formula and the scoop manifest. (GITHUB_TOKEN above only has
-          # rights on this monorepo, so the cross-repo publish needs the PAT.)
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          SCOOP_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # GITHUB_TOKEN above only has rights on this monorepo; the cross-repo formula
+          # + scoop pushes use the GitHub App token minted above (see the app setup in
+          # docs/concepts/release-system.mdx · scripts/setup-release-github-app.sh).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
+          SCOOP_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
           GORELEASER_CURRENT_TAG: ${{ env.CLI_TAG }}
 
       - name: Configure AWS credentials (OIDC — read the release bearer)
