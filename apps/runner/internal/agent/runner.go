@@ -15,10 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/obs"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Config struct {
@@ -276,13 +280,38 @@ func (w *Runner) wakeLoop(ctx context.Context, onEvent func(WakeEvent)) {
 	}
 }
 
-func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
+func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr error) {
 	job := claim.Job
 	traceparent := job.Traceparent
 	traceID := traceIDFromTraceparent(traceparent)
 	// Operational logger for this job's lifetime — structured JSON to stderr carrying
 	// the correlation ids so a runner line joins the console trace.
 	jlog := LogWith(w.config.RunnerID, traceID, job.ID)
+
+	// Anchor this job's work to the traceparent minted at enqueue, then open the runner's
+	// per-job span. The console started the root at enqueue and stamped the traceparent on
+	// the job; by re-anchoring to the SAME traceparent here, this span (and the provisioner
+	// stage spans nested under it via ctx) share ONE trace-id with the console spans — the
+	// console↔runner JOIN. No-op when no OTLP endpoint is configured. job_id lives as a span
+	// ATTRIBUTE (fine — spans are high-cardinality), never as a metric label.
+	provider := ""
+	if claim.CloudIdentity != nil {
+		provider = claim.CloudIdentity.Provider
+	}
+	ctx = obs.ContextFromTraceparent(ctx, traceparent)
+	ctx, span := obs.Tracer().Start(ctx, "job.execute",
+		trace.WithAttributes(
+			attribute.String("alethia.job_id", job.ID),
+			attribute.String("alethia.job_type", job.JobType),
+			attribute.String("provider", provider),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
 
 	// Customer-facing job streams (STDOUT/STDERR) — trace-stamped so each log line
 	// correlates. SYSTEM ships the runner's OPERATIONAL failures to the console (they
@@ -403,11 +432,6 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			}
 			defer cleanup()
 		}
-	}
-
-	provider := ""
-	if claim.CloudIdentity != nil {
-		provider = claim.CloudIdentity.Provider
 	}
 
 	var execErr error

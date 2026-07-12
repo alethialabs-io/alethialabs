@@ -26,6 +26,8 @@ import {
 } from "@/lib/db/env-status";
 import { jobs } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
+import { outcomeFromStatus, recordProvision } from "@/lib/observability/metrics";
+import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export async function PUT(
@@ -93,10 +95,38 @@ export async function PUT(
 					org_id: jobs.org_id,
 					cloud_identity_id: jobs.cloud_identity_id,
 					execution_metadata: jobs.execution_metadata,
+					provider: jobs.provider,
+					traceparent: jobs.traceparent,
+					created_at: jobs.created_at,
+					claimed_at: jobs.claimed_at,
 				})
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
 				.limit(1);
+
+			// Telemetry (no-op unless an OTLP endpoint is configured): on a terminal status,
+			// record the provision duration + outcome (low-cardinality provider/job_type/outcome
+			// labels — NEVER job_id/trace_id/env_id) and emit the console's "callback" span so
+			// the terminal hop joins the same distributed trace as the runner's stage spans.
+			if (
+				job &&
+				(status === "SUCCESS" || status === "FAILED" || status === "CANCELLED")
+			) {
+				const startedAt = job.claimed_at ?? job.created_at;
+				const outcome = outcomeFromStatus(status);
+				recordProvision({
+					provider: job.provider,
+					jobType: job.job_type,
+					outcome,
+					seconds: (Date.now() - startedAt.getTime()) / 1000,
+				});
+				markJobSpan("console.job.callback", job.traceparent, {
+					"alethia.job_id": jobId,
+					"alethia.job_type": job.job_type,
+					provider: job.provider ?? "unknown",
+					outcome,
+				});
+			}
 
 			// Cancelled (torn down mid-flight by the runner after a user cancel). Alert on the
 			// cancellation, and — when the runner flagged orphan risk (apply was interrupted) —

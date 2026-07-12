@@ -11,6 +11,8 @@ import {
 } from "@/lib/db/schema";
 import { markFailed } from "@/lib/connectors/health";
 import { decryptSecret } from "@/lib/crypto/secrets";
+import { recordClaimLatency } from "@/lib/observability/metrics";
+import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -80,6 +82,19 @@ export async function POST(req: Request) {
 		if (!job) {
 			return NextResponse.json({ job: null });
 		}
+
+		// Telemetry (no-op unless an OTLP endpoint is configured): record how long this job
+		// waited in QUEUED before being claimed, and emit the console's "claim" span anchored
+		// to the job's traceparent so it joins the runner's spans in one distributed trace.
+		recordClaimLatency(
+			job.provider,
+			(Date.now() - job.created_at.getTime()) / 1000,
+		);
+		markJobSpan("console.job.claim", job.traceparent, {
+			"alethia.job_id": job.id,
+			"alethia.job_type": job.job_type,
+			provider: job.provider ?? "unknown",
+		});
 
 		let cloud_identity = null;
 		if (job.cloud_identity_id) {
