@@ -540,6 +540,20 @@
       "when": 1783843705455,
       "tag": "0076_volatile_may_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1783851981990,
+      "tag": "0077_futuristic_tag",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1783852012420,
+      "tag": "0078_redundant_power_man",
+      "breakpoints": true
     }
   ]
 }

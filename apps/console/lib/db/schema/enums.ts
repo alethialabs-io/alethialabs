@@ -147,6 +147,16 @@ export const runnerStatus = pgEnum("runner_status", [
 	"DRAINING",
 ]);
 
+// One managed-fleet controller action, recorded to the fleet_actions ledger so there's a
+// durable record of WHY the scaler created/drained/destroyed a VM. `noop` is reserved for a
+// "considered, held" tick and is not emitted on every idle reconcile (that would be noise).
+export const fleetActionType = pgEnum("fleet_action_type", [
+	"create",
+	"drain",
+	"destroy",
+	"noop",
+]);
+
 export const connectorCategory = pgEnum("connector_category", [
 	"git",
 	"cloud",
@@ -309,6 +319,7 @@ export type RunnerMode = (typeof runnerMode.enumValues)[number];
 export type RunnerOperator = (typeof runnerOperator.enumValues)[number];
 export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];
 export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
+export type FleetActionType = (typeof fleetActionType.enumValues)[number];
 export type ProjectStatus = (typeof projectStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type AddonMode = (typeof addonMode.enumValues)[number];

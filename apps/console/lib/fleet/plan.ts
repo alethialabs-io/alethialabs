@@ -7,7 +7,13 @@
 // one hard invariant: never plan the claimable (online) count below the warm floor.
 // Convergent: each call advances rollout/heal/rebalance one safe step; idempotent.
 
-import type { FleetAction, FleetTarget, Observed, ObservedInstance } from "@/lib/fleet/types";
+import type {
+	FleetAction,
+	FleetActionReason,
+	FleetTarget,
+	Observed,
+	ObservedInstance,
+} from "@/lib/fleet/types";
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -46,12 +52,12 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 		if (b === "online") online.push(i);
 		else if (b === "draining") draining.push(i);
 		else if (b === "booting") booting.push(i);
-		else actions.push({ type: "destroy", instanceId: i.instanceId }); // dead → reap
+		else actions.push({ type: "destroy", instanceId: i.instanceId, reason: "reap-dead" }); // dead → reap
 	}
 
 	// Drained instances whose job has finished → reap (their replacement was already created).
 	for (const d of draining) {
-		if (!d.busy) actions.push({ type: "destroy", instanceId: d.instanceId });
+		if (!d.busy) actions.push({ type: "destroy", instanceId: d.instanceId, reason: "reap-drained" });
 	}
 
 	// "Live" = capacity that counts toward target (online + booting); draining is leaving.
@@ -77,10 +83,10 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 		}
 		return best;
 	}
-	function create(version: string | null): boolean {
+	function create(version: string | null, reason: FleetActionReason): boolean {
 		if (live >= maxInstances) return false;
 		const loc = pickLocation();
-		actions.push({ type: "create", location: loc, version });
+		actions.push({ type: "create", location: loc, version, reason });
 		liveByLoc.set(loc, (liveByLoc.get(loc) ?? 0) + 1);
 		live += 1;
 		return true;
@@ -88,10 +94,10 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 
 	// Count + placement: bring live up to target (placement-aware), then satisfy any
 	// remaining per-location minimums. New capacity is always created at the target version.
-	while (live < target) if (!create(project.targetVersion)) break;
+	while (live < target) if (!create(project.targetVersion, "scale-up-demand")) break;
 	for (const loc of project.locations) {
 		while ((liveByLoc.get(loc) ?? 0) < project.minPerLocation && live < maxInstances) {
-			actions.push({ type: "create", location: loc, version: project.targetVersion });
+			actions.push({ type: "create", location: loc, version: project.targetVersion, reason: "min-per-location" });
 			liveByLoc.set(loc, (liveByLoc.get(loc) ?? 0) + 1);
 			live += 1;
 		}
@@ -105,10 +111,10 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 		if (online.length > target) {
 			const victim = outdated.find((h) => !h.busy) ?? outdated[0];
 			if (victim.runnerId) {
-				actions.push({ type: "drain", runnerId: victim.runnerId, instanceId: victim.instanceId });
+				actions.push({ type: "drain", runnerId: victim.runnerId, instanceId: victim.instanceId, reason: "rollout-drain" });
 			}
 		} else if (live < target + project.surge) {
-			create(project.targetVersion); // surge a replacement up; drain it in next tick
+			create(project.targetVersion, "rollout-surge"); // surge a replacement up; drain it in next tick
 		}
 	}
 
@@ -123,7 +129,7 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 		for (const h of idle) {
 			if (over <= 0) break;
 			if ((liveByLoc.get(h.location) ?? 0) <= project.minPerLocation) continue;
-			actions.push({ type: "destroy", instanceId: h.instanceId });
+			actions.push({ type: "destroy", instanceId: h.instanceId, reason: "scale-down-idle" });
 			liveByLoc.set(h.location, (liveByLoc.get(h.location) ?? 0) - 1);
 			live -= 1;
 			over -= 1;

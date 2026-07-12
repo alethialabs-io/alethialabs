@@ -12,14 +12,18 @@
 
 import {
 	boolean,
+	index,
 	integer,
+	jsonb,
 	pgTable,
 	text,
 	timestamp,
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import { cloudProvider } from "./enums";
+import type { FleetActionMetadata } from "@/types/jsonb.types";
+import { cloudProvider, fleetActionType } from "./enums";
+import { runners } from "./runners";
 
 export const fleetPools = pgTable(
 	"fleet_pools",
@@ -62,3 +66,44 @@ export const fleetPools = pgTable(
 
 export type FleetPool = typeof fleetPools.$inferSelect;
 export type NewFleetPool = typeof fleetPools.$inferInsert;
+
+// Durable audit ledger of every managed-fleet controller action. `reconcilePool` records one
+// row per applied action (create / drain / destroy) with the WHY (`reason`) and the decision
+// inputs (queue depth + observed pool size) at that tick — so an operator can reconstruct why
+// the fleet grew/shrank at 3am. Like fleet_pools this is GLOBAL platform infrastructure (no
+// org_id / no RLS); all access is through getServiceDb() gated by the `fleet` PDP resource.
+// Writes are best-effort in the controller: a ledger hiccup must never break a reconcile.
+export const fleetActions = pgTable(
+	"fleet_actions",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		// The pool (provider) this action was taken against.
+		provider: cloudProvider().notNull(),
+		// What the controller did.
+		action: fleetActionType().notNull(),
+		// The correlated managed runner (drain/destroy). NULL for a create (no runner yet) — the
+		// new VM's runner self-registers later. ON DELETE SET NULL so pruning a runner row keeps
+		// its history readable.
+		runner_id: uuid().references(() => runners.id, { onDelete: "set null" }),
+		// Instances this action pertains to (usually 1; kept for a future batched action).
+		count: integer().default(1).notNull(),
+		// Machine-readable reason token (FleetActionReason), e.g. "scale-up-demand", "scale-down-idle".
+		reason: text().notNull(),
+		// Decision inputs captured at the tick: QUEUED backlog for the provider …
+		queue_depth: integer(),
+		// … and the observed live (online + booting) pool size.
+		pool_size: integer(),
+		// Free-form extra context (location, instance id, versions) for forensics.
+		metadata: jsonb().$type<FleetActionMetadata>(),
+	},
+	(t) => [
+		// The read path is "recent actions for a provider" (the later dashboard) — newest first.
+		index("idx_fleet_actions_provider_time").on(t.provider, t.created_at.desc()),
+	],
+);
+
+// Named *Row (not FleetAction) to avoid colliding with the planner's `FleetAction` action-union
+// in lib/fleet/types.ts — this is the persisted ledger row, that is the in-memory decision.
+export type FleetActionRow = typeof fleetActions.$inferSelect;
+export type NewFleetActionRow = typeof fleetActions.$inferInsert;

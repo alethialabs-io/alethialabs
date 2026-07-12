@@ -172,7 +172,7 @@ BEGIN
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
     UPDATE public.jobs
-    SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+    SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
@@ -185,7 +185,7 @@ BEGIN
             -- Shared pool: priority, then fair across orgs (fewest in-flight), then
             -- oldest; skip orgs already at their plan concurrency cap.
             UPDATE public.jobs
-            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
@@ -205,7 +205,7 @@ BEGIN
         ELSE
             -- Self/dedicated runner: its own org's jobs; priority then oldest, uncapped.
             UPDATE public.jobs
-            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
@@ -221,20 +221,71 @@ BEGIN
 END;
 $$;
 
+-- Recovers stale in-flight jobs, now with a poison-job cap + a progress-stall path. Two staleness
+-- signals, evaluated in ONE atomic UPDATE (so the attempts increment can't race a concurrent claim —
+-- claim_next_job only touches QUEUED rows FOR UPDATE SKIP LOCKED, and a plain UPDATE row-locks the
+-- CLAIMED/PROCESSING rows it matches; a racing second recovery re-checks the WHERE and no-ops):
+--
+--   (A) DEAD RUNNER (liveness): claimed > 15 min ago AND the runner isn't heartbeating (no
+--       last_heartbeat within 5 min, or no runner). The original behaviour.
+--   (B) STALLED-BUT-ALIVE (progress): the runner IS heartbeating (alive within 5 min) but has made
+--       no real progress for a long time (progress_at older than the 30-min stall threshold — set at
+--       claim, refreshed on every stage transition + log flush). A hung-mid-apply runner that the
+--       liveness check can never catch. The threshold is deliberately generous and DISTINCT from the
+--       5-min liveness window: a live tofu apply prints "Still creating… [Ns elapsed]" every ~10s, so
+--       progress_at refreshes constantly — only genuine multi-minute silence trips (B).
+--
+-- Each recovery INCREMENTS attempts. Below the cap the job is requeued (QUEUED, runner cleared).
+-- At the cap (attempts >= max_attempts) it is failed TERMINAL (FAILED + a clear error_message)
+-- instead of requeued forever. The function RETURNS the jobs it failed terminally so the caller
+-- (lib/jobs/recovery.ts) can drive each one's environment status through the env-status CAS
+-- (deployFailed / destroyFailed / planFailed) — a terminal job must not leave its env stuck.
 CREATE OR REPLACE FUNCTION public.recover_stale_jobs()
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_count INTEGER;
+RETURNS TABLE(job_id UUID, job_type public.provision_job_type, environment_id UUID, org_id UUID, project_id UUID)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-    UPDATE public.jobs
-    SET status = 'QUEUED', runner_id = NULL, claimed_at = NULL, started_at = NULL, updated_at = now()
-    WHERE status IN ('CLAIMED', 'PROCESSING')
-      AND claimed_at < now() - INTERVAL '15 minutes'
-      AND (runner_id IS NULL OR NOT EXISTS (
-        SELECT 1 FROM public.runners r
-        WHERE r.id = jobs.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes'
-      ));
-    GET DIAGNOSTICS v_count = ROW_COUNT;
-    RETURN v_count;
+    RETURN QUERY
+    WITH updated AS (
+        UPDATE public.jobs j
+        SET attempts = j.attempts + 1,
+            -- At/over the cap → terminal FAILED; otherwise requeue.
+            status = CASE WHEN j.attempts + 1 >= j.max_attempts
+                          THEN 'FAILED'::public.provision_job_status
+                          ELSE 'QUEUED'::public.provision_job_status END,
+            -- Requeue clears the claim; a terminal fail keeps runner_id/claimed_at for forensics.
+            runner_id  = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.runner_id  ELSE NULL END,
+            claimed_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.claimed_at ELSE NULL END,
+            started_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.started_at ELSE NULL END,
+            completed_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN now() ELSE j.completed_at END,
+            error_message = CASE WHEN j.attempts + 1 >= j.max_attempts
+                THEN 'Job exceeded max attempts (' || j.max_attempts
+                     || '): its runner repeatedly died or stalled mid-run. Failed terminally by the '
+                     || 'poison-job cap to protect the queue.'
+                ELSE j.error_message END,
+            updated_at = now()
+        WHERE j.status IN ('CLAIMED', 'PROCESSING')
+          AND (
+            -- (A) dead-runner liveness
+            ( j.claimed_at < now() - INTERVAL '15 minutes'
+              AND (j.runner_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM public.runners r
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes')) )
+            OR
+            -- (B) stalled-but-alive: runner heartbeating, but no forward progress for the stall window
+            ( j.runner_id IS NOT NULL
+              AND j.progress_at IS NOT NULL
+              AND j.progress_at < now() - INTERVAL '30 minutes'
+              AND EXISTS (
+                SELECT 1 FROM public.runners r
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes') )
+          )
+        RETURNING j.id, j.job_type, j.environment_id, j.org_id, j.project_id,
+                  (j.status = 'FAILED') AS terminal
+    )
+    -- Only the terminally-failed jobs need an env-status transition; requeued ones keep their env.
+    SELECT u.id, u.job_type, u.environment_id, u.org_id, u.project_id
+    FROM updated u
+    WHERE u.terminal;
 END;
 $$;
 
@@ -286,6 +337,14 @@ BEGIN
     -- Notify SSE listeners (one LISTEN conn per app instance fans out). IDs only
     -- (8 KB payload cap); the stream route fetches rows since its last seen id.
     PERFORM pg_notify('job_logs', json_build_object('jobId', p_job_id, 'logId', v_log_id)::text);
+    -- Progress heartbeat: a log flush is real forward progress. Stamp progress_at so the
+    -- stalled-but-alive detector resets — but THROTTLE the write to ≤ once/minute per job so a
+    -- chatty apply (log chunks every ~1s) doesn't bloat the jobs row. Minute granularity is ample
+    -- against the 30-min stall threshold.
+    UPDATE public.jobs
+    SET progress_at = now()
+    WHERE id = p_job_id
+      AND (progress_at IS NULL OR progress_at < now() - INTERVAL '55 seconds');
 END;
 $$;
 
@@ -310,6 +369,9 @@ BEGIN
         execution_metadata = CASE WHEN p_execution_metadata IS NOT NULL
             THEN COALESCE(execution_metadata, '{}'::jsonb) || p_execution_metadata ELSE execution_metadata END,
         started_at = CASE WHEN p_status = 'PROCESSING' AND started_at IS NULL THEN now() ELSE started_at END,
+        -- Progress heartbeat: a status post to PROCESSING is a stage transition = real forward
+        -- progress. Stamp progress_at so the stalled-but-alive detector (recover_stale_jobs) resets.
+        progress_at = CASE WHEN p_status = 'PROCESSING' THEN now() ELSE progress_at END,
         completed_at = CASE WHEN p_status IN ('SUCCESS', 'FAILED', 'CANCELLED') THEN now() ELSE completed_at END,
         updated_at = now()
     WHERE id = p_job_id AND runner_id = p_runner_id

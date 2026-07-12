@@ -104,6 +104,10 @@ export const jobWire = createSelectSchema(jobs, {
 	verify_override: true,
 	// Internal W3C trace correlation — carried enqueue → claim → runner, not CLI-facing.
 	traceparent: true,
+	// Internal poison-job cap + progress heartbeat — scheduler/recovery bookkeeping, not CLI-facing.
+	attempts: true,
+	max_attempts: true,
+	progress_at: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
