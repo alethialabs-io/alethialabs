@@ -225,6 +225,14 @@ jobs:
         if: matrix.module == 'packages/core'
         working-directory: ${{ matrix.module }}
         run: go vet -tags=e2e_local ./provisioner/
+      # Compile-check the T1 harness (test/e2e — a SEPARATE module outside go.work, run only
+      # by the merge-queue provision-e2e job). Without this, a break in controlplane.go /
+      # t1_provision_test.go would escape every per-PR check and only surface in the merge
+      # queue, blocking it for everyone rather than failing the offending PR (parity with the
+      # e2e_local keystone above).
+      - name: Vet e2e_t1 harness (compile check)
+        if: matrix.module == 'packages/core'
+        run: cd test/e2e && GOWORK=off go vet -tags=e2e_t1 ./...
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}

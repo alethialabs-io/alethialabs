@@ -46,6 +46,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -259,9 +260,16 @@ func (cp *ControlPlane) handleClaim(w http.ResponseWriter, r *http.Request) {
 	err := cp.pool.QueryRow(r.Context(),
 		`SELECT id FROM public.claim_next_job($1::uuid, $2, NULL::uuid)`, runnerID, tokenHash).
 		Scan(&jobID)
-	if err != nil {
-		// No claimable job ⇒ no rows. Any other error is a real failure.
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Genuinely no claimable job ⇒ empty response (the runner polls again).
 		writeJSON(w, http.StatusOK, map[string]any{"job": nil})
+		return
+	}
+	if err != nil {
+		// A real claim_next_job failure — surface it as a 500 rather than masquerading as
+		// "no job", which would only ever manifest as an opaque WaitTerminal timeout and hide
+		// exactly the claim regression this E2E exists to catch.
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jobJSON, err := cp.claimedJobJSON(r.Context(), jobID)
@@ -322,6 +330,13 @@ func (cp *ControlPlane) claimedJobJSON(ctx context.Context, jobID string) (map[s
 	return job, nil
 }
 
+// handleStatus mirrors the SQL SSOT half of the real console status route: it runs the
+// authoritative update_job_status RPC and returns {success}. FIDELITY BOUNDARY (deliberate): the
+// real apps/console/app/api/jobs/[id]/status/route.ts layers a large TS orchestration on top of the
+// same RPC — finalizeDeployment (env→ACTIVE), the env-status CAS, promotions, alerts, and usage
+// billing. NONE of that is exercised here. So a green T1 proves the runner→SQL contract + the
+// provisioning spine, NOT that the console marks the env ACTIVE or bills the job; those side-effects
+// are covered by the console integration tests, not this harness.
 func (cp *ControlPlane) handleStatus(w http.ResponseWriter, r *http.Request) {
 	runnerID, tokenHash, ok := cp.authHash(r)
 	if !ok {
