@@ -133,6 +133,91 @@ func detectProviders(planned []plannedResource) []string {
 	return out
 }
 
+// controlledProviderTokens are the resource-type prefixes (the segment before the
+// first underscore) that have an authored control set — a violation in one of these
+// providers is actually checked. Note "google" maps to the gcp control set and both
+// "azurerm"/"azuread" map to the azure set; the token is the raw terraform prefix.
+var controlledProviderTokens = map[string]bool{
+	"aws": true, "google": true, "azurerm": true, "azuread": true,
+}
+
+// supportedNoControlProviderTokens are provider prefixes the engine recognizes as a
+// LEGITIMATE vacuous pass: providers for which there is no keyless / OIDC-sub /
+// least-privilege control surface to assert, so a plan built only from them is
+// honestly a pass. Two groups:
+//
+//   - Clouds without a control set BY DESIGN. Hetzner (hcloud) is token-auth — the
+//     token is the ceiling, there is no OIDC/federation to bind, so the keyless
+//     controls do not apply (see the Hetzner posture). Cloudflare likewise.
+//   - Utility providers that create no cloud authority at all: random_, tls_, null_,
+//     local_, time_, external_.
+//
+// This allowlist is what makes the fail-closed backstop (controlEvaluableScope) safe:
+// it must NOT flip these legitimate plans to not_evaluable, only genuinely
+// unrecognized providers. When in doubt a provider is left OFF this list (the
+// fail-closed default) so an unknown cloud is surfaced rather than silently passed.
+var supportedNoControlProviderTokens = map[string]bool{
+	"hcloud": true, "cloudflare": true,
+	"random": true, "tls": true, "null": true,
+	"local": true, "time": true, "external": true,
+}
+
+// providerToken extracts the terraform provider prefix from a resource type — the
+// segment before the first underscore (aws_iam_role → "aws", hcloud_server →
+// "hcloud", awscc_s3_bucket → "awscc", random_id → "random"). A type with no
+// underscore is returned whole (e.g. the "external" data-source type). This is how a
+// resource is bucketed as controlled / supported-no-controls / unrecognized.
+func providerToken(rtype string) string {
+	if i := strings.IndexByte(rtype, '_'); i > 0 {
+		return rtype[:i]
+	}
+	return rtype
+}
+
+// controlEvaluableScope — SCOPE-001. The fail-closed backstop for the whole gate.
+// detectProviders + the per-cloud controls are all resource-type-filtered, so a plan
+// whose resources belong to NO controlled provider runs every control set to a
+// "nothing in scope" vacuous pass — historically a silent PASS even for a plan the
+// gate cannot reason about at all (a typo'd/custom provider, or AWS Cloud Control
+// `awscc_`, whose resources the `aws_` controls never match). That is the exact
+// false-PASS this package must never make.
+//
+// This control asserts the plan is EVALUABLE: every managed resource must belong to a
+// provider we recognize — either a controlled cloud (aws/gcp/azure, whose controls
+// ran) or a supported-no-controls provider (Hetzner/Cloudflare/utility, a legitimate
+// vacuous pass). A resource from any OTHER provider means the gate cannot see the
+// authority that resource creates, so the report is not_evaluable (honest per-resource
+// note naming the unrecognized provider) rather than a pass over uninspected infra. It
+// does NOT deny — a controlled cloud's real violation still hard-fails and blocks; an
+// unrecognized provider only demotes an otherwise-clean plan from pass to not_evaluable.
+func controlEvaluableScope(planned []plannedResource) ControlResult {
+	c := ControlResult{
+		ID:         "SCOPE-001",
+		Title:      "Plan is within the engine's evaluable scope",
+		Severity:   SeverityHigh,
+		Provider:   "all",
+		Frameworks: []string{"SOC2-CC6.1"},
+		Status:     StatusPass,
+	}
+	var coverage []string
+	for _, r := range planned { // plan order → deterministic
+		tok := providerToken(r.rtype)
+		if controlledProviderTokens[tok] || supportedNoControlProviderTokens[tok] {
+			continue
+		}
+		c.Findings = append(c.Findings, Finding{
+			Address: r.address,
+			Message: "unrecognized provider \"" + tok + "\" (resource type " + r.rtype + "): no control set covers it and it is not on the supported-no-controls allowlist — the gate cannot reason about the authority this resource creates, so the plan is not_evaluable rather than passed",
+		})
+		coverage = append(coverage, r.address+": unrecognized provider "+tok)
+	}
+	if len(c.Findings) > 0 {
+		c.Status = StatusNotEvaluable
+		c.Coverage = strings.Join(coverage, "; ")
+	}
+	return c
+}
+
 // providerLabel renders the detected provider set for the Report.Provider field: a
 // single cloud by name ("aws"), a multi-cloud plan as a deterministic "+"-joined set
 // ("aws+azure"), and a plan with no recognized cloud as "unknown".

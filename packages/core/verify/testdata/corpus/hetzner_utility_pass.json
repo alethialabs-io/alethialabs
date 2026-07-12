@@ -1,0 +1,58 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "hcloud_server.node",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "node",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "server_type": "cpx21", "location": "nbg1", "image": "ubuntu-24.04" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "random_id.suffix",
+      "mode": "managed",
+      "type": "random_id",
+      "name": "suffix",
+      "provider_name": "registry.terraform.io/hashicorp/random",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "byte_length": 4 },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "tls_private_key.talos",
+      "mode": "managed",
+      "type": "tls_private_key",
+      "name": "talos",
+      "provider_name": "registry.terraform.io/hashicorp/tls",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "algorithm": "ED25519" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "null_resource.wait",
+      "mode": "managed",
+      "type": "null_resource",
+      "name": "wait",
+      "provider_name": "registry.terraform.io/hashicorp/null",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {},
+        "after_unknown": {}
+      }
+    }
+  ]
+}

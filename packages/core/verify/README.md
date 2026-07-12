@@ -23,7 +23,7 @@ package: **never report a pass on something we could not inspect.** Such cases a
 `not_evaluable` with a plain-language `coverage` note. A silent pass on an un-inspectable
 resource is exactly the false-PASS the verification claim must never make.
 
-## Controls (catalog `elench-controls-0.1.0`)
+## Controls (catalog `elench-controls-0.2.0`)
 
 `Evaluate` detects **every** recognized cloud present in the plan and runs the **union** of those
 providers' control sets — a single OpenTofu plan can mix clouds (an AWS EKS cluster alongside an Azure
@@ -33,6 +33,23 @@ it is scoped to only that provider's resources. A plan with **no** recognized cl
 sets (the fail-closed default — never zero checks). `Report.Provider` is the detected set: a single
 cloud by name (`aws`), a multi-cloud plan as a `+`-joined set (`aws+azure`), or `unknown`. Each control
 records its own `provider` so a uniform UI can't imply coverage a control doesn't have.
+
+**The fail-closed scope backstop (`SCOPE-001`).** Every control filters to its own resource types, so a
+plan whose resources belong to no controlled provider would otherwise run every control set to a
+"nothing in scope" vacuous **pass** — a silent hole for any provider the gate can't reason about (a
+typo'd/custom provider, or AWS Cloud Control `awscc_`, whose resources the `aws_` controls never match).
+`SCOPE-001` closes it: a plan is **evaluable** iff every managed resource belongs to a provider that is
+either **controlled** (`aws`/`google`/`azurerm`/`azuread`) or on the **supported-no-controls allowlist**
+— clouds with no keyless/OIDC/least-priv surface *by design* (**Hetzner** `hcloud` is token-auth, the
+token is the ceiling; **Cloudflare**) plus the utility providers that create no cloud authority
+(`random`/`tls`/`null`/`local`/`time`/`external`). Those legitimately stay a **pass**. Any resource from
+a provider outside that union makes the report **`not_evaluable`** (with an honest per-resource note
+naming the unrecognized provider) rather than a pass — the gate never implies it checked infrastructure
+it cannot see. It does **not** blanket-deny: a controlled cloud's real violation still hard-fails (fail
+precedence over not_evaluable), and an unrecognized provider only demotes an otherwise-clean plan from
+pass to not_evaluable. The control is emitted only when it fires (a fully-recognized plan keeps its exact
+control list) and is deliberately kept out of the corpus fail-coverage/mutation gates since it never
+emits `fail`.
 
 **AWS**
 
