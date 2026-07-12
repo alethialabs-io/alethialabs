@@ -14,7 +14,25 @@
 # ---------------------------------------------------------------------------
 
 locals {
-  hcloud_csi_version = "2.13.0"
+  # Pinned to the NEWEST version that still supports the Kubernetes this template actually
+  # builds. Both bounds are load-bearing — do not bump blindly:
+  #
+  #   FLOOR  v2.15.0 — `controller.volumeExtraLabels` (HCLOUD_VOLUME_EXTRA_LABELS, see the
+  #                    volume-labelling block below) arrived in v2.14.0, but upstream marks
+  #                    v2.14.0 itself as DO-NOT-INSTALL ("install v2.15.0 or later"). On any
+  #                    chart below this the label setting is SILENTLY IGNORED → leaked volumes.
+  #   CEILING v2.20.2 — upstream's version-policy table maps k8s 1.32 → v2.20.2 (no "+"): it is
+  #                    the LAST release supporting 1.32, and v2.21.0 explicitly "drop[s] support
+  #                    for Kubernetes v1.32". This template's talos_version default (v1.9.5)
+  #                    ships DefaultKubernetesVersion = 1.32.3, so anything newer than v2.20.2 is
+  #                    OUT OF SUPPORT here — and this is the real CUSTOMER provisioning template,
+  #                    not just the nightly, so an unsupported CSI driver would land in customer
+  #                    clusters (which DO run PVC workloads via the addon catalog).
+  #
+  # v2.20.2 satisfies both, and carries the 2.20.1/2.20.2 volume-label validation + truncation
+  # fixes. Raising this ceiling REQUIRES first moving Talos to a release whose default k8s is
+  # >= 1.33 — bump them together, never the chart alone.
+  hcloud_csi_version = "2.20.2"
 }
 
 data "helm_template" "hcloud_csi" {
@@ -33,6 +51,24 @@ data "helm_template" "hcloud_csi" {
   set {
     name  = "controller.hcloudToken.existingSecret.key"
     value = "token"
+  }
+
+  # ── Stamp the cluster label on every DYNAMICALLY-provisioned volume. ──
+  # A PVC-created hcloud Volume (`pvc-<uuid>`) is created by the CSI CONTROLLER at
+  # runtime, not by this template — so it carries none of our labels, and `tofu destroy`
+  # (which only knows template-managed resources) does not delete it. Destroying a cluster
+  # with live PVCs therefore LEAKS real, billable volumes, and the teardown sweep
+  # (scripts/e2e/hcloud-cleanup.sh) could not see them either: its every call is scoped to
+  # `cluster=<name>`, and it must stay that way — the hcloud account is SHARED WITH PROD, so
+  # sweeping unlabelled `pvc-*` volumes account-wide is exactly the near-miss the
+  # scope-destructive-cloud-ops rule forbids.
+  #
+  # Telling the driver to label what it creates closes the gap at the source: the volumes
+  # become label-visible, so the EXISTING cluster-scoped sweep reclaims them with no
+  # widening of its blast radius. Requires chart >= 2.14.0 (pinned above).
+  set {
+    name  = "controller.volumeExtraLabels.cluster"
+    value = local.cluster_name
   }
 
   # Make hcloud-volumes the default StorageClass.
@@ -61,4 +97,33 @@ locals {
     local.csi_manifest_yaml
   ))
   csi_has_driver = can(regex("csi.hetzner.cloud", local.csi_manifest_yaml))
+
+  # The controller must actually receive HCLOUD_VOLUME_EXTRA_LABELS carrying THIS cluster's
+  # label — that is what makes dynamically-provisioned `pvc-*` volumes reclaimable by the
+  # cluster-scoped teardown sweep. HARD-ENFORCED via a lifecycle precondition (see the
+  # csi_volume_label_guard resource below), because a chart pin outside the supported window,
+  # or an upstream rename of the value, would otherwise silently drop the label and start
+  # leaking billable volumes with no other signal.
+  #
+  # strcontains, NOT regex: cluster_name is interpolated from project_name, which permits `.`
+  # and `-`. As a regex pattern those are metacharacters, so `a.b` would match `axb` (a false
+  # POSITIVE — the guard would pass on the wrong label). A literal substring test cannot.
+  csi_has_volume_labels = strcontains(local.csi_manifest_yaml, "HCLOUD_VOLUME_EXTRA_LABELS") && strcontains(
+    local.csi_manifest_yaml, "cluster=${local.cluster_name}"
+  )
+}
+
+# The label invariant is a MONEY guard (an unlabelled volume is unreclaimable and bills forever),
+# so it must HARD-FAIL, not warn. OpenTofu `check` blocks only emit WARNINGS — they do not fail
+# plan or apply — which makes them the wrong tool here: a silent label regression would sail
+# through as a warning buried in runner logs. A `lifecycle.precondition` fails the plan outright.
+resource "terraform_data" "csi_volume_label_guard" {
+  input = local.hcloud_csi_version
+
+  lifecycle {
+    precondition {
+      condition     = local.csi_has_volume_labels
+      error_message = "CSI controller must set HCLOUD_VOLUME_EXTRA_LABELS with cluster=${local.cluster_name} (needs hcloud-csi chart in [2.15.0, 2.20.2]); without it, dynamically-provisioned pvc-* volumes carry no cluster label, cannot be reclaimed by the cluster-scoped teardown, and leak as billable resources."
+    }
+  }
 }
