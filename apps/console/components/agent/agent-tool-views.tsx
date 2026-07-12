@@ -6,51 +6,23 @@ import type { ToolUIPart } from "ai";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { z } from "zod";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@repo/ui/table";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
-import { cn } from "@repo/ui/utils";
 import { ToolResultFrame } from "./tool-result-frame";
+import { widgetDefForPartType } from "./widgets/registry";
 
-/** Tool result types this module renders specially (tables / chips). */
+/** Tool result types this module renders specially (registry tables / one-liners). */
 export const TOOL_VIEW_TYPES = new Set<string>([
 	"tool-list_projects",
 	"tool-list_jobs",
 	"tool-list_clusters",
 	"tool-list_connectors",
+	"tool-list_runners",
 	"tool-cidr_for_hosts",
 	"tool-list_services",
 	"tool-list_service_options",
 	"tool-connect_cloud",
 ]);
 
-const str = z.string().nullish();
-const projectsOut = z.object({
-	projects: z.array(
-		z.object({ id: z.string(), name: str, environment: str, region: str, status: str }),
-	),
-});
-const jobsOut = z.object({
-	jobs: z.array(
-		z.object({ id: z.string(), type: str, project: str, provider: str, status: str }),
-	),
-});
-const clustersOut = z.object({
-	clusters: z.array(
-		z.object({ id: z.string(), name: str, region: str, provider: str, status: str }),
-	),
-});
-const connectorsOut = z.object({
-	connectors: z.array(
-		z.object({ slug: z.string(), name: str, category: str, status: str, connected: z.boolean().nullish() }),
-	),
-});
 const cidrOut = z.object({ cidr: z.string(), totalAddresses: z.number().nullish() });
 const connectOut = z.object({
 	provider: z.string(),
@@ -100,32 +72,11 @@ function ConnectAction({
 	);
 }
 
-function Status({ v }: { v: string | null | undefined }) {
-	return (
-		<span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-			<span className="h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/70" />
-			{v ?? "—"}
-		</span>
-	);
-}
-
-const TH = "vx-eyebrow h-auto py-2 text-[9px]";
-const TD = "py-1.5 text-[12px]";
-
-/** Marker-line row count for a framed table ("4 rows", "1 row"). */
-function rowsDetail(n: number): string {
-	return `${n} ${n === 1 ? "row" : "rows"}`;
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-	return <div className="overflow-hidden border border-border">{children}</div>;
-}
-
 /**
  * Polished tool-result renderings for the agent transcript — every result inside the
- * shared `ToolResultFrame` (a labeled marker line): framed tables for the list_* reads
- * (projects/jobs clickable → artifact panel), marker-only frames for the catalog/CIDR
- * one-liners, and the generic collapsible frame for anything else.
+ * shared `ToolResultFrame` (a labeled marker line). Tabular reads render through the
+ * tool→widget registry (the same bodies the grid pins), catalog/CIDR one-liners fold
+ * into the marker line, and anything else falls back to the generic collapsible frame.
  */
 export function ToolView({ part }: { part: ToolUIPart }) {
 	const open = useArtifactStore((s) => s.open);
@@ -160,143 +111,17 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 			);
 		}
 
-		case "tool-list_projects": {
-			const p = projectsOut.safeParse(part.output);
-			if (!p.success) return <ToolResultFrame part={part} />;
-			return (
-				<ToolResultFrame part={part} detail={rowsDetail(p.data.projects.length)}>
-					<Shell>
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead className={TH}>Project</TableHead>
-								<TableHead className={TH}>Env</TableHead>
-								<TableHead className={TH}>Region</TableHead>
-								<TableHead className={TH}>Status</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{p.data.projects.map((s) => (
-								<TableRow
-									key={s.id}
-									onClick={() => open({ projectId: s.id }, "config")}
-									className="cursor-pointer"
-								>
-									<TableCell className={cn(TD, "font-medium")}>{s.name ?? "—"}</TableCell>
-									<TableCell className={TD}>{s.environment ?? "—"}</TableCell>
-									<TableCell className={cn(TD, "font-mono")}>{s.region ?? "—"}</TableCell>
-									<TableCell className={TD}>
-										<Status v={s.status} />
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</Shell>
-				</ToolResultFrame>
-			);
-		}
-
-		case "tool-list_jobs": {
-			const p = jobsOut.safeParse(part.output);
-			if (!p.success) return <ToolResultFrame part={part} />;
-			return (
-				<ToolResultFrame part={part} detail={rowsDetail(p.data.jobs.length)}>
-					<Shell>
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead className={TH}>Type</TableHead>
-								<TableHead className={TH}>Project</TableHead>
-								<TableHead className={TH}>Status</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{p.data.jobs.map((j) => (
-								<TableRow
-									key={j.id}
-									onClick={() => open({ jobId: j.id }, "logs")}
-									className="cursor-pointer"
-								>
-									<TableCell className={cn(TD, "font-mono")}>{j.type ?? "—"}</TableCell>
-									<TableCell className={TD}>{j.project ?? "—"}</TableCell>
-									<TableCell className={TD}>
-										<Status v={j.status} />
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</Shell>
-				</ToolResultFrame>
-			);
-		}
-
-		case "tool-list_clusters": {
-			const p = clustersOut.safeParse(part.output);
-			if (!p.success) return <ToolResultFrame part={part} />;
-			return (
-				<ToolResultFrame part={part} detail={rowsDetail(p.data.clusters.length)}>
-					<Shell>
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead className={TH}>Cluster</TableHead>
-								<TableHead className={TH}>Region</TableHead>
-								<TableHead className={TH}>Cloud</TableHead>
-								<TableHead className={TH}>Status</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{p.data.clusters.map((c) => (
-								<TableRow key={c.id}>
-									<TableCell className={cn(TD, "font-medium")}>{c.name ?? "—"}</TableCell>
-									<TableCell className={cn(TD, "font-mono")}>{c.region ?? "—"}</TableCell>
-									<TableCell className={cn(TD, "font-mono")}>{c.provider ?? "—"}</TableCell>
-									<TableCell className={TD}>
-										<Status v={c.status} />
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</Shell>
-				</ToolResultFrame>
-			);
-		}
-
-		case "tool-list_connectors": {
-			const p = connectorsOut.safeParse(part.output);
-			if (!p.success) return <ToolResultFrame part={part} />;
-			return (
-				<ToolResultFrame part={part} detail={rowsDetail(p.data.connectors.length)}>
-					<Shell>
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead className={TH}>Connector</TableHead>
-								<TableHead className={TH}>Category</TableHead>
-								<TableHead className={TH}>Connected</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{p.data.connectors.map((c) => (
-								<TableRow key={c.slug}>
-									<TableCell className={cn(TD, "font-medium")}>{c.name ?? c.slug}</TableCell>
-									<TableCell className={cn(TD, "font-mono")}>{c.category ?? "—"}</TableCell>
-									<TableCell className={TD}>
-										<Status v={c.connected ? "connected" : "not connected"} />
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				</Shell>
-				</ToolResultFrame>
-			);
-		}
-
-		default:
+		default: {
+			// Registry-backed tabular reads: the same body the grid renders, framed.
+			const def = widgetDefForPartType(part.type);
+			if (def?.parses(part.output)) {
+				return (
+					<ToolResultFrame part={part} detail={def.detail(part.output)}>
+						<def.Body output={part.output} openArtifact={open} />
+					</ToolResultFrame>
+				);
+			}
 			return <ToolResultFrame part={part} />;
+		}
 	}
 }

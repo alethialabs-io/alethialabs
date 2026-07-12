@@ -40,3 +40,4 @@ export * from "./stripe-webhook-event";
 export * from "./support";
 export * from "./classification";
 export * from "./breakglass";
+export * from "./widgets";

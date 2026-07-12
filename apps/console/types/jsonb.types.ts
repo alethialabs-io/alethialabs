@@ -817,3 +817,29 @@ export interface BreakglassActionInput {
 	 */
 	suppressPaymentRetry?: boolean;
 }
+
+// ── Elench widget grid (per-chat bento canvas) ─────────
+// Structured tool results pin to a 5-column grid next to the chat as widgets
+// (`thread_widgets` rows). A widget either replays a read tool (`source` set) or
+// renders a frozen DashboardBlock (`block` set, from an exploded build_dashboard).
+
+/** The replayable tool call behind a live widget (`null` args = call with no input). */
+export interface WidgetSource {
+	/** Tool name from the AI tool registry (read tools only). */
+	tool: string;
+	args: Record<string, unknown> | null;
+}
+
+/** live = refetches via `source` on an interval; frozen = a pinned snapshot. */
+export type WidgetMode = "live" | "frozen";
+
+/** How a widget renders (drives the body renderer + default size). */
+export type WidgetKind = "table" | "stat" | "bar" | "line" | "keyvalue";
+
+/** The data payload a widget renders: a tool output snapshot or a dashboard block. */
+export interface WidgetData {
+	/** Snapshot of the source tool's output (tool-driven widgets). */
+	output?: unknown;
+	/** A single generative dashboard block (exploded build_dashboard widgets). */
+	block?: DashboardBlock;
+}

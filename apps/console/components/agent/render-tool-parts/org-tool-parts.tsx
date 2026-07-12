@@ -12,7 +12,7 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
-import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
+import { DashboardPinnedCard } from "@/components/agent/render-tool-parts/dashboard-pinned";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { proposeOperationInputSchema } from "@/lib/ai/operation";
@@ -24,8 +24,10 @@ const jobIdSchema = z.object({ jobId: z.string() });
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
 
 interface OrgToolPartsDeps {
-	/** Open the artifact panel (dashboard/config/plan/logs) for a project/job/spec. */
+	/** Open the inspector panel (config/plan/cost/logs) for a project/job. */
 	openArtifact: (artifact: Artifact, tab: ArtifactTab) => void;
+	/** Reveal the split pane's widget grid (maximizing a docked panel first). */
+	openGrid: () => void;
 	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
 	addToolResult: AddToolResult;
 }
@@ -39,6 +41,7 @@ interface OrgToolPartsDeps {
  */
 export function orgRenderToolPart({
 	openArtifact,
+	openGrid,
 	addToolResult,
 }: OrgToolPartsDeps): RenderToolPart {
 	return function renderOrgToolPart(part: ToolUIPart) {
@@ -65,20 +68,13 @@ export function orgRenderToolPart({
 			);
 		}
 
-		// Generative dashboard ready → an "Open dashboard" card opening the split pane.
+		// Generative dashboard ready → its blocks auto-pin to the grid; the transcript
+		// shows the framed receipt with an "Open grid" action.
 		if (
 			part.type === "tool-build_dashboard" &&
 			part.state === "output-available"
 		) {
-			return (
-				<ToolResultFrame part={part}>
-					<DashboardReadyCard
-						part={part}
-						openArtifact={openArtifact}
-						context="org"
-					/>
-				</ToolResultFrame>
-			);
+			return <DashboardPinnedCard part={part} openGrid={openGrid} />;
 		}
 
 		// Repo scan ready → an "Open in canvas" action to review the proposed project.

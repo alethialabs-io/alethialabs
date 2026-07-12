@@ -2,9 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Loader2, X } from "lucide-react";
+import { X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { Shimmer } from "@/components/ai-elements/shimmer";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 import { getPlanResult } from "@/app/server/actions/jobs";
 import { getProject } from "@/app/server/actions/projects";
@@ -18,8 +17,6 @@ import { type PlanSummary, parsePlanJSON } from "@/lib/plan/parse-plan";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import type {
-	DashboardBlock,
-	DashboardSpec,
 	SignedReceipt,
 	VerifyReport,
 	VerifyStatus,
@@ -57,7 +54,6 @@ export function ArtifactPanel() {
 
 	const projectId = artifact?.projectId;
 	const jobId = artifact?.jobId;
-	const dashboard = artifact?.dashboard;
 
 	const [project, setProject] = useState<ProjectDetail | null>(null);
 	const [cost, setCost] = useState<{ items: CostItem[]; total: number } | null>(
@@ -149,20 +145,14 @@ export function ArtifactPanel() {
 
 	if (!artifact) return null;
 
-	// Config/Cost need a project; Plan/Logs need a job; Dashboard needs a spec. The
-	// tabs are shown only for what the artifact actually carries, so a dashboard-only
-	// artifact reads as a single Dashboard view.
+	// Config/Cost need a project; Plan/Logs need a job. The tabs are shown only for
+	// what the artifact actually carries.
 	const hasProject = !!projectId;
 	const hasJob = !!jobId;
-	// A `null` dashboard is a pending artifact (opened ahead of its spec) — still a dashboard.
-	const hasDashboard = dashboard !== undefined;
 
-	const title = dashboard
-		? dashboard.title
-		: dashboard === null
-			? "Dashboard"
-			: (project?.project.project_name ??
-				(jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact"));
+	const title =
+		project?.project.project_name ??
+		(jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact");
 
 	return (
 		<aside className="flex h-full w-full flex-col bg-card">
@@ -181,23 +171,12 @@ export function ArtifactPanel() {
 			<Tabs
 				value={tab}
 				onValueChange={(v) => {
-					if (
-						v === "config" ||
-						v === "plan" ||
-						v === "cost" ||
-						v === "logs" ||
-						v === "dashboard"
-					)
+					if (v === "config" || v === "plan" || v === "cost" || v === "logs")
 						setTab(v);
 				}}
 				className="flex min-h-0 flex-1 flex-col gap-0"
 			>
 				<TabsList className="h-auto justify-start rounded-none border-b border-border bg-transparent px-2 py-1.5">
-					{hasDashboard && (
-						<TabsTrigger value="dashboard" className="rounded-none text-xs">
-							Dashboard
-						</TabsTrigger>
-					)}
 					{hasProject && (
 						<TabsTrigger value="config" className="rounded-none text-xs">
 							Config
@@ -221,18 +200,6 @@ export function ArtifactPanel() {
 				</TabsList>
 
 				<div className="min-h-0 flex-1">
-					{hasDashboard && (
-						<TabsContent value="dashboard" className="m-0 h-full">
-							<ScrollArea className="h-full">
-								<div className="p-4">
-									<DashboardPane
-										spec={dashboard ?? null}
-										progress={artifact?.dashboardProgress}
-									/>
-								</div>
-							</ScrollArea>
-						</TabsContent>
-					)}
 					<TabsContent value="config" className="m-0 h-full">
 						<ScrollArea className="h-full">
 							<div className="p-4">
@@ -609,190 +576,6 @@ function PlanPane({
 					}
 				/>
 			)}
-		</div>
-	);
-}
-
-/** A stat block → a card with a big value + optional caption. */
-function StatCard({
-	title,
-	value,
-	sub,
-}: {
-	title: string;
-	value: string | number;
-	sub?: string;
-}) {
-	return (
-		<div className="border border-border px-3 py-3">
-			<div className="vx-eyebrow text-[9px]">{title}</div>
-			<div className="mt-1 font-mono text-2xl font-semibold tracking-tight text-foreground">
-				{value}
-			</div>
-			{sub && <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div>}
-		</div>
-	);
-}
-
-/**
- * A bar block → vertical grayscale bars (ink-weight; heights normalized to the
- * block's max). No charting library — the design system is strictly grayscale.
- */
-function BarChart({ data }: { data: Array<{ label: string; value: number }> }) {
-	const max = Math.max(1, ...data.map((d) => d.value));
-	return (
-		<div className="flex h-36 items-end gap-2">
-			{data.map((d) => (
-				<div
-					key={d.label}
-					className="flex min-w-0 flex-1 flex-col items-center gap-1"
-					title={`${d.label}: ${d.value}`}
-				>
-					<span className="font-mono text-[9px] text-muted-foreground">
-						{d.value}
-					</span>
-					<div className="flex w-full flex-1 items-end">
-						<div
-							className="w-full bg-foreground"
-							style={{ height: `${Math.max(2, (d.value / max) * 100)}%` }}
-						/>
-					</div>
-					<span className="w-full truncate text-center text-[9px] text-muted-foreground">
-						{d.label}
-					</span>
-				</div>
-			))}
-		</div>
-	);
-}
-
-/**
- * A line block → an ink-weight grayscale sparkline over the point series (min/max
- * normalized). Mirrors the landing's decorative chart, driven by real numbers.
- */
-function Sparkline({ points, label }: { points: number[]; label?: string }) {
-	if (points.length < 2) {
-		return (
-			<Empty text={label ? `${label}: not enough data` : "Not enough data"} />
-		);
-	}
-	const W = 300;
-	const H = 80;
-	const min = Math.min(...points);
-	const max = Math.max(...points);
-	const range = max - min || 1;
-	const coords = points.map((p, i) => {
-		const x = (i / (points.length - 1)) * W;
-		const y = H - ((p - min) / range) * H;
-		return `${x.toFixed(1)} ${y.toFixed(1)}`;
-	});
-	const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"}${c}`).join(" ");
-	const areaPath = `${linePath} L${W} ${H} L0 ${H} Z`;
-	return (
-		<div className="h-24 w-full">
-			<svg
-				viewBox={`0 0 ${W} ${H}`}
-				preserveAspectRatio="none"
-				className="block h-full w-full text-foreground"
-				aria-hidden
-			>
-				<title>{label ?? "trend"}</title>
-				<path d={areaPath} fill="currentColor" fillOpacity="0.06" />
-				<path
-					d={linePath}
-					fill="none"
-					stroke="currentColor"
-					strokeOpacity="0.6"
-					strokeWidth="2"
-					strokeLinejoin="round"
-					strokeLinecap="round"
-					vectorEffect="non-scaling-stroke"
-				/>
-			</svg>
-		</div>
-	);
-}
-
-/** Render one dashboard block by its kind (stat/bar/line/grid). */
-function DashboardBlockView({ block }: { block: DashboardBlock }) {
-	if (block.kind === "stat") {
-		return <StatCard title={block.title} value={block.value} sub={block.sub} />;
-	}
-	if (block.kind === "grid") {
-		return (
-			<Section title={block.title}>
-				{block.cells.map((c) => (
-					<Row key={c.label} k={c.label} v={c.value} />
-				))}
-			</Section>
-		);
-	}
-	if (block.kind === "bar") {
-		return (
-			<div>
-				<div className="vx-eyebrow pb-2 text-[9px]">{block.title}</div>
-				<div className="border border-border p-3">
-					<BarChart data={block.data} />
-				</div>
-			</div>
-		);
-	}
-	return (
-		<div>
-			<div className="vx-eyebrow pb-2 text-[9px]">{block.title}</div>
-			<div className="border border-border p-3">
-				<Sparkline points={block.points} label={block.label} />
-			</div>
-		</div>
-	);
-}
-
-/**
- * The generative dashboard pane — interprets a `DashboardSpec` (from the
- * `build_dashboard` tool) with grayscale primitives: stat/grid blocks as cards,
- * bar blocks as vertical bars, line blocks as sparklines. No charting library.
- * A `null` spec is the pending state (the pane was opened ahead of the result, e.g. the
- * landing's "Try now") — it shows a building affordance, upgraded with live progress
- * (streamed title + block count) while the tool input streams; the live-sync effect
- * fills the pane the moment the result lands.
- */
-function DashboardPane({
-	spec,
-	progress,
-}: {
-	spec: DashboardSpec | null;
-	progress?: { title?: string; blocks: number };
-}) {
-	if (!spec) {
-		return (
-			<div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-				<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-				<div className="text-sm font-medium text-foreground">
-					{progress?.title ? (
-						<Shimmer duration={1.5}>{progress.title}</Shimmer>
-					) : (
-						"Building your dashboard…"
-					)}
-				</div>
-				{progress && progress.blocks > 0 ? (
-					<div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-						{progress.blocks} {progress.blocks === 1 ? "block" : "blocks"} composed
-					</div>
-				) : (
-					<div className="max-w-[220px] text-xs text-muted-foreground">
-						Elench is gathering your data and composing the views. This pane fills
-						in as soon as the result is ready.
-					</div>
-				)}
-			</div>
-		);
-	}
-	if (spec.blocks.length === 0) return <Empty text="Empty dashboard." />;
-	return (
-		<div className="space-y-4">
-			{spec.blocks.map((block, i) => (
-				<DashboardBlockView key={`${block.kind}-${i}`} block={block} />
-			))}
 		</div>
 	);
 }
