@@ -28,7 +28,12 @@ import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
-import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
+import {
+	AiBudgetError,
+	type AiHoldContext,
+	assertAiAllowed,
+	releaseAiHold,
+} from "@/lib/billing/ai-guard";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
 import { getAdvisorModel, getExecutorModel, isAiConfigured } from "@/lib/config/ai";
 
@@ -150,100 +155,123 @@ export async function POST(
 		);
 	}
 
-	// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
-	// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
-	// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
-	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
-	const executor = getExecutorModel();
-	const advisor = getAdvisorModel(tier, { deepReasoning });
-	/** The canonical key metered for a given step (step 0 = advisor; the rest = executor). */
-	const modelForStep = (stepNumber: number): string =>
-		stepNumber === 0 ? advisor.key : executor.key;
+	// Everything from here through the streamText registration runs AFTER the hold was reserved; a
+	// throw in this window (tier/mentions resolution, message conversion, tool build) would strand
+	// the ≈$0.10 hold — nothing downstream releases it — so release it in the catch.
+	const holdCtx: AiHoldContext = {
+		orgId: actor.orgId,
+		userId: actor.userId,
+		kind: "agent",
+		refId: threadId ?? projectId,
+	};
+	try {
+		// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
+		// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
+		// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
+		const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+		const executor = getExecutorModel();
+		const advisor = getAdvisorModel(tier, { deepReasoning });
+		/** The canonical key metered for a given step (step 0 = advisor; the rest = executor). */
+		const modelForStep = (stepNumber: number): string =>
+			stepNumber === 0 ? advisor.key : executor.key;
 
-	const parsedMentions = mentionsSchema.safeParse(mentions);
-	const mentionBlock = parsedMentions.success
-		? formatMentionsForPrompt(parsedMentions.data)
-		: "";
-	const system = mentionBlock
-		? `${systemPrompt(projectId, canvas)}\n\n${mentionBlock}`
-		: systemPrompt(projectId, canvas);
+		const parsedMentions = mentionsSchema.safeParse(mentions);
+		const mentionBlock = parsedMentions.success
+			? formatMentionsForPrompt(parsedMentions.data)
+			: "";
+		const system = mentionBlock
+			? `${systemPrompt(projectId, canvas)}\n\n${mentionBlock}`
+			: systemPrompt(projectId, canvas);
 
-	const modelMessages = await convertToModelMessages(messages);
+		const modelMessages = await convertToModelMessages(messages);
 
-	// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
-	// parts) interleave with the model's own parts (PLAN/EXECUTE separators).
-	const stream = createUIMessageStream({
-		originalMessages: messages,
-		execute: ({ writer }) => {
-			const result = streamText({
-				model: executor.model,
-				// Cache the (stable) system prompt so repeated turns read it from cache.
-				messages: [cachedSystemMessage(system), ...modelMessages],
-				// Our own system prompt (cached) is intentionally a system message; user turns are
-				// never system-role, so this is not a prompt-injection surface.
-				allowSystemInMessages: true,
-				tools: buildProjectAgentTools(canvas),
-				stopWhen: stepCountIs(8),
-				// Step 0 runs on the advisor; the rest use the executor. The planning step gets
-				// extended thinking on EVERY tier so reasoning streams to the transcript.
-				prepareStep: ({ stepNumber }) => {
-					const marker = agentStepMarker({
-						stepNumber,
-						clientPick: false,
-						advisorKey: advisor.key,
-						executorKey: executor.key,
-						baseKey: executor.key,
-					});
-					if (marker) {
-						writer.write({
-							type: AGENT_STEP_PART_TYPE,
-							id: `step-${stepNumber}`,
-							data: marker,
+		// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
+		// parts) interleave with the model's own parts (PLAN/EXECUTE separators).
+		const stream = createUIMessageStream({
+			originalMessages: messages,
+			execute: ({ writer }) => {
+				const result = streamText({
+					model: executor.model,
+					// Cache the (stable) system prompt so repeated turns read it from cache.
+					messages: [cachedSystemMessage(system), ...modelMessages],
+					// Our own system prompt (cached) is intentionally a system message; user turns are
+					// never system-role, so this is not a prompt-injection surface.
+					allowSystemInMessages: true,
+					// Wire the request's abort signal so a client disconnect aborts generation (and fires
+					// onAbort) instead of streaming — and paying — into the void with the hold left open.
+					abortSignal: req.signal,
+					tools: buildProjectAgentTools(canvas),
+					stopWhen: stepCountIs(8),
+					// Step 0 runs on the advisor; the rest use the executor. The planning step gets
+					// extended thinking on EVERY tier so reasoning streams to the transcript.
+					prepareStep: ({ stepNumber }) => {
+						const marker = agentStepMarker({
+							stepNumber,
+							clientPick: false,
+							advisorKey: advisor.key,
+							executorKey: executor.key,
+							baseKey: executor.key,
 						});
-					}
-					return stepNumber === 0
-						? { model: advisor.model, providerOptions: thinkingOptions(advisor) }
-						: {};
-				},
-				// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
-				onFinish: ({ steps }) => {
-					void recordAgentTurnUsage({
-						orgId: actor.orgId,
-						userId: actor.userId,
-						kind: "agent",
-						charge,
-						refId: threadId ?? projectId,
-						steps: steps.map((s, i) => ({
-							model: modelForStep(i),
-							usage: {
-								inputTokens: s.usage.inputTokens,
-								outputTokens: s.usage.outputTokens,
-								cachedInputTokens: s.usage.cachedInputTokens,
-							},
-						})),
-					});
-				},
-				// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
-				onError: ({ error }) => {
-					void recordAiUsage({
-						orgId: actor.orgId,
-						userId: actor.userId,
-						kind: "agent",
-						source: charge.source,
-						holdId: charge.settle ? charge.holdId : undefined,
-						refId: threadId ?? projectId,
-						model: executor.key,
-						isError: true,
-						error: error instanceof Error ? error.message : String(error),
-					});
-				},
-			});
-			writer.merge(result.toUIMessageStream());
-		},
-		onFinish: ({ messages: finished }) => {
-			if (threadId) void saveThreadMessages(threadId, finished);
-		},
-	});
+						if (marker) {
+							writer.write({
+								type: AGENT_STEP_PART_TYPE,
+								id: `step-${stepNumber}`,
+								data: marker,
+							});
+						}
+						return stepNumber === 0
+							? { model: advisor.model, providerOptions: thinkingOptions(advisor) }
+							: {};
+					},
+					// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
+					onFinish: ({ steps }) => {
+						void recordAgentTurnUsage({
+							orgId: actor.orgId,
+							userId: actor.userId,
+							kind: "agent",
+							charge,
+							refId: threadId ?? projectId,
+							steps: steps.map((s, i) => ({
+								model: modelForStep(i),
+								usage: {
+									inputTokens: s.usage.inputTokens,
+									outputTokens: s.usage.outputTokens,
+									cachedInputTokens: s.usage.cachedInputTokens,
+								},
+							})),
+						});
+					},
+					// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
+					onError: ({ error }) => {
+						void recordAiUsage({
+							orgId: actor.orgId,
+							userId: actor.userId,
+							kind: "agent",
+							source: charge.source,
+							holdId: charge.settle ? charge.holdId : undefined,
+							refId: threadId ?? projectId,
+							model: executor.key,
+							isError: true,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					},
+					// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
+					// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.
+					onAbort: () => {
+						void releaseAiHold(charge, holdCtx);
+					},
+				});
+				writer.merge(result.toUIMessageStream());
+			},
+			onFinish: ({ messages: finished }) => {
+				if (threadId) void saveThreadMessages(threadId, finished);
+			},
+		});
 
-	return createUIMessageStreamResponse({ stream });
+		return createUIMessageStreamResponse({ stream });
+	} catch (e) {
+		// A throw between the gate and stream registration strands the hold — release it before rethrow.
+		await releaseAiHold(charge, holdCtx);
+		throw e;
+	}
 }

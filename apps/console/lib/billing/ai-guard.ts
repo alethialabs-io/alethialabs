@@ -16,6 +16,7 @@ import {
 	oldestUsageForUserSince,
 	oldestUsageSince,
 	purchasedBalance,
+	recordAiUsage,
 	sumCredits,
 	sumCreditsForUser,
 } from "@/lib/billing/ai-quota";
@@ -27,9 +28,18 @@ import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
  * Credits a metered (settle) turn HOLDS while it is in flight (≈$0.10). Written to the ledger
  * up front as a provisional row so concurrent turns in the same org SEE the reservation and are
  * denied once the window's cap (outstanding holds included) is reached; the hold is reconciled
- * to the turn's real cost-of-serve on finish (or released to 0 on error/empty turn). Chosen small
- * enough that a single legit turn always fits an `ai_free` session/week (130/510), large enough
- * that N parallel turns can't all slip through the headroom check before any settles.
+ * to the turn's real cost-of-serve on finish (or released to 0 on error/abort/empty turn). Chosen
+ * small enough that a single legit turn always fits an `ai_free` session/week (130/510) — do NOT
+ * raise it, or `ai_free`'s small cap would admit no turn at all.
+ *
+ * **Honest overspend bound.** The reserve is a placeholder, NOT a ceiling: a real agent turn often
+ * costs MORE than the reserve (100 cr ≈ $0.10; real turns run 300–900+ cr). While such a turn is in
+ * flight it under-books the window by `realCost - reserve`, so the window can transiently overspend.
+ * The bound is `Σ over concurrently-admitted turns of max(0, realCost - reserve)`, where concurrency
+ * is capped at `ceil(cap / reserve)` (that many holds fit before the headroom check blocks the next
+ * turn). It is NOT "≤ 1 hold" — that only holds when every turn costs ≤ the reserve. Each turn's hold
+ * reconciles to its real cost on finish, so the overspend is transient (the window self-corrects as
+ * turns settle) and bounded; it is the accepted cost of gating a metered turn on headroom.
  */
 export const METERED_RESERVE_CREDITS = 100;
 
@@ -58,6 +68,44 @@ export class AiBudgetError extends Error {
 export type AiCharge =
 	| { source: CreditSource; credits: number; settle?: false }
 	| { source: CreditSource; settle: true; holdId: string };
+
+/** Context needed to release a metered hold: whose/which turn's row to reconcile. */
+export interface AiHoldContext {
+	orgId: string;
+	userId: string;
+	kind: AiUsageKind;
+	/** Optional ledger `ref_id` to stamp on the released row (thread/agent/project id). */
+	refId?: string;
+}
+
+/**
+ * Release a metered (settle) turn's provisional HOLD to **0 credits**, restoring the window's
+ * headroom. A metered turn reserves a `METERED_RESERVE_CREDITS` hold up front (see
+ * {@link assertAiAllowed}); that hold MUST be reconciled to real cost on finish OR released here on
+ * any path that ends the turn without settling — a throw BETWEEN the gate and `streamText`
+ * registration, or a client disconnect / abort mid-stream (`onAbort`). Passing the `holdId` with no
+ * tokens/model makes {@link recordAiUsage} overwrite the reserved estimate with 0 (an absolute-value
+ * UPDATE), so the hold never leaks headroom.
+ *
+ * No-op for a fixed (reservation) charge — it holds no row. Idempotent-safe: the UPDATE is
+ * last-writer-wins, so releasing an already-reconciled hold to 0 is harmless — but callers wire this
+ * ONLY to the mutually-exclusive abort / pre-stream-throw paths (never after a successful `onFinish`
+ * already reconciled), so it does not double-fire the normal path.
+ */
+export async function releaseAiHold(
+	charge: AiCharge,
+	ctx: AiHoldContext,
+): Promise<void> {
+	if (!charge.settle) return;
+	await recordAiUsage({
+		orgId: ctx.orgId,
+		userId: ctx.userId,
+		kind: ctx.kind,
+		source: charge.source,
+		holdId: charge.holdId,
+		refId: ctx.refId,
+	});
+}
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -151,8 +199,12 @@ export async function isAiSurfaceEnabled(orgId: string): Promise<boolean> {
  *    re-reads under the lock and RESERVES a provisional `METERED_RESERVE_CREDITS` hold row — so
  *    the next turn's re-read sees the reservation. The returned charge is `{ settle: true, holdId }`;
  *    the caller RECONCILES that hold to the turn's real cost (derived from `cost_micros`) on finish,
- *    or RELEASES it (to 0) on error. A turn that starts with headroom may overshoot its window by
- *    ≤1 hold — standard/accepted; the NEXT turn blocks.
+ *    or RELEASES it (to 0) on error / abort / a throw before the stream registers. A turn that starts
+ *    with headroom may TRANSIENTLY overshoot its window while in flight — the reserve is a placeholder,
+ *    not a ceiling, so a turn costing more than the reserve under-books by `realCost - reserve` until
+ *    it settles. The overspend is bounded by `Σ over concurrently-admitted turns of max(0, realCost -
+ *    reserve)`, concurrency ≤ `ceil(cap / reserve)` (see {@link METERED_RESERVE_CREDITS}); it is NOT
+ *    "≤ 1 hold". Each hold reconciles to real cost on finish, so the window self-corrects.
  *
  * When `userId` is supplied, an additional **per-seat** session + weekly sub-cap is enforced on
  * top of the org caps (a fraction of the org allowance — see `AiTierSpec.perUser*`), so one

@@ -12,6 +12,11 @@
 //     and RELEASES it to 0 on an errored/empty turn (no leaked hold that permanently eats headroom).
 //  5. recordAgentTurnUsage reconciles the hold on row 0 + appends further model rows; empty → release.
 //  6. Included exhausted → the hold is reserved against purchased packs instead.
+//  7. LEAK-HARDENING (releaseAiHold): the streaming routes can end a turn WITHOUT a settle — a throw
+//     between the gate and streamText (case a) or a client disconnect firing onAbort (case b). Both
+//     call releaseAiHold(charge, ctx). Proven non-vacuously: WITHOUT the release the stranded hold
+//     stays at the reserve and blocks the next turn (the leak); WITH it the hold drops to 0 in place
+//     and headroom is restored so the next turn is re-admitted. No-op for a fixed (scan) charge.
 //
 // Needs `pnpm db:up` (or any migrated Postgres on ALETHIA_DATABASE_URL); skips when unreachable.
 
@@ -20,9 +25,11 @@ import { and, eq, sum } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import {
+	type AiCharge,
 	AiBudgetError,
 	assertAiAllowed,
 	METERED_RESERVE_CREDITS,
+	releaseAiHold,
 } from "@/lib/billing/ai-guard";
 import { AI_SESSION_WINDOW_MS, aiTierSpec } from "@/lib/billing/ai-plan";
 import {
@@ -300,5 +307,92 @@ describeIfDb("assertAiAllowed — metered overspend race", () => {
 				),
 			);
 		expect(Number(inc?.s ?? 0)).toBe(FREE.sessionCredits);
+	});
+
+	// ── Leak-hardening: releaseAiHold on the streaming routes' pre-stream throw / onAbort paths ──
+
+	it("LEAK vs FIX (non-vacuous): a stranded hold blocks the next turn; releaseAiHold restores headroom", async () => {
+		const org = freshOrg();
+		const user = randomUUID();
+		// Seed 40 of the 130 session cap → headroom 90. One 100-credit hold tips the window OVER cap.
+		await seedIncludedUsed(org, user, 40);
+
+		// A metered turn reserves its hold, then a throw happens BETWEEN the gate and streamText
+		// registration (req.json / model resolution / tool build) — the exact case-(a) window.
+		const charge = await assertAiAllowed(org, "agent", user);
+		if (!charge.settle) throw new Error("expected a settle charge");
+
+		// THE LEAK (what shipped before this fix): with the hold NOT released, the window sits at
+		// 40 + 100 = 140 ≥ 130, so the NEXT turn is wrongly denied — the ≈$0.10 hold ate the headroom.
+		expect(await sumCredits(org, "included", new Date(0))).toBe(
+			40 + METERED_RESERVE_CREDITS,
+		);
+		await expect(assertAiAllowed(org, "agent", user)).rejects.toBeInstanceOf(
+			AiBudgetError,
+		);
+
+		// THE FIX: the route's catch (case a) — identically, onAbort (case b) — calls releaseAiHold,
+		// which reconciles the SAME hold row to 0. Headroom drops back to 40 → the next turn is admitted.
+		await releaseAiHold(charge, {
+			orgId: org,
+			userId: user,
+			kind: "agent",
+			refId: "thread-x",
+		});
+		expect(await sumCredits(org, "included", new Date(0))).toBe(40);
+
+		const readmitted = await assertAiAllowed(org, "agent", user);
+		expect(readmitted.settle).toBe(true);
+
+		// Ledger: seed(40) + the released hold(0, UPDATE in place) + the re-admitted turn's fresh hold(100).
+		const rows = await ledgerRows(org);
+		expect(rows.length).toBe(3);
+		expect(rows.map((r) => r.credits).sort((a, b) => a - b)).toEqual([
+			0,
+			40,
+			METERED_RESERVE_CREDITS,
+		]);
+	});
+
+	it("releaseAiHold reconciles the hold IN PLACE to 0 (no new row, cost-only null) — the onAbort path", async () => {
+		const org = freshOrg();
+		const user = randomUUID();
+		const charge = await assertAiAllowed(org, "agent", user);
+		if (!charge.settle) throw new Error("expected a settle charge");
+
+		// Simulate a client disconnect: onAbort → releaseAiHold, with no tokens/model recorded.
+		await releaseAiHold(charge, { orgId: org, userId: user, kind: "agent" });
+
+		const rows = await ledgerRows(org);
+		expect(rows.length).toBe(1); // UPDATE, not INSERT
+		expect(rows[0].id).toBe(charge.holdId);
+		expect(rows[0].credits).toBe(0);
+		expect(rows[0].cost_micros).toBeNull(); // released with no model → cost-only null
+		expect(await sumCredits(org, "included", new Date(0))).toBe(0);
+	});
+
+	it("releaseAiHold is idempotent-safe — a second release keeps the hold at 0", async () => {
+		const org = freshOrg();
+		const user = randomUUID();
+		const charge = await assertAiAllowed(org, "agent", user);
+		if (!charge.settle) throw new Error("expected a settle charge");
+
+		// Both the catch AND onAbort could theoretically run; the absolute-value UPDATE makes a double
+		// release harmless (last-writer-wins → still 0), and never inserts a duplicate row.
+		await releaseAiHold(charge, { orgId: org, userId: user, kind: "agent" });
+		await releaseAiHold(charge, { orgId: org, userId: user, kind: "agent" });
+
+		const rows = await ledgerRows(org);
+		expect(rows.length).toBe(1);
+		expect(rows[0].credits).toBe(0);
+	});
+
+	it("releaseAiHold is a no-op for a fixed (scan) charge — it holds no row", async () => {
+		const org = freshOrg();
+		const user = randomUUID();
+		// A fixed charge carries no holdId; releasing it must write nothing to the ledger.
+		const fixed: AiCharge = { source: "included", credits: 5 };
+		await releaseAiHold(fixed, { orgId: org, userId: user, kind: "scan" });
+		expect((await ledgerRows(org)).length).toBe(0);
 	});
 });
