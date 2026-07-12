@@ -29,6 +29,11 @@ export async function register() {
 	// never-synced connections (self-hostable; no external cron — the /api route stays for hosted).
 	const { startConnectionSweeper } = await import("@/lib/cloud-providers/sweep");
 	startConnectionSweeper();
+	// Supervised reconcile loop (B2c "keep proving it + self-heal + don't leak"): env-status
+	// convergence backstop, periodic drift scheduler, ephemeral-env reaper, and retention GC —
+	// each heartbeat-stamped. Sibling to the loops above; idempotent + safe across instances.
+	const { startReconcileLoop } = await import("@/lib/reconcile/loop");
+	startReconcileLoop();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
 	await seedAuthz().catch((err) =>
