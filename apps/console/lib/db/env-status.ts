@@ -104,8 +104,15 @@ export async function setEnvStatus(
 	jobId: string | null,
 	meta?: EnvStatusMeta,
 ): Promise<boolean> {
+	// Bind the from-set as a single Postgres array-literal string, NOT a raw JS array. Drizzle's
+	// sql`` expands an interpolated JS array into a ($1, $2, …) parameter LIST (a record), and
+	// `(rec)::text[]` is an illegal cast (42846: cannot cast type record to text[]) — so the CAS
+	// failed against real Postgres even though the mocked unit tests passed. A `'{A,B}'::text[]`
+	// literal binds as one text param and casts cleanly. ProjectStatus values are fixed uppercase
+	// enum tokens (no commas/quotes/backslashes), so the brace-join needs no escaping.
+	const fromArray = `{${from.join(",")}}`;
 	const rows = await db.execute<{ updated: boolean }>(
-		sql`select public.set_env_status(${envId}::uuid, ${from}::text[], ${to}::text, ${jobId}::uuid) as updated`,
+		sql`select public.set_env_status(${envId}::uuid, ${fromArray}::text[], ${to}::text, ${jobId}::uuid) as updated`,
 	);
 	const updated = Boolean(rows[0]?.updated);
 
