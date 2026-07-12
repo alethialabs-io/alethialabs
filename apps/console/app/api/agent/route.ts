@@ -27,7 +27,12 @@ import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
-import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
+import {
+	AiBudgetError,
+	type AiHoldContext,
+	assertAiAllowed,
+	releaseAiHold,
+} from "@/lib/billing/ai-guard";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
 import {
 	getAdvisorModel,
@@ -173,139 +178,165 @@ export async function POST(req: Request) {
 		);
 	}
 
-	// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
-	// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
-	// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
-	// An explicit client model pick overrides orchestration with that single deliberate choice.
-	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
-	const executor = getExecutorModel();
-	const advisor = getAdvisorModel(tier, { deepReasoning });
-	const clientPick = isSelectableModel(model) ? model : null;
-	// The base run: the client's explicit pick, else the cheap executor. Step 0 upgrades to the
-	// advisor (via prepareStep) unless the user forced a pick.
-	const base = clientPick ? resolveModel(clientPick) : executor;
-	/** The canonical key metered for a given step (step 0 = advisor unless the user forced a pick). */
-	const modelForStep = (stepNumber: number): string =>
-		!clientPick && stepNumber === 0 ? advisor.key : base.key;
+	// Everything from here through the streamText registration runs AFTER the hold was reserved. A
+	// throw in this window (req parsing happened above; tier/mentions/model resolution here) would
+	// otherwise strand the ≈$0.10 hold — nothing downstream releases it — so release it in the catch.
+	const holdCtx: AiHoldContext = {
+		orgId: actor.orgId,
+		userId: actor.userId,
+		kind: "agent",
+		refId: threadId,
+	};
+	try {
+		// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
+		// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
+		// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
+		// An explicit client model pick overrides orchestration with that single deliberate choice.
+		const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+		const executor = getExecutorModel();
+		const advisor = getAdvisorModel(tier, { deepReasoning });
+		const clientPick = isSelectableModel(model) ? model : null;
+		// The base run: the client's explicit pick, else the cheap executor. Step 0 upgrades to the
+		// advisor (via prepareStep) unless the user forced a pick.
+		const base = clientPick ? resolveModel(clientPick) : executor;
+		/** The canonical key metered for a given step (step 0 = advisor unless the user forced a pick). */
+		const modelForStep = (stepNumber: number): string =>
+			!clientPick && stepNumber === 0 ? advisor.key : base.key;
 
-	// Resolve @-mentions into a prompt block so the model knows what each ref points to.
-	const parsedMentions = mentionsSchema.safeParse(mentions);
-	const mentionBlock = parsedMentions.success
-		? formatMentionsForPrompt(parsedMentions.data)
-		: "";
-	// Empty-cell prompt: the user clicked grid cell (x, y) and described a widget.
-	const cellBlock = cellTarget
-		? [
-				`The user is filling grid cell (x=${cellTarget.x}, y=${cellTarget.y}) of the 5-column`,
-				"bento grid with this request. Satisfy it with ONE read tool, then call `pin_widget`",
-				`with position {x: ${cellTarget.x}, y: ${cellTarget.y}}, sized to fit the content.`,
-			].join(" ")
-		: "";
-	const system = [systemPrompt(mode), mentionBlock, cellBlock]
-		.filter(Boolean)
-		.join("\n\n");
+		// Resolve @-mentions into a prompt block so the model knows what each ref points to.
+		const parsedMentions = mentionsSchema.safeParse(mentions);
+		const mentionBlock = parsedMentions.success
+			? formatMentionsForPrompt(parsedMentions.data)
+			: "";
+		// Empty-cell prompt: the user clicked grid cell (x, y) and described a widget.
+		const cellBlock = cellTarget
+			? [
+					`The user is filling grid cell (x=${cellTarget.x}, y=${cellTarget.y}) of the 5-column`,
+					"bento grid with this request. Satisfy it with ONE read tool, then call `pin_widget`",
+					`with position {x: ${cellTarget.x}, y: ${cellTarget.y}}, sized to fit the content.`,
+				].join(" ")
+			: "";
+		const system = [systemPrompt(mode), mentionBlock, cellBlock]
+			.filter(Boolean)
+			.join("\n\n");
 
-	const modelMessages = await convertToModelMessages(messages);
+		const modelMessages = await convertToModelMessages(messages);
 
-	// LLM-observability enrichment (PostHog): thread = session, prompt = input, the mode's tool set
-	// powers the Tools view, wall-clock latency around the turn. Hoisted so onFinish/onError reuse them.
-	const agentTools = buildAgentTools({ mode });
-	const aiInput = uiMessagesToAiInput(messages);
-	const toolNames = Object.keys(agentTools);
-	const startedAt = Date.now();
+		// LLM-observability enrichment (PostHog): thread = session, prompt = input, the mode's tool set
+		// powers the Tools view, wall-clock latency around the turn. Hoisted so onFinish/onError reuse them.
+		const agentTools = buildAgentTools({ mode });
+		const aiInput = uiMessagesToAiInput(messages);
+		const toolNames = Object.keys(agentTools);
+		const startedAt = Date.now();
 
-	// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
-	// parts) interleave with the model's own parts — the transcript renders them as
-	// PLAN/EXECUTE separators showing which model owns each phase.
-	const stream = createUIMessageStream({
-		originalMessages: messages,
-		execute: ({ writer }) => {
-			const result = streamText({
-				model: base.model,
-				// Cache the (stable) system prompt so repeated turns read it from cache.
-				messages: [cachedSystemMessage(system), ...modelMessages],
-				// Our own system prompt (cached) is intentionally a system message; user turns are
-				// never system-role, so this is not a prompt-injection surface.
-				allowSystemInMessages: true,
-				tools: agentTools,
-				stopWhen: stepCountIs(8),
-				// A forced pick runs one model on every step — it thinks throughout.
-				providerOptions: clientPick ? thinkingOptions(base) : undefined,
-				// Step 0 runs on the advisor (unless the user forced a model); the rest use the
-				// executor. The planning step gets extended thinking on EVERY tier (the free
-				// tier's Haiku advisor included) so reasoning streams to the transcript.
-				prepareStep: ({ stepNumber }) => {
-					const marker = agentStepMarker({
-						stepNumber,
-						clientPick: !!clientPick,
-						advisorKey: advisor.key,
-						executorKey: executor.key,
-						baseKey: base.key,
-					});
-					if (marker) {
-						writer.write({
-							type: AGENT_STEP_PART_TYPE,
-							id: `step-${stepNumber}`,
-							data: marker,
+		// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
+		// parts) interleave with the model's own parts — the transcript renders them as
+		// PLAN/EXECUTE separators showing which model owns each phase.
+		const stream = createUIMessageStream({
+			originalMessages: messages,
+			execute: ({ writer }) => {
+				const result = streamText({
+					model: base.model,
+					// Cache the (stable) system prompt so repeated turns read it from cache.
+					messages: [cachedSystemMessage(system), ...modelMessages],
+					// Our own system prompt (cached) is intentionally a system message; user turns are
+					// never system-role, so this is not a prompt-injection surface.
+					allowSystemInMessages: true,
+					// Wire the request's abort signal so a client disconnect aborts generation (and fires
+					// onAbort) instead of streaming — and paying — into the void with the hold left open.
+					abortSignal: req.signal,
+					tools: agentTools,
+					stopWhen: stepCountIs(8),
+					// A forced pick runs one model on every step — it thinks throughout.
+					providerOptions: clientPick ? thinkingOptions(base) : undefined,
+					// Step 0 runs on the advisor (unless the user forced a model); the rest use the
+					// executor. The planning step gets extended thinking on EVERY tier (the free
+					// tier's Haiku advisor included) so reasoning streams to the transcript.
+					prepareStep: ({ stepNumber }) => {
+						const marker = agentStepMarker({
+							stepNumber,
+							clientPick: !!clientPick,
+							advisorKey: advisor.key,
+							executorKey: executor.key,
+							baseKey: base.key,
 						});
-					}
-					if (clientPick) return {};
-					return stepNumber === 0
-						? { model: advisor.model, providerOptions: thinkingOptions(advisor) }
-						: {};
-				},
-				// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
-				onFinish: ({ steps, text, finishReason }) => {
-					void recordAgentTurnUsage({
-						orgId: actor.orgId,
-						userId: actor.userId,
-						kind: "agent",
-						charge,
-						refId: threadId,
-						steps: steps.map((s, i) => ({
-							model: modelForStep(i),
-							usage: {
-								inputTokens: s.usage.inputTokens,
-								outputTokens: s.usage.outputTokens,
-								cachedInputTokens: s.usage.cachedInputTokens,
+						if (marker) {
+							writer.write({
+								type: AGENT_STEP_PART_TYPE,
+								id: `step-${stepNumber}`,
+								data: marker,
+							});
+						}
+						if (clientPick) return {};
+						return stepNumber === 0
+							? { model: advisor.model, providerOptions: thinkingOptions(advisor) }
+							: {};
+					},
+					// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
+					onFinish: ({ steps, text, finishReason }) => {
+						void recordAgentTurnUsage({
+							orgId: actor.orgId,
+							userId: actor.userId,
+							kind: "agent",
+							charge,
+							refId: threadId,
+							steps: steps.map((s, i) => ({
+								model: modelForStep(i),
+								usage: {
+									inputTokens: s.usage.inputTokens,
+									outputTokens: s.usage.outputTokens,
+									cachedInputTokens: s.usage.cachedInputTokens,
+								},
+							})),
+							// Turn-level PostHog enrichment (rides the primary generation; session on all rows).
+							turn: {
+								sessionId: threadId,
+								input: aiInput,
+								outputChoices: textToAiOutput(text),
+								tools: toolNames,
+								latencyMs: Date.now() - startedAt,
+								stopReason: finishReason,
 							},
-						})),
-						// Turn-level PostHog enrichment (rides the primary generation; session on all rows).
-						turn: {
+						});
+					},
+					// A failed turn still shows in PostHog's Errors view (no per-model steps on error) and
+					// RELEASES its reserved hold (reconciled to 0) so an errored turn never leaks headroom.
+					onError: ({ error }) => {
+						void recordAiUsage({
+							orgId: actor.orgId,
+							userId: actor.userId,
+							kind: "agent",
+							source: charge.source,
+							holdId: charge.settle ? charge.holdId : undefined,
+							refId: threadId,
+							model: base.key,
+							latencyMs: Date.now() - startedAt,
 							sessionId: threadId,
 							input: aiInput,
-							outputChoices: textToAiOutput(text),
 							tools: toolNames,
-							latencyMs: Date.now() - startedAt,
-							stopReason: finishReason,
-						},
-					});
-				},
-				// A failed turn still shows in PostHog's Errors view (no per-model steps on error).
-				onError: ({ error }) => {
-					void recordAiUsage({
-						orgId: actor.orgId,
-						userId: actor.userId,
-						kind: "agent",
-						source: charge.source,
-						refId: threadId,
-						model: base.key,
-						latencyMs: Date.now() - startedAt,
-						sessionId: threadId,
-						input: aiInput,
-						tools: toolNames,
-						stream: true,
-						isError: true,
-						error: error instanceof Error ? error.message : String(error),
-					});
-				},
-			});
-			writer.merge(result.toUIMessageStream());
-		},
-		onFinish: ({ messages: finished }) => {
-			if (threadId) void saveThreadMessages(threadId, finished);
-		},
-	});
+							stream: true,
+							isError: true,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					},
+					// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
+					// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.
+					onAbort: () => {
+						void releaseAiHold(charge, holdCtx);
+					},
+				});
+				writer.merge(result.toUIMessageStream());
+			},
+			onFinish: ({ messages: finished }) => {
+				if (threadId) void saveThreadMessages(threadId, finished);
+			},
+		});
 
-	return createUIMessageStreamResponse({ stream });
+		return createUIMessageStreamResponse({ stream });
+	} catch (e) {
+		// A throw between the gate and stream registration (tier/model resolution, message
+		// conversion, tool build) strands the hold — release it to 0 before propagating.
+		await releaseAiHold(charge, holdCtx);
+		throw e;
+	}
 }

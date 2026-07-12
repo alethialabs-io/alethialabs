@@ -15,7 +15,12 @@ import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { currentActor } from "@/lib/authz/guard";
-import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
+import {
+	AiBudgetError,
+	type AiHoldContext,
+	assertAiAllowed,
+	releaseAiHold,
+} from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 import { withScope } from "@/lib/db";
@@ -87,78 +92,107 @@ export async function POST(
 		});
 	}
 
-	const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
-	const model = getAiModel();
-	const tools = scopeToolsToAgent(
-		buildAgentTools({ mode }),
-		agent.tool_scope,
-	) as ToolSet;
-	// LLM-observability enrichment (PostHog): the thread is the "session", the prompt is the input,
-	// and the scoped tool set is what powers the Tools view. Latency is wall-clock around the stream.
-	const sessionId = threadId ?? agentId;
-	const aiInput = uiMessagesToAiInput(messages);
-	const toolNames = Object.keys(tools);
-	const startedAt = Date.now();
+	// Everything from here through the streamText registration runs AFTER the hold was reserved. A
+	// throw in this window (req parsing, tool scoping, message conversion) would strand the ≈$0.10
+	// hold — nothing downstream releases it — so release it in the catch. refId defaults to the
+	// always-available agentId, then narrows to the thread's session id once req.json() resolves.
+	const holdCtx: AiHoldContext = {
+		orgId: actor.orgId,
+		userId: actor.userId,
+		kind: "agent",
+		refId: agentId,
+	};
+	try {
+		const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
+		const model = getAiModel();
+		const tools = scopeToolsToAgent(
+			buildAgentTools({ mode }),
+			agent.tool_scope,
+		) as ToolSet;
+		// LLM-observability enrichment (PostHog): the thread is the "session", the prompt is the input,
+		// and the scoped tool set is what powers the Tools view. Latency is wall-clock around the stream.
+		const sessionId = threadId ?? agentId;
+		holdCtx.refId = sessionId;
+		const aiInput = uiMessagesToAiInput(messages);
+		const toolNames = Object.keys(tools);
+		const startedAt = Date.now();
 
-	const result = streamText({
-		model: model.model,
-		// Cache the (stable, per-agent) system prompt so repeated turns read it from cache.
-		messages: [
-			cachedSystemMessage(buildAgentSystemPrompt(agent)),
-			...(await convertToModelMessages(messages)),
-		],
-		// Our own system prompt (cached) is intentionally a system message; user turns are
-		// never system-role, so this is not a prompt-injection surface.
-		allowSystemInMessages: true,
-		tools,
-		stopWhen: stepCountIs(8),
-		// Single-model run — extended thinking on every step so reasoning streams.
-		providerOptions: thinkingOptions(model),
-		onFinish: ({ usage, text, finishReason }) => {
-			void recordAiUsage({
-				orgId: actor.orgId,
-				userId: actor.userId,
-				kind: "agent",
-				// Metered → omit credits; settled from this row's real cost-of-serve.
-				source: charge.source,
-				refId: sessionId,
-				model: model.key,
-				inputTokens: usage.inputTokens,
-				outputTokens: usage.outputTokens,
-				cachedInputTokens: usage.cachedInputTokens,
-				latencyMs: Date.now() - startedAt,
-				sessionId,
-				input: aiInput,
-				outputChoices: textToAiOutput(text),
-				tools: toolNames,
-				stopReason: finishReason,
-				stream: true,
-			});
-		},
-		onError: ({ error }) => {
-			// Record the failed generation so it shows in PostHog's Errors view (no tokens on error).
-			void recordAiUsage({
-				orgId: actor.orgId,
-				userId: actor.userId,
-				kind: "agent",
-				source: charge.source,
-				refId: sessionId,
-				model: model.key,
-				latencyMs: Date.now() - startedAt,
-				sessionId,
-				input: aiInput,
-				tools: toolNames,
-				stream: true,
-				isError: true,
-				error: error instanceof Error ? error.message : String(error),
-			});
-		},
-	});
+		const result = streamText({
+			model: model.model,
+			// Cache the (stable, per-agent) system prompt so repeated turns read it from cache.
+			messages: [
+				cachedSystemMessage(buildAgentSystemPrompt(agent)),
+				...(await convertToModelMessages(messages)),
+			],
+			// Our own system prompt (cached) is intentionally a system message; user turns are
+			// never system-role, so this is not a prompt-injection surface.
+			allowSystemInMessages: true,
+			// Wire the request's abort signal so a client disconnect aborts generation (and fires
+			// onAbort) instead of streaming — and paying — into the void with the hold left open.
+			abortSignal: req.signal,
+			tools,
+			stopWhen: stepCountIs(8),
+			// Single-model run — extended thinking on every step so reasoning streams.
+			providerOptions: thinkingOptions(model),
+			onFinish: ({ usage, text, finishReason }) => {
+				void recordAiUsage({
+					orgId: actor.orgId,
+					userId: actor.userId,
+					kind: "agent",
+					// Metered → omit credits; settled from this row's real cost-of-serve. Reconciles the
+					// reserved hold IN PLACE (holdId) so the provisional estimate becomes the real cost.
+					source: charge.source,
+					holdId: charge.settle ? charge.holdId : undefined,
+					refId: sessionId,
+					model: model.key,
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					cachedInputTokens: usage.cachedInputTokens,
+					latencyMs: Date.now() - startedAt,
+					sessionId,
+					input: aiInput,
+					outputChoices: textToAiOutput(text),
+					tools: toolNames,
+					stopReason: finishReason,
+					stream: true,
+				});
+			},
+			onError: ({ error }) => {
+				// Record the failed generation so it shows in PostHog's Errors view (no tokens on error)
+				// and RELEASE the reserved hold (reconciled to 0) so an errored turn never leaks headroom.
+				void recordAiUsage({
+					orgId: actor.orgId,
+					userId: actor.userId,
+					kind: "agent",
+					source: charge.source,
+					holdId: charge.settle ? charge.holdId : undefined,
+					refId: sessionId,
+					model: model.key,
+					latencyMs: Date.now() - startedAt,
+					sessionId,
+					input: aiInput,
+					tools: toolNames,
+					stream: true,
+					isError: true,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+			// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
+			// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.
+			onAbort: () => {
+				void releaseAiHold(charge, holdCtx);
+			},
+		});
 
-	return result.toUIMessageStreamResponse({
-		originalMessages: messages,
-		onFinish: ({ messages }) => {
-			if (threadId) void saveThreadMessages(threadId, messages);
-		},
-	});
+		return result.toUIMessageStreamResponse({
+			originalMessages: messages,
+			onFinish: ({ messages }) => {
+				if (threadId) void saveThreadMessages(threadId, messages);
+			},
+		});
+	} catch (e) {
+		// A throw between the gate and stream registration strands the hold — release it before rethrow.
+		await releaseAiHold(charge, holdCtx);
+		throw e;
+	}
 }
