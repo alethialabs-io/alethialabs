@@ -37,6 +37,7 @@ import {
 	type GateContext,
 	type PromotionRules,
 } from "@/lib/promotions/gates";
+import { claimApprovalSlot } from "@/lib/promotions/approve";
 import { getEnforcingValuesFor } from "@/lib/queries/classification";
 import type {
 	ApproverSpec,
@@ -280,19 +281,12 @@ export async function approvePromotion(
 	await assertApprover(actor, rulesRow);
 
 	const db = getServiceDb();
-	// Approve the caller's slot: prefer a slot they haven't already decided; one approval per user.
-	const slots = await db
-		.select()
-		.from(promotionApprovals)
-		.where(eq(promotionApprovals.promotion_id, promotionId));
-	if (slots.some((s) => s.decided_by === actor.userId && s.status === "approved"))
+	// Record the caller's approval atomically: a transaction + per-slot CAS so two approvers racing
+	// this action can never collapse onto the same slot (which silently dropped one SOC2 approval).
+	const claim = await claimApprovalSlot(db, promotionId, actor.userId, comment);
+	if (claim.outcome === "already_approved")
 		throw new Error("You have already approved this promotion");
-	const open = slots.find((s) => s.status === "pending");
-	if (!open) throw new Error("No pending approval slots remain");
-	await db
-		.update(promotionApprovals)
-		.set({ status: "approved", decided_by: actor.userId, comment, decided_at: new Date() })
-		.where(eq(promotionApprovals.id, open.id));
+	if (claim.outcome === "no_slots") throw new Error("No pending approval slots remain");
 
 	const [planJob] = promotion.plan_job_id
 		? await db.select().from(jobs).where(eq(jobs.id, promotion.plan_job_id)).limit(1)
@@ -696,10 +690,21 @@ async function applyGateDecision(
 				);
 			}
 		}
+		// Re-park only from a pre-approval state. Now that concurrent quorum is actually reachable
+		// (the lost-update fix lets two approvers both land), a stale approver that still evaluates
+		// `pending_approval` could otherwise clobber a promotion a faster co-approver already advanced
+		// to APPROVED/DEPLOYING — flipping it back to PENDING_APPROVAL while a DEPLOY is enqueued. The
+		// predecessor guard makes that a no-op (0 rows) so the deploy stands. PENDING_PLAN is the
+		// first-park predecessor; PENDING_APPROVAL is a benign re-eval self-write.
 		await db
 			.update(environmentPromotions)
 			.set({ status: "PENDING_APPROVAL", gate_evaluations: evaluation, updated_at: now })
-			.where(eq(environmentPromotions.id, promotion.id));
+			.where(
+				and(
+					eq(environmentPromotions.id, promotion.id),
+					inArray(environmentPromotions.status, ["PENDING_PLAN", "PENDING_APPROVAL"]),
+				),
+			);
 		return;
 	}
 
