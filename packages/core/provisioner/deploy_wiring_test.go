@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -108,31 +107,6 @@ func shortID(t *testing.T) string {
 		t.Fatalf("rand: %v", err)
 	}
 	return hex.EncodeToString(b)
-}
-
-// repoRoot resolves the repository root as an absolute path, relative to THIS test
-// file (not the process CWD) — packages/core/provisioner/<file> is three dirs deep.
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	root, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	return root
-}
-
-// absTemplatesDir resolves a bundled project template dir to an absolute path.
-func absTemplatesDir(t *testing.T, name string) string {
-	t.Helper()
-	dir := filepath.Join(repoRoot(t), "infra", "templates", "project", name)
-	if _, err := os.Stat(dir); err != nil {
-		t.Fatalf("template dir %s not found: %v", dir, err)
-	}
-	return dir
 }
 
 // tLogWriter pipes provisioner stdout/stderr into the test log so a failure shows
