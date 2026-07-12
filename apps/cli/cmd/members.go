@@ -65,13 +65,14 @@ var membersListCmd = &cobra.Command{
 	},
 }
 
-var memberListColumns = []string{"Email", "Name", "Role", "Status"}
+var memberListColumns = []string{"ID", "Email", "Name", "Role", "Status"}
 
-// memberRows projects members into plain table rows.
+// memberRows projects members into plain table rows. The ID column is included
+// because `members remove <member_id>` addresses a member by it.
 func memberRows(members []api.Member) [][]string {
 	rows := make([][]string, len(members))
 	for i, m := range members {
-		rows[i] = []string{m.Email, m.Name, m.Role, m.Status}
+		rows[i] = []string{m.ID, m.Email, m.Name, m.Role, m.Status}
 	}
 	return rows
 }

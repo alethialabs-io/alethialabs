@@ -59,7 +59,7 @@ jobs:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
           owner: alethialabs-io
-          repositories: homebrew-alethialabs
+          repositories: homebrew-tap
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

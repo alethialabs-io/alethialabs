@@ -41,33 +41,54 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 3. It creates (or updates) a release PR per component with:
    - Version bump (major/minor/patch based on commit type)
    - Auto-generated CHANGELOG.md entries
-4. When merged, release-please creates a git tag (`alethia-v0.1.8` or `runner-v0.1.0`)
+4. When merged, release-please creates a git tag (`cli-v0.2.2` or `runner-v0.1.0`)
 5. The tag triggers the component's release workflow
 
-## alethia Release Pipeline
+## alethia (CLI) Release Pipeline
 
-**Trigger:** Push to tag matching `alethia-v*`
+**Trigger:** `release-please` cuts a `cli-v*` tag; `release-please.yml` then calls the reusable workflow.
 
-**Workflow:** `.github/workflows/release-alethia.yml`
+**Workflow:** `.github/workflows/release-cli.yml`
 
 ```
-Tag push (alethia-v0.1.8)
+release-please merges the CLI release PR → tag cli-v0.2.2
   └── Checkout + Go setup
-       └── GoReleaser
-            ├── Build: darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
-            ├── Archive: tar.gz per platform
+       └── GoReleaser (-f apps/cli/.goreleaser.yml, --skip=validate)
+            ├── Build: darwin/amd64, darwin/arm64, linux/{amd64,arm64}, windows/{amd64,arm64}
+            ├── Archive: tar.gz per platform (zip on Windows) + checksums
             ├── GitHub Release: upload archives + checksums
-            └── Homebrew: update formula in alethialabs-io/alethialabs tap
+            ├── Docker: ghcr.io/alethialabs-io/alethia (amd64+arm64 manifest)
+            └── Homebrew: push Formula/alethia.rb to alethialabs-io/homebrew-tap
 ```
 
 **GoReleaser config** (`apps/cli/.goreleaser.yml`):
-- Builds 4 binaries (2 OS x 2 arch)
-- Creates GitHub Release with download links
-- Updates Homebrew tap formula automatically
+- Builds binaries across macOS/Linux/Windows × amd64/arm64 (`project_name: alethia`)
+- Creates a GitHub Release with download links
+- Publishes/updates the Homebrew formula automatically
 
 **Distribution channels:**
-- `brew install alethialabs-io/alethialabs/alethia` (macOS/Linux via Homebrew)
+- `brew install alethialabs-io/tap/alethia` (macOS/Linux via Homebrew) — or `brew tap alethialabs-io/tap && brew install alethia`
 - Direct binary download from GitHub Releases
+- `docker run --rm ghcr.io/alethialabs-io/alethia --version`
+
+### One-time Homebrew tap setup (maintainer)
+
+The tap formula is pushed by GoReleaser at release time; the target repo and a
+scoped token must exist first. This is a one-time setup:
+
+1. **Create the tap repo** `alethialabs-io/homebrew-tap` (public), initialized with
+   a `main` branch. GoReleaser writes `Formula/alethia.rb` into it on each release.
+2. **Install the tap GitHub App** on that repo and set the `TAP_APP_ID` /
+   `TAP_APP_PRIVATE_KEY` repo secrets — `release-cli.yml` mints a scoped token via
+   `create-github-app-token` (`repositories: homebrew-tap`) to push the formula.
+   (A classic PAT with `public_repo` in `HOMEBREW_TAP_GITHUB_TOKEN` also works.)
+3. **Cut a release**: merge a `feat:`/`fix:` commit under `apps/cli/` to `main`, then
+   merge the release-please CLI PR. The `cli-v*` tag runs the pipeline end-to-end and
+   the formula appears in the tap — `brew install alethialabs-io/tap/alethia` then works.
+
+> The last GitHub Release predates the `alethia` rename (its archives are named
+> `grape_*`). The first release after this pipeline lands re-publishes them as
+> `alethia_*` and creates the formula.
 
 ## Runner Release Pipeline
 
