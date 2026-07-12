@@ -174,6 +174,34 @@ func clusterReadyRequireNode() bool {
 	return true
 }
 
+// gateRequiresReport is the fail-closed backstop for the real-apply path: a real
+// apply must never proceed without a conclusive verification verdict. It returns
+// nil (apply may proceed) when this is a dry-run/plan job (nothing is applied), or
+// a verification report was produced (the report's own fail-closed enforcement runs
+// separately, below), or an authorized override waives the ControlPlanUnavailable
+// sentinel. Otherwise — a real apply whose plan JSON could not be produced, so the
+// gate could not evaluate anything — it returns an error refusing the apply rather
+// than silently skipping enforcement. Kept pure so the decision is unit-testable
+// without real tofu. showErr (if any) is threaded through for the operator message.
+func gateRequiresReport(dryRun bool, report *verify.Report, ov *verify.Override, showErr error) error {
+	if dryRun || report != nil {
+		return nil
+	}
+	if ov.Covers(verify.ControlPlanUnavailable) {
+		return nil
+	}
+	// report==nil is broader than "no plan JSON": the report is also nil when the plan JSON
+	// existed but verify.Evaluate errored. Both are "the gate produced no verdict" → refuse
+	// (fail-closed) — but report the actual cause honestly so the operator fixes the right thing.
+	cause := "the verifier could not evaluate the plan"
+	if showErr != nil {
+		cause = fmt.Sprintf("the plan JSON could not be produced (tofu show error: %v)", showErr)
+	}
+	return fmt.Errorf(
+		"verification gate produced no verdict (%s) — refusing apply; fix the underlying error or supply an authorized, time-boxed override waiving %s",
+		cause, verify.ControlPlanUnavailable)
+}
+
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
 func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retErr error) {
 	vc := params.ProjectConfig
@@ -480,6 +508,24 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		attachReceipt(&result, planFile, planJSON, nil, stdout)
 		fmt.Fprintln(stdout, "Dry-run complete. Plan and cost analysis finished.")
 		return &result, nil
+	}
+
+	// Fail-closed backstop: a real apply must never proceed without a conclusive
+	// verification verdict. If the plan JSON could not be produced (ShowPlanJSON
+	// errored, or tofu emitted no JSON) the gate could not evaluate the plan at
+	// all, so we REFUSE the apply rather than silently skipping enforcement — a
+	// missing report must never read as an implicit pass. An authorized operator
+	// may still proceed by waiving the ControlPlanUnavailable sentinel in
+	// VerifyOverride (per-apply, audited, expiry-bounded); disabling the gate
+	// wholesale remains impossible. No-op when a report exists (the report's own
+	// enforcement runs just below) and on dry-run (already returned above).
+	if err := gateRequiresReport(params.DryRun, result.VerifyReport, params.VerifyOverride, showErr); err != nil {
+		telemetry.GateBlocked(ctx, provider.Name())
+		return nil, err
+	}
+	if result.VerifyReport == nil && params.VerifyOverride.Covers(verify.ControlPlanUnavailable) {
+		fmt.Fprintf(stdout, "Verification override applied by %q: proceeding without a plan-JSON verdict (control %s, reason: %s)\n",
+			params.VerifyOverride.By, verify.ControlPlanUnavailable, params.VerifyOverride.Reason)
 	}
 
 	// Fail-closed enforcement: a real apply must not proceed while any hard
