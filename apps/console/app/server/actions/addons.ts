@@ -9,12 +9,13 @@
 
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
 	type AddonMode,
 	type ComponentStatus,
 	projectAddons,
 	projectRepositories,
+	projects,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
@@ -75,32 +76,49 @@ export async function getProjectAddons(
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
 
-	const { rows, hasAppsRepo } = await withOwnerScope(
-		actor.userId,
-		async (tx) => {
-			const rows = await tx
-				.select()
-				.from(projectAddons)
-				.where(
-					and(
-						eq(projectAddons.project_id, projectId),
-						eq(projectAddons.environment_id, envId),
-					),
-				);
-			// GitOps mode needs a destination apps repo on this environment.
-			const [repo] = await tx
-				.select({ repo: projectRepositories.apps_destination_repo })
-				.from(projectRepositories)
-				.where(
-					and(
-						eq(projectRepositories.project_id, projectId),
-						eq(projectRepositories.environment_id, envId),
-					),
-				)
-				.limit(1);
-			return { rows, hasAppsRepo: Boolean(repo?.repo) };
-		},
-	);
+	// `project_addons` / `project_repositories` are RLS-less project-child tables, so the
+	// org boundary is enforced HERE, not by a policy: join to the parent project and filter
+	// on the caller's org (mirrors lib/queries/evidence.ts queryOrgEvidence and drift.ts).
+	// The service db bypasses RLS, so the explicit `projects.org_id = actor.orgId` predicate
+	// is the tenancy wall — a foreign project UUID yields no rows even though the org-blind
+	// PDP grant let authorize() through. Using actor.orgId (not withOwnerScope on
+	// actor.userId) keeps it correct for Teams orgs (project owned by another member).
+	const db = getServiceDb();
+	const rows = await db
+		.select({
+			addon_id: projectAddons.addon_id,
+			enabled: projectAddons.enabled,
+			mode: projectAddons.mode,
+			values: projectAddons.values,
+			values_yaml: projectAddons.values_yaml,
+			status: projectAddons.status,
+			health: projectAddons.health,
+			sync_status: projectAddons.sync_status,
+			last_synced_at: projectAddons.last_synced_at,
+		})
+		.from(projectAddons)
+		.innerJoin(projects, eq(projectAddons.project_id, projects.id))
+		.where(
+			and(
+				eq(projectAddons.project_id, projectId),
+				eq(projectAddons.environment_id, envId),
+				eq(projects.org_id, actor.orgId),
+			),
+		);
+	// GitOps mode needs a destination apps repo on this environment.
+	const [repo] = await db
+		.select({ repo: projectRepositories.apps_destination_repo })
+		.from(projectRepositories)
+		.innerJoin(projects, eq(projectRepositories.project_id, projects.id))
+		.where(
+			and(
+				eq(projectRepositories.project_id, projectId),
+				eq(projectRepositories.environment_id, envId),
+				eq(projects.org_id, actor.orgId),
+			),
+		)
+		.limit(1);
+	const hasAppsRepo = Boolean(repo?.repo);
 	const byId = new Map(rows.map((r) => [r.addon_id, r]));
 
 	const items: AddonMarketItem[] = ADDON_CATALOG.map((def) => {

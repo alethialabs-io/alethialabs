@@ -11,8 +11,20 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { getProjectAddons } from "@/app/server/actions/addons";
+import { getLatestDriftPosture } from "@/app/server/actions/drift";
+import { runWithActor } from "@/lib/authz/actor-context";
+import type { Actor } from "@/lib/authz/types";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
-import { jobs, projects } from "@/lib/db/schema";
+import {
+	environmentDrift,
+	grants,
+	jobs,
+	permission,
+	projectAddons,
+	projectEnvironments,
+	projects,
+} from "@/lib/db/schema";
 import { describeIfDb } from "./db";
 
 const ORG_A = randomUUID();
@@ -173,4 +185,277 @@ describeIfDb("RLS tenant isolation", () => {
 			expect(own).toHaveLength(1);
 		},
 	);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-tenant read of RLS-less project-child tables (drift + addons). Unlike
+// `projects`/`jobs` above, `environment_drift` and `project_addons` carry NO
+// per-tenant RLS policy — the belt-and-suspenders backstop is deferred to a later
+// wave — so the ONLY thing stopping one org from reading another's rows is each
+// server action's own org predicate. The PDP is org-blind on resource ownership: an
+// org-wide `project:view` grant makes authorize("view", { project, id: ANY_UUID })
+// succeed for ANY project UUID, so without the org join these reads leak another
+// org's drift detail (recon-grade resource addresses) and addon/GitOps config.
+//
+// These cases inject an ORG_A actor (the MCP token path — runWithActor), call the
+// action for ORG_B's project, and assert nothing comes back. The same-org and
+// Teams-shaped cases prove the org filter doesn't over-restrict (a naive RLS-only
+// fix under withOwnerScope(actor.userId) would wrongly hide a teammate's project;
+// the explicit actor.orgId filter returns it). The leak is gated solely by the
+// app-layer org join here (APP_ROLE_DISTINCT is irrelevant — these tables have no
+// RLS), which is exactly the fix under test.
+describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () => {
+	const DRIFT_ORG_A = randomUUID();
+	const DRIFT_ORG_B = randomUUID();
+	const DRIFT_ORG_TEAM = randomUUID();
+	const TEAM_OWNER = randomUUID(); // owns the Teams project …
+	const TEAM_READER = randomUUID(); // … a *different* teammate reads it via an org grant
+
+	let projectAId = "";
+	let projectBId = "";
+	let projectTId = "";
+	let envAId = "";
+	let envBId = "";
+	let envTId = "";
+
+	/** Seeds an org-wide (resource_id NULL) `project:view` ALLOW grant for a user principal. */
+	async function seedOrgWideViewGrant(
+		orgId: string,
+		userId: string,
+	): Promise<void> {
+		await getServiceDb().insert(grants).values({
+			org_id: orgId,
+			principal_type: "user",
+			principal_id: userId,
+			effect: "allow",
+			permission_key: "project:view",
+			resource_type: "project",
+			resource_id: null,
+		});
+	}
+
+	beforeAll(async () => {
+		const db = getServiceDb();
+		// The permission the grants reference (FK target). migrate.mjs doesn't run the
+		// PDP registry seed, so insert the one key these grants need.
+		await db
+			.insert(permission)
+			.values({
+				key: "project:view",
+				resource: "project",
+				action: "view",
+				description: "View a project",
+			})
+			.onConflictDoNothing();
+
+		// A + B are community projects (org_id === user_id); T is Teams-shaped — owned by
+		// TEAM_OWNER but scoped to DRIFT_ORG_TEAM and read by a different teammate.
+		const [pa, pb, pt] = await db
+			.insert(projects)
+			.values([
+				{
+					user_id: DRIFT_ORG_A,
+					org_id: DRIFT_ORG_A,
+					project_name: `drift-a-${DRIFT_ORG_A.slice(0, 6)}`,
+					region: "eu-west-1",
+					iac_version: "1.0.0",
+				},
+				{
+					user_id: DRIFT_ORG_B,
+					org_id: DRIFT_ORG_B,
+					project_name: `drift-b-${DRIFT_ORG_B.slice(0, 6)}`,
+					region: "eu-west-1",
+					iac_version: "1.0.0",
+				},
+				{
+					user_id: TEAM_OWNER,
+					org_id: DRIFT_ORG_TEAM,
+					project_name: `drift-t-${DRIFT_ORG_TEAM.slice(0, 6)}`,
+					region: "eu-west-1",
+					iac_version: "1.0.0",
+				},
+			])
+			.returning({ id: projects.id });
+		projectAId = pa.id;
+		projectBId = pb.id;
+		projectTId = pt.id;
+
+		// One default environment per project (getProjectAddons resolves the default env).
+		const [ea, eb, et] = await db
+			.insert(projectEnvironments)
+			.values([
+				{
+					project_id: projectAId,
+					user_id: DRIFT_ORG_A,
+					org_id: DRIFT_ORG_A,
+					name: "prod",
+					is_default: true,
+				},
+				{
+					project_id: projectBId,
+					user_id: DRIFT_ORG_B,
+					org_id: DRIFT_ORG_B,
+					name: "prod",
+					is_default: true,
+				},
+				{
+					project_id: projectTId,
+					user_id: TEAM_OWNER,
+					org_id: DRIFT_ORG_TEAM,
+					name: "prod",
+					is_default: true,
+				},
+			])
+			.returning({ id: projectEnvironments.id });
+		envAId = ea.id;
+		envBId = eb.id;
+		envTId = et.id;
+
+		// Distinctive drift rows — B's addresses are what would leak if the read is unscoped.
+		await db.insert(environmentDrift).values([
+			{
+				project_id: projectAId,
+				environment_id: envAId,
+				in_sync: false,
+				drifted: 1,
+				details: [
+					{
+						address: "module.a.aws_s3_bucket.own",
+						type: "aws_s3_bucket",
+						kind: "modified",
+					},
+				],
+				scanned_at: new Date(),
+			},
+			{
+				project_id: projectBId,
+				environment_id: envBId,
+				in_sync: false,
+				drifted: 1,
+				details: [
+					{
+						address: "module.secret.aws_db_instance.x",
+						type: "aws_db_instance",
+						kind: "modified",
+					},
+				],
+				scanned_at: new Date(),
+			},
+			{
+				project_id: projectTId,
+				environment_id: envTId,
+				in_sync: false,
+				drifted: 1,
+				details: [
+					{
+						address: "module.team.aws_eks_cluster.k",
+						type: "aws_eks_cluster",
+						kind: "modified",
+					},
+				],
+				scanned_at: new Date(),
+			},
+		]);
+
+		// Distinctive addon installs (catalog ids from lib/addons/catalog.ts).
+		await db.insert(projectAddons).values([
+			{
+				project_id: projectAId,
+				environment_id: envAId,
+				addon_id: "cert-manager",
+				enabled: true,
+				mode: "managed",
+				namespace: "cert-manager",
+				status: "PENDING",
+			},
+			{
+				project_id: projectBId,
+				environment_id: envBId,
+				addon_id: "vault",
+				enabled: true,
+				mode: "managed",
+				namespace: "vault",
+				status: "PENDING",
+			},
+		]);
+
+		// The org-blind grants that make authorize("view", project:ANY) succeed.
+		await seedOrgWideViewGrant(DRIFT_ORG_A, DRIFT_ORG_A);
+		await seedOrgWideViewGrant(DRIFT_ORG_TEAM, TEAM_READER);
+	});
+
+	afterAll(async () => {
+		const db = getServiceDb();
+		const projectIds = [projectAId, projectBId, projectTId];
+		await db
+			.delete(environmentDrift)
+			.where(inArray(environmentDrift.project_id, projectIds));
+		await db
+			.delete(projectAddons)
+			.where(inArray(projectAddons.project_id, projectIds));
+		await db
+			.delete(projectEnvironments)
+			.where(inArray(projectEnvironments.project_id, projectIds));
+		await db.delete(projects).where(inArray(projects.id, projectIds));
+		await db
+			.delete(grants)
+			.where(inArray(grants.org_id, [DRIFT_ORG_A, DRIFT_ORG_TEAM]));
+		await db.delete(permission).where(eq(permission.key, "project:view"));
+	});
+
+	/** Runs `fn` under an injected Actor (the MCP token path binds it via runWithActor). */
+	function asActor<T>(
+		userId: string,
+		orgId: string,
+		fn: () => Promise<T>,
+	): Promise<T> {
+		const actor: Actor = { userId, orgId };
+		return runWithActor(actor, fn);
+	}
+
+	// ── drift.getLatestDriftPosture ─────────────────────────────────────────────
+	it("does NOT leak another org's drift posture (ORG_A reads ORG_B's project)", async () => {
+		const leaked = await asActor(DRIFT_ORG_A, DRIFT_ORG_A, () =>
+			getLatestDriftPosture(projectBId),
+		);
+		expect(leaked).toBeNull();
+	});
+
+	it("returns the caller's OWN drift posture (the wall isn't blocking everything)", async () => {
+		const own = await asActor(DRIFT_ORG_A, DRIFT_ORG_A, () =>
+			getLatestDriftPosture(projectAId),
+		);
+		expect(own).not.toBeNull();
+		expect(own?.details.map((d) => d.address)).toEqual([
+			"module.a.aws_s3_bucket.own",
+		]);
+	});
+
+	it("returns a teammate's project drift under a Teams org (org-, not user-scoped)", async () => {
+		const teamRead = await asActor(TEAM_READER, DRIFT_ORG_TEAM, () =>
+			getLatestDriftPosture(projectTId),
+		);
+		expect(teamRead).not.toBeNull();
+		expect(teamRead?.details.map((d) => d.address)).toEqual([
+			"module.team.aws_eks_cluster.k",
+		]);
+	});
+
+	// ── addons.getProjectAddons ─────────────────────────────────────────────────
+	it("does NOT leak another org's addon install state (ORG_A reads ORG_B's project)", async () => {
+		const view = await asActor(DRIFT_ORG_A, DRIFT_ORG_A, () =>
+			getProjectAddons(projectBId),
+		);
+		expect(view.items.every((i) => i.install === null)).toBe(true);
+	});
+
+	it("returns the caller's OWN addon install state (non-vacuity)", async () => {
+		const view = await asActor(DRIFT_ORG_A, DRIFT_ORG_A, () =>
+			getProjectAddons(projectAId),
+		);
+		const installed = view.items
+			.filter((i) => i.install !== null)
+			.map((i) => i.id);
+		expect(installed).toEqual(["cert-manager"]);
+	});
 });
