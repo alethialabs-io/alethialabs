@@ -1152,3 +1152,51 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.gc_fleet_actions(INTERVAL, INTEGER) TO alethia_app;
+
+-- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
+-- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /
+-- runner_usage_sessions idiom), so the least-privilege alethia_app role — the one behind every
+-- customer request and the tofu-state proxy — can neither read nor write them. Break-glass code
+-- reaches them exclusively through getServiceDb() behind the ALETHIA_BREAKGLASS_ENABLED +
+-- BREAKGLASS_OPERATORS gate. Defense in depth: even if a bug handed alethia_app one of these tables,
+-- RLS denies it.
+ALTER TABLE public.breakglass_session ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.breakglass_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.breakglass_approval ENABLE ROW LEVEL SECURITY;
+
+-- breakglass_audit is APPEND-ONLY and must stay immutable even against the service role (a
+-- compromised/rogue operator path or a careless migration). The customer audit_log relies on RLS
+-- alone (SELECT/INSERT policies, no UPDATE/DELETE) — that only binds the app role, NOT the
+-- BYPASSRLS service role that break-glass uses. So we add a trigger-based WORM guard: any UPDATE,
+-- DELETE, or TRUNCATE raises, regardless of the caller's role. (A superuser could still deliberately
+-- DISABLE the trigger or flip session_replication_role — that is an out-of-band, itself-auditable act,
+-- not something reachable from application code; this closes the in-app tamper path.) The append
+-- INSERT path is unaffected, so the write-before-act invariant still works.
+CREATE OR REPLACE FUNCTION public.breakglass_audit_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'breakglass_audit is append-only: % is not permitted', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS breakglass_audit_no_mutate ON public.breakglass_audit;
+CREATE TRIGGER breakglass_audit_no_mutate
+  BEFORE UPDATE OR DELETE ON public.breakglass_audit
+  FOR EACH ROW EXECUTE FUNCTION public.breakglass_audit_immutable();
+
+DROP TRIGGER IF EXISTS breakglass_audit_no_truncate ON public.breakglass_audit;
+CREATE TRIGGER breakglass_audit_no_truncate
+  BEFORE TRUNCATE ON public.breakglass_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION public.breakglass_audit_immutable();
+
+-- Belt-and-braces: revoke UPDATE/DELETE/TRUNCATE from PUBLIC and the app role outright, so the
+-- privilege isn't even granted (the trigger is the hard stop; this removes the grant too).
+REVOKE UPDATE, DELETE, TRUNCATE ON public.breakglass_audit FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON public.breakglass_audit FROM alethia_app';
+    -- The app role has no business touching any break-glass table at all.
+    EXECUTE 'REVOKE ALL ON public.breakglass_session, public.breakglass_audit, public.breakglass_approval FROM alethia_app';
+  END IF;
+END $$;

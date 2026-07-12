@@ -126,6 +126,37 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	// Bring-your-own IaC (E3) module scan: clone → pin commit → inventory providers/modules →
 	// tofu validate. Its result gates the env's PLAN/DEPLOY/DESTROY (finalizeIacScan pins commit_sha).
 	"IAC_SCAN",
+	// Break-glass privileged state surgery: an operator-initiated, two-person-approved,
+	// fully-audited repair of a corrupt/stranded tofu state, queued as a NORMAL job so it flows
+	// through claim_next_job → the tofu-state lock/backend (fencing intact) instead of a raw UPDATE.
+	// The runner-side executor ships INERT (fail-closed): it refuses unless the runner opts in via
+	// ALETHIA_BREAKGLASS_STATE_SURGERY_ENABLED, so no state is ever mutated through an unproven path.
+	"STATE_SURGERY",
+]);
+
+// Break-glass (privileged incident recovery) action catalog + per-action blast-radius label.
+// The catalog metadata (which actions require two-person approval, which are inert) lives in
+// lib/breakglass/catalog.ts; these enums are the durable, immutable audit lexicon so a
+// breakglass_audit row's `action`/`blast_radius` are constrained at the DB, not free text.
+export const breakglassAction = pgEnum("breakglass_action", [
+	"open_session",
+	"inspect_job",
+	"retry_job",
+	"cancel_job",
+	"unstick_env",
+	"drain_runner",
+	"restart_runner",
+	"replay_webhook",
+	"force_release_state_lock",
+	"state_surgery",
+	"orphan_detect",
+	"orphan_clean",
+]);
+export const breakglassBlastRadius = pgEnum("breakglass_blast_radius", [
+	"none",
+	"low",
+	"medium",
+	"high",
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);
@@ -343,5 +374,8 @@ export type ConnectorHealthStatus =
 export type AlertDeliveryStatus =
 	(typeof alertDeliveryStatus.enumValues)[number];
 export type ResourceKind = (typeof resourceKind.enumValues)[number];
+export type BreakglassAction = (typeof breakglassAction.enumValues)[number];
+export type BreakglassBlastRadius =
+	(typeof breakglassBlastRadius.enumValues)[number];
 // SupportCase* / SupportAuthorType / SupportAbuseCategory unions come via the
 // `export * from "@repo/support/enums"` re-export above.

@@ -16,6 +16,7 @@ import {
 	ShieldCheck,
 	Trash2,
 	Upload,
+	Wrench,
 } from "lucide-react";
 import type { ProvisionJobType } from "@/lib/db/schema";
 
@@ -78,6 +79,11 @@ export const JOB_TYPES: Record<
 		label: "IaC Scan",
 		icon: ShieldCheck,
 		description: "Validate a bring-your-own IaC module and pin the commit it deploys from",
+	},
+	STATE_SURGERY: {
+		label: "State Surgery",
+		icon: Wrench,
+		description: "Break-glass privileged tofu-state repair (executor ships inert / fail-closed)",
 	},
 };
 

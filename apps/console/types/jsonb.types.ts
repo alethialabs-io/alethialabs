@@ -786,3 +786,29 @@ export interface DashboardSpec {
 	title: string;
 	blocks: DashboardBlock[];
 }
+
+/**
+ * The recorded `input` of a break-glass action (breakglass_audit.input, and the
+ * approval-binding surface). Deliberately a small, explicit shape — NOT
+ * Record<string, unknown> — so what an operator asked to do is legible in the
+ * immutable audit forever. Every field is optional because the relevant subset
+ * depends on the action (see lib/breakglass/catalog.ts); the dispatcher validates
+ * per-action required fields with zod before writing the row.
+ */
+export interface BreakglassActionInput {
+	/** unstick_env: the explicit CAS precondition — the env must currently be in one of these. */
+	expectedFrom?: string[];
+	/** unstick_env: the target status to move the env to (the CAS `to`). */
+	to?: string;
+	/** force_release_state_lock / state_surgery: the tofu state object key. */
+	stateKey?: string;
+	/** drain_runner / restart_runner: the fleet-action "why" reason token echoed to the ledger. */
+	fleetReason?: string;
+	/** orphan_detect / orphan_clean: the run scope these are constrained to (never account-wide). */
+	projectId?: string;
+	environmentId?: string;
+	/** state_surgery: a free-form operator description of the intended repair (audit only). */
+	surgeryNote?: string;
+	/** replay_webhook: whether the replay suppressed the branded emails (default true). */
+	suppressEmails?: boolean;
+}

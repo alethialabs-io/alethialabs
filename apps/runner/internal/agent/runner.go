@@ -460,6 +460,10 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeIacScan:
 		execErr = w.executeIacScan(ctx, job, stdoutLogger, stderrLogger)
+	case types.JobTypeStateSurgery:
+		// Break-glass privileged state surgery — ships INERT (fail-closed); performs no state
+		// mutation. See state_surgery.go.
+		execErr = w.executeStateSurgery(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
