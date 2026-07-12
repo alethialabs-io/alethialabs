@@ -114,6 +114,12 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "cp" {
       hostname = "admin.${var.domain}"
       service  = "http://caddy:80"
     }
+    # get.<domain> serves the CLI install scripts. Also forwards to Caddy, which
+    # host-routes get.<domain> → the console (curl … | sh, install.ps1).
+    ingress_rule {
+      hostname = "get.${var.domain}"
+      service  = "http://caddy:80"
+    }
     # Required catch-all.
     ingress_rule {
       service = "http_status:404"
@@ -147,6 +153,17 @@ resource "cloudflare_record" "www" {
 resource "cloudflare_record" "admin" {
   zone_id = var.cloudflare_zone_id
   name    = "admin"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+}
+
+# get.<domain> — the CLI install-script host (curl … | sh, install.ps1), onto the
+# same tunnel. Caddy host-routes it to the console; no Access app (it's public).
+resource "cloudflare_record" "get" {
+  zone_id = var.cloudflare_zone_id
+  name    = "get"
   type    = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
   proxied = true

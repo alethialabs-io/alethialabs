@@ -1,11 +1,17 @@
 ---
 title: Installation
-description: Install Alethia via Homebrew, binary download, or from source.
+description: Install the Alethia CLI via Homebrew, Scoop, an install script, a Linux package, Docker, a binary download, or from source.
 ---
 
 # Installation
 
-## Homebrew (Recommended)
+The `alethia` CLI ships for **macOS, Linux, and Windows** (amd64 + arm64). Pick whichever
+method fits your platform — every one below installs the same binary and self-updates against
+GitHub Releases.
+
+## macOS / Linux
+
+### Homebrew (recommended)
 
 One line, no prior setup:
 
@@ -13,18 +19,79 @@ One line, no prior setup:
 brew install alethialabs-io/tap/alethia
 ```
 
-Or tap once, then install by the short name:
+Or tap once, then install (and reinstall) by the short name:
 
 ```bash
 brew tap alethialabs-io/tap
 brew install alethia
 ```
 
-Updates via `brew upgrade alethia`. Works on macOS and Linux.
+Upgrade with `brew upgrade alethia`.
 
-## Binary Download
+### Install script
 
-Pre-built binaries are available on GitHub Releases for every tagged version:
+No Homebrew? Pipe the installer — it detects your OS/arch, verifies the SHA-256 checksum, and
+drops the binary in `~/.local/bin`:
+
+```bash
+curl -fsSL https://get.alethialabs.io | sh
+```
+
+Pin a version or change the install dir with env vars:
+
+```bash
+curl -fsSL https://get.alethialabs.io | ALETHIA_VERSION=0.3.0 sh
+curl -fsSL https://get.alethialabs.io | ALETHIA_INSTALL_DIR=/usr/local/bin sh
+```
+
+### Linux packages (.deb / .rpm / .apk)
+
+Every release attaches Debian, RPM, and Alpine packages. Download the one for your arch from the
+[latest release](https://github.com/alethialabs-io/alethialabs/releases) and install it:
+
+```bash
+# Debian / Ubuntu
+sudo dpkg -i alethia_*_linux_amd64.deb
+
+# Fedora / RHEL
+sudo rpm -i alethia_*_linux_amd64.rpm
+
+# Alpine
+sudo apk add --allow-untrusted alethia_*_linux_amd64.apk
+```
+
+## Windows
+
+### Scoop (recommended)
+
+```powershell
+scoop bucket add alethia https://github.com/alethialabs-io/scoop-bucket
+scoop install alethia
+```
+
+Upgrade with `scoop update alethia`.
+
+### Install script
+
+```powershell
+irm https://get.alethialabs.io/install.ps1 | iex
+```
+
+Honors `$env:ALETHIA_VERSION` and `$env:ALETHIA_INSTALL_DIR`; installs to
+`%LOCALAPPDATA%\Alethia\bin` and adds it to your user `PATH`.
+
+## Docker
+
+```bash
+docker run --rm ghcr.io/alethialabs-io/alethia --version
+```
+
+Images are published to GHCR for every release (`:latest` and `:X.Y.Z`, amd64 + arm64).
+
+## Binary download
+
+Pre-built archives are on [GitHub Releases](https://github.com/alethialabs-io/alethialabs/releases)
+for every tagged version:
 
 | Platform | Architecture | Archive |
 |----------|-------------|---------|
@@ -33,6 +100,7 @@ Pre-built binaries are available on GitHub Releases for every tagged version:
 | Linux | amd64 | `alethia_Linux_x86_64.tar.gz` |
 | Linux | arm64 | `alethia_Linux_arm64.tar.gz` |
 | Windows | amd64 | `alethia_Windows_x86_64.zip` |
+| Windows | arm64 | `alethia_Windows_arm64.zip` |
 
 ```bash
 tar xzf alethia_Darwin_arm64.tar.gz
@@ -40,9 +108,12 @@ mv alethia /usr/local/bin/
 alethia --version
 ```
 
-## From Source
+Each release also ships `checksums.txt` — verify with `sha256sum -c` (Linux) or
+`shasum -a 256 -c` (macOS) before installing.
 
-Requires Go 1.22+:
+## From source
+
+Requires Go 1.25+:
 
 ```bash
 cd apps/cli
@@ -50,14 +121,14 @@ go build -o alethia .
 ./alethia --version
 ```
 
-## Build System
+## Build system
 
-Alethia releases are built by [GoReleaser](https://goreleaser.com/) via GitHub Actions. See [Release System](/concepts/release-system) for the full pipeline.
+Alethia releases are built by [GoReleaser](https://goreleaser.com/) via GitHub Actions on each
+`cli-v*` tag. See [Release System](/concepts/release-system) for the full pipeline.
 
-The GoReleaser config (`apps/cli/.goreleaser.yml`) defines:
-- 4 binary builds (2 OS x 2 arch) with CGO disabled
-- tar.gz archives with checksums
-- GitHub Release publication
-- Homebrew formula auto-update in the `alethialabs-io/tap` tap
+The GoReleaser config (`apps/cli/.goreleaser.yml`) produces:
+- binaries for macOS / Linux / Windows × amd64 / arm64 (CGO disabled), archived with checksums
+- Linux packages (`.deb` / `.rpm` / `.apk`) and Docker images (GHCR)
+- the Homebrew formula (`alethialabs-io/tap`) and Scoop manifest (`alethialabs-io/scoop-bucket`), updated automatically
 
 The `ALETHIA_WEB_ORIGIN` build variable is baked into the binary, pointing to the production Alethia URL.
