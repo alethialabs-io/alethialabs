@@ -330,16 +330,20 @@ class HcloudFleetProvider implements FleetProvider {
 		// billable orphans). Keep the label selector on every page.
 		const servers: HcloudServer[] = [];
 		let page = 1;
-		for (;;) {
+		// Bound the loop by ITERATION COUNT, not by the page value: a misbehaving API/proxy that
+		// returns a constant (always 2) or cyclic (1↔2) next_page keeps `page` below any page-number
+		// cap forever. Also require STRICT progress (next_page must exceed the current page) so such
+		// a response terminates instead of spinning list() — which, awaited inside the 60s scaler
+		// tick, would wedge scale-up AND reaping across every pool.
+		for (let i = 0; i < HCLOUD_LIST_MAX_PAGES; i++) {
 			const body = await this.api(
 				"GET",
 				`/servers?label_selector=${selector}&per_page=${HCLOUD_LIST_PER_PAGE}&page=${page}`,
 			);
 			const parsed = parseServerListPage(body);
 			servers.push(...parsed.servers);
-			if (parsed.nextPage === null) break;
+			if (parsed.nextPage === null || parsed.nextPage <= page) break;
 			page = parsed.nextPage;
-			if (page > HCLOUD_LIST_MAX_PAGES) break;
 		}
 		const now = Date.now();
 		return servers.map((s) => ({

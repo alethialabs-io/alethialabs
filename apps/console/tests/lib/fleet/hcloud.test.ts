@@ -434,6 +434,19 @@ describe("HcloudFleetProvider.list — Hetzner pagination", () => {
 		}
 	});
 
+	it("TERMINATES on a misbehaving API that returns a non-increasing/cyclic next_page (no infinite loop)", async () => {
+		// A broken API/proxy that always says next_page=1 (cyclic) would spin forever if the loop
+		// trusted the page value. The iteration bound + strict-progress guard (next_page must exceed
+		// the current page) stops it — otherwise list() wedges the whole 60s scaler tick.
+		fetchMock.mockImplementation(async () => pageRes(range(1, 3), 1)); // always claims next_page=1
+
+		const out = await getHcloudFleetProvider().list(target("aws"));
+
+		// Stops after page 1 (next_page=1 is not strictly greater than page=1) → 3 servers, one fetch.
+		expect(out).toHaveLength(3);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("makes a SINGLE fetch when the first page is the last (next_page null)", async () => {
 		fetchMock.mockImplementation(async () => pageRes([1, 2, 3], null));
 
