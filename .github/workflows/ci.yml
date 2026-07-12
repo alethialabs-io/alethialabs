@@ -102,6 +102,12 @@ jobs:
       # A DISTINCT app-role URL so the RLS isolation assertion actually runs (not skipped).
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      # OpenFGA (started as a step below — service containers can't override the image command, and
+      # OpenFGA needs `run`). Makes the community↔enterprise PDP-parity suite actually execute
+      # per-commit; REQUIRE=1 turns an OpenFGA-absent skip into a hard failure so parity can't
+      # silently go dark (SOC2 CC6.1).
+      OPENFGA_TEST_API_URL: http://localhost:8082
+      ALETHIA_PDP_PARITY_REQUIRE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -112,9 +118,21 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # In-memory OpenFGA for the PDP-parity test (it provisions its own store/model/tuples and
+      # deletes them after — no datastore migration needed). Started via docker run so we can pass
+      # the `run` command; HTTP 8080 → host 8082 (what OPENFGA_TEST_API_URL points at).
+      - name: Start OpenFGA (in-memory) for PDP parity
+        run: |
+          docker run -d --name openfga -p 8082:8080 \
+            -e OPENFGA_DATASTORE_ENGINE=memory openfga/openfga:v1.8.4 run
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:8082/healthz && { echo "openfga up"; break; }
+            [ "$i" = "40" ] && { echo "::error::OpenFGA did not become healthy"; docker logs openfga; exit 1; }
+            sleep 1
+          done
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -F console db:migrate
-      - name: Integration tests (real SQL query builders + RLS isolation)
+      - name: Integration tests (real SQL query builders + RLS isolation + PDP parity)
         run: pnpm -F console test:integration
 
   e2e-browser:
