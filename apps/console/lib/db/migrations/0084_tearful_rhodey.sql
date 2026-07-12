@@ -1,0 +1,1 @@
+CREATE INDEX "idx_job_logs_created_at" ON "job_logs" USING btree ("created_at");
