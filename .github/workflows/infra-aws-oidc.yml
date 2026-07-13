@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for the infra/aws-oidc stack (GitHub-OIDC deploy roles + the BYOC A1.1
+# `alethia-e2e-nightly` provisioning role + budget). Credential-free by design — this stack
+# creates IAM, so it is APPLIED MANUALLY by a maintainer with an admin identity (invariant 4:
+# `tofu apply` on infra/ identity stacks is maintainer-only; see infra/aws-oidc/README.md).
+# There is deliberately NO apply job here: the workflow only fmt/validate/lint/scans, so no
+# cloud or state credentials ever touch a run (safe on contributor PRs).
+
+name: Infra - AWS OIDC
+
+on:
+  pull_request:
+    paths:
+      - "infra/aws-oidc/**"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/aws-oidc/**"
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/aws-oidc
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    name: Validate + IaC checks (no backend, no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu validate
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}

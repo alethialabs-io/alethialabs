@@ -39,3 +39,19 @@ AVD-GCP-0031
 # Inbound is fully closed (the SG has NO ingress; web is tunnel-fronted, SSH is SSM), so the box is an
 # origin, not a pivot — egress-all is the accepted, cost-correct posture for a single self-contained VM.
 AVD-AWS-0104
+
+# infra/aws-oidc e2e-nightly role (BYOC A1.1). The `alethia-e2e-nightly` OIDC role provisions +
+# tears down a WHOLE ephemeral EKS estate (EKS/VPC/RDS/ElastiCache/ECR/IRSA/Karpenter/…) from
+# infra/templates/project/aws. A provisioning identity cannot be reduced to a narrow per-resource
+# action list without breaking on the next template change, so by DESIGN its identity policy uses
+# service-level wildcards (incl. s3:*) — AVD-AWS-0345. The blast radius is capped NOT by the allow
+# list but by three independent walls proven in checks.tf: a ref-bound OIDC trust, an un-removable
+# permissions boundary (region lock to a non-prod region + prod state-bucket/secret isolation + no
+# self-tamper / admin-attach / org access), and a monthly Budget. Accepted, reviewed.
+AVD-AWS-0345
+
+# infra/aws-oidc e2e budget SNS topic (BYOC A1.1) is INTENTIONALLY unencrypted — AVD-AWS-0095.
+# AWS Budgets publishes cost alerts via budgets.amazonaws.com, which cannot publish to a customer
+# CMK-encrypted topic, and the AWS-managed alias/aws/sns key does not grant Budgets kms:GenerateDataKey
+# — either would silently DROP the alerts. The payload is a non-sensitive cost figure. Accepted.
+AVD-AWS-0095
