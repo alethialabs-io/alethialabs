@@ -15,6 +15,10 @@ const PAIRS = [
 		"apps/console/public/alethia-azure-setup.sh",
 	],
 	[
+		"infra/connector/alibaba/alethia-alibaba-setup.sh",
+		"apps/console/public/alethia-alibaba-setup.sh",
+	],
+	[
 		"infra/connector/gcp/alethia-gcp-setup.sh",
 		"apps/console/public/alethia-gcp-setup.sh",
 	],

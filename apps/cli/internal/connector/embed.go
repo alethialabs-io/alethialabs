@@ -38,3 +38,11 @@ var AwsBootstrapTemplate string
 //
 //go:embed alibaba-connector.tf
 var AlibabaConnectorModule string
+
+// AlibabaSetupScript uses the aliyun CLI to register, in the user's Alibaba account,
+// a RAM OIDC provider trusting the Alethia issuer + a RAM role, then prints the role
+// ARN between "--- START CONFIG --- / --- END CONFIG ---" markers. Takes the issuer
+// URL as its first argument (or ALETHIA_ISSUER_URL). Keyless + account-free.
+//
+//go:embed alibaba-setup.sh
+var AlibabaSetupScript string

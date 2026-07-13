@@ -16,8 +16,9 @@ const (
 	// connectorBaseURL hosts the public copies of the setup artifacts used by
 	// the guided-manual fallbacks (provisioned by infra/connector-assets).
 	connectorBaseURL   = "https://alethia-connector-assets.s3.eu-west-1.amazonaws.com"
-	gcpCloudShellURL   = "https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal"
-	azureCloudShellURL = "https://shell.azure.com"
+	gcpCloudShellURL     = "https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal"
+	azureCloudShellURL   = "https://shell.azure.com"
+	alibabaCloudShellURL = "https://shell.aliyun.com"
 )
 
 var connectorCmd = &cobra.Command{

@@ -25,6 +25,40 @@ func EnsureAz() error {
 	return nil
 }
 
+// EnsureAliyun verifies the aliyun CLI is installed.
+func EnsureAliyun() error {
+	if !have("aliyun") {
+		return ErrAliyunNotFound
+	}
+	return nil
+}
+
+// RunAlibabaSetup writes the embedded installer to a temp file, runs it with the user's local
+// aliyun login (federating to the given Alethia issuer), and returns the created RAM role ARN
+// parsed from the CONFIG block. Keyless + account-free — Alethia never receives Alibaba creds.
+func RunAlibabaSetup(script, issuerURL string) (string, error) {
+	path, cleanup, err := writeTemp("alethia-alibaba-setup-*.sh", script)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	output, err := runStreaming("bash", path, issuerURL)
+	if err != nil {
+		return "", fmt.Errorf("alibaba setup failed: %w", err)
+	}
+
+	block, ok := extractBetweenMarkers(output)
+	if !ok {
+		return "", fmt.Errorf("could not find config in setup output")
+	}
+	roleArn := parseKeyValues(block)["role_arn"]
+	if roleArn == "" {
+		return "", fmt.Errorf("alibaba setup did not return a role ARN")
+	}
+	return roleArn, nil
+}
+
 // RunAwsBootstrap writes the CloudFormation template to a temp file, deploys it so the customer's role
 // trusts the given Alethia issuer (keyless, no external id), and returns the created role ARN from the
 // stack outputs. Uses the user's locally configured aws credentials.
