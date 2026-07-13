@@ -3,8 +3,10 @@
 
 // Integration: the defense-in-depth enqueue guard `assertRunnerInOrg` against real
 // Postgres. Seeds two orgs, each with a self-operated runner, and proves the guard
-// ACCEPTS an in-org runner and REJECTS a cross-org runner, a non-existent runner id
-// (same rejection — no cross-tenant disclosure), and a managed (org_id NULL) runner.
+// mirrors claim_next_job's admission EXACTLY: it ACCEPTS an in-org self runner AND a
+// managed (org_id NULL) platform-fleet runner (both claimable), and REJECTS a
+// different-tenant self runner and a non-existent runner id (same rejection — no
+// cross-tenant disclosure).
 //
 // The runner's owning org is read from `runners.org_id` — the SAME column
 // claim_next_job compares against `v_runner_org_id` — so this exercises the exact
@@ -85,9 +87,15 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
-	it("REJECTS a managed (org_id NULL) runner for any tenant — fail closed", async () => {
+	it("ACCEPTS a managed (org_id NULL) runner for any tenant — mirrors claim_next_job's `v_operator='managed'` admission", async () => {
+		// A managed platform-fleet runner belongs to no tenant and assumes-role into the
+		// job's own org at run time, so pinning to it is legitimate for any caller — the
+		// enqueue guard must not be stricter than the claim guard that would accept it.
 		await expect(
 			assertRunnerInOrg(getServiceDb(), managedRunner, ORG_A),
-		).rejects.toBeInstanceOf(ForbiddenError);
+		).resolves.toBeUndefined();
+		await expect(
+			assertRunnerInOrg(getServiceDb(), managedRunner, ORG_B),
+		).resolves.toBeUndefined();
 	});
 });

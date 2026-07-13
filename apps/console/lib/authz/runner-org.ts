@@ -18,14 +18,20 @@ import { runners } from "@/lib/db/schema";
  * caller's org so we fail closed BEFORE the job row is inserted.
  *
  * The runner's owning org is `runners.org_id` — the SAME column `claim_next_job`
- * reads into `v_runner_org_id`, so this uses an identical notion of "the runner's
- * org" as the execution guard. Managed (platform-fleet) runners carry a NULL
- * org_id and are never tenant-assignable by id, so they are correctly rejected.
- *
- * Throws {@link ForbiddenError} for BOTH "runner belongs to another org" and
- * "runner does not exist", so callers can return an identical not-found /
- * unauthorized response and never disclose a runner's existence across a tenancy
- * boundary.
+ * reads into `v_runner_org_id`. This guard mirrors the execution guard's admission
+ * EXACTLY (`claim_next_job` Phase A: `v_operator = 'managed' OR j.org_id =
+ * v_runner_org_id`): the ONLY thing rejected is a **self runner owned by a
+ * different tenant** (`org_id` non-null and != the caller's org). Two cases are
+ * accepted because the executor could legitimately claim the job:
+ *   - the caller's own runner (`org_id === orgId`);
+ *   - a **managed** platform-fleet runner (`org_id IS NULL`) — nobody's tenant, it
+ *     assumes-role into the job's own org at run time, so pinning to it is the same
+ *     as the "any available" managed path (`claim_next_job` Phase B). Rejecting it
+ *     here would be stricter than the claim guard and break the self-managed picker,
+ *     which legitimately offers managed runners as pin targets.
+ * A non-existent runner id is rejected with the SAME error as a cross-tenant one, so
+ * callers return an identical not-found/unauthorized response and never disclose a
+ * runner's existence across a tenancy boundary.
  *
  * @param db     A service (RLS-bypassing) db handle or an open transaction.
  * @param runnerId The client-supplied runner id to validate (must be non-null).
@@ -42,7 +48,10 @@ export async function assertRunnerInOrg(
 		.where(eq(runners.id, runnerId))
 		.limit(1);
 
-	if (!row || row.org_id !== orgId) {
+	// Reject a non-existent runner, OR a self runner owned by another tenant. A managed
+	// runner (org_id IS NULL) is accepted — it mirrors claim_next_job's `v_operator =
+	// 'managed'` admission and belongs to no tenant.
+	if (!row || (row.org_id !== null && row.org_id !== orgId)) {
 		throw new ForbiddenError(
 			"deploy",
 			{ type: "runner", id: runnerId },
