@@ -61,7 +61,7 @@ func TestRenderManagedAddOnsSkipsGitops(t *testing.T) {
 	gitops.ID = "loki"
 	gitops.Mode = "gitops"
 
-	dir, err := RenderManagedAddOns([]types.AddOnInstall{managed, gitops})
+	dir, err := RenderManagedAddOns([]types.AddOnInstall{managed, gitops}, nil)
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}

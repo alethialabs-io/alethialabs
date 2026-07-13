@@ -23,8 +23,10 @@ const addonsRepoDir = "addons"
 // clobbered (mirrors generateAppManifests' bring-your-own philosophy). Manifests for add-ons
 // no longer enabled in gitops mode are pruned (only files WE authored — identified by the
 // marketplace label — so a customer's own files are left alone). No-op when there are no
-// gitops add-ons and nothing of ours to prune.
-func writeAddOnGitOps(vc *types.ProjectConfig, token string, stdout, stderr io.Writer) error {
+// gitops add-ons and nothing of ours to prune. commonLabels are the classification/sweep labels
+// stamped onto each seeded Application (BYOC B1.4) — the app-of-apps syncs these into the cluster
+// as ArgoCD Applications, so they must carry the same sweep handles as their managed-mode twins.
+func writeAddOnGitOps(vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) error {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil
 	}
@@ -60,7 +62,7 @@ func writeAddOnGitOps(vc *types.ProjectConfig, token string, stdout, stderr io.W
 		if _, statErr := os.Stat(file); statErr == nil {
 			continue // already present — respect customer edits
 		}
-		manifest, renderErr := argocd.RenderAddOnApplication(a)
+		manifest, renderErr := renderSeedManifest(a, commonLabels)
 		if renderErr != nil {
 			return fmt.Errorf("render gitops add-on %s: %w", id, renderErr)
 		}
@@ -85,6 +87,19 @@ func writeAddOnGitOps(vc *types.ProjectConfig, token string, stdout, stderr io.W
 	}
 	fmt.Fprintf(stdout, "Synced GitOps add-ons: %d seeded, %d pruned.\n", seeded, pruned)
 	return nil
+}
+
+// renderSeedManifest renders a gitops-mode add-on Application and stamps the classification/sweep
+// labels onto it (BYOC B1.4), so the seeded manifest the app-of-apps syncs into the cluster carries
+// the same sweep handles as the managed-mode twin from argocd.RenderManagedAddOns. Pure + testable:
+// no repo/network. The marketplace identity label the template already sets is preserved (injection
+// never clobbers), so prune-by-label still recognizes our files.
+func renderSeedManifest(a types.AddOnInstall, commonLabels map[string]string) (string, error) {
+	manifest, err := argocd.RenderAddOnApplication(a)
+	if err != nil {
+		return "", err
+	}
+	return argocd.InjectCommonLabels(manifest, commonLabels)
 }
 
 // pruneOrphanAddOnManifests deletes `addons/*.yaml` files that WE authored (they carry the

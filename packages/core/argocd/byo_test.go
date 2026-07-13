@@ -58,7 +58,7 @@ func TestByoRepoSecretName(t *testing.T) {
 func TestRenderByoAppProject(t *testing.T) {
 	out, err := RenderByoAppProject("byo-payments",
 		[]string{"https://github.com/acme/payments-helm", "", "https://github.com/acme/payments-helm"},
-		[]string{"payments", "payments", ""})
+		[]string{"payments", "payments", ""}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
