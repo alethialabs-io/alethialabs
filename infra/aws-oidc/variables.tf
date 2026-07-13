@@ -46,7 +46,59 @@ variable "oidc_provider_arn" {
 }
 
 variable "admin_principal_arns" {
-  description = "Extra IAM principals allowed to assume the deploy roles (e.g. an admin for local apply). Empty = OIDC only."
+  description = "Extra IAM principals allowed to assume the deploy + e2e roles (e.g. an admin for local apply). Empty = OIDC only. Must be concrete IAM ARNs — a wildcard would open the roles to any AWS account."
+  type        = list(string)
+  default     = []
+
+  validation {
+    # A `*` here would render `Principal: { AWS: "*" }` — anyone, anywhere could assume these
+    # (broadly-permissioned) roles. Require concrete arn:aws:iam:: principals.
+    condition = alltrue([
+      for a in var.admin_principal_arns : !strcontains(a, "*") && startswith(a, "arn:aws:iam::")
+    ])
+    error_message = "admin_principal_arns entries must be concrete arn:aws:iam:: ARNs with no '*' wildcard."
+  }
+}
+
+# ── E2E nightly provisioning role (BYOC A1.1) ────────────────────────────────
+# `alethia-e2e-nightly` is the OIDC role the T2 real-cloud nightly (.github/workflows/
+# e2e-nightly.yml) assumes to provision + tear down a genuine, ephemeral AWS EKS cluster.
+# Unlike the deploy roles above (S3/ECR-scoped), this one needs broad provisioning
+# reach — so its blast radius is capped by a permissions boundary + a hard region lock +
+# a monthly Budget, NOT by a narrow action list. It runs in the SHARED platform account,
+# so the region lock keeps it off every prod region (state/SES eu-central-1, fleet eu-west-1).
+
+variable "e2e_region" {
+  description = "The single AWS region the e2e nightly may operate in (hard-denied everywhere else). Cheapest EC2 + the global-service home, so the region lock is a clean single-region allow. MUST NOT be a prod region (eu-central-1 / eu-west-1)."
+  type        = string
+  default     = "us-east-1"
+
+  validation {
+    condition     = !contains(["eu-central-1", "eu-west-1"], var.e2e_region)
+    error_message = "e2e_region must not be a prod region (eu-central-1 hosts state/SES, eu-west-1 hosts the runner fleet)."
+  }
+}
+
+variable "e2e_github_branch" {
+  description = "Branch whose Actions runs may assume the e2e-nightly role. The `schedule` trigger runs on the default branch, so this is `main`. The OIDC `sub` is bound EXACTLY to `repo:<repo>:ref:refs/heads/<this>` (StringEquals, never a wildcard) — PRs and other branches cannot assume it."
+  type        = string
+  default     = "main"
+}
+
+variable "e2e_github_environment" {
+  description = "Optional GitHub Actions environment to ADDITIONALLY trust (adds an exact `repo:<repo>:environment:<this>` sub). Empty = ref-only (tightest). Only set this if the nightly job pins `environment:` AND the environment is branch-restricted to e2e_github_branch."
+  type        = string
+  default     = ""
+}
+
+variable "e2e_monthly_budget_usd" {
+  description = "Monthly cost ceiling (USD) for the e2e AWS spend. Alerts fire at 50/80/100% actual + 100% forecast. A safety net — the nightly itself is a single tiny ephemeral cluster torn down each run."
+  type        = number
+  default     = 100
+}
+
+variable "e2e_budget_alert_emails" {
+  description = "Email addresses subscribed to the e2e budget SNS topic + notified directly by the Budget. Empty = SNS topic only (wire an automation/kill-switch later)."
   type        = list(string)
   default     = []
 }

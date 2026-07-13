@@ -373,6 +373,8 @@ jobs:
         run: node scripts/check-connector-assets.mjs
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
         run: node scripts/check-license-headers.mjs
+      - name: Cloud privilege (OIDC / creds) never reachable from a PR (BYOC invariant 1)
+        run: node scripts/check-workflow-oidc-isolation.mjs
 
   go:
     name: Go (build · vet · test · lint)

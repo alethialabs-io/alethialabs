@@ -33,10 +33,11 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Cloud provider to prove (only hetzner today; aws/azure later)."
+        description: "Cloud provider to prove (hetzner today; aws gated on vars.E2E_AWS_ROLE_ARN; azure later)."
         type: choice
         options:
           - hetzner
+          - aws
         default: hetzner
       region:
         description: "Cloud region/location (hetzner: nbg1/fsn1/hel1)."
@@ -50,6 +51,14 @@ jobs:
   provision:
     name: Provision + verify + teardown (real cloud)
     runs-on: ubuntu-latest
+    # `id-token: write` mints the GitHub OIDC token the AWS path exchanges for the
+    # `alethia-e2e-nightly` role (aws-actions/configure-aws-credentials). This is SAFE: the
+    # whole workflow triggers ONLY on `schedule` / `workflow_dispatch` — never `pull_request` /
+    # `pull_request_target` — so no fork/PR can ever reach the token (program invariant 1,
+    # enforced by scripts/check-workflow-oidc-isolation.mjs). `contents: read` stays the default.
+    permissions:
+      contents: read
+      id-token: write
     # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
     timeout-minutes: 60
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
@@ -100,6 +109,11 @@ jobs:
       # skips the real work. Also read directly by the T2 runner process (HCLOUD_TOKEN
       # is the env var the hcloud/imager/talos providers authenticate from).
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      # The AWS gate. A repo VARIABLE (not a secret — a role ARN is not sensitive), so it can
+      # be read in a plain `if:`/`case`. Empty until a maintainer applies infra/aws-oidc and
+      # sets it → the aws path green-skips (mirrors the HCLOUD_TOKEN gate). The role itself is
+      # assumed via OIDC below; no long-lived AWS keys ever exist.
+      E2E_AWS_ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
       ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
@@ -119,8 +133,8 @@ jobs:
           PROVIDER: ${{ matrix.provider }}
         run: |
           case "$PROVIDER" in
-            hetzner) TOKEN="$HCLOUD_TOKEN"; SECRET_NAME="HCLOUD_TOKEN" ;;
-            # aws)   TOKEN="$AWS_ROLE_ARN";  SECRET_NAME="AWS_ROLE_ARN"  ;;
+            hetzner) TOKEN="$HCLOUD_TOKEN";    SECRET_NAME="HCLOUD_TOKEN" ;;
+            aws)     TOKEN="$E2E_AWS_ROLE_ARN"; SECRET_NAME="E2E_AWS_ROLE_ARN (repo variable)" ;;
             # azure) TOKEN="$AZURE_CREDS";   SECRET_NAME="AZURE_CREDS"   ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
@@ -176,7 +190,7 @@ jobs:
         if: steps.gate.outputs.run == 'true'
 
       - name: Install hcloud CLI (belt-and-suspenders teardown)
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner'
         env:
           HCLOUD_CLI_VERSION: v1.49.1
         run: |
@@ -192,6 +206,19 @@ jobs:
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
         if: steps.gate.outputs.run == 'true'
         run: pnpm -F console db:migrate
+
+      # ── AWS: exchange the GitHub OIDC token for the ref-bound `alethia-e2e-nightly` role
+      #    (no long-lived keys). Only runs for the aws provider once a maintainer has applied
+      #    infra/aws-oidc and set vars.E2E_AWS_ROLE_ARN; otherwise the gate above already
+      #    green-skipped the whole run. The role is region-locked + boundary-capped + budgeted
+      #    (see infra/aws-oidc/e2e-nightly.tf). aws-region matches the role's locked region. ──
+      - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          role-duration-seconds: 7200
 
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
@@ -264,8 +291,13 @@ jobs:
       #    `tofu destroy` already ran in-process on the normal path; this label-scoped
       #    hcloud sweep is the guarantee for a hard-killed test process. It only ever
       #    deletes resources labelled `cluster=$E2E_CLUSTER` — never account-wide. ──
+      # Hetzner teardown guarantee. The graceful in-process `tofu destroy` already ran on the
+      # normal path; this label-scoped hcloud sweep is the belt-and-suspenders for a hard-killed
+      # test. Scoped to `cluster=$E2E_CLUSTER` — never account-wide. AWS gets its own always()
+      # sweeper (scripts/e2e/aws-cleanup.sh) in BYOC A1.3/A1.4; until then the aws path doesn't
+      # provision (harness/template wiring lands in A1.2+), so there is nothing to sweep here.
       - name: Guaranteed teardown (label-scoped hcloud cleanup)
-        if: steps.gate.outputs.run == 'true' && always()
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner' && always()
         run: |
           if [ -z "${E2E_CLUSTER:-}" ]; then
             echo "::error::E2E_CLUSTER is unset — refusing to run an unscoped cleanup."
