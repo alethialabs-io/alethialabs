@@ -25,6 +25,12 @@ export async function POST(
 		return NextResponse.json({
 			identity_id: result.identityId,
 			external_id: result.externalId ?? null,
+			// Azure bakes the platform Entra app id into the customer's setup command (fixed,
+			// non-secret). Null for other providers / an instance that hasn't configured Azure.
+			platform_client_id:
+				provider === "azure"
+					? (process.env.ALETHIA_AZURE_CLIENT_ID ?? null)
+					: null,
 		});
 	} catch (err) {
 		return errorResponse(err, 500);

@@ -157,6 +157,9 @@ export const providerStatusWire = z.object({
 export const initIdentityWire = z.object({
 	identity_id: z.string(),
 	external_id: z.string().nullable().optional(),
+	// Azure only: the platform Entra app id the CLI bakes into the customer's setup command (a
+	// fixed, non-secret operator value). Null/absent for other providers or an unconfigured instance.
+	platform_client_id: z.string().nullable().optional(),
 });
 
 /** Credential submission (POST /api/cli/providers/:provider/connect). The server
