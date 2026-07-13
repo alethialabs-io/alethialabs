@@ -56,7 +56,7 @@ var b14Labels = map[string]string{
 
 func TestInjectCommonLabels_EmptyIsNoop(t *testing.T) {
 	in := "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: x\n"
-	out, err := injectCommonLabels(in, nil)
+	out, err := InjectCommonLabels(in, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestInjectCommonLabels_EmptyIsNoop(t *testing.T) {
 func TestInjectCommonLabels_StampsApplicationAndProject(t *testing.T) {
 	for _, kind := range []string{"Application", "AppProject"} {
 		in := "apiVersion: argoproj.io/v1alpha1\nkind: " + kind + "\nmetadata:\n  name: x\n  namespace: argocd\nspec:\n  project: infra\n"
-		out, err := injectCommonLabels(in, b14Labels)
+		out, err := InjectCommonLabels(in, b14Labels)
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)
 		}
@@ -88,7 +88,7 @@ func TestInjectCommonLabels_LeavesNonArgoKindsAlone(t *testing.T) {
 		"apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: eso\nspec:\n  project: infra",
 		"apiVersion: external-secrets.io/v1beta1\nkind: ClusterSecretStore\nmetadata:\n  name: aws\nspec:\n  provider: {}",
 	}, "\n---\n")
-	out, err := injectCommonLabels(in, b14Labels)
+	out, err := InjectCommonLabels(in, b14Labels)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestInjectCommonLabels_LeavesNonArgoKindsAlone(t *testing.T) {
 // label of the same key.
 func TestInjectCommonLabels_NeverClobbersExisting(t *testing.T) {
 	in := "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: x\n  labels:\n    alethia.io/managed-by: addon-marketplace\nspec:\n  project: infra\n"
-	out, err := injectCommonLabels(in, map[string]string{
+	out, err := InjectCommonLabels(in, map[string]string{
 		"alethia.io/managed-by": "SHOULD-NOT-WIN",
 		"alethia.io/project-id": "proj-1",
 	})
@@ -133,7 +133,7 @@ func TestInjectCommonLabels_NeverClobbersExisting(t *testing.T) {
 func TestInjectCommonLabels_CreatesLabelsWhenAbsent(t *testing.T) {
 	// external-secrets-operator.yaml's Application has annotations + finalizers but NO labels block.
 	in := "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: eso\n  annotations:\n    argocd.argoproj.io/sync-wave: \"1\"\nspec:\n  project: infra\n"
-	out, err := injectCommonLabels(in, b14Labels)
+	out, err := InjectCommonLabels(in, b14Labels)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestInjectCommonLabels_PreservesHelmValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render add-on: %v", err)
 	}
-	labeled, err := injectCommonLabels(manifest, b14Labels)
+	labeled, err := InjectCommonLabels(manifest, b14Labels)
 	if err != nil {
 		t.Fatalf("inject: %v", err)
 	}
