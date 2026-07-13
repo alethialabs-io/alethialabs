@@ -382,7 +382,9 @@ export interface ExecutionMetadata {
 	 *  (a working cluster, not just "tofu apply exited 0"). Set by the runner on a real deploy. */
 	cluster_ready?: boolean;
 	argocd_url?: string;
-	argocd_admin_password?: string;
+	// The ArgoCD admin password is deliberately absent: the runner never persists it (it is
+	// retrieved on-demand from the cluster's argocd-initial-admin-secret), so it never appears
+	// in execution_metadata. See the runner's buildDeployMetadata + scrubMetadataTree.
 	outputs?: Record<string, unknown>;
 	cached_resources?:
 		| CachedResources

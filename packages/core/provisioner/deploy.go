@@ -78,9 +78,12 @@ type PlanResult struct {
 	// ClusterReady reports that after a real apply the cluster's API server answered and
 	// its nodes reached Ready within the probe timeout. A deploy that can't reach the
 	// cluster is FAILED (not SUCCESS) — "tofu apply exited 0" is not a working cluster.
-	ClusterReady        bool
-	ArgocdURL           string
-	ArgocdAdminPassword string
+	ClusterReady bool
+	ArgocdURL    string
+	// The ArgoCD admin password is deliberately NOT a field here. It lives in the cluster's
+	// `argocd-initial-admin-secret` Secret and is retrieved on-demand; keeping it out of
+	// PlanResult stops it from crossing the sandbox boundary (result.json) or landing in the
+	// console's execution_metadata (Postgres) as plaintext. See installArgoCD + buildDeployMetadata.
 	// VerifyReport is the deterministic verification gate's result for this plan
 	// (nil if the plan JSON could not be produced). On a real apply a blocking
 	// verdict stops the apply before any infrastructure changes.
@@ -862,20 +865,18 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to install ArgoCD: %w", err)
 	}
 
-	fmt.Fprintln(stdout, "ArgoCD installed. Extracting admin credentials...")
-
-	passwordCmd := "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d"
-	password, err := utils.ExecuteCommandWithOutput(passwordCmd, ".", nil)
-	if err != nil {
-		fmt.Fprintf(stderr, "Warning: could not extract ArgoCD admin password: %v\n", err)
-	} else {
-		result.ArgocdAdminPassword = strings.TrimSpace(password)
-	}
+	// The admin password is NOT extracted here: it stays in the `argocd-initial-admin-secret`
+	// Secret and is retrieved on-demand from the cluster
+	// (`kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`).
+	// Reading it into the deploy result would carry plaintext across the sandbox boundary and into
+	// the console's execution_metadata (Postgres) — a secret leak. The console shows the retrieval
+	// command instead of a stored password.
+	fmt.Fprintln(stdout, "ArgoCD installed.")
 
 	if result.ArgocdURL != "" {
 		fmt.Fprintf(stdout, "ArgoCD ready. URL: %s\n", result.ArgocdURL)
 	} else {
-		fmt.Fprintln(stdout, "ArgoCD ready (no ingress on this cloud yet — access via port-forward or the admin password).")
+		fmt.Fprintln(stdout, "ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).")
 	}
 	return nil
 }

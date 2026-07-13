@@ -30,8 +30,8 @@ external agent (read-only at launch). `assertAudienceCoverage` (tested in
 - ✅ `list_projects` — `getProjects()` · `view project`. ✅ `get_project(id)` — `getProject()` · `view project` (components + sizes).
 - ✅ `list_jobs` / `get_job(id)` — `getJobs()` / `getJob()` · `view job`. ✅ `get_plan_result(id)` — `getPlanResult()`.
 - ✅ `list_runners` — `getRunnersWithReleases()` · `view runner`.
-- ✅ `list_clusters` — `getClusters()` — provisioned stacks (endpoints/dbs/caches). **`argocd_admin_password`
-  dropped — never feed secrets to the model.**
+- ✅ `list_clusters` — `getClusters()` — provisioned stacks (endpoints/dbs/caches). No ArgoCD admin
+  password is stored or surfaced — it is retrieved on-demand from `argocd-initial-admin-secret`.
 - ✅ `list_cloud_identities` — `getVerifiedCloudIdentities()`. ✅ `list_connectors` — `getConnectorsWithStatus()`.
 - ✅ `get_cached_resources(id)` — NEW `getCloudIdentityResources()` · `view cloud_identity` — existing VPCs/subnets.
 - ✅ `search_docs(query)` — `docs.ts` · lexical TF-IDF over the committed docs index (`gen:docs-index` from

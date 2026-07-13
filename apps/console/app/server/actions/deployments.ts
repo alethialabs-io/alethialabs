@@ -37,7 +37,9 @@ const deployMetaSchema = z.object({
 	cluster_name: z.string().optional().catch(undefined),
 	cluster_endpoint: z.string().optional().catch(undefined),
 	argocd_url: z.string().optional().catch(undefined),
-	argocd_admin_password: z.string().optional().catch(undefined),
+	// NOTE: argocd_admin_password is intentionally NOT read here. The runner no longer persists
+	// the ArgoCD admin password into execution_metadata (it is retrieved on-demand from the
+	// cluster's argocd-initial-admin-secret); the console never stores or displays a plaintext one.
 	outputs: z.record(z.string(), z.unknown()).optional().catch(undefined),
 	// Managed marketplace add-on health, keyed by ArgoCD Application name ("addon-<id>").
 	addon_status: z
@@ -173,8 +175,6 @@ export async function finalizeDeployment(jobId: string) {
 	// URL" and must CLEAR any previously persisted one (older deploys wrote a bogus
 	// https://argocd.<domain> on clouds where no ingress exists).
 	clusterUpdate.argocd_url = meta.argocd_url ?? null;
-	if (meta.argocd_admin_password)
-		clusterUpdate.argocd_admin_password = meta.argocd_admin_password;
 	if (outputs) {
 		const clusterArn = extractOutputValue(outputs, "eks_cluster_arn");
 		if (clusterArn) clusterUpdate.provider_outputs = { arn: clusterArn };

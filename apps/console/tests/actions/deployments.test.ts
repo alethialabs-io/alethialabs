@@ -75,6 +75,8 @@ function fullJob() {
 			cluster_name: "eks-prod",
 			cluster_endpoint: "https://eks.example",
 			argocd_url: "https://argo.example",
+			// A stray plaintext ArgoCD admin password on the metadata (as an old runner emitted, or
+			// a malicious/legacy job): finalizeDeployment must NEVER persist it to the cluster row.
 			argocd_admin_password: "s3cret",
 			outputs: {
 				// object {value} form — exercises extractOutputValue's unwrap branch
@@ -152,9 +154,11 @@ describe("finalizeDeployment — success path", () => {
 			cluster_name: "eks-prod",
 			cluster_endpoint: "https://eks.example",
 			argocd_url: "https://argo.example",
-			argocd_admin_password: "s3cret",
 			provider_outputs: { arn: "arn:aws:eks:cluster" }, // {value} unwrapped
 		});
+		// Security regression (SOC 2 CC6.7): the plaintext ArgoCD admin password on the metadata
+		// must NOT be written to the cluster row — it is retrieved on-demand, never stored.
+		expect(cluster).not.toHaveProperty("argocd_admin_password");
 
 		const dbWrite = writeFor(projectDatabases)?.set;
 		expect(dbWrite).toMatchObject({

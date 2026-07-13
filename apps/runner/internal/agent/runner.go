@@ -689,7 +689,16 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
 	}
 	if result != nil {
-		if metadata := buildDeployMetadata(result); len(metadata) > 0 {
+		metadata := buildDeployMetadata(result)
+		// Defense-in-depth over the WHOLE assembled blob: even if buildDeployMetadata regresses
+		// (a re-added top-level secret) or a new tofu output shape carries credential material,
+		// scrubMetadataTree walks every nested key against the denylist and drops any match BEFORE
+		// the metadata crosses into the console Postgres. A non-empty drop list means a regression
+		// the backstop caught — surface it loudly in the job log.
+		if dropped := scrubMetadataTree(metadata); len(dropped) > 0 {
+			fmt.Fprintf(stderr, "Warning: dropped %d secret-bearing metadata key(s) before posting: %v\n", len(dropped), dropped)
+		}
+		if len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 		}
 	}
@@ -704,6 +713,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 // in-process by the deploy pipeline, but only a SCRUBBED copy may cross into the console
 // metadata (which lands in DB backups/replicas and is readable by cross-tenant support
 // staff). See scrubSensitiveOutputs + docs/compliance/security-e2e-matrix.md (CC6.7).
+//
+// The ArgoCD admin password is intentionally NOT assembled here (and no longer exists on
+// PlanResult): it is retrieved on-demand from the cluster's `argocd-initial-admin-secret`
+// Secret, never stored as plaintext. The caller additionally runs scrubMetadataTree over the
+// whole returned blob as a denylist backstop before posting.
 func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 	metadata := map[string]any{}
 	if result.ClusterName != "" {
@@ -720,9 +734,10 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 	if result.ArgocdURL != "" {
 		metadata["argocd_url"] = result.ArgocdURL
 	}
-	if result.ArgocdAdminPassword != "" {
-		metadata["argocd_admin_password"] = result.ArgocdAdminPassword
-	}
+	// NOTE: the ArgoCD admin password is deliberately never persisted — it is retrieved
+	// on-demand from the cluster's argocd-initial-admin-secret. Re-adding a
+	// metadata["argocd_admin_password"] = … line here is a secret leak; the whole-blob
+	// scrubMetadataTree backstop + secret_nonleak_test guard against it.
 	// Persist outputs to the console, but scrub credential-bearing outputs (full
 	// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
 	// so they never land in execution_metadata (console Postgres). The pipeline already

@@ -137,7 +137,6 @@ export const projectCluster = pgTable(
 		cluster_name: text(),
 		cluster_endpoint: text(),
 		argocd_url: text(),
-		argocd_admin_password: text(),
 		// Provider-specific resource identifiers (ARN/KMS/… on AWS) — cloud-agnostic.
 		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
