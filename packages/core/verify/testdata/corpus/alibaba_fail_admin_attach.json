@@ -1,0 +1,180 @@
+{
+  "_comment": "Alibaba admin-attachment fixture \u2014 OpenTofu v1.12.3 + aliyun/alicloud provider v1.285.0 (dummy ALICLOUD access/secret via provider block; RAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. An alicloud_ram_role_policy_attachment binding the System managed policy AdministratorAccess (policy_type=System) \u2014 full account admin. The role itself trusts a Service principal (ecs.aliyuncs.com), so ALI-OIDC-001 is vacuous-pass, isolating the block to least-priv. Expect: ALI-LEASTPRIV-001 FAIL => verdict fail (blocks).",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_role.app",
+          "mode": "managed",
+          "type": "alicloud_ram_role",
+          "name": "app",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "assume_role_policy_document": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":[\"ecs.aliyuncs.com\"]}}],\"Version\":\"1\"}",
+            "description": null,
+            "force": null,
+            "role_name": "alethia-demo-app",
+            "tags": null,
+            "timeouts": null,
+            "version": "1"
+          },
+          "sensitive_values": {
+            "ram_users": [],
+            "services": []
+          }
+        },
+        {
+          "address": "alicloud_ram_role_policy_attachment.admin",
+          "mode": "managed",
+          "type": "alicloud_ram_role_policy_attachment",
+          "name": "admin",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "policy_name": "AdministratorAccess",
+            "policy_type": "System",
+            "timeouts": null
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_role.app",
+      "mode": "managed",
+      "type": "alicloud_ram_role",
+      "name": "app",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "assume_role_policy_document": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":[\"ecs.aliyuncs.com\"]}}],\"Version\":\"1\"}",
+          "description": null,
+          "force": null,
+          "role_name": "alethia-demo-app",
+          "tags": null,
+          "timeouts": null,
+          "version": "1"
+        },
+        "after_unknown": {
+          "arn": true,
+          "create_time": true,
+          "document": true,
+          "id": true,
+          "max_session_duration": true,
+          "name": true,
+          "ram_users": true,
+          "role_id": true,
+          "services": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "ram_users": [],
+          "services": []
+        }
+      }
+    },
+    {
+      "address": "alicloud_ram_role_policy_attachment.admin",
+      "mode": "managed",
+      "type": "alicloud_ram_role_policy_attachment",
+      "name": "admin",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "policy_name": "AdministratorAccess",
+          "policy_type": "System",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "role_name": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "alicloud": {
+        "name": "alicloud",
+        "full_name": "registry.opentofu.org/aliyun/alicloud",
+        "version_constraint": ">= 1.230.0, < 2.0.0",
+        "expressions": {
+          "access_key": {
+            "constant_value": "dummy-access-key-for-plan"
+          },
+          "region": {
+            "constant_value": "eu-central-1"
+          },
+          "secret_key": {
+            "constant_value": "dummy-secret-key-for-plan"
+          }
+        }
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_role.app",
+          "mode": "managed",
+          "type": "alicloud_ram_role",
+          "name": "app",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "assume_role_policy_document": {},
+            "role_name": {
+              "constant_value": "alethia-demo-app"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "alicloud_ram_role_policy_attachment.admin",
+          "mode": "managed",
+          "type": "alicloud_ram_role_policy_attachment",
+          "name": "admin",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "policy_name": {
+              "constant_value": "AdministratorAccess"
+            },
+            "policy_type": {
+              "constant_value": "System"
+            },
+            "role_name": {
+              "references": [
+                "alicloud_ram_role.app.id",
+                "alicloud_ram_role.app"
+              ]
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "relevant_attributes": [
+    {
+      "resource": "alicloud_ram_role.app",
+      "attribute": [
+        "id"
+      ]
+    }
+  ],
+  "timestamp": "2026-07-13T14:48:22Z",
+  "errored": false
+}

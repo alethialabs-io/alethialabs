@@ -150,6 +150,7 @@ func selectControls(providers []string, planned []plannedResource) []ControlResu
 		out = append(out, gcpControls(planned)...)
 		out = append(out, azureControls(planned)...)
 		out = append(out, hetznerControls(planned)...)
+		out = append(out, alibabaControls(planned)...)
 		return out
 	}
 	var out []ControlResult
@@ -163,6 +164,8 @@ func selectControls(providers []string, planned []plannedResource) []ControlResu
 			out = append(out, azureControls(planned)...)
 		case "hetzner":
 			out = append(out, hetznerControls(planned)...)
+		case "alibaba":
+			out = append(out, alibabaControls(planned)...)
 		}
 	}
 	return out
@@ -221,8 +224,8 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 // recognized prefix (utility providers like random_/tls_, or clouds without a
 // control set such as cloudflare) contribute nothing here — the engine has no
 // controls to run over them, which the report states honestly rather than implying a
-// pass it never checked. hcloud_ IS recognized now (→ "hetzner"), so a Hetzner plan
-// runs the posture control set rather than being a vacuous pass.
+// pass it never checked. hcloud_ IS recognized now (→ "hetzner") and alicloud_ (→
+// "alibaba"), so those plans run their control sets rather than being a vacuous pass.
 func detectProviders(planned []plannedResource) []string {
 	seen := map[string]bool{}
 	for _, r := range planned {
@@ -235,6 +238,8 @@ func detectProviders(planned []plannedResource) []string {
 			seen["azure"] = true
 		case strings.HasPrefix(r.rtype, "hcloud_"):
 			seen["hetzner"] = true
+		case strings.HasPrefix(r.rtype, "alicloud_"):
+			seen["alibaba"] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -254,6 +259,7 @@ func detectProviders(planned []plannedResource) []string {
 // authority-shaped, but the plan is genuinely inspected rather than vacuously passed.
 var controlledProviderTokens = map[string]bool{
 	"aws": true, "google": true, "azurerm": true, "azuread": true, "hcloud": true,
+	"alicloud": true,
 }
 
 // supportedNoControlProviderTokens are provider prefixes the engine recognizes as a
@@ -276,10 +282,11 @@ var controlledProviderTokens = map[string]bool{
 //   - Utility providers that create no cloud authority at all: random_, tls_, null_,
 //     local_, time_, external_.
 //
-// NB this is a CLOUD-AUTHORITY allowlist, not a managed-cloud allowlist: `alicloud` is a
-// managed cloud but has NO authored control set yet, so it is deliberately LEFT OFF —
-// an Alibaba plan is honestly not_evaluable until alicloud controls exist (it has RAM/OIDC
-// authority, so it must eventually get real controls, not this allowlist).
+// NB this is a CLOUD-AUTHORITY allowlist, not a managed-cloud allowlist. `alicloud` is
+// NOT here: Alibaba has real RAM/OIDC authority and now has an authored control set
+// (see alibabaControls / controls_alibaba.go), so it lives in controlledProviderTokens
+// — its plans are genuinely inspected (keyless / RRSA-sub / least-priv), never a
+// no-controls pass.
 //
 // This allowlist is what makes the fail-closed backstop (controlEvaluableScope) safe:
 // it must NOT flip these legitimate plans to not_evaluable, only genuinely
