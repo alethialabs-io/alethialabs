@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
@@ -37,7 +37,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -58,8 +58,30 @@ import {
 	projectTopics,
 	projects,
 	resourceHierarchy,
+	runners,
 } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
+
+/**
+ * Stubs getServiceDb so the defense-in-depth assigned-runner lookup
+ * (assertRunnerInOrg → select org_id from runners) resolves to `runnerOrgId`.
+ * Passing the caller's org (default "org-1") makes the runner in-org; a different
+ * value simulates a cross-org assignment.
+ */
+function mockRunnerLookup(runnerOrgId: string | null = "org-1") {
+	vi.mocked(getServiceDb).mockReturnValue({
+		select: () => ({
+			from: (t: unknown) => ({
+				where: () => ({
+					limit: () =>
+						Promise.resolve(
+							t === runners && runnerOrgId !== null ? [{ org_id: runnerOrgId }] : [],
+						),
+				}),
+			}),
+		}),
+	} as never);
+}
 
 type Rows = unknown[];
 type RowsResolver = Rows | (() => Rows);
@@ -167,6 +189,8 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
+	// Default: any client-supplied assigned runner belongs to the caller's org.
+	mockRunnerLookup("org-1");
 });
 
 // ============================================================
@@ -454,6 +478,31 @@ describe("planProject", () => {
 		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-1" });
+	});
+
+	it("rejects (defense-in-depth) a client-supplied runner owned by another org", async () => {
+		const { valuesSpy, insertSpy } = setupDb({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		mockRunnerLookup("org-OTHER"); // runner-9 belongs to a different org than actor (org-1)
+
+		await expect(planProject("p1", "runner-9")).rejects.toThrow(/Forbidden/);
+		// Fail closed BEFORE the job is inserted — no orphaned/unclaimable row.
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("rejects (defense-in-depth) a non-existent client-supplied runner id", async () => {
+		setupDb({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		mockRunnerLookup(null); // no such runner → same rejection, no disclosure
+
+		await expect(planProject("p1", "runner-nope")).rejects.toThrow(/Forbidden/);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
 	it("emits storage_buckets and container_registries in the snapshot with resolved placement", async () => {

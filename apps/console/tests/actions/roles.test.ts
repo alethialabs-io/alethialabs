@@ -9,7 +9,13 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet: vi.fn() }));
+// The privilege ceiling calls the real PDP (getPdp().can → db); mock it to "within ceiling" by
+// default so these unit tests exercise the gate/DB behavior. The ceiling's own denial is proven
+// against the real PDP in tests/integration/roles-authz.test.ts.
+vi.mock("@/lib/authz/ceiling", () => ({
+	actorHoldsAllKeys: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
@@ -23,8 +29,9 @@ import {
 } from "@/app/server/actions/roles";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { recordActivity } from "@/lib/authz/activity";
-import { currentActor } from "@/lib/authz/guard";
+import { authorizeQuiet } from "@/lib/authz/guard";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 
 /**
@@ -67,17 +74,19 @@ function mockDb(queue: unknown[]) {
 	return { insertTables, deleteTables, valuesCalls, setSpy };
 }
 
-/** Actor in an org WITHOUT the customRoles entitlement (community baseline). */
+/** Actor in an org WITHOUT the customRoles entitlement (community baseline). The PDP gate
+ *  (authorizeQuiet) is satisfied — it resolves the actor — so the denial under test is the
+ *  entitlement, not authorization. */
 function communityActor() {
-	vi.mocked(currentActor).mockResolvedValue({
+	vi.mocked(authorizeQuiet).mockResolvedValue({
 		orgId: "org-1",
 		userId: "user-1",
 	} as never);
 }
 
-/** Actor in an org WITH the customRoles entitlement (Enterprise). */
+/** Actor in an org WITH the customRoles entitlement (Enterprise) and the PDP gate satisfied. */
 function enterpriseActor() {
-	vi.mocked(currentActor).mockResolvedValue({
+	vi.mocked(authorizeQuiet).mockResolvedValue({
 		orgId: "org-1",
 		userId: "user-1",
 		entitlements: { customRoles: true },
@@ -89,6 +98,41 @@ beforeEach(() => {
 	vi.mocked(getTupleSync).mockReturnValue({
 		resyncRole: vi.fn(() => Promise.resolve()),
 	} as never);
+});
+
+describe("PDP gate (authorizeQuiet) — a member without manage_members is blocked", () => {
+	// A viewer/operator holds a role but NOT `member:manage_members`, so the real PDP denies the
+	// mutations; here we simulate that by making authorizeQuiet throw and assert no DB write happens.
+	// (The real-PDP proof is tests/integration/roles-authz.test.ts.)
+	const deny = () =>
+		vi
+			.mocked(authorizeQuiet)
+			.mockRejectedValue(
+				new ForbiddenError("manage_members", { type: "member" }, "no_grant"),
+			);
+
+	it("createRole rejects (ForbiddenError) and never inserts", async () => {
+		const { insertTables } = mockDb([]);
+		deny();
+		await expect(createRole("Eng", ["org:view"])).rejects.toThrow(ForbiddenError);
+		expect(insertTables).toHaveLength(0);
+	});
+
+	it("updateRole rejects (ForbiddenError) and never writes", async () => {
+		const { insertTables, deleteTables, setSpy } = mockDb([]);
+		deny();
+		await expect(updateRole("r-1", "Eng", ["org:view"])).rejects.toThrow(ForbiddenError);
+		expect(insertTables).toHaveLength(0);
+		expect(deleteTables).toHaveLength(0);
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("deleteRole rejects (ForbiddenError) and never deletes", async () => {
+		const { deleteTables } = mockDb([]);
+		deny();
+		await expect(deleteRole("r-1")).rejects.toThrow(ForbiddenError);
+		expect(deleteTables).toHaveLength(0);
+	});
 });
 
 describe("listCustomRoles", () => {

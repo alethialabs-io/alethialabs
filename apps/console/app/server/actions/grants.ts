@@ -7,14 +7,17 @@ import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { actorCanGrant } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
-import { currentActor } from "@/lib/authz/guard";
+import { authorize } from "@/lib/authz/guard";
 import {
 	BUILTIN_ROLE_IDS,
 	type BuiltInRole,
 	PERMISSIONS,
 } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import type { Actor } from "@/lib/authz/types";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -28,9 +31,14 @@ import {
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
-/** Managing access (grants) is an Enterprise feature; enforce it server-side. */
+/**
+ * Gate for mutating access grants. Enforces `member:manage_members` via the PDP FIRST
+ * (a viewer/operator without it is denied and the denial is recorded), THEN the
+ * Enterprise (customRoles) entitlement — mirroring the CLI route
+ * (app/api/cli/grants). Both gates must pass; returns the resolved actor.
+ */
 async function requireAccessAdmin() {
-	const actor = await currentActor();
+	const actor = await authorize("manage_members", { type: "member" });
 	if (!getEntitlements(actor).customRoles) {
 		throw new Error("Access management requires an Enterprise license.");
 	}
@@ -50,7 +58,9 @@ export interface GrantOptions {
 
 /** Everything the "Grant access" builder needs, in one round-trip. */
 export async function getGrantOptions(): Promise<GrantOptions> {
-	const actor = await currentActor();
+	// Reading the access model requires `member:view` (viewers keep parity; non-members
+	// are denied) — mirrors the CLI GET /api/cli/grants gate.
+	const actor = await authorize("view", { type: "member" });
 	const db = getServiceDb();
 	const [members, teamRows, projectRows, runnerRows, idRows, custom] =
 		await Promise.all([
@@ -102,6 +112,18 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	}
 	if (input.permissionKey && !VALID_KEYS.has(input.permissionKey)) {
 		throw new Error("Unknown permission.");
+	}
+	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
+	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
+	if (
+		input.effect === "allow" &&
+		!(await actorCanGrant(actor, input.roleId ?? null, input.permissionKey ?? null))
+	) {
+		throw new ForbiddenError(
+			"manage_members",
+			{ type: "member" },
+			"exceeds_grantor_privilege",
+		);
 	}
 	const resourceId = input.resourceId ?? null;
 	// Org-wide grants are stored on the org resource type.
@@ -200,7 +222,9 @@ export interface AccessGrantRow {
  * project-scoped Access surface; without it, every org grant is returned.
  */
 export async function listAccessGrants(projectId?: string): Promise<AccessGrantRow[]> {
-	const actor = await currentActor();
+	// Enumerating grants requires `member:view` (viewers keep parity; non-members are
+	// denied) — mirrors the CLI GET /api/cli/grants gate.
+	const actor = await authorize("view", { type: "member" });
 	const rows = await getServiceDb()
 		.select({
 			id: grants.id,

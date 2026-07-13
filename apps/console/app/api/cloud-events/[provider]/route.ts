@@ -10,6 +10,7 @@
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import {
 	type NormalizedCloudEvent,
 	applyCloudEvent,
@@ -47,7 +48,7 @@ export async function POST(
 	if (!secret) {
 		return NextResponse.json({ error: "ingestion not configured" }, { status: 503 });
 	}
-	if (req.headers.get("authorization") !== `Bearer ${secret}`) {
+	if (!isInternalAuthorized(req)) {
 		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 	}
 

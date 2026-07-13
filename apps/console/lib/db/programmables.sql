@@ -152,11 +152,15 @@ CREATE OR REPLACE FUNCTION public.claim_next_job(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
     v_job_id UUID;
+    v_org UUID;
     v_operator public.runner_operator;
     v_providers public.cloud_provider[];
     v_status public.runner_status;
+    v_runner_org_id UUID;
 BEGIN
-    SELECT operator, supported_providers, status INTO v_operator, v_providers, v_status FROM public.runners
+    SELECT operator, supported_providers, status, org_id
+      INTO v_operator, v_providers, v_status, v_runner_org_id
+      FROM public.runners
       WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF v_operator IS NULL THEN
         RAISE EXCEPTION 'Unauthorized runner';
@@ -171,11 +175,18 @@ BEGIN
     PERFORM public.open_runner_session(p_runner_id);
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
+    -- Even an EXPLICIT assignment must respect org boundaries for a self runner: assigned_runner_id
+    -- is set from a caller-supplied value at enqueue (projects.ts / the DESTROY_RUNNER route) and is
+    -- NOT validated to be same-org, so a user authorized on org X's project could queue an org-X job
+    -- (carrying org X's decrypted cloud_identity) bound to a self runner they own in another org.
+    -- The (managed OR same-org) guard is the fail-closed backstop: managed runners legitimately serve
+    -- every org (org_id NULL, shared pool); a self runner may only take an assigned job in its OWN org.
     UPDATE public.jobs
     SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
+          AND (v_operator = 'managed' OR j.org_id = v_runner_org_id)
         ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
     ) RETURNING id INTO v_job_id;
 
@@ -184,31 +195,76 @@ BEGIN
         IF v_operator = 'managed' THEN
             -- Shared pool: priority, then fair across orgs (fewest in-flight), then
             -- oldest; skip orgs already at their plan concurrency cap.
-            UPDATE public.jobs
-            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
-            WHERE id = (
-                SELECT j.id FROM public.jobs j
-                WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
-                  -- Self-managed token clouds: only the customer's self-hosted runner
-                  -- has the credential. A managed runner must never claim these.
-                  AND j.requires_self_runner = false
-                  AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
-                  AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
-                  AND (
-                    public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
-                    OR public.org_managed_inflight(j.org_id)
-                       < public.plan_max_concurrency(public.org_effective_plan(j.org_id))
-                  )
-                ORDER BY j.priority DESC, public.org_managed_inflight(j.org_id) ASC, j.created_at ASC
-                LIMIT 1 FOR UPDATE SKIP LOCKED
-            ) RETURNING id INTO v_job_id;
+            --
+            -- TOCTOU FIX: the cap gate below (org_managed_inflight < plan_max_concurrency)
+            -- counts CLAIMED/PROCESSING rows, but FOR UPDATE SKIP LOCKED locks only the
+            -- candidate JOB row, not the org's in-flight set. Under READ COMMITTED a concurrent
+            -- claimer's not-yet-committed CLAIMED row is invisible to that count, and the
+            -- broadcast wake (jobs_runner_wake -> /api/runners/wake fan-out to the whole pool)
+            -- makes N managed runners fire claim within milliseconds -- so without serialization
+            -- every claimer snapshots inflight < cap and admits, blowing past the per-org cap.
+            --
+            -- Admission is serialized PER ORG with a transaction-scoped advisory lock, and the
+            -- cap re-verified while holding it. The winning org isn't known until the fairness
+            -- SELECT runs, so: (1) pick + row-lock the candidate (FOR UPDATE SKIP LOCKED),
+            -- (2) take the org-keyed advisory lock, (3) re-check the cap, (4) claim. A concurrent
+            -- same-org claimer blocks at (2) until we COMMIT, at which point our CLAIMED row is
+            -- visible to its recount -- so the re-check is authoritative (a plain post-UPDATE
+            -- recheck WITHOUT this lock would NOT close the race: the uncommitted row stays
+            -- invisible under READ COMMITTED). The key is per-org (hashtext of org_id), so
+            -- different orgs never contend the same lock -- no cross-org serialization. Lock
+            -- ordering is always candidate-row-lock then org-advisory-lock (single key per claim),
+            -- so no deadlock; the xact-scoped lock releases when this one-statement claim commits.
+            SELECT j.id, j.org_id INTO v_job_id, v_org
+              FROM public.jobs j
+              WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
+                -- Self-managed token clouds: only the customer's self-hosted runner
+                -- has the credential. A managed runner must never claim these.
+                AND j.requires_self_runner = false
+                AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
+                AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
+                AND (
+                  public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
+                  OR public.org_managed_inflight(j.org_id)
+                     < public.plan_max_concurrency(public.org_effective_plan(j.org_id))
+                )
+              ORDER BY j.priority DESC, public.org_managed_inflight(j.org_id) ASC, j.created_at ASC
+              LIMIT 1 FOR UPDATE SKIP LOCKED;
+
+            IF v_job_id IS NOT NULL THEN
+                -- Serialize same-org admission, then re-verify the cap under the lock.
+                PERFORM pg_advisory_xact_lock(hashtext('alethia:claim:managed:' || v_org::text)::bigint);
+                IF (
+                     public.plan_max_concurrency(public.org_effective_plan(v_org)) IS NULL
+                     OR public.org_managed_inflight(v_org)
+                        < public.plan_max_concurrency(public.org_effective_plan(v_org))
+                   ) THEN
+                    UPDATE public.jobs
+                    SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(),
+                        progress_at = now(), updated_at = now()
+                    WHERE id = v_job_id;
+                ELSE
+                    -- Org filled to its cap between the SELECT and acquiring the lock: do not
+                    -- claim. The candidate stays QUEUED (its row lock releases at commit); the
+                    -- broadcast wake / next poll re-offers it once an in-flight job finishes.
+                    v_job_id := NULL;
+                END IF;
+            END IF;
         ELSE
-            -- Self/dedicated runner: its own org's jobs; priority then oldest, uncapped.
+            -- Self/dedicated runner: STRICTLY its own org's jobs; priority then oldest, uncapped.
+            -- The org_id predicate is the cross-tenant guard: without it a self runner
+            -- registered with cloud_identity_id omitted and supported_providers unset makes the
+            -- cloud_identity/provider filters vacuously true and would claim ANY org's QUEUED job,
+            -- leaking that job's decrypted cloud credential to the wrong tenant's runner. A self
+            -- runner always has user_id NOT NULL, so runners.org_id backfills (set_org_id trigger)
+            -- and is reliably non-null; if it were ever NULL, j.org_id = NULL matches nothing
+            -- (fail-closed). Managed runners (org_id NULL, shared pool) must NOT take this branch.
             UPDATE public.jobs
             SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), progress_at = now(), updated_at = now()
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
+                  AND j.org_id = v_runner_org_id
                   AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
                   AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -534,11 +590,23 @@ BEGIN
 END;
 $$;
 
--- Flips stale ONLINE runners to OFFLINE (mirrors recover_stale_jobs's 5-min window)
--- and closes their open session at last_heartbeat (last proof-of-life), so the
--- staleness grace window is not billed. RETURNS the flipped runners so the caller can
--- emit `system.runner.offline` alerts (lib/jobs/recovery.ts) — the state change is the
+-- Flips stale ONLINE **or DRAINING** runners to OFFLINE (mirrors recover_stale_jobs's
+-- 5-min window) and closes their open session at last_heartbeat (last proof-of-life),
+-- so the staleness grace window is not billed. RETURNS the flipped runners so the caller
+-- can emit `system.runner.offline` alerts (lib/jobs/recovery.ts) — the state change is the
 -- durable signal; emit is best-effort.
+--
+-- Why DRAINING is swept too: the fleet controller sets a managed runner DRAINING to retire
+-- it (version roll / scale-down). A live drainer keeps its SSE wake connection, so
+-- runner_present refreshes last_heartbeat every ~10s AND preserves DRAINING — a fresh
+-- heartbeat therefore means "still alive, don't reap" and the `last_heartbeat < now() - 45s`
+-- guard skips it. But if the VM dies HARD (power loss / hard partition) there is no clean
+-- SSE abort, so runner_lost never fires; the runner is stranded DRAINING with a stale
+-- heartbeat and — because the old predicate only matched ONLINE — its open
+-- runner_usage_sessions row was never closed, billing the managed runner FOREVER. Including
+-- DRAINING in the stale predicate closes that session at last_heartbeat exactly like the
+-- ONLINE path (audit #21). The 45s stale window is identical: a draining runner heartbeats
+-- while alive, so 45s of silence = dead regardless of ONLINE vs DRAINING.
 -- DROP first: the return type changed (INTEGER → TABLE), which CREATE OR REPLACE can't do.
 DROP FUNCTION IF EXISTS public.sweep_offline_runners();
 CREATE OR REPLACE FUNCTION public.sweep_offline_runners()
@@ -551,10 +619,11 @@ BEGIN
   WITH stale AS (
     UPDATE public.runners
     SET status = 'OFFLINE'::public.runner_status
-    WHERE status = 'ONLINE'
+    WHERE status IN ('ONLINE', 'DRAINING')
       -- Tightened lease: the SSE wake connection refreshes last_heartbeat every ~10s
-      -- via runner_present, so a 45s gap means the connection is genuinely gone (hard
-      -- partition). Clean drops are caught instantly by runner_lost.
+      -- via runner_present (which preserves DRAINING), so a 45s gap means the connection
+      -- is genuinely gone (hard partition) whether the runner was ONLINE or DRAINING.
+      -- Clean drops are caught instantly by runner_lost.
       AND (last_heartbeat IS NULL OR last_heartbeat < now() - INTERVAL '45 seconds')
     RETURNING id, org_id, name, last_heartbeat
   ),
@@ -1111,9 +1180,13 @@ GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO ale
 -- several passes and then no-ops. FOR UPDATE SKIP LOCKED makes concurrent app instances
 -- safe: two loops racing the same window claim disjoint rows instead of blocking.
 
--- Delete job_logs older than the retention window (default 30d). The oldest rows first
--- (job_logs.id is a monotonic identity, so id-order == insert-order). job_logs has a FK
--- to jobs ON DELETE CASCADE, but we only delete the log rows themselves here.
+-- Delete job_logs older than the retention window (default 30d). Oldest first by
+-- created_at; the created_at btree (idx_job_logs_created_at) serves the range filter +
+-- ordered LIMIT as an index scan, so an empty steady-state window costs one index probe
+-- instead of a full pkey/seq scan every 15m (mirrors gc_fleet_actions). Same physical set
+-- as oldest-by-id — id-order == insert-order == created_at-order — so semantics are
+-- unchanged. job_logs has a FK to jobs ON DELETE CASCADE, but we only delete the log rows
+-- themselves here.
 CREATE OR REPLACE FUNCTION public.gc_job_logs(
     p_age INTERVAL DEFAULT INTERVAL '30 days', p_limit INTEGER DEFAULT 5000
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -1123,7 +1196,7 @@ BEGIN
         SELECT jl.id
         FROM public.job_logs jl
         WHERE jl.created_at < now() - p_age
-        ORDER BY jl.id
+        ORDER BY jl.created_at
         LIMIT p_limit
         FOR UPDATE SKIP LOCKED
     )
@@ -1162,6 +1235,36 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.gc_fleet_actions(INTERVAL, INTEGER) TO alethia_app;
+
+-- Delete authz_activity_log rows older than the retention window (default 365d). The PDP writes
+-- this append-only governance/audit log on EVERY enforce(), so unbounded it grows forever; a
+-- 365-day window keeps a full year of decisions/denials (SOC2-friendly audit retention) and
+-- trims the rest. Oldest first by ts; the ts-leading index (idx_authz_activity_ts) serves the
+-- range filter + ordered LIMIT as an index scan (the (org_id, id) read index CANNOT — its leading
+-- org_id column is unconstrained here), so an empty steady-state window costs one index probe
+-- instead of a seq scan every pass (mirrors gc_fleet_actions). FOR UPDATE SKIP LOCKED makes
+-- concurrent app instances safe: two loops racing the same window claim disjoint rows.
+CREATE OR REPLACE FUNCTION public.gc_authz_activity_log(
+    p_age INTERVAL DEFAULT INTERVAL '365 days', p_limit INTEGER DEFAULT 5000
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    WITH doomed AS (
+        SELECT al.id
+        FROM public.authz_activity_log al
+        WHERE al.ts < now() - p_age
+        ORDER BY al.ts
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM public.authz_activity_log al
+    USING doomed d
+    WHERE al.id = d.id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.gc_authz_activity_log(INTERVAL, INTEGER) TO alethia_app;
 
 -- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
 -- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /

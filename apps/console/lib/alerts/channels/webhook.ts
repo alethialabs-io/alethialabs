@@ -8,6 +8,7 @@
 import { createHmac } from "node:crypto";
 import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
+import { safeFetch } from "@/lib/net/ssrf-guard";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { ChannelSender } from "./types";
 import { TEST_CONTEXT } from "./types";
@@ -42,7 +43,7 @@ async function post(
 		const sig = createHmac("sha256", signingSecret).update(body).digest("hex");
 		headers["X-Alethia-Signature"] = `sha256=${sig}`;
 	}
-	const res = await fetch(url, {
+	const res = await safeFetch(url, {
 		method: "POST",
 		headers,
 		body,

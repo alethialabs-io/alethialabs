@@ -34,6 +34,11 @@ export interface FleetTarget {
 	/** Release channel (e.g. "stable") the controller resolves to the newest release each
 	 *  tick; ignored when an explicit `version` pin is configured. */
 	channel: string | null;
+	/** TEARDOWN mode: this pool is being deleted or is paused, so the planner reconciles its
+	 *  target to zero and destroys EVERY instance (version-agnostic) rather than scaling. Undefined
+	 *  for all normal pools → normal scaling is byte-identical. Set by `loadFleetPools` for rows
+	 *  whose `deleting` flag is set (or that are paused / not enabled). */
+	teardown?: boolean;
 }
 
 /** What the cloud knows about one VM (returned by FleetProvider.list). */
@@ -78,7 +83,8 @@ export type FleetActionReason =
 	| "rollout-drain" // drain: retire an outdated instance during a version rollout
 	| "reap-dead" // destroy: a dead / never-registered (past boot-grace) instance
 	| "reap-drained" // destroy: a drained instance whose in-flight job has finished
-	| "scale-down-idle"; // destroy: idle surplus past the scale-down grace window
+	| "scale-down-idle" // destroy: idle surplus past the scale-down grace window
+	| "teardown"; // drain/destroy: the pool is being deleted or paused → drain to zero (version-agnostic)
 
 /** Minimal, idempotent actions the controller applies to converge toward the project. Each carries
  *  the `reason` it was emitted for, which the controller records to the fleet_actions ledger. */

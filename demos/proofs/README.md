@@ -80,10 +80,21 @@ cluster** (`<project>-<env>`, derived from the GitHub run id/attempt):
   plausibly-unique cluster name and asserts the selector on every call — so a hard-killed
   test process can never leak, and the cleanup can never touch prod or another run.
 
-Residual note: CSI-provisioned `pvc-*` volumes created *inside* the cluster are labelled
-by the CSI driver, not the template, so neither `tofu destroy` nor the label filter
-guarantees their removal. The nightly cluster runs no PVC workloads, but periodically
-`hcloud volume list` for stray `pvc-*` volumes.
+CSI volumes: a `pvc-*` volume is created by the CSI **controller** at runtime, not by the
+template, so `tofu destroy` (which only knows template-managed resources) cannot reclaim it —
+destroying a cluster with live PVCs used to leak real, billable volumes that the teardown
+sweep could not see either (it is cluster-label-scoped, and must stay that way: the hcloud
+account is shared with prod). This is now closed **at the source**: the Hetzner template sets
+the CSI driver's `HCLOUD_VOLUME_EXTRA_LABELS` to `cluster=<cluster_name>`
+(`infra/templates/project/hetzner/csi.tf`, hcloud-csi chart pinned to **2.20.2** — the value
+needs ≥ 2.15.0 and is silently ignored below it, and 2.20.2 is the newest release still
+supporting the k8s 1.32.3 that Talos v1.9.5 ships; a `lifecycle` precondition **hard-fails**
+the plan if the label ever stops rendering). So every dynamically-provisioned volume carries
+the cluster label and the label-scoped teardown sweep reclaims it **without widening its blast
+radius** — after waiting out the async volume detach that `hcloud server delete` triggers, and
+the sweep now **fails loudly** (non-zero exit) rather than exiting green if any labelled resource
+survives. Only volumes from clusters built before this change can still be stray — sweep those by
+hand, never account-wide.
 
 ## Running T2 locally (optional)
 

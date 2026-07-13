@@ -12,6 +12,7 @@ import {
 	linkBootstrapToken,
 	redeemBootstrapToken,
 } from "@/lib/runners/bootstrap-token";
+import { timingSafeStrEqual } from "@/lib/auth/internal-auth";
 
 // Self-registration for scaler-provisioned VMs (ADR 08). A fresh Hetzner runner has no
 // credentials: it presents its PER-VM bootstrap token (E0 0b — minted by the scaler at VM
@@ -61,7 +62,7 @@ export async function POST(req: Request) {
 	const redeemed = await redeemBootstrapToken(presentedHash, instanceId ?? null);
 	if (!redeemed.ok) {
 		const shared = process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN;
-		if (!shared || presented !== shared) {
+		if (!timingSafeStrEqual(presented, shared)) {
 			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 		}
 	}

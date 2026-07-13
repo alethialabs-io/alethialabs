@@ -368,7 +368,8 @@ describe("HcloudFleetProvider.list", () => {
 		const [url, init] = fetchMock.mock.calls[0];
 		expect(url).toBe(
 			"https://api.hetzner.cloud/v1/servers?label_selector=" +
-				encodeURIComponent("alethia-pool=aws"),
+				encodeURIComponent("alethia-pool=aws") +
+				"&per_page=50&page=1",
 		);
 		expect(init.method).toBe("GET");
 		expect(init.headers.Authorization).toBe("Bearer test-token");
@@ -392,6 +393,68 @@ describe("HcloudFleetProvider.list", () => {
 	it("returns [] when the API body has no servers", async () => {
 		fetchMock.mockResolvedValue(jsonRes({}));
 		expect(await getHcloudFleetProvider().list(target("azure"))).toEqual([]);
+	});
+});
+
+describe("HcloudFleetProvider.list — Hetzner pagination", () => {
+	// ids a..b inclusive → the server ids one page holds.
+	const range = (a: number, b: number): number[] =>
+		Array.from({ length: b - a + 1 }, (_, i) => a + i);
+	// A canned GET /servers page: the servers slice + the meta.pagination cursor Hetzner returns.
+	const pageRes = (ids: number[], nextPage: number | null) =>
+		jsonRes({
+			servers: ids.map((id) => ({ id, created: new Date().toISOString() })),
+			meta: { pagination: { next_page: nextPage } },
+		});
+
+	it("follows next_page across EVERY page (not just the first ≤50 servers)", async () => {
+		// page 1 → 50 servers (ids 1..50), next_page=2; page 2 → 10 servers (ids 51..60), next_page=null.
+		// Default branch also serves the pre-fix single-request URL (no page param) → 50 servers, proving
+		// the RED: without paging, list() returns only page 1 (length 50), truncating the pool.
+		fetchMock.mockImplementation(async (url: string) => {
+			if (String(url).includes("page=2")) return pageRes(range(51, 60), null);
+			return pageRes(range(1, 50), 2);
+		});
+
+		const out = await getHcloudFleetProvider().list(target("aws"));
+
+		expect(out).toHaveLength(60);
+		const ids = out.map((i) => i.instanceId);
+		// Servers past page 1 (ids 51..60) MUST surface — the reaper only ever sees what list() returns,
+		// so a truncated list leaves them as permanent billable orphans.
+		for (const id of range(51, 60)) expect(ids).toContain(String(id));
+
+		// Exactly two fetches: page=1 then page=2, both label-scoped + per_page=50, no infinite loop.
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+		expect(urls[0]).toContain("&per_page=50&page=1");
+		expect(urls[1]).toContain("&per_page=50&page=2");
+		for (const u of urls) {
+			expect(u).toContain(`label_selector=${encodeURIComponent("alethia-pool=aws")}`);
+		}
+	});
+
+	it("TERMINATES on a misbehaving API that returns a non-increasing/cyclic next_page (no infinite loop)", async () => {
+		// A broken API/proxy that always says next_page=1 (cyclic) would spin forever if the loop
+		// trusted the page value. The iteration bound + strict-progress guard (next_page must exceed
+		// the current page) stops it — otherwise list() wedges the whole 60s scaler tick.
+		fetchMock.mockImplementation(async () => pageRes(range(1, 3), 1)); // always claims next_page=1
+
+		const out = await getHcloudFleetProvider().list(target("aws"));
+
+		// Stops after page 1 (next_page=1 is not strictly greater than page=1) → 3 servers, one fetch.
+		expect(out).toHaveLength(3);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("makes a SINGLE fetch when the first page is the last (next_page null)", async () => {
+		fetchMock.mockImplementation(async () => pageRes([1, 2, 3], null));
+
+		const out = await getHcloudFleetProvider().list(target("gcp"));
+
+		expect(out).toHaveLength(3);
+		expect(out.map((i) => i.instanceId)).toEqual(["1", "2", "3"]);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });
 

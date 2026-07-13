@@ -14,6 +14,13 @@ import type { ThreadWidget } from "@/lib/db/schema";
 import { buildOccupancy, firstFit, type GridRect } from "@/lib/widgets/layout";
 import type { WidgetMode } from "@/types/jsonb.types";
 
+/** A pin request: everything the server action needs, minus the placement the store
+ * resolves (pass posX/posY to pin at an explicit cell instead of first-fit). */
+export type PinInput = Omit<PinWidgetInput, "posX" | "posY"> & {
+	posX?: number;
+	posY?: number;
+};
+
 /** A widget's grid rect (for occupancy math). */
 function rectOf(w: ThreadWidget): GridRect & { id: string } {
 	return { id: w.id, x: w.pos_x, y: w.pos_y, colspan: w.colspan, rowspan: w.rowspan };
@@ -43,10 +50,10 @@ interface WidgetGridState {
 	/** Forget the loaded grid (new chat / close). */
 	reset: () => void;
 	/** Pin at first-fit (auto-pin + user pins); resolves placement client-side.
-	 * Resolves true when a widget actually landed/updated (false = dedupe no-op). */
-	pin: (
-		input: Omit<PinWidgetInput, "posX" | "posY"> & { posX?: number; posY?: number },
-	) => Promise<boolean>;
+	 * Resolves true when a widget actually landed/updated (false = dedupe no-op).
+	 * Callers pinning SEVERAL widgets must await them one at a time — each first-fit
+	 * reads the current grid, so parallel pins would all pick the same cell. */
+	pin: (input: PinInput) => Promise<boolean>;
 	/** Optimistically move/resize a widget, then persist. */
 	place: (id: string, rect: Partial<GridRect>) => void;
 	setMode: (id: string, mode: WidgetMode) => void;

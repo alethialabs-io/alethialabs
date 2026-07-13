@@ -13,7 +13,15 @@ import "strings"
 //
 // The list targets full kubeconfigs and raw client key material — e.g. Alibaba/Hetzner
 // emit a `kubeconfig` (and Hetzner a `talosconfig`) sensitive output containing a
-// cluster-admin client cert + key. Cluster endpoints and CA certs are public and kept.
+// cluster-admin client cert + key — plus generated credential VALUES: the AWS
+// awssm-passgen module re-exports plaintext generated secrets as `custom_secret_values`,
+// and any `*_secret_value(s)` / `password` / `_token` / `access_key` / `secret_key`
+// output carries raw secret material. Cluster endpoints and CA certs are public and kept.
+//
+// Deliberately NOT included: a bare "secret" substring — the console legitimately shows the
+// non-secret handles `custom_secret_arns` / `custom_secret_names` / `custom_secret_versions`
+// and `rds_master_credentials_secret_arn`, none of which carry plaintext. Only value-bearing
+// keys are dropped, so those survive.
 var sensitiveOutputSubstrings = []string{
 	"kubeconfig",
 	"kube_config",
@@ -22,6 +30,17 @@ var sensitiveOutputSubstrings = []string{
 	"client_certificate",
 	"private_key",
 	"client_secret",
+	// value-bearing generated credentials (e.g. AWS custom_secret_values, *_secret_values)
+	"secret_value", // catches custom_secret_values / *_secret_value(s)
+	"secret_key",
+	"access_key",
+	"password",
+	"_token",
+	// Rendered manifests carry embedded credentials: the Hetzner `bootstrap_manifests` output
+	// (a sensitive=true join of the hcloud Secret + CNI/CCM/CSI YAML) embeds the hcloud API
+	// token as base64(var.hcloud_token) — base64 is encoding, not encryption. The runner
+	// consumes it in-process (applyn) and never needs it in the persisted metadata, so drop it.
+	"manifest", // catches bootstrap_manifests / *_manifests
 }
 
 // isSensitiveOutputKey reports whether an output key names credential material that must

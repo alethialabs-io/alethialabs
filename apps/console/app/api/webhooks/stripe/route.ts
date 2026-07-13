@@ -21,8 +21,8 @@ import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import {
 	claimWebhookEvent,
-	markWebhookEventDone,
 	markWebhookEventError,
+	runWebhookEventExactlyOnce,
 } from "@/lib/billing/webhook-events";
 import { handleStripeEvent } from "@/lib/billing/webhook-handler";
 
@@ -48,14 +48,22 @@ export async function POST(req: Request): Promise<Response> {
 		});
 	}
 
-	// Exactly-once claim: skip an already-processed delivery (no double emails).
+	// Exactly-once claim: fast-skip an already-processed delivery (no double emails).
 	const claim = await claimWebhookEvent(event.id, event.type);
 	if (!claim.claimed && claim.alreadyDone) {
 		return Response.json({ received: true, duplicate: true });
 	}
 
 	try {
-		await handleStripeEvent(event);
+		// Serialize deliveries of THIS event id under a per-event advisory lock and run the handler
+		// (which sends the non-idempotent email) inside it, so a network-duplicated / retried delivery
+		// that arrives while the first is still IN-FLIGHT blocks and is then skipped — never double-mails.
+		const outcome = await runWebhookEventExactlyOnce(event.id, event.type, () =>
+			handleStripeEvent(event),
+		);
+		if (outcome !== "handled") {
+			return Response.json({ received: true, duplicate: true });
+		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error(`[stripe] handler error for ${event.type}:`, err);
@@ -66,6 +74,5 @@ export async function POST(req: Request): Promise<Response> {
 		return new Response("handler error", { status: 500 });
 	}
 
-	await markWebhookEventDone(event.id);
 	return Response.json({ received: true });
 }

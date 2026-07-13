@@ -9,7 +9,9 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
+vi.mock("@/lib/authz/role-permissions", () => ({ rolePermissionKeys: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn() }));
 vi.mock("@/app/server/actions/roles", () => ({ listCustomRoles: vi.fn() }));
@@ -26,9 +28,12 @@ import {
 import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { getPdp } from "@/lib/authz";
 import { recordActivity } from "@/lib/authz/activity";
-import { currentActor } from "@/lib/authz/guard";
+import { authorize } from "@/lib/authz/guard";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { rolePermissionKeys } from "@/lib/authz/role-permissions";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -90,6 +95,9 @@ function mockDb(rows: unknown[] = [], byTable?: Map<unknown, unknown[]>) {
 
 const syncScopedGrant = vi.fn().mockResolvedValue(undefined);
 const removeScopedGrant = vi.fn().mockResolvedValue(undefined);
+// The privilege-ceiling PDP probe; defaults to "actor holds everything" (owner) so the persistence
+// paths run — the dedicated ceiling suite flips it to a deny to prove the check is load-bearing.
+const can = vi.fn().mockResolvedValue({ allowed: true });
 
 /** An actor that passes the Enterprise (customRoles) entitlement gate. */
 const ADMIN_ACTOR = {
@@ -102,16 +110,142 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	syncScopedGrant.mockResolvedValue(undefined);
 	removeScopedGrant.mockResolvedValue(undefined);
+	can.mockResolvedValue({ allowed: true });
+	vi.mocked(getPdp).mockReturnValue({ can } as never);
+	vi.mocked(rolePermissionKeys).mockResolvedValue([]);
 	vi.mocked(getTupleSync).mockReturnValue({
 		syncScopedGrant,
 		removeScopedGrant,
 	} as never);
-	vi.mocked(currentActor).mockResolvedValue(ADMIN_ACTOR as never);
+	// The real `authorize` runs the PDP; here it is mocked to resolve to an authorized
+	// actor so the entitlement/validation/persistence paths below are exercised. The
+	// dedicated "PDP gate" suite below instead makes it THROW, proving the gate is
+	// load-bearing (a mocked rubber-stamp would otherwise hide the escalation bug).
+	vi.mocked(authorize).mockResolvedValue(ADMIN_ACTOR as never);
+});
+
+describe("PDP gate (authorize) — denied actor is blocked before any DB write", () => {
+	// A viewer holds `member:view` but NOT `member:manage_members`, so the real PDP
+	// denies the mutating actions; here we simulate that by making `authorize` throw.
+	const deny = () =>
+		vi
+			.mocked(authorize)
+			.mockRejectedValue(
+				new ForbiddenError("manage_members", { type: "member" }, "no_grant"),
+			);
+
+	it("assignGrant rejects (ForbiddenError) and never inserts", async () => {
+		const { insertSpy } = mockDb();
+		deny();
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.owner,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(ForbiddenError);
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+		expect(emitAlertEventSafe).not.toHaveBeenCalled();
+	});
+
+	it("revokeGrant rejects (ForbiddenError) and never deletes", async () => {
+		const { deleteSpy } = mockDb([
+			{
+				id: "g-1",
+				org_id: "org-1",
+				principal_type: "user",
+				principal_id: "u-1",
+				effect: "allow",
+				role_id: BUILTIN_ROLE_IDS.owner,
+				permission_key: null,
+				resource_type: "org",
+				resource_id: null,
+			},
+		]);
+		deny();
+		await expect(revokeGrant("g-1")).rejects.toThrow(ForbiddenError);
+		expect(deleteSpy).not.toHaveBeenCalled();
+		expect(removeScopedGrant).not.toHaveBeenCalled();
+	});
+
+	it("listAccessGrants rejects (ForbiddenError) before querying", async () => {
+		mockDb();
+		vi
+			.mocked(authorize)
+			.mockRejectedValue(
+				new ForbiddenError("view", { type: "member" }, "no_grant"),
+			);
+		await expect(listAccessGrants()).rejects.toThrow(ForbiddenError);
+	});
+
+	it("getGrantOptions rejects (ForbiddenError) before querying", async () => {
+		mockDb();
+		vi
+			.mocked(authorize)
+			.mockRejectedValue(
+				new ForbiddenError("view", { type: "member" }, "no_grant"),
+			);
+		await expect(getGrantOptions()).rejects.toThrow(ForbiddenError);
+	});
+});
+
+describe("privilege ceiling — a grant above the actor's own permissions is blocked", () => {
+	// The actor passes requireAccessAdmin (member:manage_members), but the PDP reports they do NOT
+	// hold the permission being granted (e.g. an admin granting billing) → ForbiddenError, no insert.
+	// The real-PDP proof is tests/integration/grants-actions-authz.test.ts.
+	it("assignGrant rejects a single permission the actor lacks and never inserts", async () => {
+		const { insertSpy } = mockDb();
+		can.mockResolvedValue({ allowed: false, reason: "no_grant" });
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "billing:manage_billing",
+				resourceType: "org",
+			}),
+		).rejects.toThrow(ForbiddenError);
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+	});
+
+	it("assignGrant rejects a role carrying a permission the actor lacks", async () => {
+		const { insertSpy } = mockDb();
+		vi.mocked(rolePermissionKeys).mockResolvedValue(["billing:manage_billing"]);
+		can.mockResolvedValue({ allowed: false, reason: "no_grant" });
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.owner,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(ForbiddenError);
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("a DENY grant skips the ceiling (a deny can't escalate the grantee)", async () => {
+		const { insertSpy } = mockDb();
+		can.mockResolvedValue({ allowed: false, reason: "no_grant" }); // would block an allow …
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny", // … but a deny is never ceiling-checked
+			permissionKey: "billing:manage_billing",
+			resourceType: "org",
+		});
+		expect(insertSpy).toHaveBeenCalledTimes(1);
+		expect(can).not.toHaveBeenCalled();
+	});
 });
 
 describe("requireAccessAdmin gate", () => {
 	it("assignGrant rejects an actor without the customRoles entitlement", async () => {
-		vi.mocked(currentActor).mockResolvedValue({
+		vi.mocked(authorize).mockResolvedValue({
 			orgId: "org-1",
 			userId: "user-1",
 			entitlements: undefined,
@@ -128,7 +262,7 @@ describe("requireAccessAdmin gate", () => {
 	});
 
 	it("revokeGrant rejects an actor without the customRoles entitlement", async () => {
-		vi.mocked(currentActor).mockResolvedValue({
+		vi.mocked(authorize).mockResolvedValue({
 			orgId: "org-1",
 			userId: "user-1",
 			entitlements: { customRoles: false },

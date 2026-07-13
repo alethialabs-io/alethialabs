@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// ControlPlanUnavailable is the reserved control ID an authorized override must
+// waive to let a real apply proceed when the plan JSON could not be produced
+// (tofu show -json errored, or emitted no JSON) and therefore no verification
+// verdict exists. It is not a control the evaluator ever emits in a Report; it
+// is the sentinel the fail-closed apply backstop refuses on, and the only lever
+// an operator can pull (per-apply, audited, expiry-bounded) to override that
+// refusal — disabling the gate wholesale remains impossible.
+const ControlPlanUnavailable = "GATE-PLAN-UNAVAILABLE"
+
 // Override records an authorized, time-boxed waiver of one or more failing
 // controls so a fail-closed gate can be passed deliberately rather than disabled
 // wholesale. Phase 0 threads it through and records it; Phase 1 adds the
@@ -25,12 +34,21 @@ type Override struct {
 	Expiry time.Time `json:"expiry"`
 }
 
-// covers reports whether this override currently waives a given control ID.
-func (ov *Override) covers(id string) bool {
+// Covers reports whether this override currently waives a given control ID.
+// Nil-safe on the receiver, and false for an expired waiver.
+func (ov *Override) Covers(id string) bool {
 	if ov == nil {
 		return false
 	}
 	if !ov.Expiry.IsZero() && time.Now().After(ov.Expiry) {
+		return false
+	}
+	// The fail-closed apply backstop (ControlPlanUnavailable) may be waived ONLY by an
+	// explicitly time-boxed override. A zero (never-expiring) Expiry would otherwise
+	// disable the backstop FOREVER if a payload merely omitted `expiry` — a silent
+	// permanent hole in the very gate this sentinel protects. Regular controls keep the
+	// Phase-0 "zero Expiry = no expiry" contract; only the backstop demands a bound.
+	if id == ControlPlanUnavailable && ov.Expiry.IsZero() {
 		return false
 	}
 	return slices.Contains(ov.Controls, id)
@@ -44,7 +62,7 @@ func (r *Report) Unwaived(ov *Override) []string {
 		if c.Status != StatusFail {
 			continue
 		}
-		if ov.covers(c.ID) {
+		if ov.Covers(c.ID) {
 			continue
 		}
 		out = append(out, c.ID)

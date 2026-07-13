@@ -31,6 +31,14 @@ const FLEET_ACTION_RETENTION_DAYS = retentionDays(
 	process.env.ALETHIA_FLEET_ACTION_RETENTION_DAYS,
 	90,
 );
+/**
+ * Retention window (days) for the authz_activity_log governance/audit log. Override via env; default
+ * 365d — a full year of enforce() decisions/denials (SOC2-friendly audit retention).
+ */
+const AUTHZ_ACTIVITY_RETENTION_DAYS = retentionDays(
+	process.env.ALETHIA_AUTHZ_ACTIVITY_RETENTION_DAYS,
+	365,
+);
 /** Max rows deleted per pass — bounds the delete so it can't lock the table. */
 const GC_BATCH_LIMIT = 5000;
 
@@ -46,6 +54,14 @@ export async function gcJobLogs(db: Db): Promise<{ deleted: number }> {
 export async function gcFleetActions(db: Db): Promise<{ deleted: number }> {
 	const rows = await db.execute<{ deleted: number }>(
 		sql`select public.gc_fleet_actions(make_interval(days => ${FLEET_ACTION_RETENTION_DAYS}), ${GC_BATCH_LIMIT}) as deleted`,
+	);
+	return { deleted: Number(rows[0]?.deleted ?? 0) };
+}
+
+/** Delete a bounded batch of authz_activity_log rows past the retention window. Returns rows deleted. */
+export async function gcAuthzActivityLog(db: Db): Promise<{ deleted: number }> {
+	const rows = await db.execute<{ deleted: number }>(
+		sql`select public.gc_authz_activity_log(make_interval(days => ${AUTHZ_ACTIVITY_RETENTION_DAYS}), ${GC_BATCH_LIMIT}) as deleted`,
 	);
 	return { deleted: Number(rows[0]?.deleted ?? 0) };
 }

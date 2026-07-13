@@ -40,6 +40,7 @@ import {
 	jobs,
 	projectEnvironments,
 	projects,
+	runners,
 } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { makeJob } from "../../fixtures/jobs";
@@ -131,20 +132,34 @@ function valuesFor(spy: ReturnType<typeof vi.fn>, table: unknown): Record<string
 
 /**
  * Stubs getServiceDb for the route's own queries: the post-action job fetch
- * (select→limit), the configuration_hash write (update→returning), and the
- * DESTROY_RUNNER legacy insert (insert→returning).
+ * (select→limit), the configuration_hash write (update→returning), the
+ * DESTROY_RUNNER legacy insert (insert→returning), and the defense-in-depth
+ * assigned-runner lookup (select from runners → org_id). `runnerOrgId` (default
+ * "org-1", the caller's org) makes the assigned runner in-org; a mismatch or null
+ * simulates a cross-org / missing runner.
  */
 function mockServiceDb(rows: {
 	selectRows?: Rows;
 	updateRows?: Rows;
 	insertRows?: Rows;
+	runnerOrgId?: string | null;
 }) {
 	const insertValuesSpy = vi.fn();
 	const updateSetSpy = vi.fn();
+	const runnerOrgId = rows.runnerOrgId === undefined ? "org-1" : rows.runnerOrgId;
 	const db = {
 		select: () => ({
-			from: () => ({
-				where: () => ({ limit: () => Promise.resolve(rows.selectRows ?? []) }),
+			from: (t: unknown) => ({
+				where: () => ({
+					limit: () =>
+						Promise.resolve(
+							t === runners
+								? runnerOrgId !== null
+									? [{ org_id: runnerOrgId }]
+									: []
+								: (rows.selectRows ?? []),
+						),
+				}),
 			}),
 		}),
 		update: () => ({
@@ -385,5 +400,42 @@ describe("POST /api/jobs (CLI queue)", () => {
 			}),
 		);
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("404s (defense-in-depth) when a delegated PLAN names a runner in another org", async () => {
+		const { valuesSpy } = setupTx({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		// Assigned runner resolves to a DIFFERENT org than the caller (org-1).
+		mockServiceDb({ selectRows: [wireJob()], runnerOrgId: "org-other" });
+
+		const res = await post({
+			job_type: "PLAN",
+			configuration_id: "p1",
+			assigned_runner_id: "runner-x",
+		});
+
+		expect(res.status).toBe(404);
+		// Fail closed BEFORE the job insert — no orphaned/unclaimable row.
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("404s (defense-in-depth) when DESTROY_RUNNER names a runner in another org", async () => {
+		setupTx({});
+		const { insertValuesSpy } = mockServiceDb({
+			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
+			runnerOrgId: "org-other", // not the caller's org (user-1's personal org)
+		});
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			cloud_identity_id: "ci-1",
+			config_snapshot: { runner_name: "r1" },
+			assigned_runner_id: "runner-x",
+		});
+
+		expect(res.status).toBe(404);
+		expect(insertValuesSpy).not.toHaveBeenCalled();
 	});
 });

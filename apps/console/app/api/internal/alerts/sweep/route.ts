@@ -7,6 +7,7 @@
 // when unset so it can never be invoked anonymously.
 
 import { NextResponse } from "next/server";
+import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { sweepDueDeliveries } from "@/lib/alerts/dispatch";
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -17,7 +18,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 			{ status: 503 },
 		);
 	}
-	if (req.headers.get("authorization") !== `Bearer ${secret}`) {
+	if (!isInternalAuthorized(req)) {
 		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 	}
 

@@ -1,20 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// E2E for the Elench agent surface (modal + docked panel). Covers the ported design's
-// chrome + interactions: the modal empty landing, the composer (Ask Elench + @-mention
-// affordance), the Ask-mode popover, minimize/maximize shared state, and the panel.
-// AI-dependent streaming is not asserted (the route is 503 without ANTHROPIC_API_KEY);
-// the optimistic user message is enough to prove the conversation survives a view flip.
+// E2E for the Elench agent surface (modal + docked panel) with AI OFF: the chrome +
+// interactions — modal empty landing, composer (Ask Elench + @-mention affordance),
+// Ask-mode popover, minimize/maximize shared state, thread persistence, and the
+// "AI is not configured" 503 path.
+//
+// The AI JOURNEYS (streaming, tools, grid, artifacts) live in `elench-ai.spec.ts`,
+// which drives the REAL server pipeline against a scripted model (ALETHIA_AI_MOCK=1) —
+// far stronger than the client-side SSE stubs this file used to carry.
 
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
-import {
-	proposeOperationChunks,
-	stubAgentStream,
-	textThenDashboardChunks,
-} from "./helpers/ai-stream";
-import type { DashboardSpec } from "../types/jsonb.types";
 
 /** Open the Elench surface as a docked panel via the topbar "Ask AI" button. */
 async function openElenchPanel(page: Page): Promise<void> {
@@ -103,8 +100,14 @@ test.describe("Elench agent — modal (org)", () => {
 	});
 });
 
-// ─── Deterministic AI-off flows (no stubbing; the stack serves the modal + a 503 route) ───
+// ─── Deterministic AI-off flows (the stack serves the modal + a 503 route) ───
 test.describe("Elench agent — AI-off deterministic flows (org)", () => {
+	// The 503 path only exists with AI unconfigured — skip when the scripted E2E model
+	// is engaged (that console answers for real; see elench-ai.spec.ts).
+	test.skip(
+		process.env.ALETHIA_AI_MOCK === "1",
+		"the scripted model makes the console AI-configured",
+	);
 	test.beforeEach(async ({ authedPage: page }) => {
 		await openElenchModal(page);
 	});
@@ -174,81 +177,5 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 		await composer.press("Enter");
 		await expect(page.getByText(/ai is not configured/i)).toBeVisible();
 		await expect(page.getByRole("button", { name: /retry/i })).toBeVisible();
-	});
-});
-
-// ─── Stubbed streaming flows: page.route() fulfills a canned AI-SDK UI-message stream ───
-// These do NOT need a live model/key — the SSE stub (helpers/ai-stream) replays exactly what
-// `toUIMessageStreamResponse` frames and `useChat` parses.
-test.describe("Elench agent — stubbed streaming (org)", () => {
-	const SPEC: DashboardSpec = {
-		title: "Infrastructure overview",
-		blocks: [
-			{ kind: "stat", title: "Clusters", value: 4, sub: "live" },
-			{
-				kind: "bar",
-				title: "Jobs by provider",
-				data: [
-					{ label: "aws", value: 12 },
-					{ label: "gcp", value: 3 },
-				],
-			},
-			{ kind: "line", title: "Runner minutes", points: [10, 20, 30, 25] },
-		],
-	};
-
-	test("streams text + a build_dashboard tool part → Open dashboard opens the split pane", async ({
-		authedPage: page,
-	}) => {
-		await stubAgentStream(
-			page,
-			textThenDashboardChunks("Here is your infrastructure overview.", SPEC),
-		);
-		await openElenchModal(page);
-
-		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
-		await composer.fill("build me a dashboard");
-		await composer.press("Enter");
-
-		// The streamed assistant text renders, then the generative-dashboard result card.
-		await expect(
-			page.getByText("Here is your infrastructure overview."),
-		).toBeVisible();
-		await expect(page.getByText("Dashboard ready")).toBeVisible();
-		await page.getByRole("button", { name: /open dashboard/i }).click();
-
-		// The artifact split pane opens with the stat/bar/line block titles from the spec.
-		await expect(page.getByText("Clusters")).toBeVisible();
-		await expect(page.getByText("Jobs by provider")).toBeVisible();
-		await expect(page.getByText("Runner minutes")).toBeVisible();
-	});
-
-	test("streams a HITL propose_operation → Approve fires the addToolResult follow-up request", async ({
-		authedPage: page,
-	}) => {
-		const stub = await stubAgentStream(
-			page,
-			proposeOperationChunks({
-				label: "Plan ai-platform",
-				operation: { operation: "plan_project", projectId: "proj-e2e" },
-				stats: { add: 3, change: 1, destroy: 0, monthly: 120 },
-			}),
-		);
-		await openElenchModal(page);
-
-		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
-		await composer.fill("plan my project");
-		await composer.press("Enter");
-
-		// The HITL approval card renders from the input-available tool part.
-		await expect(page.getByText("Plan ai-platform")).toBeVisible();
-		const approve = page.getByRole("button", { name: /approve & plan/i });
-		await expect(approve).toBeVisible();
-		await approve.click();
-
-		// Approving feeds the outcome back via addToolResult; sendAutomaticallyWhen resumes the
-		// run → a SECOND request to the streaming route. (The plan action may deny a fake project,
-		// but the outcome still resolves the HITL loop, so the follow-up request fires either way.)
-		await expect.poll(() => stub.callCount()).toBeGreaterThanOrEqual(2);
 	});
 });

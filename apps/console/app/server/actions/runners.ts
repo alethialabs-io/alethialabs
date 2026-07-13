@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorize } from "@/lib/authz/guard";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb, withOwnerScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
@@ -241,6 +242,10 @@ export async function deployRunner(params: {
 	assignedRunnerId?: string | null;
 }) {
 	const actor = await authorize("deploy", { type: "runner" });
+	// Defense-in-depth: the existing runner that will run this deploy must belong
+	// to the caller's org (claim_next_job blocks execution; this blocks enqueue).
+	if (params.assignedRunnerId)
+		await assertRunnerInOrg(getServiceDb(), params.assignedRunnerId, actor.orgId);
 	const owner = actor.userId;
 	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
@@ -393,6 +398,10 @@ export async function destroyRunner(
 	assignedRunnerId?: string | null,
 ) {
 	const actor = await authorize("destroy", { type: "runner", id: runnerId });
+	// Defense-in-depth: the existing runner that will run this destroy must belong
+	// to the caller's org (claim_next_job blocks execution; this blocks enqueue).
+	if (assignedRunnerId)
+		await assertRunnerInOrg(getServiceDb(), assignedRunnerId, actor.orgId);
 	const owner = actor.userId;
 	const { runner, deployConfig, identity } = await fetchDeployedRunner(
 		owner,

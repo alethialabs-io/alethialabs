@@ -4,8 +4,9 @@
 
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { type Tx, withOwnerScope } from "@/lib/db";
+import { getServiceDb, type Tx, withOwnerScope } from "@/lib/db";
 import {
 	type EnvTransitionContext,
 	transitionEnv,
@@ -1125,6 +1126,9 @@ export async function planProject(
 	environmentId?: string | null,
 ) {
 	const actor = await authorize("plan", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
@@ -1166,6 +1170,9 @@ export async function provisionProject(
 	environmentId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
@@ -1221,6 +1228,9 @@ export async function queueDriftDetection(
 	runnerId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
@@ -1263,6 +1273,9 @@ export async function destroyProject(
 	runnerId?: string | null,
 ) {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
@@ -1318,6 +1331,9 @@ export async function detectDrift(
 	runnerId?: string | null,
 ) {
 	const actor = await authorize("plan", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
