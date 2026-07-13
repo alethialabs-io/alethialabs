@@ -30,6 +30,9 @@ func declaredControlIDs() []string {
 	for _, c := range hetznerControls(nil) {
 		ids = append(ids, c.ID)
 	}
+	for _, c := range alibabaControls(nil) {
+		ids = append(ids, c.ID)
+	}
 	return ids
 }
 

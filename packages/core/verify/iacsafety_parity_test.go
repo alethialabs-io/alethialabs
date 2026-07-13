@@ -66,8 +66,8 @@ var sourceToPrefixes = map[string][]string{
 	"hashicorp/azurerm":     {"azurerm"}, // azurerm_* → controlledProviderTokens (azure)
 	"hashicorp/azuread":     {"azuread"}, // azuread_* → controlledProviderTokens (azure)
 
-	// Managed cloud WITHOUT a control set yet → parity gap (see knownParityGaps).
-	"hashicorp/alicloud": {"alicloud"}, // alicloud_* — no controls yet (B0.2)
+	// Managed cloud WITH an authored control set (BYOC B0.2: controls_alibaba.go).
+	"hashicorp/alicloud": {"alicloud"}, // alicloud_* → controlledProviderTokens (alibaba)
 	"aliyun/alicloud":    {"alicloud"}, // same prefix, the canonical registry mirror
 
 	// Cloud without a control-surface BY DESIGN (token auth is the ceiling).
@@ -96,17 +96,12 @@ var sourceToPrefixes = map[string][]string{
 // anti-regression check fails if a listed gap is actually covered — forcing this set
 // to shrink the moment a gap is closed in verify.go).
 //
-//   - "alicloud": verify deliberately omits Alibaba — it has real RAM/OIDC authority,
-//     so it must eventually get a real control set, NOT a vacuous supported-list pass.
-//     An Alibaba plan is honestly not_evaluable until BYOC task B0.2 ships
-//     controls_alibaba.go. Remove this entry when B0.2 lands.
 //   - "cloudinit", "dns", "template": utility providers with no cloud-authority
 //     surface that belong alongside random_/tls_/null_ in
 //     supportedNoControlProviderTokens but are currently missing → BYO IaC plans using
 //     them hit not_evaluable. Tracked follow-up: add them to verify's supported set in
 //     a separate verify.go PR (NOT this additive test). Remove each here as it lands.
 var knownParityGaps = map[string]string{
-	"alicloud":  "no verify control set yet (B0.2 controls_alibaba.go); honest not_evaluable until then",
 	"cloudinit": "utility provider, no cloud authority; add to supportedNoControlProviderTokens (verify.go follow-up)",
 	"dns":       "utility provider, no cloud authority; add to supportedNoControlProviderTokens (verify.go follow-up)",
 	"template":  "utility provider, no cloud authority; add to supportedNoControlProviderTokens (verify.go follow-up)",

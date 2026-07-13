@@ -214,6 +214,43 @@ func TestMutationFlipsVerdict(t *testing.T) {
 				})
 			},
 		},
+		{
+			name:      "ALI-KEYLESS-001/inject-ram-access-key",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-KEYLESS-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_access_key.leaked", "alicloud_ram_access_key", "alibaba",
+					map[string]any{"user_name": "ci-user"}, map[string]any{"secret": true})
+			},
+		},
+		{
+			// Widen the RRSA trust's oidc:sub from a pinned ServiceAccount to a
+			// StringLike wildcard — any pod from the cluster issuer could then assume.
+			name:      "ALI-OIDC-001/widen-sub-to-wildcard",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-OIDC-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "alicloud_ram_role.external_secrets")
+				m["assume_role_policy_document"] = `{"Version":"1","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"Federated":["acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo"]},"Condition":{"StringEquals":{"oidc:aud":"sts.aliyuncs.com"},"StringLike":{"oidc:sub":"system:serviceaccount:*"}}}]}`
+			},
+		},
+		{
+			// The System-managed-policy ATTACHMENT branch (isALIAdminSystemPolicy over
+			// policy_type/policy_name) — distinct from the inline policy_document
+			// wildcard path. Attaching AdministratorAccess is the most common real
+			// over-privilege pattern on Alibaba.
+			name:      "ALI-LEASTPRIV-001/attach-administrator-access",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_role_policy_attachment.admin", "alicloud_ram_role_policy_attachment", "alibaba",
+					map[string]any{
+						"role_name":   "app",
+						"policy_name": "AdministratorAccess",
+						"policy_type": "System",
+					}, map[string]any{})
+			},
+		},
 	}
 
 	// Assert every declared control has a mutator — parity with the corpus coverage

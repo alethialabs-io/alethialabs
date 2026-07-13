@@ -23,7 +23,7 @@ package: **never report a pass on something we could not inspect.** Such cases a
 `not_evaluable` with a plain-language `coverage` note. A silent pass on an un-inspectable
 resource is exactly the false-PASS the verification claim must never make.
 
-## Controls (catalog `elench-controls-0.3.0`)
+## Controls (catalog `elench-controls-0.4.0`)
 
 `Evaluate` detects **every** recognized cloud present in the plan and runs the **union** of those
 providers' control sets — a single OpenTofu plan can mix clouds (an AWS EKS cluster alongside an Azure
@@ -61,10 +61,9 @@ fail-coverage/mutation gates since it never emits `fail`.
 every other honest `not_evaluable` — computed IAM policies, opaque role-def ids): it stops the gate
 forging a *verified/pass* receipt on a plan it could not inspect, but it does **not** by itself block
 `tofu apply` (only a hard `fail` does). So an all-unrecognized-provider plan still applies — with an
-honest "not evaluated" receipt rather than a false pass. **Alibaba** (`alicloud`) is a managed cloud but
-has no authored control set yet, so it is deliberately **off** the allowlist (it has RAM/OIDC authority
-— it must eventually get real controls, not a no-controls pass): an Alibaba plan is honestly
-`not_evaluable` until those controls exist. This closed a prior silent false-PASS on Alibaba.
+honest "not evaluated" receipt rather than a false pass. **Alibaba** (`alicloud`) now has an authored
+control set (RAM/RRSA — see the table below), so it is a **controlled** provider, not on the
+no-controls allowlist: an Alibaba plan is genuinely inspected.
 
 **AWS**
 
@@ -89,6 +88,26 @@ has no authored control set yet, so it is deliberately **off** the allowlist (it
 | `AZURE-KEYLESS-001` | No static app/SP secrets | creating an `azuread_application_password`/`azuread_service_principal_password` (use a federated identity credential) |
 | `AZURE-FED-001` | Federated credentials bind a subject | an `azuread_application_federated_identity_credential` with an empty or wildcard `subject` |
 | `AZURE-LEASTPRIV-001` | No Owner/Contributor assignments | an `azurerm_role_assignment` of `Owner` (fail) — **warns** on `Contributor` — scope annotated |
+
+**Alibaba** — *RAM/RRSA authority, mirrors the AWS set.* Alibaba has a real RAM/OIDC surface: RRSA
+(RAM Roles for Service Accounts) is its OIDC workload-identity mechanism (analogue of AWS IRSA / GCP
+WIF), so its controls assert keyless / bound-subject / least-privilege just like AWS. The RAM trust +
+policy documents share AWS IAM's `Effect/Action/Resource/Principal/Condition` shape (`Version:"1"`), so
+the AWS parser + `subjectIsBound` are reused — the only Alibaba difference is the trust **action**
+(`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`).
+
+*Real-plan shape (verified against OpenTofu 1.12.3 + aliyun/alicloud v1.285.0; every `alibaba_*` corpus
+fixture is a real `tofu show -json` capture):* the writable trust attribute is `assume_role_policy_document`
+and the writable policy body is `policy_document`; the provider ALSO emits a **computed read-only
+`document` mirror** (`after_unknown:true` on a create plan), so the controls read the writable attribute
+first and never mis-read the computed mirror as `not_evaluable` (`document` is the fallback for older
+provider versions where it was the writable attr).
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `ALI-KEYLESS-001` | No static RAM access keys | creating an `alicloud_ram_access_key` (use RRSA / AssumeRoleWithOIDC instead) |
+| `ALI-OIDC-001` | RRSA trust bound to a specific subject | an `alicloud_ram_role` whose Federated (RRSA) trust **lacks an `oidc:sub` condition**, or binds it only with a **`StringLike` wildcard** (any pod from the issuer can assume). Service-principal roles are out of scope; a computed trust doc → **not_evaluable**. |
+| `ALI-LEASTPRIV-001` | No over-broad RAM grants (named patterns) | an `alicloud_ram_policy` granting `Action:"*"` on `Resource:"*"`, or an `alicloud_ram_role_policy_attachment` of the System `AdministratorAccess` managed policy. **Warns** on a service-level wildcard (`ecs:*`,…) with `Resource:"*"`. **Not-evaluable** when the policy body is computed until apply. |
 
 **Hetzner** — *posture, not authority.* Hetzner is token-auth: the API token is the ceiling, there is
 no OIDC/federation/IAM surface to bind, so the keyless/OIDC-sub/least-priv controls do not apply. What a

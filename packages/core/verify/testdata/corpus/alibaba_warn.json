@@ -1,0 +1,112 @@
+{
+  "_comment": "Alibaba service-wildcard warn fixture \u2014 OpenTofu v1.12.3 + aliyun/alicloud provider v1.285.0 (dummy ALICLOUD access/secret via provider block; RAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. An alicloud_ram_policy granting a service-level wildcard (ecs:*) on Resource:[\"*\"] \u2014 broad but not full-admin. Expect: ALI-LEASTPRIV-001 WARN (recorded, non-blocking) => verdict warn.",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_policy.broad_ecs",
+          "mode": "managed",
+          "type": "alicloud_ram_policy",
+          "name": "broad_ecs",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "description": null,
+            "force": null,
+            "policy_document": "{\"Statement\":[{\"Action\":[\"ecs:*\"],\"Effect\":\"Allow\",\"Resource\":[\"*\"]}],\"Version\":\"1\"}",
+            "policy_name": "alethia-demo-ecs",
+            "rotate_strategy": null,
+            "tags": null,
+            "timeouts": null,
+            "version": "1"
+          },
+          "sensitive_values": {
+            "statement": []
+          }
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_policy.broad_ecs",
+      "mode": "managed",
+      "type": "alicloud_ram_policy",
+      "name": "broad_ecs",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "description": null,
+          "force": null,
+          "policy_document": "{\"Statement\":[{\"Action\":[\"ecs:*\"],\"Effect\":\"Allow\",\"Resource\":[\"*\"]}],\"Version\":\"1\"}",
+          "policy_name": "alethia-demo-ecs",
+          "rotate_strategy": null,
+          "tags": null,
+          "timeouts": null,
+          "version": "1"
+        },
+        "after_unknown": {
+          "attachment_count": true,
+          "create_time": true,
+          "default_version": true,
+          "document": true,
+          "id": true,
+          "name": true,
+          "statement": true,
+          "type": true,
+          "version_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "statement": []
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "alicloud": {
+        "name": "alicloud",
+        "full_name": "registry.opentofu.org/aliyun/alicloud",
+        "version_constraint": ">= 1.230.0, < 2.0.0",
+        "expressions": {
+          "access_key": {
+            "constant_value": "dummy-access-key-for-plan"
+          },
+          "region": {
+            "constant_value": "eu-central-1"
+          },
+          "secret_key": {
+            "constant_value": "dummy-secret-key-for-plan"
+          }
+        }
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_policy.broad_ecs",
+          "mode": "managed",
+          "type": "alicloud_ram_policy",
+          "name": "broad_ecs",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "policy_document": {},
+            "policy_name": {
+              "constant_value": "alethia-demo-ecs"
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "timestamp": "2026-07-13T14:48:26Z",
+  "errored": false
+}

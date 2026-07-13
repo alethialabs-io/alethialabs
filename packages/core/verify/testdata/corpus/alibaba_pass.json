@@ -1,0 +1,272 @@
+{
+  "_comment": "Alibaba (alicloud_) TEMPLATE-MIRROR fixture \u2014 OpenTofu v1.12.3 + aliyun/alicloud provider v1.285.0 (dummy ALICLOUD access/secret via provider block; RAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. Mirrors infra/templates/project/alibaba/workload-identity.tf: an alicloud_ram_role with an RRSA trust doc (Principal.Federated + sts:AssumeRole + Condition.StringEquals[\"oidc:sub\"] pinned to the operator SA), a least-priv alicloud_ram_policy (scoped kms actions on a scoped acs:kms secret ARN), and a Custom alicloud_ram_role_policy_attachment. Trust/policy values are LITERAL (not module-computed) so the docs are KNOWN in the plan and the controls are EVALUABLE (anti-inertness) \u2014 in the real shipped template these interpolate cluster-module outputs, so they are computed-until-apply => per-resource not_evaluable, which is ALSO zero hard fails. Expect: ALI-KEYLESS-001 pass, ALI-OIDC-001 pass, ALI-LEASTPRIV-001 pass => verdict pass. Doubles as the shipped-template no-hard-fail proof AND the mutation-gate baseline.",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_policy.external_secrets_read",
+          "mode": "managed",
+          "type": "alicloud_ram_policy",
+          "name": "external_secrets_read",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "description": "Read-only access to the alethia-demo-* KMS secrets.",
+            "force": null,
+            "policy_document": "{\"Statement\":[{\"Action\":[\"kms:GetSecretValue\",\"kms:DescribeSecret\"],\"Effect\":\"Allow\",\"Resource\":[\"acs:kms:eu-central-1:1234567890123456:secret/alethia-demo-*\"]}],\"Version\":\"1\"}",
+            "policy_name": "alethia-demo-extsecrets-read",
+            "rotate_strategy": null,
+            "tags": null,
+            "timeouts": null,
+            "version": "1"
+          },
+          "sensitive_values": {
+            "statement": []
+          }
+        },
+        {
+          "address": "alicloud_ram_role.external_secrets",
+          "mode": "managed",
+          "type": "alicloud_ram_role",
+          "name": "external_secrets",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "assume_role_policy_document": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEquals\":{\"oidc:aud\":\"sts.aliyuncs.com\",\"oidc:iss\":\"https://oidc-eu-central-1.oss-eu-central-1.aliyuncs.com/cluster-demo\",\"oidc:sub\":\"system:serviceaccount:external-secrets-operator:external-secrets-operator-sa\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":[\"acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo\"]}}],\"Version\":\"1\"}",
+            "description": "external-secrets operator RRSA role (keyless).",
+            "force": null,
+            "max_session_duration": 3600,
+            "role_name": "alethia-demo-extsecrets",
+            "tags": null,
+            "timeouts": null,
+            "version": "1"
+          },
+          "sensitive_values": {
+            "ram_users": [],
+            "services": []
+          }
+        },
+        {
+          "address": "alicloud_ram_role_policy_attachment.external_secrets_read",
+          "mode": "managed",
+          "type": "alicloud_ram_role_policy_attachment",
+          "name": "external_secrets_read",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "policy_name": "alethia-demo-extsecrets-read",
+            "policy_type": "Custom",
+            "timeouts": null
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_policy.external_secrets_read",
+      "mode": "managed",
+      "type": "alicloud_ram_policy",
+      "name": "external_secrets_read",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "description": "Read-only access to the alethia-demo-* KMS secrets.",
+          "force": null,
+          "policy_document": "{\"Statement\":[{\"Action\":[\"kms:GetSecretValue\",\"kms:DescribeSecret\"],\"Effect\":\"Allow\",\"Resource\":[\"acs:kms:eu-central-1:1234567890123456:secret/alethia-demo-*\"]}],\"Version\":\"1\"}",
+          "policy_name": "alethia-demo-extsecrets-read",
+          "rotate_strategy": null,
+          "tags": null,
+          "timeouts": null,
+          "version": "1"
+        },
+        "after_unknown": {
+          "attachment_count": true,
+          "create_time": true,
+          "default_version": true,
+          "document": true,
+          "id": true,
+          "name": true,
+          "statement": true,
+          "type": true,
+          "version_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "statement": []
+        }
+      }
+    },
+    {
+      "address": "alicloud_ram_role.external_secrets",
+      "mode": "managed",
+      "type": "alicloud_ram_role",
+      "name": "external_secrets",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "assume_role_policy_document": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEquals\":{\"oidc:aud\":\"sts.aliyuncs.com\",\"oidc:iss\":\"https://oidc-eu-central-1.oss-eu-central-1.aliyuncs.com/cluster-demo\",\"oidc:sub\":\"system:serviceaccount:external-secrets-operator:external-secrets-operator-sa\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":[\"acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo\"]}}],\"Version\":\"1\"}",
+          "description": "external-secrets operator RRSA role (keyless).",
+          "force": null,
+          "max_session_duration": 3600,
+          "role_name": "alethia-demo-extsecrets",
+          "tags": null,
+          "timeouts": null,
+          "version": "1"
+        },
+        "after_unknown": {
+          "arn": true,
+          "create_time": true,
+          "document": true,
+          "id": true,
+          "name": true,
+          "ram_users": true,
+          "role_id": true,
+          "services": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "ram_users": [],
+          "services": []
+        }
+      }
+    },
+    {
+      "address": "alicloud_ram_role_policy_attachment.external_secrets_read",
+      "mode": "managed",
+      "type": "alicloud_ram_role_policy_attachment",
+      "name": "external_secrets_read",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "policy_name": "alethia-demo-extsecrets-read",
+          "policy_type": "Custom",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "role_name": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "alicloud": {
+        "name": "alicloud",
+        "full_name": "registry.opentofu.org/aliyun/alicloud",
+        "version_constraint": ">= 1.230.0, < 2.0.0",
+        "expressions": {
+          "access_key": {
+            "constant_value": "dummy-access-key-for-plan"
+          },
+          "region": {
+            "constant_value": "eu-central-1"
+          },
+          "secret_key": {
+            "constant_value": "dummy-secret-key-for-plan"
+          }
+        }
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_policy.external_secrets_read",
+          "mode": "managed",
+          "type": "alicloud_ram_policy",
+          "name": "external_secrets_read",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "description": {
+              "constant_value": "Read-only access to the alethia-demo-* KMS secrets."
+            },
+            "policy_document": {},
+            "policy_name": {
+              "constant_value": "alethia-demo-extsecrets-read"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "alicloud_ram_role.external_secrets",
+          "mode": "managed",
+          "type": "alicloud_ram_role",
+          "name": "external_secrets",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "assume_role_policy_document": {},
+            "description": {
+              "constant_value": "external-secrets operator RRSA role (keyless)."
+            },
+            "max_session_duration": {
+              "constant_value": 3600
+            },
+            "role_name": {
+              "constant_value": "alethia-demo-extsecrets"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "alicloud_ram_role_policy_attachment.external_secrets_read",
+          "mode": "managed",
+          "type": "alicloud_ram_role_policy_attachment",
+          "name": "external_secrets_read",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "policy_name": {
+              "references": [
+                "alicloud_ram_policy.external_secrets_read.policy_name",
+                "alicloud_ram_policy.external_secrets_read"
+              ]
+            },
+            "policy_type": {
+              "constant_value": "Custom"
+            },
+            "role_name": {
+              "references": [
+                "alicloud_ram_role.external_secrets.id",
+                "alicloud_ram_role.external_secrets"
+              ]
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "relevant_attributes": [
+    {
+      "resource": "alicloud_ram_policy.external_secrets_read",
+      "attribute": [
+        "policy_name"
+      ]
+    },
+    {
+      "resource": "alicloud_ram_role.external_secrets",
+      "attribute": [
+        "id"
+      ]
+    }
+  ],
+  "timestamp": "2026-07-13T14:46:58Z",
+  "errored": false
+}
