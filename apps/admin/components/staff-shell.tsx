@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { CircleDollarSign, LifeBuoy } from "lucide-react";
+import { Building2, CircleDollarSign, LifeBuoy } from "lucide-react";
 import Link from "next/link";
 import type React from "react";
 import { cn } from "@repo/ui/utils";
 
 /** Which top-nav section is active (drives the highlighted link). */
-export type StaffNav = "cases" | "spend";
+export type StaffNav = "cases" | "spend" | "orgs";
 
 /** The staff-console top-nav sections: label + route + active key. */
 const NAV: { key: StaffNav; label: string; href: string }[] = [
 	{ key: "cases", label: "Cases", href: "/" },
 	{ key: "spend", label: "AI spend", href: "/spend" },
+	{ key: "orgs", label: "Orgs", href: "/orgs" },
 ];
 
 /**
@@ -59,6 +60,7 @@ export function StaffShell({
 									{item.key === "spend" && (
 										<CircleDollarSign className="size-4" />
 									)}
+									{item.key === "orgs" && <Building2 className="size-4" />}
 									{item.label}
 								</Link>
 							))}

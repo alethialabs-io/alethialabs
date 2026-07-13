@@ -13,10 +13,25 @@ import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { env } from "next-runtime-env";
 import postgres from "postgres";
 import { z } from "zod";
+import * as platformSchema from "@repo/platform/schema";
 import * as supportSchema from "@repo/support/schema";
-import { aiUsageLedger, organization, user } from "./db-schema";
+import {
+	aiUsageLedger,
+	member,
+	organization,
+	organizationBilling,
+	user,
+} from "./db-schema";
 
-const schema = { ...supportSchema, aiUsageLedger, organization, user };
+const schema = {
+	...supportSchema,
+	...platformSchema,
+	aiUsageLedger,
+	member,
+	organization,
+	organizationBilling,
+	user,
+};
 
 type Db = PostgresJsDatabase<typeof schema>;
 

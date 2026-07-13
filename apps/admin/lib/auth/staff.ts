@@ -88,3 +88,33 @@ export async function assertStaff(): Promise<SupportStaff> {
 	if (!staff) throw new Error("Not authorized: support staff only");
 	return staff;
 }
+
+/** Parsed, lowercased allowlist from PLATFORM_ADMIN_EMAILS (comma-separated). */
+function platformAdminAllowlist(): string[] {
+	return (env("PLATFORM_ADMIN_EMAILS") || "")
+		.split(",")
+		.map((e) => e.trim().toLowerCase())
+		.filter(Boolean);
+}
+
+/**
+ * Whether an email may PERFORM operator actions (flip an org to Enterprise, create an org). This is
+ * a DISTINCT, act-capable allowlist from SUPPORT_STAFF_EMAILS — the break-glass principle: being
+ * able to READ cross-tenant (support staff) is not being able to ACT (operator). Keep it tiny.
+ */
+export function isPlatformAdmin(email: string | null | undefined): boolean {
+	if (!email) return false;
+	return platformAdminAllowlist().includes(email.toLowerCase());
+}
+
+/**
+ * The guard every platform-operator MUTATION calls first: resolves the caller to a staff identity
+ * AND asserts they're on PLATFORM_ADMIN_EMAILS. Reads (org list/detail) stay on {@link getStaff}.
+ */
+export async function assertPlatformAdmin(): Promise<SupportStaff> {
+	const staff = await getStaff();
+	if (!staff || !isPlatformAdmin(staff.email)) {
+		throw new Error("Not authorized: platform operator only");
+	}
+	return staff;
+}

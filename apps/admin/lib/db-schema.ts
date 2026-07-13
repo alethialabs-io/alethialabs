@@ -14,6 +14,7 @@ export const organization = pgTable("organization", {
 	id: uuid().primaryKey().defaultRandom(),
 	name: text().notNull(),
 	slug: text().unique(),
+	createdAt: timestamp({ withTimezone: true }),
 });
 
 /** A platform user — the case customer and (for `assigned_staff_id`) the staff assignee. */
@@ -39,4 +40,33 @@ export const aiUsageLedger = pgTable("ai_usage_ledger", {
 	model: text(),
 	cost_micros: bigint({ mode: "number" }),
 	created_at: timestamp({ withTimezone: true }).notNull(),
+});
+
+/**
+ * The console-owned org billing record — the SOLE source of an org's plan (apps/console/lib/db/
+ * schema/organization-billing.ts). The operator plane READS it (org detail) and WRITES it for the
+ * external path (via the console `set-plan` route — never directly, to preserve single-writer). Only
+ * the columns the operator plane touches are declared.
+ */
+export const organizationBilling = pgTable("organization_billing", {
+	id: uuid().primaryKey().defaultRandom(),
+	organizationId: uuid().notNull().unique(),
+	plan: text().notNull(),
+	status: text().notNull(),
+	stripeCustomerId: text(),
+	stripeSubscriptionId: text(),
+	seats: integer(),
+	currentPeriodStart: timestamp({ withTimezone: true }),
+	currentPeriodEnd: timestamp({ withTimezone: true }),
+	welcomedAt: timestamp({ withTimezone: true }),
+	updatedAt: timestamp({ withTimezone: true }),
+});
+
+/** Org membership — the operator reads the member list + resolves the owner. */
+export const member = pgTable("member", {
+	id: uuid().primaryKey().defaultRandom(),
+	organizationId: uuid().notNull(),
+	userId: uuid().notNull(),
+	role: text().notNull(),
+	createdAt: timestamp({ withTimezone: true }),
 });
