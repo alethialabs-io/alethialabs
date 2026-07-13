@@ -410,6 +410,9 @@ jobs:
             echo "ALETHIA_DEPLOYMENT_MODE=hosted"
             emit BETTER_AUTH_SECRET
             emit CLI_JWT_SECRET
+            # Auth brute-force rate-limit kill-switch (default on; set =0 in the vault to disable).
+            # Emit so the disable path actually reaches the console.
+            emit ALETHIA_AUTH_RATE_LIMIT
             emit ALETHIA_CRED_ENCRYPTION_KEY
             # Credential-encryption key id (keyring) for ONLINE key rotation. Defaults to "1" if the
             # vault key is absent (secrets.ts falls back), so this emit is safe even when unset.

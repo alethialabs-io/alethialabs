@@ -70,7 +70,7 @@ export function getAuthRateLimit(): NonNullable<BetterAuthOptions["rateLimit"]> 
 			// 6-digit OTP verify (login) — a few guesses per minute.
 			"/sign-in/email-otp": { window: 60, max: 5 },
 			// OTP issuance — email-bomb + limits how many fresh codes an attacker can mint.
-			"/email-otp/send-verification-otp": { window: 60, max: 3 },
+			"/email-otp/send-verification-otp": { window: 60, max: 5 },
 			// Email-confirmation OTP verify.
 			"/email-otp/verify-email": { window: 60, max: 5 },
 		},

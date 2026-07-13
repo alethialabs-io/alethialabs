@@ -173,7 +173,17 @@ export const auth = betterAuth({
 	rateLimit: getAuthRateLimit(),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
 	// backstop (current_setting('app.current_owner')::uuid).
-	advanced: { database: { generateId: "uuid" } },
+	advanced: {
+		database: { generateId: "uuid" },
+		// Trust ONLY cf-connecting-ip for the client IP (the rate-limit bucket key + audit). Prod is
+		// Cloudflare Tunnel → Caddy → console, and Cloudflare sets/overwrites cf-connecting-ip while a
+		// client-supplied X-Forwarded-For is attacker-controlled (CF appends, doesn't replace). Without
+		// this, Better Auth keys on the leftmost XFF → an attacker rotating that header gets a fresh
+		// rate-limit bucket per request and bypasses the throttle. cf-connecting-ip matches the existing
+		// convention (lib/breakglass/guard.ts). A self-host behind a different edge should front the
+		// console with a proxy that strips inbound XFF / sets a trusted header; never expose it directly.
+		ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+	},
 	emailAndPassword: { enabled: false },
 	socialProviders,
 	// `username` is populated server-side from the OAuth profile (mapProfileToUser),

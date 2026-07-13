@@ -42,9 +42,15 @@ describe("auth rate-limit config", () => {
 		expect(rl?.customRules?.["/sign-in/email-otp"]).toEqual({ window: 60, max: 5 });
 		expect(rl?.customRules?.["/email-otp/send-verification-otp"]).toEqual({
 			window: 60,
-			max: 3,
+			max: 5,
 		});
 		expect(rl?.customRules?.["/email-otp/verify-email"]).toEqual({ window: 60, max: 5 });
+	});
+
+	it("keys the limiter on the trusted client IP (cf-connecting-ip), not spoofable X-Forwarded-For", () => {
+		// Without this, Better Auth keys on the leftmost XFF, which is attacker-controlled behind
+		// Cloudflare → the throttle is bypassable by rotating the header. Regression guard for that fix.
+		expect(auth.options.advanced?.ipAddress?.ipAddressHeaders).toEqual(["cf-connecting-ip"]);
 	});
 
 	it("the driven policy is the exact production policy (getAuthRateLimit)", () => {
