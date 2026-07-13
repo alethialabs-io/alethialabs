@@ -503,12 +503,11 @@ jobs:
             # is set (the SDK wants a default region for the global STS call).
             echo "AWS_REGION=us-east-1"
             # Azure is KEYLESS: the console + runner authenticate as ONE multi-tenant Entra app
-            # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The client
-            # id is also surfaced to the browser (the connect UI bakes it into the customer setup
-            # command). No ALETHIA_AZURE_TENANT_ID/CLIENT_SECRET — the console auths against the
-            # customer's stored tenant.
+            # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The connect
+            # UI receives the id server-side (threaded as a prop) and bakes it into the customer setup
+            # command — no NEXT_PUBLIC_ copy (that inlined at build time and never reached this image).
+            # No ALETHIA_AZURE_TENANT_ID/CLIENT_SECRET — the console auths against the customer tenant.
             emit ALETHIA_AZURE_CLIENT_ID
-            echo "NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID=$(val ALETHIA_AZURE_CLIENT_ID)"
             # Alibaba is KEYLESS + ACCOUNT-FREE: the console assumes the customer RAM role via
             # AssumeRoleWithOIDC with a minted assertion (issuer above) — Alethia holds no Alibaba
             # account / AccessKey, so nothing is emitted; availability tracks the OIDC issuer.

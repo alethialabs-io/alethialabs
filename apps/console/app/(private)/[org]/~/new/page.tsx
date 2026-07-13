@@ -68,8 +68,10 @@ export default async function NewProjectPage({
 		return <ScanReviewNotice org={org} result={result} />;
 	}
 
-	const [{ canManage, integrations, awsSetup, gcpSetup, azureSetup, extraSetup }, collab] =
-		await Promise.all([getCloudConnectSetup(), getCollaborationAccess()]);
+	const [
+		{ canManage, integrations, awsSetup, gcpSetup, azureSetup, extraSetup, platformConfigured },
+		collab,
+	] = await Promise.all([getCloudConnectSetup(), getCollaborationAccess()]);
 
 	return (
 		<CreateProjectForm
@@ -81,6 +83,7 @@ export default async function NewProjectPage({
 			gcpSetup={gcpSetup}
 			azureSetup={azureSetup}
 			extraSetup={extraSetup}
+			platformConfigured={platformConfigured}
 			byoHelmEnabled={isByoHelmEnabled()}
 		/>
 	);
