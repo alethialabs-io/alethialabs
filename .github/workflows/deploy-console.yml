@@ -555,6 +555,11 @@ jobs:
             emit SUPPORT_STAFF_EMAILS
             echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
             echo "COMPOSE_PROFILES=admin"
+            # Platform-operator provisioning (Enterprise onboarding): apps/admin → console internal
+            # routes. Dedicated bearer (NOT the cron secret) + the system-user inviter. Unset → the
+            # operator plane is inert (503).
+            emit PLATFORM_PROVISION_SECRET
+            emit PLATFORM_SYSTEM_USER_EMAIL
             echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
             echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
             echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"

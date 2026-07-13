@@ -45,3 +45,14 @@ export function bearerMatches(req: Request, secret: string | undefined | null): 
 export function isInternalAuthorized(req: Request): boolean {
 	return bearerMatches(req, process.env.ALETHIA_CRON_SECRET);
 }
+
+/**
+ * True when the request carries the platform-PROVISIONING secret (`PLATFORM_PROVISION_SECRET`) — the
+ * staff app's onboarding calls (create an org, set an org's plan). Fail-closed + constant-time.
+ * DELIBERATELY a distinct secret from `ALETHIA_CRON_SECRET`: these routes mint orgs and grant
+ * ownership (far higher blast radius than an idempotent sweep), so they must not ride the broadly
+ * -shared cron secret. Unset ⇒ the operator plane is inert (every call 503s upstream).
+ */
+export function isPlatformProvisionAuthorized(req: Request): boolean {
+	return bearerMatches(req, process.env.PLATFORM_PROVISION_SECRET);
+}
