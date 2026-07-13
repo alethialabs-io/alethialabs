@@ -7,6 +7,7 @@
 // card read one source of truth (promote, don't duplicate).
 
 import {
+	Activity,
 	ArrowUpCircle,
 	Container,
 	FileSearch,
@@ -84,6 +85,11 @@ export const JOB_TYPES: Record<
 		label: "State Surgery",
 		icon: Wrench,
 		description: "Break-glass privileged tofu-state repair (executor ships inert / fail-closed)",
+	},
+	PROBE_CLUSTER: {
+		label: "Probe Cluster",
+		icon: Activity,
+		description: "Live cluster-alive probe — dials the cluster API server to record reachability",
 	},
 };
 

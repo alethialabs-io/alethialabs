@@ -121,6 +121,32 @@ export interface DriftDetail {
 	kind: string;
 }
 
+/**
+ * Honest structured result of a cluster-alive probe (BYOC B2) — mirrors the Go
+ * `provisioner.ProbeResult` (packages/core/provisioner, built in B2.2). Stored on
+ * `environment_probes.detail`; produced by a PROBE_CLUSTER job that dials the env's
+ * cluster API server. Every field is optional because a probe records only what it
+ * could observe: an unreachable cluster fills `error` and little else; a reachable one
+ * fills the health fields. NEVER holds a secret (no kubeconfig / token / cert material).
+ */
+export interface ProbeDetail {
+	/** Cluster API-server endpoint the probe dialed (host:port or URL), when known. */
+	endpoint?: string;
+	/** How liveness was checked, e.g. "apiserver-readyz" | "apiserver-version". */
+	method?: string;
+	/** HTTP status the API-server health endpoint returned, when it answered. */
+	statusCode?: number;
+	/** Kubernetes server version reported by a reachable API server. */
+	serverVersion?: string;
+	/** Nodes the probe saw, and how many were Ready — omitted when it didn't list nodes. */
+	nodeCount?: number;
+	readyNodeCount?: number;
+	/** Round-trip latency of the liveness check, in milliseconds. */
+	latencyMs?: number;
+	/** Failure reason when unreachable (dial error / TLS / timeout) — a message, never a secret. */
+	error?: string;
+}
+
 export interface SubnetInfo {
 	ID: string;
 	CIDR: string;
