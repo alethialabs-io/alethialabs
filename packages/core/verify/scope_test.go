@@ -75,9 +75,11 @@ func TestAwsccCloudControlIsCaught(t *testing.T) {
 	}
 }
 
-// TestSupportedNoControlProvidersPass proves the allowlist prevents a false-DENY on
-// legitimate supported clouds: a Hetzner + utility-only plan (no keyless/OIDC/least-
-// priv surface by design) is a legitimate vacuous PASS, and SCOPE-001 must NOT fire.
+// TestSupportedNoControlProvidersPass proves the scope backstop prevents a false-DENY
+// on a legitimate Hetzner/Talos plan: hcloud now runs its POSTURE control set (server
+// is firewalled -> HCLOUD-FW-001 pass; no firewall resource -> HCLOUD-NET-001 vacuous
+// pass) and the cluster-layer/utility tokens (talos/imager/minio/helm/random) are on
+// the supported-no-controls allowlist, so SCOPE-001 must NOT fire and the plan PASSES.
 func TestSupportedNoControlProvidersPass(t *testing.T) {
 	rep := evalCorpus(t, "hetzner_utility_pass.json")
 	if rep.Verdict != StatusPass {
