@@ -8,11 +8,21 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// sso.ts now reaches better-auth (auth.handler) + the PDP for its mutation/bootstrap paths; stub
+// them so this read-path suite stays I/O-free and doesn't boot the auth stack at import time.
+vi.mock("@/lib/auth", () => ({ auth: { handler: vi.fn() } }));
+vi.mock("@/lib/authz", () => ({
+	getPdp: () => ({ can: vi.fn().mockResolvedValue({ allowed: true }) }),
+}));
+vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
+vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 
 import { getSsoProviders } from "@/app/server/actions/sso";
-import { currentActor } from "@/lib/authz/guard";
+import { authorizeQuiet } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 
 // A real self-signed cert (generated for the test). Its SHA-256 fingerprint is fixed below.
@@ -41,7 +51,10 @@ function mockDb(rows: unknown[]) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(currentActor).mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
+	vi.mocked(authorizeQuiet).mockResolvedValue({
+		orgId: "org-1",
+		userId: "user-1",
+	} as never);
 });
 
 describe("getSsoProviders", () => {
@@ -153,10 +166,28 @@ describe("getSsoProviders", () => {
 		expect(row.clientId).toBeNull();
 	});
 
+	it("reports type=unknown when NEITHER config is stored (a broken row)", async () => {
+		// Previously `oidcConfig ? "oidc" : "saml"` mislabelled a config-less row as SAML,
+		// hiding a broken provider behind a plausible-looking protocol.
+		mockDb([
+			{
+				id: "p-6",
+				providerId: "empty",
+				domain: "empty.com",
+				issuer: "https://idp.empty.com",
+				oidcConfig: null,
+				samlConfig: null,
+				domainVerified: false,
+			},
+		]);
+		const [row] = await getSsoProviders();
+		expect(row.type).toBe("unknown");
+	});
+
 	it("scopes the query to the active organization", async () => {
 		const { whereSpy } = mockDb([]);
 		await getSsoProviders();
-		expect(currentActor).toHaveBeenCalledTimes(1);
+		expect(authorizeQuiet).toHaveBeenCalledTimes(1);
 		expect(whereSpy).toHaveBeenCalledTimes(1);
 		// The where clause is a drizzle SQL object; assert it was passed (org-scoped predicate built).
 		expect(whereSpy.mock.calls[0][0]).toBeTruthy();
