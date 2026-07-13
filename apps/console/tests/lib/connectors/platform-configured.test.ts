@@ -13,6 +13,7 @@ vi.mock("@/lib/config/auth", () => ({
 	getAuthConfig: () => ({
 		providers: { github: null, google: null, gitlab: null, bitbucket: null },
 	}),
+	getAuthRateLimit: () => ({ enabled: false }),
 }));
 vi.mock("@/lib/oidc/issuer", () => ({
 	oidcIssuerConfigured: () => issuerState.on,

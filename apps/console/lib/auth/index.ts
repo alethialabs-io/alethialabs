@@ -9,7 +9,7 @@ import type {
 	BetterAuthOptions,
 	SocialProviders,
 } from "better-auth";
-import { getAuthConfig, getGitlabBaseUrl } from "@/lib/config/auth";
+import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
@@ -22,6 +22,7 @@ import {
 	oauthApplication,
 	oauthConsent,
 	organization,
+	rateLimit,
 	session,
 	ssoProvider,
 	team,
@@ -163,11 +164,26 @@ export const auth = betterAuth({
 			oauthApplication,
 			oauthAccessToken,
 			oauthConsent,
+			// Built-in rate limiter's backing store (rateLimit: storage "database").
+			rateLimit,
 		},
 	}),
+	// DB-backed brute-force throttle for /api/auth/* (sign-in / email-OTP). Replica-
+	// consistent, unlike the per-process lib/rate-limit.ts. See getAuthRateLimit().
+	rateLimit: getAuthRateLimit(),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
 	// backstop (current_setting('app.current_owner')::uuid).
-	advanced: { database: { generateId: "uuid" } },
+	advanced: {
+		database: { generateId: "uuid" },
+		// Trust ONLY cf-connecting-ip for the client IP (the rate-limit bucket key + audit). Prod is
+		// Cloudflare Tunnel → Caddy → console, and Cloudflare sets/overwrites cf-connecting-ip while a
+		// client-supplied X-Forwarded-For is attacker-controlled (CF appends, doesn't replace). Without
+		// this, Better Auth keys on the leftmost XFF → an attacker rotating that header gets a fresh
+		// rate-limit bucket per request and bypasses the throttle. cf-connecting-ip matches the existing
+		// convention (lib/breakglass/guard.ts). A self-host behind a different edge should front the
+		// console with a proxy that strips inbound XFF / sets a trusted header; never expose it directly.
+		ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+	},
 	emailAndPassword: { enabled: false },
 	socialProviders,
 	// `username` is populated server-side from the OAuth profile (mapProfileToUser),
