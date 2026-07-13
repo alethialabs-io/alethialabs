@@ -293,6 +293,11 @@ export interface IacScanReport {
 // (lib/crypto/secrets.ts). The plaintext is a JSON map of {fieldKey: value}.
 export interface EncryptedSecret {
 	v: number;
+	// Key id (keyring) that sealed this envelope — lets a leaked key be rotated online without
+	// downtime (decryption selects the matching key). ABSENT on legacy ciphertext written before
+	// rotation existed; those decrypt under the active ALETHIA_CRED_ENCRYPTION_KEY. New writes
+	// always stamp the active kid. See lib/crypto/secrets.ts.
+	kid?: string;
 	iv: string;
 	tag: string;
 	data: string;

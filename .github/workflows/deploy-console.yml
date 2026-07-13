@@ -411,6 +411,14 @@ jobs:
             emit BETTER_AUTH_SECRET
             emit CLI_JWT_SECRET
             emit ALETHIA_CRED_ENCRYPTION_KEY
+            # Credential-encryption key id (keyring) for ONLINE key rotation. Defaults to "1" if the
+            # vault key is absent (secrets.ts falls back), so this emit is safe even when unset.
+            emit ALETHIA_CRED_ENCRYPTION_KID
+            # To ROTATE the credential key with no downtime: add the previous active key to the vault as
+            # ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>, add an `emit ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>`
+            # line here, set the new active key + bump ALETHIA_CRED_ENCRYPTION_KID, deploy, then run
+            # `pnpm -F console db:reencrypt` on the box. Drop the retired key + its emit line once every
+            # row has been re-encrypted. See lib/crypto/secrets.ts for the runbook + ordering.
             echo "ALETHIA_DB_USER=alethia"
             echo "ALETHIA_DB_NAME=alethia"
             emit ALETHIA_DB_PASSWORD
