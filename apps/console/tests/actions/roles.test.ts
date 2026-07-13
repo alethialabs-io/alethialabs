@@ -200,6 +200,7 @@ describe("createRole", () => {
 		expect(valuesCalls[0]).toEqual({
 			organization_id: "org-1",
 			name: "Eng",
+			description: null,
 			is_builtin: false,
 		});
 		// Second insert is one rolePermission row per sanitised key.
@@ -259,7 +260,7 @@ describe("updateRole", () => {
 
 		await updateRole("r-1", "Renamed", ["org:view", "junk:key"]);
 
-		expect(setSpy).toHaveBeenCalledWith({ name: "Renamed" });
+		expect(setSpy).toHaveBeenCalledWith({ name: "Renamed", description: null });
 		expect(deleteTables).toHaveLength(1); // old permissions cleared
 		expect(valuesCalls[0]).toEqual([{ role_id: "r-1", permission_key: "org:view" }]);
 		expect(resyncRole).toHaveBeenCalledWith("r-1");
