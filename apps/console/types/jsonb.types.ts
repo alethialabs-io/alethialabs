@@ -686,6 +686,21 @@ export interface ClassificationEnforcement {
 	min_approvals: number;
 }
 
+/**
+ * The frozen per-dimension classification captured into a job's `config_snapshot` at
+ * enqueue time (B1.1). Keyed by classification dimension `key`; each entry is the sorted,
+ * de-duplicated list of assigned value slugs on that dimension. Environment-level
+ * assignments OVERRIDE the project's values per dimension (the environment is the more
+ * specific scope); dimensions the environment doesn't touch inherit the project's values.
+ * Keys and value arrays are sorted so the snapshot's `configuration_hash` is deterministic
+ * regardless of DB row order. The runner (B1.2+) maps this onto per-cloud resource
+ * tags/labels. Built by `resolveClassificationSnapshot` (lib/classification/snapshot.ts).
+ */
+export interface ClassificationSnapshot {
+	/** dimension `key` → sorted, de-duplicated assigned value slugs */
+	[dimension: string]: string[];
+}
+
 // ============================================================
 // Environment promotion (Phase 2). Stored on environment_promotions / _protection_rules.
 // ============================================================
