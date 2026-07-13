@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
 	COMMUNITY_ENTITLEMENTS,
 	isBillingActive,
+	isManualGrantExpired,
 	planEntitlements,
 	resolvePlanEntitlements,
 } from "@/lib/billing/plan";
@@ -87,5 +88,49 @@ describe("resolvePlanEntitlements", () => {
 		expect(resolvePlanEntitlements("team", "none")).toEqual(
 			COMMUNITY_ENTITLEMENTS,
 		);
+	});
+});
+
+describe("isManualGrantExpired", () => {
+	const now = new Date("2026-07-13T00:00:00Z");
+	const past = new Date("2026-07-01T00:00:00Z");
+	const future = new Date("2026-08-01T00:00:00Z");
+
+	it("lapses an off-Stripe grant whose term end has passed", () => {
+		expect(
+			isManualGrantExpired(
+				{ stripeSubscriptionId: null, currentPeriodEnd: past },
+				now,
+			),
+		).toBe(true);
+	});
+
+	it("keeps an off-Stripe grant whose term is still running", () => {
+		expect(
+			isManualGrantExpired(
+				{ stripeSubscriptionId: null, currentPeriodEnd: future },
+				now,
+			),
+		).toBe(false);
+	});
+
+	it("never lapses an open-ended grant (no term end)", () => {
+		expect(
+			isManualGrantExpired(
+				{ stripeSubscriptionId: null, currentPeriodEnd: null },
+				now,
+			),
+		).toBe(false);
+	});
+
+	it("never touches a Stripe-backed subscription, even past its period end", () => {
+		// A paying customer's renewal date is the webhook's concern — a late renewal event
+		// must not flicker them down to community. Only off-Stripe grants lapse here.
+		expect(
+			isManualGrantExpired(
+				{ stripeSubscriptionId: "sub_123", currentPeriodEnd: past },
+				now,
+			),
+		).toBe(false);
 	});
 });
