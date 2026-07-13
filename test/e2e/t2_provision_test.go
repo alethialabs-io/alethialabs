@@ -115,6 +115,25 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	credsOK, credsMsg := p.credsPresent()
 	t2RequireOrSkip(t, credsOK, credsMsg)
 
+	// ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6) — the customer-repo half. Opt-in:
+	// a fully-absent config is a clean skip (base T2 A0.1–A0.5 still proves), but a REQUIRED
+	// run (the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is set)
+	// or a PARTIAL config is a HARD FAIL — a half-wired secret can never silently disable it.
+	// Resolved here (before seeding) so a misconfig fails fast, and so the same config drives
+	// both the seeded snapshot and the assertion. Intentionally AFTER the provider-creds gate
+	// above: "required" means "if the base T2 proof runs, the repos proof must too" — with no
+	// cloud creds there is no cluster to prove anything on, so the whole test skips first. ──
+	repos := t2ArgoReposFromEnv()
+	reposEnabled, reposErr := repos.decide()
+	if reposErr != nil {
+		t.Fatalf("A0.6: %v", reposErr)
+	}
+	if reposEnabled {
+		t.Logf("A0.6: ArgoCD-with-repos ENABLED — apps repo %q + BYO chart repo %q will be wired and asserted", repos.appsRepo, repos.byoChartRepo)
+	} else {
+		t.Log("A0.6: ArgoCD-with-repos SKIPPED — no apps/BYO repo configured (set ALETHIA_E2E_ARGO_APPS_REPO + ALETHIA_E2E_ARGO_BYO_CHART_REPO + ALETHIA_E2E_GIT_TOKEN). Base T2 proof still runs.")
+	}
+
 	root := t2RepoRoot(t)
 	waitTimeout := resolveT2WaitTimeout(p)
 	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
@@ -169,7 +188,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// over HTTP from this same server.
 	t.Cleanup(cp.Close)
 
-	jobID, err := seedT2DeployJob(ctx, cp, project, env, provider, region)
+	jobID, err := seedT2DeployJob(ctx, cp, project, env, provider, region, repos, reposEnabled)
 	if err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
@@ -305,7 +324,43 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
 	}
 	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
-	if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
+
+	if reposEnabled {
+		// (7) ArgoCD-WITH-REPOS + BYO Helm CONVERGED (BYOC A0.6) — the #1 ask. The repo-apps
+		//     "apps" app-of-apps and the repo-byo "addon-<id>" chart must be GENUINELY in the
+		//     derived set (fail-closed, never hardcoded — a broken wiring yields an empty
+		//     derivation and fails here), their credential Secrets must be present (proving the
+		//     credential was seeded, without ever reading the token), and every expected app —
+		//     including the hardened manual-sync BYO chart, synced over its CR — must reach
+		//     Healthy+Synced.
+		byoApp := repos.byoAppName()
+		if e := t2AssertContains(expectedApps, "apps"); e != nil {
+			t.Fatalf("A0.6 repo-apps: %v", e)
+		}
+		if e := t2AssertContains(expectedApps, byoApp); e != nil {
+			t.Fatalf("A0.6 repo-byo: %v", e)
+		}
+		if e := assertRepoCredentialSecret(ctx, kc, "repo-apps"); e != nil {
+			t.Fatalf("A0.6 repo-apps credential: %v", e)
+		}
+		if e := assertRepoCredentialSecret(ctx, kc, repos.byoSecretName()); e != nil {
+			t.Fatalf("A0.6 repo-byo credential: %v", e)
+		}
+		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO synced over its CR)...", byoApp)
+		if e := AssertArgoReposConverge(ctx, kc, expectedApps, []string{byoApp}, ArgoAssertTimeout()); e != nil {
+			t.Fatalf("A0.6 ArgoCD-with-repos convergence failed: %v", e)
+		}
+		// Not vacuous: both repo-sourced apps must MANAGE ≥1 resource — an empty repo/chart
+		// renders nothing yet reports Healthy+Synced, which would prove a credentialed clone but
+		// NOT that GitOps actually deployed a workload.
+		if e := assertArgoAppManagesResources(ctx, kc, "apps"); e != nil {
+			t.Fatalf("A0.6 repo-apps workload: %v", e)
+		}
+		if e := assertArgoAppManagesResources(ctx, kc, byoApp); e != nil {
+			t.Fatalf("A0.6 repo-byo workload: %v", e)
+		}
+		t.Logf("A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra")
+	} else if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
 	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
@@ -348,8 +403,10 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 // runner; the runner reads the provider from the snapshot. Node sizing defaults to the
 // template's cheapest cluster (1 control plane + 1 worker); ALETHIA_E2E_CLUSTER_JSON
 // (merged into the `cluster` block via t2MergeClusterJSON) lets each cloud's workflow
-// pin its own cheapest shape. Reuses the control plane's own pool (same package).
-func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string) (string, error) {
+// pin its own cheapest shape. When reposEnabled (BYOC A0.6), it also wires the
+// apps-destination repo + appends the BYO chart add-on (repos.applyToSnapshot). Reuses the
+// control plane's own pool (same package).
+func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool) (string, error) {
 	jobID := newUUID()
 	snap := map[string]any{
 		"id":                "e2e-" + env,
@@ -358,6 +415,13 @@ func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provid
 		"region":            region,
 		"provider":          provider,
 		"addons":            seedAddOns(),
+	}
+	// A0.6: wire the apps-destination repo + append the BYO chart add-on when the
+	// ArgoCD-with-repos proof is enabled. The git token is NOT written into the snapshot — it
+	// crosses via the control plane's git-token handler (see t2_argo_repos.go), so it never
+	// lands in the persisted config_snapshot.
+	if reposEnabled {
+		repos.applyToSnapshot(snap)
 	}
 	// Merge the per-cloud cluster shape override (instance types, node counts,
 	// enable_karpenter, …) into the snapshot's `cluster` block. Malformed JSON is a loud

@@ -63,6 +63,45 @@ the workflow's *Gate on the provider secret* step with that provider's secret. T
 harness already keys off `ALETHIA_E2E_PROVIDER`; only the credential env + template wiring
 differ.
 
+### Optional: the ArgoCD-with-repos + BYO Helm proof (BYOC A0.6)
+
+On top of the base T2 proof (which asserts the always-rendered platform Applications + a
+seeded marketplace add-on converge), the nightly can also prove the **customer-repo** half:
+a real apps-destination repo and a bring-your-own Helm chart repo, wired as **credentialed**
+ArgoCD Applications (`repo-apps` → the `apps` app-of-apps, `repo-byo-*` → the chart's
+`addon-<id>` Application), converging **Healthy+Synced** — asserted over CRs only, never an
+ArgoCD URL. This half is **opt-in and additive**: leave it unset and the base proof runs
+unchanged; set it partially and a required run **hard-fails** (a half-wired secret can never
+silently disable the assertion).
+
+To enable it, add these repo **variables** (Settings → Secrets and variables → Actions →
+*Variables*) and one **secret**:
+
+| Name | Kind | Purpose |
+|------|------|---------|
+| `E2E_ARGO_APPS_REPO` | var | HTTPS URL of the apps-destination repo. Its **root** manifests are synced by the `apps` app; it must contain **at least one** valid manifest (e.g. a `Namespace` or `ConfigMap`) — the proof asserts the app manages ≥1 resource, so an empty repo (which would trivially report Healthy+Synced) fails. Presence of this var flips the proof to **required**. |
+| `E2E_ARGO_BYO_CHART_REPO` | var | HTTPS URL of a git repo containing a Helm chart. |
+| `E2E_ARGO_BYO_CHART_PATH` | var | Chart directory within that repo (default `chart`). |
+| `E2E_ARGO_BYO_CHART_REVISION` | var | Git ref for the chart (default `HEAD`). |
+| `E2E_ARGO_BYO_CHART_NAMESPACE` | var | Namespace the chart installs into (default `byo-e2e`). |
+| `E2E_GIT_TOKEN` | **secret** | A git token (PAT / installation token) with **read** access to both repos. Served only via the control plane's git-token API — it is **never** written into the persisted `config_snapshot`, never logged (go-git uses BasicAuth, credential Secrets are read `-o name` only), and never uploaded (A0.0 metadata denylist). |
+
+**BYO chart constraints (important):** bring-your-own charts sync into a **hardened,
+default-deny** ArgoCD AppProject — `clusterResourceWhitelist: []` (no CRDs, ClusterRoles,
+Namespaces, webhooks) and an RBAC/ServiceAccount blacklist. The chart at
+`E2E_ARGO_BYO_CHART_PATH` must therefore create **only namespaced resources** in its target
+namespace (e.g. a ConfigMap + Deployment + Service) with **no ServiceAccount/Role/RoleBinding**
+(set `serviceAccount.create=false` for charts like podinfo). The chart must render **at least one**
+resource (the proof asserts the app manages ≥1 — an empty chart would trivially green). A chart
+that needs cluster-scoped or RBAC objects will (correctly) fail to sync and red the nightly. A BYO
+chart Application is
+**manual-sync** by design (an operator reviews an untrusted chart first); the harness issues
+the sync over the Application CR, mirroring that operator action, then asserts convergence.
+
+**Tip:** the apps repo may also contain an empty `addons/` directory — the deploy renders a
+same-repo `addons` app-of-apps at that path; it is not asserted, but an existing (even empty)
+directory keeps it Healthy in the captured proof instead of erroring on a missing path.
+
 ## Teardown is guaranteed — and never account-wide
 
 The Hetzner account is **shared with production**; an unfiltered delete once nearly wiped

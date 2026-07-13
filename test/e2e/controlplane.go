@@ -37,6 +37,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -458,7 +459,17 @@ func (cp *ControlPlane) handleGitToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// No git source for the local template — return an explicit null token (200).
+	// Production-faithful git-token path (BYOC A0.6): the runner fetches the apps/BYO-chart
+	// credential HERE (POST /jobs/{id}/git-token) exactly as it does against the console —
+	// the token is NEVER carried in the config_snapshot (which is persisted to Postgres), so it
+	// cannot land in a proof/DB dump. It is served straight from the T2 process env
+	// (ALETHIA_E2E_GIT_TOKEN, wired from the CI secret) and crosses to the sandbox child via the
+	// child's allowlisted env, not the workdir payload. Unset ⇒ an explicit null token (200), the
+	// no-git-source default the lean local/kind path relies on.
+	if tok := strings.TrimSpace(os.Getenv(envArgoGitToken)); tok != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"token": tok})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": nil})
 }
 
