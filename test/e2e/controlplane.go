@@ -135,10 +135,40 @@ func (cp *ControlPlane) SeedRunner(ctx context.Context) (id, token string, err e
 	return id, token, nil
 }
 
+// seedAddOns returns the tiny managed marketplace add-on every provisioning tier
+// seeds into its DEPLOY config snapshot (ProjectConfig.AddOns, json "addons" — the
+// exact camelCase shape the console's resolveAddOnInstall emits). It is the TEETH
+// of the ArgoCD health assertion: on the lean kind/hetzner paths every infra-service
+// decision that ships an Application is honestly "skipped", so without it the
+// derived expected set would be empty and DeriveExpectedArgoApps would (rightly)
+// refuse the vacuous assertion. reloader is the lightest catalog chart (one small
+// deployment, no CRD storms, no cloud dependencies), pinned to the same version as
+// apps/console/lib/addons/catalog.ts, and PROVEN to converge Healthy+Synced on a
+// 1-node kind cluster end-to-end. (sealed-secrets was the intended second seed, but
+// the assertion's first real run caught its catalog chartRepo returning 404 —
+// bitnami-labs.github.io/sealed-secrets is dead upstream, so that add-on can never
+// sync anywhere; catalog fix tracked separately. Seed only charts whose repos are
+// proven alive, or the tier reds on upstream rot rather than on our spine.)
+func seedAddOns() []types.AddOnInstall {
+	return []types.AddOnInstall{
+		{
+			ID:        "reloader",
+			Mode:      "managed",
+			ChartRepo: "https://stakater.github.io/stakater-charts",
+			Chart:     "reloader",
+			Version:   "1.1.0",
+			Namespace: "reloader",
+			Values:    map[string]interface{}{},
+			SyncWave:  1,
+		},
+	}
+}
+
 // SeedDeployJob enqueues a QUEUED DEPLOY job whose config_snapshot targets the local
-// kind template (driven as Provider="hetzner"). provider column is left NULL so the
-// claim's provider filter passes for any runner; the runner reads the provider from
-// the snapshot. Returns the job id.
+// kind template (driven as Provider="hetzner") with the seed add-ons enabled (they
+// give the ArgoCD health assertion teeth — see seedAddOns). provider column is left
+// NULL so the claim's provider filter passes for any runner; the runner reads the
+// provider from the snapshot. Returns the job id.
 func (cp *ControlPlane) SeedDeployJob(ctx context.Context, project, env string) (jobID string, err error) {
 	jobID = newUUID()
 	userID := newUUID()
@@ -148,6 +178,7 @@ func (cp *ControlPlane) SeedDeployJob(ctx context.Context, project, env string) 
 		"environment_stage": env,
 		"region":            "local",
 		"provider":          "hetzner", // reuse the Talos post-apply path (talos_* outputs)
+		"addons":            seedAddOns(),
 	})
 	if err != nil {
 		return "", err
