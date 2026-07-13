@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	ADDON_CATALOG,
+	ADDON_COUNT,
 	deepMerge,
 	getAddOn,
 	parseValuesYaml,
@@ -179,6 +180,16 @@ describe("parseValuesYaml", () => {
 });
 
 describe("ADDON_CATALOG integrity", () => {
+	// The catalog is the single source of truth for the add-on count. This asserts the array
+	// LENGTH (never grep the file — helper code like `defineAddOn` yields false `id:` matches).
+	// When you ADD or REMOVE an add-on, update the number below AND any doc/copy that cites a
+	// count (prefer countless phrasing — "the add-on catalog"). ADDON_COUNT is derived, so it
+	// tracks the array automatically; this test just pins the expected total.
+	it("has exactly 19 add-ons (update this + any doc citing a count when changing the catalog)", () => {
+		expect(ADDON_CATALOG.length).toBe(19);
+		expect(ADDON_COUNT).toBe(ADDON_CATALOG.length);
+	});
+
 	it("every entry has unique id, pinned chart coords, and a fields array", () => {
 		const ids = new Set<string>();
 		for (const a of ADDON_CATALOG) {

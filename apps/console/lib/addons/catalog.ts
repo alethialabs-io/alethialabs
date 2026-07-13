@@ -49,7 +49,14 @@ function defineAddOn<S extends z.ZodTypeAny>(def: AddOnDef<S>): AddOnDef<S> {
 	return def;
 }
 
-/** The curated catalog. Ordered for display; grouped by category in the UI. */
+/**
+ * The curated catalog. Ordered for display; grouped by category in the UI.
+ *
+ * This array is the SINGLE SOURCE OF TRUTH for the add-on count — never hard-code a number in
+ * docs or copy. Read `ADDON_COUNT` (or `ADDON_CATALOG.length`) in code, and prefer countless
+ * phrasing ("the add-on catalog") in prose. `tests/lib/addons-catalog.test.ts` guards the count
+ * so it can't silently drift.
+ */
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
 		id: "kube-prometheus-stack",
@@ -562,6 +569,12 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		syncWave: 2,
 	}),
 ];
+
+/**
+ * The number of add-ons in the catalog, derived from the array so it can never drift from the
+ * declared entries. Consume this (not a literal) anywhere a count is shown.
+ */
+export const ADDON_COUNT: number = ADDON_CATALOG.length;
 
 /** A catalog add-on id (the `project_addons.addon_id`). */
 export type AddOnId = string;
