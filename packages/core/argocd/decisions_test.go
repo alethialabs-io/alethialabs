@@ -24,8 +24,8 @@ func decisionFor(t *testing.T, decisions []InfraServiceDecision, service string)
 // or skipped — must carry a non-empty reason.
 func assertAllReasonsNonEmpty(t *testing.T, decisions []InfraServiceDecision) {
 	t.Helper()
-	if len(decisions) != 5 {
-		t.Fatalf("expected 5 decisions (one per service), got %d", len(decisions))
+	if len(decisions) != 6 {
+		t.Fatalf("expected 6 decisions (one per service), got %d", len(decisions))
 	}
 	for _, d := range decisions {
 		if strings.TrimSpace(d.Reason) == "" {
@@ -181,5 +181,25 @@ func TestInfraServiceDecisions_GCPMissingWorkloadIdentity(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(edns.Reason), "workload identity") {
 		t.Errorf("gcp external-dns skip reason should mention workload identity, got %q", edns.Reason)
+	}
+}
+
+func TestInfraServiceDecisions_AppsRepo(t *testing.T) {
+	// BYOC A0.6: the apps-repo decision mirrors the user-apps.yaml render gate
+	// ({{- if .AppsDestinationRepo }}). With a repo wired it is "installed" (repo-apps
+	// credentialed + the "apps" app-of-apps rendered); with none it is a clean "skipped".
+	// The T2 harness derives the "apps" Application from THIS decision, so the gate must be
+	// exact — never installed without an actual repo.
+	with := decisionFor(t, InfraServiceDecisions(&InfraFacts{AppsDestinationRepo: "https://github.com/acme/apps"}), "apps-repo")
+	if with.Status != infraStatusInstalled {
+		t.Errorf("apps-repo (repo wired): want installed, got %s (%s)", with.Status, with.Reason)
+	}
+	if !strings.Contains(strings.ToLower(with.Reason), "repo-apps") {
+		t.Errorf("apps-repo installed reason should name the repo-apps credential, got %q", with.Reason)
+	}
+
+	without := decisionFor(t, InfraServiceDecisions(&InfraFacts{}), "apps-repo")
+	if without.Status != infraStatusSkipped {
+		t.Errorf("apps-repo (no repo): want skipped, got %s (%s)", without.Status, without.Reason)
 	}
 }

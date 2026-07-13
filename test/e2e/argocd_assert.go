@@ -69,6 +69,14 @@ var infraServiceArgoApps = map[string]string{
 	"external-secrets-store": "external-secrets-operator",
 	// ingressDecision is "installed" only on AWS, where it means the ALB controller.
 	"ingress": "aws-load-balancer-controller",
+	// appsRepoDecision is "installed" when the project wired an apps-destination repo: the
+	// runner credentials ArgoCD to it (the shared "repo-apps" repository Secret) and renders
+	// the credentialed "apps" app-of-apps that syncs the customer's repo (user-apps.yaml). This
+	// is the repo-apps half of the ArgoCD-WITH-REPOS proof (BYOC A0.6) — deriving it here (never
+	// hardcoding it) keeps the expected set honest with what the deploy actually shipped. The BYO
+	// (repo-byo-*) half rides the addon_status keys: a bring-your-own git-source chart is a
+	// managed add-on, so its "addon-<id>" Application is already in the derived set.
+	"apps-repo": "apps",
 }
 
 // infraServiceNoApp whitelists the decisions that genuinely ship NO ArgoCD

@@ -50,7 +50,7 @@ cat > "$out/RUN-NOTES.md" <<EOF
 - [ ] \`nodes.txt\` — every node Ready (the #288 reachability gate)
 - [ ] \`kube-system.txt\` — Cilium + hcloud-CCM pods Running (the #301 CNI bootstrap)
 - [ ] \`pods.txt\` — no CrashLoopBackOff (esp. argocd-redis; the #308 pre-seed)
-- [ ] \`argocd-apps.txt\` — infra-services + addons Healthy/Synced
+- [ ] \`argocd-apps.txt\` — infra-services + addons Healthy/Synced (with the A0.6 repos proof on: also the credentialed \`apps\` (repo-apps) + \`addon-byo-e2e\` (repo-byo-*) Applications)
 - [ ] Attach: the DEPLOY job's full SSE log as \`deploy-log.txt\`
 - [ ] Attach: the ed25519 verify receipt as \`receipt.json\` (Evidence → download)
 

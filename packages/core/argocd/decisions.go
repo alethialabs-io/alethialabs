@@ -13,7 +13,7 @@ import "fmt"
 // the console/CLI can render it truthfully instead of leaving the operator guessing.
 type InfraServiceDecision struct {
 	// Service is the infra service the decision is about.
-	// One of: "external-dns" | "external-secrets-store" | "ingress" | "storage-class" | "argocd-url".
+	// One of: "external-dns" | "external-secrets-store" | "ingress" | "storage-class" | "argocd-url" | "apps-repo".
 	Service string `json:"service"`
 	// Status is "installed" or "skipped".
 	Status string `json:"status"`
@@ -38,7 +38,28 @@ func InfraServiceDecisions(f *InfraFacts) []InfraServiceDecision {
 		ingressDecision(f),
 		storageClassDecision(f),
 		argocdURLDecision(f),
+		appsRepoDecision(f),
 	}
+}
+
+// appsRepoDecision mirrors the user-apps.yaml render gate ({{- if .AppsDestinationRepo }}):
+// when the project wired an apps-destination repo, the runner registers the shared "repo-apps"
+// ArgoCD repository credential (install.go ConfigureRepoCredentials) AND renders the credentialed
+// "apps" Application (an app-of-apps syncing the customer's repo). Recording it as an honest
+// install/skip decision — from the SAME AppsDestinationRepo gate the render uses — is what lets a
+// tier DERIVE the "apps" Application into its expected ArgoCD health set instead of hardcoding it
+// (see the T2 harness DeriveExpectedArgoApps + the infraServiceArgoApps map, BYOC A0.6). A project
+// with no apps repo skips it (GitOps is opt-in), and the decision states so.
+func appsRepoDecision(f *InfraFacts) InfraServiceDecision {
+	d := InfraServiceDecision{Service: "apps-repo"}
+	if f.AppsDestinationRepo != "" {
+		d.Status = infraStatusInstalled
+		d.Reason = "installed (repo-apps) — ArgoCD is credentialed to the apps-destination repo and syncs it via the \"apps\" Application."
+		return d
+	}
+	d.Status = infraStatusSkipped
+	d.Reason = "no apps-destination repo is wired for this project — connect a git repo to sync applications via GitOps."
+	return d
 }
 
 // externalDNSDecision mirrors the external-dns render gate: installed only when DNS is
