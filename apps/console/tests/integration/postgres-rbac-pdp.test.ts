@@ -26,7 +26,7 @@ import {
 	teamMember,
 	user,
 } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
 // Stable per-run fixture ids (unique → never collide with other rows / parallel runs).
 const ORG = randomUUID();
@@ -112,7 +112,7 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 	afterAll(async () => {
 		const db = getServiceDb();
 		await db.delete(grants).where(eq(grants.org_id, ORG));
-		await db.delete(authzActivityLog).where(eq(authzActivityLog.org_id, ORG));
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, ORG));
 		await db
 			.delete(resourceHierarchy)
 			.where(inArray(resourceHierarchy.parent_id, [ORG]));
