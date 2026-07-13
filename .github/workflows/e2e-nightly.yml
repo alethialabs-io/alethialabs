@@ -196,10 +196,12 @@ jobs:
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
       #    normally — rather than the whole job hitting its cap. ──
+      # 45m step / 50m go-timeout: the test's own ctx is 40m (deploy wait 25m + the ArgoCD
+      # Healthy+Synced convergence assertion 8m + build headroom) plus teardown margin.
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: 40
+        timeout-minutes: 45
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -209,7 +211,7 @@ jobs:
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
         run: |
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout 45m -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout 50m -v
 
       # ── Capture the committable proof from the SUCCESSFUL run (before teardown).
       #    The runner wrote a host-usable kubeconfig to $HOME/.alethia/kubeconfig. ──

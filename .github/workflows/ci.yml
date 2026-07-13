@@ -399,14 +399,20 @@ jobs:
         if: matrix.module == 'packages/core'
         working-directory: ${{ matrix.module }}
         run: go vet -tags=e2e_local ./provisioner/
-      # Compile-check the T1 harness (test/e2e — a SEPARATE module outside go.work, run only
-      # by the merge-queue provision-e2e job). Without this, a break in controlplane.go /
-      # t1_provision_test.go would escape every per-PR check and only surface in the merge
-      # queue, blocking it for everyone rather than failing the offending PR (parity with the
-      # e2e_local keystone above).
-      - name: Vet e2e_t1 harness (compile check)
+      # Compile-check the T1/T2 harness (test/e2e — a SEPARATE module outside go.work, run
+      # only by the merge-queue provision-e2e job / the nightly). Without this, a break in
+      # controlplane.go / t1_provision_test.go would escape every per-PR check and only
+      # surface in the merge queue, blocking it for everyone rather than failing the
+      # offending PR (parity with the e2e_local keystone above). The untagged `go test` runs
+      # the harness's PURE unit tests (argocd_assert_test.go — the ArgoCD health assertion's
+      # parse/evaluate/derive negative paths; no docker/kind/postgres needed).
+      - name: Vet + unit-test e2e harness (compile check + pure logic)
         if: matrix.module == 'packages/core'
-        run: cd test/e2e && GOWORK=off go vet -tags=e2e_t1 ./...
+        run: |
+          cd test/e2e
+          GOWORK=off go vet -tags=e2e_t1 ./...
+          GOWORK=off go vet -tags=e2e_t2 ./...
+          GOWORK=off go test ./...
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}
@@ -480,9 +486,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
         run: pnpm -F console db:migrate
+      # 25m: the test's own ctx is 20m (deploy wait 8m + ArgoCD Healthy+Synced
+      # convergence assertion 8m + build/boot headroom) plus teardown margin.
       - name: T1 — real runner claims from the control plane and provisions kind
         working-directory: test/e2e
-        run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 20m -v
+        run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 25m -v
       - name: Teardown any leaked kind clusters (safety net)
         if: always()
         run: kind delete clusters --all || true

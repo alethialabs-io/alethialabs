@@ -55,6 +55,12 @@
 //     sha256 whose ed25519 signature verifies under our pub.
 //   - in-process-only work → we assert a status callback reached `jobs` and log lines
 //     reached `job_logs` over the real HTTP paths.
+//   - ArgoCD merely INSTALLED but broken (an app stuck Progressing/Degraded/OutOfSync
+//     used to pass this tier) → every expected Application must reach Healthy+Synced
+//     via the runner-written kubeconfig, bounded by ALETHIA_E2E_ARGO_TIMEOUT. The
+//     expected set is DERIVED from the persisted infra_services + addon_status
+//     metadata, and an EMPTY derived set FAILS (never a vacuous assertion) — the
+//     seed add-ons guarantee it never is (see argocd_assert.go + seedAddOns).
 package e2e
 
 import (
@@ -102,7 +108,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	t2RequireOrSkip(t, hcloudToken != "", "HCLOUD_TOKEN is unset (the hetzner API token from repo secrets)")
 
 	root := t2RepoRoot(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// 40m: up to t2WaitTimeout (25m) for the deploy plus ArgoAssertTimeout (8m) for
+	// the ArgoCD convergence assertion, with headroom for the runner build.
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
 
 	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
@@ -272,14 +280,30 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     $HOME/.alethia/kubeconfig (ConfigureKubeconfig). Read it and prove a node is
 	//     Ready via a fresh kubectl — the workflow's capture-e1.sh reuses this same
 	//     kubeconfig for the committed proof.
-	assertT2KubeconfigNodesReady(t, ctx)
+	kc := assertT2KubeconfigNodesReady(t, ctx)
+
+	// (6) GitOps actually CONVERGED (BYOC A0.2): every ArgoCD Application the deploy
+	//     is on record as having shipped — derived from the persisted infra_services +
+	//     addon_status metadata, never hardcoded, never empty — must reach Healthy AND
+	//     Synced on the real cluster. A degraded/missing app fails the nightly instead
+	//     of sliding by as "installed".
+	expectedApps, err := DeriveExpectedArgoApps(metaRaw)
+	if err != nil {
+		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
+	}
+	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
+	if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
+		t.Fatalf("ArgoCD application health assertion failed: %v", err)
+	}
+	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
 }
 
-// assertT2KubeconfigNodesReady reads the runner-written kubeconfig and asserts at
-// least one Ready node via a fresh kubectl. (For a real cloud the kubeconfig is a
-// Talos output the runner persisted, not a `kind` side-effect — so we read it from
+// assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least
+// one Ready node via a fresh kubectl, and returns the kubeconfig path for follow-on
+// assertions (the ArgoCD health check). (For a real cloud the kubeconfig is a Talos
+// output the runner persisted, not a `kind` side-effect — so we read it from
 // $HOME/.alethia/kubeconfig rather than shelling `kind get kubeconfig`.)
-func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) {
+func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -301,13 +325,16 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) {
 		t.Fatalf("no Ready node via the runner kubeconfig:\n%s", out)
 	}
 	t.Logf("kubectl get nodes:\n%s", out)
+	return kc
 }
 
 // seedT2DeployJob enqueues a QUEUED DEPLOY job whose config_snapshot targets the REAL
-// cloud template at a REAL region. The `provider` column is left NULL so the atomic
-// claim's provider filter passes for the seeded runner; the runner reads the provider
-// from the snapshot. Node sizing is left at the template default (1 control plane + 1
-// worker) — the cheapest cluster. Reuses the control plane's own pool (same package).
+// cloud template at a REAL region, with the seed add-ons enabled (they give the
+// ArgoCD health assertion teeth — see seedAddOns in controlplane.go). The `provider`
+// column is left NULL so the atomic claim's provider filter passes for the seeded
+// runner; the runner reads the provider from the snapshot. Node sizing is left at the
+// template default (1 control plane + 1 worker) — the cheapest cluster. Reuses the
+// control plane's own pool (same package).
 func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string) (string, error) {
 	jobID := newUUID()
 	snapshot, err := json.Marshal(map[string]any{
@@ -316,6 +343,7 @@ func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provid
 		"environment_stage": env,
 		"region":            region,
 		"provider":          provider,
+		"addons":            seedAddOns(),
 	})
 	if err != nil {
 		return "", err
