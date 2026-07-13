@@ -230,6 +230,14 @@ export function register(core: CoreContext): EnterpriseModule {
 					// "member"; the PDP then maps it to Alethia's viewer-scoped access.
 					defaultRole: "member",
 				},
+				// Prove the customer controls the domain before we trust the IdP for it.
+				// This gates TWO things in @better-auth/sso: (1) sign-in through a provider
+				// whose domain isn't verified is rejected, and (2) JIT account-linking by
+				// email domain ("isTrustedProvider") — without it, registering a provider for
+				// a domain you don't own would let you link into existing accounts on it.
+				// The token is a DNS TXT record at `_alethia-sso-<providerId>`; the plugin
+				// stores it in the core `verification` table (no schema change needed).
+				domainVerification: { enabled: true, tokenPrefix: "alethia-sso" },
 			}),
 
 			// Entitlement gate for SSO registration. The @better-auth/sso plugin enforces
