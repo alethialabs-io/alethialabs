@@ -111,7 +111,22 @@ export const authzActivityLog = pgTable(
 		reason: text(),
 		ts: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
-	(t) => [index("idx_authz_activity_org").on(t.org_id)],
+	(t) => [
+		// The hot read (app/server/actions/activity.ts + api/cli/activity) is
+		// `WHERE org_id = ? [AND id < ?] ORDER BY id DESC LIMIT n` — a per-org keyset
+		// page, newest first. A composite (org_id, id DESC) btree serves the org filter,
+		// the `id <` cursor bound, AND the descending order as a single index range scan,
+		// so paging is a bounded probe instead of an org-index scan + in-memory sort. This
+		// SUPERSEDES a standalone (org_id) index (a lone org filter is just a prefix of this
+		// one), so we don't keep the old idx_authz_activity_org — it would be redundant.
+		index("idx_authz_activity_org_id_desc").on(t.org_id, t.id.desc()),
+		// Retention GC (gc_authz_activity_log) range-scans `ts < now() - p_age` and takes the
+		// oldest first (ORDER BY ts) with no org predicate, so the (org_id, id) index above
+		// can't serve it — its leading org_id column is unconstrained. This ts btree
+		// (ascending, matching `ORDER BY ts`) turns the GC's range filter + ordered LIMIT into
+		// an index scan instead of a seq-scan + sort every pass. Mirrors idx_fleet_actions_created_at.
+		index("idx_authz_activity_ts").on(t.ts),
+	],
 );
 
 export type Permission = typeof permission.$inferSelect;

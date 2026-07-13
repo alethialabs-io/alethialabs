@@ -1236,6 +1236,36 @@ END;
 $$;
 GRANT EXECUTE ON FUNCTION public.gc_fleet_actions(INTERVAL, INTEGER) TO alethia_app;
 
+-- Delete authz_activity_log rows older than the retention window (default 365d). The PDP writes
+-- this append-only governance/audit log on EVERY enforce(), so unbounded it grows forever; a
+-- 365-day window keeps a full year of decisions/denials (SOC2-friendly audit retention) and
+-- trims the rest. Oldest first by ts; the ts-leading index (idx_authz_activity_ts) serves the
+-- range filter + ordered LIMIT as an index scan (the (org_id, id) read index CANNOT — its leading
+-- org_id column is unconstrained here), so an empty steady-state window costs one index probe
+-- instead of a seq scan every pass (mirrors gc_fleet_actions). FOR UPDATE SKIP LOCKED makes
+-- concurrent app instances safe: two loops racing the same window claim disjoint rows.
+CREATE OR REPLACE FUNCTION public.gc_authz_activity_log(
+    p_age INTERVAL DEFAULT INTERVAL '365 days', p_limit INTEGER DEFAULT 5000
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    WITH doomed AS (
+        SELECT al.id
+        FROM public.authz_activity_log al
+        WHERE al.ts < now() - p_age
+        ORDER BY al.ts
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM public.authz_activity_log al
+    USING doomed d
+    WHERE al.id = d.id;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.gc_authz_activity_log(INTERVAL, INTEGER) TO alethia_app;
+
 -- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
 -- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /
 -- runner_usage_sessions idiom), so the least-privilege alethia_app role — the one behind every

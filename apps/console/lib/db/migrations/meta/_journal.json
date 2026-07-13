@@ -603,6 +603,13 @@
       "when": 1783896488187,
       "tag": "0085_fair_warbird",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1783901216071,
+      "tag": "0086_needy_rumiko_fujikawa",
+      "breakpoints": true
     }
   ]
 }
