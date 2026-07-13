@@ -69,6 +69,7 @@
 		"@repo/brand": "workspace:*",
 		"@repo/email": "workspace:*",
 		"@repo/plan-catalog": "workspace:*",
+		"@repo/platform": "workspace:*",
 		"@repo/support": "workspace:*",
 		"@repo/ui": "workspace:*",
 		"@sentry/nextjs": "^10.65.0",

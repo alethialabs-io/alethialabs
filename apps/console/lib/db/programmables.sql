@@ -1383,3 +1383,42 @@ DO $$ BEGIN
     EXECUTE 'REVOKE ALL ON public.breakglass_session, public.breakglass_audit, public.breakglass_approval FROM alethia_app';
   END IF;
 END $$;
+
+-- ── Platform-operator plane (Enterprise contracts + their audit) ─────────────────────────────────
+-- SERVICE-ROLE ONLY, exactly like break-glass: RLS is enabled with NO app policy, so the
+-- least-privilege alethia_app role (the one behind every customer request) can neither read nor
+-- write these. They are written solely by the staff app (apps/admin) over the service connection;
+-- the console never touches them (it only owns the migration).
+ALTER TABLE public.enterprise_contract ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.platform_audit      ENABLE ROW LEVEL SECURITY;
+
+-- platform_audit is APPEND-ONLY (WORM). Unlike authz_activity_log this log has NO retention GC —
+-- there is no legitimate deleter — so the trigger is ABSOLUTE (the breakglass_audit pattern):
+-- UPDATE, DELETE and TRUNCATE are always rejected. Triggers are NOT bypassed by BYPASSRLS, so the
+-- row is immutable even against the service role that writes it. INSERT is untouched, so the
+-- attempt/result append path keeps working.
+CREATE OR REPLACE FUNCTION public.platform_audit_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'platform_audit is append-only: % is not permitted', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS platform_audit_no_mutate ON public.platform_audit;
+CREATE TRIGGER platform_audit_no_mutate
+  BEFORE UPDATE OR DELETE ON public.platform_audit
+  FOR EACH ROW EXECUTE FUNCTION public.platform_audit_immutable();
+
+DROP TRIGGER IF EXISTS platform_audit_no_truncate ON public.platform_audit;
+CREATE TRIGGER platform_audit_no_truncate
+  BEFORE TRUNCATE ON public.platform_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION public.platform_audit_immutable();
+
+-- Belt-and-braces: strip the mutation grants outright, and keep the app role out of both tables.
+REVOKE UPDATE, DELETE, TRUNCATE ON public.platform_audit FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE ALL ON public.enterprise_contract, public.platform_audit FROM alethia_app';
+  END IF;
+END $$;
