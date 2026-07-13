@@ -310,7 +310,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 
 	// (5) INDEPENDENT reachability: the runner wrote a host-usable kubeconfig to
 	//     $HOME/.alethia/kubeconfig (ConfigureKubeconfig). Read it and prove a node is
-	//     Ready via a fresh kubectl — the workflow's capture-e1.sh reuses this same
+	//     Ready via a fresh kubectl — the workflow's capture-proof.sh reuses this same
 	//     kubeconfig for the committed proof.
 	kc := assertT2KubeconfigNodesReady(t, ctx)
 

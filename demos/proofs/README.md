@@ -7,10 +7,42 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 Committable evidence that the provisioning spine works against **real** infrastructure
 — the honest "SUCCESS = a working cluster" artifact, not a screenshot. Each proof is a
-timestamped directory (`e1-<provider>/<UTC-stamp>/`) holding the cluster's state at the
-moment a `DEPLOY` job reached `SUCCESS`: node readiness, pod status, ArgoCD app health,
-the CNI/cloud-integration bootstrap, plus a `RUN-NOTES.md` template and (attached by
-hand) the deploy log and the ed25519 verify receipt.
+timestamped directory (`<provider>/<UTC-stamp>/`) capturing what the nightly `DEPLOY`
+run did: a structured `provision-summary.json` (resources added, nodes Ready, ArgoCD
+Healthy+Synced count, the signed-receipt plan hash, teardown confirmation, timings), a
+one-line `VERDICT.txt`, the scrubbed runner-log highlights (`summary.txt`), the verify
+receipt + control report pulled from the control plane (`receipt.json` /
+`verify-result.json`), and — on the success path — the cluster's state at the moment the
+job reached `SUCCESS` (node readiness, pod status, ArgoCD app health, the
+CNI/cloud-integration bootstrap).
+
+## Proof capture v2 — scrubbed, fail-closed, captured on pass **and** fail (BYOC A0.4)
+
+The bundle is produced by **`demos/proofs/capture-proof.sh <provider>`**, which runs on
+**any** T2 outcome (`if: always()`) — a red night is captured too, with its failure
+**stage** (e.g. `applying` / `argocd-ready`) recorded, so it is debuggable rather than an
+opaque failure. Every captured file is routed through **`demos/proofs/scrub.sh`**, a
+text-level port of the runner's A0.0 metadata denylist
+(`apps/runner/internal/agent/output_scrub.go`): it redacts exact secret **values** (the
+Hetzner/AWS/git tokens), PEM private-key blocks, and any denylisted `key: value` line
+(kubeconfig / talosconfig / `*client_key` / `password` / `*_token` / `*secret_value` …).
+The script then **fails closed** — an `assert_grep_clean` tripwire re-greps the finished
+bundle and exits non-zero (reddening the step, uploading nothing) if any secret survived
+(program **invariant 2**: nothing uploads unscrubbed). `scrub.sh --self-test` seeds a fake
+secret of every shape and proves the scrub + tripwire are non-vacuous; the nightly runs it
+unconditionally (no cloud/secret needed) so a denylist regression reds the workflow early.
+
+Because the T2 test tears the cluster down **in-process** (`t.Cleanup` → `RunDestroy`) when
+the go-test step ends — before the capture step — the cluster is usually already gone by
+capture time. So live `kubectl` state (nodes/pods/ArgoCD apps) is **best-effort**: the script
+probes reachability first and only dumps it if the cluster still answers. On the nightly the
+proof therefore rests on the authoritative signals that survive teardown: the **T2 outcome**
+(the test exits `success` *only* if it asserted the whole apply → Ready node → every ArgoCD
+Application Healthy+Synced chain), the runner-log markers (resources added, signed-receipt
+plan hash, destroy confirmation), and the signed receipt pulled from the control-plane DB.
+
+The legacy hand-run `capture-e1.sh` (success-only, unscrubbed, `e1-<provider>/` layout) is
+replaced by this.
 
 ## The two tiers
 
@@ -28,19 +60,20 @@ node). T1 proves the spine for free on kind; **T2 proves it against a genuine cl
 
 ## How the nightly captures land
 
-`.github/workflows/e2e-nightly.yml`, on a `SUCCESS`:
+`.github/workflows/e2e-nightly.yml`:
 
-1. runs `test/e2e/t2_provision_test.go` (`-tags=e2e_t2`) — the real cluster comes up and
-   the runner writes a host-usable kubeconfig to `$HOME/.alethia/kubeconfig`;
-2. runs **`./demos/proofs/capture-e1.sh <provider> nightly-<run_id>`** with that
-   kubeconfig, writing `demos/proofs/e1-<provider>/<UTC-stamp>/`;
+1. runs `test/e2e/t2_provision_test.go` (`-tags=e2e_t2`) — on success the real cluster comes
+   up and the runner writes a host-usable kubeconfig to `$HOME/.alethia/kubeconfig`;
+2. **on any outcome** (`if: always()`) runs **`./demos/proofs/capture-proof.sh <provider>`**,
+   writing the scrubbed bundle to `demos/proofs/<provider>/<UTC-stamp>/` and the per-provider
+   PASS/FAIL verdict to the job **step summary**;
 3. uploads that directory as the workflow artifact `e2e-proof-<provider>-<run_id>`
-   (30-day retention) — the run does **not** push to the repo (the nightly has read-only
+   (30-day retention), **also `if: always()`** — a failed night's partial evidence + failure
+   stage is uploaded too. The run does **not** push to the repo (the nightly has read-only
    `contents` and `dev` is protected).
 
-To keep a proof: download the artifact, fill in `RUN-NOTES.md`, attach the DEPLOY job's
-`deploy-log.txt` + the `receipt.json` from Evidence, and commit it under
-`demos/proofs/e1-<provider>/…` yourself.
+To keep a proof: download the artifact and commit it under `demos/proofs/<provider>/…`
+yourself (the receipt + control report are already in the bundle when the DB was reachable).
 
 ## Enabling the T2 nightly (maintainer)
 
