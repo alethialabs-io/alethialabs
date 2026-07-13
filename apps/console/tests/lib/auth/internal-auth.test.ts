@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// isInternalAuthorized: the shared `Authorization: Bearer ${ALETHIA_CRON_SECRET}` gate. Fail-closed
-// (unset secret ⇒ never authorized), exact-match, and no false-positive on prefixes/whitespace.
+// The shared platform-internal auth primitives: timingSafeStrEqual (constant-time string equality),
+// bearerMatches (constant-time `Authorization: Bearer ${secret}` against an arbitrary secret), and
+// isInternalAuthorized (bearerMatches bound to ALETHIA_CRON_SECRET). All fail-closed on an unset
+// secret, exact-match, no false-positive on prefixes/whitespace.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isInternalAuthorized } from "@/lib/auth/internal-auth";
+import {
+	bearerMatches,
+	isInternalAuthorized,
+	timingSafeStrEqual,
+} from "@/lib/auth/internal-auth";
 
 const saved = process.env.ALETHIA_CRON_SECRET;
 const SECRET = "s3cr3t-token-value";
@@ -50,5 +56,61 @@ describe("isInternalAuthorized", () => {
 		expect(isInternalAuthorized(reqWith("Bearer anything"))).toBe(false);
 		expect(isInternalAuthorized(reqWith("Bearer "))).toBe(false);
 		expect(isInternalAuthorized(reqWith())).toBe(false);
+	});
+
+	// The `if (!secret) return false` guard in bearerMatches is LOAD-BEARING and is NOT
+	// backed up by timingSafeStrEqual's own `!b` guard: with the secret unset, the template
+	// `Bearer ${secret}` interpolates to the literal — and TRUTHY — string "Bearer undefined",
+	// which timingSafeStrEqual would happily compare as a real expected value. Drop the guard
+	// and `Authorization: Bearer undefined` AUTHORIZES every cron/cloud-events route. The
+	// generic "Bearer anything" cases above do NOT catch that (the mutant survives them), so
+	// pin the exact interpolation.
+	it("fail-closed: the literal interpolation of an unset secret must not authorize", () => {
+		delete process.env.ALETHIA_CRON_SECRET;
+		expect(isInternalAuthorized(reqWith("Bearer undefined"))).toBe(false);
+		expect(bearerMatches(reqWith("Bearer undefined"), undefined)).toBe(false);
+		expect(bearerMatches(reqWith("Bearer null"), null)).toBe(false);
+		expect(bearerMatches(reqWith("Bearer "), "")).toBe(false);
+	});
+});
+
+describe("timingSafeStrEqual", () => {
+	it("true only for an exact match", () => {
+		expect(timingSafeStrEqual("abc123", "abc123")).toBe(true);
+		expect(timingSafeStrEqual("abc123", "abc124")).toBe(false);
+	});
+
+	it("false on any length mismatch (never throws)", () => {
+		expect(timingSafeStrEqual("abc", "abcd")).toBe(false);
+		expect(timingSafeStrEqual("abcd", "abc")).toBe(false);
+		expect(timingSafeStrEqual("", "abc")).toBe(false);
+	});
+
+	it("fail-closed: an unset/empty expected value is never equal", () => {
+		expect(timingSafeStrEqual("abc", undefined)).toBe(false);
+		expect(timingSafeStrEqual("abc", null)).toBe(false);
+		expect(timingSafeStrEqual("abc", "")).toBe(false);
+		// even an empty presented token must not match an unset expected value
+		expect(timingSafeStrEqual("", undefined)).toBe(false);
+	});
+});
+
+describe("bearerMatches (arbitrary secret)", () => {
+	const OTHER = "release-api-secret-xyz";
+
+	it("true for the exact Bearer secret", () => {
+		expect(bearerMatches(reqWith(`Bearer ${OTHER}`), OTHER)).toBe(true);
+	});
+
+	it("false for a wrong / prefixed / unprefixed token", () => {
+		expect(bearerMatches(reqWith("Bearer wrong"), OTHER)).toBe(false);
+		expect(bearerMatches(reqWith(`Bearer ${OTHER}x`), OTHER)).toBe(false);
+		expect(bearerMatches(reqWith(OTHER), OTHER)).toBe(false);
+		expect(bearerMatches(reqWith(), OTHER)).toBe(false);
+	});
+
+	it("fail-closed when the expected secret is unset", () => {
+		expect(bearerMatches(reqWith("Bearer anything"), undefined)).toBe(false);
+		expect(bearerMatches(reqWith("Bearer anything"), "")).toBe(false);
 	});
 });

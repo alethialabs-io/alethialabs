@@ -44,23 +44,46 @@ export async function explainJobFindings(jobId: string) {
 	if (!charge) return [];
 
 	const resolved = getAiModel();
+	// A metered turn reserved a provisional hold (assertAiAllowed) that MUST be reconciled or
+	// released. Wrap the model calls so an error releases the hold (reconciled to 0) instead of
+	// leaving the ≈$0.10 estimate stuck in the window.
+	const holdId = charge.settle ? charge.holdId : undefined;
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let cachedInputTokens = 0;
-	const explanations = await explainFindings(report, async (prompt) => {
-		const { text, usage } = await generateText({ model: resolved.model, prompt });
-		inputTokens += usage.inputTokens ?? 0;
-		outputTokens += usage.outputTokens ?? 0;
-		cachedInputTokens += usage.cachedInputTokens ?? 0;
-		return text;
-	});
+	let explanations: Awaited<ReturnType<typeof explainFindings>>;
+	try {
+		explanations = await explainFindings(report, async (prompt) => {
+			const { text, usage } = await generateText({
+				model: resolved.model,
+				prompt,
+			});
+			inputTokens += usage.inputTokens ?? 0;
+			outputTokens += usage.outputTokens ?? 0;
+			cachedInputTokens += usage.cachedInputTokens ?? 0;
+			return text;
+		});
+	} catch (e) {
+		// Release the hold before propagating so a failed explanation never leaks headroom.
+		await recordAiUsage({
+			orgId: actor.orgId,
+			userId: actor.userId,
+			kind: "agent",
+			source: charge.source,
+			holdId,
+			refId: jobId,
+		});
+		throw e;
+	}
 
 	void recordAiUsage({
 		orgId: actor.orgId,
 		userId: actor.userId,
 		kind: "agent",
-		// Metered → omit credits; settled from the explanation's real cost-of-serve.
+		// Metered → omit credits; settled from the explanation's real cost-of-serve. Reconciles
+		// the reserved hold IN PLACE (holdId) so the estimate becomes the real cost.
 		source: charge.source,
+		holdId,
 		refId: jobId,
 		model: resolved.key,
 		inputTokens,

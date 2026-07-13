@@ -113,6 +113,21 @@ describe("createLogger", () => {
 		log.info("kept");
 		expect(lines).toHaveLength(1);
 	});
+
+	// Regression: the prod deploy emits ALETHIA_LOG_LEVEL even when unset → "". An empty/blank/unknown
+	// level made pino throw at construction ("default level: must be included in custom levels"), and
+	// since createLogger runs at module load (instrumentation.ts) that crashed the whole server (every
+	// route 500). createLogger must normalize a bad level to "info" instead of throwing.
+	it.each(["", "   ", "verbose", "INFO"])(
+		"does not throw on a blank/unknown level (%j) — falls back to info",
+		(level) => {
+			expect(() => createLogger({ level })).not.toThrow();
+			const { log, lines } = collectLogger(level);
+			log.info("kept");
+			expect(lines).toHaveLength(1);
+			expect(lines[0]).toMatchObject({ level: "info", msg: "kept" });
+		},
+	);
 });
 
 // The OTLP endpoint is unset in the test env, so startOtel() is never called → the

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
@@ -29,6 +31,24 @@ export async function POST(req: Request) {
 		}
 
 		const db = getServiceDb();
+
+		// Defense-in-depth: the existing runner that will run this deploy must belong
+		// to the caller's org (matches the identity org-check below and the org
+		// claim_next_job compares against). Fail closed (404) — same shape as a
+		// missing runner — so we never disclose a runner in another org.
+		if (assigned_runner_id) {
+			try {
+				await assertRunnerInOrg(db, assigned_runner_id, actor.orgId);
+			} catch (e: unknown) {
+				if (e instanceof ForbiddenError) {
+					return NextResponse.json(
+						{ error: "Runner not found" },
+						{ status: 404 },
+					);
+				}
+				throw e;
+			}
+		}
 
 		const [identity] = await db
 			.select({

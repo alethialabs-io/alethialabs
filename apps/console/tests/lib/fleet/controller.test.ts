@@ -219,6 +219,47 @@ describe("reconcilePool — correlation, apply + hysteresis edges (mutation hard
 	});
 });
 
+describe("reconcilePool — teardown drains every instance + closes sessions (version-agnostic)", () => {
+	it("destroys the idle instances, drains the busy one, and RETIRES each destroyed runner", async () => {
+		// 3 online instances (all OFF the null target version), one busy. Teardown must destroy the
+		// 2 idle, drain the busy, and call retire (→ closes runner_usage_session) for each destroyed
+		// runner. retire is the hook that stops the metered session billing forever.
+		const prov = mkProvider([
+			pi({ instanceId: "a", version: "1.2.3" }),
+			pi({ instanceId: "b", version: "1.2.3" }),
+			pi({ instanceId: "c", version: "1.2.3" }),
+		]);
+		const deps = mkDeps({
+			runnerMap: async () =>
+				new Map<string, RunnerState>([
+					["a", { runnerId: "ra", status: "online", version: "1.2.3", busy: false }],
+					["b", { runnerId: "rb", status: "online", version: "1.2.3", busy: false }],
+					["c", { runnerId: "rc", status: "online", version: "1.2.3", busy: true }],
+				]),
+		});
+		await reconcilePool(project({ teardown: true, targetVersion: null }), prov, deps, new Map());
+
+		expect(prov.create).not.toHaveBeenCalled(); // teardown never provisions
+		expect(prov.destroy).toHaveBeenCalledWith("a");
+		expect(prov.destroy).toHaveBeenCalledWith("b");
+		expect(prov.destroy).not.toHaveBeenCalledWith("c"); // busy → drained, not destroyed
+		expect(deps.drain).toHaveBeenCalledWith("rc");
+		expect(deps.retire).toHaveBeenCalledWith("ra"); // session closed
+		expect(deps.retire).toHaveBeenCalledWith("rb"); // session closed
+		expect(deps.retire).not.toHaveBeenCalledWith("rc"); // still draining its job
+	});
+
+	it("is idempotent once the pool is empty (no actions to apply)", async () => {
+		const prov = mkProvider([]);
+		const deps = mkDeps();
+		const acted = await reconcilePool(project({ teardown: true }), prov, deps, new Map());
+		expect(acted).toBe(0);
+		expect(prov.destroy).not.toHaveBeenCalled();
+		expect(deps.drain).not.toHaveBeenCalled();
+		expect(deps.retire).not.toHaveBeenCalled();
+	});
+});
+
 describe("reconcilePool — fleet_actions ledger recording", () => {
 	it("records one row per action with the reason + decision inputs (cold-start creates)", async () => {
 		const fake = new FakeFleet();

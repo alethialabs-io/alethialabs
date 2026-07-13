@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { timingSafeStrEqual } from "@/lib/auth/internal-auth";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners } from "@/lib/db/schema";
 import { createHash, randomBytes } from "crypto";
@@ -57,7 +58,11 @@ export async function verifyRunnerToken(
 		.where(eq(runners.id, runnerId))
 		.limit(1);
 
-	if (!runner || runner.token_hash !== tokenHash) {
+	// Constant-time even though both sides are SHA-256 hashes: a plain `!==` still leaks a
+	// byte-wise prefix match, and "the compared value is a hash" is a reason it's hard to
+	// exploit, not a reason to leave the side channel open. Keeps the last hand-rolled
+	// secret compare consistent with the rest of the internal-auth surface.
+	if (!runner || !timingSafeStrEqual(tokenHash, runner.token_hash)) {
 		return {
 			runnerId: "",
 			tokenHash: "",

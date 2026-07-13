@@ -234,10 +234,12 @@ export async function grantAiCredits(input: {
  * cost-only row). When `credits` is OMITTED (the metered settle path), the row's
  * cost-weighted credits are DERIVED from its real cost-of-serve — `costToCredits(cost_micros)`
  * — so each model row is priced by its own tokens. Always records the model + tokens +
- * snapshotted USD micros (via `aiCostMicros`) when a model is present. No-ops only when
- * there is nothing to record — 0 credits AND no model (e.g. a legacy/self-host call before
- * token capture). A 0-credit call WITH a model is still recorded (cost row) so self-hosters
- * and the FinOps rollup get real cost visibility without affecting the credit budget.
+ * snapshotted USD micros (via `aiCostMicros`) when a model is present. On the INSERT path it
+ * no-ops only when there is nothing to record — 0 credits AND no model (e.g. a legacy/self-host
+ * call before token capture); a 0-credit call WITH a model is still recorded (cost row) so
+ * self-hosters and the FinOps rollup get real cost visibility without affecting the credit budget.
+ * When `holdId` is set it RECONCILES that provisional hold row in place (always, even to 0) rather
+ * than inserting — see the field doc — so a metered turn's ≈$0.10 hold never leaks.
  */
 export async function recordAiUsage(input: {
 	orgId: string;
@@ -246,6 +248,13 @@ export async function recordAiUsage(input: {
 	/** Credits to book. Omit on a metered (settle) turn — derived from `cost_micros`. */
 	credits?: number;
 	source: CreditSource;
+	/**
+	 * Id of the provisional hold row this turn reserved (from `assertAiAllowed`'s settle charge).
+	 * When set, that row is reconciled/released IN PLACE (updated to this call's real cost, even 0)
+	 * instead of appending a new ledger row — so a settled, errored, or empty turn never leaks its
+	 * ≈$0.10 hold. Without it the classic append-only insert path is used.
+	 */
+	holdId?: string;
 	refId?: string;
 	model?: string;
 	inputTokens?: number;
@@ -280,22 +289,40 @@ export async function recordAiUsage(input: {
 	// Settle path: no explicit credits → cost-weighted from the row's real cost-of-serve.
 	const credits =
 		input.credits ?? (costMicros != null ? costToCredits(costMicros) : 0);
-	if (credits <= 0 && !input.model) return;
-	await getServiceDb()
-		.insert(aiUsageLedger)
-		.values({
-			org_id: input.orgId,
-			user_id: input.userId,
-			kind: input.kind,
-			credits,
-			source: input.source,
-			ref_id: input.refId ?? null,
-			model: input.model ?? null,
-			input_tokens: input.inputTokens ?? null,
-			output_tokens: input.outputTokens ?? null,
-			cached_input_tokens: input.cachedInputTokens ?? null,
-			cost_micros: costMicros,
-		});
+	if (input.holdId) {
+		// Reconcile a provisional hold IN PLACE: overwrite the reserved estimate with this turn's
+		// real cost. ALWAYS runs (even 0 credits / no model) so an errored or empty turn RELEASES
+		// the hold instead of leaving the reserve estimate stuck in the window (no leaked headroom).
+		await getServiceDb()
+			.update(aiUsageLedger)
+			.set({
+				credits,
+				ref_id: input.refId ?? null,
+				model: input.model ?? null,
+				input_tokens: input.inputTokens ?? null,
+				output_tokens: input.outputTokens ?? null,
+				cached_input_tokens: input.cachedInputTokens ?? null,
+				cost_micros: costMicros,
+			})
+			.where(eq(aiUsageLedger.id, input.holdId));
+	} else {
+		if (credits <= 0 && !input.model) return;
+		await getServiceDb()
+			.insert(aiUsageLedger)
+			.values({
+				org_id: input.orgId,
+				user_id: input.userId,
+				kind: input.kind,
+				credits,
+				source: input.source,
+				ref_id: input.refId ?? null,
+				model: input.model ?? null,
+				input_tokens: input.inputTokens ?? null,
+				output_tokens: input.outputTokens ?? null,
+				cached_input_tokens: input.cachedInputTokens ?? null,
+				cost_micros: costMicros,
+			});
+	}
 
 	// Mirror the generation into PostHog LLM-analytics (cost/tokens by model + org). This is the single
 	// chokepoint every AI call site funnels through, so instrumenting here covers the agent, project

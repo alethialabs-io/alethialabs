@@ -4,10 +4,16 @@
 // AI budget guard (lib/billing/ai-guard.ts). Mocked boundary: stub Stripe-configured, the
 // resolved AI tier (INDEPENDENT of the org plan), credit-ledger sums + oldest-usage MINs +
 // purchased balance, and the fixed per-kind cost; assert the self-host bypass, the
-// not-enabled gate, and BOTH charge models: the FIXED (scan) reserve-up-front path
-// (used+cost<=cap) and the METERED (agent/support) headroom→settle path (used<cap →
-// { settle: true }), plus the per-seat sub-cap, the included→purchased fallback, and
-// session-vs-weekly exhaustion + resetAt (session = oldest in-window usage + 5h).
+// not-enabled gate, and the FIXED (scan) reserve-up-front path (used+cost<=cap), plus the
+// per-seat sub-cap, the included→purchased fallback, and session-vs-weekly exhaustion +
+// resetAt (session = oldest in-window usage + 5h).
+//
+// The METERED (agent/support) branch is NOT unit-tested here: it now runs inside a per-org
+// advisory-locked transaction that re-reads the window sums and writes a provisional hold row
+// (the serialize-concurrent-turns fix), so it is DB-coupled and can't be meaningfully mocked.
+// Its headroom→settle decision, purchased fallback, per-seat block, hard cap, hold reconcile/
+// release, AND the concurrency serialization are proven against REAL Postgres in
+// tests/integration/ai-guard-race.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -144,54 +150,6 @@ describe("assertAiAllowed", () => {
 		vi.mocked(sumCredits).mockResolvedValue(0);
 		await assertAiAllowed("org-1", "scan");
 		expect(sumCreditsForUser).not.toHaveBeenCalled();
-	});
-
-	describe("metered (agent/support) headroom → settle", () => {
-		it("returns an included settle charge when the org + seat have any headroom", async () => {
-			vi.mocked(sumCredits).mockResolvedValue(0); // org empty
-			vi.mocked(sumCreditsForUser).mockResolvedValue(0); // seat empty
-			const charge = await assertAiAllowed("org-1", "agent", "user-1");
-			expect(charge).toEqual({ source: "included", settle: true });
-			// A metered turn never reserves the fixed per-kind cost up front.
-			expect(creditsFor).not.toHaveBeenCalled();
-		});
-
-		it("still allows a turn when the window is nearly full (gate is headroom, not used+cost)", async () => {
-			// session 29 < 30, week 99 < 100 — one turn may overshoot by ≤1 turn; it's allowed.
-			vi.mocked(sumCredits).mockResolvedValueOnce(29).mockResolvedValueOnce(99);
-			const charge = await assertAiAllowed("org-1", "agent");
-			expect(charge).toEqual({ source: "included", settle: true });
-		});
-
-		it("402s the NEXT turn once the session window is full (no headroom left)", async () => {
-			// session exactly at the cap → no headroom; week still open; no packs.
-			vi.mocked(sumCredits).mockResolvedValueOnce(30).mockResolvedValueOnce(50);
-			vi.mocked(purchasedBalance).mockResolvedValue(0);
-			const err = await assertAiAllowed("org-1", "agent").catch((e) => e);
-			expect(err).toBeInstanceOf(AiBudgetError);
-			expect(err.reason).toBe("session");
-			expect(err.upgradable).toBe(true);
-		});
-
-		it("settles against purchased packs when the org included headroom is gone (balance > 0)", async () => {
-			vi.mocked(sumCredits).mockResolvedValueOnce(30).mockResolvedValueOnce(50); // session full
-			vi.mocked(purchasedBalance).mockResolvedValue(1); // any positive balance suffices
-			const charge = await assertAiAllowed("org-1", "agent");
-			expect(charge).toEqual({ source: "purchased", settle: true });
-		});
-
-		it("blocks a seat at its personal cap while the org still has room (no purchased divert)", async () => {
-			vi.mocked(sumCredits).mockResolvedValue(0); // org wide open
-			vi.mocked(sumCreditsForUser)
-				.mockResolvedValueOnce(10) // user session at cap (not < 10)
-				.mockResolvedValueOnce(10); // user week ok
-			vi.mocked(purchasedBalance).mockResolvedValue(100); // packs available — must NOT be used
-			const err = await assertAiAllowed("org-1", "agent", "user-1").catch((e) => e);
-			expect(err).toBeInstanceOf(AiBudgetError);
-			expect(err.reason).toBe("session");
-			expect(err.upgradable).toBe(false);
-			expect(purchasedBalance).not.toHaveBeenCalled();
-		});
 	});
 
 	describe("per-user sub-caps", () => {

@@ -92,6 +92,24 @@ export async function recordAgentTurnUsage(input: {
 	const records = aggregateUsageByModel(input.steps);
 	const charge = input.charge;
 	const turn = input.turn;
+	// A metered turn RESERVED a provisional hold row (assertAiAllowed) that MUST be reconciled or
+	// released — never left at the ≈$0.10 estimate. The turn's first model row reconciles that hold
+	// in place (holdId → UPDATE); any further model rows append as new ledger rows. An empty turn
+	// (no steps) still releases the hold to 0 so it doesn't permanently reduce the window's headroom.
+	const holdId = charge.settle ? charge.holdId : undefined;
+	if (records.length === 0) {
+		if (holdId) {
+			await recordAiUsage({
+				orgId: input.orgId,
+				userId: input.userId,
+				kind: input.kind,
+				source: charge.source,
+				refId: input.refId,
+				holdId,
+			});
+		}
+		return;
+	}
 	await Promise.all(
 		records.map((rec, i) => {
 			// Enrichment only when the caller supplied turn context — otherwise the metering call stays
@@ -119,6 +137,8 @@ export async function recordAgentTurnUsage(input: {
 				credits: charge.settle ? undefined : i === 0 ? charge.credits : 0,
 				source: charge.source,
 				refId: input.refId,
+				// Row 0 reconciles the reserved hold IN PLACE; later rows append as new ledger rows.
+				holdId: i === 0 ? holdId : undefined,
 				model: rec.model,
 				inputTokens: rec.inputTokens,
 				outputTokens: rec.outputTokens,

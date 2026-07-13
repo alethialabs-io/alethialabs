@@ -582,6 +582,34 @@
       "when": 1783870563365,
       "tag": "0082_mushy_squadron_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1783891225602,
+      "tag": "0083_equal_blue_blade",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1783892675487,
+      "tag": "0084_tearful_rhodey",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1783896488187,
+      "tag": "0085_fair_warbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1783901216071,
+      "tag": "0086_needy_rumiko_fujikawa",
+      "breakpoints": true
     }
   ]
 }

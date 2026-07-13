@@ -149,8 +149,7 @@ export async function setRunnerObserved(
 	await getServiceDb().execute(sql`
 		update public.runners
 		set location = ${location},
-		    version = coalesce(version, ${version}),
-		    updated_at = now()
+		    version = coalesce(version, ${version})
 		where id = ${runnerId}::uuid
 		  and (location is distinct from ${location} or version is null)
 	`);
@@ -159,7 +158,7 @@ export async function setRunnerObserved(
 /** Mark an ONLINE runner DRAINING so it stops claiming and drains to idle. */
 export async function markRunnerDraining(runnerId: string): Promise<void> {
 	await getServiceDb().execute(sql`
-		update public.runners set status = 'DRAINING'::public.runner_status, updated_at = now()
+		update public.runners set status = 'DRAINING'::public.runner_status
 		where id = ${runnerId}::uuid and status = 'ONLINE'
 	`);
 }
@@ -184,7 +183,7 @@ export async function insertFleetAction(record: FleetActionRecord): Promise<void
 export async function retireRunner(runnerId: string): Promise<void> {
 	await getServiceDb().execute(sql`
 		with closed as (
-			update public.runners set status = 'OFFLINE'::public.runner_status, updated_at = now()
+			update public.runners set status = 'OFFLINE'::public.runner_status
 			where id = ${runnerId}::uuid returning id
 		)
 		update public.runner_usage_sessions s

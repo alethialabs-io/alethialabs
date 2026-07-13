@@ -67,6 +67,7 @@ export const CATEGORIES: CatalogCategory[] = [
 			ev("orphan.risk", "system.project.orphan_risk", "Possible orphaned resources", "critical", true),
 			ev("destroy.requested", "system.job.destroy_requested", "Destroy requested", "warning", true),
 			ev("destroy.completed", "system.project.destroyed", "Destroy completed", "warning", true),
+			ev("reap.gave_up", "system.project.reap_gave_up", "Auto-teardown gave up", "critical", true),
 			ev("drift.detected", "system.project.drift", "Drift detected", "warning"),
 			ev("status.conflict", "system.project.status_conflict", "Environment status conflict", "warning", true),
 		],
@@ -121,7 +122,7 @@ export const CATEGORIES: CatalogCategory[] = [
 		label: "Cost",
 		icon: "CircleDollarSign",
 		events: [
-			ev("budget.threshold", "system.cost.budget_threshold", "Budget threshold crossed", "warning"),
+			ev("budget.threshold", "system.cost.budget_threshold", "Budget threshold crossed", "warning", true),
 			ev("spend.spike", "system.cost.spend_spike", "Spend spike", "warning"),
 			ev("overage.started", "system.cost.overage", "Overage started", "info"),
 		],

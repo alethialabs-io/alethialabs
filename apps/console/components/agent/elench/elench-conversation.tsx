@@ -37,6 +37,15 @@ import {
 /** External help destination for the Support affordances. */
 export const ELENCH_SUPPORT_HREF = "https://alethialabs.io/contact";
 
+/** Read the staged empty-cell target and clear it — a cell request must ride exactly the
+ * one request it was typed for, and never leak into the next message. */
+function takePendingCellTarget(): { x: number; y: number } | null {
+	const grid = useWidgetGridStore.getState();
+	const target = grid.pendingCellTarget;
+	if (target) grid.setPendingCellTarget(null);
+	return target;
+}
+
 const PLACEHOLDER = "Ask Elench, or type @ to tag a resource";
 
 export interface ElenchThreadApi {
@@ -96,7 +105,10 @@ export function ElenchConversation({
 							model: s.model,
 							mentions: s.pendingMentions,
 							deepReasoning: s.deepReasoning,
-							cellTarget: useWidgetGridStore.getState().pendingCellTarget,
+							// Consumed HERE, as the request body is built: clearing it after
+							// `onSend` returned raced the transport and the coordinates were
+							// gone by the time this ran, so the widget landed at (0,0).
+							cellTarget: takePendingCellTarget(),
 						};
 					}
 				: () => ({
@@ -188,11 +200,9 @@ export function ElenchConversation({
 		if (!pendingCellRequest) return;
 		const grid = useWidgetGridStore.getState();
 		grid.clearPendingCellRequest();
+		// Staged for the next request body only — `prepareBody` consumes (and clears) it.
 		grid.setPendingCellTarget({ x: pendingCellRequest.x, y: pendingCellRequest.y });
-		void (async () => {
-			await onSend(pendingCellRequest.text);
-			useWidgetGridStore.getState().setPendingCellTarget(null);
-		})();
+		void onSend(pendingCellRequest.text);
 	}, [pendingCellRequest, onSend]);
 
 	// Tool-render lanes by context. Org routes artifacts through the panel; if the

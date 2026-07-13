@@ -10,6 +10,7 @@
 // Column shapes mirror FleetTarget (lib/fleet/types.ts) + the env zod schema
 // (lib/fleet/config.ts) 1:1.
 
+import { sql } from "drizzle-orm";
 import {
 	boolean,
 	index,
@@ -53,14 +54,25 @@ export const fleetPools = pgTable(
 		version: text(),
 		// Release channel (e.g. "stable") resolved to the newest release each tick.
 		channel: text(),
-		// Paused pools are skipped by the controller (kept for quick resume).
+		// Paused pools are skipped for scale-up but still reconciled as a teardown target: the
+		// controller DRAINS their warm VMs to zero (closing each runner's usage session) and
+		// rebuilds them on resume — pausing never leaves billable orphans.
 		enabled: boolean().default(true).notNull(),
+		// A reconciled TEARDOWN request (not a hard delete). `deleteFleetPool` sets this instead of
+		// removing the row, so the controller still sees the pool and can drain its VMs + close their
+		// runner_usage_sessions before `reapDeletedPools` physically removes the now-empty row. A hard
+		// DELETE would orphan every VM (perpetual cloud spend) and leave sessions billing forever.
+		deleting: boolean().default(false).notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
-		// One pool per provider keeps managed-runner attribution unambiguous.
-		uniqueIndex("idx_fleet_pools_provider").on(t.provider),
+		// One LIVE pool per provider keeps managed-runner attribution unambiguous. Partial (deleting
+		// = false) so a fresh pool for a provider can be created while the old one still drains its
+		// VMs (deleting = true) — the draining row is excluded from the uniqueness constraint.
+		uniqueIndex("idx_fleet_pools_provider")
+			.on(t.provider)
+			.where(sql`deleting = false`),
 	],
 );
 

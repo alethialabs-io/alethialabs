@@ -7,6 +7,7 @@ import { cliReleases } from "@/lib/db/schema";
 import { cliLatestReleaseWire } from "@/lib/validations/cli-contract";
 import { desc } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { bearerMatches } from "@/lib/auth/internal-auth";
 
 /** Returns the Postgres error code if present (e.g. 23505 unique violation). */
 function pgErrorCode(err: unknown): string | undefined {
@@ -46,10 +47,7 @@ export async function GET() {
 
 /** CI calls this endpoint to publish a new CLI release (mirrors runner releases). */
 export async function POST(req: Request) {
-	const authHeader = req.headers.get("authorization");
-	const expected = process.env.RELEASE_API_SECRET;
-
-	if (!expected || authHeader !== `Bearer ${expected}`) {
+	if (!bearerMatches(req, process.env.RELEASE_API_SECRET)) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 

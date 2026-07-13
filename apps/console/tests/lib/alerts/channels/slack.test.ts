@@ -2,18 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Slack incoming-webhook sender (lib/alerts/channels/slack.ts). Mocked boundary: stub
-// decryptSecret (returns the channel webhook URL) and global fetch; assert the Block Kit
-// payload formatting (severity emoji, summary/context/actions blocks), URL resolution,
-// and send()/verify() success + failure throws.
+// decryptSecret (returns the channel webhook URL) and the SSRF-guarded network sink
+// safeFetch (the sender's only outbound call); assert the Block Kit payload formatting
+// (severity emoji, summary/context/actions blocks), URL resolution, and send()/verify()
+// success + failure throws. (The SSRF guard itself is covered by tests/unit/ssrf-guard.test.ts.)
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/crypto/secrets", () => ({ decryptSecret: vi.fn() }));
+vi.mock("@/lib/net/ssrf-guard", () => ({ safeFetch: vi.fn() }));
 
 import { slackSender } from "@/lib/alerts/channels/slack";
 import { TEST_CONTEXT } from "@/lib/alerts/channels/types";
 import { decryptSecret } from "@/lib/crypto/secrets";
+import { safeFetch } from "@/lib/net/ssrf-guard";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertEventContext } from "@/types/jsonb.types";
 
@@ -23,23 +26,23 @@ const WEBHOOK = "https://hooks.slack.com/services/T000/B000/xyz";
 const channel = (secret: unknown = { sealed: true }): AlertChannel =>
 	({ id: "ch-1", secret } as never);
 
-/** Reads the JSON body POSTed to Slack from the fetch mock's last call. */
-function lastBody(): { text: string; blocks: Array<Record<string, unknown>> } {
-	const call = vi.mocked(fetch).mock.calls.at(-1);
-	if (!call) throw new Error("fetch was not called");
-	return JSON.parse((call[1] as RequestInit).body as string);
-}
+/** The mocked outbound sink — the sender POSTs through safeFetch, not global fetch. */
+const fetchMock = vi.mocked(safeFetch);
 
-const fetchMock = vi.fn();
+/** Reads the JSON body POSTed to Slack from safeFetch's last call. */
+function lastBody(): { text: string; blocks: Array<Record<string, unknown>> } {
+	const call = fetchMock.mock.calls.at(-1);
+	if (!call) throw new Error("safeFetch was not called");
+	return JSON.parse(call[1]?.body as string);
+}
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.stubGlobal("fetch", fetchMock);
 	fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" } as never);
 	vi.mocked(decryptSecret).mockReturnValue({ url: WEBHOOK } as never);
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => vi.clearAllMocks());
 
 describe("slackSender.send — payload formatting", () => {
 	it("POSTs to the decrypted webhook URL with JSON content-type and an abort signal", async () => {
@@ -48,9 +51,9 @@ describe("slackSender.send — payload formatting", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		const [url, init] = fetchMock.mock.calls[0];
 		expect(url).toBe(WEBHOOK);
-		expect(init.method).toBe("POST");
-		expect(init.headers).toEqual({ "content-type": "application/json" });
-		expect(init.signal).toBeInstanceOf(AbortSignal);
+		expect(init?.method).toBe("POST");
+		expect(init?.headers).toEqual({ "content-type": "application/json" });
+		expect(init?.signal).toBeInstanceOf(AbortSignal);
 	});
 
 	it("sets fallback text and leads the title block with the severity emoji", async () => {

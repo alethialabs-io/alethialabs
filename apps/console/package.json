@@ -27,6 +27,7 @@
 		"test": "vitest run --coverage",
 		"test:watch": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"test:ai-eval": "vitest run --config vitest.ai-eval.config.ts",
 		"mutate": "stryker run",
 		"mutate:since": "stryker run --since origin/main",
 		"test:e2e": "playwright test",
@@ -37,6 +38,7 @@
 	"dependencies": {
 		"@ai-sdk/anthropic": "3.0.95",
 		"@ai-sdk/openai": "3.0.82",
+		"@ai-sdk/provider": "3.0.13",
 		"@ai-sdk/react": "^3.0.210",
 		"@alicloud/openapi-client": "^0.4.15",
 		"@alicloud/tea-util": "^1.4.11",
@@ -113,6 +115,7 @@
 		"streamdown": "^2.5.0",
 		"stripe": "^22.2.2",
 		"tailwind-merge": "^3.3.1",
+		"undici": "^8.7.0",
 		"use-stick-to-bottom": "^1.1.6",
 		"yaml": "^2.8.1",
 		"zod": "^4.1.13",

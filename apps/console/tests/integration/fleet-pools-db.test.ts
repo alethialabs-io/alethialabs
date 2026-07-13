@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Integration: the DB-backed fleet-pool config against real Postgres — loadFleetPools' enabled
-// WHERE-filter + the row→FleetTarget mapping (version-pin-wins-over-channel) that mocks can't
-// verify, plus that a live enabled-toggle (CRUD UPDATE) is reflected on the next load. The
+// Integration: the DB-backed fleet-pool config against real Postgres — loadFleetPools now loads
+// EVERY pool (no enabled WHERE-filter) and maps disabled/deleting rows to a TEARDOWN target so the
+// controller can drain their VMs + close sessions instead of orphaning them; plus the
+// row→FleetTarget mapping (version-pin-wins-over-channel) that mocks can't verify, and that a live
+// enabled-toggle (CRUD UPDATE) flips the teardown flag on the next load. The
 // `fleet_pools` table is GLOBAL (no org_id) with a unique index on `provider`, so the suite uses
 // a fixed set of providers, clears any pre-existing rows for exactly those providers, and cleans
 // up the same set afterwards — assertions are scoped to those providers (never raw totals).
@@ -76,12 +78,15 @@ describeIfDb("fleet pools DB config", () => {
 		await getServiceDb().delete(fleetPools).where(inArray(fleetPools.provider, MINE));
 	});
 
-	it("loads only enabled pools (the disabled one is filtered out)", async () => {
+	it("loads ALL pools and maps a disabled (paused) row to a teardown target (no longer filtered out)", async () => {
 		const all = await loadFleetPools();
 		const mine = all.filter((p) => MINE.includes(p.provider));
 		const providers = mine.map((p) => p.provider).sort();
-		expect(providers).toEqual([ENABLED_B, ENABLED_A].sort()); // civo + alibaba, NOT digitalocean
-		expect(mine.some((p) => p.provider === DISABLED)).toBe(false);
+		// digitalocean (disabled) is now PRESENT — as a teardown target, so its VMs drain to zero.
+		expect(providers).toEqual([ENABLED_A, ENABLED_B, DISABLED].sort());
+		expect(mine.find((p) => p.provider === ENABLED_A)?.teardown).toBeUndefined(); // enabled → normal
+		expect(mine.find((p) => p.provider === ENABLED_B)?.teardown).toBeUndefined();
+		expect(mine.find((p) => p.provider === DISABLED)?.teardown).toBe(true); // paused → drain
 	});
 
 	it("maps every column 1:1 onto the FleetTarget shape", async () => {
@@ -110,17 +115,18 @@ describeIfDb("fleet pools DB config", () => {
 		expect(ali?.locations).toEqual(["fra1", "ams3"]);
 	});
 
-	it("reflects a live enabled-toggle (CRUD update) on the next load", async () => {
+	it("flips a live enabled-toggle to the teardown flag on the next load (pause = drain, not drop)", async () => {
 		const db = getServiceDb();
-		// Pause civo → it should drop out of the load.
+		// Pause civo → it STAYS in the load but as a teardown target (drains to zero), rather than
+		// vanishing (which previously orphaned its VMs + left their sessions billing).
 		await db.update(fleetPools).set({ enabled: false }).where(eq(fleetPools.provider, ENABLED_A));
-		let mine = (await loadFleetPools()).filter((p) => MINE.includes(p.provider));
-		expect(mine.map((p) => p.provider)).toEqual([ENABLED_B]);
+		let civo = (await loadFleetPools()).find((p) => p.provider === ENABLED_A);
+		expect(civo?.teardown).toBe(true);
 
-		// Resume civo → it returns.
+		// Resume civo → back to a normal (non-teardown) target.
 		await db.update(fleetPools).set({ enabled: true }).where(eq(fleetPools.provider, ENABLED_A));
-		mine = (await loadFleetPools()).filter((p) => MINE.includes(p.provider));
-		expect(mine.map((p) => p.provider).sort()).toEqual([ENABLED_B, ENABLED_A].sort());
+		civo = (await loadFleetPools()).find((p) => p.provider === ENABLED_A);
+		expect(civo?.teardown).toBeUndefined();
 	});
 
 	it("applies schema column defaults for the sparsely-seeded disabled row", async () => {

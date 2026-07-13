@@ -13,6 +13,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { cliJson } from "@/lib/cli/respond";
@@ -103,7 +104,25 @@ export async function POST(req: Request) {
 
 		if (jobType === "DESTROY_RUNNER") {
 			// Runner teardown has no project config to snapshot — the client sends the
-			// runner descriptor as the snapshot. Unchanged legacy path.
+			// runner descriptor as the snapshot. This path scopes the job by
+			// `user_id: userId` (org_id backfills to userId, the caller's personal org),
+			// so the assigned runner must belong to that same org — the org
+			// claim_next_job will compare `j.org_id` against. Fail closed (404) on a
+			// cross-org / non-existent runner so we never queue an unclaimable job.
+			if (assigned_runner_id) {
+				try {
+					await assertRunnerInOrg(db, assigned_runner_id, userId);
+				} catch (e: unknown) {
+					if (e instanceof ForbiddenError) {
+						return NextResponse.json(
+							{ error: "Runner not found or unauthorized" },
+							{ status: 404 },
+						);
+					}
+					throw e;
+				}
+			}
+
 			const [job] = await db
 				.insert(jobs)
 				.values({

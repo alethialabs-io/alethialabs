@@ -132,7 +132,14 @@ export const jobLogs = pgTable(
 		traceparent: text(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
-	(t) => [index("idx_job_logs_job_id").on(t.job_id)],
+	(t) => [
+		index("idx_job_logs_job_id").on(t.job_id),
+		// Retention GC (gc_job_logs) range-scans created_at < now()-p_age and takes the
+		// oldest first. A created_at btree serves both the range filter and the ordered
+		// LIMIT as a single index scan, so an empty window costs one index probe instead
+		// of a full pkey/seq scan every 15m. Mirrors idx_fleet_actions_created_at (#345).
+		index("idx_job_logs_created_at").on(t.created_at),
+	],
 );
 
 export type Job = typeof jobs.$inferSelect;

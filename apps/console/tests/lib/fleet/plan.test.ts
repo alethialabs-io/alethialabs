@@ -239,6 +239,58 @@ describe("plan — placement + capacity-cap edges (mutation hardening)", () => {
 	});
 });
 
+describe("plan — teardown (version-agnostic drain to zero)", () => {
+	it("destroys EVERY instance regardless of version and never creates (the case the naive fix misses)", () => {
+		// A pool being deleted/paused with targetVersion=null and OFF-version instances. The naive
+		// "set target=0" fix leaves these untouched (scale-down is gated on outdated.length===0), so
+		// they orphan. The explicit teardown branch must destroy/drain all of them.
+		const a = plan(
+			project({ teardown: true, targetVersion: null }),
+			obs([
+				inst({ instanceId: "oi", runnerId: "oi", version: "1.2.3" }), // online idle
+				inst({ instanceId: "ob", runnerId: "ob", version: "1.2.3", busy: true }), // online busy
+				inst({ instanceId: "dr", runnerId: "dr", status: "draining", busy: false }), // draining idle
+				inst({ instanceId: "bt", runnerId: null, status: "none", ageSeconds: 10 }), // booting
+			]),
+		);
+		expect(creates(a)).toHaveLength(0); // teardown NEVER creates
+		// busy online → drain (let the in-flight job finish); everything else → destroy.
+		expect(drains(a).map((d) => d.type === "drain" && d.runnerId)).toEqual(["ob"]);
+		expect(destroys(a).map((d) => d.type === "destroy" && d.instanceId).sort()).toEqual(
+			["bt", "dr", "oi"].sort(),
+		);
+	});
+
+	it("leaves a busy DRAINING instance alone until its job finishes, then destroys it", () => {
+		const busyDraining = plan(
+			project({ teardown: true }),
+			obs([inst({ instanceId: "d1", runnerId: "d1", status: "draining", busy: true })]),
+		);
+		expect(busyDraining).toHaveLength(0); // busy + already draining → wait
+		const idleDraining = plan(
+			project({ teardown: true }),
+			obs([inst({ instanceId: "d1", runnerId: "d1", status: "draining", busy: false })]),
+		);
+		expect(destroys(idleDraining).map((d) => d.type === "destroy" && d.instanceId)).toEqual(["d1"]);
+	});
+
+	it("is a no-op once the pool is empty (idempotent → lets reapDeletedPools remove the row)", () => {
+		expect(plan(project({ teardown: true }), obs([]))).toEqual([]);
+	});
+
+	it("NEGATIVE — the naive fix: without the teardown branch, target=0 does NOT drop an off-version instance", () => {
+		// warmMin/buffer 0 (target 0) and targetVersion=null with one online off-version instance.
+		// This documents WHY the explicit branch is required: the scale-down path is gated behind
+		// outdated.length===0 (all online on the target version), which is never true here, so the
+		// planner emits NO destroy and the VM would orphan.
+		const a = plan(
+			project({ warmMin: 0, buffer: 0, minPerLocation: 0, targetVersion: null }),
+			obs([inst({ version: "1.2.3" })], { surplusTicks: 99 }),
+		);
+		expect(destroys(a)).toHaveLength(0); // the leak the teardown branch fixes
+	});
+});
+
 describe("plan — rollout converges with the warmMin invariant intact", () => {
 	it("rolls v1→v2 across ticks, never dropping online below warmMin", () => {
 		const s = project({ warmMin: 2, minPerLocation: 1, locations: ["fsn1", "nbg1"], surge: 1, buffer: 0 });

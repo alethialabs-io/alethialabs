@@ -61,15 +61,33 @@ export async function runColonyTasks(
 		status: "pending",
 	}));
 
-	const result = await runSupervisor(tasks, runner);
+	// A metered turn reserved a provisional hold (assertAiAllowed) that MUST be reconciled or
+	// released. Wrap the run so an error releases the hold (reconciled to 0) instead of leaving the
+	// ≈$0.10 estimate stuck in the window.
+	const holdId = charge.settle ? charge.holdId : undefined;
+	let result: SupervisorResult;
+	try {
+		result = await runSupervisor(tasks, runner);
+	} catch (e) {
+		await recordAiUsage({
+			orgId: actor.orgId,
+			userId: actor.userId,
+			kind: "agent",
+			source: charge.source,
+			holdId,
+		});
+		throw e;
+	}
 
-	// Record the colony's accumulated token cost across all sub-agent calls.
+	// Record the colony's accumulated token cost across all sub-agent calls — reconciles the
+	// reserved hold IN PLACE (holdId) so the estimate becomes the real accumulated cost.
 	void recordAiUsage({
 		orgId: actor.orgId,
 		userId: actor.userId,
 		kind: "agent",
 		// Metered → omit credits; settled from the colony's accumulated real cost-of-serve.
 		source: charge.source,
+		holdId,
 		model: resolved.key,
 		inputTokens,
 		outputTokens,

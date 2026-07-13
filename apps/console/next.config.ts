@@ -31,6 +31,11 @@ const PUBLIC_DEV_ORIGINS = (() => {
 
 const nextConfig: NextConfig = {
 	output: "standalone",
+	// Don't 308-redirect a trailing slash. Without this, the PostHog reverse-proxy paths
+	// (`/ingest/e/`, `/ingest/flags/` — posthog-js sends them WITH a trailing slash) get a
+	// Next trailing-slash redirect before the rewrite runs, adding a hop to every captured
+	// event. Recommended by PostHog's Next.js reverse-proxy guide.
+	skipTrailingSlashRedirect: true,
 	// Allow the tunnel host to make cross-origin dev requests (server actions, /_next/*).
 	allowedDevOrigins: PUBLIC_DEV_ORIGINS,
 	// Also allow the Server Action Origin check behind the proxy (production-mode renders).
