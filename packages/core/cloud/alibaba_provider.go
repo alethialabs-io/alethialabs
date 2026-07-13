@@ -156,6 +156,11 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved DNS keys are
 	// consumed above under a different tfvar name.
+	// B1.2: classification → resource tags (+ the always-on project-id/environment-id sweep
+	// handles), Alibaba-styled (`alethia:...`). Set before mergeProviderConfig so a user's
+	// provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
+	tfvars["classification_tags"] = classificationTags(config, alibabaTagStyle)
+
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "managed_certificate", "application_waf")
 

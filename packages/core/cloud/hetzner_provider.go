@@ -116,6 +116,12 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// Generic passthrough: any provider_config key that names a template variable
 	// flows through verbatim (talos_version consumed above under the same name is
 	// merge-if-absent, so it isn't duplicated).
+	// B1.2: classification → node labels (+ the always-on project-id/environment-id sweep
+	// handles), Hetzner/K8s-styled (`alethia_...`, ≤63, alnum boundaries). Set before
+	// mergeProviderConfig so a user's provider_config can't shadow it. Consumed by the
+	// classification_tags var (B1.3).
+	tfvars["classification_tags"] = classificationTags(config, hetznerTagStyle)
+
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
 
 	return tfvars

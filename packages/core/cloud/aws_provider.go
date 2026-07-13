@@ -186,6 +186,11 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// flows through verbatim (e.g. eks_volume_iops, a CMEK key id, WAF rule list)
 	// without a dedicated Go field. Reserved keys are consumed above under a
 	// different tfvar name, so they aren't injected as undeclared duplicates.
+	// B1.2: classification → resource tags (+ the always-on project-id/environment-id sweep
+	// handles), AWS-styled (`alethia:...`). Set before mergeProviderConfig so a user's
+	// provider_config can't shadow it. Consumed by the template's classification_tags var (B1.3).
+	tfvars["classification_tags"] = classificationTags(config, awsTagStyle)
+
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_karpenter")
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloudfront_waf", "acm_certificate", "application_waf")
 
