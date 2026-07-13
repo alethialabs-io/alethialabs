@@ -129,6 +129,24 @@ variable "aks_disk_size_gb" {
   }
 }
 
+# BYOC B4.1: Entra group OBJECT IDs (GUIDs, not names) granted cluster-admin via AKS
+# AAD-integrated RBAC. Sourced from the project's cluster_admins (each admin's `groups`
+# hold Entra group object IDs). Empty (default) = no AAD admin-group integration,
+# Kubernetes-RBAC-only, unchanged.
+variable "aks_admin_group_object_ids" {
+  type        = list(string)
+  default     = []
+  description = "Entra group object IDs mapped to the AKS cluster admin_group_object_ids. Empty leaves AAD admin-group integration off (unchanged)."
+}
+
+# BYOC B4.1: CIDRs allowed to reach the AKS public API server. Empty (default) leaves
+# the API server open to all source IPs so the external runner can still provision.
+variable "aks_authorized_ip_ranges" {
+  type        = list(string)
+  default     = []
+  description = "CIDRs allow-listed on the AKS public API server (api_server_access_profile.authorized_ip_ranges). Empty = open to all (unchanged)."
+}
+
 #########################################################################
 ##                   Azure DB Variables                                ##
 #########################################################################
@@ -185,6 +203,15 @@ variable "azure_db_iam_auth" {
   type        = bool
   default     = false
   description = "Whether to enable Azure Active Directory (AAD) authentication on the Flexible Server"
+}
+
+# BYOC B4.1: source CIDRs allow-listed on the DB public endpoint (one firewall rule
+# each). Empty (default) creates no rules — the server stays private (VNet-integrated),
+# unchanged. Applies to the public endpoint only (see azure-db module).
+variable "azure_db_allowed_cidrs" {
+  type        = list(string)
+  default     = []
+  description = "Source CIDRs allow-listed on the Azure DB public endpoint. Empty = no firewall rules, server stays private (unchanged)."
 }
 
 #########################################################################
