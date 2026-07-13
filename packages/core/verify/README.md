@@ -95,10 +95,18 @@ no OIDC/federation/IAM surface to bind, so the keyless/OIDC-sub/least-priv contr
 Hetzner plan *can* misconfigure is its network/firewall, so its control set asserts that. Hetzner is the
 only cloud with a real nightly apply, so these are tuned to keep the **shipped template warns-only**.
 
+*Real-plan shape (verified against OpenTofu 1.12.3 + hcloud 1.66.0; every `hetzner_*` corpus fixture is
+a real `tofu show -json` capture):* `firewall_ids` is a set-typed computed attribute — on a create plan
+it serializes as `after:null` + `after_unknown:true` for BOTH a firewalled and a bare server, so
+`HCLOUD-FW-001` judges from the plan's **`configuration`** section (`expressions.firewall_ids.references`).
+And a fully-known firewall `rule` list appears in `after_unknown` as per-element **all-false** maps
+(`source_ips: [false,false]`) — only a `true` leaf means unknown; treating any list as unknown would make
+the controls inert on every real plan (the exact defect an adversarial grill caught in v1).
+
 | ID | Title | Hard-fail on |
 |----|-------|--------------|
-| `HCLOUD-FW-001` | Every server is behind a firewall | an `hcloud_server` with no `firewall_ids` (and no covering `hcloud_firewall_attachment`) — a bare public node. A **computed** `firewall_ids = [ref]` list literal keeps its length, so it is an evaluable **pass** (firewall attached, id unknown until apply), not a silent pass. |
-| `HCLOUD-NET-001` | No world-open SSH; management ports flagged | a firewall rule opening SSH (`:22`, or an `any`-port rule subsuming 22) to `0.0.0.0/0`/`::/0` — Talos runs no SSH daemon, so world-open 22 is always wrong. **Warns** (by design, does not block) on world-open Kubernetes API `6443` / Talos apid `50000`/`50001` — open to the internet on purpose today (the runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer) — and on any other world-open inbound port. Rules with computed source/port → **not_evaluable**. |
+| `HCLOUD-FW-001` | Every server is behind a firewall | an `hcloud_server` with **no firewall anywhere**: no known `firewall_ids` value, no configuration reference to an `hcloud_firewall`, and no `hcloud_firewall_attachment` whose config `server_ids` references it — a bare public node. **Pass** when the (computed) `firewall_ids` is proven by a config reference / non-empty literal, or an attachment covers it. **Not_evaluable** (never a false brick): `firewall_ids` from an unresolvable expression (var/local), attachments selecting by `label_selectors`, any firewall using `apply_to` (label-based BYO), or a plan with no configuration section at all. A **decoy** attachment covering only *other* servers does **not** neutralize the fail. |
+| `HCLOUD-NET-001` | No world-open SSH; management ports flagged | a firewall rule opening **tcp** SSH (`22`, or an `any`-port tcp rule subsuming 22) to the whole internet — where "whole internet" is a **union** judgment: `0.0.0.0/0`, `::/0`, or a split-CIDR spelling (`0.0.0.0/1` + `128.0.0.0/1`) that adds up to full coverage. Talos runs no SSH daemon, so world-open 22 is always wrong. **Warns** (by design, does not block) on world-open tcp Kubernetes API `6443` / Talos apid `50000`/`50001` (open on purpose today — the runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer), on any other world-open inbound rule (other tcp ports, **udp/icmp — never misjudged as SSH**), and on tcp/22 from a very broad partial source (v4 ≤ /8, v6 ≤ /16). Rules with computed source/port → **not_evaluable**. |
 
 Statuses: `pass` · `fail` (blocks apply) · `warn` (recorded, does not block) · `not_evaluable`.
 Overall verdict precedence: `fail` → `warn` → `not_evaluable` → `pass`.

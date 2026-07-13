@@ -1,19 +1,23 @@
 {
-  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. HCLOUD-NET-001 hard fail: firewall rule tcp/22 from 0.0.0.0/0+::/0. Talos runs no SSH daemon. Server itself is firewalled (FW-001 passes) isolating the failure to the SSH rule. The co-present world-open 6443 stays a warn.",
+  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. Adversarial/BYO: hcloud_firewall with apply_to { label_selector } and a server with NO inline firewall_ids. Label->server matching is not resolvable from the plan -> FW-001 must be not_evaluable (honest), NEVER a false hard fail that bricks a legit BYO pattern. Rules are private-CIDR so NET-001 passes -> verdict not_evaluable.",
   "format_version": "1.2",
   "terraform_version": "1.12.3",
   "planned_values": {
     "root_module": {
       "resources": [
         {
-          "address": "hcloud_firewall.this",
+          "address": "hcloud_firewall.by_label",
           "mode": "managed",
           "type": "hcloud_firewall",
-          "name": "this",
+          "name": "by_label",
           "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
           "schema_version": 0,
           "values": {
-            "apply_to": [],
+            "apply_to": [
+              {
+                "label_selector": "cluster=demo"
+              }
+            ],
             "name": "demo",
             "rule": [
               {
@@ -23,38 +27,20 @@
                 "port": "6443",
                 "protocol": "tcp",
                 "source_ips": [
-                  "0.0.0.0/0",
-                  "::/0"
-                ]
-              },
-              {
-                "description": "SSH",
-                "destination_ips": [],
-                "direction": "in",
-                "port": "22",
-                "protocol": "tcp",
-                "source_ips": [
-                  "0.0.0.0/0",
-                  "::/0"
+                  "10.100.0.0/16"
                 ]
               }
             ]
           },
           "sensitive_values": {
-            "apply_to": [],
+            "apply_to": [
+              {}
+            ],
             "labels": {},
             "rule": [
               {
                 "destination_ips": [],
                 "source_ips": [
-                  false,
-                  false
-                ]
-              },
-              {
-                "destination_ips": [],
-                "source_ips": [
-                  false,
                   false
                 ]
               }
@@ -62,10 +48,10 @@
           }
         },
         {
-          "address": "hcloud_server.control_plane",
+          "address": "hcloud_server.node",
           "mode": "managed",
           "type": "hcloud_server",
-          "name": "control_plane",
+          "name": "node",
           "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
           "schema_version": 0,
           "values": {
@@ -76,9 +62,11 @@
             "image": "debian-12",
             "iso": null,
             "keep_disk": false,
-            "labels": null,
+            "labels": {
+              "cluster": "demo"
+            },
             "location": "nbg1",
-            "name": "demo-cp-1",
+            "name": "demo-node-1",
             "network": [],
             "placement_group_id": null,
             "public_net": [],
@@ -92,6 +80,7 @@
           },
           "sensitive_values": {
             "firewall_ids": [],
+            "labels": {},
             "network": [],
             "public_net": []
           }
@@ -101,10 +90,10 @@
   },
   "resource_changes": [
     {
-      "address": "hcloud_firewall.this",
+      "address": "hcloud_firewall.by_label",
       "mode": "managed",
       "type": "hcloud_firewall",
-      "name": "this",
+      "name": "by_label",
       "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
       "change": {
         "actions": [
@@ -112,7 +101,11 @@
         ],
         "before": null,
         "after": {
-          "apply_to": [],
+          "apply_to": [
+            {
+              "label_selector": "cluster=demo"
+            }
+          ],
           "name": "demo",
           "rule": [
             {
@@ -122,39 +115,23 @@
               "port": "6443",
               "protocol": "tcp",
               "source_ips": [
-                "0.0.0.0/0",
-                "::/0"
-              ]
-            },
-            {
-              "description": "SSH",
-              "destination_ips": [],
-              "direction": "in",
-              "port": "22",
-              "protocol": "tcp",
-              "source_ips": [
-                "0.0.0.0/0",
-                "::/0"
+                "10.100.0.0/16"
               ]
             }
           ]
         },
         "after_unknown": {
-          "apply_to": [],
+          "apply_to": [
+            {
+              "server": true
+            }
+          ],
           "id": true,
           "labels": true,
           "rule": [
             {
               "destination_ips": [],
               "source_ips": [
-                false,
-                false
-              ]
-            },
-            {
-              "destination_ips": [],
-              "source_ips": [
-                false,
                 false
               ]
             }
@@ -162,20 +139,14 @@
         },
         "before_sensitive": false,
         "after_sensitive": {
-          "apply_to": [],
+          "apply_to": [
+            {}
+          ],
           "labels": {},
           "rule": [
             {
               "destination_ips": [],
               "source_ips": [
-                false,
-                false
-              ]
-            },
-            {
-              "destination_ips": [],
-              "source_ips": [
-                false,
                 false
               ]
             }
@@ -184,10 +155,10 @@
       }
     },
     {
-      "address": "hcloud_server.control_plane",
+      "address": "hcloud_server.node",
       "mode": "managed",
       "type": "hcloud_server",
-      "name": "control_plane",
+      "name": "node",
       "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
       "change": {
         "actions": [
@@ -202,9 +173,11 @@
           "image": "debian-12",
           "iso": null,
           "keep_disk": false,
-          "labels": null,
+          "labels": {
+            "cluster": "demo"
+          },
           "location": "nbg1",
-          "name": "demo-cp-1",
+          "name": "demo-node-1",
           "network": [],
           "placement_group_id": null,
           "public_net": [],
@@ -224,6 +197,7 @@
           "ipv4_address": true,
           "ipv6_address": true,
           "ipv6_network": true,
+          "labels": {},
           "network": [],
           "primary_disk_size": true,
           "public_net": [],
@@ -232,6 +206,7 @@
         "before_sensitive": false,
         "after_sensitive": {
           "firewall_ids": [],
+          "labels": {},
           "network": [],
           "public_net": []
         }
@@ -249,36 +224,23 @@
     "root_module": {
       "resources": [
         {
-          "address": "hcloud_firewall.this",
+          "address": "hcloud_firewall.by_label",
           "mode": "managed",
           "type": "hcloud_firewall",
-          "name": "this",
+          "name": "by_label",
           "provider_config_key": "hcloud",
           "expressions": {
+            "apply_to": [
+              {
+                "label_selector": {
+                  "constant_value": "cluster=demo"
+                }
+              }
+            ],
             "name": {
               "constant_value": "demo"
             },
             "rule": [
-              {
-                "description": {
-                  "constant_value": "SSH"
-                },
-                "direction": {
-                  "constant_value": "in"
-                },
-                "port": {
-                  "constant_value": "22"
-                },
-                "protocol": {
-                  "constant_value": "tcp"
-                },
-                "source_ips": {
-                  "constant_value": [
-                    "0.0.0.0/0",
-                    "::/0"
-                  ]
-                }
-              },
               {
                 "description": {
                   "constant_value": "Kubernetes API server"
@@ -294,8 +256,7 @@
                 },
                 "source_ips": {
                   "constant_value": [
-                    "0.0.0.0/0",
-                    "::/0"
+                    "10.100.0.0/16"
                   ]
                 }
               }
@@ -304,26 +265,25 @@
           "schema_version": 0
         },
         {
-          "address": "hcloud_server.control_plane",
+          "address": "hcloud_server.node",
           "mode": "managed",
           "type": "hcloud_server",
-          "name": "control_plane",
+          "name": "node",
           "provider_config_key": "hcloud",
           "expressions": {
-            "firewall_ids": {
-              "references": [
-                "hcloud_firewall.this.id",
-                "hcloud_firewall.this"
-              ]
-            },
             "image": {
               "constant_value": "debian-12"
+            },
+            "labels": {
+              "constant_value": {
+                "cluster": "demo"
+              }
             },
             "location": {
               "constant_value": "nbg1"
             },
             "name": {
-              "constant_value": "demo-cp-1"
+              "constant_value": "demo-node-1"
             },
             "server_type": {
               "constant_value": "cpx31"
@@ -337,14 +297,6 @@
       ]
     }
   },
-  "relevant_attributes": [
-    {
-      "resource": "hcloud_firewall.this",
-      "attribute": [
-        "id"
-      ]
-    }
-  ],
-  "timestamp": "2026-07-13T14:11:02Z",
+  "timestamp": "2026-07-13T14:11:06Z",
   "errored": false
 }

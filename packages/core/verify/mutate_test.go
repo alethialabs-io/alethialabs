@@ -184,19 +184,21 @@ func TestMutationFlipsVerdict(t *testing.T) {
 			},
 		},
 		{
-			// Strip a server's firewall_ids so it becomes a bare public node — the
-			// clean base attaches every server to hcloud_firewall.this.
+			// Strip a server's firewall to a KNOWN-empty list — a bare public node.
+			// (The base is a REAL plan where firewall_ids is computed + proven by the
+			// configuration reference; a known-empty plan VALUE overrides that.)
 			name:      "HCLOUD-FW-001/strip-server-firewall",
 			base:      "hetzner_pass.json",
 			controlID: "HCLOUD-FW-001",
 			mutate: func(t *testing.T, plan *tfjson.Plan) {
-				m := afterOf(t, plan, "hcloud_server.control_plane")
+				m := afterOf(t, plan, `hcloud_server.control_planes["demo-cp-1"]`)
 				m["firewall_ids"] = []any{}
 			},
 		},
 		{
-			// Open SSH (:22) to the whole internet on the firewall — Talos has no SSH,
-			// so this is always a hard fail even though the base rules are all confined.
+			// Open SSH (tcp/22) to the whole internet on the firewall — Talos has no
+			// SSH, so this is always a hard fail even though the base rules are all
+			// confined to bounded CIDRs.
 			name:      "HCLOUD-NET-001/open-ssh-to-world",
 			base:      "hetzner_pass.json",
 			controlID: "HCLOUD-NET-001",

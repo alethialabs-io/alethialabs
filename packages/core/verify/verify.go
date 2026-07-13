@@ -19,6 +19,105 @@ type plannedResource struct {
 	provider     string
 	after        map[string]any
 	afterUnknown any
+	// configExprs are this resource's configuration expressions (from the plan's
+	// `configuration` section), keyed by attribute. They let a control reason
+	// honestly about a value that is computed until apply — e.g. an hcloud_server's
+	// `firewall_ids = [hcloud_firewall.this.id]` collapses to after_unknown:true in
+	// the change, but the configuration still shows the firewall REFERENCE. Nil when
+	// the plan carries no configuration (a bare change-only plan).
+	configExprs map[string]*tfjson.Expression
+	// modPrefix is the module address prefix ("" for root, "module.x." inside a
+	// module). Configuration references are module-local, so callers prefix them
+	// with this to compare against absolute plan addresses.
+	modPrefix string
+	// hasCfg records whether the plan's configuration section contained this
+	// resource at all (independent of whether it had any expressions).
+	hasCfg bool
+}
+
+// exprRefs returns the configuration references of attribute `attr` for this
+// resource, module-prefixed so they compare against absolute plan addresses.
+// Empty when the plan has no configuration or the attribute is not set from a
+// reference.
+func (r *plannedResource) exprRefs(attr string) []string {
+	if r.configExprs == nil {
+		return nil
+	}
+	e := r.configExprs[attr]
+	if e == nil || e.ExpressionData == nil {
+		return nil
+	}
+	out := make([]string, 0, len(e.References))
+	for _, ref := range e.References {
+		out = append(out, r.modPrefix+ref)
+	}
+	return out
+}
+
+// exprConstant returns the configuration constant value of attribute `attr`, and
+// whether one is present (a literal in the .tf source, e.g. firewall_ids = [123]).
+func (r *plannedResource) exprConstant(attr string) (any, bool) {
+	if r.configExprs == nil {
+		return nil, false
+	}
+	e := r.configExprs[attr]
+	if e == nil || e.ExpressionData == nil || e.ConstantValue == nil {
+		return nil, false
+	}
+	return e.ConstantValue, true
+}
+
+// hasConfig reports whether the plan carried configuration for this resource at
+// all — the difference between "attribute not configured" (config present, attr
+// absent: a real, judgeable fact) and "we cannot see the configuration" (an
+// honest not_evaluable).
+func (r *plannedResource) hasConfig() bool { return r.hasCfg }
+
+// baseAddress strips the instance key from a resource address
+// (hcloud_server.workers["w-1"] → hcloud_server.workers) so it can be matched
+// against configuration addresses, which are never instance-keyed.
+func baseAddress(addr string) string {
+	if i := strings.IndexByte(addr, '['); i > 0 {
+		return addr[:i]
+	}
+	return addr
+}
+
+// resourceConfig pairs a configuration resource's expressions with its module
+// prefix for reference resolution.
+type resourceConfig struct {
+	exprs     map[string]*tfjson.Expression
+	modPrefix string
+}
+
+// configExprIndex walks the plan's configuration and indexes each resource's
+// expressions by its module-prefixed base address. Returns nil when the plan has
+// no configuration section (callers then treat config-dependent judgments as
+// not_evaluable rather than guessing).
+func configExprIndex(plan *tfjson.Plan) map[string]resourceConfig {
+	if plan.Config == nil || plan.Config.RootModule == nil {
+		return nil
+	}
+	out := map[string]resourceConfig{}
+	var walk func(m *tfjson.ConfigModule, prefix string)
+	walk = func(m *tfjson.ConfigModule, prefix string) {
+		if m == nil {
+			return
+		}
+		for _, cr := range m.Resources {
+			if cr == nil {
+				continue
+			}
+			out[prefix+cr.Address] = resourceConfig{exprs: cr.Expressions, modPrefix: prefix}
+		}
+		for name, mc := range m.ModuleCalls {
+			if mc != nil {
+				walk(mc.Module, prefix+"module."+name+".")
+			}
+		}
+	}
+	walk(plan.Config.RootModule, "")
+	return out
 }
 
 // Evaluate runs the authored control set against a parsed OpenTofu plan and
@@ -82,6 +181,7 @@ func awsControls(planned []plannedResource) []ControlResult {
 // are being created/updated/replaced (skipping data sources, no-ops and pure
 // deletes, whose `after` is absent and which create no new authority).
 func gatherPlanned(plan *tfjson.Plan) []plannedResource {
+	cfg := configExprIndex(plan)
 	var out []plannedResource
 	for _, rc := range plan.ResourceChanges {
 		if rc == nil || rc.Change == nil {
@@ -97,13 +197,19 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 		if !ok {
 			continue // delete (after is null) or a non-object body
 		}
-		out = append(out, plannedResource{
+		pr := plannedResource{
 			address:      rc.Address,
 			rtype:        rc.Type,
 			provider:     rc.ProviderName,
 			after:        after,
 			afterUnknown: rc.Change.AfterUnknown,
-		})
+		}
+		if rcfg, ok := cfg[baseAddress(rc.Address)]; ok {
+			pr.configExprs = rcfg.exprs
+			pr.modPrefix = rcfg.modPrefix
+			pr.hasCfg = true
+		}
+		out = append(out, pr)
 	}
 	return out
 }

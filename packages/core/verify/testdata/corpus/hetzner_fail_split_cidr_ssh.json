@@ -1,5 +1,5 @@
 {
-  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. HCLOUD-NET-001 hard fail: firewall rule tcp/22 from 0.0.0.0/0+::/0. Talos runs no SSH daemon. Server itself is firewalled (FW-001 passes) isolating the failure to the SSH rule. The co-present world-open 6443 stays a warn.",
+  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. Adversarial: tcp/22 sourced from 0.0.0.0/1 + 128.0.0.0/1 \u2014 the split-CIDR spelling of world-open. The UNION covers the entire IPv4 internet -> HCLOUD-NET-001 hard fail (evasion by enumeration is still world-open).",
   "format_version": "1.2",
   "terraform_version": "1.12.3",
   "planned_values": {
@@ -17,25 +17,14 @@
             "name": "demo",
             "rule": [
               {
-                "description": "Kubernetes API server",
-                "destination_ips": [],
-                "direction": "in",
-                "port": "6443",
-                "protocol": "tcp",
-                "source_ips": [
-                  "0.0.0.0/0",
-                  "::/0"
-                ]
-              },
-              {
-                "description": "SSH",
+                "description": "SSH (split CIDR evasion)",
                 "destination_ips": [],
                 "direction": "in",
                 "port": "22",
                 "protocol": "tcp",
                 "source_ips": [
-                  "0.0.0.0/0",
-                  "::/0"
+                  "0.0.0.0/1",
+                  "128.0.0.0/1"
                 ]
               }
             ]
@@ -44,13 +33,6 @@
             "apply_to": [],
             "labels": {},
             "rule": [
-              {
-                "destination_ips": [],
-                "source_ips": [
-                  false,
-                  false
-                ]
-              },
               {
                 "destination_ips": [],
                 "source_ips": [
@@ -116,25 +98,14 @@
           "name": "demo",
           "rule": [
             {
-              "description": "Kubernetes API server",
-              "destination_ips": [],
-              "direction": "in",
-              "port": "6443",
-              "protocol": "tcp",
-              "source_ips": [
-                "0.0.0.0/0",
-                "::/0"
-              ]
-            },
-            {
-              "description": "SSH",
+              "description": "SSH (split CIDR evasion)",
               "destination_ips": [],
               "direction": "in",
               "port": "22",
               "protocol": "tcp",
               "source_ips": [
-                "0.0.0.0/0",
-                "::/0"
+                "0.0.0.0/1",
+                "128.0.0.0/1"
               ]
             }
           ]
@@ -150,13 +121,6 @@
                 false,
                 false
               ]
-            },
-            {
-              "destination_ips": [],
-              "source_ips": [
-                false,
-                false
-              ]
             }
           ]
         },
@@ -165,13 +129,6 @@
           "apply_to": [],
           "labels": {},
           "rule": [
-            {
-              "destination_ips": [],
-              "source_ips": [
-                false,
-                false
-              ]
-            },
             {
               "destination_ips": [],
               "source_ips": [
@@ -261,7 +218,7 @@
             "rule": [
               {
                 "description": {
-                  "constant_value": "SSH"
+                  "constant_value": "SSH (split CIDR evasion)"
                 },
                 "direction": {
                   "constant_value": "in"
@@ -274,28 +231,8 @@
                 },
                 "source_ips": {
                   "constant_value": [
-                    "0.0.0.0/0",
-                    "::/0"
-                  ]
-                }
-              },
-              {
-                "description": {
-                  "constant_value": "Kubernetes API server"
-                },
-                "direction": {
-                  "constant_value": "in"
-                },
-                "port": {
-                  "constant_value": "6443"
-                },
-                "protocol": {
-                  "constant_value": "tcp"
-                },
-                "source_ips": {
-                  "constant_value": [
-                    "0.0.0.0/0",
-                    "::/0"
+                    "0.0.0.0/1",
+                    "128.0.0.0/1"
                   ]
                 }
               }
@@ -345,6 +282,6 @@
       ]
     }
   ],
-  "timestamp": "2026-07-13T14:11:02Z",
+  "timestamp": "2026-07-13T14:11:04Z",
   "errored": false
 }

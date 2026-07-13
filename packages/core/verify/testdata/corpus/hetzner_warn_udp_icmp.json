@@ -1,5 +1,5 @@
 {
-  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. HCLOUD-NET-001 hard fail: firewall rule tcp/22 from 0.0.0.0/0+::/0. Talos runs no SSH daemon. Server itself is firewalled (FW-001 passes) isolating the failure to the SSH rule. The co-present world-open 6443 stays a warn.",
+  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. Adversarial protocol handling: world-open udp/22 (NOT SSH \u2014 SSH is tcp) and world-open icmp (portless; port='' must not be read as 'covers 22'). Neither may hard-fail the SSH control -> generic warns only -> verdict warn.",
   "format_version": "1.2",
   "terraform_version": "1.12.3",
   "planned_values": {
@@ -17,22 +17,22 @@
             "name": "demo",
             "rule": [
               {
-                "description": "Kubernetes API server",
+                "description": "world-open ICMP (portless)",
                 "destination_ips": [],
                 "direction": "in",
-                "port": "6443",
-                "protocol": "tcp",
+                "port": "",
+                "protocol": "icmp",
                 "source_ips": [
                   "0.0.0.0/0",
                   "::/0"
                 ]
               },
               {
-                "description": "SSH",
+                "description": "world-open UDP 22 (not SSH; SSH is TCP)",
                 "destination_ips": [],
                 "direction": "in",
                 "port": "22",
-                "protocol": "tcp",
+                "protocol": "udp",
                 "source_ips": [
                   "0.0.0.0/0",
                   "::/0"
@@ -62,10 +62,10 @@
           }
         },
         {
-          "address": "hcloud_server.control_plane",
+          "address": "hcloud_server.node",
           "mode": "managed",
           "type": "hcloud_server",
-          "name": "control_plane",
+          "name": "node",
           "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
           "schema_version": 0,
           "values": {
@@ -78,7 +78,7 @@
             "keep_disk": false,
             "labels": null,
             "location": "nbg1",
-            "name": "demo-cp-1",
+            "name": "demo-node-1",
             "network": [],
             "placement_group_id": null,
             "public_net": [],
@@ -116,22 +116,22 @@
           "name": "demo",
           "rule": [
             {
-              "description": "Kubernetes API server",
+              "description": "world-open ICMP (portless)",
               "destination_ips": [],
               "direction": "in",
-              "port": "6443",
-              "protocol": "tcp",
+              "port": "",
+              "protocol": "icmp",
               "source_ips": [
                 "0.0.0.0/0",
                 "::/0"
               ]
             },
             {
-              "description": "SSH",
+              "description": "world-open UDP 22 (not SSH; SSH is TCP)",
               "destination_ips": [],
               "direction": "in",
               "port": "22",
-              "protocol": "tcp",
+              "protocol": "udp",
               "source_ips": [
                 "0.0.0.0/0",
                 "::/0"
@@ -184,10 +184,10 @@
       }
     },
     {
-      "address": "hcloud_server.control_plane",
+      "address": "hcloud_server.node",
       "mode": "managed",
       "type": "hcloud_server",
-      "name": "control_plane",
+      "name": "node",
       "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
       "change": {
         "actions": [
@@ -204,7 +204,7 @@
           "keep_disk": false,
           "labels": null,
           "location": "nbg1",
-          "name": "demo-cp-1",
+          "name": "demo-node-1",
           "network": [],
           "placement_group_id": null,
           "public_net": [],
@@ -261,7 +261,7 @@
             "rule": [
               {
                 "description": {
-                  "constant_value": "SSH"
+                  "constant_value": "world-open UDP 22 (not SSH; SSH is TCP)"
                 },
                 "direction": {
                   "constant_value": "in"
@@ -270,7 +270,7 @@
                   "constant_value": "22"
                 },
                 "protocol": {
-                  "constant_value": "tcp"
+                  "constant_value": "udp"
                 },
                 "source_ips": {
                   "constant_value": [
@@ -281,16 +281,13 @@
               },
               {
                 "description": {
-                  "constant_value": "Kubernetes API server"
+                  "constant_value": "world-open ICMP (portless)"
                 },
                 "direction": {
                   "constant_value": "in"
                 },
-                "port": {
-                  "constant_value": "6443"
-                },
                 "protocol": {
-                  "constant_value": "tcp"
+                  "constant_value": "icmp"
                 },
                 "source_ips": {
                   "constant_value": [
@@ -304,10 +301,10 @@
           "schema_version": 0
         },
         {
-          "address": "hcloud_server.control_plane",
+          "address": "hcloud_server.node",
           "mode": "managed",
           "type": "hcloud_server",
-          "name": "control_plane",
+          "name": "node",
           "provider_config_key": "hcloud",
           "expressions": {
             "firewall_ids": {
@@ -323,7 +320,7 @@
               "constant_value": "nbg1"
             },
             "name": {
-              "constant_value": "demo-cp-1"
+              "constant_value": "demo-node-1"
             },
             "server_type": {
               "constant_value": "cpx31"
@@ -345,6 +342,6 @@
       ]
     }
   ],
-  "timestamp": "2026-07-13T14:11:02Z",
+  "timestamp": "2026-07-13T14:11:08Z",
   "errored": false
 }
