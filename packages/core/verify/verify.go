@@ -50,6 +50,7 @@ func selectControls(providers []string, planned []plannedResource) []ControlResu
 		out := awsControls(planned)
 		out = append(out, gcpControls(planned)...)
 		out = append(out, azureControls(planned)...)
+		out = append(out, hetznerControls(planned)...)
 		return out
 	}
 	var out []ControlResult
@@ -61,6 +62,8 @@ func selectControls(providers []string, planned []plannedResource) []ControlResu
 			out = append(out, gcpControls(planned)...)
 		case "azure":
 			out = append(out, azureControls(planned)...)
+		case "hetzner":
+			out = append(out, hetznerControls(planned)...)
 		}
 	}
 	return out
@@ -110,9 +113,10 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 // several clouds, so this is a set rather than a single best-effort guess: every
 // provider in it gets its controls run (see selectControls). Resource types with no
 // recognized prefix (utility providers like random_/tls_, or clouds without a
-// control set such as hcloud/cloudflare) contribute nothing here — the engine has no
+// control set such as cloudflare) contribute nothing here — the engine has no
 // controls to run over them, which the report states honestly rather than implying a
-// pass it never checked.
+// pass it never checked. Hetzner (hcloud_) IS recognized now — it has posture
+// (firewall / network-hardening) controls, mapped to the semantic name "hetzner".
 func detectProviders(planned []plannedResource) []string {
 	seen := map[string]bool{}
 	for _, r := range planned {
@@ -123,6 +127,8 @@ func detectProviders(planned []plannedResource) []string {
 			seen["gcp"] = true
 		case strings.HasPrefix(r.rtype, "azurerm_"), strings.HasPrefix(r.rtype, "azuread_"):
 			seen["azure"] = true
+		case strings.HasPrefix(r.rtype, "hcloud_"):
+			seen["hetzner"] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -137,25 +143,29 @@ func detectProviders(planned []plannedResource) []string {
 // first underscore) that have an authored control set — a violation in one of these
 // providers is actually checked. Note "google" maps to the gcp control set and both
 // "azurerm"/"azuread" map to the azure set; the token is the raw terraform prefix.
+// "hcloud" maps to the hetzner posture control set (firewall / world-open ingress) —
+// it is token-auth so it has no keyless/OIDC controls, but it is NOT a vacuous pass.
 var controlledProviderTokens = map[string]bool{
-	"aws": true, "google": true, "azurerm": true, "azuread": true,
+	"aws": true, "google": true, "azurerm": true, "azuread": true, "hcloud": true,
 }
 
 // supportedNoControlProviderTokens are provider prefixes the engine recognizes as a
-// LEGITIMATE vacuous pass: providers for which there is no keyless / OIDC-sub /
-// least-privilege control surface to assert, so a plan built only from them is
-// honestly a pass. Two groups:
+// LEGITIMATE vacuous pass: providers for which there is no control surface to assert,
+// so a plan built only from them is honestly a pass. Two groups:
 //
-//   - Clouds without a control set BY DESIGN. Hetzner (hcloud) is token-auth — the
-//     token is the ceiling, there is no OIDC/federation to bind, so the keyless
-//     controls do not apply (see the Hetzner posture). Cloudflare likewise.
+//   - Clouds without a control set BY DESIGN. Cloudflare has no keyless / OIDC-sub /
+//     least-privilege / network-posture surface the engine audits. (Hetzner USED to be
+//     here on the same reasoning, but it DOES have a network-posture surface — firewall
+//     attachment + world-open ingress — so hcloud is now a CONTROLLED provider, not a
+//     vacuous pass. See controls_hetzner.go / controlledProviderTokens.)
 //   - CLUSTER-LAYER providers that create NO cloud-authority surface — the K8s
 //     bootstrap + in-cluster resources that co-occur in every real cluster plan
 //     (talos_, imager_, minio_, helm_, kubernetes_, kubectl_). None of them create a
 //     cloud IAM identity / keyless-federation / least-priv surface (the only thing the
-//     controls audit); they configure the cluster itself. Alethia's shipped Hetzner
-//     template is hcloud_ + talos_ + imager_ + minio_ + helm_, so WITHOUT this group a
-//     real Hetzner/Talos provision would wrongly flip pass → not_evaluable.
+//     cloud controls audit); they configure the cluster itself. Alethia's shipped Hetzner
+//     template is hcloud_ (now controlled) + talos_ + imager_ + minio_ + helm_, so
+//     WITHOUT this group a real Hetzner/Talos provision would wrongly flip to
+//     not_evaluable on the cluster-layer resources.
 //   - Utility providers that create no cloud authority at all: random_, tls_, null_,
 //     local_, time_, external_.
 //
@@ -169,7 +179,7 @@ var controlledProviderTokens = map[string]bool{
 // unrecognized providers. When in doubt a provider is left OFF this list (the
 // fail-closed default) so an unknown cloud is surfaced rather than silently passed.
 var supportedNoControlProviderTokens = map[string]bool{
-	"hcloud": true, "cloudflare": true,
+	"cloudflare": true,
 	// cluster-layer, no cloud-authority surface (co-occur in every real cluster plan):
 	"talos": true, "imager": true, "minio": true,
 	"helm": true, "kubernetes": true, "kubectl": true,

@@ -133,6 +133,8 @@ func controlAddressPrefix(provider string) string {
 		return "google_"
 	case "azure":
 		return "azure" // azurerm_ / azuread_
+	case "hetzner":
+		return "hcloud_"
 	default:
 		return ""
 	}

@@ -1,7 +1,7 @@
 {
   "format_version": "1.2",
   "terraform_version": "1.9.0",
-  "_comment": "A REALISTIC Alethia Hetzner/Talos provision plan: hcloud_ (VMs) + talos_ (k8s bootstrap) + imager_ (image factory) + minio_ (in-cluster S3) + helm_ (CNI/CSI) + random_. None of these carry a cloud-authority surface (no IAM identity / keyless federation / least-priv role), so the plan is honestly a PASS — the fail-closed backstop (SCOPE-001) must NOT flip it to not_evaluable.",
+  "_comment": "A REALISTIC Alethia Hetzner/Talos provision plan: hcloud_ (VMs, now a CONTROLLED provider with posture controls) + talos_ (k8s bootstrap) + imager_ (image factory) + minio_ (in-cluster S3) + helm_ (CNI/CSI) + random_. The hcloud_server carries a firewall (firewall_ids) so HCLOUD-FW-001 passes, and there is no world-open firewall rule to warn on, so the plan is a clean PASS. The cluster-layer + utility providers carry no cloud-authority surface, so the fail-closed backstop (SCOPE-001) must NOT flip this to not_evaluable.",
   "resource_changes": [
     {
       "address": "hcloud_server.node",
@@ -12,7 +12,7 @@
       "change": {
         "actions": ["create"],
         "before": null,
-        "after": { "server_type": "cpx21", "location": "nbg1" },
+        "after": { "server_type": "cpx21", "location": "nbg1", "firewall_ids": ["3421095"] },
         "after_unknown": {}
       }
     },

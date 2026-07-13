@@ -1,0 +1,20 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "_comment": "NEGATIVE (teeth): an hcloud_server with NO firewall — no firewall_ids and no hcloud_firewall_attachment anywhere in the plan. HCLOUD-FW-001 must hard-fail; the VM would be exposed on every port its OS listens on.",
+  "resource_changes": [
+    {
+      "address": "hcloud_server.exposed",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "exposed",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "exposed", "server_type": "cpx21", "location": "nbg1" },
+        "after_unknown": { "id": true }
+      }
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "_comment": "THE LOAD-BEARING PROOF (B0.1 grill#3): a faithful representation of the CURRENTLY SHIPPED infra/templates/project/hetzner plan — 2x hcloud_server (control-plane + worker) each with firewall_ids=[hcloud_firewall.this.id] (computed → unknown-until-apply), hcloud_network + subnet, hcloud_primary_ip, and hcloud_firewall.this with the exact rules from network.tf: world-open tcp 50000/50001 (Talos apid) + 6443 (k8s API), and intra-cluster tcp/udp/icmp scoped to the private CIDR. Expected: HCLOUD-FW-001 PASS (both servers reference the firewall), HCLOUD-NET-001 WARN (three world-open k8s/Talos ports, port 22 is NOT world-open), overall verdict=warn, ZERO fails. If this ever flips to fail, tonight's nightly bricks — that regression must break the build.",
+  "resource_changes": [
+    {
+      "address": "hcloud_network.this",
+      "mode": "managed",
+      "type": "hcloud_network",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "alethia-cluster", "ip_range": "10.0.0.0/16" },
+        "after_unknown": { "id": true }
+      }
+    },
+    {
+      "address": "hcloud_network_subnet.nodes",
+      "mode": "managed",
+      "type": "hcloud_network_subnet",
+      "name": "nodes",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "type": "cloud", "ip_range": "10.0.0.0/24" },
+        "after_unknown": { "id": true, "network_id": true, "network_zone": true }
+      }
+    },
+    {
+      "address": "hcloud_primary_ip.control_plane_ipv4[0]",
+      "mode": "managed",
+      "type": "hcloud_primary_ip",
+      "name": "control_plane_ipv4",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "alethia-cluster-cp-1-ipv4", "type": "ipv4", "auto_delete": false },
+        "after_unknown": { "id": true, "ip_address": true }
+      }
+    },
+    {
+      "address": "hcloud_firewall.this",
+      "mode": "managed",
+      "type": "hcloud_firewall",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "alethia-cluster",
+          "rule": [
+            { "description": "Talos apid", "direction": "in", "protocol": "tcp", "port": "50000", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Talos apid (trustd)", "direction": "in", "protocol": "tcp", "port": "50001", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Kubernetes API server", "direction": "in", "protocol": "tcp", "port": "6443", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Intra-cluster TCP (private network)", "direction": "in", "protocol": "tcp", "port": "any", "source_ips": ["10.0.0.0/16"] },
+            { "description": "Intra-cluster UDP (private network)", "direction": "in", "protocol": "udp", "port": "any", "source_ips": ["10.0.0.0/16"] },
+            { "description": "Intra-cluster ICMP (private network)", "direction": "in", "protocol": "icmp", "source_ips": ["10.0.0.0/16"] }
+          ]
+        },
+        "after_unknown": { "id": true }
+      }
+    },
+    {
+      "address": "hcloud_server.control_planes[\"alethia-cluster-cp-1\"]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "control_planes",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "alethia-cluster-cp-1",
+          "server_type": "cpx21",
+          "location": "nbg1",
+          "labels": { "cluster": "alethia-cluster", "role": "control-plane" }
+        },
+        "after_unknown": { "id": true, "firewall_ids": [true] }
+      }
+    },
+    {
+      "address": "hcloud_server.workers[\"alethia-cluster-worker-1\"]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "workers",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "alethia-cluster-worker-1",
+          "server_type": "cpx31",
+          "location": "nbg1",
+          "labels": { "cluster": "alethia-cluster", "role": "worker" }
+        },
+        "after_unknown": { "id": true, "firewall_ids": [true] }
+      }
+    },
+    {
+      "address": "talos_machine_configuration_apply.cp",
+      "mode": "managed",
+      "type": "talos_machine_configuration_apply",
+      "name": "cp",
+      "provider_name": "registry.terraform.io/siderolabs/talos",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {},
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "helm_release.cilium",
+      "mode": "managed",
+      "type": "helm_release",
+      "name": "cilium",
+      "provider_name": "registry.terraform.io/hashicorp/helm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "chart": "cilium", "namespace": "kube-system" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "random_id.suffix",
+      "mode": "managed",
+      "type": "random_id",
+      "name": "suffix",
+      "provider_name": "registry.terraform.io/hashicorp/random",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "byte_length": 4 },
+        "after_unknown": {}
+      }
+    }
+  ]
+}

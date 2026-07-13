@@ -183,6 +183,32 @@ func TestMutationFlipsVerdict(t *testing.T) {
 				m["role_definition_name"] = "Owner"
 			},
 		},
+		{
+			// Inject an hcloud_server with NO firewall (no firewall_ids, no attachment)
+			// into an otherwise-protected Hetzner plan — HCLOUD-FW-001 must flip to fail.
+			name:      "HCLOUD-FW-001/inject-firewall-less-server",
+			base:      "hetzner_utility_pass.json",
+			controlID: "HCLOUD-FW-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "hcloud_server.orphan", "hcloud_server", "hetzner",
+					map[string]any{"name": "orphan", "server_type": "cpx11", "location": "nbg1"},
+					map[string]any{})
+			},
+		},
+		{
+			// Inject a firewall that opens SSH (tcp/22) to 0.0.0.0/0 — HCLOUD-NET-001
+			// must flip to fail (world-open SSH is the one hard-fail network posture).
+			name:      "HCLOUD-NET-001/inject-world-open-ssh",
+			base:      "hetzner_utility_pass.json",
+			controlID: "HCLOUD-NET-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "hcloud_firewall.bad", "hcloud_firewall", "hetzner",
+					map[string]any{"name": "bad", "rule": []any{
+						map[string]any{"direction": "in", "protocol": "tcp", "port": "22", "source_ips": []any{"0.0.0.0/0"}},
+					}},
+					map[string]any{})
+			},
+		},
 	}
 
 	// Assert every declared control has a mutator — parity with the corpus coverage

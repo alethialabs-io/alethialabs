@@ -39,14 +39,16 @@ plan whose resources belong to no controlled provider would otherwise run every 
 "nothing in scope" vacuous **pass** — a silent hole for any provider the gate can't reason about (a
 typo'd/custom provider, or AWS Cloud Control `awscc_`, whose resources the `aws_` controls never match).
 `SCOPE-001` closes it: a plan is **evaluable** iff every managed resource belongs to a provider that is
-either **controlled** (`aws`/`google`/`azurerm`/`azuread`) or on the **supported-no-controls allowlist**
-— clouds with no keyless/OIDC/least-priv surface *by design* (**Hetzner** `hcloud` is token-auth, the
-token is the ceiling; **Cloudflare**), the **cluster-layer** providers that co-occur in every real
-cluster plan and carry no cloud-authority surface (`talos`/`imager`/`minio`/`helm`/`kubernetes`/
-`kubectl` — they configure the cluster, not a cloud IAM identity), plus the utility providers that
-create no cloud authority (`random`/`tls`/`null`/`local`/`time`/`external`). Those legitimately stay a
-**pass** — Alethia's shipped Hetzner/Talos template is `hcloud`+`talos`+`imager`+`minio`+`helm`, so
-without the cluster-layer group a real Hetzner provision would wrongly flip to not_evaluable. Any
+either **controlled** (`aws`/`google`/`azurerm`/`azuread`/`hcloud`) or on the **supported-no-controls
+allowlist** — clouds with no control surface *by design* (**Cloudflare**), the **cluster-layer**
+providers that co-occur in every real cluster plan and carry no cloud-authority surface
+(`talos`/`imager`/`minio`/`helm`/`kubernetes`/`kubectl` — they configure the cluster, not a cloud IAM
+identity), plus the utility providers that create no cloud authority
+(`random`/`tls`/`null`/`local`/`time`/`external`). Those legitimately stay a **pass** — Alethia's shipped
+Hetzner/Talos template is `hcloud`+`talos`+`imager`+`minio`+`helm`, so without the cluster-layer group a
+real Hetzner provision would wrongly flip to not_evaluable. **Hetzner** (`hcloud`) is **no longer** a
+vacuous pass: it is token-auth (no keyless/OIDC surface), but it DOES have a network-posture surface, so
+it moved onto the controlled set with the `HCLOUD-*` controls below. Any
 resource from a provider outside that union makes the report **`not_evaluable`** (with an honest
 per-resource note naming the unrecognized provider) rather than a pass — the gate never implies it
 checked infrastructure it cannot see. It does **not** blanket-deny: a controlled cloud's real violation
@@ -87,6 +89,20 @@ has no authored control set yet, so it is deliberately **off** the allowlist (it
 | `AZURE-KEYLESS-001` | No static app/SP secrets | creating an `azuread_application_password`/`azuread_service_principal_password` (use a federated identity credential) |
 | `AZURE-FED-001` | Federated credentials bind a subject | an `azuread_application_federated_identity_credential` with an empty or wildcard `subject` |
 | `AZURE-LEASTPRIV-001` | No Owner/Contributor assignments | an `azurerm_role_assignment` of `Owner` (fail) — **warns** on `Contributor` — scope annotated |
+
+**Hetzner** (token-auth → POSTURE controls, not authority/keyless controls — the token is the ceiling,
+there is no OIDC/federation to bind)
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `HCLOUD-FW-001` | Servers are attached to a firewall | an `hcloud_server` with no firewall — no `firewall_ids` (inline, incl. the computed `[hcloud_firewall.x.id]` reference the shipped template uses) and no `hcloud_firewall_attachment`. An attachment whose `server_ids` are computed → not_evaluable (can't map to a server), never a false fail. |
+| `HCLOUD-NET-001` | No world-open SSH; world-open ingress surfaced | an `hcloud_firewall` ingress rule that opens **SSH (tcp 22, incl. `any`/ranges spanning 22)** to `0.0.0.0/0`/`::/0`. **Warns** on any OTHER world-open ingress (the Kubernetes API `6443` and Talos apid `50000`/`50001` are open by design). Computed rule block → not_evaluable. |
+
+The Hetzner controls are deliberately POSTURE (network/firewall hardening), not keyless/least-priv
+authority controls — Hetzner has no OIDC surface to assert, so those would be vacuous. The load-bearing
+guard is `hetzner_shipped_template_warn.json` + `TestHetznerShippedTemplateWarnsOnlyZeroFails`: the
+currently-shipped Hetzner/Talos template plan must be **warns-only, zero fails** (else the nightly
+provision bricks), enforced in CI.
 
 Statuses: `pass` · `fail` (blocks apply) · `warn` (recorded, does not block) · `not_evaluable`.
 Overall verdict precedence: `fail` → `warn` → `not_evaluable` → `pass`.

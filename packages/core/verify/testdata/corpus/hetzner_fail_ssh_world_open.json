@@ -1,0 +1,39 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "_comment": "NEGATIVE (teeth): a firewall that opens SSH (tcp/22) to 0.0.0.0/0. HCLOUD-NET-001 must hard-fail on world-open SSH (the one blocking network posture). The hcloud_server references the firewall (firewall_ids computed) so HCLOUD-FW-001 PASSES — isolating the failure to the SSH rule.",
+  "resource_changes": [
+    {
+      "address": "hcloud_firewall.bad",
+      "mode": "managed",
+      "type": "hcloud_firewall",
+      "name": "bad",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "bad",
+          "rule": [
+            { "description": "SSH open to the world", "direction": "in", "protocol": "tcp", "port": "22", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Kubernetes API server", "direction": "in", "protocol": "tcp", "port": "6443", "source_ips": ["0.0.0.0/0"] }
+          ]
+        },
+        "after_unknown": { "id": true }
+      }
+    },
+    {
+      "address": "hcloud_server.node",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "node",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "node", "server_type": "cpx21", "location": "nbg1" },
+        "after_unknown": { "id": true, "firewall_ids": [true] }
+      }
+    }
+  ]
+}
