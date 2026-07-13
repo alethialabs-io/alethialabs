@@ -6,6 +6,7 @@ package argocd
 import (
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -35,6 +36,11 @@ type InfraFacts struct {
 	ClusterArn      string // AWS EKS ARN (empty on GCP/Azure)
 
 	AppsDestinationRepo string
+
+	// Labels are the classification + sweep-handle Kubernetes labels (cloud.ClassificationLabels)
+	// stamped onto metadata.labels of every rendered ArgoCD Application/AppProject (BYOC B1.4).
+	// Attribution/selection only — never secrets (facts are rendered into templates).
+	Labels map[string]string
 
 	// ── AWS (IRSA) ──────────────────────────────────────────────
 	AWSAccountID           string
@@ -136,6 +142,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		DNSCredentialPresent: dnsCredentialPresent(vc),
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
+		Labels:               cloud.ClassificationLabels(vc),
 	}
 
 	switch vc.Provider {

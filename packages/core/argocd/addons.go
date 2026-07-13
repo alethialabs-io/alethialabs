@@ -102,7 +102,10 @@ func AddOnAppName(id string) string {
 // temp dir and returns it, ready for ApplyApplications (kubectl apply). Gitops-mode add-ons
 // are skipped here (Phase 2 writes those into the customer's apps repo). Returns an empty dir
 // (and no error) when there are no managed add-ons, so the caller can apply unconditionally.
-func RenderManagedAddOns(addons []types.AddOnInstall) (string, error) {
+// commonLabels are the classification/sweep labels stamped onto each Application (BYOC B1.4);
+// pass nil to add none. This path also renders BYO (git-source) chart Applications, so their
+// Applications get the same attribution labels.
+func RenderManagedAddOns(addons []types.AddOnInstall, commonLabels map[string]string) (string, error) {
 	outDir, err := os.MkdirTemp("", "argocd-addons-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
@@ -116,8 +119,12 @@ func RenderManagedAddOns(addons []types.AddOnInstall) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to render add-on %s: %w", a.ID, err)
 		}
+		labeled, err := injectCommonLabels(manifest, commonLabels)
+		if err != nil {
+			return "", fmt.Errorf("failed to label add-on %s: %w", a.ID, err)
+		}
 		dst := filepath.Join(outDir, AddOnAppName(a.ID)+".yaml")
-		if err := os.WriteFile(dst, []byte(manifest), 0644); err != nil {
+		if err := os.WriteFile(dst, []byte(labeled), 0644); err != nil {
 			return "", fmt.Errorf("failed to write add-on %s: %w", a.ID, err)
 		}
 	}

@@ -695,9 +695,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
 			// and register their per-repo credentials BEFORE rendering the Applications, so the
 			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
-			prepareByoCharts(vc, params.GitAccessToken, stdout, stderr)
+			prepareByoCharts(vc, params.GitAccessToken, facts.Labels, stdout, stderr)
 
-			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns)
+			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
 			} else {
