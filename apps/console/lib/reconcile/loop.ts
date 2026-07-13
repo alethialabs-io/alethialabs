@@ -16,7 +16,7 @@ import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
-import { gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
+import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
 import { getHeartbeats, isDue, runTask } from "@/lib/reconcile/heartbeat";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
 
@@ -35,6 +35,7 @@ const INTERVALS = {
 	"drift-schedule": 5 * 60_000, // 5m — the sweep itself self-gates per-env by tier cadence (hours)
 	"gc-job-logs": 15 * 60_000, // 15m — bounded-batch retention GC; a backlog drains over passes
 	"gc-fleet-actions": 15 * 60_000, // 15m
+	"gc-authz-activity": 15 * 60_000, // 15m — bounded-batch retention GC for the governance/audit log
 } as const;
 
 const globalForReconcile = globalThis as unknown as {
@@ -82,12 +83,15 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		if (isDue("drift-schedule", INTERVALS["drift-schedule"], now)) {
 			await runTask("drift-schedule", () => sweepDriftSchedule(now));
 		}
-		// Retention GC (best-effort, bounded batch): job_logs + fleet_actions ledger.
+		// Retention GC (best-effort, bounded batch): job_logs + fleet_actions ledger + authz activity log.
 		if (isDue("gc-job-logs", INTERVALS["gc-job-logs"], now)) {
 			await runTask("gc-job-logs", () => gcJobLogs(db));
 		}
 		if (isDue("gc-fleet-actions", INTERVALS["gc-fleet-actions"], now)) {
 			await runTask("gc-fleet-actions", () => gcFleetActions(db));
+		}
+		if (isDue("gc-authz-activity", INTERVALS["gc-authz-activity"], now)) {
+			await runTask("gc-authz-activity", () => gcAuthzActivityLog(db));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already
