@@ -111,6 +111,11 @@ export class FakeFleet implements FleetProvider {
 			recordAction: async (record) => {
 				this.recorded.push(record);
 			},
+			// Single-world fake: the scale lock is always free → run the apply span and report acquired.
+			withScaleLock: async (_provider, apply) => {
+				await apply();
+				return true;
+			},
 		};
 	}
 

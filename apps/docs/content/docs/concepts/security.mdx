@@ -54,7 +54,7 @@ tightly the role is (being) scoped.
 
 ### Setup
 
-The user deploys a CloudFormation template (or Terraform module) in their AWS account. This creates:
+The user deploys a CloudFormation template (or OpenTofu module) in their AWS account. This creates:
 
 1. **An IAM OIDC provider** for the Alethia issuer (`${APP_URL}/api/oidc`) — the account's trust root for Alethia
 2. **`AlethiaProvisionerRole`** — an IAM role whose trust policy allows **only** `sts:AssumeRoleWithWebIdentity` from that provider, pinned to the fixed audience (`sts.amazonaws.com`) and subject (`alethia-connector`)
@@ -68,15 +68,18 @@ the role.
 The control plane (for server-side connection health / inventory) and managed runners (for provisioning)
 federate **directly** into the customer role with a minted assertion — a single hop, no platform account:
 
-```
-Console/Runner ──► STS AssumeRoleWithWebIdentity(customer RoleArn, OIDC assertion)   ← no access key
-               ◄── Temporary customer credentials (AccessKeyID, SecretKey, SessionToken)
-               ──► Terraform runs; the assertion auto-refreshes from the re-read token file
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant R as Console / Runner
+  participant STS as AWS STS
+  R->>STS: AssumeRoleWithWebIdentity(customer RoleArn, OIDC assertion) — no access key
+  STS-->>R: Temporary customer credentials (~1h)
+  Note over R: tofu runs; the assertion auto-refreshes from the re-read token file
+`} />
 
 A managed runner has no ambient AWS identity, so it writes the assertion to a web-identity token file and an
 AWS profile (`AWS_CONFIG_FILE`/`AWS_PROFILE`); the SDK re-reads the file and re-assumes on expiry, so an apply
-past the ~1 hour session survives. (Self-hosted runners run in the customer's own cloud with their own
+past the ~1 hour session survives. (Self-operated runners run in the customer's own cloud with their own
 credentials and assume the customer role directly.)
 
 ### Permissions scope
@@ -114,12 +117,14 @@ The user configures a Workload Identity Pool and Provider in their GCP project:
 
 ### Runtime Flow
 
-```
-Runner ──► Present OIDC token from Console
-GCP STS ──► Validate token against registered issuer/subject
-         ◄── Short-lived GCP access token
-         ──► Terraform runs with exchanged credentials
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant R as Console / Runner
+  participant STS as GCP STS
+  R->>STS: Present minted OIDC token (Console issuer)
+  STS-->>R: Short-lived GCP access token (~1h)
+  Note over R: tofu runs with the exchanged credentials
+`} />
 
 No service account JSON key files are created or stored. The OIDC token exchange happens at runtime for each job.
 
@@ -162,12 +167,14 @@ store nothing:
 
 ### Runtime Flow
 
-```
-Console/Runner ──► Present minted OIDC assertion as a client assertion (ARM_OIDC_TOKEN)
-Azure          ──► Validate against the issuer's JWKS (subject/audience)
-               ◄── Access token for Azure Resource Manager (~1 hour)
-               ──► Terraform runs; the runner re-mints into the token file so long applies refresh
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant R as Console / Runner
+  participant AZ as Azure (Entra / ARM)
+  R->>AZ: Present minted OIDC assertion as a client assertion (ARM_OIDC_TOKEN)
+  AZ-->>R: Access token for Azure Resource Manager (~1h)
+  Note over R: tofu runs; the runner re-mints into the token file so long applies refresh
+`} />
 
 No client secret is ever generated or stored. Access revocation is instant by deleting the service
 principal in the customer tenant.
@@ -193,17 +200,19 @@ external-dns identity and **nothing else** (no path to Owner). See the
 ## Alibaba: RAM Role via OIDC (account-free)
 
 Alibaba is keyless **and account-free** — Alethia holds no Alibaba account and no AccessKey. The customer
-applies a Terraform module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia
+applies an OpenTofu module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia
 issuer plus a **RAM role**, then pastes the role ARN (Alethia derives the provider ARN from it).
 
 ### Runtime Flow
 
-```
-Console/Runner ──► STS AssumeRoleWithOIDC(RoleArn, OIDCProviderArn, minted OIDC token)   ← anonymous, no AccessKey
-Alibaba        ──► Validate the token against the RAM OIDC provider (issuer/subject/audience)
-               ◄── Temporary STS credentials (~1 hour)
-               ──► Terraform runs; the runner re-mints into the token file so long applies refresh
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant R as Console / Runner
+  participant STS as Alibaba STS
+  R->>STS: AssumeRoleWithOIDC(RoleArn, OIDCProviderArn, minted token) — anonymous, no AccessKey
+  STS-->>R: Temporary STS credentials (~1h)
+  Note over R: tofu runs; the runner re-mints into the token file so long applies refresh
+`} />
 
 `AssumeRoleWithOIDC` is an anonymous STS action — the OIDC token itself authenticates the call, so there is
 no AccessKey and no request signature. On the runner, the `alicloud` provider performs the exchange itself
@@ -246,7 +255,7 @@ runs on it?
 
 - **Trusted templates** — Alethia's own project templates (EKS/GKE/AKS/ACK/Talos + supporting services) run
   in-process on the runner. They are reviewed platform code, so this is safe.
-- **Untrusted bring-your-own** — customer Terraform / Helm (a provider, an `external` data source, a chart
+- **Untrusted bring-your-own** — customer OpenTofu / Helm (a provider, an `external` data source, a chart
   hook) is arbitrary code. It runs inside a **per-job container sandbox**: a fresh container per job with its
   own PID namespace, an **allowlisted environment** (no runner token, no storage key, no signing key — only
   the short-lived, job-scoped cloud credentials it needs), read-only credential mounts, and a **default-deny,
@@ -255,7 +264,7 @@ runs on it?
 
 Three properties keep the blast radius of a single job to that one job:
 
-- **No storage master key on the runner.** Terraform state goes through a console **state proxy**
+- **No storage master key on the runner.** OpenTofu state goes through a Console **state proxy**
   (`backend "http"` → `/api/jobs/[id]/state`) authenticated by a **per-job, key-scoped** token; the state
   object key is derived server-side from the job. The runner never holds the object-storage credential, and
   one job's token can only touch its own state (fenced locking prevents lost updates).
@@ -277,22 +286,18 @@ the [managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-
 
 The alethia CLI uses the **Device Authorization Grant** flow (RFC 8628), the same pattern used by GitHub CLI, Azure CLI, and AWS SSO:
 
-```
-1. alethia login
-   └── CLI generates UUID device_code
-   └── Opens browser to: {console_url}/cli/login?device_code={code}
-
-2. User authenticates in browser
-   └── Sees 6-character verification code
-   └── Types code into CLI prompt
-
-3. CLI exchanges device_code + verification_code
-   └── POST /api/auth/cli/exchange
-   └── Receives refresh_token
-
-4. Token stored locally
-   └── ~/.config/alethia/auth.json (encrypted)
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant CLI as alethia CLI
+  participant B as Browser (Console)
+  participant API as Console API
+  CLI->>CLI: generate device_code
+  CLI->>B: open {console}/cli/login?device_code=...
+  B->>B: user signs in, approves the device_code
+  CLI->>API: poll POST /api/auth/cli/exchange (device_code)
+  API-->>CLI: 404 while pending, then JWT pair once approved
+  CLI->>CLI: store ~/.config/alethia/credentials.json
+`} />
 
 The user never types a password in the terminal. The refresh token is stored locally and used to obtain short-lived access tokens for API calls. Automatic refresh happens transparently via `POST /api/auth/cli/refresh`.
 

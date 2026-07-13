@@ -5,7 +5,7 @@ description: How ArgoCD is installed automatically and configured with the App o
 
 # GitOps & ArgoCD
 
-After a successful `terraform apply`, the Runner automatically installs **ArgoCD** on the provisioned Kubernetes cluster. ArgoCD manages all subsequent application deployments via GitOps — Git is the source of truth.
+After a successful `tofu apply`, the runner automatically installs **ArgoCD** on the provisioned Kubernetes cluster. ArgoCD manages all subsequent application deployments via GitOps — Git is the source of truth.
 
 <img src="/docs/diagrams/concepts/gitops-argocd.svg" alt="GitOps ArgoCD" />
 
@@ -27,29 +27,36 @@ Every provisioned cluster comes with ArgoCD and a set of supporting components:
 
 <Steps>
 
-### Terraform apply completes
-The Runner provisions all infrastructure (VPC, cluster, databases, etc.) via Terraform. Outputs include cluster name, endpoint, and ARN.
+### `tofu apply` completes
+The runner provisions all infrastructure (VPC, cluster, databases, etc.) via `tofu`. Outputs include cluster name, endpoint, and ARN.
 
-### Kubeconfig generated
-The Runner calls the provider-specific CLI to generate a kubeconfig:
-- AWS: `aws eks update-kubeconfig --name {cluster} --region {region}`
-- GCP: `gcloud container clusters get-credentials {cluster} --region {region}`
-- Azure: `az aks get-credentials --name {cluster} --resource-group {rg}`
+### Exec-plugin kubeconfig (CLI-free)
+The runner is **CLI-free** — it does not shell out to `aws eks update-kubeconfig`, `gcloud`, or `az`.
+It writes an **exec-credential** kubeconfig (`packages/core/cloud.writeExecKubeconfig`) built from the
+`tofu` cluster outputs (endpoint + CA), whose exec block invokes the runner itself as the credential
+plugin: `runner kube-token --provider <aws|gcp|azure>` (`apps/runner/internal/agent/kube_token.go`).
+So kubectl/helm mint a fresh short-lived token in-process on demand, exchanging the keyless cloud
+credential for cluster access — no cluster CLIs, no long-lived kubeconfig secret.
 
 ### ArgoCD installed via Helm
 The Runner runs `helm upgrade --install argocd` with the ArgoCD Helm chart. It waits for all ArgoCD pods to become Ready.
 
-### Admin password extracted
-The ArgoCD admin password is read from the `argocd-initial-admin-secret` Kubernetes Secret.
+### Admin password stays in the cluster
+The ArgoCD admin password lives in the `argocd-initial-admin-secret` Kubernetes Secret and is **never extracted or stored by Alethia** — retrieve it on demand:
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d
+```
 
 ### Infrastructure facts rendered
-Terraform outputs (cluster name, VPC ID, RDS endpoints, ElastiCache endpoints, etc.) are rendered into a **Helm values file** called "infra facts." This file provides concrete resource identifiers to ArgoCD applications.
+`tofu` outputs (cluster name, VPC ID, RDS endpoints, ElastiCache endpoints, etc.) are rendered into a **Helm values file** called "infra facts." This file provides concrete resource identifiers to ArgoCD applications.
 
 ### App of Apps configured
 ArgoCD Application manifests are rendered from templates and applied to the cluster.
 
 ### Metadata reported
-The ArgoCD URL, admin password, and cluster metadata are stored in the job's execution metadata and written to the Project's component tables.
+The ArgoCD URL and cluster metadata are stored in the job's execution metadata and written to the Project's component tables. Credentials (the admin password, kubeconfigs, generated secret values) are scrubbed and never persisted.
 
 </Steps>
 
@@ -57,21 +64,22 @@ The ArgoCD URL, admin password, and cluster metadata are stored in the job's exe
 
 ArgoCD uses the **App of Apps** pattern: a single "parent" Application watches a directory of YAML files, each defining a child Application.
 
-```
-manifests/applications/
-├── aws-load-balancer-controller.yaml
-├── external-dns.yaml
-├── external-secrets-operator.yaml
-├── karpenter.yaml
-├── metrics-server.yaml
-└── storage-class.yaml
-```
+<Files>
+  <Folder name="manifests/applications" defaultOpen>
+    <File name="aws-load-balancer-controller.yaml" />
+    <File name="external-dns.yaml" />
+    <File name="external-secrets-operator.yaml" />
+    <File name="karpenter.yaml" />
+    <File name="metrics-server.yaml" />
+    <File name="storage-class.yaml" />
+  </Folder>
+</Files>
 
 The parent Application points to this directory. When a new YAML file is added (via Git push), ArgoCD automatically deploys the new application.
 
 ## Infrastructure Facts
 
-Terraform outputs are injected into ArgoCD applications as Helm values. This bridges the gap between infrastructure provisioning (Terraform) and application deployment (ArgoCD).
+`tofu` outputs are injected into ArgoCD applications as Helm values. This bridges the gap between infrastructure provisioning (OpenTofu) and application deployment (ArgoCD).
 
 Example infra facts:
 

@@ -18,6 +18,7 @@ import {
 	sql,
 } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
+import { likeTerm } from "@/lib/db/like";
 import {
 	type ClassificationDimension,
 	type ClassificationValue,
@@ -64,7 +65,7 @@ export async function listDimensionsWithValues(
 	search?: string,
 ): Promise<DimensionWithValues[]> {
 	const q = search?.trim();
-	const like = q ? `%${q}%` : null;
+	const like = q ? likeTerm(q) : null;
 	const where = like
 		? or(
 				ilike(classificationDimension.label, like),

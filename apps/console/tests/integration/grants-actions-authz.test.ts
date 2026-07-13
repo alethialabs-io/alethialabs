@@ -33,7 +33,7 @@ import {
 	organization,
 	user,
 } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
 // Stable per-run fixture ids (unique → never collide with other rows / parallel runs).
 const ORG = randomUUID();
@@ -127,7 +127,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 	afterAll(async () => {
 		const db = getServiceDb();
 		await db.delete(grants).where(eq(grants.org_id, ORG));
-		await db.delete(authzActivityLog).where(eq(authzActivityLog.org_id, ORG));
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, ORG));
 		await db.delete(organization).where(eq(organization.id, ORG));
 		await db.delete(user).where(inArray(user.id, [OWNER, ADMIN, VIEWER, OUTSIDER, TARGET]));
 	});

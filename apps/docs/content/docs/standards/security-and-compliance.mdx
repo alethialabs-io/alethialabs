@@ -1,0 +1,95 @@
+---
+title: Security & Compliance
+description: The real security controls behind Alethia — tenant isolation via Postgres RLS, keyless cloud credentials, the fail-closed verify gate, least-privilege connector roles, audit logging, and the state proxy — mapped to the standards, with an honest SOC 2 posture.
+---
+
+# Security & Compliance
+
+This page maps Alethia's **real, shipped** controls to the standards in this section. Every control
+below has code evidence. The compliance framing is deliberately conservative — see the SOC 2 note at
+the end.
+
+## Controls
+
+### Tenant isolation — coarse Postgres RLS
+
+Every tenant-owned table is scoped by `org_id`, and Postgres **Row-Level Security** enforces the
+boundary at the database. After authentication, the [PDP](/access-control/architecture) resolves the
+active [organization](/concepts/glossary) and sets `app.current_org` via `set_config`; RLS policies
+key on that setting, so a query can only ever see its own org's rows even if application code forgets a
+`WHERE`. This is *coarse* isolation (org-level), complemented by the fine-grained PDP for
+role/resource authorization. See [concepts/security](/concepts/security) and
+[access control](/access-control).
+
+### Keyless cloud credentials — zero stored secrets
+
+Alethia stores **no** static cloud credentials. All four managed clouds federate keylessly through the
+Alethia OIDC issuer ([workload identity](/standards/workload-identity)); the only durable private key
+is the issuer's own signing key, held on the control plane and never shared. Revocation is the
+customer deleting the trust in their own account — there is nothing to leak from Alethia's side.
+
+### Fail-closed verify gate — Elench
+
+On a real apply the [runner](/runner) runs the [Elench](/elench) `verify` gate between `tofu plan` and
+`tofu apply` (`provisioner.RunDeployV2` over `packages/core/verify`). It is **fail-closed**: a hard
+control failure (keyless / least-privilege / OIDC-subject checks) blocks the apply unless an
+authorized, time-boxed `verify.Override` waives it — and the waiver is recorded in the evidence
+receipt. The report is forwarded on `execution_metadata["verify_result"]` and rendered in the Console
+Plan tab. Evidence receipts are ed25519-signable ([JOSE](/standards/jose)).
+
+### Least-privilege connector roles
+
+The cloud roles Alethia assumes are scoped down from cloud-admin to the minimum needed to provision
+and inspect — not blanket administrative access — narrowing blast radius even within a federated
+session.
+
+### Runner holds no storage credentials — the state proxy
+
+The runner never receives object-storage keys. `tofu` state is read and written through the Console
+**state proxy** (`backend "http"` → `/api/jobs/{id}/state`, authenticated by a per-job token in
+`TF_HTTP_PASSWORD`). A compromised runner cannot reach the state bucket directly. The runner images
+also ship **CLI-free** (no bundled `aws`/`gcloud`/`az`); cluster tokens are minted in-process.
+
+### Audit / activity log
+
+Membership and authorization-relevant actions (invites, removals, role changes, policy decisions) are
+written to the org **activity log** (`recordActivity` / `enforceDecision`, surfaced at
+[access control → activity log](/access-control/activity-log)). It gives a per-org trail of who did
+what.
+
+<Callout type="info">
+  **Known honest limitation.** The activity/audit log today has no dedicated RLS policy or
+  write-once (WORM) retention guarantee — it is an application-level trail, not yet a tamper-evident
+  store. Note this when scoping evidence requirements; it is a tracked hardening item, not a shipped
+  guarantee.
+</Callout>
+
+## Control-to-standard map
+
+| Control | Backing standard | Evidence |
+|---|---|---|
+| Web sign-in | [OAuth 2.0 + PKCE](/standards/oauth2) | `lib/auth/index.ts`, Better Auth |
+| Enterprise SSO | [OIDC](/standards/oidc) · [SAML 2.0](/standards/scim-saml) | `ee/src/index.ts`, `@better-auth/sso` |
+| CLI auth | [Device grant](/standards/device-code) · [JWT](/standards/jose) | `api/auth/cli/*` |
+| Keyless cloud access | [Workload identity](/standards/workload-identity) | `lib/oidc/issuer.ts`, `lib/cloud-providers/session/*` |
+| Tamper-evident apply evidence | [ed25519 / EdDSA](/standards/jose) | `packages/core/verify` |
+| Tenant isolation | Postgres RLS (`org_id`) | `app.current_org` + RLS policies |
+
+## SOC 2 posture — read this carefully
+
+Alethia is **built to support SOC 2** — the controls above map to the Security and Confidentiality
+Trust Services Criteria (least-privilege access, no stored credentials, tenant isolation, change
+verification, audit trail). This is **SOC 2 readiness / control mapping**, and nothing more.
+
+<Callout type="warn">
+  Alethia is **not SOC 2 certified**, **not SOC 2 compliant**, and no SOC 2 report has been issued.
+  SOC 2 is an attestation performed by an independent auditor over an observation period; **no such
+  formal audit has been performed and no report exists yet.** Anyone stating otherwise is wrong. The
+  accurate phrasing is "designed for SOC 2 readiness" / "controls mapped to SOC 2 criteria".
+</Callout>
+
+For the security model in prose, see [concepts/security](/concepts/security).
+
+## Authoritative reference
+
+- [AICPA — SOC 2](https://www.aicpa-cima.com/topic/audit-assurance/audit-and-assurance-greater-than-soc-2) — what a SOC 2 report is (and requires).

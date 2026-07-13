@@ -11,12 +11,12 @@ decides *where it goes*, and every routed event is recorded as a **delivery**. F
 
 ## How alerting works
 
-```
-event fires ──▶ policies match (event + conditions) ──▶ each routes to its channels ──▶ delivery
-   e.g. a deploy fails,                                                                 (attempted now,
-   an action is denied,                                                                  retried on failure,
-   a connector token breaks                                                              logged in Activity)
-```
+<Mermaid chart={`
+flowchart LR
+  E["event fires<br/>deploy fails · action denied · cloud-identity token breaks"] --> P["policies match<br/>event + conditions"]
+  P --> C["route to channels"]
+  C --> D["delivery<br/>attempted now, retried on failure, logged in Activity"]
+`} />
 
 - **Events** are emitted by the platform as things happen — you don't wire anything up.
 - **Policies** watch a chosen set of events and route matches to channels.
@@ -72,7 +72,7 @@ condition drops anything below the chosen level.
 
 <Callout type="info">
   There is no Alethia-hosted Slack/Teams app and no OAuth. A chat channel is just an **incoming-webhook
-  URL** you create in your own workspace and paste in. Alethia signs (where applicable) and POSTs to that
+  URL** you create in your own Slack or RocketChat workspace and paste in. Alethia signs (where applicable) and POSTs to that
   URL — nothing more.
 </Callout>
 

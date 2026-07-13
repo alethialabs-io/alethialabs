@@ -41,6 +41,8 @@ import {
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
+import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
+import { listAssignmentsFor } from "@/lib/queries/classification";
 import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
@@ -927,6 +929,18 @@ async function buildConfigSnapshot(
 			}
 		}
 
+		// B1.1: resolve the effective classification (env overrides project per dimension)
+		// into the frozen snapshot so the runner can propagate it to cloud resource tags/labels.
+		// RLS scopes both reads to the owner's org (we're inside withOwnerScope).
+		const [projectClassification, envClassification] = await Promise.all([
+			listAssignmentsFor(tx, "project", projectId),
+			listAssignmentsFor(tx, "project_environment", envId),
+		]);
+		const classification = resolveClassificationSnapshot(
+			projectClassification,
+			envClassification,
+		);
+
 		const configSnapshot = {
 			...project,
 			// M1: the Go provisioner reads `environment_stage` (frozen wire key) for the
@@ -934,6 +948,9 @@ async function buildConfigSnapshot(
 			environment_stage: environment.name,
 			region: environment.region ?? project.region,
 			provider: identity.provider,
+			// B1.1: frozen per-dimension classification map ({ dimension_key: value_slug[] }),
+			// environment overriding project per dimension. See ClassificationSnapshot.
+			classification,
 			network: {
 				...resolvePlacement(network),
 				provision_network: network?.provision_network ?? true,

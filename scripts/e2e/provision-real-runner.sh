@@ -13,8 +13,10 @@
 # A green run proves: the runner claimed → RunDeployV2 → kind came up →
 # cluster_ready + a signed verify receipt (sealed to the plan hash) landed in the DB
 # via a real status callback → logs shipped to job_logs → an INDEPENDENT
-# `kubectl get nodes` (via `kind get kubeconfig`) reports a Ready node. Teardown
-# (RunDestroy + docker rm fallback) is guaranteed.
+# `kubectl get nodes` (via `kind get kubeconfig`) reports a Ready node → every
+# expected ArgoCD Application (derived from the persisted infra_services +
+# addon_status metadata; a tiny add-on is seeded so the set is never empty)
+# reached Healthy+Synced. Teardown (RunDestroy + docker rm fallback) is guaranteed.
 #
 # This is the seam the merge-queue CI job (ci.yml → provision-e2e) invokes.
 #
@@ -34,7 +36,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 E2E_DIR="$REPO_ROOT/test/e2e"
-GOTEST_TIMEOUT="${GOTEST_TIMEOUT:-25m}"
+# 30m: the test's own ctx is 20m (deploy wait 8m + ArgoCD convergence assertion 8m
+# + build/boot headroom) plus teardown margin.
+GOTEST_TIMEOUT="${GOTEST_TIMEOUT:-30m}"
 export ALETHIA_DATABASE_URL="${ALETHIA_DATABASE_URL:-postgres://alethia:alethia-dev-secret@localhost:5433/alethia}"
 export ALETHIA_E2E_T1_REQUIRE="${ALETHIA_E2E_T1_REQUIRE:-1}"
 

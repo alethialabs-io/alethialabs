@@ -8,7 +8,7 @@ description: The full system — repos to a verified GitOps Kubernetes cluster o
 <Community />
 
 Alethia is **one product**: connect your repos and get a **verified GitOps Kubernetes cluster on your own
-cloud**. Two operator modes — **managed** (Alethia's runner fleet assumes a role into your account) and
+cloud**. Two operators — **managed** (Alethia's runner fleet assumes a role into your account) and
 **self** (a runner you run) — and two entry flows that share the same design surface, provisioner, and
 proof layer:
 
@@ -27,13 +27,17 @@ proof layer:
 
 Each stage names its source-of-truth code so the docs stay honest to the implementation.
 
-```
- repos ─▶ scan ─▶ infer + merge ─▶ propose ─▶ provision ─▶ generate ─▶ GitOps ─▶ VERIFY ─▶ day-2 drift
-   │       │           │             │           │            │          │          │           │
- connect  Go       lib/scanner    canvas    RunDeployV2   manifests   ArgoCD    elench      DETECT_DRIFT
- (1:N)   scanner   infer/          design    (tofu)       .FromServices Apps     gate +      → Posture
-         per-svc   to-project                                          (path .)  receipt     (loop)
-```
+<Mermaid chart={`
+flowchart LR
+  repos[repos<br/>connect 1:N] --> scan[scan<br/>Go scanner · per-svc]
+  scan --> infer[infer + merge<br/>lib/scanner → to-project]
+  infer --> propose[propose<br/>canvas design]
+  propose --> provision[provision<br/>RunDeployV2 · tofu]
+  provision --> generate[generate<br/>manifests .FromServices]
+  generate --> gitops[GitOps<br/>ArgoCD apps · path .]
+  gitops --> verify[VERIFY<br/>elench gate + receipt]
+  verify --> drift[day-2 drift<br/>DETECT_DRIFT → Posture loop]
+`} />
 
 1. **Connect repos (1:N, monorepo-aware).** `project_source_repos` (migration `0050`) holds every scanned
    repo + its detected services.
@@ -60,11 +64,15 @@ Each stage names its source-of-truth code so the docs stay honest to the impleme
 The verification engine is **plan-agnostic**, so auditing infrastructure Alethia *didn't* generate needs
 no new controls:
 
-```
- existing plan / manifests ─▶ AUDIT job ─▶ verify (same controls) ─▶ signed report ─▶ VerifyBlock
-```
+<Mermaid chart={`
+flowchart LR
+  A[existing plan / manifests] --> B[AUDIT job]
+  B --> C[verify<br/>same controls]
+  C --> D[signed report]
+  D --> E[VerifyBlock]
+`} />
 
-- **Terraform:** `verify.ParseCustomerPlan(planJSON)` → `Evaluate` — the same AWS/GCP/Azure controls.
+- **OpenTofu / Terraform plan:** `verify.ParseCustomerPlan(planJSON)` → `Evaluate` — the same AWS/GCP/Azure controls.
 - **Kubernetes:** `verify.EvaluateManifests(yaml)` → the k8s [control set](/elench/control-catalog).
 - The `AUDIT` job (migration `0052`) runs on the runner (`executeAudit`) and posts the report to
   `jobs.execution_metadata.verify_result`, surfaced by the existing `get_plan_result` tool + the

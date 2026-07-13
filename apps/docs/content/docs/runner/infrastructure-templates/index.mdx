@@ -1,11 +1,13 @@
 ---
 title: Infrastructure Templates Overview
-description: Terraform modules that Runner uses to provision infrastructure across AWS, GCP, and Azure.
+description: OpenTofu modules the runner uses to provision infrastructure across AWS, GCP, Azure, Alibaba, and Hetzner.
 ---
 
 # Infrastructure Templates
 
-Runner provisions infrastructure using pre-built Terraform modules. These templates are embedded in the Docker image during the release build and cover all supported resource types across three providers.
+The runner provisions infrastructure using pre-built OpenTofu modules (HCL). These templates are
+baked into the runner image at build time — each per-cloud image pre-runs `tofu init` on its
+template so no provider/module download happens at job time.
 
 ## Template Categories
 
@@ -14,7 +16,9 @@ Runner provisions infrastructure using pre-built Terraform modules. These templa
 | AWS project | `infra/templates/project/aws/` | User infrastructure on AWS |
 | GCP project | `infra/templates/project/gcp/` | User infrastructure on GCP |
 | Azure project | `infra/templates/project/azure/` | User infrastructure on Azure |
-| Runner | `infra/templates/runner/aws/` | Runner agent infrastructure |
+| Alibaba project | `infra/templates/project/alibaba/` | User infrastructure on Alibaba Cloud |
+| Hetzner project | `infra/templates/project/hetzner/` | Self-managed Talos K8s on Hetzner VMs |
+| Runner | `infra/templates/runner/aws/` | Self-deployed runner infrastructure (ECS Fargate) |
 | ArgoCD | `infra/templates/argocd/` | ArgoCD applications and components |
 
 <Cards>
@@ -24,26 +28,28 @@ Runner provisions infrastructure using pre-built Terraform modules. These templa
   <Card title="ArgoCD Components" href="/runner/infrastructure-templates/argocd">Pre-installed cluster components</Card>
 </Cards>
 
-## Template Staging (Docker Build)
+## Template staging (image build)
 
-During the [Runner release pipeline](/concepts/release-system), templates are copied into the Docker build context:
-
-```
-infra/templates/project/aws     → apps/runner/project-templates/aws
-infra/templates/project/gcp     → apps/runner/project-templates/gcp
-infra/templates/project/azure   → apps/runner/project-templates/azure
-infra/templates/runner       → apps/runner/runner-templates
-infra/templates/argocd       → apps/runner/argocd-templates
-```
-
-## Variable Generation
-
-When executing a job, Runner generates `terraform.tfvars` from the project's config snapshot. The provisioner in `packages/core/provisioner/` maps each project component to specific Terraform variables. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
-
-## Terraform State
-
-State for all templates is stored in [S3-compatible state](/concepts/terraform-state) with path structure:
+During the [runner release pipeline](/concepts/release-system), templates are `COPY`d into the image
+and pre-initialized. The full `runner` image carries all five project templates; each per-cloud image
+(`runner-aws`, `runner-hetzner`, …) carries only its own:
 
 ```
-{project}/{stage}/{region}/terraform.tfstate
+infra/templates/project/<cloud>  → /home/runner/project-templates/<cloud>   (+ tofu init)
+infra/templates/runner/          → /home/runner/runner-templates/
+infra/templates/argocd/          → /home/runner/argocd-templates/
 ```
+
+## Variable generation
+
+When executing a job, the runner materializes a tfvars file from the environment's config snapshot
+(`tofu.OverrideTfvarsFromMap`). The provisioner in `packages/core/provisioner/` maps each component
+to specific tofu variables (`ProviderTfvars`). See
+[Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
+
+## tofu state
+
+The runner holds **no object-storage credentials**. State for every template is written through the
+**Console HTTP state proxy** — the templates declare `backend "http" {}`, and the runner fetches a
+per-job token it exposes as `TF_HTTP_PASSWORD`, so state I/O flows through
+`/api/jobs/{id}/state`. See [tofu state](/concepts/terraform-state).

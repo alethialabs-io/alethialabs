@@ -1,0 +1,78 @@
+---
+title: SAML 2.0 & SCIM 2.0
+description: Enterprise directory federation — SAML 2.0 SSO is implemented (Enterprise, Service Provider) with documented hardening follow-ups; SCIM 2.0 provisioning is NOT implemented (just-in-time provisioning only).
+---
+
+# SAML 2.0 & SCIM 2.0
+
+<Enterprise />
+
+Two enterprise directory standards, at two different maturities. Read the status on each honestly —
+one is live, one is roadmap.
+
+## SAML 2.0 — implemented
+
+### What the standard is
+
+**SAML 2.0** (Security Assertion Markup Language, OASIS) is the long-standing XML protocol for
+enterprise SSO. The Identity Provider (IdP) issues a digitally-signed XML **assertion** about the
+user; the Service Provider (SP) validates the signature against the IdP's X.509 certificate and logs
+the user in. It predates OIDC and is still the default in many enterprise directories.
+
+### How Alethia implements it
+
+Alethia is the **Service Provider** — same posture as [OIDC](/standards/oidc). SAML providers are
+registered per [organization](/concepts/glossary) via the `@better-auth/sso` plugin (`ee/src/index.ts`,
+[Enterprise](/editions)-gated). SAML config is stored in the `ssoProvider.samlConfig` column; the
+server actions in `apps/console/app/server/actions/sso.ts` parse it to surface the IdP entry point and
+a **SHA-256 fingerprint of the signing certificate**, and classify each row's protocol as
+`oidc` | `saml` | `unknown` (a row with neither config is reported `unknown` rather than mislabelled).
+Registration collects the IdP entity ID, SSO entry-point URL, and X.509 signing certificate (see
+[access control → SSO](/access-control/sso)).
+
+Domain verification (DNS `TXT` at `_alethia-sso-<providerId>`) and the same
+`alethia-sso-entitlement-guard` gate apply to SAML exactly as to OIDC, and users are provisioned
+just-in-time as least-privileged members.
+
+<Callout type="warn">
+  **Documented hardening follow-ups (from `ee/src/index.ts`).** The SAML integration ships with two
+  standup items still open: enabling `algorithms.onDeprecated: "reject"` (reject deprecated signature
+  algorithms) and turning on `InResponseTo` validation. Also, IdP group-claim → Alethia role mapping
+  is not yet wired — every SSO user lands as least-privileged. Treat SAML as functional but
+  actively-hardening, not a finished security surface.
+</Callout>
+
+## SCIM 2.0 — not implemented
+
+### What the standard is
+
+**SCIM 2.0** (System for Cross-domain Identity Management, [RFC 7644](https://www.rfc-editor.org/rfc/rfc7644)
+protocol + [RFC 7643](https://www.rfc-editor.org/rfc/rfc7643) schema) is the REST standard for
+**automatic** user/group provisioning and *de*-provisioning. A directory (Okta, Entra) pushes
+create/update/delete against the SP's `/scim/v2/Users` and `/scim/v2/Groups` endpoints, so access is
+granted and — critically — **revoked** the moment HR changes the directory, with no sign-in required.
+
+### Reality in Alethia
+
+SCIM is **not built**. There is no `/scim/v2` endpoint. Membership is populated only by **just-in-time
+provisioning** — a user becomes a member the first time they successfully sign in through SSO, and is
+never automatically deprovisioned by the directory.
+
+This is stated honestly in the product itself: the console SSO settings
+(`apps/console/components/settings/sso/sso-manager.tsx`) render a plain note that *"automatic user
+provisioning/deprovisioning from your IdP isn't available yet — SSO users are provisioned
+just-in-time on first sign-in"*, with a "talk to us" link. The code comments record that an earlier
+UI advertised a `/scim/v2/<tenant>` URL that never existed; that fake card was removed. The plan
+catalog lists SCIM as *"coming soon"*.
+
+<Callout type="error">
+  Do not represent SCIM as available. If a deployment's compliance posture depends on **automatic
+  deprovisioning** (offboarding removing access without an admin action), that requirement is **not
+  met today** — plan around JIT provisioning and manual member removal
+  ([members & invitations](/access-control/members-and-invitations)).
+</Callout>
+
+## Authoritative reference
+
+- [OASIS — SAML 2.0 Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf).
+- [RFC 7644](https://www.rfc-editor.org/rfc/rfc7644) — SCIM 2.0 Protocol · [RFC 7643](https://www.rfc-editor.org/rfc/rfc7643) — SCIM 2.0 Core Schema.

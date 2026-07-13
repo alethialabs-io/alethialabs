@@ -31,6 +31,10 @@ cloud account, no static key anywhere:**
 The only load-bearing operator secret is the issuer's signing key (`ALETHIA_OIDC_SIGNING_KEY`, set by
 default). AWS, GCP, and Alibaba need nothing else; only Azure adds an app id.
 
+For the underlying protocols — the [OIDC](/standards/oidc) issuer, the per-cloud
+[workload-identity federation](/standards/workload-identity) exchange, and the
+[JOSE](/standards/jose) assertion signing — see the standards reference.
+
 ## AWS / GCP / Alibaba — nothing to configure
 
 These three are keyless **and** account-free on the operator side: the customer's IAM role (AWS) / WIF pool
@@ -95,7 +99,7 @@ Alibaba account** and no AccessKey. There is **nothing to set here** (no `ALETHI
 tracks the OIDC issuer key alone (`ALETHIA_OIDC_SIGNING_KEY`, auto-generated).
 
 **Customer side** (documented at [Connectors → Alibaba](/console/connectors/alibaba)): the customer applies
-a Terraform module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia issuer
+an OpenTofu module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia issuer
 + a **RAM role**, then pastes the role ARN — Alethia derives the provider ARN from it. No operator action
 beyond having the issuer key.
 

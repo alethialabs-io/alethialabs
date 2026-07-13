@@ -61,7 +61,6 @@ const WIRE_EXCLUDE = new Set<string>([
 	"estimated_monthly_cost",
 	"name",
 	"cloud_identity_id",
-	"argocd_admin_password",
 	"argocd_url",
 	"cluster_endpoint",
 	"endpoint",

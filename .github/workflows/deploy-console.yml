@@ -410,7 +410,18 @@ jobs:
             echo "ALETHIA_DEPLOYMENT_MODE=hosted"
             emit BETTER_AUTH_SECRET
             emit CLI_JWT_SECRET
+            # Auth brute-force rate-limit kill-switch (default on; set =0 in the vault to disable).
+            # Emit so the disable path actually reaches the console.
+            emit ALETHIA_AUTH_RATE_LIMIT
             emit ALETHIA_CRED_ENCRYPTION_KEY
+            # Credential-encryption key id (keyring) for ONLINE key rotation. Defaults to "1" if the
+            # vault key is absent (secrets.ts falls back), so this emit is safe even when unset.
+            emit ALETHIA_CRED_ENCRYPTION_KID
+            # To ROTATE the credential key with no downtime: add the previous active key to the vault as
+            # ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>, add an `emit ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>`
+            # line here, set the new active key + bump ALETHIA_CRED_ENCRYPTION_KID, deploy, then run
+            # `pnpm -F console db:reencrypt` on the box. Drop the retired key + its emit line once every
+            # row has been re-encrypted. See lib/crypto/secrets.ts for the runbook + ordering.
             echo "ALETHIA_DB_USER=alethia"
             echo "ALETHIA_DB_NAME=alethia"
             emit ALETHIA_DB_PASSWORD
@@ -492,12 +503,11 @@ jobs:
             # is set (the SDK wants a default region for the global STS call).
             echo "AWS_REGION=us-east-1"
             # Azure is KEYLESS: the console + runner authenticate as ONE multi-tenant Entra app
-            # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The client
-            # id is also surfaced to the browser (the connect UI bakes it into the customer setup
-            # command). No ALETHIA_AZURE_TENANT_ID/CLIENT_SECRET — the console auths against the
-            # customer's stored tenant.
+            # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The connect
+            # UI receives the id server-side (threaded as a prop) and bakes it into the customer setup
+            # command — no NEXT_PUBLIC_ copy (that inlined at build time and never reached this image).
+            # No ALETHIA_AZURE_TENANT_ID/CLIENT_SECRET — the console auths against the customer tenant.
             emit ALETHIA_AZURE_CLIENT_ID
-            echo "NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID=$(val ALETHIA_AZURE_CLIENT_ID)"
             # Alibaba is KEYLESS + ACCOUNT-FREE: the console assumes the customer RAM role via
             # AssumeRoleWithOIDC with a minted assertion (issuer above) — Alethia holds no Alibaba
             # account / AccessKey, so nothing is emitted; availability tracks the OIDC issuer.
@@ -545,6 +555,14 @@ jobs:
             emit SUPPORT_STAFF_EMAILS
             echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
             echo "COMPOSE_PROFILES=admin"
+            # Platform-operator plane (Enterprise onboarding, apps/admin /orgs → console internal
+            # routes). The dedicated provisioning bearer is [auto] (bootstrap-secrets.sh, NOT the cron
+            # secret); the operator + system-user are the maintainer's own account (const, not
+            # secrets); the Stripe Product for enterprise line items comes from the vault ([ext]).
+            emit PLATFORM_PROVISION_SECRET
+            echo "PLATFORM_ADMIN_EMAILS=borislav@alethialabs.io"
+            echo "PLATFORM_SYSTEM_USER_EMAIL=borislav@alethialabs.io"
+            emit STRIPE_ENTERPRISE_PRODUCT_ID
             echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
             echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
             echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"

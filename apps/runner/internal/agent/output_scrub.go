@@ -3,7 +3,10 @@
 
 package agent
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // sensitiveOutputSubstrings marks a tofu output as a credential that must NOT be
 // persisted into the job's execution_metadata (which lands in the console Postgres,
@@ -22,6 +25,11 @@ import "strings"
 // non-secret handles `custom_secret_arns` / `custom_secret_names` / `custom_secret_versions`
 // and `rds_master_credentials_secret_arn`, none of which carry plaintext. Only value-bearing
 // keys are dropped, so those survive.
+//
+// KEEP IN SYNC with the console's ingest-side port of this list
+// (apps/console/lib/jobs/scrub-metadata.ts SENSITIVE_KEY_SUBSTRINGS): the console re-scrubs
+// every runner post at its own trust boundary, because legacy / mid-rollout / self-registered
+// runners bypass this file entirely.
 var sensitiveOutputSubstrings = []string{
 	"kubeconfig",
 	"kube_config",
@@ -71,4 +79,55 @@ func scrubSensitiveOutputs(outputs map[string]any) map[string]any {
 		scrubbed[k] = v
 	}
 	return scrubbed
+}
+
+// scrubMetadataTree is the whole-blob denylist backstop: it walks the FULLY-assembled
+// execution_metadata map (not just result.Outputs) and deletes any entry whose key names
+// credential material (isSensitiveOutputKey), recursing into nested map[string]any / []any so
+// a secret nested anywhere is caught. It is defense-in-depth for buildDeployMetadata — even if
+// a future change reintroduces a top-level secret (e.g. the ArgoCD admin password) or a new
+// tofu output shape carries one, nothing secret-bearing crosses into the console Postgres.
+//
+// It mutates m in place and returns the dotted paths dropped (for a warning log; a non-empty
+// result signals a regression the backstop caught). Idempotent over an already-scrubbed
+// outputs map, and it only descends into dynamic maps/slices — typed struct values the runner
+// assembles (verify report, addon status, …) carry no plaintext credentials and are left as-is.
+func scrubMetadataTree(m map[string]any) []string {
+	var dropped []string
+	scrubMetadataMap(m, "", &dropped)
+	return dropped
+}
+
+// scrubMetadataMap removes denylisted keys from one map level and recurses into nested
+// maps/slices. `prefix` is the dotted path to `m` for reporting; `dropped` accumulates hits.
+func scrubMetadataMap(m map[string]any, prefix string, dropped *[]string) {
+	for k, v := range m {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if isSensitiveOutputKey(k) {
+			delete(m, k)
+			*dropped = append(*dropped, path)
+			continue
+		}
+		switch child := v.(type) {
+		case map[string]any:
+			scrubMetadataMap(child, path, dropped)
+		case []any:
+			scrubMetadataSlice(child, path, dropped)
+		}
+	}
+}
+
+// scrubMetadataSlice recurses into a slice's map/slice elements (scalars carry no key to match).
+func scrubMetadataSlice(s []any, prefix string, dropped *[]string) {
+	for i, v := range s {
+		switch child := v.(type) {
+		case map[string]any:
+			scrubMetadataMap(child, fmt.Sprintf("%s[%d]", prefix, i), dropped)
+		case []any:
+			scrubMetadataSlice(child, fmt.Sprintf("%s[%d]", prefix, i), dropped)
+		}
+	}
 }

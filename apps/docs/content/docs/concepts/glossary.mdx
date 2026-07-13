@@ -1,0 +1,75 @@
+---
+title: Glossary & Naming
+description: The canonical name for every core concept — one term per thing, and the words we deliberately avoid.
+---
+
+# Glossary & Naming
+
+Alethia uses **one name per concept**. This page is the source of truth: every other page in these
+docs defers to the terms below. If you find a doc using a rejected term, it's a bug — the canonical
+column is what the product, the schema, and the CLI actually call it.
+
+<Callout type="info">
+  A quick disambiguation up front: **Alethia** is the whole platform, **Console** is the web app you
+  sign into, and **`alethia`** (lowercase) is the CLI binary. **Alethia Labs** is the company.
+</Callout>
+
+## Core objects
+
+| Concept | Canonical term | Definition | Avoid |
+|---|---|---|---|
+| Tenancy boundary | **organization** ("org") | The top-level owner of every resource. In Community a personal org is created per user; the Enterprise edition turns orgs into shared, multi-member tenants. Enforced by coarse Postgres RLS keyed on `org_id`. | ~~workspace~~ |
+| Infrastructure app record | **project** | A declarative infrastructure configuration under an org. A project is an *app* that **owns N environments**. Links to exactly one [cloud identity](#connectivity). | — |
+| Deployment target | **environment** | An independently-provisionable target inside a project (`project_environments`). A project owns **N**; each has a `stage` (development / staging / production) and a `lifecycle` (`persistent` or `ephemeral`). The per-environment provisioning **status** lives here. | 1:1 phrasing; treating a project as having a single environment |
+| Configured resource | **component** | A cloud resource a project's environment declares — network, cluster, DNS, database, cache, queue, registry, secret, etc. Every component belongs to a `(project, environment)` pair. | — |
+
+<Callout type="warn">
+  **A project owns N environments — not one.** A common stale assumption is Project↔Environment 1:1.
+  It is 1:N: components attach to a `(project, environment)` pair, and `status` is per-environment.
+</Callout>
+
+## Connectivity
+
+| Concept | Canonical term | Definition | Avoid |
+|---|---|---|---|
+| A connected cloud account | **cloud identity** | The credential anchor for one connected cloud account (AWS / GCP / Azure / Hetzner / …). Keyless via a single Alethia OIDC issuer for the managed clouds; the runner assumes into it at job time. Queries always filter by `provider`. | ~~connector~~, ~~integration~~, ~~cloud connection~~, ~~connection~~ (for the account) |
+| The catalog of provider types | **connector** | The registry of *connector types* per category (cloud, git, observability, registry, dns, secrets) plus git/pluggable providers. "Connector" names the **type in the catalog**, never a specific connected account. | using "connector" to mean a cloud identity |
+
+## Provisioning & execution
+
+| Concept | Canonical term | Definition | Avoid |
+|---|---|---|---|
+| IaC engine | **OpenTofu** (`tofu`) | The binary the runner executes: `tofu plan` / `tofu apply` / `tofu destroy`. | ~~Terraform~~ — except when referring to the HCL *language/format* itself |
+| Execution agent | **runner** | The Go daemon that claims jobs and executes them. Described by two axes below. | — |
+| Who runs & bills a runner | **operator** = `managed` \| `self` | `managed` = Alethia runs it in the platform account and bills provisioned hours; `self` = the customer runs it in their own cloud. | ~~mode~~ (legacy `cloud-hosted`/`self-hosted` is a back-compat alias only) |
+| How a self runner exists | **provisioning** = `deployed` \| `registered` | `deployed` = provisioned into the customer's cloud by an existing runner; `registered` = customer brought their own (own IaC or `alethia runner start`). Null for `managed`. | "self-hosted" as a synonym for `registered` |
+| Managed capacity | **in-app scaler + Hetzner VM fleet** | A 60s in-app loop (`apps/console/lib/fleet/`) sizes per-provider warm pools by queue depth and creates/destroys cheap Hetzner VMs that self-register. | ~~ECS Fargate~~, ~~Lambda scaler~~, ~~EventBridge~~ (retired) |
+| The verification layer | **Elench** | The engine that runs `verify` (a fail-closed, plan-JSON policy gate between plan and apply) and `drift` (refresh-only posture). | — |
+
+## Surfaces & brand
+
+| Concept | Canonical term | Avoid |
+|---|---|---|
+| Whole product / platform | **Alethia** | ~~ADP~~, ~~itgix~~ |
+| The web control plane | **Console** (`apps/console`) | calling the web app "Alethia" |
+| The command-line tool | **`alethia`** (CLI) | — |
+| The company | **Alethia Labs** | — |
+| Apply a project's plan from the CLI | **`alethia project apply`** | ~~`alethia apply`~~ (no such top-level command) |
+
+## Job types at a glance
+
+Jobs are the unit of work a runner claims. The full set (see [Job Queue](/concepts/job-queue) and
+[Runner → Job execution](/runner/job-execution)):
+
+| Type | Purpose |
+|---|---|
+| `PLAN` | `tofu plan` (+ optional Infracost) |
+| `DEPLOY` | `tofu plan` → verify gate → `tofu apply` → ArgoCD install |
+| `DESTROY` | `tofu destroy` with graceful cleanup |
+| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | Lifecycle of a self-operated runner |
+| `ANALYZE_REPO` | Clone + statically scan a repo into a `RepoDigest` |
+| `DETECT_DRIFT` | `tofu plan -refresh-only` → drift `Posture` |
+| `AUDIT` | Run the Elench verify engine over bring-your-own plan/manifests (provisions nothing) |
+| `CHART_SCAN` | Render + scan a bring-your-own Helm chart (zero secrets, deny-all egress) |
+| `IAC_SCAN` | Scan a bring-your-own IaC module; gates the environment's PLAN/DEPLOY/DESTROY |
+| `STATE_SURGERY` | Two-person-approved, audited repair of a corrupt tofu state (ships inert / fail-closed) |

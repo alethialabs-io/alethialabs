@@ -1,77 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 400" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 400" width="100%" role="img" aria-label="Multi-cloud conversion: duplicating a project onto another cloud maps regions, instances, engines and capacity, and surfaces warnings">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
-    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="820" height="400" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Multi-Cloud Conversion — Cross-Provider Project Duplication</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="400" rx="12"/>
+  <rect x="0" y="0" width="840" height="400" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="399" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · CONVERSION</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">Duplicate a project onto another cloud</text>
 
-  <!-- Source Project -->
-  <rect x="30" y="62" width="220" height="230" rx="8" fill="#27272A" stroke="#FF9900"/>
-  <text x="140" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FF9900">Source Project (AWS)</text>
+  <!-- source -->
+  <rect class="d-surface" x="28" y="130" width="160" height="96" rx="8"/>
+  <text class="d-label" x="108" y="162" text-anchor="middle" font-size="13" font-weight="600">Source project</text>
+  <text class="d-sub mono" x="108" y="182" text-anchor="middle" font-size="10">provider: aws</text>
+  <text class="d-sub mono" x="108" y="200" text-anchor="middle" font-size="9">Duplicate &amp; Edit</text>
+  <text class="d-sub mono" x="108" y="214" text-anchor="middle" font-size="9">pick new cloud identity</text>
 
-  <rect x="46" y="100" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="140" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">EKS · t3.medium · 1.32</text>
+  <!-- converter -->
+  <rect class="d-emph" x="248" y="122" width="180" height="112" rx="8"/>
+  <text class="d-emph-text" x="338" y="150" text-anchor="middle" font-size="13" font-weight="600">convertProjectConfig</text>
+  <text class="d-emph-text mono" x="338" y="172" text-anchor="middle" font-size="9" opacity="0.82">region map</text>
+  <text class="d-emph-text mono" x="338" y="188" text-anchor="middle" font-size="9" opacity="0.82">instance-type map</text>
+  <text class="d-emph-text mono" x="338" y="204" text-anchor="middle" font-size="9" opacity="0.82">engine · capacity clamp</text>
+  <text class="d-emph-text mono" x="338" y="220" text-anchor="middle" font-size="9" opacity="0.82">provider_config keys</text>
 
-  <rect x="46" y="132" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="140" y="148" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Aurora PostgreSQL · 2 ACU</text>
+  <!-- target -->
+  <rect class="d-surface" x="488" y="130" width="160" height="96" rx="8"/>
+  <text class="d-label" x="568" y="162" text-anchor="middle" font-size="13" font-weight="600">Target project</text>
+  <text class="d-sub mono" x="568" y="182" text-anchor="middle" font-size="10">provider: gcp</text>
+  <text class="d-sub mono" x="568" y="200" text-anchor="middle" font-size="9">defaults applied</text>
+  <text class="d-sub mono" x="568" y="214" text-anchor="middle" font-size="9">+ deploys apps (GitOps)</text>
 
-  <rect x="46" y="164" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="140" y="180" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">ElastiCache Redis</text>
+  <!-- warnings -->
+  <rect class="d-surface" x="688" y="122" width="124" height="112" rx="8"/>
+  <text class="d-label" x="750" y="148" text-anchor="middle" font-size="12" font-weight="600">Warnings</text>
+  <text class="d-sub mono" x="750" y="168" text-anchor="middle" font-size="9">unmapped types</text>
+  <text class="d-sub mono" x="750" y="184" text-anchor="middle" font-size="9">unit changes</text>
+  <text class="d-sub mono" x="750" y="200" text-anchor="middle" font-size="9">review before</text>
+  <text class="d-sub mono" x="750" y="214" text-anchor="middle" font-size="9">submit</text>
 
-  <rect x="46" y="196" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="140" y="212" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">eu-west-1 · VPC 10.0.0.0/16</text>
+  <line class="d-edge" x1="188" y1="178" x2="248" y2="178" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="428" y1="178" x2="488" y2="178" marker-end="url(#ar)"/>
+  <path class="d-edge" d="M338 234 V266 H750 V234" marker-end="url(#ar)"/>
 
-  <rect x="46" y="228" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="140" y="244" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Route 53 · Karpenter</text>
+  <text class="d-sub mono" x="28" y="316" font-size="9">CANNOT CONVERT (cleared, reconfigure manually):</text>
+  <text class="d-sub mono" x="28" y="336" font-size="10">IAM roles / service accounts · cluster admin ARNs · existing network refs · DNS hosted zones · WAF rules</text>
 
-  <rect x="46" y="260" width="188" height="24" rx="4" fill="#18181B" stroke="#EF444450"/>
-  <text x="140" y="276" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#EF4444">WAF rules · Zone ID</text>
-
-  <!-- Conversion Function -->
-  <rect x="290" y="110" width="240" height="80" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
-  <text x="410" y="138" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">convertProjectConfig()</text>
-  <text x="410" y="158" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Region, instance, engine, capacity</text>
-  <text x="410" y="174" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">mapping + validation + warnings</text>
-
-  <!-- Arrows Source → Convert → Target -->
-  <line x1="250" y1="150" x2="284" y2="150" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
-  <line x1="530" y1="150" x2="564" y2="150" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
-
-  <!-- Target Project -->
-  <rect x="570" y="62" width="220" height="230" rx="8" fill="#27272A" stroke="#4285F4"/>
-  <text x="680" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#4285F4">Target Project (GCP)</text>
-
-  <rect x="586" y="100" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="680" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">GKE · e2-medium · 1.31</text>
-
-  <rect x="586" y="132" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="680" y="148" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Cloud SQL PostgreSQL · 1 vCPU</text>
-
-  <rect x="586" y="164" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="680" y="180" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Memorystore Redis</text>
-
-  <rect x="586" y="196" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="680" y="212" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">europe-west1 · VPC 10.0.0.0/16</text>
-
-  <rect x="586" y="228" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="680" y="244" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Cloud DNS · Autopilot</text>
-
-  <rect x="586" y="260" width="188" height="24" rx="4" fill="#18181B" stroke="#F59E0B50"/>
-  <text x="680" y="276" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#F59E0B">Cleared — re-configure</text>
-
-  <!-- Mapping callouts -->
-  <rect x="290" y="210" width="240" height="110" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="232" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">Mappings Applied</text>
-  <text x="410" y="252" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">t3.medium → e2-medium</text>
-  <text x="410" y="268" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">eu-west-1 → europe-west1</text>
-  <text x="410" y="284" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Aurora → Cloud SQL</text>
-  <text x="410" y="300" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">ACU → vCPU (capacity clamped)</text>
-  <text x="410" y="314" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Karpenter → GKE Autopilot</text>
-
-  <!-- Warnings -->
-  <rect x="290" y="334" width="240" height="50" rx="6" fill="#EF444410" stroke="#EF444440"/>
-  <text x="410" y="354" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#EF4444">Cannot Convert</text>
-  <text x="410" y="372" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">WAF rules · DNS zones · IAM roles · VPC IDs</text>
+  <text class="d-sub mono" x="812" y="384" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

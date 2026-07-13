@@ -32,16 +32,12 @@ export const ALETHIA_ISSUER_URL = `${(
 	process.env.NEXT_PUBLIC_APP_URL ?? "https://alethialabs.io"
 ).replace(/\/+$/, "")}/api/oidc`;
 
-/**
- * The Application (client) ID of Alethia's ONE multi-tenant Entra app — the identity the
- * console (and runner) authenticate as, keylessly, via a minted OIDC assertion. The customer
- * grants THIS app a role in their tenant (they create no app of their own), so the connect
- * UI shows it in the setup command rather than asking the customer to paste it. Set by the
- * operator via `NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID`; empty on an instance that hasn't
- * registered the app (Azure connect is gated off there anyway).
- */
-export const ALETHIA_AZURE_CLIENT_ID =
-	process.env.NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID ?? "";
+// The Alethia platform Entra app id (Alethia's ONE multi-tenant app — the identity the console
+// and runner authenticate as, keylessly, via a minted OIDC assertion) is NOT read from a
+// `NEXT_PUBLIC_*` env var: those inline at build time, so the prod image never received it and the
+// connect command shipped without the id. It's now threaded server→client as the `clientId` prop on
+// <AzureConnection> (sourced from the server-only `ALETHIA_AZURE_CLIENT_ID` in `initAzureIdentity`),
+// so it's runtime-configurable with no rebuild and stays a single source of truth.
 
 /** Docs base for the connectors guides (per-cloud Terraform/CLI walk-throughs). */
 export const CONNECTOR_DOCS_BASE = "/docs/console/connectors";

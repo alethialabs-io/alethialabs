@@ -1,58 +1,74 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 380" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 380" width="100%" role="img" aria-label="Cost estimation in two layers: a real-time cost sidebar during design and a precise Infracost breakdown after tofu plan">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="820" height="380" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="379" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Cost Estimation — Two-Layer Approach</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="380" rx="12"/>
+  <rect x="0" y="0" width="840" height="380" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="379" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · COST</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">Two layers: instant estimate, then precise Infracost</text>
 
-  <!-- Left path: Real-time -->
-  <rect x="30" y="56" width="370" height="290" rx="8" fill="none" stroke="#22C55E30"/>
-  <rect x="30" y="56" width="370" height="28" rx="8" fill="#22C55E10"/>
-  <rect x="30" y="78" width="370" height="1" fill="#22C55E30"/>
-  <text x="215" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#22C55E">Real-time (Instant)</text>
+  <!-- Layer 1: sidebar -->
+  <rect class="d-surface" x="28" y="96" width="180" height="70" rx="8"/>
+  <text class="d-label" x="118" y="124" text-anchor="middle" font-size="13" font-weight="600">Design form</text>
+  <text class="d-sub mono" x="118" y="142" text-anchor="middle" font-size="9">edits capabilities</text>
+  <text class="d-sub mono" x="118" y="154" text-anchor="middle" font-size="9">region selected</text>
 
-  <rect x="55" y="96" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="215" y="118" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">User configures project in form</text>
-  <line x1="215" y1="132" x2="215" y2="148" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect class="d-emph" x="256" y="92" width="196" height="78" rx="8"/>
+  <text class="d-emph-text" x="354" y="120" text-anchor="middle" font-size="13" font-weight="600">Cost sidebar</text>
+  <text class="d-emph-text mono" x="354" y="138" text-anchor="middle" font-size="9" opacity="0.82">real-time · simple formulas</text>
+  <text class="d-emph-text mono" x="354" y="152" text-anchor="middle" font-size="9" opacity="0.82">AWS Pricing API · 24h cache</text>
+  <text class="d-emph-text mono" x="354" y="164" text-anchor="middle" font-size="9" opacity="0.82">Σ hourly × 730</text>
 
-  <rect x="55" y="152" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="215" y="174" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">fetchPrices(region) → AWS Pricing API</text>
-  <line x1="215" y1="188" x2="215" y2="204" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect class="d-surface" x="500" y="96" width="312" height="70" rx="8"/>
+  <text class="d-label" x="516" y="122" font-size="12" font-weight="600">Approximate monthly $</text>
+  <text class="d-sub mono" x="516" y="140" font-size="9">major cost drivers · instant feedback</text>
+  <text class="d-sub mono" x="516" y="156" font-size="9">fallback rates when the API is unavailable</text>
 
-  <rect x="55" y="208" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="215" y="224" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Σ (hourly_rate × 730h) per component</text>
-  <text x="215" y="238" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">cached 24h · fallback rates if API fails</text>
-  <line x1="215" y1="244" x2="215" y2="260" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <line class="d-edge" x1="208" y1="131" x2="256" y2="131" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="452" y1="131" x2="500" y2="131" marker-end="url(#ar)"/>
 
-  <rect x="55" y="264" width="320" height="44" rx="6" fill="#27272A" stroke="#22C55E"/>
-  <text x="215" y="284" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#22C55E">Cost Sidebar</text>
-  <text x="215" y="300" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Updates as you type · approximate</text>
+  <!-- Divider -->
+  <line class="d-grid" x1="28" y1="200" x2="812" y2="200"/>
+  <text class="d-sub mono" x="28" y="222" font-size="9">AFTER PLAN</text>
 
-  <!-- Right path: Infracost -->
-  <rect x="420" y="56" width="370" height="290" rx="8" fill="none" stroke="#8B5CF630"/>
-  <rect x="420" y="56" width="370" height="28" rx="8" fill="#8B5CF610"/>
-  <rect x="420" y="78" width="370" height="1" fill="#8B5CF630"/>
-  <text x="605" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Post-Plan (Precise)</text>
+  <!-- Layer 2: Infracost -->
+  <rect class="d-surface" x="28" y="238" width="150" height="70" rx="8"/>
+  <text class="d-label" x="103" y="266" text-anchor="middle" font-size="13" font-weight="600">tofu plan</text>
+  <text class="d-sub mono" x="103" y="284" text-anchor="middle" font-size="9">tofu show -json</text>
+  <text class="d-sub mono" x="103" y="296" text-anchor="middle" font-size="9">→ plan JSON</text>
 
-  <rect x="445" y="96" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="605" y="118" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Runner runs terraform plan</text>
-  <line x1="605" y1="132" x2="605" y2="148" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect class="d-surface" x="226" y="238" width="170" height="70" rx="8"/>
+  <text class="d-label" x="311" y="266" text-anchor="middle" font-size="13" font-weight="600">Infracost</text>
+  <text class="d-sub mono" x="311" y="284" text-anchor="middle" font-size="9">breakdown --path</text>
+  <text class="d-sub mono" x="311" y="296" text-anchor="middle" font-size="9">per-resource costs</text>
 
-  <rect x="445" y="152" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="605" y="174" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">terraform show -json → plan.json</text>
-  <line x1="605" y1="188" x2="605" y2="204" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect class="d-surface" x="444" y="238" width="180" height="70" rx="8"/>
+  <text class="d-label" x="534" y="266" text-anchor="middle" font-size="12" font-weight="600">execution_metadata</text>
+  <text class="d-sub mono" x="534" y="284" text-anchor="middle" font-size="9">.cost_breakdown</text>
 
-  <rect x="445" y="208" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="605" y="224" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">infracost breakdown --path plan.json</text>
-  <text x="605" y="238" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">analyzes every Terraform resource</text>
-  <line x1="605" y1="244" x2="605" y2="260" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect class="d-surface" x="672" y="238" width="140" height="70" rx="8"/>
+  <text class="d-label" x="742" y="266" text-anchor="middle" font-size="13" font-weight="600">Plan tab</text>
+  <text class="d-sub mono" x="742" y="284" text-anchor="middle" font-size="9">precise total</text>
+  <text class="d-sub mono" x="742" y="296" text-anchor="middle" font-size="9">sign-off view</text>
 
-  <rect x="445" y="264" width="320" height="44" rx="6" fill="#27272A" stroke="#8B5CF6"/>
-  <text x="605" y="284" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#8B5CF6">Plan Tab Breakdown</text>
-  <text x="605" y="300" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Per-resource costs · final review</text>
+  <line class="d-edge" x1="178" y1="273" x2="226" y2="273" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="396" y1="273" x2="444" y2="273" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="624" y1="273" x2="672" y2="273" marker-end="url(#ar)"/>
 
-  <!-- Bottom summary -->
-  <text x="215" y="360" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Quick feedback while configuring</text>
-  <text x="605" y="360" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Precise number for sign-off</text>
+  <text class="d-sub mono" x="812" y="360" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

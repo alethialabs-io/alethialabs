@@ -1,91 +1,112 @@
 ---
-title: Terraform State Management
-description: How Terraform state is stored in S3-compatible object storage, organized by Project, and shared across Runner executions.
+title: OpenTofu State Management
+description: How OpenTofu state is stored in S3-compatible object storage, organized by environment, and shared across runner executions.
 ---
 
-# Terraform State Management
+# OpenTofu State Management
 
-Terraform tracks the real-world resources it manages in a **state file**. The platform stores state in S3-compatible object storage (SeaweedFS by default, swappable for Garage, MinIO, AWS S3, or R2), enabling Runners to share state across executions and resume from failures.
+OpenTofu tracks the real-world resources it manages in a **state file**. Alethia never hands a runner an
+object-storage key. Instead, **every** provisioning job reaches state through the Console **state proxy**
+using OpenTofu's built-in `http` backend, and the Console persists the bytes to S3-compatible object
+storage (SeaweedFS by default, swappable for Garage, MinIO, AWS S3, or R2). This lets runners share state
+across executions and resume from failures while holding zero storage credentials.
 
-<img src="/docs/diagrams/concepts/terraform-state.svg" alt="Terraform State" />
+<img src="/docs/diagrams/concepts/terraform-state.svg" alt="OpenTofu State" />
+
+<Callout type="info">
+  The state proxy is the **universal** path — trusted Alethia templates and managed **untrusted**
+  bring-your-own code alike. The runner authenticates to `/api/jobs/{id}/state` with a per-job,
+  key-scoped token minted at claim time (`stateBackend()` in `apps/runner/internal/agent/runner.go`),
+  passed to `tofu` only via `TF_HTTP_PASSWORD` — never written to the workdir. See
+  [Security → Execution isolation](/concepts/security#execution-isolation-managed-untrusted-byo).
+</Callout>
 
 ## State Backend
 
-Terraform is configured with an S3 backend pointing at the configured S3-compatible endpoint:
+The runner writes a `backend "http"` config (`WriteBackendHCL` in `packages/core/cloud/http_backend.go`)
+and runs `tofu init -backend-config=<file>`. The state, lock, and unlock endpoints all point at the
+Console proxy for that job; the per-job token travels out-of-band in `TF_HTTP_PASSWORD` (App Router can't
+export the `LOCK`/`UNLOCK` verbs, so locking uses `POST`/`DELETE` against a separate lock address).
 
 ```hcl
-terraform {
-  backend "s3" {
-    bucket                      = "project-tofu-state"
-    key                         = "{project}-{environment}-{region}/tofu.tfstate"
-    endpoint                    = "{ALETHIA_STORAGE_ENDPOINT}"
-    region                      = "{ALETHIA_STORAGE_REGION}"
-    access_key                  = "{ALETHIA_STORAGE_ACCESS_KEY_ID}"
-    secret_key                  = "{ALETHIA_STORAGE_SECRET_ACCESS_KEY}"
-    use_lockfile                = true
-    skip_credentials_validation = true
-    skip_metadata_api_check     = true
-    force_path_style            = true
-  }
-}
+# backend.hcl — generated per job, consumed by `tofu init -backend-config=backend.hcl`
+address        = "{console_url}/api/jobs/{job_id}/state"
+lock_address   = "{console_url}/api/jobs/{job_id}/state/lock"
+unlock_address = "{console_url}/api/jobs/{job_id}/state/lock"
+# TF_HTTP_USERNAME=alethia, TF_HTTP_PASSWORD=<per-job state token>  (from the process env, not this file)
 ```
+
+Behind the proxy, the Console reads and writes each environment's state object in S3-compatible storage,
+keyed as `{project}-{environment}-{region}/tofu.tfstate`. The S3 endpoint/bucket/credentials live
+**server-side on the Console**, never on the runner.
 
 ### Path Structure
 
-```
-project-tofu-state/
-├── api-backend-production-eu-west-1/
-│   └── tofu.tfstate
-└── api-backend-staging-us-east-1/
-    └── tofu.tfstate
-```
+The state key is `{project}-{environment}-{region}/tofu.tfstate`, so **every environment** — not
+just every project — gets its own state file:
 
-Each Project gets its own state file, keyed by project name, environment stage, and region. This ensures isolation between Projects and environments.
+<Files>
+  <Folder name="project-tofu-state" defaultOpen>
+    <Folder name="api-backend-production-eu-west-1">
+      <File name="tofu.tfstate" />
+    </Folder>
+    <Folder name="api-backend-staging-us-east-1">
+      <File name="tofu.tfstate" />
+    </Folder>
+  </Folder>
+</Files>
+
+This is why a project's `staging` and `production` are fully isolated: they are separate state files.
+The key is derived from the environment's `name` (see [Domain Model](/concepts/domain-model#environments)).
 
 ## State Lifecycle
 
-### During `terraform plan`
+### During `tofu plan`
 
-1. Runner generates the backend configuration dynamically from the Project's metadata
-2. `terraform init` downloads the existing state (if any) from S3-compatible storage
-3. `terraform plan` compares the desired configuration against the current state
+1. The runner mints a per-job state token and writes `backend.hcl` pointing at the Console proxy
+2. `tofu init` pulls the existing state (if any) from the proxy via the `http` backend
+3. `tofu plan` compares the desired configuration against the current state
 4. The plan output describes what will change
 
-### During `terraform apply`
+### During `tofu apply`
 
-1. `terraform apply` executes the plan
-2. After each resource is created/updated/destroyed, Terraform writes the updated state back to S3
+1. `tofu apply` executes the plan, taking a state lock via `POST` to the lock address
+2. After each resource is created/updated/destroyed, OpenTofu writes the updated state back through the proxy
 3. If the apply fails mid-way, the state reflects the partial progress
 
-### During `terraform destroy`
+### During `tofu destroy`
 
-1. `terraform destroy` removes all resources tracked in the state
+1. `tofu destroy` removes all resources tracked in the state
 2. The state file is left empty (or removed)
 
-## Why S3-compatible state?
+## Why proxy the state?
 
-- **Portable** — any S3-compatible backend works (SeaweedFS, Garage, MinIO, AWS S3, R2); the endpoint is swappable, so you are never locked to one provider
-- **Lock-free coordination** — `use_lockfile = true` keeps concurrent runs safe without a separate DynamoDB table
-- **Consistent across Runners** — every Runner reads and writes the same state, so executions share a single source of truth
-- **Cross-provider** — works regardless of whether the Project targets AWS, GCP, or Azure
-- **Access control** — Runner credentials (S3 keys) are set as environment variables, not stored in the Project config
+- **Zero storage credentials on the runner** — the runner never sees an S3 key; it holds only a per-job,
+  key-scoped state token in `TF_HTTP_PASSWORD`. This is what lets managed untrusted BYO code run safely.
+- **Locked coordination** — the `http` backend takes a lock via the proxy's lock address (`POST`/`DELETE`),
+  keeping concurrent runs on the same environment safe.
+- **Consistent across runners** — every runner reads and writes the same state through the proxy, so
+  executions share a single source of truth.
+- **Portable storage** — behind the proxy, any S3-compatible backend works (SeaweedFS, Garage, MinIO, AWS
+  S3, R2); the Console's endpoint is swappable, so you are never locked to one provider.
+- **Cross-provider** — works regardless of whether the environment targets AWS, GCP, Azure, or Hetzner.
 
 ## State and Failure Recovery
 
 Because state is persisted after every resource operation:
 
-- If a Runner dies mid-apply, the state reflects all resources created so far
-- A retry (new job) runs `terraform init` → downloads the existing state → `terraform plan` only shows remaining resources
+- If a runner dies mid-apply, the state reflects all resources created so far
+- A retry (new job) runs `tofu init` → downloads the existing state → `tofu plan` only shows remaining resources
 - No resources are double-created
 
-This is why Terraform state is the foundation of the platform's reliability model.
+This is why OpenTofu state is the foundation of the platform's reliability model.
 
 ## Plan Artifacts
 
-In addition to state, **plan artifacts** are stored in a separate S3-compatible bucket (`plan-artifacts`). These are the binary `plan.tfplan` files that capture exactly what Terraform will do.
+In addition to state, **plan artifacts** are stored in a separate S3-compatible bucket (`plan-artifacts`). These are the binary `plan.tfplan` files that capture exactly what OpenTofu will do.
 
-When a user clicks "Apply" after reviewing a plan, the Runner downloads the plan artifact and passes it to `terraform apply plan.tfplan`. This ensures the apply executes exactly what was planned, even if the Terraform configuration has changed since the plan was generated.
+When a user applies after reviewing a plan, the runner downloads the plan artifact and passes it to `tofu apply plan.tfplan`. This ensures the apply executes exactly what was planned, even if the configuration has changed since the plan was generated.
 
 <Callout type="info">
-Plan artifacts are validated with a **config hash**. If the Project configuration was modified after the plan was generated, the hash won't match and the apply will fail, forcing the user to re-plan. This prevents stale plans from being applied.
+Plan artifacts are validated with a **config hash**. If the environment's configuration was modified after the plan was generated, the hash won't match and the apply will fail, forcing the user to re-plan. This prevents stale plans from being applied.
 </Callout>

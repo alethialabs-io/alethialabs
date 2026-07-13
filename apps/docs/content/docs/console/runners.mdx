@@ -5,7 +5,7 @@ description: Registering, monitoring, and managing Runner execution agents.
 
 # Runners
 
-Runners are the execution agents that run Terraform on behalf of users. The Runners page manages their lifecycle. For how Runners work internally, see the [Runner Agent](/runner) documentation.
+Runners are the execution agents that run OpenTofu (the `tofu` binary) on behalf of users. The Runners page manages their lifecycle. Every runner sits on a two-axis taxonomy — **operator** (`managed` | `self`) × **provisioning** (`deployed` | `registered`, for `self` only). For how Runners work internally, see the [Runner Agent](/runner) documentation.
 
 ## Runners Page
 
@@ -23,7 +23,7 @@ Filter by Runner name.
 |--------|-------------|
 | Name | Runner identifier |
 | Operator | `managed` (Alethia-operated fleet) or `self` — self runners also show provisioning: `self · deployed` or `self · registered` |
-| Region | AWS region (managed runners only) |
+| Region | Deployment region/location (managed & self·deployed runners) |
 | Status | Badge: ONLINE (green), DRAINING (yellow), OFFLINE (red) |
 | Version | Runner release version |
 | Created | Registration timestamp |
@@ -41,7 +41,7 @@ Click **"Add Runner"** to open the registration sheet with two tabs:
 
 <Tabs items={["Deploy (Self · Deployed)", "Register (Self · Registered)"]}>
   <Tab value="Deploy (Self · Deployed)">
-    Provisions a Runner into your cloud account automatically (an existing runner runs Terraform to stand it up in ECS Fargate). This is a `self`-operated, `deployed` runner:
+    Provisions a Runner into your cloud account automatically (an existing runner runs OpenTofu to stand it up — the AWS path uses ECS Fargate via `infra/templates/runner/aws`). This is a `self`-operated, `deployed` runner:
 
     1. Select a cloud identity and region
     2. Click Deploy → queues a `DEPLOY_RUNNER` job
@@ -51,7 +51,7 @@ Click **"Add Runner"** to open the registration sheet with two tabs:
     Deployed Runners support [scale-to-zero](/runner/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
   </Tab>
   <Tab value="Register (Self · Registered)">
-    For bringing your own Runner — your own Terraform, or just `alethia runner start` — on infrastructure you control. This creates a `self`-operated, `registered` runner:
+    For bringing your own Runner — your own IaC (OpenTofu/Terraform), or just `alethia runner start` — on infrastructure you control. This creates a `self`-operated, `registered` runner:
 
     1. Enter a name for the Runner
     2. Click Register → generates a `runner_id` and `runner_token`
@@ -63,7 +63,7 @@ Click **"Add Runner"** to open the registration sheet with two tabs:
 </Tabs>
 
 <Callout type="info">
-**Managed** runners are a third category: Alethia operates them in our own account and bills them by provisioned hours (online time). They don't appear under "Add Runner" — you opt into the managed fleet rather than registering or deploying them yourself.
+**Managed** runners are a third category: Alethia operates them in the platform account and bills them by provisioned hours (online time, via the `runner_usage_sessions` ledger). The managed fleet is driven by the **in-app scaler** (`apps/console/lib/fleet/`) — a 60s loop that sizes per-provider warm pools by queue depth and converges them through the **Hetzner VM fleet** (`FLEET_PROVIDER=hcloud`), whose cloud-init self-registers a per-cloud runner image via `ALETHIA_RUNNER_BOOTSTRAP_TOKEN`. (The legacy AWS ECS + Lambda scaler is retired.) Managed runners don't appear under "Add Runner" — you opt into the fleet rather than registering or deploying them yourself.
 </Callout>
 
 <Callout type="warn">
@@ -91,4 +91,4 @@ Each Runner reports its version on heartbeat. The page shows:
 - Latest available version (from `runner_releases` table)
 - **Release Notes** dialog showing the changelog for each version
 
-When a new Runner release is published via the CI pipeline, existing deployed and managed Runners are updated via `UPDATE_RUNNER` jobs that trigger ECS force-new-deployment.
+When a new Runner release is published via the CI pipeline, existing runners are rolled onto the new image via `UPDATE_RUNNER` jobs — ECS force-new-deployment for self·deployed AWS runners; VM replacement for the managed Hetzner fleet.

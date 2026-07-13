@@ -13,24 +13,26 @@ This platform is a hybrid multi-cloud infrastructure orchestration system. It co
 
 | Component | Type | Language | Role |
 |-----------|------|----------|------|
-| **Console** | Web application | TypeScript (Next.js 15) | Visual configuration, job management, real-time monitoring |
+| **Console** | Web application | TypeScript (Next.js) | Visual configuration, job management, real-time monitoring |
 | **alethia** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
-| **Runner** | Execution agent | Go | Runs Terraform, installs ArgoCD, streams logs back to Console |
+| **Runner** | Execution agent | Go | Runs OpenTofu (`tofu`), installs ArgoCD, streams logs back to Console |
 
 ## Data Flow
 
-```
-User ─► Console (web) ─► Job Queue (PostgreSQL) ─► Runner (agent) ─► Cloud Provider
-         │                                            │
-         ├─ OR ──► alethia CLI ─► Job Queue ──────────┘
-         │
-         └─ LISTEN/NOTIFY → SSE ◄── Log Streaming ◄── Runner
-```
+<Mermaid chart={`
+flowchart LR
+  Web["Console (web form)"] --> Q["Job Queue (Postgres)"]
+  CLI["alethia CLI"] --> Q
+  Q -->|claim| Runner["Runner (agent)"]
+  Runner -->|keyless assume| Cloud["Cloud Provider"]
+  Runner -->|logs| Notify["LISTEN/NOTIFY"]
+  Notify -->|SSE| Web
+`} />
 
-1. The user configures infrastructure through Console (web form) or alethia (CLI commands)
-2. Actions are queued as jobs in PostgreSQL
-3. A Runner agent claims the job atomically and assumes temporary cloud credentials
-4. The Runner executes Terraform and streams logs back in real-time
+1. The user configures infrastructure through Console (web form) or the `alethia` CLI
+2. Actions are queued as jobs in Postgres
+3. A runner claims the job atomically and assumes temporary, keyless cloud credentials
+4. The runner executes `tofu` and streams logs back in real time over LISTEN/NOTIFY → SSE
 5. On completion, ArgoCD is installed for GitOps-managed deployments
 
 ## Multi-Cloud Support
@@ -56,11 +58,11 @@ Every infrastructure component has provider-specific implementations across thre
 
 **CLI (alethia):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
 
-**Agent (Runner):** Go, ECS Fargate (ARM64), embeds Terraform + kubectl + Helm + cloud CLIs
+**Agent (Runner):** Go single binary — on a managed Hetzner fleet VM or the customer's own cloud; bundles `tofu` + kubectl + Helm, **CLI-free** (no aws-cli / gcloud / azure-cli; keyless OIDC + in-process `runner kube-token`)
 
-**Shared (core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
+**Shared (core):** Go package — provisioner, OpenTofu wrapper, cloud provider abstraction, ArgoCD rendering, Infracost, Git, Helm, and the Elench `verify` + `drift` engines
 
-**Infrastructure:** Terraform, S3-compatible storage / SeaweedFS (state), Lambda scaler (scale-to-zero), release-please
+**Infrastructure:** OpenTofu, S3-compatible storage / SeaweedFS (state), the in-app fleet scaler (Hetzner VMs), release-please
 
 ## Concept Pages
 
@@ -80,7 +82,7 @@ Deep dives into the platform's key technical patterns:
     Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
   </Card>
   <Card title="Runner Scaling" href="/concepts/runner-scaling">
-    Scale-to-zero with Lambda scaler, EventBridge, and ECS Fargate.
+    The in-app scaler sizing per-provider warm pools on Hetzner VMs by queue depth.
   </Card>
   <Card title="Cloud Provider Abstraction" href="/concepts/cloud-abstraction">
     Registry, region mapping, instance types, provider_config JSONB.
@@ -100,8 +102,8 @@ Deep dives into the platform's key technical patterns:
   <Card title="Multi-Cloud Conversion" href="/concepts/multi-cloud-conversion">
     Cross-provider Project duplication with mapping and warnings.
   </Card>
-  <Card title="Terraform State" href="/concepts/terraform-state">
-    S3-compatible backend, state paths, plan artifacts.
+  <Card title="OpenTofu State" href="/concepts/terraform-state">
+    S3-compatible backend, per-environment state paths, plan artifacts.
   </Card>
   <Card title="GitOps & ArgoCD" href="/concepts/gitops-argocd">
     App of Apps pattern, infra facts, Helm values.
@@ -124,15 +126,15 @@ alethialabs/
 │   ├── runner/           # Go execution agent
 │   └── docs/             # Documentation site (Fumadocs)
 ├── packages/
-│   ├── core/       # Shared Go libraries
-│   ├── ui/               # Shared UI components
-│   ├── charts/           # Helm charts
-│   └── ...config/        # Shared TS/ESLint config
+│   ├── core/             # Shared Go library (provisioner, verify, drift, argocd)
+│   ├── @repo/ui/         # Shared shadcn/ui design system
+│   └── @repo/*           # Shared web packages (brand, plan-catalog, email, config)
 ├── infra/
-│   ├── platform/         # Runner deployment (ECR, ECS, Lambda scaler)
-│   ├── templates/project/ # Infrastructure templates (AWS/GCP/Azure)
+│   ├── templates/project/ # Infrastructure templates (AWS/GCP/Azure/Alibaba/Hetzner)
 │   ├── templates/argocd/ # ArgoCD application templates
-│   └── connector/        # Cloud provider federation setup
+│   ├── templates/runner/ # Self-deployed runner template (ECS) — NOT the managed fleet
+│   └── connector/        # Cloud account bootstrap (OIDC federation setup)
+├── apps/console/lib/fleet/          # In-app managed-fleet scaler (Hetzner)
 ├── apps/console/lib/db/migrations/  # PostgreSQL schema migrations (Drizzle)
-└── .github/workflows/    # CI/CD (release-please, release-alethia, release-runner)
+└── .github/workflows/    # CI/CD (release-please, release-cli, release-runner)
 ```

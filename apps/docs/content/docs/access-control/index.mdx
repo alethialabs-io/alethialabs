@@ -13,14 +13,17 @@ Every action in Alethia — viewing a project, deploying infrastructure, destroy
 
 ## The mental model
 
-```
- actor ──holds──▶ grant ──of a──▶ role ──bundles──▶ permissions ──gate──▶ actions on resources
- (you + org)              (owner/admin/…)          (project:deploy, …)
-```
+<Mermaid chart={`
+flowchart LR
+  actor["actor<br/>(you + org)"] -->|holds| grant
+  grant -->|of a| role["role<br/>(owner/admin/…)"]
+  role -->|bundles| perms["permissions<br/>(project:deploy, …)"]
+  perms -->|gate| act["actions on resources"]
+`} />
 
 - **Actor** — a verified user plus their **active organization** (the tenancy scope). In the free Community edition there is exactly one organization per user — your *personal organization* — so "actor" is effectively just "you".
-- **Resource** — a thing you act on: an organization, a **project** (an infrastructure definition), a **runner**, a **cloud identity**, a job, a connector, a member, Activity logs, or billing.
-- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, and the management actions (`manage_identities`, `manage_members`, `manage_connectors`, `view_activity`, `export_activity`, `manage_billing`).
+- **Resource** — a thing you act on: an organization, a **project** (an infrastructure application), a **runner**, a **cloud identity** (a connected cloud account), a job, a connector (git / integration provider), a member, alerts, the managed fleet, support cases, Activity logs, or billing.
+- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, `test`, and the management actions (`manage_identities`, `manage_members`, `manage_connectors`, `view_alerts`, `manage_alerts`, `view_activity`, `export_activity`, `manage_billing`, `manage_support`).
 - **Permission** — a single `resource:action` pair, e.g. `project:deploy`. The complete, exhaustive list is fixed in code (see [Roles & Permissions](/access-control/roles-and-permissions)).
 - **Role** — a named bundle of permissions (`owner`, `admin`, `operator`, `viewer`). You don't grant permissions one by one; you grant a role.
 - **Grant** — "this actor gets this role, at this scope." The scope can be the whole organization, or a single project.

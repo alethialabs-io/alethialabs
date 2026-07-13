@@ -26,12 +26,21 @@ export async function listAzureIdentities(): Promise<conn.ConnectionStatus[]> {
 	return conn.listIdentities(actor, "azure");
 }
 
-/** Gets or creates a pending Azure identity (manage-gated, not activity-logged). */
-export async function initAzureIdentity() {
+/**
+ * Gets or creates a pending Azure identity (manage-gated, not activity-logged), plus the platform
+ * Entra app id the connect UI bakes into the customer's setup command. `clientId` is Alethia's one
+ * multi-tenant app — a fixed, non-secret operator value (never customer-entered); empty when the
+ * operator hasn't configured Azure.
+ */
+export async function initAzureIdentity(): Promise<{
+	identityId: string;
+	clientId: string;
+}> {
 	const actor = await authorizeQuiet("manage_identities", {
 		type: "cloud_identity",
 	});
-	return conn.initIdentity(actor, "azure");
+	const { identityId } = await conn.initIdentity(actor, "azure");
+	return { identityId, clientId: process.env.ALETHIA_AZURE_CLIENT_ID ?? "" };
 }
 
 /** Validates the Azure GUIDs, persists them, and queues a connection test. */

@@ -66,7 +66,7 @@ The deploy flow itself never changes — a new cloud is five edits (mirrors
 Add `<cloud>_provider.go` implementing the four-method interface and a `case` in `NewCloudProvider`.
 </Step>
 <Step>
-### Terraform template + outputs
+### OpenTofu template + outputs
 Provision a cluster + backing services + a **keyless** workload-identity binding for the external-dns KSA,
 exporting the identity. Validate with `tofu validate`.
 </Step>
@@ -83,6 +83,6 @@ Add a `BuildFromOutputs` case + the per-cloud block, and the branch in `external
 
 <Callout type="info">
   **Honest status.** The seam is green — `BuildFromOutputs` per-cloud unit tests, template render tests,
-  and `tofu validate` for the GCP/Azure workload-identity Terraform. The remaining proof is a real
+  and `tofu validate` for the GCP/Azure workload-identity OpenTofu. The remaining proof is a real
   GKE/AKS end-to-end run + a live apps-repo git push; only a live cluster/repo can validate those.
 </Callout>

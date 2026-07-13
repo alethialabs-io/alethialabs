@@ -15,6 +15,18 @@ spec:
     targetRevision: "3.12.1"
     helm:
       values: |
+        # Kubelets that serve SELF-SIGNED certs without IP SANs (Talos default,
+        # kind, k3s, minikube) fail metrics-server's scrape TLS verification
+        # ("x509: cannot validate certificate ... doesn't contain any IP SANs"),
+        # so the Deployment never becomes Ready and the Application sits
+        # Progressing/Degraded forever — proven empirically on kind (default
+        # values: never Ready; with this flag: Ready in ~30s). `args` APPENDS to
+        # the chart's defaultArgs. Tradeoff: the kubelet scrape skips cert
+        # verification (upstream's documented answer for non-CA-signed kubelets);
+        # the CA-signed alternative (serverTLSBootstrap + a CSR approver) is
+        # per-distro work — if wired later, gate this flag off per provider.
+        args:
+          - --kubelet-insecure-tls
         resources:
           requests:
             cpu: 100m

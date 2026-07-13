@@ -1,0 +1,78 @@
+---
+title: OpenID Connect
+description: Enterprise SSO with Alethia as the OIDC Service Provider — Okta, Microsoft Entra ID, Google Workspace, AWS IAM Identity Center and any OIDC IdP, via @better-auth/sso.
+---
+
+# OpenID Connect
+
+<Enterprise />
+
+## What the standard is
+
+**OpenID Connect (OIDC)** is a thin identity layer on top of [OAuth 2.0](/standards/oauth2). Where
+OAuth 2.0 answers *"is this app allowed to act?"*, OIDC answers *"who is this user?"* — the IdP
+returns a signed **ID token** (a JWT) with verified identity claims (`sub`, `email`, group/role
+claims), and the Relying Party verifies it against the IdP's published JWKS. It is the protocol behind
+"sign in with your company account".
+
+Alethia plays two OIDC roles, kept strictly separate:
+
+- **Relying Party / Service Provider** for enterprise SSO — it *consumes* a customer's IdP so members
+  sign in with their corporate identity (this page).
+- **Identity Provider** for keyless cloud federation — it *is* an OIDC issuer that clouds trust. That
+  is a different subsystem; see [workload identity](/standards/workload-identity).
+
+## How Alethia implements it
+
+Enterprise SSO is an [Enterprise](/editions)-gated capability contributed by the `@alethia/ee` module
+(`ee/src/index.ts`) through the `getAuthPlugins()` seam in `apps/console/lib/auth/plugins.ts`. It wraps
+the **`@better-auth/sso`** plugin. Alethia is always the **Service Provider** — it never runs an IdP
+of its own for user login (no Hydra, no Alethia-as-IdP).
+
+Each [organization](/concepts/glossary) registers its own provider (rows in the `ssoProvider` table,
+scoped by `organizationId`), so different orgs can federate different directories. Supported IdPs
+include Okta, Microsoft Entra ID, Google Workspace, AWS IAM Identity Center, OneLogin, and Ping — any
+standards-compliant OIDC provider. The server actions in `apps/console/app/server/actions/sso.ts`
+manage provider CRUD and report each row's protocol (`oidc` | `saml` | `unknown`) from which config
+block is present.
+
+### Domain verification and JIT provisioning
+
+Two safeguards gate first sign-in:
+
+<Steps>
+
+### Domain proof
+Registration is bound to domain ownership. `@better-auth/sso` is configured with
+`domainVerification: { enabled: true, tokenPrefix: "alethia-sso" }` — the customer publishes a DNS
+`TXT` record at `_alethia-sso-<providerId>`. Until the domain is verified, sign-in through that
+provider is rejected and no email-domain account-linking is trusted.
+
+### Entitlement gate
+A custom `alethia-sso-entitlement-guard` middleware blocks `POST /sso/register` unless the target org
+holds the `sso` entitlement — so a non-Enterprise admin cannot register a provider by calling the API
+directly. The UI shows the upsell instead.
+
+### Just-in-time member provisioning
+On first successful SSO sign-in, the user is provisioned into their org with
+`organizationProvisioning.defaultRole: "member"` (least-privileged). The
+[PDP](/access-control/architecture) then authorizes them exactly like any other
+[member](/access-control/members-and-invitations) — mapping better-auth's `member` to Alethia's
+viewer-scoped access.
+
+</Steps>
+
+<Callout type="warn">
+  **Honest current state.** SSO users are always provisioned as least-privileged members — automatic
+  **IdP group-claim → Alethia role** mapping (owner/admin/operator/viewer) is a documented follow-up,
+  not yet wired. Directory-driven provisioning/deprovisioning (SCIM) is **not implemented**; see
+  [SAML & SCIM](/standards/scim-saml).
+</Callout>
+
+For the operator-facing setup (fields per protocol, the register flow), see
+[access control → SSO](/access-control/sso).
+
+## Authoritative reference
+
+- [openid.net — How OpenID Connect works](https://openid.net/developers/how-connect-works/).
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) — the specification.

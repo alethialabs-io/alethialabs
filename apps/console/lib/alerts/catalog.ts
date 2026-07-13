@@ -93,6 +93,15 @@ export const CATEGORIES: CatalogCategory[] = [
 			ev("role.created", "authz.role.create", "Role created", "info", true),
 			ev("role.changed", "authz.role.edit", "Role permissions changed", "warning", true),
 			ev("role.deleted", "authz.role.delete", "Role deleted", "warning", true),
+			ev("sso.changed", "authz.sso.edit", "SSO provider updated", "warning", true),
+			ev("sso.deleted", "authz.sso.delete", "SSO provider removed", "warning", true),
+			ev(
+				"sso.domain_verified",
+				"authz.sso.domain_verified",
+				"SSO domain verified",
+				"info",
+				true,
+			),
 		],
 	},
 	{

@@ -1,11 +1,11 @@
 ---
 title: Provisioning Pipeline
-description: How Project form values flow through config snapshots and provider-specific mappings into Terraform variables.
+description: How project form values flow through config snapshots and provider-specific mappings into OpenTofu variables.
 ---
 
 # Provisioning Pipeline
 
-When a user clicks "Plan" or "Apply", the platform transforms the Project's form configuration into Terraform variables through a five-stage pipeline. Each stage has a single responsibility: serialize, freeze, deserialize, map, execute.
+When a user plans or applies an environment, the platform transforms the project's form configuration into OpenTofu variables through a five-stage pipeline. Each stage has a single responsibility: serialize, freeze, deserialize, map, execute.
 
 <img src="/docs/diagrams/concepts/provisioning-pipeline.svg" alt="Provisioning Pipeline" />
 
@@ -18,7 +18,7 @@ When a user clicks "Plan" or "Apply", the platform transforms the Project's form
 
 ## Stage 1: Form → Database
 
-The Project form in Console (or `alethia plan` in the CLI) calls `createProject()`, which inserts the configuration into normalized component tables:
+The project form in Console (or `alethia project plan` in the CLI) calls `createProject()`, which inserts the configuration into normalized component tables:
 
 | Table | Data |
 |-------|------|
@@ -81,7 +81,7 @@ The `ProjectConfig` struct in `packages/core/types/project_config.go` mirrors th
 
 ## Stage 4: ProjectConfig → terraform.tfvars.json
 
-Each cloud provider implements a `ProviderTfvars()` method that maps `ProjectConfig` fields to provider-specific Terraform variable names:
+Each cloud provider implements a `ProviderTfvars()` method that maps `ProjectConfig` fields to provider-specific OpenTofu variable names:
 
 | ProjectConfig Field | AWS | GCP | Azure |
 |-----------------|-----|-----|-------|
@@ -100,9 +100,9 @@ Each cloud provider implements a `ProviderTfvars()` method that maps `ProjectCon
 
 The result is a `map[string]interface{}` written to `terraform.tfvars.json` via `OverrideTfvarsFromMap()`.
 
-**No templating engine touches the `.tf` files.** The Terraform templates at `infra/templates/project/{aws,gcp,azure}/` are plain HCL with `variable` declarations. Values are injected entirely through Terraform's native tfvars mechanism.
+**No templating engine touches the `.tf` files.** The OpenTofu templates at `infra/templates/project/{aws,gcp,azure,alibaba,hetzner}/` are plain HCL with `variable` declarations. Values are injected entirely through OpenTofu's native tfvars mechanism (`terraform.tfvars.json` — the filename `tofu` reads for back-compat).
 
-## Stage 5: Terraform Execution
+## Stage 5: OpenTofu Execution
 
 <Steps>
 
@@ -110,16 +110,16 @@ The result is a `map[string]interface{}` written to `terraform.tfvars.json` via 
 The Runner resolves the template directory based on `ProjectConfig.Provider` — one of `aws/`, `gcp/`, or `azure/` under the templates path.
 
 ### Backend Configuration
-Terraform state is stored in S3-compatible storage. The backend key follows the pattern `{project}-{env}-{region}/tofu.tfstate`. See [Terraform State](/concepts/terraform-state).
+OpenTofu state is stored in S3-compatible storage. The backend key follows the pattern `{project}-{env}-{region}/tofu.tfstate`. See [OpenTofu State](/concepts/terraform-state).
 
 ### Plan
-`terraform plan` runs with the generated tfvars. For PLAN jobs, an Infracost analysis is also generated. The plan artifact is uploaded to S3-compatible storage.
+`tofu plan` runs with the generated tfvars. For PLAN jobs, an Infracost analysis is also generated. The plan artifact is uploaded to S3-compatible storage.
 
 ### Apply
-For DEPLOY jobs, `terraform apply` runs the plan. If a `plan_job_id` is linked, the cached plan artifact is downloaded and applied directly.
+For DEPLOY jobs, `tofu apply` runs the plan. If a `plan_job_id` is linked, the cached plan artifact is downloaded and applied directly.
 
 ### Post-Apply
-After apply, the Runner extracts Terraform outputs (cluster endpoint, database endpoints, ARNs), configures kubeconfig via the provider, installs ArgoCD, and renders application templates (per cloud — see [Multi-cloud](/elench/multi-cloud)). It then **generates app manifests** for the detected services and scaffolds them into the GitOps repo — only when that repo has no manifests yet, so a bring-your-own repo is never overwritten. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+After apply, the runner extracts `tofu` outputs (cluster endpoint, database endpoints, ARNs), writes an exec-plugin kubeconfig in-process (CLI-free — see [GitOps & ArgoCD](/concepts/gitops-argocd)), installs ArgoCD, and renders application templates (per cloud — see [Multi-cloud](/elench/multi-cloud)). It then **generates app manifests** for the detected services and scaffolds them into the GitOps repo — only when that repo has no manifests yet, so a bring-your-own repo is never overwritten. See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
 Between `plan` and `apply` the [elench verification gate](/elench/engine-internals) runs (fail-closed) and seals a signed receipt.
 

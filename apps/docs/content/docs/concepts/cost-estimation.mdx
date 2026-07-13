@@ -63,17 +63,17 @@ const FALLBACK_EC2: Record<string, number> = {
 
 ## Infracost Analysis (Post-Plan)
 
-After a Runner runs `terraform plan`, it optionally runs [Infracost](https://www.infracost.io/) for a precise cost breakdown based on the actual Terraform resources.
+After a runner runs `tofu plan`, it optionally runs [Infracost](https://www.infracost.io/) for a precise cost breakdown based on the actual planned resources.
 
 ### How It Works
 
 <Steps>
 
-### Terraform plan completes
-The Runner generates a plan JSON via `terraform show -json plan.tfplan`.
+### `tofu plan` completes
+The runner generates a plan JSON via `tofu show -json plan.tfplan`.
 
 ### Infracost analyzes the plan
-If an `INFRACOST_API_KEY` is configured, the Runner runs:
+If an `INFRACOST_API_KEY` is configured, the runner runs:
 ```bash
 infracost breakdown --path plan.json --format json
 ```
@@ -92,7 +92,7 @@ The Plan tab in the Project detail page shows per-resource costs and a total mon
 |---|---|---|
 | **When** | During form editing | After plan generation |
 | **Speed** | Instant | Requires plan job |
-| **Accuracy** | Approximate (simple formulas) | Precise (analyzes actual Terraform resources) |
+| **Accuracy** | Approximate (simple formulas) | Precise (analyzes actual planned resources) |
 | **Scope** | Major cost drivers only | Every resource in the plan |
 | **Use case** | Quick feedback while configuring | Final review before apply |
 

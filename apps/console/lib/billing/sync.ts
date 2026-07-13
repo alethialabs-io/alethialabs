@@ -18,7 +18,27 @@ import {
 	upsertOrgBilling,
 } from "@/lib/billing/queries";
 import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
-import type { BillingStatus } from "@/lib/db/schema/enums";
+import { billingPlan } from "@/lib/db/schema/enums";
+import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
+
+/**
+ * Resolves the org plan a subscription grants. The platform stamps `metadata.plan` when it
+ * creates the subscription; we trust it for the same reason we already trust
+ * `metadata.organization_id` — the platform is its sole writer — but validate it against the
+ * billing_plan enum so a malformed value can never widen entitlements. This is what lets an
+ * Enterprise subscription work: Enterprise is sold on a CUSTOM negotiated price, so its price id
+ * is not one of the STRIPE_PRICE_* env prices and `planForPriceId` returns null (which would
+ * otherwise silently write the org back to community). Falls back to the price-id map for
+ * self-serve Team, whose subscription carries no `metadata.plan`.
+ */
+export function planFromSubscription(
+	sub: Stripe.Subscription,
+	priceId: string | undefined,
+): BillingPlan | null {
+	const validated = billingPlan.enumValues.find((p) => p === sub.metadata?.plan);
+	if (validated) return validated;
+	return priceId ? planForPriceId(priceId) : null;
+}
 
 /** Stripe subscription.status → our billing_status. */
 export function mapStatus(s: Stripe.Subscription.Status): BillingStatus {
@@ -64,7 +84,7 @@ export async function syncSubscriptionToBilling(
 		return;
 	}
 
-	const plan = priceId ? planForPriceId(priceId) : null;
+	const plan = planFromSubscription(sub, priceId);
 	const status = mapStatus(sub.status);
 	// Only a LIVE subscription (active/trialing) grants a paid plan or shows a renewal
 	// date. An `incomplete` (→ "none"), `past_due`, or `canceled` sub keeps the org on

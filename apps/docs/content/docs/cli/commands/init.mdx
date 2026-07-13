@@ -1,0 +1,97 @@
+---
+title: First-Run Setup (init)
+description: One command to point the CLI at a control plane and log in — the hosted default, or a self-hosted / dev URL.
+---
+
+# First-Run Setup
+
+`alethia init` is the guided one-time setup: it picks the **control-plane URL**, persists it, then
+runs the browser [device-code login](/cli/authentication). It's exactly the composition of
+[`alethia config set web-origin`](/cli/commands) + [`alethia login`](/cli/authentication) in a single
+prompt — nothing more.
+
+```bash
+alethia init
+```
+
+<Steps>
+
+### Choose the control-plane URL
+A form asks for the **control-plane URL**, pre-filled with the current value — the hosted
+`alethialabs.io` by default, or your self-hosted / dev origin. The entered value is validated
+(must be `http`/`https` with a host) and saved with the trailing slash stripped.
+
+### Log in
+The device-code flow runs immediately: the CLI opens `<origin>/cli/login?device_code=<uuid>` in your
+browser and polls `<origin>/api/auth/cli/exchange` until you approve, then writes the tokens. See
+[Authentication](/cli/authentication) for the full RFC 8628 flow.
+
+</Steps>
+
+<Callout type="info">
+**On the hosted platform you can skip `init` entirely** — the default origin already points at
+`alethialabs.io`, so `alethia login` on its own is enough. Reach for `init` (or set `web-origin`
+directly) when you run a **self-hosted** console or a **local dev** stack.
+</Callout>
+
+## How the control-plane URL resolves
+
+The CLI resolves the origin in this precedence — highest first:
+
+<Mermaid chart={`
+flowchart LR
+  A[ALETHIA_WEB_ORIGIN env var] --> B[persisted config web-origin]
+  B --> C[hosted default alethialabs.io]
+`} />
+
+- **`ALETHIA_WEB_ORIGIN`** — an environment variable, wins for the current shell. Handy for CI or a
+  throwaway override without touching the config file.
+- **Persisted `web-origin`** — what `alethia init`, `alethia config set web-origin <url>`, and
+  `alethia login --web-origin <url>` write. Stored in the on-disk CLI config.
+- **Hosted default** — the built-in `alethialabs.io` origin, used when neither of the above is set.
+
+`alethia config` shows the resolved origin **and its source** (`env` / `config` / `default`), plus
+the on-disk config and credentials paths:
+
+```bash
+alethia config
+alethia config get web-origin   # just the resolved origin
+```
+
+## Equivalent one-shots
+
+`init` is convenience glue. Any of these do the same job piecemeal:
+
+```bash
+# Set the origin once, then log in
+alethia config set web-origin https://alethia.internal.example.com
+alethia login
+
+# Or set-and-log-in in a single command (persists the origin, then runs the device flow)
+alethia login --web-origin https://alethia.internal.example.com
+
+# Per-shell override without persisting (e.g. dev / CI)
+export ALETHIA_WEB_ORIGIN=http://localhost:3000
+alethia login
+```
+
+<Callout type="info">
+`init`'s **URL prompt** honors `--no-input`: with prompting disabled it takes the already-resolved
+origin without asking. The **login** step still needs a browser to approve the device code — for a
+fully non-interactive machine, provision credentials another way (`ALETHIA_WEB_ORIGIN` + a
+pre-seeded credentials file). See [Configuration](/cli/configuration).
+</Callout>
+
+## Where things are stored
+
+`init` writes to the standard per-user config directory (`os.UserConfigDir()/alethia/`): the
+control-plane URL and active-org context to the CLI config file, and the login tokens to a separate
+credentials file. `alethia config` prints both exact paths. See
+[Configuration](/cli/configuration) for the file formats and
+[Authentication](/cli/authentication) for token lifetimes and refresh.
+
+## See also
+
+- [Authentication](/cli/authentication) — the device-code flow, token refresh, `logout`.
+- [Configuration](/cli/configuration) — config keys, env vars, file locations.
+- [Command Reference](/cli/commands) — the full command tree.

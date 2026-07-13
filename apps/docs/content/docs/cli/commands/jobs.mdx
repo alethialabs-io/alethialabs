@@ -35,6 +35,22 @@ c3d4...       DEPLOY   PROCESSING  api-backend     30 sec ago
 e5f6...       DESTROY  QUEUED      data-platform   just now
 ```
 
+The **TYPE** column is one of the full job-type set the Runner executes — not just the three above:
+
+| Type | What the Runner does |
+|------|----------------------|
+| `PLAN` | `tofu plan` + the [verify](/concepts/glossary) gate over the plan JSON — no mutation. |
+| `DEPLOY` | `tofu plan` → verify gate → `tofu apply` → ArgoCD scaffold. |
+| `DESTROY` | `tofu destroy` — tears the project's infrastructure down. |
+| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | Provision, upgrade, or tear down a self-deployed Runner. |
+| `ANALYZE_REPO` | Inspect a connected git repository (repo-onboarding analysis). |
+| `DETECT_DRIFT` | `tofu plan -refresh-only` → a per-environment drift posture. |
+| `AUDIT` | Re-run the verify controls against current state for evidence. |
+| `CHART_SCAN` / `IAC_SCAN` | Scan Helm charts / IaC for policy + security findings. |
+| `STATE_SURGERY` | Privileged state repair (queued via `alethia ops state-surgery`; ships INERT). |
+
+The **STATUS** lifecycle is `QUEUED → CLAIMED → PROCESSING → SUCCESS | FAILED | CANCELLED`.
+
 ## `alethia jobs get`
 
 Get detailed information about a specific job. The job ID is a **positional argument**.
@@ -43,7 +59,7 @@ Get detailed information about a specific job. The job ID is a **positional argu
 alethia jobs get <job_id>
 ```
 
-Shows: type, status, assigned Runner, all timestamps, error message (if failed), and execution metadata (Terraform outputs, cost data).
+Shows: type, status, assigned Runner, all timestamps, error message (if failed), and execution metadata (OpenTofu outputs, cost data, and the `verify_result` report on PLAN/DEPLOY jobs).
 
 ## `alethia jobs logs`
 
@@ -58,7 +74,7 @@ alethia jobs logs <job_id> [-f/--follow]
 | `<job_id>` | Yes | Job ID (positional) |
 | `-f`, `--follow` | No | Continuously stream new log entries (like `tail -f`) |
 
-Without `--follow`, prints all existing logs and exits. With `--follow`, the command blocks and prints new log lines as the Runner writes them. Logs include Terraform plan/apply output, resource creation progress, and error messages.
+Without `--follow`, prints all existing logs and exits. With `--follow`, the command blocks and prints new log lines as the Runner writes them. Logs include `tofu` (OpenTofu) plan/apply output, resource creation progress, and error messages.
 
 Press `Ctrl+C` to stop following.
 
@@ -70,7 +86,7 @@ Cancel a queued or in-progress job. The job ID is a **positional argument**.
 alethia jobs cancel <job_id>
 ```
 
-Sets the job status to CANCELLED. If the job is currently being executed by a Runner, the Runner detects the cancellation on its next status check and terminates Terraform gracefully.
+Sets the job status to CANCELLED. If the job is currently being executed by a Runner, the Runner detects the cancellation on its next status check and terminates the `tofu` process gracefully.
 
 ## Waiting for jobs
 

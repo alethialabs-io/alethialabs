@@ -1,12 +1,12 @@
 ---
 title: Isolated Execution
-description: When Alethia runs your bring-your-own Terraform or Helm on the managed fleet, each job runs in a per-job sealed sandbox — no shared secrets, no cloud metadata, default-deny domain-allowlisted egress.
+description: When Alethia runs your bring-your-own OpenTofu/Terraform or Helm on the managed fleet, each job runs in a per-job sealed sandbox — no shared secrets, no cloud metadata, default-deny domain-allowlisted egress.
 ---
 
 # Isolated Execution
 
 Zero-credential connections control **who** can touch a cloud. Isolated execution controls what the
-**provisioning code itself** can do once it runs. When Alethia runs *your* code — bring-your-own Terraform
+**provisioning code itself** can do once it runs. When Alethia runs *your* code — bring-your-own OpenTofu/Terraform
 providers, `external` data sources, Helm charts and their hooks — on the **managed fleet**, that code is
 arbitrary. Isolated execution is the boundary that runs it **sealed off** from the platform.
 
@@ -26,7 +26,7 @@ Alethia runs two kinds of code, and treats them differently:
 - **Trusted templates** — Alethia's own project templates (EKS / GKE / AKS / ACK / Talos + supporting
   services). Reviewed platform code, so it runs in-process on the runner. This is every managed provision
   today.
-- **Untrusted bring-your-own** — your Terraform / Helm. Arbitrary code, so on the managed fleet it runs in a
+- **Untrusted bring-your-own** — your OpenTofu/Terraform or Helm. Arbitrary code, so on the managed fleet it runs in a
   **per-job container sandbox**: a fresh container per job, its own PID namespace, an allowlisted environment
   (no runner token, no storage key, no signing key — only the short-lived, job-scoped cloud credentials the
   job actually needs), read-only credential mounts, and a **default-deny, domain-allowlisted** network.
@@ -42,7 +42,7 @@ For an untrusted job on the managed fleet:
 | Guarantee | How |
 | --- | --- |
 | **No platform secrets** | The child gets an allowlist-only environment; a fail-closed guard refuses to start the container if any platform secret (runner token, storage key, signing key) would leak in. |
-| **No cross-job state** | Terraform state goes through a console **state proxy** with a per-job, key-scoped token — one job's token can only touch its own state. The runner holds no object-storage credential. |
+| **No cross-job state** | OpenTofu state goes through a console **state proxy** with a per-job, key-scoped token — one job's token can only touch its own state. The runner holds no object-storage credential. |
 | **No cloud metadata** | The child has no network route of its own; it reaches only a domain-allowlist forward proxy, so `169.254.169.254` (which serves the VM's boot config) is unreachable by construction. |
 | **No open egress** | Only the registries, Git hosts, and the target cloud's API are reachable — everything else is default-denied. |
 | **No host reach** | Its own PID namespace, dropped capabilities, no-new-privileges, read-only root, resource limits. |

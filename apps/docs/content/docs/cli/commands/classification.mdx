@@ -1,0 +1,150 @@
+---
+title: Classification Commands
+description: Read and edit the org's governed taxonomy — dimensions, values, and per-resource assignments — from the terminal.
+---
+
+# Classification Commands
+
+The `classification` group (alias `class`) drives the same **governed taxonomy** as the console's
+[Classification](/console/classification) page — from the terminal. Instead of free-form tags, an
+admin defines a fixed set of **dimensions** (axes) and their **allowed values** once; every resource
+is then labeled from that closed vocabulary. The CLI lets you list that taxonomy, read a resource's
+labels, and set or clear them.
+
+<Callout type="info">
+The CLI is a client of the same Console API — it authors nothing locally. Every subcommand calls
+`/cli/classification/*` with your [CLI token](/cli/authentication) and operates on the **active
+organization** (`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## The model
+
+Three concepts, in a strict hierarchy — the CLI vocabulary matches the console's exactly:
+
+- **Dimension** — a named axis (one question you can ask about every resource: *Environment*,
+  *Team*, *Data classification*). It has a `key` slug (immutable, wire-stable), a `label`, an
+  optional description, a **single/multi** mode (`Multi bool`), and an `applies_to` list of resource
+  kinds it targets (empty = all resource kinds).
+- **Value** — an allowed answer on that axis (`dev` / `staging` / `prod`). Each has an immutable
+  `value` slug and a `label`. `assign` takes the **value slug**, so slugs must be discoverable —
+  which is why `dimensions` prints them, not just a count.
+- **Assignment** — a value pinned to one concrete resource, addressed by its **kind** and **id**.
+
+<Callout type="warn">
+Classification is **organizational metadata** — it does not enforce anything today. No policy,
+permission check, provisioning step, or the [verify](/concepts/glossary) gate reads these labels to
+allow, deny, or route. See [Classification](/console/classification#what-it-is-not--yet).
+</Callout>
+
+## Addressing a resource: `<kind> <id>`
+
+`show`, `assign`, and `unassign` all target a resource by its **kind** (a snake-case record type) and
+its **id** (a UUID). For example a project's default environment is `project_environment <uuid>`.
+The classifiable kinds mirror the console — projects, environments, clusters, cloud identities
+(connectors), runners, members, roles, alert policies, alert channels, support cases. Audit-trail
+records (alert *deliveries*, runner *usage sessions*) are intentionally not classifiable.
+
+## `alethia classification dimensions`
+
+List the org's dimensions and, for each, its allowed value slugs.
+
+```bash
+alethia classification dimensions
+# alias:
+alethia class dimensions
+```
+
+Columns: **Key**, **Label**, **Mode** (`single` | `multi`), **Applies to** (the resource kinds, or
+`all resources`), **Values** (the value slugs, comma-separated). In an interactive TTY this renders
+as a navigable [TUI table](/cli/tui); otherwise it prints a plain table. Add `-o json` for the raw
+`ClassificationDimension` objects (including value `id`/`label` and per-dimension `description`).
+
+```
+KEY          LABEL                MODE     APPLIES TO                      VALUES
+environment  Environment          single   project, project_environment   dev, staging, prod
+team         Team                 multi    all resources                  platform, payments, data
+data-class   Data classification  single   project_environment, cluster   public, internal, restricted
+```
+
+Backing call: `GET /cli/classification/dimensions`.
+
+## `alethia classification show`
+
+Show the values currently assigned to one resource.
+
+```bash
+alethia classification show <kind> <id>
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<kind>` | Yes | Resource kind, e.g. `project_environment`, `cluster`, `cloud_identity`. |
+| `<id>` | Yes | The resource UUID. |
+
+Columns: **Dimension**, **Value** (both rendered as their human labels). Prints `Not classified.`
+when the resource carries no values. Backing call:
+`GET /cli/classification/assignments?kind=<kind>&id=<id>`.
+
+```bash
+alethia classification show project_environment 8f3c... -o json
+```
+
+## `alethia classification assign`
+
+Pin a value to a resource.
+
+```bash
+alethia classification assign <kind> <id> <dimension-key> <value-slug>
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<kind>` | Yes | Resource kind. |
+| `<id>` | Yes | Resource UUID. |
+| `<dimension-key>` | Yes | The dimension's `key` (from `dimensions`). |
+| `<value-slug>` | Yes | The value's slug on that dimension (from `dimensions`). |
+
+For a **single**-valued dimension, assigning a new value **replaces** the current one; for a
+**multi**-valued dimension, values accumulate. On success:
+
+```
+✓ Assigned environment=prod to project_environment 8f3c...
+```
+
+Backing call: `POST /cli/classification/assignments` with
+`{ kind, id, dimension_key, value_slug }`; it returns the resource's full updated assignment set.
+
+```bash
+# Label a project's default environment as prod, and tag two owning teams (multi dimension)
+alethia classification assign project_environment 8f3c... environment prod
+alethia classification assign project_environment 8f3c... team platform
+alethia classification assign project_environment 8f3c... team payments
+```
+
+## `alethia classification unassign`
+
+Clear a value from a resource (addressed by its **slug**, not the dimension key).
+
+```bash
+alethia classification unassign <kind> <id> <value-slug>
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<kind>` | Yes | Resource kind. |
+| `<id>` | Yes | Resource UUID. |
+| `<value-slug>` | Yes | The value slug to remove. |
+
+```
+✓ Cleared payments from project_environment 8f3c...
+```
+
+Backing call:
+`DELETE /cli/classification/assignments?kind=<kind>&id=<id>&value_slug=<value-slug>`.
+
+## See also
+
+- [Classification (Console)](/console/classification) — authoring dimensions/values, single vs multi,
+  where the taxonomy applies, and usage insight.
+- [Authentication](/cli/authentication) — how the CLI obtains the token these commands use.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

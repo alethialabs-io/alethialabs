@@ -24,10 +24,7 @@ import {
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import {
-	ALETHIA_AZURE_CLIENT_ID,
-	connectorAssetUrl,
-} from "@/components/connector/connector-assets";
+import { connectorAssetUrl } from "@/components/connector/connector-assets";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { ClipboardPaste, Download, ExternalLink, Terminal } from "lucide-react";
@@ -67,6 +64,10 @@ const azureSchema = z.object({
 type AzureFormValues = z.infer<typeof azureSchema>;
 
 interface AzureConnectionProps {
+	/** Alethia's platform Entra app id (server-provided). Baked into the setup command — the
+	 * script requires it as `ALETHIA_AZURE_CLIENT_ID`. Empty only on an instance whose operator
+	 * hasn't configured Azure (the connect flow is gated off there). */
+	clientId: string;
 	onComplete: (
 		tenantId: string,
 		clientId: string,
@@ -74,17 +75,17 @@ interface AzureConnectionProps {
 	) => Promise<VerifyOutcome>;
 }
 
-export function AzureConnection({ onComplete }: AzureConnectionProps) {
+export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) {
 	const [method, setMethod] = useState<"cli" | "terraform">("cli");
 	const { state: verifyState, run, cancel } = useConnectionTest();
 
 	const scriptUrl = connectorAssetUrl("alethia-azure-setup.sh");
-	// The platform app id is baked into the command (the customer authorizes Alethia's app —
-	// they don't create one). When the operator hasn't set NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID
-	// the script falls back to its own built-in default, so an empty value is still runnable.
-	const cloudShellCmd = ALETHIA_AZURE_CLIENT_ID
-		? `curl -sO ${scriptUrl} && ALETHIA_AZURE_CLIENT_ID=${ALETHIA_AZURE_CLIENT_ID} bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`
-		: `curl -sO ${scriptUrl} && bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
+	// The platform app id is baked into the command (the customer authorizes Alethia's app — they
+	// create none). The script REQUIRES it as ALETHIA_AZURE_CLIENT_ID and errors without it, so
+	// always emit the prefix; if the id is somehow empty, show a labelled placeholder to fill in
+	// rather than a command that fails silently.
+	const clientIdArg = clientId || "YOUR_ALETHIA_APP_ID";
+	const cloudShellCmd = `curl -sO ${scriptUrl} && ALETHIA_AZURE_CLIENT_ID=${clientIdArg} bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
 	const cloudShellUrl = "https://shell.azure.com";
 
 	const form = useForm<AzureFormValues>({
@@ -104,9 +105,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 
 	const onSubmit = async (data: AzureFormValues) => {
 		// The client id is fixed — Alethia's own multi-tenant app, not a per-customer one.
-		await run(() =>
-			onComplete(data.tenantId, ALETHIA_AZURE_CLIENT_ID, data.subscriptionId),
-		);
+		await run(() => onComplete(data.tenantId, clientId, data.subscriptionId));
 	};
 
 	// True when "Paste all" found nothing on the clipboard — a quiet inline hint (no toast).
@@ -257,7 +256,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 							<div>terraform init && terraform apply \</div>
 							<div className="pl-4">-var &quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot; \</div>
 							<div className="pl-4">
-								-var &quot;alethia_client_id={ALETHIA_AZURE_CLIENT_ID || "ALETHIA_APP_ID"}
+								-var &quot;alethia_client_id={clientId || "YOUR_ALETHIA_APP_ID"}
 								&quot;
 							</div>
 						</div>

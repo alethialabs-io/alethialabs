@@ -5,7 +5,7 @@ description: Connect cloud providers and Git accounts to enable infrastructure p
 
 # Connectors
 
-The Connectors page manages connections to cloud providers — the **federated clouds** (AWS, GCP, Azure, Alibaba) and the **token clouds** (Hetzner, DigitalOcean, Civo) — plus Git providers (GitHub, GitLab, Bitbucket) and **pluggable per-category providers** (DNS, secrets, registry, observability). Cloud and Git connections must be established before provisioning; pluggable connectors are optional — they let a Project use a tool you already run instead of the cloud-native default.
+The **connector** catalog is the registry of provider *types* you can connect. Each account you actually connect becomes a **cloud identity** (`cloud_identities`) — the credential anchor a project provisions against. The catalog spans the **federated clouds** (AWS, GCP, Azure, Alibaba) and the **token clouds** (Hetzner, DigitalOcean, Civo), plus Git providers (GitHub, GitLab, Bitbucket) and **pluggable per-category providers** (DNS, secrets, registry, observability). At least one cloud identity and one Git provider must be connected before provisioning; pluggable providers are optional — they let a project use a tool you already run instead of the cloud-native default.
 
 ## How It Works
 
@@ -53,7 +53,7 @@ The **token clouds** (Hetzner, DigitalOcean, Civo) instead use the customer's ow
 account to federate into. The token is encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted
 on the runner at provision time.
 
-After connecting, Alethia verifies the credentials **instantly, server-side** (an auth + provisioning-permission probe — no runner, no job) and marks the connection `Connected`, `Degraded`, or `Disconnected`. Existing resources (VPCs, subnets, DNS zones) are discovered + kept fresh by the server-side, event-driven asset inventory. See [Connection health & inventory](/console/connectors/health-and-inventory).
+After connecting, Alethia verifies the credentials **instantly, server-side** (an auth + provisioning-permission probe — no runner, no job) and marks the cloud identity `Connected`, `Degraded`, or `Disconnected`. Existing resources (VPCs, subnets, DNS zones) are discovered + kept fresh by the server-side, event-driven asset inventory. See [Connection health & inventory](/console/connectors/health-and-inventory).
 
 ## Git Provider Connections
 

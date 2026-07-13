@@ -30,6 +30,8 @@ export const role = pgTable("role", {
 	id: uuid().primaryKey().defaultRandom(),
 	organization_id: uuid(),
 	name: text().notNull(),
+	/** Human description — built-ins seed from the registry; custom roles author their own. */
+	description: text(),
 	is_builtin: boolean().default(false).notNull(),
 });
 
@@ -97,7 +99,10 @@ export const resourceHierarchy = pgTable(
 );
 
 /** Append-only Activity log; written by the PDP on every enforce() (and by the explicit
- *  recordActivity seam for non-PDP governance events) so activity can't be skipped. */
+ *  recordActivity seam for non-PDP governance events) so activity can't be skipped. Append-only
+ *  is DB-ENFORCED in programmables.sql: an org-scoped RLS SELECT policy + a GC-aware WORM trigger
+ *  (UPDATE/TRUNCATE always rejected; DELETE only via the retention GC) + REVOKE of mutation from
+ *  the app role. */
 export const authzActivityLog = pgTable(
 	"authz_activity_log",
 	{

@@ -1,65 +1,79 @@
 ---
 title: core Library
-description: Shared Go packages used by both Alethia CLI and Runner agent.
+description: Shared Go packages used by both the alethia CLI and the runner agent.
 ---
 
 # core Library
 
-`packages/core/` is a shared Go module imported by both Alethia CLI and Runner (agent). It contains the core logic for infrastructure provisioning, cloud provider interactions, and tool integrations.
+`packages/core/` is a shared Go module imported by both the alethia CLI and the runner. It holds the
+provisioning orchestration, the cloud-provider abstraction, the OpenTofu wrapper, and the Elench
+verify/drift engines — so both callers use identical logic.
 
-## Package Map
+## Package map
 
 | Package | Purpose |
 |---------|---------|
-| `api/` | HTTP client for Alethia API (Bearer token auth) |
-| `provisioner/` | Orchestrates deploy, destroy, and bootstrap workflows |
-| `terraform/` | Wrapper around `hashicorp/terraform-exec` |
-| `infracost/` | Infracost CLI wrapper and JSON output parser |
-| `argocd/` | ArgoCD installation, manifest rendering, infra facts |
+| `api/` | HTTP client for the Alethia control plane (runner + Bearer auth) |
+| `provisioner/` | Orchestrates deploy, destroy, and bootstrap workflows (`RunDeployV2`, `RunDestroy`, `RunBootstrap`) |
+| `tofu/` | Wrapper around the `tofu` binary via `hashicorp/terraform-exec` |
+| `cloud/` | `CloudProvider` interface + per-cloud implementations, the HTTP state backend, and kubeconfig writing |
+| `verify/` | The deterministic, fail-closed Elench policy gate over the plan JSON (+ ed25519 evidence receipt) |
+| `drift/` | Turns `tofu plan -refresh-only -json` into a per-environment drift `Posture` |
+| `sandbox/` | The per-job isolation seam (Passthrough / Container backends) |
+| `argocd/` | ArgoCD install, manifest rendering, infra facts |
 | `helm/` | Helm chart operations with retry logic |
-| `k8s/` | Kubernetes kubeconfig management |
+| `k8s/` | kubeconfig management |
 | `git/` | Git clone, checkout, commit, push |
-| `cloud/` | Cloud provider interface + implementations |
-| `types/` | ProjectConfig, CloudIdentity structs |
-| `state/` | Terraform state file handling |
-| `utils/` | Logger, CLI execution, file operations |
-| `assets/` | Embedded templates and Helm charts (via `go embed`) |
+| `infracost/` | Infracost CLI wrapper and JSON output parser |
+| `accessanalyzer/` | AWS IAM Access Analyzer corroboration for the verify gate (opt-in) |
+| `scanner/` / `iacsafety/` | Static scanning of bring-your-own charts + IaC |
+| `catalog/` / `categories/` / `manifests/` | Add-on catalog, component categories, rendered manifests |
+| `types/` | `ProjectConfig`, `CloudIdentity`, and shared structs |
+| `state/` | tofu state handling |
+| `telemetry/` · `utils/` · `assets/` | OTel spans; logger/CLI/file helpers; embedded templates (`go:embed`) |
 
-## Key Packages
+## Key packages
 
 ### provisioner/
 
 The main orchestration layer. Entry point: `RunDeployV2()`.
 
-```
-RunDeployV2(projectConfig, provider, planFile, installerConfig, apiClient, dryRun)
-  → Validate dependencies (terraform, kubectl, helm, cloud CLIs)
-  → Download templates from embedded assets
-  → Generate terraform.tfvars from ProjectConfig
-      · brownfield: for a component marked "existing" (e.g. !ProvisionNetwork + NetworkID), inject the
-        existing resource id as a tfvar (vpc_id / network_id / vnet_id) so the template attaches to it
-        instead of creating one; AWS additionally resolves the VPC's subnets here (EC2 API)
-  → terraform init (with S3 backend)
-  → terraform plan (if no planFile) or terraform apply (if planFile)
-  → Infracost analysis (optional)
-  → Configure kubeconfig
-  → Install ArgoCD (Helm)
-  → Extract cluster info
-  → Return PlanResult
-```
+<Mermaid chart={`
+flowchart TD
+  A[RunDeployV2 params] --> B[Write backend HCL · console HTTP proxy]
+  B --> C[Generate tfvars · OverrideTfvarsFromMap]
+  C --> D[tofu init]
+  D --> E[tofu plan]
+  E --> F[verify gate · verify.Evaluate]
+  F -->|hard fail unwaived| X[refuse before apply]
+  F -->|pass / warn / waived| G[attach signed receipt]
+  G --> H[tofu apply]
+  H --> I[write keyless kubeconfig · runner kube-token]
+  I --> J[install ArgoCD · reachability gate]
+  J --> K[PlanResult + execution_metadata]
+`} />
 
-Also provides `RunDestroy()` for teardown and `RunBootstrap()` for initial cluster setup.
+`RunDeployV2` is the fail-closed spine: it evaluates the plan JSON with `verify.Evaluate`, refuses
+the apply if a hard control is failing and unwaived (`gateRequiresReport` + `Report.Unwaived`), and
+seals a `verify.SignedReceipt`. Also exposes `RunDestroy()` and `RunBootstrap()`. Brownfield attach
+is handled here: a component marked "existing" injects the resource id (`vpc_id` / `network_id` /
+`vnet_id`) as a tfvar instead of creating one.
 
-### terraform/
+### tofu/
 
-Wraps the `hashicorp/terraform-exec` package:
+Drives the `tofu` binary through `hashicorp/terraform-exec/tfexec` (state- and CLI-compatible with
+the Terraform 1.6 HCL line, hence the legacy library name):
 
-- `Init()` / `InitWithBackendFile()` — initialize with backend config
-- `Plan()` — generate plan with optional output file
-- `Apply()` — apply a plan file or direct apply
-- `Destroy()` — destroy all tracked resources
-- Auto-downloads the Terraform binary if not present (via `hc-install`)
-- Structured JSON output parsing for plan results
+- `NewTofuCLI()` — construct against a workdir with stage-aware graceful cancellation (SIGINT to the
+  `tofu` child on ctx-done, then a grace period)
+- `Init()` / `InitWithBackendFile()` — init with backend config (the console HTTP backend file)
+- `Plan()` / `PlanRefreshOnly()` — plan, or refresh-only for drift detection
+- `Apply()` / `Destroy()` — apply a plan file / destroy
+- `ShowPlanJSON()` — the structured plan JSON the UI diff and verify gate consume
+- `OverrideTfvarsFromMap()` — materialize a tfvars file from `ProviderTfvars`
+
+The `tofu` binary is **baked into the runner image** (SHA-verified), so no binary is downloaded at
+provision time.
 
 ### cloud/
 
@@ -74,45 +88,45 @@ type CloudProvider interface {
 }
 ```
 
-Three implementations (provisioning-only — the runner no longer lists cloud resources; the console
-maintains the [asset inventory](/console/connectors/health-and-inventory) server-side):
-- `aws_provider.go` — AWS SDK: STS (AssumeRole), EKS (post-provision kubeconfig), S3 (state), Access
-  Analyzer (verify gate), plus an EC2 subnet lookup for reusing an existing VPC.
-- `gcp_provider.go` — GCP Workload Identity Federation + kubeconfig.
-- `azure_provider.go` — Azure federated identity + kubeconfig (`azidentity`).
+Implementations are provisioning-only — the runner no longer lists cloud resources; the Console
+maintains the [asset inventory](/console/connectors/health-and-inventory) server-side:
 
-Plus `s3_backend.go` — S3-compatible storage client for Terraform state and plan artifacts.
+- `aws_provider.go` — AWS SDK: keyless `AssumeRoleWithWebIdentity`, EKS kubeconfig, Access Analyzer,
+  EC2 subnet lookup for reusing an existing VPC
+- `gcp_provider.go` — GCP Workload Identity Federation + kubeconfig
+- `azure_provider.go` — Azure federated identity + kubeconfig (`azidentity`)
+- `alibaba_provider.go` — Alibaba RAM `AssumeRoleWithOIDC`
+- `hetzner_provider.go` — Hetzner token auth + Talos kubeconfig (`RequiredCLIs` empty — CLI-free)
+- `http_backend.go` — the **Console HTTP state backend** (`backend "http"`, per-job token via
+  `TF_HTTP_PASSWORD`) — there is no S3 storage credential on the runner
+- `kubeconfig.go` — writes the exec-credential kubeconfig that invokes `runner kube-token`
+
+### verify/ & drift/
+
+`verify` is the deterministic, engine-agnostic policy gate (keyless / least-privilege / OIDC-subject
+controls, honest `not_evaluable`, ed25519 receipt). `drift` turns a refresh-only plan into a per-env
+`Posture`. See [Engine internals](/elench/engine-internals) and `packages/core/verify/README.md`.
 
 ### infracost/
 
-- `CheckToken()` — validates API key
+- `CheckToken()` — validates the API key
 - `ensureBinary()` — downloads infracost if missing
-- `Run()` — executes `infracost breakdown` on Terraform plan JSON
-- `parse.go` — parses structured JSON into `CostBreakdown` struct
-- `types.go` — `CostBreakdown`, `ResourceCost` data structures
+- `Run()` — executes `infracost breakdown` on the plan JSON
+- `parse.go` / `types.go` — parses into `CostBreakdown` / `ResourceCost`
 
-### argocd/
+### argocd/ & helm/
 
-- `install.go` — deploys ArgoCD via Helm, waits for Ready
-- `render.go` — renders Application manifests from templates with infra facts
-- `infra_facts.go` — extracts cluster info, database endpoints, cache endpoints from Terraform outputs
-
-### helm/
-
-- `UpgradeInstall()` — runs `helm upgrade --install` with server-side dry-run
-- Retry logic: 3 attempts with 5-second backoff
-- Supports `--set-json` for complex values
+- `argocd/install.go` — deploys ArgoCD via Helm, waits for Ready
+- `argocd/render.go` — renders Application manifests from templates with infra facts
+- `argocd/infra_facts.go` — extracts cluster info, DB/cache endpoints from tofu outputs
+- `helm/` — `UpgradeInstall()` (`helm upgrade --install`, server-side dry-run), 3× retry with backoff
 
 ### assets/
 
-Uses Go's `embed` directive to include templates directly in the binary:
+Uses Go's `embed` directive to ship templates inside the binary — the runner is self-contained:
 
 ```go
-//go:embed terraform/seed/*
-var SeedTemplates embed.FS
-
-//go:embed helm/runner/*
-var RunnerHelmChart embed.FS
+//go:embed all:tofu/seed
+//go:embed all:helm/runner
+var embedded embed.FS
 ```
-
-This means the Runner binary is fully self-contained — no external file dependencies.

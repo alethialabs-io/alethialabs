@@ -5,10 +5,11 @@
 // SKIPS rather than fails when the dev Postgres isn't up) plus tiny seed helpers. Seeding goes
 // through getServiceDb() (bypasses RLS); tests use unique ids and clean up after themselves.
 
+import { type SQL, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { describe } from "vitest";
 import { getServiceDb } from "@/lib/db";
-import { runners } from "@/lib/db/schema";
+import { authzActivityLog, runners } from "@/lib/db/schema";
 
 /** Probe the dev DB once; true when reachable. */
 async function ping(): Promise<boolean> {
@@ -38,6 +39,20 @@ if (!DB_UP) {
 
 /** `describe` that no-ops when the DB is down, so CI/dev without the stack stays green. */
 export const describeIfDb = DB_UP ? describe : describe.skip;
+
+/**
+ * Deletes authz_activity_log rows matching `where`, under the retention-GC WORM exemption. The
+ * append-only WORM trigger (authz_activity_log_worm in programmables.sql) blocks EVERY direct DELETE
+ * except while `app.authz_gc = 'on'` — the flag only gc_authz_activity_log sets. Test teardown is
+ * legitimate maintenance, so set that flag for the txn (exactly as the GC does) and then delete.
+ * Without this the WORM raises and the suite's cleanup fails.
+ */
+export async function purgeAuthzActivityLog(where: SQL): Promise<void> {
+	await getServiceDb().transaction(async (tx) => {
+		await tx.execute(sql`select set_config('app.authz_gc', 'on', true)`);
+		await tx.delete(authzActivityLog).where(where);
+	});
+}
 
 /** Inserts a managed runner (the FK target for jobs / usage sessions) and returns its id. */
 export async function seedManagedRunner(name: string): Promise<string> {

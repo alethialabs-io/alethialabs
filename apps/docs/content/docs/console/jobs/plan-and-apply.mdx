@@ -15,14 +15,14 @@ Infrastructure provisioning follows a strict **Plan-Review-Apply** workflow. Not
 From the [project detail page](/console/dashboard/project-detail), click **Plan**. Select a Runner to execute. A `PLAN` job is queued.
 
 The Runner:
-1. Assumes cloud credentials ([how](/concepts/authentication))
-2. Generates Terraform variable files from the project's config snapshot
-3. Runs `terraform init` with S3-compatible backend ([state management](/concepts/terraform-state))
-4. Runs `terraform plan -out=plan.tfplan`
-5. Runs `terraform show -json` for structured output
-6. Optionally runs Infracost for cost breakdown ([cost estimation](/concepts/cost-estimation))
-7. Uploads the plan artifact to S3-compatible storage
-8. Reports resource change counts and costs
+1. Mints short-lived cloud credentials via keyless OIDC ([how](/concepts/authentication))
+2. Generates OpenTofu variable files (`tofu.OverrideTfvarsFromMap`) from the project's config snapshot
+3. Runs `tofu init` — state goes through the Console **state proxy** (`backend "http"` → `/api/jobs/{id}/state`), so the runner holds no object-storage credentials
+4. Runs `tofu plan -out=plan.tfplan`
+5. Runs `tofu show -json` for structured output
+6. Evaluates the [verify gate](#verify-gate) over the plan JSON and attaches the `verify_result` report
+7. Optionally runs Infracost for cost breakdown ([cost estimation](/concepts/cost-estimation))
+8. Uploads the plan artifact and reports resource change counts and costs
 
 ### Review Plan
 The Plan tab in project detail shows:
@@ -39,28 +39,47 @@ Collapsible sections grouped by resource type (e.g., "AWS EKS", "AWS VPC", "AWS 
 - Action: create / update / delete
 - Per-resource monthly cost (from Infracost)
 
+**Verify Report:**
+The Plan tab renders the [verify gate](#verify-gate) result (`execution_metadata["verify_result"]`) — per-control pass / fail / `not_evaluable` outcomes over the plan JSON. See [engine internals](/elench/engine-internals).
+
 **Cost Breakdown:**
 Total estimated monthly cost with per-resource itemization.
 
 ### Apply
-Click **Apply** to provision. Select a Runner. A `DEPLOY` job is queued.
+Click **Apply** to provision. Select a Runner. A `DEPLOY` job is queued. `DEPLOY` runs through `provisioner.RunDeployV2`.
 
 The Runner:
-1. Downloads the plan artifact from the PLAN job
-2. Validates the config hash — if the project was modified after planning, the apply fails with a hash mismatch error
-3. Runs `terraform apply plan.tfplan`
-4. Extracts Terraform outputs (cluster endpoint, database endpoints, etc.)
-5. Installs ArgoCD via Helm ([GitOps](/concepts/gitops-argocd))
-6. Reports cluster metadata back to Alethia
+1. Validates the config hash against the referenced PLAN job — if the project was modified after planning, the apply fails with a hash mismatch error
+2. Runs `tofu plan -out` and `tofu show -json` from the config snapshot
+3. **Verify gate** — evaluates `packages/core/verify` over the plan JSON; this is **fail-closed** (see [below](#verify-gate))
+4. Runs `tofu apply` (only if the gate passes or an authorized override waives it)
+5. Installs ArgoCD via Helm / scaffolds its manifests ([GitOps](/concepts/gitops-argocd))
+6. Reports cluster metadata back to the Console
 
 ### Finalization
 On DEPLOY success, Alethia's `finalizeDeployment()` server action:
 - Updates `project_cluster` with cluster name, endpoint, ARN, ArgoCD URL and password
 - Updates `project_databases` with writer/reader endpoints, credentials ARNs
 - Updates `project_caches` with primary/reader endpoints
-- Sets project status to `ACTIVE`
+- Sets the environment's provisioning `status` (on `project_environments`) to `ACTIVE`
 
 </Steps>
+
+## Verify gate
+
+Between `tofu plan` and `tofu apply`, the runner runs the [Elench](/elench) verification gate
+(`packages/core/verify`, invoked from `provisioner.RunDeployV2`) over the OpenTofu **plan JSON**. It
+evaluates the plan against a catalog of security controls (keyless auth, least-privilege, OIDC-subject
+pinning) and produces a structured `verify.Report` — per-control `pass`, `fail`, or an honest
+`not_evaluable` for anything the plan JSON can't prove.
+
+The gate is **fail-closed**: a hard control failure **blocks before `tofu apply`** unless an authorized
+`verify.Override` waives the specific failing controls (audited, expiry-bounded). PLAN jobs evaluate and
+attach the report too, so you see the outcome before ever applying.
+
+The report rides back on `execution_metadata["verify_result"]` and the Console renders it in the **Plan
+tab**. For the control catalog, the `not_evaluable` honesty rule, and the signed evidence receipt, see
+[Engine internals](/elench/engine-internals).
 
 ## Config Hash Validation
 
@@ -81,9 +100,9 @@ Destroy follows a simpler flow — no plan step required:
 1. Click **Destroy** from project detail
 2. Select a Runner
 3. A `DESTROY` job is queued
-4. The Runner runs `terraform destroy -auto-approve`
-5. Project status → DESTROYING → DESTROYED
+4. The Runner runs `tofu destroy -auto-approve`
+5. Environment status → DESTROYING → DESTROYED
 
 <Callout type="warn">
-Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.). Terraform state is preserved so accidental destroys can be recovered by re-applying, but data in databases will be lost.
+Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.). OpenTofu state is preserved so accidental destroys can be recovered by re-applying, but data in databases will be lost.
 </Callout>

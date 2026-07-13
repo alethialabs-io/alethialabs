@@ -13,22 +13,25 @@ The platform uses **Postgres LISTEN/NOTIFY fanned out to the browser over SSE** 
 
 When a row changes, a Postgres trigger emits a `NOTIFY` on a named channel with a small JSON payload. The console holds a single `LISTEN` connection per app instance and receives every notification. It fans those notifications out to connected browsers over an SSE stream, filtering each event to the subscriber that should see it.
 
-```
-Postgres NOTIFY ──► Console LISTEN (1 per instance) ──► SSE ──► Browser
-```
+<Mermaid chart={`
+flowchart LR
+  N["Postgres NOTIFY"] --> L["Console LISTEN<br/>(1 per instance)"]
+  L --> S["SSE stream"]
+  S --> B["Browser"]
+`} />
 
 The implementation lives in `apps/console/lib/realtime/index.ts`. A single LISTEN connection avoids one connection per browser tab. For multi-instance scale-out, an optional Redis transport relays notifications between console instances (enterprise).
 
 ## Log Streaming
 
-The most latency-sensitive use case. When a Runner executes Terraform, stdout/stderr are streamed to the browser in near real-time.
+The most latency-sensitive use case. When a runner executes `tofu`, stdout/stderr are streamed to the browser in near real-time.
 
 ### Data Flow
 
 <Steps>
 
 ### Runner writes logs
-The `JobLogger` buffers Terraform output and flushes every 2 seconds (or when the buffer exceeds 10KB) via `POST /api/jobs/{id}/logs`.
+The `JobLogger` buffers `tofu` output and flushes every 2 seconds (or when the buffer exceeds 10KB) via `POST /api/jobs/{id}/logs`.
 
 ### Console inserts into database
 The API route inserts the log chunk into `job_logs` with a stream type (STDOUT, STDERR, or SYSTEM).
@@ -56,7 +59,7 @@ events.addEventListener('log', (event) => {
 
 | Step | Latency |
 |------|---------|
-| Terraform → JobLogger buffer | ≤ 2 seconds |
+| `tofu` → JobLogger buffer | ≤ 2 seconds |
 | POST to Console API | ~50ms |
 | Database INSERT | ~5ms |
 | NOTIFY → SSE delivery | ~50ms |
@@ -108,9 +111,12 @@ This enables live status indicators:
 - **Yellow** (DRAINING) — finishing current job, not accepting new ones
 - **Red** (OFFLINE) — heartbeat missed
 
-## Project Status Updates
+## Environment Status Updates
 
-The projects store listens for Project status changes (e.g., DRAFT → PROVISIONING → ACTIVE). A trigger on the `projects` table emits a NOTIFY on update, which the console relays over SSE:
+The projects store listens for **environment** provisioning-status changes (e.g. DRAFT →
+PROVISIONING → ACTIVE). Provisioning `status` lives on `project_environments`, not `projects` (see
+[Domain Model](/concepts/domain-model#environment-lifecycle)); the console relays each change over
+SSE keyed by the environment's representative project:
 
 ```typescript
 events.addEventListener('project', (event) => {

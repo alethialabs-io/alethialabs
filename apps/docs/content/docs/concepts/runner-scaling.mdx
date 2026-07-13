@@ -1,81 +1,125 @@
 ---
 title: Runner Scaling
-description: How Runners scale from zero to one when jobs arrive and back to zero when idle.
+description: The in-app scaler that sizes per-provider warm pools by queue depth and converges them onto cheap Hetzner VMs.
 ---
 
 # Runner Scaling
 
-Runners run on AWS ECS Fargate with **scale-to-zero** enabled by default. When a job is queued, Console immediately invokes a Lambda scaler via its Function URL to spin up a Runner container. An EventBridge rule polls every minute as a fallback. When no jobs remain, the same Lambda scales containers back down after a short idle period.
+Managed runner capacity is driven by an **in-app scaler** — a control loop that lives inside the
+Console process (`apps/console/lib/fleet/`), not a separate AWS service. A 60-second tick, plus an
+on-demand wake whenever a job is enqueued, sizes a per-provider **warm pool** by queue depth and
+converges it through a `FleetProvider`. The default provider is **Hetzner Cloud**
+(`FLEET_PROVIDER=hcloud`): cheap VMs that boot a per-cloud runner image from GHCR and self-register.
 
 <img src="/docs/diagrams/concepts/runner-scaling.svg" alt="Runner Scaling Architecture" />
 
-## Why Scale-to-Zero
+<Callout type="info">
+  The legacy managed fleet — AWS ECS Fargate services driven by a Lambda scaler behind a Function
+  URL, with an EventBridge fallback tick — is **retired** (`infra/fleet-aws` is gone). If you see
+  those terms in old material, they no longer describe the system. The ECS runner template under
+  `infra/templates/runner/aws/` still exists, but only for the **self-deployed** runner path — it is
+  not the managed fleet.
+</Callout>
 
-Each Runner container ships Terraform, kubectl, Helm, AWS CLI, Google Cloud SDK, Azure CLI, and Infracost — roughly 500 MB of tooling. Running these 24/7 across multiple regions is expensive, but infrastructure provisioning happens in bursts: a user clicks "Apply," the Runner works for 5–15 minutes, then sits idle for hours.
+## The control loop
 
-Scale-to-zero eliminates idle costs entirely. The platform only pays for compute when jobs are actually running.
+`apps/console/lib/fleet/` splits into a pure planner and an impure driver:
 
-## Architecture
+| File | Role |
+|---|---|
+| `scaler.ts` | Hosts the 60s tick (`TICK_INTERVAL_MS = 60_000`) and the fire-on-enqueue `wakeFleetScaler`. Serializes passes per process so two overlapping ticks can't over-provision. |
+| `plan.ts` | **Pure** `plan(project, observed)` — diffs a pool target against observed reality and returns the minimal, safe create/drain/destroy actions. Reconciles four axes in priority order: **health → count → placement → version**. |
+| `controller.ts` | Applies the planned actions idempotently through the provider and records each to the `fleet_actions` ledger. |
+| `hcloud.ts` | The Hetzner `FleetProvider` — `list`/`create`/`destroy` over the Hetzner REST API (`fetch`, no SDK). |
+| `config.ts` | Parses `FLEET_POOLS` (a JSON array of pool targets). Unset or invalid → `[]` → the controller is a **no-op**. |
 
-Four components work together:
+<Mermaid chart={`
+flowchart TD
+  Job["job enqueued (QUEUED)"] -->|wakeFleetScaler| Tick
+  Timer["60s tick"] --> Tick["scaler.ts (serialized pass)"]
+  Tick --> Plan["plan.ts — pure diff<br/>health → count → placement → version"]
+  Plan --> Ctl["controller.ts — apply actions"]
+  Ctl -->|create / drain / destroy| Prov["Hetzner FleetProvider"]
+  Ctl --> Ledger["fleet_actions ledger"]
+  Prov -->|cloud-init boots GHCR image| VM["fleet VM"]
+  VM -->|self-register (bootstrap token)| Reg["POST /api/runners/register"]
+  VM -->|poll loop| Claim["POST /api/jobs/claim"]
+`} />
 
-| Component | Role |
-|-----------|------|
-| **Console** | Invokes the Lambda scaler instantly via Function URL when a job is queued |
-| **Lambda scaler** | POSTs to each console's `/api/platform/queue` to get queued-job counts, adjusts ECS service desired count |
-| **EventBridge rule** | Triggers the Lambda every 1 minute as a fallback (also drives scale-down) |
-| **ECS Fargate** | Runs Runner containers, pulls image from GHCR on scale-up |
+## Sizing: warm pools, not scale-to-zero
 
-The Lambda function runs in `eu-west-1` but manages ECS services across multiple regions (currently `eu-west-1` and `eu-central-1`). Each Runner deployment gets its own ECS cluster, service, VPC, and secrets.
+Each pool target (a `FLEET_POOLS` entry) is a small set of knobs (`config.ts`):
 
-## Scale-Up Flow
+| Knob | Default | Meaning |
+|---|---|---|
+| `warmMin` | `1` | The warm floor — healthy runners kept ready even at zero backlog. |
+| `max` | `10` | Hard ceiling on healthy instances. |
+| `buffer` | `1` | N+1 headroom added on top of demand. |
+| `slotsPerRunner` | `1` | Concurrent jobs one runner claims. |
+| `surge` | `1` | Max new VMs created per tick (bounded ramp). |
+| `scaleDownGraceTicks` | `5` | Consecutive idle-surplus ticks before a runner is drained. |
+| `locations` | `["fsn1"]` | Hetzner locations to spread across. |
+
+The desired healthy count each tick is:
+
+```
+targetCount = clamp( max(warmMin, demand + buffer), 0, max )
+demand      = max(recentPeak, ceil(backlog / slotsPerRunner))
+```
+
+So a pool holds `warmMin` runners warm, lifts toward `demand + buffer` as the queue grows, and never
+plans the claimable (online) count below the warm floor. A non-zero `warmMin` trades a little idle
+cost for **zero cold-start latency** on the common case; set `warmMin: 0` to allow scale-to-zero for
+a pool that tolerates boot latency.
+
+## VM lifecycle: cloud-init self-registration
+
+When the planner calls for a new instance, the Hetzner provider creates a VM whose **cloud-init**
+runs the per-cloud runner image from GHCR (`ghcr.io/alethialabs-io/runner-<cloud>`). The image
+self-registers rather than being pre-provisioned with credentials:
 
 <Steps>
 
-### Job Created
+### Create
+`controller.ts` calls `hcloud.create()`; a VM boots with cloud-init carrying an
+`ALETHIA_RUNNER_BOOTSTRAP_TOKEN` — a **short-TTL, instance-bound** token, not a shared fleet secret.
 
-A user clicks "Plan," "Apply," or "Destroy" in Console (or runs `alethia plan` / `alethia apply` / `alethia destroy`). A `jobs` row is inserted with status `QUEUED`.
+### Self-register
+The runner binary exchanges the bootstrap token for its identity via `POST /api/runners/register`,
+receiving its own `ALETHIA_RUNNER_ID` / `ALETHIA_RUNNER_TOKEN`.
 
-### Console Notifies the Scaler
+### Claim & work
+The runner enters its poll loop (`POST /api/jobs/claim`, ~10s) and starts claiming jobs for the
+clouds it serves. See [Job Queue Pattern](/concepts/job-queue).
 
-Immediately after inserting the job, Console sends a fire-and-forget POST to the Lambda scaler's Function URL. For each runner in its `RUNNERS` config (region/cluster/service/`alethia_url`), the Lambda POSTs to `{alethia_url}/api/platform/queue` with header `Authorization: Bearer ${ALETHIA_API_SECRET}`. That console endpoint runs `recover_stale_jobs()` and returns `{ recovered, queued }`. If the direct call fails, EventBridge retries within 60 seconds.
-
-### ECS Scales Up
-
-If `queued > 0` and the service's `desiredCount` is 0, the Lambda calls `ecs:UpdateService` to set `desiredCount` to 1.
-
-### Container Starts
-
-ECS Fargate pulls the Runner Docker image from GHCR (`ghcr.io/alethialabs-io/runner:latest`), injects secrets from AWS Secrets Manager, and starts the container. This takes roughly 30–60 seconds depending on image cache state.
-
-### Runner Claims Job
-
-The Runner authenticates with Console using its runner token, enters its poll loop, and claims the queued job atomically via `FOR UPDATE SKIP LOCKED`. See [Job Queue Pattern](/concepts/job-queue) for claiming details.
+### Drain & destroy
+When backlog falls and a runner has been surplus for `scaleDownGraceTicks` consecutive ticks, the
+planner emits a `drain` (finish the current job, accept no new ones) then a `destroy`. The VM is
+deleted; billing stops.
 
 </Steps>
 
-<Callout type="info">
-**Cold start latency**: ~30–60 seconds from job creation to job claimed, dominated by ECS task startup (image pull + container init). The Lambda is invoked instantly by Console, so there is no polling delay. Subsequent jobs while the Runner is already running are claimed within seconds.
-</Callout>
+Every action the controller takes is written to the **`fleet_actions`** ledger
+(`create` \| `drain` \| `destroy` \| `noop`) so there is a durable record of *why* the scaler
+changed the pool.
 
-## Scale-Down Flow
+## Concurrency ceiling
 
-When the Lambda detects zero queued jobs but the ECS service is running (`desiredCount > 0`), it increments an **idle counter** for that service:
+`scheduleTick()` serializes passes **within a process** — a wake arriving mid-pass coalesces into a
+single follow-up so a wake-storm can't fan out into N parallel `read → plan → act` passes (each
+would read the same stale instance list and over-provision). This is **not** cross-replica: the
+serializer state is per-process, so more than one replica could still run concurrent passes against
+the same pool. Production runs a single box today, so this is not live exposure; true multi-replica
+safety would need a Postgres advisory lock around `reconcilePool`.
 
-```
-Check 1: 0 queued, 1 running → idle 1/5
-Check 2: 0 queued, 1 running → idle 2/5
-Check 3: 0 queued, 1 running → idle 3/5
-Check 4: 0 queued, 1 running → idle 4/5
-Check 5: 0 queued, 1 running → scale DOWN to 0
-```
+## Heartbeats & liveness
 
-After **5 consecutive idle checks** (5 minutes), the Lambda sets `desiredCount` to 0. ECS drains the running task and the Runner shuts down gracefully.
+While running, a runner heartbeats every **30 seconds** (`POST /api/runners/heartbeat`), carrying
+its binary version and resetting its status to `ONLINE`. If heartbeats stop for 60 seconds the
+Console marks the runner `OFFLINE`; jobs stuck in `PROCESSING` with no log activity are swept to
+`FAILED` — see [Failure Recovery](/concepts/job-queue#failure-recovery).
 
-If a new job arrives during the idle countdown, the counter resets to zero immediately.
-
-## Heartbeat Monitoring
-
-While running, a Runner sends a heartbeat to Console every 30 seconds via `POST /api/runners/heartbeat`. Each heartbeat includes the Runner's binary version and resets its status to `ONLINE`.
-
-If heartbeats stop for 60 seconds, Console marks the Runner as `OFFLINE`. Jobs stuck in `PROCESSING` with no log activity for 5 minutes are marked `FAILED` — see [Failure Recovery](/concepts/job-queue#failure-recovery) for details.
+The runner is **CLI-free**: its images bundle `tofu`, `kubectl`, and `helm` but **not** aws-cli /
+gcloud / azure-cli. Cluster tokens are minted in-process via `runner kube-token`, and cloud auth is
+keyless OIDC — so the images stay small and hold no static cloud credentials. See
+[Security](/concepts/security#execution-isolation-managed-untrusted-byo).

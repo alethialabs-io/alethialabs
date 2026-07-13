@@ -49,7 +49,11 @@ function defineAddOn<S extends z.ZodTypeAny>(def: AddOnDef<S>): AddOnDef<S> {
 	return def;
 }
 
-/** The curated catalog. Ordered for display; grouped by category in the UI. */
+/** The curated catalog. Ordered for display; grouped by category in the UI.
+ *
+ * SSOT: this array is the single source of truth for the marketplace add-on set. Its length is
+ * guarded by tests/lib/addons/catalog-count.test.ts (the BYOC proof's ArgoCD expected-set
+ * derivation depends on it) — a deliberate add/remove here must update that test. */
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
 		id: "kube-prometheus-stack",

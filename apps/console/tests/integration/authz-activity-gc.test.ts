@@ -17,7 +17,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { authzActivityLog } from "@/lib/db/schema";
 import { gcAuthzActivityLog } from "@/lib/reconcile/gc";
-import { describeIfDb } from "./db";
+import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
 describeIfDb("authz_activity_log retention GC + keyset index", () => {
 	const orgId = randomUUID();
@@ -77,12 +77,10 @@ describeIfDb("authz_activity_log retention GC + keyset index", () => {
 	});
 
 	afterAll(async () => {
-		const db = getServiceDb();
-		await db.delete(authzActivityLog).where(eq(authzActivityLog.org_id, orgId));
+		// authz_activity_log is WORM-protected: deletes go through the GC exemption helper.
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, orgId));
 		// Remove the other-org noise rows too, keyed by their reason marker, so the suite is hermetic.
-		await db
-			.delete(authzActivityLog)
-			.where(eq(authzActivityLog.reason, "seed-noise"));
+		await purgeAuthzActivityLog(eq(authzActivityLog.reason, "seed-noise"));
 	});
 
 	/** Count this org's remaining rows. */

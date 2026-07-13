@@ -20,8 +20,8 @@ The header displays:
 
 | Action | Description |
 |--------|-------------|
-| **Plan** | Queue a PLAN job → Runner runs `terraform plan` |
-| **Apply** | Queue a DEPLOY job → Runner runs `terraform apply` + installs ArgoCD |
+| **Plan** | Queue a PLAN job → Runner runs `tofu plan` |
+| **Apply** | Queue a DEPLOY job → Runner runs the [verify gate](/console/jobs/plan-and-apply#verify-gate) then `tofu apply` + installs ArgoCD |
 | **Quick Duplicate** | Create a copy with the same config |
 | **Duplicate & Edit** | Open the Design a Project form pre-filled with this project's config |
 | **Delete** | Delete the project record (does NOT destroy cloud resources) |
@@ -45,7 +45,7 @@ Then displays two sub-sections:
 - Cluster: K8s version, node sizing (min/desired/max), instance types, autoscaler
 - DNS: domain, certificate, WAF settings (if enabled)
 - Repositories: application repo (if configured)
-- General: Terraform version, region, environment
+- General: OpenTofu version (`iac_version`), region, environment
 
 **Services** — grid of service buttons for each configured component:
 - Databases (engine, capacity, endpoints if provisioned)
@@ -69,6 +69,7 @@ Visible after running a Plan job. Shows:
 
 - **Plan Summary Bar** — resource counts (add/change/destroy) and estimated cost
 - **Resource Groups** — collapsible sections grouped by resource type, each showing individual resources with their action (create/update/delete) and cost
+- **Verify Report** — the [verify gate](/console/jobs/plan-and-apply#verify-gate) result (`verify_result`): per-control pass / fail / `not_evaluable` over the plan JSON
 - **Apply Button** — queues a DEPLOY job using this plan's artifact
 
 See [Plan & Apply](/console/jobs/plan-and-apply) for the full workflow.

@@ -41,6 +41,7 @@ vi.mock("@/lib/config/auth", () => ({
 		},
 	})),
 	getGitlabBaseUrl: vi.fn(() => "https://gitlab.example.com"),
+	getAuthRateLimit: vi.fn(() => ({ enabled: false })),
 }));
 
 vi.mock("@/lib/auth/plugins", () => ({ getAuthPlugins: vi.fn(() => []) }));
@@ -58,6 +59,7 @@ vi.mock("@/lib/db/schema", () => ({
 	oauthApplication: {},
 	oauthConsent: {},
 	organization: {},
+	rateLimit: {},
 	session: {},
 	ssoProvider: {},
 	team: {},

@@ -18,7 +18,7 @@ This guide walks through the complete flow from sign-up to a running Kubernetes 
 
 ### Sign Up
 
-Navigate to Alethia and sign in with one of the supported OAuth providers (GitHub, GitLab, Bitbucket, or Google). Your account is created automatically on first login.
+Open the Console and sign in with a supported social provider (GitHub, GitLab, Bitbucket, or Google) or with a 6-digit email OTP. Your account is created automatically on first login.
 
 After sign-in, you'll land on the dashboard — empty, with no projects or jobs.
 
@@ -31,19 +31,19 @@ Go to **Connectors** in the sidebar. Connect your cloud account:
     1. Click **Connect** on the AWS card
     2. Deploy the provided **CloudFormation template** in your AWS account (it creates an IAM OIDC provider trusting the Alethia issuer + a role — no external id)
     3. Paste the resulting **Role ARN** back into Alethia
-    4. Alethia verifies the connection by assuming the role via web identity
+    4. Alethia verifies the new cloud identity by assuming the role via `AssumeRoleWithWebIdentity`
   </Tab>
   <Tab value="GCP">
     1. Click **Connect** on the GCP card
-    2. Create a **Workload Identity Pool** and OIDC Provider in your GCP project
-    3. Bind a service account with the required roles
-    4. Paste the WIF configuration JSON into Alethia
+    2. Run the provided setup script (or OpenTofu module) — it creates the **Workload Identity Pool** + OIDC provider + provisioner service account in your project
+    3. Enter the two values it prints — **Project ID** and **Project Number** (Alethia assembles the WIF config; there is no JSON to copy)
+    4. Alethia verifies the new cloud identity via Workload Identity Federation
   </Tab>
   <Tab value="Azure">
     1. Click **Connect** on the Azure card
-    2. Create an **App Registration** in Azure Entra ID
-    3. Add a **Federated Credential** with the Alethia OIDC issuer
-    4. Enter Tenant ID, Client ID, and Subscription ID in Alethia
+    2. Run the one-line `az ad sp create --id <ALETHIA_AZURE_CLIENT_ID>` — you consent to Alethia's multi-tenant Entra app in **your** tenant (you register no app, store no secret)
+    3. Assign it RBAC roles (Contributor + User Access Administrator) on your subscription
+    4. Enter **Tenant ID** and **Subscription ID** (the Client ID is Alethia's own, fixed)
   </Tab>
 </Tabs>
 
@@ -68,13 +68,13 @@ The **cost sidebar** shows estimated monthly costs as you configure. Click **Cre
 
 ### Plan
 
-From the project detail page, click **Plan**. Select a Runner (or "Any available") to execute. The Runner runs `terraform plan` and streams the output in real-time.
+From the project detail page, click **Plan**. Select a Runner (or "Any available") to execute. The Runner runs `tofu plan` and streams the output in real-time.
 
 Review the plan: how many resources will be created, what they'll cost.
 
 ### Apply
 
-Click **Apply** to provision the infrastructure. The Runner runs `terraform apply`, provisions all resources, installs ArgoCD, and reports back with cluster credentials.
+Click **Apply** to provision the infrastructure. The Runner runs the [verify gate](/console/jobs/plan-and-apply#verify-gate) then `tofu apply`, provisions all resources, installs ArgoCD, and reports back with cluster credentials.
 
 ### Access Your Cluster
 

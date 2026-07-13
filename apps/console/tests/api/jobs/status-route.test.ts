@@ -8,6 +8,7 @@
 // `system.project.orphan_risk` critical alert (mirroring the CANCELLED path). A plain FAILED
 // without that flag must NOT raise it (no over-alerting).
 
+import { inspect } from "node:util";
 import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,17 +32,23 @@ vi.mock("@/lib/billing/meter", () => ({
 /**
  * Builds a drizzle-ish stub: `execute()` resolves the update_job_status RPC row, and the
  * select chain resolves the re-SELECTed job row the route reads execution_metadata from.
+ * Returns the captured `execute` args so tests can assert on what reached the RPC.
  */
 function mockDb(applied: boolean, job: Record<string, unknown> | undefined) {
+	const executeCalls: unknown[] = [];
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
-		execute: () => Promise.resolve([{ applied }]),
+		execute: (q: unknown) => {
+			executeCalls.push(q);
+			return Promise.resolve([{ applied }]);
+		},
 		select: () => db,
 		from: () => db,
 		where: () => db,
 		limit: () => Promise.resolve(job ? [job] : []),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
+	return { executeCalls };
 }
 
 /** Invokes the PUT route with a JSON body. */
@@ -143,5 +150,64 @@ describe("PUT /api/jobs/[id]/status — orphan_risk on interrupted apply", () =>
 		expect(res.status).toBe(200);
 		expect(await res.json()).toMatchObject({ applied: false });
 		expect(emitAlertEventSafe).not.toHaveBeenCalled();
+	});
+});
+
+// Security regression (SOC 2 CC6.7): the console must scrub runner-posted execution_metadata
+// at ITS OWN trust boundary before the update_job_status RPC merges it into jobs. A legacy /
+// mid-rollout / self-registered runner (the runner is separately versioned) can post the
+// pre-fix `argocd_admin_password` plaintext — the route must drop it so it NEVER reaches the
+// DB, while non-secret metadata flows through untouched.
+describe("PUT /api/jobs/[id]/status — ingest-side secret scrub", () => {
+	const SENTINEL = "SENTINEL-CRED-52b90c7e-DO-NOT-PERSIST";
+
+	/** Serializes everything that reached db.execute (the drizzle sql object incl. params). */
+	function persistedSurface(executeCalls: unknown[]): string {
+		return inspect(executeCalls, { depth: null });
+	}
+
+	it("drops a legacy runner's argocd_admin_password before the RPC", async () => {
+		const { executeCalls } = mockDb(true, deployJob(null));
+
+		const res = await put("job-4", {
+			status: "SUCCESS",
+			execution_metadata: {
+				cluster_name: "prod-eks",
+				argocd_url: "https://argocd.example.com",
+				argocd_admin_password: SENTINEL,
+				outputs: { kubeconfig: SENTINEL, eks_cluster_endpoint: "https://abc" },
+			},
+		});
+		expect(res.status).toBe(200);
+
+		const surface = persistedSurface(executeCalls);
+		// Non-vacuity: the RPC really received the metadata JSON (non-secrets present)…
+		expect(surface).toContain("argocd_url");
+		expect(surface).toContain("eks_cluster_endpoint");
+		// …but no planted credential crossed into it.
+		expect(surface).not.toContain(SENTINEL);
+		expect(surface).not.toContain("argocd_admin_password");
+		expect(surface).not.toContain("kubeconfig");
+	});
+
+	it("leaves a PLAN post's plan_result payload untouched (raw plan keys legitimately collide)", async () => {
+		const { executeCalls } = mockDb(true, deployJob(null));
+
+		const res = await put("job-5", {
+			status: "PROCESSING",
+			execution_metadata: {
+				plan_completed: true,
+				plan_result: {
+					resource_changes: [
+						{ address: "aws_db_instance.main", change: { after_unknown: { password: true } } },
+					],
+				},
+			},
+		});
+		expect(res.status).toBe(200);
+
+		// The raw plan's attribute key named `password` survives inside plan_result — the
+		// opaque-subtree exemption keeps the Plan tab rendering intact.
+		expect(persistedSurface(executeCalls)).toContain("password");
 	});
 });

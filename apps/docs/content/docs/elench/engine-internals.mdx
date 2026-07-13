@@ -129,12 +129,14 @@ key is loaded from `ALETHIA_RECEIPT_SIGNING_KEY`; with none configured the recei
 (`in_sync`, `drifted` count, per-resource `kind` ∈ modified/deleted/other) via `Analyze(plan)`. The full
 loop is closed end-to-end:
 
-```
- sweep cron ─▶ DETECT_DRIFT job ─▶ runner ─▶ persist ─▶ environment_drift ─▶ read
- (schedule)    (0044)              refresh-  (job-status  (0051, latest       get_drift_posture
-                                   only →     route)       per env)           + MCP
-                                   Analyze)
-```
+<Mermaid chart={`
+flowchart LR
+  A[sweep cron<br/>schedule] --> B[DETECT_DRIFT job<br/>migration 0044]
+  B --> C[runner<br/>refresh-only → Analyze]
+  C --> D[persist<br/>job-status route]
+  D --> E[environment_drift<br/>0051 · latest per env]
+  E --> F[read<br/>get_drift_posture + MCP]
+`} />
 
 1. A tiered scheduler (`lib/drift/schedule` + `dispatch`) enqueues checks per environment on a cadence
    (production most often) through the cron route `/api/internal/drift/sweep` (`sweepDriftSchedule`).

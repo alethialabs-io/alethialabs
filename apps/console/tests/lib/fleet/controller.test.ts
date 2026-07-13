@@ -137,6 +137,10 @@ function mkDeps(over: Partial<ControllerDeps> = {}): ControllerDeps {
 		bootGraceSeconds: 120,
 		mintBootstrapToken: vi.fn(async () => "boot-tok"),
 		recordAction: vi.fn(async () => {}),
+		withScaleLock: async (_provider, apply) => {
+			await apply();
+			return true;
+		},
 		...over,
 	};
 }

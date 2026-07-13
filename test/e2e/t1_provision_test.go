@@ -32,6 +32,12 @@
 //     sealed to a 64-hex plan sha256, whose ed25519 signature VERIFIES under our pub.
 //   - the run only proves in-process work → we assert a status callback reached
 //     `jobs` (SUCCESS + metadata) AND log lines reached `job_logs`.
+//   - ArgoCD merely INSTALLED but broken (an app stuck Progressing/Degraded/OutOfSync
+//     used to pass this tier) → every expected Application must reach Healthy+Synced
+//     via the independent kubeconfig, bounded by ALETHIA_E2E_ARGO_TIMEOUT. The
+//     expected set is DERIVED from the persisted infra_services + addon_status
+//     metadata, and an EMPTY derived set FAILS (never a vacuous assertion) — the
+//     harness seeds a tiny add-on so it never is (see argocd_assert.go).
 //   - a leaked cluster / cloud state → guaranteed teardown (RunDestroy + docker rm
 //     fallback) registered BEFORE the deploy, and the runner process is killed.
 package e2e
@@ -105,7 +111,9 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 	requireOrSkip(t, dbURL != "", "ALETHIA_DATABASE_URL is unset (the migrated control-plane DB)")
 
 	root := repoRoot(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// 20m: up to waitTimeout (8m) for the deploy plus ArgoAssertTimeout (8m) for the
+	// ArgoCD convergence assertion, with headroom for the runner build + kind boot.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	// ── Build the REAL runner binary (this is what makes T1 more than T0). ──
@@ -266,12 +274,28 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 
 	// (5) INDEPENDENT reachability: fetch a host-usable kubeconfig via `kind` (not the
 	//     runner's side-effect, not the scrubbed DB metadata) and prove a node is Ready.
-	assertKubeconfigNodesReady(t, ctx, clusterName)
+	kc := assertKubeconfigNodesReady(t, ctx, clusterName)
+
+	// (6) GitOps actually CONVERGED (BYOC A0.2): every ArgoCD Application the deploy is
+	//     on record as having shipped — derived from the persisted infra_services +
+	//     addon_status metadata, never hardcoded, never empty — must reach Healthy AND
+	//     Synced over the same independent kubeconfig. A degraded/missing app fails
+	//     the tier instead of sliding by as "installed".
+	expectedApps, err := DeriveExpectedArgoApps(metaRaw)
+	if err != nil {
+		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
+	}
+	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
+	if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
+		t.Fatalf("ArgoCD application health assertion failed: %v", err)
+	}
+	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
 }
 
-// assertKubeconfigNodesReady fetches the kind cluster's kubeconfig independently and
-// asserts `kubectl get nodes` reports at least one Ready node.
-func assertKubeconfigNodesReady(t *testing.T, ctx context.Context, clusterName string) {
+// assertKubeconfigNodesReady fetches the kind cluster's kubeconfig independently,
+// asserts `kubectl get nodes` reports at least one Ready node, and returns the path
+// of the written kubeconfig for follow-on assertions (the ArgoCD health check).
+func assertKubeconfigNodesReady(t *testing.T, ctx context.Context, clusterName string) string {
 	t.Helper()
 	kubeconfig, err := KindKubeconfig(ctx, clusterName)
 	if err != nil {
@@ -293,6 +317,7 @@ func assertKubeconfigNodesReady(t *testing.T, ctx context.Context, clusterName s
 		t.Fatalf("no Ready node via the independent kubeconfig:\n%s", out)
 	}
 	t.Logf("independent kubectl get nodes:\n%s", out)
+	return kc
 }
 
 // buildRunner compiles the real runner binary from apps/runner/cmd/runner.

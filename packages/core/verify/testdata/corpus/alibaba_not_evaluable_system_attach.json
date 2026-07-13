@@ -1,0 +1,166 @@
+{
+  "_comment": "Alibaba non-admin System-attachment fixture \u2014 OpenTofu v1.12.3 + aliyun/alicloud provider v1.285.0 (dummy ALICLOUD access/secret via provider block; RAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. An alicloud_ram_user_policy_attachment binding the System AliyunOSSReadOnlyAccess policy: not in the admin family, and its body is NEVER in the plan (Alibaba manages it) \u2014 so the honest verdict is a per-resource coverage gap, not an inspected pass (mirrors AWS's managed-policy-by-ARN handling). Expect: ALI-LEASTPRIV-001 NOT_EVALUABLE with a 'System managed policy body not in plan' coverage note => verdict not_evaluable (non-blocking).",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_user.reader",
+          "mode": "managed",
+          "type": "alicloud_ram_user",
+          "name": "reader",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "comments": null,
+            "display_name": null,
+            "email": null,
+            "force": null,
+            "mobile": null,
+            "name": "alethia-reader",
+            "timeouts": null
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "alicloud_ram_user_policy_attachment.oss_ro",
+          "mode": "managed",
+          "type": "alicloud_ram_user_policy_attachment",
+          "name": "oss_ro",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "policy_name": "AliyunOSSReadOnlyAccess",
+            "policy_type": "System",
+            "timeouts": null,
+            "user_name": "alethia-reader"
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_user.reader",
+      "mode": "managed",
+      "type": "alicloud_ram_user",
+      "name": "reader",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "comments": null,
+          "display_name": null,
+          "email": null,
+          "force": null,
+          "mobile": null,
+          "name": "alethia-reader",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "alicloud_ram_user_policy_attachment.oss_ro",
+      "mode": "managed",
+      "type": "alicloud_ram_user_policy_attachment",
+      "name": "oss_ro",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "policy_name": "AliyunOSSReadOnlyAccess",
+          "policy_type": "System",
+          "timeouts": null,
+          "user_name": "alethia-reader"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "alicloud": {
+        "name": "alicloud",
+        "full_name": "registry.opentofu.org/aliyun/alicloud",
+        "version_constraint": ">= 1.230.0, < 2.0.0",
+        "expressions": {
+          "access_key": {
+            "constant_value": "dummy-access-key-for-plan"
+          },
+          "region": {
+            "constant_value": "eu-central-1"
+          },
+          "secret_key": {
+            "constant_value": "dummy-secret-key-for-plan"
+          }
+        }
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_user.reader",
+          "mode": "managed",
+          "type": "alicloud_ram_user",
+          "name": "reader",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "name": {
+              "constant_value": "alethia-reader"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "alicloud_ram_user_policy_attachment.oss_ro",
+          "mode": "managed",
+          "type": "alicloud_ram_user_policy_attachment",
+          "name": "oss_ro",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "policy_name": {
+              "constant_value": "AliyunOSSReadOnlyAccess"
+            },
+            "policy_type": {
+              "constant_value": "System"
+            },
+            "user_name": {
+              "references": [
+                "alicloud_ram_user.reader.name",
+                "alicloud_ram_user.reader"
+              ]
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "relevant_attributes": [
+    {
+      "resource": "alicloud_ram_user.reader",
+      "attribute": [
+        "name"
+      ]
+    }
+  ],
+  "timestamp": "2026-07-13T15:13:15Z",
+  "errored": false
+}

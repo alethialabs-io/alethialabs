@@ -5,6 +5,7 @@ import { notInArray, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { permission, role, rolePermission } from "@/lib/db/schema";
 import {
+	BUILT_IN_ROLE_DESCRIPTIONS,
 	BUILT_IN_ROLES,
 	BUILTIN_ROLE_IDS,
 	type BuiltInRole,
@@ -47,6 +48,7 @@ export async function seedAuthz(): Promise<void> {
 				id: BUILTIN_ROLE_IDS[name],
 				organization_id: null,
 				name,
+				description: BUILT_IN_ROLE_DESCRIPTIONS[name],
 				is_builtin: true,
 			})),
 		)
