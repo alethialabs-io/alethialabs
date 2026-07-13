@@ -123,6 +123,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Proof-scrub self-test (BYOC A0.4). Runs UNCONDITIONALLY (no cloud, no secret) so
+      #    the proof-bundle secret scrub is exercised on every nightly/dispatch: it seeds a
+      #    fake secret of every shape, scrubs it, and asserts the tripwire is non-vacuous.
+      #    A regression in the denylist reds the workflow here, before any capture runs. ──
+      - name: Proof-scrub self-test (denylist non-vacuity)
+        run: bash demos/proofs/scrub.sh --self-test
+
       # ── Secret gate: decide whether the real proof runs. Absent secret ⇒ skip
       #    cleanly with a LOUD warning (never red). Present ⇒ run for real. Secrets
       #    can't be used in a job-level `if:`, so we gate every heavy step on this
@@ -162,6 +169,8 @@ jobs:
             echo "E2E_ENV=$ENVNAME"
             echo "E2E_CLUSTER=$PROJECT-$ENVNAME"
             echo "E2E_REGION=${REGION_INPUT:-nbg1}"
+            # Wall-clock anchor for the proof bundle's duration_seconds (BYOC A0.4).
+            echo "ALETHIA_E2E_PROOF_START_EPOCH=$(date -u +%s)"
           } >> "$GITHUB_ENV"
           echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME (region ${REGION_INPUT:-nbg1})"
 
@@ -256,24 +265,40 @@ jobs:
           GOWORK=off go test -tags=e2e_t2 ./... \
             -run TestT2RealCloudProvisioning -count=1 -timeout 50m -v
 
-      # ── Capture the committable proof from the SUCCESSFUL run (before teardown).
-      #    The runner wrote a host-usable kubeconfig to $HOME/.alethia/kubeconfig. ──
-      - name: Capture E1/T2 proof
-        if: steps.gate.outputs.run == 'true' && steps.t2.outcome == 'success'
+      # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
+      #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
+      #    (verify receipt + provision summary + ArgoCD verdict + timings + destroy
+      #    confirmation on success; the failure stage on a fail), routes everything through the
+      #    A0.0 secret scrub, and FAILS this step if the finished bundle isn't grep-clean (so a
+      #    leak reds the run instead of being uploaded — program invariant 2). It also writes
+      #    the per-provider PASS/FAIL verdict to the job step summary. The runner wrote a
+      #    host-usable kubeconfig to $HOME/.alethia/kubeconfig (read only on the success path). ──
+      - name: Capture proof (scrubbed bundle + step-summary verdict)
+        if: steps.gate.outputs.run == 'true' && always()
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          ALETHIA_E2E_PROOF_OUTCOME: ${{ steps.t2.outcome }}
+          ALETHIA_E2E_PROOF_RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
+          # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
+          # the capture script reads (region + the unique cluster name for the summary).
+          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          ALETHIA_E2E_CLUSTER: ${{ env.E2E_CLUSTER }}
         run: |
-          export KUBECONFIG="$HOME/.alethia/kubeconfig"
-          if [ ! -f "$KUBECONFIG" ]; then
-            echo "::warning::runner kubeconfig not found at $KUBECONFIG — skipping capture"
-            exit 0
+          # The runner's kubeconfig only exists on the success path. Point KUBECONFIG at it
+          # when present so the capture reads real cluster state; otherwise leave it unset and
+          # the capture cleanly skips cluster-state and records the failure stage instead.
+          if [ -f "$HOME/.alethia/kubeconfig" ]; then
+            export KUBECONFIG="$HOME/.alethia/kubeconfig"
           fi
-          ./demos/proofs/capture-e1.sh "${{ matrix.provider }}" "nightly-${{ github.run_id }}"
+          ./demos/proofs/capture-proof.sh "${{ matrix.provider }}"
 
       - name: Upload proof artifact
-        if: steps.gate.outputs.run == 'true' && steps.t2.outcome == 'success'
+        if: steps.gate.outputs.run == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
-          path: demos/proofs/e1-${{ matrix.provider }}/
+          path: demos/proofs/${{ matrix.provider }}/
           if-no-files-found: warn
           retention-days: 30
 

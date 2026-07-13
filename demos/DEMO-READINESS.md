@@ -131,16 +131,11 @@ pnpm dev:runner:logs                       # follow it
 - **Reachability + datapath gates** (`packages/core/k8s/probe.go`, #288/#307/#308) — SUCCESS is gated
   on a working cluster; datapath may be single-node on a one-`cax11` design.
 
-**Capture the proof (it does not exist yet):**
-```bash
-# From the runner / console, save:
-#   - the full DEPLOY job SSE log
-#   - the ed25519 verify receipt (Evidence → receipt download)
-#   - the kubeconfig + `kubectl get nodes,pods -A`
-#   - ArgoCD Applications health
-# Commit them under demos/proofs/e1-hetzner/<date>/ on a fresh branch off dev.
-# Then DESTROY the cluster and re-run once to confirm repeatability (not a fluke).
-```
+**Capture the proof:** the nightly does this automatically — `demos/proofs/capture-proof.sh`
+writes a scrubbed bundle (provision summary + signed-receipt hash + ArgoCD verdict + cluster
+state) to `demos/proofs/<provider>/<date>/` and uploads it as an artifact on pass or fail (BYOC
+A0.4). To keep one, download the artifact and commit it under `demos/proofs/hetzner/<date>/` on a
+fresh branch off dev, then DESTROY the cluster and re-run once to confirm repeatability.
 
 ---
 
