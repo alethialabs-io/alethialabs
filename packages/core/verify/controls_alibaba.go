@@ -15,9 +15,10 @@ import "strings"
 //   - ALI-KEYLESS-001: no static RAM access keys (use RRSA / AssumeRoleWithOIDC).
 //   - ALI-OIDC-001: every RAM role whose trust document has a Federated (OIDC/RRSA)
 //     principal must bind `oidc:sub` to a non-wildcard value.
-//   - ALI-LEASTPRIV-001: no `Action:"*"` on `Resource:"*"` RAM policy, no attachment
-//     of the System `AdministratorAccess` managed policy (both hard fails); a
-//     service-level wildcard (`ecs:*` on `*`) is a warn.
+//   - ALI-LEASTPRIV-001: no `Action:"*"` on `Resource:"*"` and no `Allow`+`NotAction`
+//     RAM policy body; no attachment — to a role, user, OR group — of an admin-family
+//     System managed policy (all hard fails); a service-level wildcard (`ecs:*` on `*`)
+//     is a warn; a non-admin System attachment (body not in the plan) is not_evaluable.
 //
 // PLAN-SHAPE NOTE (verified against OpenTofu 1.12.3 + aliyun/alicloud v1.285.0 — see
 // the _comment in every alibaba_* corpus fixture, all real `tofu show -json` output):
@@ -124,12 +125,22 @@ func controlALIFederatedTrust(planned []plannedResource) ControlResult {
 	return c
 }
 
+// aliAttachTypes are the RAM policy-attachment resource types — the principal an
+// admin policy is attached TO does not change its blast radius, so role, user, and
+// group attachments are all in scope (mirroring the AWS twin's role/user/group set).
+var aliAttachTypes = map[string]bool{
+	"alicloud_ram_role_policy_attachment":  true,
+	"alicloud_ram_user_policy_attachment":  true,
+	"alicloud_ram_group_policy_attachment": true,
+}
+
 // controlALILeastPrivilege — ALI-LEASTPRIV-001. Inspect the RAM policy bodies the
-// plan can see and flag over-broad grants, and hard-fail an attachment of the System
-// AdministratorAccess managed policy. Honest about blind spots: a policy body that is
-// computed until apply is reported as a coverage gap / not_evaluable, never a silent
-// pass. This control claims "named over-broad patterns", not "catches all
-// over-permission".
+// plan can see and flag over-broad grants, and hard-fail an attachment (to a role,
+// user, or group) of an admin-family System managed policy. Honest about blind
+// spots: a policy body that is computed until apply, or a non-admin System policy
+// (whose body is never in the plan), is reported as a coverage gap / not_evaluable —
+// never a silent pass. This control claims "named over-broad patterns", not "catches
+// all over-permission".
 func controlALILeastPrivilege(planned []plannedResource) ControlResult {
 	c := ControlResult{
 		ID:         "ALI-LEASTPRIV-001",
@@ -144,8 +155,8 @@ func controlALILeastPrivilege(planned []plannedResource) ControlResult {
 	var coverage []string
 
 	for _, r := range planned {
-		switch r.rtype {
-		case "alicloud_ram_policy":
+		switch {
+		case r.rtype == "alicloud_ram_policy":
 			relevant++
 			doc, present, ok := parseALIPolicy(r)
 			if !present {
@@ -162,7 +173,7 @@ func controlALILeastPrivilege(planned []plannedResource) ControlResult {
 			failed += f
 			warned += w
 			c.Findings = append(c.Findings, findings...)
-		case "alicloud_ram_role_policy_attachment":
+		case aliAttachTypes[r.rtype]:
 			relevant++
 			if attrUnknown(r.afterUnknown, "policy_type") || attrUnknown(r.afterUnknown, "policy_name") {
 				notEval++
@@ -175,16 +186,24 @@ func controlALILeastPrivilege(planned []plannedResource) ControlResult {
 				notEval++
 				continue
 			}
-			if strings.EqualFold(ptype, "System") && isALIAdminSystemPolicy(pname) {
-				failed++
-				c.Findings = append(c.Findings, Finding{
-					Address: r.address,
-					Message: "attaches over-broad System managed policy " + pname + " (full administrative access) — attach a least-privilege Custom policy instead",
-				})
+			if strings.EqualFold(ptype, "System") {
+				if isALIAdminSystemPolicy(pname) {
+					failed++
+					c.Findings = append(c.Findings, Finding{
+						Address: r.address,
+						Message: "attaches over-broad System managed policy " + pname + " (administrative access) — attach a least-privilege Custom policy instead",
+					})
+					continue
+				}
+				// A non-admin System policy: its body is NEVER in the plan (Alibaba
+				// manages it), so we cannot fully judge it — an honest coverage gap,
+				// mirroring AWS's managed-policy-by-ARN handling.
+				coverage = append(coverage, r.address+": System managed policy body not in plan ("+pname+")")
+				notEval++
 				continue
 			}
-			// A Custom attachment (its body is the alicloud_ram_policy judged above) or
-			// a non-admin System policy with a concrete name is an inspected pass.
+			// A Custom attachment: its body is the alicloud_ram_policy judged above
+			// (or pre-existing outside this plan) — the attachment itself is inspected.
 			evaluable++
 		}
 	}
@@ -202,6 +221,11 @@ func inspectALIPolicyDoc(address string, doc *iamDoc) (findings []Finding, faile
 		}
 		if hasWildcard(st.Action) && hasWildcard(st.Resource) {
 			findings = append(findings, Finding{Address: address, Message: `grants Action:"*" on Resource:"*" (full administrative access)`})
+			failed++
+			continue
+		}
+		if len(st.NotAction) > 0 {
+			findings = append(findings, Finding{Address: address, Message: "uses Allow + NotAction (grants all actions except a listed few — effectively over-broad)"})
 			failed++
 			continue
 		}
@@ -259,10 +283,25 @@ func isALIFederatedTrust(st iamStatement) bool {
 	return false
 }
 
-// isALIAdminSystemPolicy reports whether a System-managed policy name is the
-// Alibaba god-mode grant we hard-fail on when attached.
+// isALIAdminSystemPolicy reports whether a System-managed policy name is in the
+// Alibaba admin family we hard-fail on when attached. The defensible set (mirroring
+// AWS's AdministratorAccess/PowerUserAccess/IAMFullAccess):
+//
+//   - AdministratorAccess: full account admin — the god-mode grant.
+//   - AliyunRAMFullAccess: full control of RAM itself — a principal that can create
+//     users/roles/policies and attach anything IS an admin one hop away (the exact
+//     self-escalation AWS's IAMFullAccess entry catches).
+//
+// Deliberately NOT in the family: AliyunSTSAssumeRoleAccess (grants the sts:AssumeRole
+// CALL, but every assumption is still gated by the target role's trust policy — which
+// ALI-OIDC-001 audits — so it is not intrinsically admin; it lands in the honest
+// non-admin-System not_evaluable bucket like every other System policy), and Alibaba
+// has no PowerUserAccess analogue (its service-scoped FullAccess policies, e.g.
+// AliyunECSFullAccess, are single-service — broad, but not account-admin; also the
+// not_evaluable bucket rather than a false hard fail).
 func isALIAdminSystemPolicy(name string) bool {
-	return strings.EqualFold(name, "AdministratorAccess")
+	return strings.EqualFold(name, "AdministratorAccess") ||
+		strings.EqualFold(name, "AliyunRAMFullAccess")
 }
 
 // serviceWildcardActions returns the service-scoped wildcard actions (e.g. "ecs:*",

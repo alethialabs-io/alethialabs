@@ -251,6 +251,50 @@ func TestMutationFlipsVerdict(t *testing.T) {
 					}, map[string]any{})
 			},
 		},
+		{
+			// The Allow+NotAction evasion: everything-but-one-action on Resource:"*" is
+			// effectively over-broad. The grill proved v1 dropped the AWS twin's
+			// NotAction guard — this mutator keeps it from regressing again.
+			name:      "ALI-LEASTPRIV-001/widen-policy-to-notaction",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "alicloud_ram_policy.external_secrets_read")
+				m["policy_document"] = `{"Version":"1","Statement":[{"Effect":"Allow","NotAction":["oss:GetObject"],"Resource":["*"]}]}`
+			},
+		},
+		{
+			// The USER-attachment blind spot the grill probed: v1 matched only the role
+			// attachment type, so a user attachment of AdministratorAccess passed with
+			// "no resources in scope". Role/user/group are all in scope now.
+			name:      "ALI-LEASTPRIV-001/attach-admin-to-user",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_user_policy_attachment.admin", "alicloud_ram_user_policy_attachment", "alibaba",
+					map[string]any{
+						"user_name":   "ops",
+						"policy_name": "AdministratorAccess",
+						"policy_type": "System",
+					}, map[string]any{})
+			},
+		},
+		{
+			// The RAM-self-escalation family member on the GROUP attachment type:
+			// AliyunRAMFullAccess (control of RAM itself = admin one hop away, the
+			// IAMFullAccess analogue) must flip the verdict just like AdministratorAccess.
+			name:      "ALI-LEASTPRIV-001/attach-ramfullaccess-to-group",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_group_policy_attachment.ram_full", "alicloud_ram_group_policy_attachment", "alibaba",
+					map[string]any{
+						"group_name":  "platform",
+						"policy_name": "AliyunRAMFullAccess",
+						"policy_type": "System",
+					}, map[string]any{})
+			},
+		},
 	}
 
 	// Assert every declared control has a mutator — parity with the corpus coverage

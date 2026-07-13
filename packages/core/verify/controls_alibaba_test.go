@@ -156,3 +156,71 @@ func TestAlibabaServiceWildcardWarns(t *testing.T) {
 		t.Errorf("ALI-LEASTPRIV-001 = %q, want warn for ecs:* on Resource:*", c.Status)
 	}
 }
+
+// TestAlibabaNotActionHardFails pins the Allow+NotAction evasion the grill probed:
+// everything-but-one-action on Resource:"*" is effectively over-broad and must
+// hard-fail (the AWS twin's guard, restored).
+func TestAlibabaNotActionHardFails(t *testing.T) {
+	rep := evalCorpus(t, "alibaba_fail_notaction.json")
+	if !rep.Blocking() {
+		t.Fatalf("Allow+NotAction did not block (verdict=%s) — the everything-but-one grant slipped through", rep.Verdict)
+	}
+	c := controlByID(t, rep, "ALI-LEASTPRIV-001")
+	if c.Status != StatusFail {
+		t.Errorf("ALI-LEASTPRIV-001 = %q, want fail for Allow+NotAction", c.Status)
+	}
+	found := false
+	for _, f := range c.Findings {
+		if strings.Contains(f.Message, "NotAction") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ALI-LEASTPRIV-001 findings %+v should name NotAction", c.Findings)
+	}
+}
+
+// TestAlibabaUserAdminAttachHardFails pins the user-attachment blind spot the grill
+// probed: attaching System AdministratorAccess to a RAM *user* is the same blast
+// radius as to a role and must hard-fail (v1 matched only the role attachment type
+// and passed this with "no resources in scope").
+func TestAlibabaUserAdminAttachHardFails(t *testing.T) {
+	rep := evalCorpus(t, "alibaba_fail_user_admin_attach.json")
+	if !rep.Blocking() {
+		t.Fatalf("a USER attachment of AdministratorAccess did not block (verdict=%s)", rep.Verdict)
+	}
+	if c := controlByID(t, rep, "ALI-LEASTPRIV-001"); c.Status != StatusFail {
+		t.Errorf("ALI-LEASTPRIV-001 = %q, want fail for alicloud_ram_user_policy_attachment of AdministratorAccess", c.Status)
+	}
+}
+
+// TestAlibabaGroupRAMFullAccessHardFails pins two things at once: the GROUP
+// attachment type is in scope, and AliyunRAMFullAccess is in the admin family —
+// full control of RAM itself is admin one hop away (the IAMFullAccess analogue).
+func TestAlibabaGroupRAMFullAccessHardFails(t *testing.T) {
+	rep := evalCorpus(t, "alibaba_fail_group_ramfull_attach.json")
+	if !rep.Blocking() {
+		t.Fatalf("a GROUP attachment of AliyunRAMFullAccess did not block (verdict=%s)", rep.Verdict)
+	}
+	if c := controlByID(t, rep, "ALI-LEASTPRIV-001"); c.Status != StatusFail {
+		t.Errorf("ALI-LEASTPRIV-001 = %q, want fail for alicloud_ram_group_policy_attachment of AliyunRAMFullAccess", c.Status)
+	}
+}
+
+// TestAlibabaNonAdminSystemAttachNotEvaluable pins the honesty rule the grill
+// flagged: a non-admin System policy's body is NEVER in the plan (Alibaba manages
+// it), so counting it as an inspected pass forges evidence. It must be a
+// per-resource not_evaluable with a coverage note — non-blocking, never a false fail.
+func TestAlibabaNonAdminSystemAttachNotEvaluable(t *testing.T) {
+	rep := evalCorpus(t, "alibaba_not_evaluable_system_attach.json")
+	if rep.Blocking() {
+		t.Fatalf("a non-admin System attachment blocked (verdict=%s) — must be an honest gap, not a fail", rep.Verdict)
+	}
+	c := controlByID(t, rep, "ALI-LEASTPRIV-001")
+	if c.Status != StatusNotEvaluable {
+		t.Errorf("ALI-LEASTPRIV-001 = %q, want not_evaluable for a System policy whose body is not in the plan", c.Status)
+	}
+	if !strings.Contains(c.Coverage, "body not in plan") {
+		t.Errorf("ALI-LEASTPRIV-001 coverage %q should state the System policy body is not in the plan", c.Coverage)
+	}
+}
