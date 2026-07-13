@@ -318,7 +318,7 @@ data "aws_iam_policy_document" "e2e_nightly" {
 resource "aws_iam_role" "e2e_nightly" {
   name                 = "alethia-e2e-nightly"
   path                 = local.e2e_path
-  description          = "OIDC role for the T2 real-cloud nightly — provisions + tears down an ephemeral AWS EKS cluster. Boundary + region-lock + budget capped. See infra/aws-oidc/e2e-nightly.tf."
+  description          = "OIDC role for the T2 real-cloud nightly - provisions + tears down an ephemeral AWS EKS cluster. Boundary + region-lock + budget capped. See infra/aws-oidc/e2e-nightly.tf."
   assume_role_policy   = data.aws_iam_policy_document.e2e_nightly_trust.json
   permissions_boundary = aws_iam_policy.e2e_boundary.arn
   # A long EKS+Karpenter apply must outlive the default 1h session; 2h headroom under the
