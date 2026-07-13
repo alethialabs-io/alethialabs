@@ -152,6 +152,20 @@ if [ -n "${ALETHIA_DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
 	done
 fi
 
+# ── Day-2 soak summary (BYOC A0.3). The T2 test writes a machine-readable summary to
+#    ALETHIA_E2E_SOAK_SUMMARY (counts + booleans + a numeric volume id — no secrets). Fold it
+#    into the bundle (scrubbed, as a backstop) and surface a one-line soak verdict. Absent ⇒
+#    the soak was disabled/never ran and the capture is unchanged. ──
+soak_summary="${ALETHIA_E2E_SOAK_SUMMARY:-}"
+soak_verdict=""
+if [ -n "$soak_summary" ] && [ -f "$soak_summary" ]; then
+	scrub_stream <"$soak_summary" >"$out/soak-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/soak-summary.json" ]; then
+		soak_verdict="$(jq -r '.verdict // empty' "$out/soak-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$soak_verdict" ] && echo "  · soak: $soak_verdict"
+fi
+
 # ── Wall-clock. ──
 duration_s=""
 if [ -n "$start_epoch" ]; then
@@ -232,6 +246,7 @@ run:       $run_tag @ $git_sha
 receipt:   signed=$receipt_signed sha256=${receipt_plan_sha:-n/a}
 teardown:  destroyed=$destroyed (${resources_destroyed:-?} resources)
 duration:  ${duration_s:-?}s
+soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
 EOF
 
 # ── FAIL-CLOSED tripwire: the finished bundle MUST be grep-clean. A surviving secret makes
@@ -259,6 +274,7 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| signed receipt | ${receipt_signed} (sha256 \`${receipt_plan_sha:-n/a}\`) |"
 	echo "| teardown | destroyed=${destroyed} (${resources_destroyed:-n/a} resources) |"
 	echo "| duration | ${duration_s:-n/a}s |"
+	echo "| day-2 soak (A0.3) | ${soak_verdict:-n/a} |"
 	echo "| commit | \`${git_sha}\` |"
 	echo
 } >>"${GITHUB_STEP_SUMMARY:-/dev/stdout}"
