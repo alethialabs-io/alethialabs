@@ -39,8 +39,10 @@ func hetznerServerArch(serverType string) string {
 }
 
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
-	// Node sizing: prefer an explicit/ resolved instance type, else a cheap ARM default.
-	workerType := "cax11"
+	// Node sizing: prefer an explicit/ resolved instance type, else a cheap, orderable
+	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
+	// cpx11 is retired, so an amd64 shared-vCPU type is the reliably-provisionable default.
+	workerType := "cpx22"
 	if inst := resolveInstanceTypes("hetzner", config.Cluster); len(inst) > 0 {
 		workerType = inst[0]
 	}
@@ -55,7 +57,11 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 
 	// Control-plane: single node by default (minimal/cheapest). A floating-IP API
 	// endpoint keeps kubeconfig stable if this later grows to a 3-node HA quorum.
-	controlPlaneType := "cax11"
+	// The CP server type follows the resolved worker type so a single instance_types
+	// override moves BOTH pools together — otherwise a pinned amd64 worker still forces
+	// an arm64 Talos image build for a hard-coded arm64 CP, making the cluster
+	// unprovisionable during a Hetzner ARM (cax) capacity shortage.
+	controlPlaneType := workerType
 	controlPlaneCount := 1
 
 	// Non-overlapping CIDRs (private network vs pod vs service) — CCM route creation

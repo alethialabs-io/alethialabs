@@ -95,6 +95,53 @@ func TestHetznerProvider_ProviderTfvars_NoBuckets(t *testing.T) {
 	}
 }
 
+// TestHetznerProvider_ProviderTfvars_NodeTypes verifies the default node types are the
+// currently-orderable amd64 cpx22 for BOTH pools (cax11 ARM is capacity-unreliable, cpx11
+// is retired), that the control-plane type FOLLOWS the resolved worker type so a single
+// instance_types override moves both pools together, and that arch is derived per type.
+func TestHetznerProvider_ProviderTfvars_NodeTypes(t *testing.T) {
+	p := &hetznerProvider{}
+
+	// Default: both pools cpx22 (amd64). An amd64 default keeps need_arm64=false in the
+	// template (no arm64 Talos image built).
+	def := p.ProviderTfvars(baseHetznerConfig())
+	if def["worker_server_type"] != "cpx22" || def["control_plane_server_type"] != "cpx22" {
+		t.Errorf("default node types = worker %v / cp %v, want cpx22 / cpx22",
+			def["worker_server_type"], def["control_plane_server_type"])
+	}
+	if def["worker_arch"] != "amd64" || def["control_plane_arch"] != "amd64" {
+		t.Errorf("default arch = worker %v / cp %v, want amd64 / amd64",
+			def["worker_arch"], def["control_plane_arch"])
+	}
+
+	// Override amd64: a single instance_types pin moves the control plane too (no forced
+	// arm64 image build for a hard-coded arm CP).
+	amd := baseHetznerConfig()
+	amd.Cluster.InstanceTypes = []string{"cpx32"}
+	ov := p.ProviderTfvars(amd)
+	if ov["worker_server_type"] != "cpx32" || ov["control_plane_server_type"] != "cpx32" {
+		t.Errorf("amd64 override = worker %v / cp %v, want cpx32 / cpx32",
+			ov["worker_server_type"], ov["control_plane_server_type"])
+	}
+	if ov["worker_arch"] != "amd64" || ov["control_plane_arch"] != "amd64" {
+		t.Errorf("amd64 override arch = worker %v / cp %v, want amd64 / amd64",
+			ov["worker_arch"], ov["control_plane_arch"])
+	}
+
+	// Override ARM: the override still works both ways — cax11 puts BOTH pools on arm64.
+	arm := baseHetznerConfig()
+	arm.Cluster.InstanceTypes = []string{"cax11"}
+	av := p.ProviderTfvars(arm)
+	if av["worker_server_type"] != "cax11" || av["control_plane_server_type"] != "cax11" {
+		t.Errorf("arm override = worker %v / cp %v, want cax11 / cax11",
+			av["worker_server_type"], av["control_plane_server_type"])
+	}
+	if av["worker_arch"] != "arm64" || av["control_plane_arch"] != "arm64" {
+		t.Errorf("arm override arch = worker %v / cp %v, want arm64 / arm64",
+			av["worker_arch"], av["control_plane_arch"])
+	}
+}
+
 // TestHetznerS3Region verifies compute-only regions fall back to an Object Storage location.
 func TestHetznerS3Region(t *testing.T) {
 	cases := map[string]string{
