@@ -21,6 +21,7 @@
 		"db:generate": "bash ../../scripts/db-generate.sh",
 		"db:migrate": "node scripts/migrate.mjs",
 		"db:reset": "node scripts/reset.mjs && node scripts/migrate.mjs",
+		"db:reencrypt": "tsx scripts/reencrypt-secrets.ts",
 		"db:studio": "drizzle-kit studio",
 		"stripe:setup": "tsx scripts/stripe-setup.ts",
 		"org:set-plan": "node scripts/set-org-plan.mjs",
