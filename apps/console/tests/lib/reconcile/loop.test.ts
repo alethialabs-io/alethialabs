@@ -14,6 +14,7 @@ vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => (
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
+	gcAuthzActivityLog: vi.fn(async () => ({ deleted: 0 })),
 }));
 
 import {
@@ -22,7 +23,7 @@ import {
 } from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
-import { gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
+import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
 import { __resetHeartbeats, getHeartbeats } from "@/lib/reconcile/heartbeat";
 import { startReconcileLoop, tick } from "@/lib/reconcile/loop";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
@@ -71,12 +72,14 @@ describe("tick — fan-out", () => {
 		expect(sweepDriftSchedule).toHaveBeenCalledTimes(1);
 		expect(gcJobLogs).toHaveBeenCalledTimes(1);
 		expect(gcFleetActions).toHaveBeenCalledTimes(1);
+		expect(gcAuthzActivityLog).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
 			"drift-schedule",
 			"env-convergence",
 			"ephemeral-reaper",
+			"gc-authz-activity",
 			"gc-fleet-actions",
 			"gc-job-logs",
 		]);
