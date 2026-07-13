@@ -91,26 +91,36 @@ import (
 // succeeded, and guarantees teardown. Maintainer-gated: it only does real work when
 // the cloud token + tools are present (a HARD FAIL under ALETHIA_E2E_T2_REQUIRE).
 func TestT2RealCloudProvisioning(t *testing.T) {
-	// Provider (only hetzner today; aws/azure slot in behind their own token env).
+	// Provider table (BYOC A0.1): hetzner is the only row the nightly runs today, but
+	// aws/gcp/azure/alibaba are wired here so their per-cloud waves only add a workflow
+	// matrix entry + secret. An unknown provider is a HARD FAIL (replaces the old
+	// hetzner-only fatal).
 	provider := t2Env("ALETHIA_E2E_PROVIDER", "hetzner")
-	if provider != "hetzner" {
-		t.Fatalf("T2 currently supports only provider=hetzner, got %q", provider)
+	p, ok := t2LookupProvider(provider)
+	if !ok {
+		t.Fatalf("T2: unknown provider %q — supported: %s", provider, t2SupportedProviders())
 	}
 
 	// Prerequisites: the real spine shells out to these, plus a migrated control-plane
-	// Postgres and the cloud token. (No `kind` — this is a real cloud, not local.)
+	// Postgres and the provider's cloud credentials. (No `kind` — this is a real cloud,
+	// not local.)
 	for _, bin := range []string{"tofu", "kubectl", "helm", "go"} {
 		t2RequireOrSkip(t, t2HaveBin(bin), bin+" not on PATH")
 	}
 	dbURL := os.Getenv("ALETHIA_DATABASE_URL")
 	t2RequireOrSkip(t, dbURL != "", "ALETHIA_DATABASE_URL is unset (the migrated control-plane DB)")
-	hcloudToken := os.Getenv("HCLOUD_TOKEN")
-	t2RequireOrSkip(t, hcloudToken != "", "HCLOUD_TOKEN is unset (the hetzner API token from repo secrets)")
+	// Per-provider credential detection: the cloud token(s) flow to the runner via the
+	// ambient environment (os.Environ below), so we only assert they are PRESENT here —
+	// a HARD FAIL under ALETHIA_E2E_T2_REQUIRE, a clean skip off CI.
+	credsOK, credsMsg := p.credsPresent()
+	t2RequireOrSkip(t, credsOK, credsMsg)
 
 	root := t2RepoRoot(t)
-	// 40m: up to t2WaitTimeout (25m) for the deploy plus ArgoAssertTimeout (8m) for
-	// the ArgoCD convergence assertion, with headroom for the runner build.
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
+	waitTimeout := resolveT2WaitTimeout(p)
+	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
+	// for the runner build. Derived from the provider row (hetzner 25m+8m+7m = 40m,
+	// bit-identical to the pre-table constant; managed clouds get their longer waits).
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+7*time.Minute)
 	defer cancel()
 
 	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
@@ -120,7 +130,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// shared name that a broad delete could catch). ──
 	project := t2Env("ALETHIA_E2E_PROJECT", "alethia-nl")
 	env := t2Env("ALETHIA_E2E_ENV", "local"+t2ShortHex(t))
-	region := t2Env("ALETHIA_E2E_HCLOUD_REGION", "nbg1")
+	// Generalized ALETHIA_E2E_REGION (legacy ALETHIA_E2E_HCLOUD_REGION still honored for
+	// hetzner), falling back to the provider row's cheap default.
+	region := resolveT2Region(p)
 	clusterName := project + "-" + env
 	t.Logf("T2 target: provider=%s region=%s cluster=%s", provider, region, clusterName)
 
@@ -177,9 +189,11 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	})
 
 	// ── Launch the REAL runner process pointed at the control plane, with the cloud
-	// token in its environment. cloud_identity is nil (like T1), so the runner does no
-	// credential activation and the hcloud/imager/talos providers read HCLOUD_TOKEN
-	// straight from this env — the self-managed / ambient-token path. ──
+	// credentials in its environment. cloud_identity is nil (like T1), so the runner does
+	// no credential activation and each provider reads its own token(s) straight from the
+	// ambient env (HCLOUD_TOKEN / AWS_* / GOOGLE_APPLICATION_CREDENTIALS / ARM_* /
+	// ALICLOUD_*) — the self-managed / ambient-token path. os.Environ() carries them all,
+	// so no per-provider token line is needed here. ──
 	var runnerOut bytes.Buffer
 	runnerCtx, killRunner := context.WithCancel(ctx)
 	defer killRunner()
@@ -190,9 +204,8 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		"ALETHIA_RUNNER_ID="+runnerID,
 		"ALETHIA_RUNNER_TOKEN="+runnerToken,
 		"ALETHIA_RUNNER_OPERATOR=self",
-		"HCLOUD_TOKEN="+hcloudToken,
 		"ALETHIA_RECEIPT_SIGNING_KEY="+base64.StdEncoding.EncodeToString(priv),
-		"ALETHIA_CLUSTER_READY_TIMEOUT="+t2ClusterReadyTimeout(),
+		"ALETHIA_CLUSTER_READY_TIMEOUT="+resolveT2ClusterReadyTimeout(p),
 		"ALETHIA_ARGOCD_TEMPLATES_DIR="+filepath.Join(root, "infra", "templates", "argocd"),
 	)
 	var runnerSink io.Writer = &runnerOut
@@ -216,7 +229,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	})
 
 	// ── Wait (bounded) for the job to go terminal, then assert on the REAL DB rows. ──
-	status, err := cp.WaitTerminal(ctx, jobID, t2WaitTimeout())
+	status, err := cp.WaitTerminal(ctx, jobID, waitTimeout)
 	if err != nil {
 		t.Fatalf("waiting for job to finish: %v\n──── runner output ────\n%s", err, runnerOut.String())
 	}
@@ -332,19 +345,27 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 // cloud template at a REAL region, with the seed add-ons enabled (they give the
 // ArgoCD health assertion teeth — see seedAddOns in controlplane.go). The `provider`
 // column is left NULL so the atomic claim's provider filter passes for the seeded
-// runner; the runner reads the provider from the snapshot. Node sizing is left at the
-// template default (1 control plane + 1 worker) — the cheapest cluster. Reuses the
-// control plane's own pool (same package).
+// runner; the runner reads the provider from the snapshot. Node sizing defaults to the
+// template's cheapest cluster (1 control plane + 1 worker); ALETHIA_E2E_CLUSTER_JSON
+// (merged into the `cluster` block via t2MergeClusterJSON) lets each cloud's workflow
+// pin its own cheapest shape. Reuses the control plane's own pool (same package).
 func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string) (string, error) {
 	jobID := newUUID()
-	snapshot, err := json.Marshal(map[string]any{
+	snap := map[string]any{
 		"id":                "e2e-" + env,
 		"project_name":      project,
 		"environment_stage": env,
 		"region":            region,
 		"provider":          provider,
 		"addons":            seedAddOns(),
-	})
+	}
+	// Merge the per-cloud cluster shape override (instance types, node counts,
+	// enable_karpenter, …) into the snapshot's `cluster` block. Malformed JSON is a loud
+	// failure — a workflow typo must not silently provision the wrong shape.
+	if err := t2MergeClusterJSON(snap); err != nil {
+		return "", err
+	}
+	snapshot, err := json.Marshal(snap)
 	if err != nil {
 		return "", err
 	}
@@ -396,25 +417,10 @@ func t2RequireOrSkip(t *testing.T, cond bool, msg string) {
 	if cond {
 		return
 	}
-	if t2Truthy(os.Getenv("ALETHIA_E2E_T2_REQUIRE")) {
+	if t2RequireIsHard() {
 		t.Fatalf("T2 prerequisite missing (ALETHIA_E2E_T2_REQUIRE set): %s", msg)
 	}
 	t.Skipf("T2 prerequisite missing: %s", msg)
-}
-
-func t2Truthy(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
-	}
-	return false
-}
-
-func t2Env(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return def
 }
 
 func t2HaveBin(name string) bool {
@@ -476,26 +482,6 @@ func t2CopyTree(t *testing.T, src, dst string) {
 			t.Fatal(err)
 		}
 	}
-}
-
-// t2ClusterReadyTimeout is the runner's reachability-gate timeout — a real cloud is
-// slower to boot than kind, so 8m by default (overridable for a slow account).
-func t2ClusterReadyTimeout() string {
-	if v := strings.TrimSpace(os.Getenv("ALETHIA_CLUSTER_READY_TIMEOUT")); v != "" {
-		return v
-	}
-	return "8m"
-}
-
-// t2WaitTimeout bounds how long the test waits for the job to finish (image build +
-// apply + spine + argo on real infra). Generous but finite.
-func t2WaitTimeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_T2_WAIT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return 25 * time.Minute
 }
 
 func t2ShortHex(t *testing.T) string {
