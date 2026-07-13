@@ -22,6 +22,17 @@ variable "project_name" {
   description = "Name of the project / client / product to be used in naming convention"
 }
 
+# Per-cloud classification tags emitted by the console (packages/core/cloud/tags.go, B1.2): the
+# project's frozen classification dimensions plus the mandatory `alethia:project-id` /
+# `alethia:environment-id` sweep handles that let a guarded sweeper scope destroys to exactly one
+# environment. Merged into local.aws_default_tags and the EBS-CSI extraVolumeTags so it lands on
+# real resources; the platform base tags always WIN a key collision (they sit on the merge RHS).
+variable "classification_tags" {
+  type        = map(string)
+  description = "Classification + sweep-handle tags to stamp on every taggable resource (colon-namespaced AWS keys). Platform base tags override on conflict."
+  default     = {}
+}
+
 variable "rds_iam_irsa" {
   type        = bool
   description = "Enable creation of RDS IAM Policy"

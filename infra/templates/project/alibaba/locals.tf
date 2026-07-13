@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 locals {
-  # Common tags applied to every taggable resource.
-  common_tags = {
+  # Platform base tags applied to every taggable resource. Classification + sweep-handle tags
+  # (var.classification_tags) are merged in UNDER these — base tags sit on the merge RHS so they
+  # always WIN a key collision, keeping the sweep handles and platform bookkeeping authoritative.
+  common_base_tags = {
     environment = var.environment
     service     = var.project_name
     managed-by  = "opentofu"
   }
+
+  common_tags = merge(var.classification_tags, local.common_base_tags)
 
   # Naming conventions (kept short — Alibaba resource names are length-limited).
   name_prefix    = "${var.project_name}-${var.environment}"

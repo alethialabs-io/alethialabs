@@ -135,6 +135,20 @@ resource "aws_eks_addon" "ebs-csi" {
   addon_name               = "aws-ebs-csi-driver"
   addon_version            = data.aws_eks_addon_version.ebs_csi.version
   service_account_role_arn = module.irsa-ebs-csi.iam_role_arn
+
+  # The `tags` below tag the addon OBJECT itself; they do NOT reach the EBS volumes the CSI
+  # controller provisions at runtime for PVCs — those are created via the AWS API by the driver,
+  # not by OpenTofu, so provider default_tags never touch them. `controller.extraVolumeTags` is the
+  # only lever that stamps the classification + sweep-handle tags (var.eks_tags, base tags already
+  # winning) onto every dynamically-provisioned `pvc-*` volume, so a guarded sweeper can reclaim
+  # them by environment. Whether the volumes actually carry the tags is only observable after a real
+  # apply with live PVCs (A0.3-gated); this wires the driver config that makes it happen.
+  configuration_values = jsonencode({
+    controller = {
+      extraVolumeTags = var.eks_tags
+    }
+  })
+
   tags = merge(
     var.eks_tags,
     tomap({ eks_addon = "ebs_csi" })
