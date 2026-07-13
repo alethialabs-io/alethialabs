@@ -9,7 +9,7 @@ import type {
 	BetterAuthOptions,
 	SocialProviders,
 } from "better-auth";
-import { getAuthConfig, getGitlabBaseUrl } from "@/lib/config/auth";
+import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
@@ -22,6 +22,7 @@ import {
 	oauthApplication,
 	oauthConsent,
 	organization,
+	rateLimit,
 	session,
 	ssoProvider,
 	team,
@@ -163,8 +164,13 @@ export const auth = betterAuth({
 			oauthApplication,
 			oauthAccessToken,
 			oauthConsent,
+			// Built-in rate limiter's backing store (rateLimit: storage "database").
+			rateLimit,
 		},
 	}),
+	// DB-backed brute-force throttle for /api/auth/* (sign-in / email-OTP). Replica-
+	// consistent, unlike the per-process lib/rate-limit.ts. See getAuthRateLimit().
+	rateLimit: getAuthRateLimit(),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
 	// backstop (current_setting('app.current_owner')::uuid).
 	advanced: { database: { generateId: "uuid" } },
