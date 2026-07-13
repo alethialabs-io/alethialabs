@@ -13,6 +13,17 @@ type ProjectConfig struct {
 	CloudIdentityID  string `json:"cloud_identity_id"`
 	Provider         string `json:"provider"`
 
+	// EnvironmentID is the target environment's stable UUID (distinct from the human
+	// EnvironmentStage name). Emitted as the `alethia:environment-id` tag/label so a
+	// guarded sweeper can scope destroys to exactly one environment's cloud resources.
+	EnvironmentID string `json:"environment_id,omitempty"`
+
+	// Classification is the frozen per-dimension classification captured onto the job's
+	// config_snapshot by the console (B1.1): dimension key → sorted value slugs, with the
+	// environment overriding the project per dimension. B1.2 turns it into per-cloud
+	// resource tags/labels via cloud/tags.go. Empty for unclassified projects.
+	Classification map[string][]string `json:"classification,omitempty"`
+
 	Network       ProjectNetworkConfig       `json:"network"`
 	Cluster       ProjectClusterConfig       `json:"cluster"`
 	DNS           ProjectDNSConfig           `json:"dns"`
