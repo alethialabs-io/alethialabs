@@ -1,0 +1,1 @@
+ALTER TABLE "project_cluster" DROP COLUMN "argocd_admin_password";

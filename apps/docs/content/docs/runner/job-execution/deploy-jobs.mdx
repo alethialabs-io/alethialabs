@@ -68,7 +68,7 @@ Calls the provider-specific CLI:
 </Tabs>
 
 ### Install ArgoCD
-Deploys ArgoCD via Helm chart, waits for pods to be Ready, extracts admin password. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+Deploys ArgoCD via Helm chart and waits for pods to be Ready. The admin password stays in the cluster's `argocd-initial-admin-secret` (never extracted). See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
 ### Configure App of Apps
 Renders ArgoCD Application manifests with infrastructure facts (cluster name, DB endpoints, etc.) as Helm values. Applies manifests to the cluster.
@@ -76,8 +76,8 @@ Renders ArgoCD Application manifests with infrastructure facts (cluster name, DB
 ### Report results
 Job status → SUCCESS with execution metadata:
 - Cluster name, endpoint, ARN
-- ArgoCD URL and admin password
-- All Terraform outputs
+- ArgoCD URL
+- Terraform outputs, with credential-bearing keys scrubbed (kubeconfigs, passwords, tokens, generated secret values never leave the runner)
 - Execution timing per phase
 
 </Steps>

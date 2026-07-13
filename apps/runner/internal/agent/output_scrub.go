@@ -25,6 +25,11 @@ import (
 // non-secret handles `custom_secret_arns` / `custom_secret_names` / `custom_secret_versions`
 // and `rds_master_credentials_secret_arn`, none of which carry plaintext. Only value-bearing
 // keys are dropped, so those survive.
+//
+// KEEP IN SYNC with the console's ingest-side port of this list
+// (apps/console/lib/jobs/scrub-metadata.ts SENSITIVE_KEY_SUBSTRINGS): the console re-scrubs
+// every runner post at its own trust boundary, because legacy / mid-rollout / self-registered
+// runners bypass this file entirely.
 var sensitiveOutputSubstrings = []string{
 	"kubeconfig",
 	"kube_config",
