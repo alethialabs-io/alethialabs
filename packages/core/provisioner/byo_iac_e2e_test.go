@@ -57,6 +57,7 @@ package provisioner
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -280,10 +281,13 @@ func TestE2EByoIacLifecycleKind(t *testing.T) {
 	repo, branch, headSHA := initRepoWithModule(t, moduleSub, map[string]string{"main.tf": byoKindModuleTF})
 	repoURL := "file://" + repo
 
-	// ── (1) ATTACH → IAC_SCAN pins the SHA. Mirror the runner's executeIacScan core:
-	// clone at the ref, resolve HEAD, run the fail-closed static gate. The pinned SHA is
-	// what the console's finalizeIacScan writes back onto the row — and what the DEPLOY
-	// below actually applies (the writeback→deploy handoff). ──
+	// ── (1) ATTACH → IAC_SCAN pins the SHA. We mirror the runner's executeIacScan CORE
+	// (clone at the ref → resolve HEAD → fail-closed iacsafety gate; see iac_scan.go) rather
+	// than calling the method itself (it needs a full Runner + sandbox + api-client harness).
+	// The pin MECHANISM is identical, and the DEPLOY below re-runs the SAME real iacsafety
+	// gate inline (prepareByoIacWorkdir), so the gate is genuinely exercised on the apply
+	// path too. The pinned SHA is what the console's finalizeIacScan writes back onto the row
+	// — and what the DEPLOY actually applies (the writeback→deploy handoff). ──
 	scanClone := filepath.Join(t.TempDir(), "scan-clone")
 	sg := git.NewGIT(repoURL, scanClone, false)
 	if err := sg.Clone(branch, true); err != nil {
@@ -390,21 +394,36 @@ func TestE2EByoIacLifecycleKind(t *testing.T) {
 	// ── (3) state on the proxy, NOT persisted locally. The module declares no backend;
 	// the platform override forced the http proxy. The recording server proves state was
 	// POSTed there and carries the real kind resource. ──
+	// NOTE: "never persisted to local disk" is proven BY CONSTRUCTION, not by stat-ing for
+	// an absent terraform.tfstate — a tofu run has exactly one state backend, RunDeployV2
+	// owns (and deletes) its internal workdir, and the module declares no backend, so a
+	// non-empty POST here means the platform http override is the sole state sink.
 	stateBytes, have, posts, _ := rs.snapshot()
 	if !have || posts == 0 {
 		t.Fatalf("no state POSTed to the proxy (have=%v posts=%d) — the http backend override did not take effect (state may be on local disk)", have, posts)
 	}
-	if !strings.Contains(string(stateBytes), "kind_cluster") || !strings.Contains(string(stateBytes), clusterName) {
-		t.Fatalf("proxy state does not contain the applied kind_cluster/%s — apply may not have written real state:\n%s", clusterName, truncateState(stateBytes))
+	// Structural (not substring) proof: a MANAGED kind_cluster resource with a materialized
+	// instance is actually in the proxy state — a bare substring could match a dependency
+	// reference without the resource being managed.
+	if n := managedInstances(t, stateBytes, "kind_cluster"); n < 1 {
+		t.Fatalf("proxy state has no managed kind_cluster instance (got %d) — apply did not write real state:\n%s", n, truncateState(stateBytes))
 	}
-	t.Logf("proxy holds %d bytes of tofu state after %d POST(s), containing kind_cluster/%s", len(stateBytes), posts, clusterName)
+	// The cluster name also proves the frozen TF_VAR_alethia_* contract reached the customer
+	// module (the module named the cluster ${alethia_project}-${alethia_environment}).
+	if !strings.Contains(string(stateBytes), clusterName) {
+		t.Fatalf("proxy state does not mention cluster %s — the frozen TF_VAR_alethia_* context may not have reached the module:\n%s", clusterName, truncateState(stateBytes))
+	}
+	t.Logf("proxy holds %d bytes of tofu state after %d POST(s), with a managed kind_cluster/%s instance", len(stateBytes), posts, clusterName)
 
 	// ── (4) independent proof the cluster is REALLY up: a Ready node via the module's
 	// emitted kubeconfig output (not a side-effect), and `kind get clusters` lists it. ──
 	assertByoKubeconfigReady(t, result.Outputs)
 	assertKindClusterListed(t, ctx, clusterName)
 
-	// ── (5) DETECT_DRIFT → in_sync (nothing changed since apply). ──
+	// ── (5) DETECT_DRIFT → in_sync (nothing changed since apply). This proves the
+	// refresh-only drift job RAN over the live proxy state and reported in_sync; a
+	// mutate-then-detect positive (proving drift is CAUGHT) is a separate property the
+	// program tracks under the day-2 soak (A0.3), not this attach→destroy lifecycle. ──
 	dctx, dcancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer dcancel()
 	posture, _, err := RunDriftDetection(dctx, DriftParams{
@@ -448,8 +467,8 @@ func TestE2EByoIacLifecycleKind(t *testing.T) {
 	if !postHave {
 		t.Fatal("proxy has no state object after destroy — expected an emptied state, not a missing one")
 	}
-	if strings.Contains(string(postState), "kind_cluster") || strings.Contains(string(postState), clusterName) {
-		t.Fatalf("post-destroy proxy state still references the kind cluster — destroy did not clear managed resources:\n%s", truncateState(postState))
+	if n := managedResourceInstances(t, postState); n != 0 {
+		t.Fatalf("post-destroy proxy state still has %d managed resource instance(s) — destroy did not clear live infra:\n%s", n, truncateState(postState))
 	}
 	t.Log("BYO IaC lifecycle proven: scan-pin → deploy → state-on-proxy → in_sync drift → destroy → detach-safe")
 }
@@ -679,6 +698,50 @@ func outputString(outputs map[string]interface{}, key string) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+// tfState is the minimal OpenTofu state (v4) shape needed to assert what is MANAGED.
+type tfState struct {
+	Resources []struct {
+		Mode      string            `json:"mode"`
+		Type      string            `json:"type"`
+		Instances []json.RawMessage `json:"instances"`
+	} `json:"resources"`
+}
+
+// managedInstances returns the count of materialized instances of a MANAGED resource of
+// the given type in the tofu state — a structural proof the resource actually exists in
+// state, stronger than a substring match.
+func managedInstances(t *testing.T, stateBytes []byte, typ string) int {
+	t.Helper()
+	var st tfState
+	if err := json.Unmarshal(stateBytes, &st); err != nil {
+		t.Fatalf("parse tofu state: %v\n%s", err, truncateState(stateBytes))
+	}
+	n := 0
+	for _, r := range st.Resources {
+		if r.Mode == "managed" && r.Type == typ {
+			n += len(r.Instances)
+		}
+	}
+	return n
+}
+
+// managedResourceInstances returns the total count of managed resource instances in the
+// state (0 ⇒ everything was destroyed).
+func managedResourceInstances(t *testing.T, stateBytes []byte) int {
+	t.Helper()
+	var st tfState
+	if err := json.Unmarshal(stateBytes, &st); err != nil {
+		t.Fatalf("parse tofu state: %v\n%s", err, truncateState(stateBytes))
+	}
+	n := 0
+	for _, r := range st.Resources {
+		if r.Mode == "managed" {
+			n += len(r.Instances)
+		}
+	}
+	return n
 }
 
 func truncateState(b []byte) string {
