@@ -21,14 +21,13 @@ A UUID identifying this login attempt.
 ### Browser opens
 Navigates to `{console_url}/cli/login?device_code={code}`.
 
-### Authenticate in browser
-Log in with any OAuth provider (GitHub, GitLab, Bitbucket, Google). A 6-character verification code is displayed.
+### Approve in browser
+Sign in with any OAuth provider (GitHub, GitLab, Bitbucket, Google) or email OTP. Console binds the pending
+`device_code` to your account and approves it — nothing is typed back into the terminal.
 
-### Enter code in CLI
-Type the code at the Bubble Tea TUI prompt. The CLI shows a spinner while waiting.
-
-### Token exchange
-CLI sends the device code + verification code to Alethia. On success, receives a JWT pair (access + refresh).
+### CLI polls for the token
+While you approve in the browser, the CLI shows a spinner and polls `POST /api/auth/cli/exchange` with the
+`device_code`. Console returns HTTP 404 while pending; once approved it returns a JWT pair (access + refresh).
 
 ### Tokens stored
 Saved to `~/.config/alethia/credentials.json`.

@@ -23,7 +23,7 @@ After cluster provisioning, Runner installs ArgoCD and deploys a set of supporti
 
 Each template is a Kubernetes manifest with Helm-style placeholders. During deployment, the Runner:
 
-1. Extracts **infrastructure facts** from Terraform outputs (cluster name, VPC ID, database endpoints, etc.)
+1. Extracts **infrastructure facts** from tofu outputs (cluster name, VPC ID, database endpoints, etc.)
 2. Renders the facts into a Helm values file
 3. Applies each component manifest as an ArgoCD Application
 

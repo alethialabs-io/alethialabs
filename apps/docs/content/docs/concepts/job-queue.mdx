@@ -5,7 +5,10 @@ description: How infrastructure operations are queued, claimed atomically, and e
 
 # Job Queue Pattern
 
-Every infrastructure operation in the platform — planning, deploying, destroying, connecting cloud accounts — is modeled as a **job** in a PostgreSQL queue. Runners poll for jobs, claim them atomically, execute them, and report results.
+Every provisioning operation in the platform — planning, deploying, destroying, drift detection,
+bring-your-own scans — is modeled as a **job** in a PostgreSQL queue. Runners poll for jobs, claim
+them atomically, execute them, and report results. (Cloud-account connection is *not* a job; it runs
+server-side in the Console — see [Connectors](/concepts/connectors).)
 
 <img src="/docs/diagrams/concepts/job-queue.svg" alt="Job Queue" />
 
@@ -15,35 +18,45 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 
 - **Decoupling** — the web UI and CLI queue work without waiting for completion
 - **Exactly-once execution** — atomic claiming prevents two Runners from running the same job
-- **Resumability** — if a Runner dies, the job can be retried from persisted Terraform state
+- **Resumability** — if a runner dies, the job can be retried from persisted OpenTofu state
 - **Auditability** — every operation is logged with timestamps, status, and metadata
 
 ## Job Types
 
+The common provisioning jobs are below; the full `provision_job_type` catalog (including
+`ANALYZE_REPO`, `DETECT_DRIFT`, `AUDIT`, `CHART_SCAN`, `IAC_SCAN`, and `STATE_SURGERY`) is documented
+in the [Domain Model](/concepts/domain-model#job-types) and the [Glossary](/concepts/glossary#job-types-at-a-glance).
+
 | Type | Purpose | Triggered By |
 |------|---------|-------------|
-| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Project |
-| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Project |
-| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Project |
-| `DEPLOY_RUNNER` | Provision Runner infrastructure (ECS task, IAM roles) | Deploying a self-operated Runner |
-| `UPDATE_RUNNER` | Update Runner to latest release | Clicking "Update" on a Runner |
-| `DESTROY_RUNNER` | Tear down Runner infrastructure | Removing a deployed Runner |
+| `PLAN` | `tofu plan` + optional Infracost analysis | Planning an environment |
+| `DEPLOY` | `tofu plan` → verify gate → `tofu apply` → install ArgoCD | Applying an environment |
+| `DESTROY` | `tofu destroy` with graceful cleanup | Destroying an environment |
+| `DEPLOY_RUNNER` | Provision a self-operated runner's infrastructure | Deploying a self-operated runner |
+| `UPDATE_RUNNER` | Roll a self-operated runner to the latest release | Updating a runner |
+| `DESTROY_RUNNER` | Tear down a self-operated runner's infrastructure | Removing a deployed runner |
 
 ## Job Lifecycle
 
-```
-QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
-                          │
-                          ├──► FAILED
-                          │
-                          └──► CANCELLED
-```
+<Mermaid chart={`
+stateDiagram-v2
+  [*] --> QUEUED
+  QUEUED --> CLAIMED: claim_next_job()
+  CLAIMED --> PROCESSING: execution starts
+  PROCESSING --> SUCCESS
+  PROCESSING --> FAILED
+  QUEUED --> CANCELLED: user cancels
+  CLAIMED --> CANCELLED
+  SUCCESS --> [*]
+  FAILED --> [*]
+  CANCELLED --> [*]
+`} />
 
 | Status | Meaning |
 |--------|---------|
 | `QUEUED` | Waiting for a Runner to pick it up |
 | `CLAIMED` | A Runner has locked it (prevents double-execution) |
-| `PROCESSING` | Runner is actively running Terraform |
+| `PROCESSING` | Runner is actively running `tofu` |
 | `SUCCESS` | Completed successfully |
 | `FAILED` | Failed with error message |
 | `CANCELLED` | User cancelled before completion |
@@ -93,22 +106,23 @@ For DEPLOY jobs, a **plan hash** is validated: if the Project config changed sin
 <Steps>
 
 ### Job Created
-User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `alethia plan` / `alethia apply` / `alethia destroy` in the CLI). A `jobs` row is inserted with status `QUEUED`.
+User plans / applies / destroys an environment in the Console (or runs `alethia project plan` /
+`alethia project apply` / `alethia project destroy` in the CLI). A `jobs` row is inserted with status `QUEUED`.
 
 ### Runner Claims Job
-A Runner's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the Runner proceeds.
+A runner's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the runner proceeds.
 
 ### Credential Assumption
-The Runner reads the `cloud_identity` from the job and assumes temporary credentials — STS AssumeRole (AWS), WIF token exchange (GCP), or federated identity (Azure).
+The runner reads the `cloud_identity` from the job and assumes temporary, **keyless** credentials — `AssumeRoleWithWebIdentity` (AWS), Workload Identity Federation token exchange (GCP), or federated identity (Azure) — using a minted OIDC assertion, no static key. See [Security](/concepts/security).
 
 ### Execution
-The Runner runs the job-type-specific logic (Terraform plan/apply/destroy, ArgoCD install, etc.) while streaming logs.
+The runner runs the job-type-specific logic (`tofu` plan/apply/destroy, ArgoCD install, etc.) while streaming logs.
 
 ### Result Reporting
-On completion, the Runner calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (Terraform outputs, cost data, cluster info).
+On completion, the runner calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (`tofu` outputs, cost data, cluster info, and the verify report).
 
 ### Finalization
-For DEPLOY jobs, Console calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the Project's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
+For DEPLOY jobs, the Console calls `finalizeDeployment()` to extract cluster metadata from `tofu` outputs and update the environment's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
 
 </Steps>
 
@@ -120,7 +134,7 @@ When a Runner dies mid-job:
 2. Job stays in PROCESSING with no new log updates
 3. After 5 minutes of no log activity, Console marks the job FAILED
 4. User can **retry** the job — creates a new job with the same config
-5. Terraform state is preserved in S3-compatible storage, so the retry continues from the last successful state
+5. OpenTofu state is preserved in S3-compatible storage, so the retry continues from the last successful state
 
 ## Real-time Status Updates
 

@@ -13,36 +13,46 @@ A **permission** is a single `resource:action` pair, e.g. `project:deploy`. Perm
 
 ### Resources
 
+The resource types are the `RESOURCES` union in `apps/console/lib/authz/registry.ts`.
+
 | Resource | What it is |
 |---|---|
 | `org` | An organization (the tenancy boundary). |
-| `project` | An infrastructure definition (cluster + databases + networking + …). |
+| `project` | An infrastructure application (owns N [environments](/concepts/glossary), each with a cluster + databases + networking + …). |
 | `runner` | An execution agent that runs provisioning jobs. |
-| `cloud_identity` | A connected cloud account (AWS / GCP / Azure). |
-| `job` | A provisioning job (plan / deploy / destroy / …). |
-| `connector` | A git / integration connection. |
+| `cloud_identity` | A connected **cloud account** — the keyless-OIDC credential anchor for AWS / GCP / Azure / Hetzner. This is the RBAC resource for a cloud account. |
+| `job` | A provisioning job (`plan` / `deploy` / `destroy` / …). |
+| `connector` | A **git / pluggable integration provider** connection (e.g. GitHub, GitLab). The connector catalog names provider *types*; a connected cloud *account* is a `cloud_identity`, not a `connector`. |
 | `member` | A member of an organization. |
 | `activity` | The Activity log. |
 | `billing` | Subscription & billing. |
+| `alert` | Alert channels, rules, and deliveries. |
+| `fleet` | Managed warm-pool (in-app scaler) config. Provisions real cloud VMs, so it's an owner/admin-only capability. |
+| `support_case` | A help-desk support case. Any member may open/track/reply to their own; `manage_support` is the staff-triage capability. |
 
 ### The matrix
 
-A ✓ means the `resource:action` permission exists and can be granted.
+Each resource permits an exact set of actions — the `MATRIX` in `registry.ts`. A `resource:action` pair not listed here is not a permission and can never be granted (default-deny by construction).
 
-| Resource | view | create | edit | plan | deploy | destroy | manage_* | activity |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| `org` | ✓ | | ✓ | | | | `manage_billing` | |
-| `project` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | |
-| `runner` | ✓ | ✓ | ✓ | | ✓ | ✓ | | |
-| `cloud_identity` | ✓ | | | | | | `manage_identities` | |
-| `job` | ✓ | ✓ | ✓ | | | | | |
-| `connector` | ✓ | | | | | | `manage_connectors` | |
-| `member` | ✓ | | | | | | `manage_members` | |
-| `activity` | | | | | | | | `view_activity`, `export_activity` |
-| `billing` | | | | | | | `manage_billing` | |
+| Resource | Actions |
+|---|---|
+| `org` | `view` · `edit` · `manage_billing` |
+| `project` | `view` · `create` · `edit` · `plan` · `deploy` · `destroy` |
+| `runner` | `view` · `create` · `edit` · `deploy` · `destroy` |
+| `cloud_identity` | `view` · `manage_identities` · `test` |
+| `job` | `view` · `create` · `edit` |
+| `connector` | `view` · `manage_connectors` |
+| `member` | `view` · `manage_members` |
+| `activity` | `view_activity` · `export_activity` |
+| `billing` | `manage_billing` |
+| `alert` | `view_alerts` · `manage_alerts` |
+| `fleet` | `view` · `create` · `edit` · `destroy` |
+| `support_case` | `view` · `create` · `reply` · `manage_support` |
+
+The `test` action re-runs a cloud identity's server-side connection verify; `plan` / `deploy` / `destroy` map to the corresponding `tofu` provisioning jobs.
 
 <Callout type="info">
-Adding a capability is a **one-line change** to the registry in the source. Because the resource and action sets are exhaustive string unions, a new action that isn't handled becomes a compile error until it's wired through — the matrix can't silently fall out of sync.
+Adding a capability is a **one-line change** to the `RESOURCES` / `ACTIONS` / `MATRIX` registry in `registry.ts`. Because the resource and action sets are exhaustive string-literal unions, a new action that isn't handled becomes a compile error until it's wired through — the matrix can't silently fall out of sync, and the `permission` / `role` tables are seeded from this file.
 </Callout>
 
 ## The four built-in roles
@@ -57,19 +67,21 @@ Roles are bundles of permissions. There are four built-in templates:
     Everything **except billing**. Can manage members, identities, integrations, and all infrastructure — but not the subscription.
   </Card>
   <Card title="operator">
-    Operate infrastructure: `view` / `create` / `edit` / `plan` / `deploy` / `destroy` on projects, runners, and jobs. **Cannot** manage cloud identities, members, billing, or the Activity log.
+    Operate infrastructure: `view` / `create` / `edit` / `plan` / `deploy` / `destroy` on projects, runners, and jobs, plus `view` on the org and connectors and read access to alerts (`view_alerts`). **Cannot** manage cloud identities, members, billing, the managed fleet, or the Activity log.
   </Card>
   <Card title="viewer">
-    Read-only. Can `view` everything but change nothing.
+    Read-only. Can `view` everything (including alert config) but change nothing — plus open/reply to their own support cases.
   </Card>
 </Cards>
 
-| Role | Infra (projects/runners/jobs) | Cloud identities | Members | Integrations | Activity | Billing |
-|---|---|---|---|---|---|---|
-| **owner** | full | manage | manage | manage | view + export | manage |
-| **admin** | full | manage | manage | manage | view + export | — |
-| **operator** | full | — | — | — | — | — |
-| **viewer** | view only | view | view | view | — | — |
+| Role | Infra (projects/runners/jobs) | Cloud identities | Connectors | Members | Alerts | Fleet | Activity | Billing |
+|---|---|---|---|---|---|---|---|---|
+| **owner** | full | manage | manage | manage | manage | manage | view + export | manage |
+| **admin** | full | manage | manage | manage | manage | manage | view + export | — |
+| **operator** | full | — | view | — | view | — | — | — |
+| **viewer** | view only | view | view | view | view | view | — | — |
+
+Every role also holds `view` / `create` / `reply` on its own support cases; `manage_support` (see-all + triage) stays owner/admin. These summaries are derived by `BUILT_IN_ROLES` in `registry.ts` — `owner` = every permission, `admin` = everything except the `billing:` keys, `operator` and `viewer` as above.
 
 <Callout type="warn">
 Custom roles (org-specific copies of these templates with tweaks) are an **Enterprise** feature. Community uses the four built-ins.
@@ -95,12 +107,16 @@ grant: you   → owner    → org                    # the Community default —
 
 ## Inheritance: the Org → Project hierarchy
 
-Resources form a tree:
+Resources form a tree — the parent chain in `apps/console/lib/authz/fga-hierarchy.ts`. `project`, `runner`, `cloud_identity`, and `connector` all hang directly off the `org`:
 
-```
-organization
-└── project
-```
+<Mermaid chart={`
+flowchart TD
+  org[organization]
+  org --> project
+  org --> runner
+  org --> cloud_identity
+  org --> connector
+`} />
 
 A grant **flows downward**. If you grant someone `operator` on the **organization**, they automatically have those permissions on **every project inside it** — you don't grant each project separately. A project-scoped grant covers just that project.
 
@@ -116,4 +132,4 @@ This is why a handful of grants covers an entire estate: assign at the highest s
 
 - **List views** only show resources you can `view` — the list itself is filtered by your grants, not just hidden in the UI.
 - **Actions** (deploy, destroy, invite, …) are checked the instant you trigger them; if you lack the permission you get a clear *Forbidden*, and the attempt is recorded in the Activity log.
-- **Community**: with a single org-wide `owner` grant, you can do everything in your own workspace — the role machinery is invisible until you add teammates under [Enterprise organizations](/access-control/organizations).
+- **Community**: with a single org-wide `owner` grant, you can do everything in your own personal organization — the role machinery is invisible until you add teammates under [Enterprise organizations](/access-control/organizations).

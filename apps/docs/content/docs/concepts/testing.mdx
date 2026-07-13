@@ -20,7 +20,7 @@ whose logic lives in server actions over a database):
 | **Static analysis** | Type safety, lint rules, dead-code & boundary checks | TypeScript (`tsc`), Biome / ESLint |
 | **Unit** | Pure business logic — billing math, entitlements, plan resolution, routing/slug rules, input validation | Vitest |
 | **Integration** (the bulk) | Server actions and **real-database** queries, aggregations, and **row-level-security isolation** | Vitest + Postgres |
-| **End-to-end** | Critical user journeys — sign-in, workspace, usage, upgrade | Playwright |
+| **End-to-end** | Critical user journeys — sign-in, create an org/project, deploy an environment, usage, upgrade | Playwright |
 
 Integration is intentionally the widest band: a test that runs a real SQL aggregation or a
 whole server action against a live database catches far more than a mocked unit test. The Go

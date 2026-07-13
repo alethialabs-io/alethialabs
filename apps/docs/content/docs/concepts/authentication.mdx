@@ -38,7 +38,10 @@ The user grants the application access to their account.
 The provider redirects back to `/api/auth/[...all]` with an authorization code. Better Auth exchanges it for access and refresh tokens.
 
 ### Session created
-Better Auth creates a session with a JWT. The JWT is stored in an HTTP-only cookie and sent with every request.
+Better Auth creates a **server-side session** (a row in the `session` table) and sets a signed,
+HTTP-only session cookie. The web session is a cookie-backed Better Auth session — **not** a JWT (the
+`jwt()` plugin is not enabled); JWTs are used only for the CLI and workload identity (see
+[**Standards → JOSE**](/standards/jose)).
 
 </Steps>
 
@@ -49,7 +52,7 @@ For password-less email sign-in, the user enters their email, receives a **6-dig
 ### Session Management
 
 - Sessions are managed by Better Auth (creation, refresh, revocation)
-- The session JWT lives in an HTTP-only cookie; the Next.js middleware validates it on every request
+- The session lives in a signed HTTP-only cookie backed by the `session` table; the Next.js middleware validates it on every request
 - Data access runs through the app's Policy Decision Point (PDP), which sets the active org via `set_config('app.current_org', …)` before queries
 - Coarse Postgres RLS keyed on `org_id` enforces per-organization data isolation (not `auth.uid()`)
 
@@ -59,7 +62,11 @@ org/team model.
 
 ## CLI Authentication (alethia)
 
-alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern used by GitHub CLI, Azure CLI, and AWS SSO.
+alethia uses a **Device Authorization Grant** flow ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628))
+— the same browser-hands-off-to-terminal pattern as GitHub CLI, Azure CLI, and AWS SSO. Alethia's flow
+is a **simplified variant**: the CLI generates the `device_code` itself and binds it directly in the
+browser URL, so there is no separately-typed `user_code`. See [**Standards → Device Code**](/standards/device-code)
+for the full protocol mapping.
 
 ### Why Device Code?
 
@@ -71,20 +78,21 @@ alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern 
 
 <Steps>
 
-### CLI generates device code
-`alethia login` generates a UUID device code and opens the browser to `{console_url}/cli/login?device_code={code}`.
+### CLI generates a device code
+`alethia login` generates a UUID `device_code` and opens the browser to `{console_url}/cli/login?device_code={code}`.
 
-### User authenticates in browser
-The user is already logged into Console (or logs in via OAuth). The CLI login page shows a 6-character verification code.
+### User approves in the browser
+The user is already signed into Console (or signs in via OAuth / email OTP). The Console page binds the
+pending `device_code` to the authenticated user and approves it — no code is typed back into the terminal.
 
-### User enters code in CLI
-The user types the verification code at the Bubble Tea TUI prompt.
-
-### Token exchange
-The CLI sends `POST /api/auth/cli/exchange` with the device code and verification code. Console validates the pair and returns a CLI-specific JWT.
+### CLI polls for the token
+While the user approves, the CLI polls `POST /api/auth/cli/exchange` with the `device_code`. Console
+returns **HTTP 404** while the request is still pending; once approved it returns a CLI-specific JWT pair.
 
 ### Token stored locally
-The refresh token is saved to `~/.config/alethia/auth.json`. The access token (1-hour TTL) is used for API calls. When it expires, the CLI transparently refreshes via `POST /api/auth/cli/refresh`.
+The tokens are saved to `~/.config/alethia/credentials.json` (`os.UserConfigDir()/alethia/credentials.json`).
+The access token (1-hour TTL) is used for API calls; when it expires the CLI transparently refreshes via
+`POST /api/auth/cli/refresh` using the 90-day refresh token.
 
 </Steps>
 
@@ -105,6 +113,11 @@ CLI tokens are signed with HS256 using `CLI_JWT_SECRET`:
 
 - **Access token**: 1-hour TTL, used in `Authorization: Bearer` header
 - **Refresh token**: 90-day TTL, used only to obtain new access tokens
+
+<Callout type="warn">
+The `iss`/`aud` values above are the current placeholder claims (`urn:example:issuer` / `urn:example:audience`)
+and are slated to be set to real Alethia identifiers. Treat them as implementation detail, not a stable contract.
+</Callout>
 
 ## Runner Authentication
 
@@ -142,6 +155,6 @@ The plaintext token is shown only once at registration. If lost, the Runner must
 
 | Component | Method | Token Lifetime | Storage |
 |-----------|--------|---------------|---------|
-| **Console** (web) | Better Auth (OAuth + email OTP) | Session-based (auto-refresh) | HTTP-only cookie |
-| **alethia** (CLI) | Device Code Grant | Access: 1h, Refresh: 90d | `~/.config/alethia/auth.json` |
+| **Console** (web) | Better Auth (OAuth + email OTP) | Session-based (auto-refresh) | Signed HTTP-only cookie (session table) |
+| **alethia** (CLI) | Device Code Grant (RFC 8628 variant) | Access: 1h, Refresh: 90d | `~/.config/alethia/credentials.json` |
 | **Runner** (agent) | SHA-256 token hash | Permanent (until re-registration) | Environment variable |

@@ -5,7 +5,7 @@ description: Scoped, project-scoped API token — encrypted at rest, decrypted o
 
 # Hetzner Connector
 
-Hetzner Cloud integration is **token-based**. Unlike AWS, GCP, Azure, and Alibaba — which are
+Connecting Hetzner Cloud registers a **cloud identity** (`cloud_identities`) that is **token-based**. Unlike AWS, GCP, Azure, and Alibaba — which are
 **keyless** (Alethia federates into a role you grant via short-lived, minted OIDC assertions) —
 Hetzner Cloud offers **no OIDC or workload-identity federation**. Its only auth primitive is a
 **project-scoped API token**. So Alethia connects with a token you create, **encrypted at rest
@@ -28,7 +28,7 @@ VMs (ARM `CAX` or x86 `CX`/`CPX`/`CCX`), with Cilium networking and the Hetzner 
 storage. Data services (Postgres, cache, queue) that would be managed cloud resources on a
 hyperscaler run **in-cluster via Helm** — CloudNativePG (Postgres), Valkey (cache), and RabbitMQ
 (queue) — deployed through ArgoCD. See
-[Health &amp; Inventory](/console/connectors/health-and-inventory) for how connections are probed.
+[Health &amp; Inventory](/console/connectors/health-and-inventory) for how cloud identities are probed.
 
 ## Setup
 
@@ -57,7 +57,7 @@ hyperscaler run **in-cluster via Helm** — CloudNativePG (Postgres), Valkey (ca
     zero-storage path for federation-less clouds.
 
     ### Connect
-    Mark the connection self-managed; provisioning jobs claimed by your runner use its environment's
+    Mark the cloud identity self-managed; provisioning jobs claimed by your runner use its environment's
     `HCLOUD_TOKEN` and Alethia never persists a credential.
 
     </Steps>
@@ -66,11 +66,11 @@ hyperscaler run **in-cluster via Helm** — CloudNativePG (Postgres), Valkey (ca
 
 ## Verification
 
-After you submit, Alethia verifies the connection **instantly, server-side** (no runner): it decrypts
+After you submit, Alethia verifies the cloud identity **instantly, server-side** (no runner): it decrypts
 the stored token and calls a cheap authenticated Hetzner Cloud API endpoint
 (`GET https://api.hetzner.cloud/v1/datacenters`).
 
-- `200` → the connection is **Connected**
+- `200` → the cloud identity is **Connected**
 - `401` / `403` → the token was rejected (bad or revoked) → **Disconnected**
 
 On success, Alethia also syncs the project's **regions** (used for placement) into the asset

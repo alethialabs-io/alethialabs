@@ -1,47 +1,67 @@
 ---
 title: Job Execution Overview
-description: How Runner claims and executes each job type.
+description: How the runner claims and executes each job type.
 ---
 
 # Job Execution
 
-All jobs share the same claiming mechanism and credential handling, but differ in what they execute. For the queue mechanics, see [Job Queue Pattern](/concepts/job-queue).
+All jobs share the same claiming mechanism and keyless credential handling, but differ in what they
+execute. For the queue mechanics, see [Job Queue Pattern](/concepts/job-queue).
 
 ## Claiming
 
-Every 10 seconds, the Runner calls `POST /api/jobs/claim`. The server runs `claim_next_job()` — a PostgreSQL function using `FOR UPDATE SKIP LOCKED` for atomic, exactly-once claiming.
+Every 10 seconds the runner calls `POST /api/jobs/claim`. The server runs `claim_next_job()` — a
+PostgreSQL function using `FOR UPDATE SKIP LOCKED` for atomic, exactly-once claiming. Job status
+walks `QUEUED → CLAIMED → PROCESSING → SUCCESS | FAILED | CANCELLED`.
 
-If a job is returned, the Runner:
-1. Updates status to PROCESSING
-2. Reads the project configuration and cloud identity from the job
-3. Assumes cloud credentials ([details](/runner/cloud-credentials))
-4. Executes job-type-specific logic
-5. Updates status to SUCCESS or FAILED
+When a job is returned, the runner:
+1. Sets status to `PROCESSING`.
+2. Reads the environment config snapshot and cloud identity from the claim.
+3. Mints cloud credentials keylessly ([details](/runner/cloud-credentials)).
+4. Dispatches on `types.JobType` (the switch in `internal/agent/runner.go`) to the handler.
+5. Sets status to `SUCCESS` or `FAILED`.
 
-## Job Types
+## Job types
+
+The dispatch switch routes each of these `provisionJobType` values:
+
+| Job type | Handler | Does |
+|----------|---------|------|
+| `PLAN` | `executePlan` | `tofu plan` + verify gate + Infracost → plan artifact. [Details](/runner/job-execution/plan-jobs) |
+| `DEPLOY` | `executeDeploy` | verify gate (fail-closed) → `tofu apply` → keyless kubeconfig → ArgoCD. [Details](/runner/job-execution/deploy-jobs) |
+| `DESTROY` | `executeDestroy` | `tofu destroy`. [Details](/runner/job-execution/destroy-jobs) |
+| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | Provision, update, or tear down a self-deployed runner. [Details](/runner/job-execution/runner-jobs) |
+| `ANALYZE_REPO` | `executeAnalyzeRepo` | Clone + statically scan a repo into a `RepoDigest`. |
+| `DETECT_DRIFT` | `executeDriftDetection` | `tofu plan -refresh-only` → `drift.Analyze` → post a `Posture`. |
+| `AUDIT` | `executeAudit` | Run the Elench verify engine over a bring-your-own plan or k8s manifests → post `verify_result`. Provisions nothing. |
+| `CHART_SCAN` | `executeChartScan` | Render a BYO Helm chart to manifests + scan it (zero secrets, deny-all egress) — always sandboxed. |
+| `IAC_SCAN` | `executeIacScan` | Static scan of bring-your-own IaC. |
+| `STATE_SURGERY` | `executeStateSurgery` | Operator-driven tofu state repair. |
 
 <Cards>
   <Card title="Plan Jobs" href="/runner/job-execution/plan-jobs">
-    terraform plan + Infracost analysis
+    tofu plan + verify gate + Infracost
   </Card>
   <Card title="Deploy Jobs" href="/runner/job-execution/deploy-jobs">
-    terraform apply + ArgoCD installation
+    verify gate + tofu apply + ArgoCD
   </Card>
   <Card title="Destroy Jobs" href="/runner/job-execution/destroy-jobs">
-    terraform destroy + cleanup
+    tofu destroy + cleanup
   </Card>
   <Card title="Runner Lifecycle Jobs" href="/runner/job-execution/runner-jobs">
     DEPLOY_RUNNER, UPDATE_RUNNER, DESTROY_RUNNER
   </Card>
 </Cards>
 
-## Error Handling
+## Error handling
 
 When any step fails:
-1. Error logged to STDERR stream
-2. Job status set to FAILED with error message
-3. Terraform state preserved (partial apply state saved to [S3-compatible state](/concepts/terraform-state))
-4. Cloud credentials cleared (deferred cleanup always runs)
-5. Runner returns to the poll loop for the next job
+1. The error is logged to the STDERR stream.
+2. Job status is set to `FAILED` with the error message.
+3. tofu state is preserved through the [Console state proxy](/concepts/terraform-state) (partial
+   apply state, with fenced locks so a reclaimed lock can't clobber a slow writer).
+4. Cloud credentials are cleared (the deferred cleanup always runs).
+5. The runner returns to the poll loop for the next job.
 
-Users can retry failed jobs — since state is preserved, retries continue from the last successful resource rather than starting over.
+Users can retry failed jobs — since state is preserved, retries continue from the last successful
+resource rather than starting over.

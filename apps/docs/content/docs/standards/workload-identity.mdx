@@ -1,0 +1,109 @@
+---
+title: Cloud Workload Identity
+description: Keyless cloud connectors — one Alethia OIDC issuer federates into AWS (AssumeRoleWithWebIdentity), GCP (Workload Identity Federation), and Azure (federated identity). No static cloud secrets are ever stored.
+---
+
+# Cloud Workload Identity
+
+## What the standard is
+
+**Workload identity federation** lets a workload prove *what it is* to a cloud without holding a
+long-lived cloud key. The workload obtains a short-lived, signed **OIDC token** from an issuer the
+cloud trusts, presents it to the cloud's token exchange, and receives temporary cloud credentials in
+return. Trust is established once (the cloud is configured to trust the issuer's URL, its published
+JWKS, and a specific `sub`/`aud`); after that every access is a fresh, expiring assertion. The static
+attack surface — access keys, service-account JSON, client secrets — disappears.
+
+Each major cloud has its own exchange built on the same OIDC primitive:
+
+- **AWS** — STS `AssumeRoleWithWebIdentity` against an IAM OIDC identity provider.
+- **GCP** — Workload Identity Federation (STS token exchange into a workload identity pool).
+- **Azure** — a federated identity credential on an Entra ID app (client-assertion grant).
+
+## How Alethia implements it
+
+The control plane **is its own OIDC issuer**, purpose-built for machine federation and nothing else
+(`apps/console/lib/oidc/issuer.ts`). It mints short-lived **RS256** JWTs and publishes the matching
+public material so any cloud can verify them:
+
+| Property | Value |
+|---|---|
+| Issuer | `${APP_URL}/api/oidc` |
+| Discovery | `/api/oidc/.well-known/openid-configuration` |
+| JWKS | `/api/oidc/jwks` |
+| Signing alg | `RS256` (widest cloud-federation compatibility) |
+| Subject (`sub`) | `alethia-connector` (single, stable, non-secret) |
+| Max token TTL | 600 seconds |
+| Signing key | `ALETHIA_OIDC_SIGNING_KEY` (PKCS8, vault-held) `+ ALETHIA_OIDC_SIGNING_KEY_PREVIOUS` for zero-downtime rotation |
+
+`mintWorkloadToken()` produces a per-cloud-scoped assertion (audience set per provider); the same
+issuer serves both the [Console](/concepts/glossary) (server-side inventory/health) and the
+[runner](/runner) (provisioning). **No platform cloud account and no stored customer secret exists
+anywhere on the Alethia side** — revocation is the customer deleting the trust in their own cloud.
+
+<Mermaid chart={`
+flowchart LR
+  ISS[Alethia OIDC issuer<br/>api/oidc  RS256] -->|mint sub=alethia-connector| TOK[Short-lived JWT]
+  TOK --> AWS[AWS STS<br/>AssumeRoleWithWebIdentity]
+  TOK --> GCP[GCP STS<br/>Workload Identity Federation]
+  TOK --> AZ[Azure Entra<br/>federated credential]
+  AWS --> CREDS[Temp cloud creds<br/>~1h]
+  GCP --> CREDS
+  AZ --> CREDS
+  JWKS[JWKS + discovery docs] -.verify.-> AWS
+  JWKS -.verify.-> GCP
+  JWKS -.verify.-> AZ
+`} />
+
+### Per-cloud exchange
+
+<Tabs items={["AWS", "GCP", "Azure", "Hetzner"]}>
+<Tab value="AWS">
+
+`apps/console/lib/cloud-providers/session/aws.ts`. The customer's IAM role trusts the Alethia issuer
+**directly** as an IAM OIDC provider, so the console/runner federate straight in via
+`AssumeRoleWithWebIdentityCommand` (`@aws-sdk/client-sts`) presenting a freshly minted assertion.
+`AssumeRoleWithWebIdentity` is an unauthenticated STS action — **no platform AWS account, no
+`ExternalId`, no stored key**. Session ≈ 1 hour, auto-refreshed.
+
+</Tab>
+<Tab value="GCP">
+
+`apps/console/lib/cloud-providers/session/gcp.ts` + `gcp-wif.ts`. A direct-OIDC Workload Identity
+Federation config exchanges the Alethia-minted JWT for a GCP access token. The audience encodes the
+pool/provider:
+`//iam.googleapis.com/projects/<n>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`.
+Connection validation asserts the audience contains `workloadIdentityPools` (`connections.ts`).
+
+</Tab>
+<Tab value="Azure">
+
+`apps/console/lib/cloud-providers/session/azure.ts`. Alethia registers **one multi-tenant Entra app**
+(`ALETHIA_AZURE_CLIENT_ID`) whose **federated-identity credential** trusts the Alethia issuer. The
+console authenticates as that app via a client assertion (the minted JWT) — keyless, no client
+secret. The federated-credential `subject` must equal `alethia-connector`.
+
+</Tab>
+<Tab value="Hetzner">
+
+Hetzner is a first-class provider for cheap Talos clusters, but **token authentication is its
+ceiling** — it has no OIDC federation primitive, so there is no keyless parity. The API token is the
+credential. Do not expect workload-identity behaviour here.
+
+</Tab>
+</Tabs>
+
+<Callout type="info">
+  Every [cloud identity](/concepts/glossary) query filters by `provider` — a cross-provider leak
+  guard, so an AWS role can never be resolved for a GCP-scoped lookup. The runner inherits the same
+  keyless posture and additionally holds **no object-storage credentials**: `tofu` state flows through
+  the Console state proxy (`backend "http"` → `/api/jobs/{id}/state`). See
+  [concepts/security](/concepts/security).
+</Callout>
+
+## Authoritative reference
+
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) — the token format clouds verify.
+- [AWS — `AssumeRoleWithWebIdentity`](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRoleWithWebIdentity.html) and [creating an IAM OIDC provider](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc.html).
+- [GCP — Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation).
+- [Azure — Workload identity federation](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation).

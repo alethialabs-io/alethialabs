@@ -1,93 +1,117 @@
 ---
 title: Deploy Jobs
-description: How Runner executes DEPLOY jobs — terraform apply, kubeconfig, and ArgoCD installation.
+description: How the runner executes DEPLOY jobs — the verify gate, tofu apply, keyless kubeconfig, and ArgoCD.
 ---
 
 # Deploy Jobs
 
-DEPLOY jobs apply the Terraform plan and install ArgoCD on the provisioned cluster.
+`DEPLOY` jobs apply the OpenTofu plan and install ArgoCD on the provisioned cluster. Between the
+plan and the apply sits the **fail-closed verify gate** — a real apply will not run while a hard
+control is failing.
 
 <Callout type="info">
   **Brownfield attach.** A DEPLOY doesn't only create new infrastructure — it can attach to what you
-  **already have**. When the project config marks a component as "existing" (e.g. an existing VPC/VNet —
-  see [Reuse existing resources](/console/design-project/network#reuse-existing-resources)), the runner
-  passes the resource's id into the tofu template instead of creating it, and the template `data`-sources
-  the existing resource (and, for networks, resolves its subnets) so the rest of the graph wires into it.
-  The provision-vs-existing seam is a `count = var.provision_X ? 1 : 0` guard on the create path plus a
-  data source on the existing path. Today this covers networks on AWS/GCP/Azure.
+  **already have**. When the environment config marks a component "existing" (e.g. an existing
+  VPC/VNet — see [Reuse existing resources](/console/design-project/network#reuse-existing-resources)),
+  the runner passes the resource's id into the tofu template instead of creating it, and the template
+  `data`-sources the existing resource (and, for networks, resolves its subnets) so the rest of the
+  graph wires into it. The provision-vs-existing seam is a `count = var.provision_X ? 1 : 0` guard on
+  the create path plus a data source on the existing path. Today this covers networks on AWS/GCP/Azure.
 </Callout>
 
-## Execution Flow
+## Execution flow
 
 <Steps>
 
-### Assume cloud credentials
-Same as PLAN jobs.
+### Mint cloud credentials
+Same keyless per-job minting as PLAN jobs. See [Cloud Credentials](/runner/cloud-credentials).
 
 ### Download plan artifact
-Fetches the binary `plan.tfplan` from the PLAN job's S3-compatible storage upload.
+Fetches the binary `plan.tfplan` from the PLAN job (`GET /api/jobs/{planJobId}/plan-artifact`) into
+the job workdir. If it can't be fetched, the runner re-plans.
 
 ### Validate config hash
-Compares the project's current config hash against the plan's config hash. If they differ (project was modified after planning), the job fails:
+Compares the environment's current `configuration_hash` against the plan job's. If they differ (the
+project was edited after planning), the job fails:
 
-> "Configuration has changed since the plan was generated. Please re-plan."
+> "configuration changed since plan was generated"
 
 This prevents applying a stale plan. See [Plan & Apply](/console/jobs/plan-and-apply).
 
-### terraform init
-Initializes with the S3 backend (same as PLAN).
+### tofu init
+Initializes against the Console HTTP state proxy (`backend "http"`, per-job `TF_HTTP_PASSWORD`) —
+same as PLAN. No cloud storage credential is involved.
 
-### terraform apply
+### Verify gate (fail-closed)
+`provisioner.RunDeployV2` re-derives the plan JSON and runs `verify.Evaluate`
+(`packages/core/verify`). It attaches a `verify.Report` and, on this **non-dry-run** apply, calls
+`gateRequiresReport` + `Report.Unwaived(override)` **before `tofu apply`**:
+
+- A hard control failure with no waiver → the job **fails here**, before any resource is touched.
+- An authorized `verify.Override` (time-boxed, carrying `Reason`/`By`) waives specific control IDs
+  so the apply can proceed deliberately.
+- An ed25519 evidence **receipt** is sealed for the apply (unsigned `algorithm: "none"` when no
+  `ALETHIA_RECEIPT_SIGNING_KEY` is set).
+
+The report and receipt ride back on `execution_metadata["verify_result"]` /
+`["verify_receipt"]` and render in the Console **Plan tab**
+(`components/agent/artifact-panel.tsx`). See [Engine internals](/elench/engine-internals).
+
+### tofu apply
 ```bash
-terraform apply plan.tfplan
+tofu apply plan.tfplan
 ```
-Provisions all infrastructure resources. State is written back to S3 after each resource operation.
+State is written back through the state proxy as each resource settles. (`RunDeployV2` writes
+`apply` to a phase file just before this, so an interrupted apply can be flagged orphan-risk.)
 
-### Extract Terraform outputs
-Reads outputs: cluster name, endpoint, ARN, database endpoints, cache endpoints, VPC ID, etc.
+### Extract tofu outputs
+Reads cluster name / endpoint / ARN, database endpoints, cache endpoints, VPC id, etc.
 
-### Generate kubeconfig
-Calls the provider-specific CLI:
+### Generate kubeconfig (CLI-free)
+No cloud CLI is invoked. The runner writes an **exec-credential kubeconfig** whose `user` runs the
+runner itself as the credential plugin:
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    ```bash
-    aws eks update-kubeconfig --name {cluster} --region {region}
-    ```
-  </Tab>
-  <Tab value="GCP">
-    ```bash
-    gcloud container clusters get-credentials {cluster} --region {region}
-    ```
-  </Tab>
-  <Tab value="Azure">
-    ```bash
-    az aks get-credentials --name {cluster} --resource-group {rg}
-    ```
-  </Tab>
-</Tabs>
+```yaml
+users:
+  - name: alethia
+    user:
+      exec:
+        apiVersion: client.authentication.k8s.io/v1beta1
+        command: runner
+        args: ["kube-token", "--provider", "aws", "--cluster", "<name>", "--region", "<region>"]
+```
+
+`runner kube-token` mints a short-lived cluster token in-process from the already-active keyless
+cloud credentials — a presigned STS `GetCallerIdentity` for EKS, a cloud-platform OAuth token for
+GKE, an AAD workload-identity token for AKS. kubectl/Helm re-invoke it on expiry, so tokens
+auto-refresh with no `aws`/`gcloud`/`az` present.
 
 ### Install ArgoCD
-Deploys ArgoCD via Helm chart and waits for pods to be Ready. The admin password stays in the cluster's `argocd-initial-admin-secret` (never extracted). See [GitOps & ArgoCD](/concepts/gitops-argocd).
+Deploys ArgoCD via Helm and waits for pods Ready. The admin password stays in the cluster's
+`argocd-initial-admin-secret` (never extracted, never persisted to `execution_metadata`). See
+[GitOps & ArgoCD](/concepts/gitops-argocd).
 
 ### Configure App of Apps
-Renders ArgoCD Application manifests with infrastructure facts (cluster name, DB endpoints, etc.) as Helm values. Applies manifests to the cluster.
+Renders ArgoCD Application manifests with infrastructure facts (cluster name, DB endpoints, …) as
+Helm values and applies them.
 
 ### Report results
-Job status → SUCCESS with execution metadata:
-- Cluster name, endpoint, ARN
+Job status → SUCCESS with `execution_metadata`:
+- Cluster name, endpoint, `cluster_ready` (a real reachability gate — not just "tofu apply exited 0")
 - ArgoCD URL
-- Terraform outputs, with credential-bearing keys scrubbed (kubeconfigs, passwords, tokens, generated secret values never leave the runner)
-- Execution timing per phase
+- tofu outputs, credential-bearing keys scrubbed (kubeconfigs, passwords, tokens, generated secrets
+  never leave the runner — `scrubSensitiveOutputs` + a whole-blob `scrubMetadataTree` backstop)
+- `verify_result` / `verify_receipt`
+- Per-phase execution timing
 
 </Steps>
 
 ## Finalization
 
-On the Alethia side, when the job reaches SUCCESS, the `finalizeDeployment()` server action:
+On the Alethia side, when the job reaches SUCCESS the `finalizeDeployment()` server action:
 - Updates `project_cluster` with cluster metadata and ArgoCD credentials
 - Updates `project_databases` with writer/reader endpoints and credential ARNs
 - Updates `project_caches` with primary/reader endpoints
-- Sets project status to `ACTIVE`
+- Sets the environment's `status` to `ACTIVE`
 
-This data appears in the [Clusters page](/console/clusters) and project detail.
+This data appears in the [Clusters page](/console/clusters) and the environment detail.

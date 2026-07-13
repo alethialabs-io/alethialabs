@@ -1,48 +1,50 @@
 ---
 title: Destroy Jobs
-description: How Runner executes DESTROY jobs — terraform destroy with state cleanup.
+description: How the runner executes DESTROY jobs — tofu destroy with state cleanup.
 ---
 
 # Destroy Jobs
 
-DESTROY jobs tear down all infrastructure provisioned by a project.
+`DESTROY` jobs tear down all infrastructure provisioned for an environment.
 
-## Execution Flow
+## Execution flow
 
 <Steps>
 
-### Assume cloud credentials
-Same as other job types.
+### Mint cloud credentials
+Same keyless per-job minting as other job types. See [Cloud Credentials](/runner/cloud-credentials).
 
-### terraform init
-Initializes with the S3 backend to download the existing state file.
+### tofu init
+Initializes against the Console HTTP state proxy (`backend "http"`, per-job `TF_HTTP_PASSWORD`) to
+read the existing state — no cloud storage credential on the runner.
 
-### terraform destroy
+### tofu destroy
 ```bash
-terraform destroy -auto-approve
+tofu destroy -auto-approve
 ```
-Removes all resources tracked in the Terraform state. No confirmation prompt — the user already confirmed via the UI or CLI.
+Removes all resources tracked in the tofu state. No confirmation prompt — the user already confirmed
+via the Console or CLI.
 
 ### State cleanup
-The state file in S3-compatible storage is left in place (empty or minimal) for audit purposes.
+The state managed by the proxy is left in place (empty or minimal) for audit purposes.
 
 ### Report results
-Job status → SUCCESS. Project status is set to `DESTROYED`.
+Job status → SUCCESS. The environment's `status` is set to `DESTROYED`.
 
 </Steps>
 
-## Partial Destroy Recovery
+## Partial destroy recovery
 
-If the destroy fails mid-way (e.g., resource dependency, timeout):
+If the destroy fails mid-way (resource dependency, timeout):
 
-1. Terraform state reflects which resources were already destroyed
-2. The job is marked FAILED with the error message
-3. User retries — the next destroy only attempts the remaining resources
-4. This continues until all resources are removed
+1. tofu state reflects which resources were already destroyed.
+2. The job is marked FAILED with the error message.
+3. The user retries — the next destroy only attempts the remaining resources.
+4. This continues until all resources are removed.
 
-## What Gets Destroyed
+## What gets destroyed
 
-Everything provisioned by the project:
+Everything provisioned for the environment:
 - VPC/VNet and all networking resources (subnets, NAT gateways, security groups)
 - Kubernetes cluster (EKS/GKE/AKS) and node groups
 - Databases (Aurora/Cloud SQL/Azure Database instances)
@@ -55,5 +57,5 @@ Everything provisioned by the project:
 - IAM roles (IRSA)
 
 <Callout type="warn">
-Destroy is permanent for stateful resources. Database data, cache contents, and secret values are **lost**. Terraform state is preserved so re-apply is possible, but the data is gone.
+Destroy is permanent for stateful resources. Database data, cache contents, and secret values are **lost**. tofu state is preserved so re-apply is possible, but the data is gone.
 </Callout>

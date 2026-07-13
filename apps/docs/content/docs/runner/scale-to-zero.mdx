@@ -1,152 +1,143 @@
 ---
-title: Scale-to-Zero
-description: Lambda-based auto-scaler that scales Runner ECS services to zero when idle.
+title: Warm-pool scaling
+description: How the managed fleet sizes itself — the in-app scaler's 60s warm-pool loop over cheap Hetzner VMs.
 ---
 
-# Scale-to-Zero
+# Warm-pool scaling
 
-Runners that run on ECS Fargate (managed and self-operated **deployed** Runners) support automatic scale-to-zero. When no jobs are queued, the Lambda scaler scales ECS services down to 0 desired tasks. When a job arrives, it scales back to 1. This eliminates Fargate costs during idle periods.
+The managed fleet has no standing capacity to pay for when idle. Instead of a fixed set of
+always-on runners, an **in-app scaler** sizes a per-provider warm pool by queue depth: it creates
+cheap VMs when jobs back up and destroys them when the backlog clears. There is no separate
+scaling service — the loop runs inside the Console process (`apps/console/lib/fleet/`).
 
-## How It Works
+<Callout type="warn">
+  **The old mechanism is retired.** The managed fleet used to be AWS ECS Fargate services scaled by
+  a Python Lambda on an EventBridge schedule (`infra/fleet-aws`). That is gone. There is no Lambda,
+  no EventBridge rule, and no `ecs:UpdateService` desired-count toggle in the managed path. ECS
+  Fargate survives only in the **self-deployed** runner template (`infra/templates/runner/aws/`) —
+  see [Self-operated runners](/runner/self-hosted). For the conceptual overview see
+  [Runner scaling](/concepts/runner-scaling); for the managed-fleet operator's guide see
+  [Managed provisioning](/self-hosting/managed-provisioning).
+</Callout>
 
-A Lambda function runs on a 1-minute schedule via EventBridge. For each runner it asks the console how many jobs are queued, then adjusts that runner's ECS service desired count accordingly. The Lambda never talks to the database directly — it calls a console API endpoint, which owns the queue logic.
+## The loop
 
-### Scale-Up Logic
+`startFleetScaler()` (`apps/console/lib/fleet/scaler.ts`) arms a `setInterval` on a **60-second**
+tick (`TICK_INTERVAL_MS = 60_000`) whenever `ALETHIA_DATABASE_URL` is set. Pools live in the
+database and are read fresh each tick, so a tick with zero enabled pools is a cheap no-op and a
+newly-created pool converges without a restart. On top of the interval, every job enqueue calls
+`wakeFleetScaler()` (≈15 call sites), so a fresh `QUEUED` job doesn't wait up to a minute for the
+next tick.
 
-```
-Every 1 minute, for each entry in RUNNERS:
-  1. POST {alethia_url}/api/platform/queue
-       Authorization: Bearer ${ALETHIA_API_SECRET}
-     → Console runs recover_stale_jobs()
-     → Console returns { recovered, queued }
-  2. If queued > 0 AND current desired = 0:
-       → Scale UP to 1
-       → Reset idle counter
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant T as 60s tick / enqueue wake
+  participant S as scheduleTick (serializer)
+  participant C as reconcileAll (controller)
+  participant P as plan (pure planner)
+  participant H as FleetProvider (hcloud)
+  T->>S: request a pass
+  S->>C: run exactly one pass (coalesce concurrent wakes)
+  C->>C: observe reality (runners, backlog, peak)
+  C->>P: plan(target, observed)
+  P-->>C: create / drain / destroy actions
+  C->>H: apply actions
+  C->>C: append fleet_actions ledger row
+`} />
 
-### Scale-Down Logic
+`scheduleTick()` guarantees **at most one pass is ever in flight** per process: a wake that arrives
+mid-pass coalesces into a single follow-up rather than launching a second concurrent read → plan →
+act (two overlapping passes would each read the same stale VM list and both create for the same
+backlog, over-provisioning past the pool max). This serializer is per-process; true multi-replica
+safety needs a Postgres advisory lock, and today prod is a single box (see the `scaler.ts` header).
 
-```
-  3. For each runner:
-     - If queued = 0 AND current desired > 0:
-       → Increment idle counter
-       → If idle counter >= 5 (5 consecutive checks = 5 minutes):
-         → Scale DOWN to 0
-     - If queued > 0:
-       → Reset idle counter
-```
+## Sizing: `targetCount`
 
-The 5-check threshold (5 minutes) prevents flapping — a brief gap between jobs won't cause a scale-down followed by an immediate scale-up.
+The desired healthy-instance count is a pure function (`plan.ts`, `targetCount`):
 
-## Infrastructure
-
-### Lambda Function
-
-| Property | Value |
-|----------|-------|
-| Runtime | Python 3.12 |
-| Architecture | ARM64 |
-| Memory | 128 MB |
-| Timeout | 30 seconds |
-| Trigger | EventBridge rule (every 1 minute) |
-
-### IAM Permissions
-
-The Lambda function needs:
-- `ecs:DescribeServices` — read current desired count
-- `ecs:UpdateService` — change desired count
-- Network access to each runner's console URL (for the queue check)
-
-### Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `ALETHIA_API_SECRET` | Bearer secret sent to the console's `/api/platform/queue` endpoint |
-| `RUNNERS` | JSON array of runner configurations (region, cluster, service, alethia_url) |
-
-### Runners Configuration
-
-```json
-[
-  {
-    "region": "eu-west-1",
-    "cluster": "alethia-prod-runner-eu",
-    "service": "alethia-prod-runner-eu-service",
-    "alethia_url": "https://eu.console.example.com"
-  },
-  {
-    "region": "us-east-1",
-    "cluster": "alethia-prod-runner-us",
-    "service": "alethia-prod-runner-us-service",
-    "alethia_url": "https://us.console.example.com"
-  }
-]
+```ts
+demand = max(recentPeak, ceil(backlog / slotsPerRunner))
+target = clamp(max(warmMin, demand + buffer), 0, max)
 ```
 
-Each entry maps to one ECS service running a Runner. The scaler handles multiple regions independently.
+| Input | Source | Meaning |
+|-------|--------|---------|
+| `backlog` | `deps.backlog(provider)` | `QUEUED` jobs targeting this provider |
+| `recentPeak` | `deps.recentPeak(provider)` | in-flight (`CLAIMED`/`PROCESSING`) jobs — auto-grows the floor |
+| `slotsPerRunner` | pool config | concurrent jobs per runner (`ALETHIA_RUNNER_SLOTS`) |
+| `warmMin` | pool config | warm floor — never plan the online count below this |
+| `buffer` | pool config | N+1 headroom above demand |
+| `max` / `surge` | pool config | hard ceiling; `surge` is transient headroom for rollouts |
 
-## Queue Check
+Scale-down is not a desired-count decrement. A surplus online VM is **drained** (marked `DRAINING`
+so it stops claiming but finishes its in-flight job); once it goes idle the next tick **destroys**
+it, and `deps.retire()` closes its `runner_usage_sessions` billing row. Dead instances (no
+registration past the boot grace) are reaped directly. Placement is location-aware: below-min
+locations fill first, then least-loaded (`minPerLocation`).
 
-The Lambda POSTs to the console's platform endpoint instead of querying the database:
+## Provider seam
 
-```python
-req = urllib.request.Request(
-    f"{runner['alethia_url']}/api/platform/queue",
-    method="POST",
-    headers={
-        'Authorization': f'Bearer {ALETHIA_API_SECRET}',
-        'Content-Type': 'application/json',
-    },
-)
-# Response: { "recovered": <n>, "queued": <n> }
+`getFleetProvider()` (`provider.ts`) selects the `FleetProvider` implementation. Default is
+`manual` (a no-op — nothing is provisioned); **`FLEET_PROVIDER=hcloud`** selects the Hetzner
+provider (`hcloud.ts`). The provider is a thin `list` / `create` / `destroy` over the Hetzner REST
+API (`https://api.hetzner.cloud/v1`, plain `fetch`, no SDK) — all diff logic lives in the pure
+planner, so the whole reconcile is unit-testable against a fake world (`fake-provider.ts`).
+
+### VM shape and self-registration
+
+`create` boots a Hetzner VM (default `HCLOUD_SERVER_TYPE=cax21`, an ARM instance;
+`HCLOUD_IMAGE=ubuntu-24.04`) whose **cloud-init** does a single `docker run` of the per-cloud
+runner image from GHCR:
+
+```
+ghcr.io/alethialabs-io/runner-${provider}:${tag}
 ```
 
-The endpoint runs `recover_stale_jobs()` (re-queuing jobs orphaned by a crashed Runner) and returns the current `queued` count. The Lambda scales the runner's ECS service up to 1 when `queued > 0`, and down to 0 after 5 consecutive idle checks.
+The VM carries **no long-lived credential**. It self-registers with a per-VM, short-TTL
+**`ALETHIA_RUNNER_BOOTSTRAP_TOKEN`** (minted per `create`, swept by `sweepBootstrapTokens`), and
+once registered the runner mints cloud auth per job via keyless OIDC and reaches tofu state through
+the Console state proxy. There is no static cloud key baked into the image or the cloud-init. (An
+`INSTANCE_ID` override lets several runners on one host register distinctly.)
 
-## Cold Start Behavior
+<Callout type="info">
+  The E0 container-sandbox knobs on the cloud-init (`ALETHIA_SANDBOX_BACKEND=container`,
+  egress-enforced proxy) are **inert** until enabled — trusted provisioning boots a byte-identical
+  cloud-init. See [Architecture → sandbox seam](/runner/architecture).
+</Callout>
 
-When a Runner is scaled from 0 → 1:
+## The `fleet_actions` ledger
 
-1. **ECS task launch** — ~30 seconds (Fargate cold start, image pull)
-2. **Runner boot** — ~5 seconds (binary startup, API registration)
-3. **First heartbeat** — ~5 seconds after boot
-4. **First job claim** — next poll cycle (≤ 10 seconds)
+Every applied action appends a durable row via `deps.recordAction()` — the audit trail behind each
+VM lifecycle event. Each `FleetActionRecord` (`controller.ts`) carries:
 
-**Total cold start: ~50 seconds** from job queue to job start.
+| Field | Meaning |
+|-------|---------|
+| `action` | `create` \| `drain` \| `destroy` |
+| `reason` | `scale-up-demand`, `min-per-location`, `teardown`, `reap-dead`, `reap-drained`, version-rollout, … |
+| `runnerId` | correlated runner (drain/destroy); `null` for a create (the runner self-registers later) |
+| `queueDepth` | `QUEUED` backlog for the provider at decision time |
+| `poolSize` | observed online (claimable) pool size at decision time |
 
-During this time, the job remains in QUEUED status. The user sees "Waiting for Runner..." in the UI.
+A ledger write is best-effort and must never break a reconcile. Actual `create`/`drain`/`destroy`
+application is additionally guarded so **only one replica** applies a given provider's actions per
+tick (a `withScaleGuard` around the per-pool span), bounding cross-replica over-provisioning until
+a real DB advisory lock lands.
 
-## Cost Savings
+## Cold start
 
-Without scale-to-zero, a single Runner running 24/7 on Fargate costs:
-- 1 vCPU + 4 GiB memory ≈ **$40/month** per Runner
+When the pool scales `0 → 1` for a fresh backlog:
 
-With scale-to-zero, you pay only for:
-- **Lambda invocations** — 43,200/month (1/min) × 128MB × 1s ≈ **$0.02/month**
-- **Fargate** — only when jobs are running
+1. **Hetzner VM boot + image pull** — cloud-init pulls `runner-<provider>` from GHCR
+2. **Runner boot + self-register** — a few seconds (`POST /api/runners/register` with the bootstrap token)
+3. **First heartbeat** — `POST /api/runners/heartbeat` (30s cadence)
+4. **First job claim** — next poll cycle (`POST /api/jobs/claim`, ≤ 10s)
 
-For workloads with sporadic provisioning (a few deploys per week), this reduces Runner costs by **~99%**.
+During this window the job stays `QUEUED`. The `wakeFleetScaler()` on enqueue is what starts the
+VM immediately rather than waiting for the next 60s tick.
 
-## Terraform Configuration
+## Cost model
 
-The scaler is defined in `infra/platform/scaler/`:
-
-```hcl
-module "scaler" {
-  source = "./scaler"
-
-  name_prefix        = local.name_prefix
-  alethia_api_secret = var.alethia_api_secret
-
-  runners = [
-    for name, w in module.runner : {
-      region      = var.runners[name].region
-      cluster     = w.cluster_name
-      service     = w.service_name
-      alethia_url = var.runners[name].alethia_url
-    }
-  ]
-}
-```
-
-The scaler automatically discovers all Runner deployments from the `module.runner` outputs.
+You pay for Hetzner VM-hours only while the pool is above its warm floor, plus whatever `warmMin`
+you choose to keep hot for latency. Managed runner cost is billed by provisioned hours through the
+`runner_usage_sessions` ledger — a session opens when a managed runner comes online and closes when
+`retire()` reaps it. There is no Lambda invocation cost and no idle Fargate task.

@@ -280,7 +280,7 @@ Git credentials for the GitOps / app-deployment repos.
 | `runner_id` | uuid (FK → runners) | Assigned Runner |
 | `config_snapshot` | jsonb | Frozen Project config for the job |
 | `error_message` | text | Failure details |
-| `execution_metadata` | jsonb | Terraform outputs, cost data, timing |
+| `execution_metadata` | jsonb | `tofu` outputs, cost data, verify report, timing |
 | `created_at` | timestamptz | |
 | `claimed_at` | timestamptz | When Runner claimed it |
 | `started_at` | timestamptz | When execution began |

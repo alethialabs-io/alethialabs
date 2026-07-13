@@ -4,6 +4,7 @@
   "root": true,
   "pages": [
     "index",
+    "glossary",
     "domain-model",
     "security",
     "testing",

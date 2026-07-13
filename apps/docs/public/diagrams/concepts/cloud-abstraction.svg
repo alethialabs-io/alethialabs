@@ -1,63 +1,78 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 420" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Cloud abstraction: one ProjectConfig of capability categories maps through ProviderTfvars to five cloud providers">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="820" height="420" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="419" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Cloud Provider Abstraction — Three-Layer Architecture</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="420" rx="12"/>
+  <rect x="0" y="0" width="840" height="420" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="419" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · CLOUD ABSTRACTION</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">One capability model, five providers</text>
 
-  <!-- Layer 1: Unified Interface -->
-  <rect x="30" y="58" width="760" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
-  <text x="410" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">Unified Interface</text>
-  <rect x="140" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="210" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Create a Project (Web)</text>
-  <rect x="340" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">alethia project apply (CLI)</text>
-  <rect x="540" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="610" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Provider Ribbon</text>
+  <!-- Capability categories -->
+  <rect class="d-surface" x="28" y="96" width="220" height="288" rx="8"/>
+  <text class="d-label" x="44" y="122" font-size="12" font-weight="600">ProjectConfig</text>
+  <text class="d-sub mono" x="44" y="136" font-size="9">capability categories</text>
+  <text class="d-sub mono" x="44" y="162" font-size="11">kubernetes · network</text>
+  <text class="d-sub mono" x="44" y="184" font-size="11">database · cache</text>
+  <text class="d-sub mono" x="44" y="206" font-size="11">queue · topic · nosql</text>
+  <text class="d-sub mono" x="44" y="228" font-size="11">object storage</text>
+  <text class="d-sub mono" x="44" y="250" font-size="11">registry · secrets</text>
+  <text class="d-sub mono" x="44" y="272" font-size="11">dns · waf · cdn/tls</text>
+  <text class="d-sub mono" x="44" y="300" font-size="9">create_* / provision_* toggles</text>
+  <text class="d-sub mono" x="44" y="322" font-size="9">provider_config JSONB for</text>
+  <text class="d-sub mono" x="44" y="336" font-size="9">per-cloud specifics</text>
+  <text class="d-sub mono" x="44" y="362" font-size="9">one form · one CLI · one runner</text>
 
-  <!-- Arrow Layer 1 → 2 -->
-  <line x1="410" y1="128" x2="410" y2="150" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Mapping -->
+  <rect class="d-emph" x="308" y="196" width="164" height="88" rx="8"/>
+  <text class="d-emph-text" x="390" y="228" text-anchor="middle" font-size="13" font-weight="600">ProviderTfvars</text>
+  <text class="d-emph-text mono" x="390" y="248" text-anchor="middle" font-size="9" opacity="0.82">registry.ts maps</text>
+  <text class="d-emph-text mono" x="390" y="262" text-anchor="middle" font-size="9" opacity="0.82">category → service</text>
+  <text class="d-emph-text mono" x="390" y="276" text-anchor="middle" font-size="9" opacity="0.82">tofu.tfvars.json</text>
 
-  <!-- Layer 2: Provider Registry -->
-  <rect x="30" y="154" width="760" height="110" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="176" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Provider Registry</text>
-  <text x="410" y="192" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">lib/cloud-providers/registry.ts</text>
+  <line class="d-edge" x1="248" y1="240" x2="308" y2="240" marker-end="url(#ar)"/>
 
-  <!-- Mapping columns -->
-  <rect x="50" y="202" width="220" height="50" rx="6" fill="#18181B" stroke="#3F3F46"/>
-  <text x="160" y="220" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">Region Mapping</text>
-  <text x="160" y="240" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">us-east-1 ↔ us-east4 ↔ eastus</text>
+  <!-- Providers -->
+  <rect class="d-surface" x="532" y="100" width="280" height="46" rx="8"/>
+  <text class="d-label" x="552" y="128" font-size="12" font-weight="600">AWS</text>
+  <text class="d-sub mono" x="808" y="128" text-anchor="end" font-size="9">EKS · Aurora · S3 · Route 53</text>
 
-  <rect x="290" y="202" width="240" height="50" rx="6" fill="#18181B" stroke="#3F3F46"/>
-  <text x="410" y="220" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">Instance Type Mapping</text>
-  <text x="410" y="240" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">t3.medium ↔ e2-medium ↔ Standard_B2s</text>
+  <rect class="d-surface" x="532" y="156" width="280" height="46" rx="8"/>
+  <text class="d-label" x="552" y="184" font-size="12" font-weight="600">GCP</text>
+  <text class="d-sub mono" x="808" y="184" text-anchor="end" font-size="9">GKE · Cloud SQL · GCS · Cloud DNS</text>
 
-  <rect x="550" y="202" width="220" height="50" rx="6" fill="#18181B" stroke="#3F3F46"/>
-  <text x="660" y="220" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">Engine Mapping</text>
-  <text x="660" y="240" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Aurora ↔ Cloud SQL ↔ Azure DB</text>
+  <rect class="d-surface" x="532" y="212" width="280" height="46" rx="8"/>
+  <text class="d-label" x="552" y="240" font-size="12" font-weight="600">Azure</text>
+  <text class="d-sub mono" x="808" y="240" text-anchor="end" font-size="9">AKS · Azure DB · Blob · Azure DNS</text>
 
-  <!-- Arrow Layer 2 → 3 -->
-  <line x1="410" y1="264" x2="410" y2="286" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect class="d-surface" x="532" y="268" width="280" height="46" rx="8"/>
+  <text class="d-label" x="552" y="296" font-size="12" font-weight="600">Alibaba</text>
+  <text class="d-sub mono" x="808" y="296" text-anchor="end" font-size="9">ACK · ApsaraDB · OSS · AliDNS</text>
 
-  <!-- Layer 3: Terraform Templates -->
-  <rect x="30" y="290" width="760" height="80" rx="8" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="312" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Terraform Templates</text>
+  <rect class="d-surface2" x="532" y="324" width="280" height="52" rx="8"/>
+  <text class="d-label" x="552" y="348" font-size="12" font-weight="600">Hetzner</text>
+  <text class="d-sub mono" x="808" y="348" text-anchor="end" font-size="9">Talos K8s + private network</text>
+  <text class="d-sub mono" x="552" y="366" font-size="9">lean · managed services in-cluster (BYO)</text>
 
-  <rect x="50" y="322" width="220" height="36" rx="6" fill="#27272A" stroke="#FF9900"/>
-  <text x="160" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FF9900">templates/project/aws/</text>
+  <line class="d-edge" x1="472" y1="230" x2="532" y2="123" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="472" y1="236" x2="532" y2="179" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="472" y1="244" x2="532" y2="235" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="472" y1="250" x2="532" y2="291" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="472" y1="256" x2="532" y2="348" marker-end="url(#ar)"/>
 
-  <rect x="290" y="322" width="240" height="36" rx="6" fill="#27272A" stroke="#4285F4"/>
-  <text x="410" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#4285F4">templates/project/gcp/</text>
-
-  <rect x="550" y="322" width="220" height="36" rx="6" fill="#27272A" stroke="#0078D4"/>
-  <text x="660" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#0078D4">templates/project/azure/</text>
-
-  <!-- provider_config escape hatch -->
-  <rect x="600" y="148" width="176" height="36" rx="6" fill="#F59E0B10" stroke="#F59E0B40" stroke-dasharray="3 3"/>
-  <text x="688" y="164" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#F59E0B">provider_config JSONB</text>
-  <text x="688" y="178" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">provider-specific escape hatch</text>
-
-  <!-- Legend -->
-  <text x="410" y="404" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">One form → one registry → three template sets. Switch provider, everything adapts.</text>
+  <text class="d-sub mono" x="812" y="404" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

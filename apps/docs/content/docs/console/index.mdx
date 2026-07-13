@@ -1,11 +1,11 @@
 ---
-title: Alethia Web Platform
-description: The central control plane for multi-cloud infrastructure orchestration.
+title: Console
+description: Alethia's web control plane for multi-cloud infrastructure orchestration.
 ---
 
-# Alethia Web Platform
+# Console
 
-Alethia is the web-based control plane. It provides a visual interface for configuring infrastructure, managing cloud integrations, monitoring jobs, and viewing provisioned clusters — all from the browser.
+The Console (`apps/console`) is Alethia's web control plane. It provides a visual interface for configuring infrastructure, managing [cloud identities](/console/connectors), monitoring [jobs](/console/jobs), and viewing provisioned clusters — all from the browser. Alethia is the platform; the Console is the web app you drive it from.
 
 ## Tech Stack
 
@@ -13,9 +13,9 @@ Alethia is the web-based control plane. It provides a visual interface for confi
 |-------|-----------|
 | Framework | Next.js 15 (App Router, Server Actions) |
 | Database | PostgreSQL + Drizzle ORM with org-scoped Row Level Security |
-| Auth | Better Auth (OAuth: GitHub, GitLab, Bitbucket, Google; email OTP) |
+| Auth | Better Auth (social OAuth: GitHub, Google native; GitLab, Bitbucket genericOAuth; email 6-digit OTP) |
 | Realtime | Postgres LISTEN/NOTIFY → SSE ([how it works](/concepts/realtime)) |
-| Storage | S3-compatible storage (default SeaweedFS) for Terraform state and plan artifacts |
+| Storage | S3-compatible storage (default SeaweedFS) for OpenTofu state and plan artifacts |
 | UI | Tailwind CSS, shadcn/ui, Zustand state management |
 
 ## Key Pages
@@ -28,7 +28,7 @@ Alethia is the web-based control plane. It provides a visual interface for confi
     11-section form for configuring multi-cloud infrastructure with real-time cost estimation.
   </Card>
   <Card title="Connectors" href="/console/connectors">
-    Connect AWS, GCP, Azure cloud accounts and GitHub, GitLab, Bitbucket Git providers.
+    Connect AWS, GCP, Azure, Alibaba, and Hetzner cloud accounts (each a cloud identity) plus GitHub, GitLab, Bitbucket Git providers.
   </Card>
   <Card title="Jobs" href="/console/jobs">
     Monitor infrastructure operations with real-time log streaming.
@@ -46,19 +46,20 @@ Alethia is the web-based control plane. It provides a visual interface for confi
 
 ## Architecture
 
-```
-Browser ──► Next.js App Router
-              ├── Server Actions (Drizzle with org-scoped RLS)
-              ├── API Routes (Runner + CLI token auth)
-              └── LISTEN/NOTIFY → SSE (Server-Sent Events)
-                   └── Live updates → browser stores
-```
+<Mermaid chart={`
+flowchart TD
+  B[Browser] --> A[Next.js App Router]
+  A --> SA[Server Actions<br/>Drizzle · org-scoped RLS]
+  A --> API[API Routes<br/>Runner + CLI token auth]
+  A --> SSE[LISTEN/NOTIFY → SSE]
+  SSE --> ST[Live updates → browser stores]
+`} />
 
-All database access goes through Drizzle with org-scoped RLS policies enforcing per-org data isolation through a Policy Decision Point (PDP). Server Actions set the current org context automatically.
+All database access goes through Drizzle with org-scoped RLS policies enforcing per-org data isolation through a Policy Decision Point (PDP). Server Actions set the current org context (`app.current_org` via `set_config`) automatically.
 
 ## State Management
 
-Alethia uses five Zustand stores for client-side state, each with a 30-second stale threshold and real-time event handlers:
+The Console uses five Zustand stores for client-side state, each with a 30-second stale threshold and real-time event handlers:
 
 | Store | Purpose |
 |-------|---------|

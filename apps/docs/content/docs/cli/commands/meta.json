@@ -2,6 +2,7 @@
   "title": "Commands",
   "pages": [
     "index",
+    "init",
     "connector",
     "project",
     "plan-and-apply",
@@ -11,6 +12,7 @@
     "organizations",
     "notifications",
     "access",
+    "classification",
     "billing"
   ]
 }

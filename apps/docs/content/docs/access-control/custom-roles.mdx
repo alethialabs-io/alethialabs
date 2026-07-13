@@ -22,8 +22,8 @@ like AWS IAM), so you toggle exactly what the role can do:
 |---|---|
 | Projects | `project:view` · `project:create` · `project:edit` · `project:plan` · `project:deploy` · `project:destroy` |
 | Runners | `runner:view` · `runner:create` · `runner:edit` · `runner:deploy` · `runner:destroy` |
-| Cloud identities | `cloud_identity:view` · `cloud_identity:manage_identities` · `cloud_identity:test` · `cloud_identity:fetch_resources` |
-| Jobs · Connectors · Org · Members · Activity · Billing | … |
+| Cloud identities | `cloud_identity:view` · `cloud_identity:manage_identities` · `cloud_identity:test` |
+| Jobs · Connectors · Org · Members · Alerts · Fleet · Support · Activity · Billing | … |
 
 Because the provisioning operations are themselves distinct permissions, you get **job-type granularity**: a
 role can grant `project:plan` without `project:deploy`, or `runner:deploy` without `runner:destroy`. Every job type a

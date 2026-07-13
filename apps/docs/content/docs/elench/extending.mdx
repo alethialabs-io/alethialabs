@@ -44,7 +44,7 @@ the decoded `k8sResource` list, wire it into `EvaluateManifests`, and add a fixt
 ## Adding a cloud
 
 Extending the provisioner + GitOps seam to a new cloud is a separate, documented checklist — the
-`CloudProvider` impl, the Terraform template + keyless workload-identity outputs, runner credential
+`CloudProvider` impl, the OpenTofu template + keyless workload-identity outputs, runner credential
 activation, and the per-cloud ArgoCD facts. See **[Multi-cloud](/elench/multi-cloud)** and
 `packages/core/cloud/README.md`.
 

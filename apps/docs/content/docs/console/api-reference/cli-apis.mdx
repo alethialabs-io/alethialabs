@@ -90,4 +90,4 @@ Publish a new Runner release (CI/CD only, requires `RELEASE_API_SECRET`).
 ```
 
 ### `POST /api/runners/register`
-Register a Runner (CI/CD only, requires `RELEASE_API_SECRET`). Used by Terraform during Runner deployment; always creates an `operator=managed` runner (no `mode` body field).
+Register a Runner (CI/CD only, requires `RELEASE_API_SECRET`). Used by OpenTofu during Runner deployment; always creates an `operator=managed` runner (no `mode` body field).

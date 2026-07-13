@@ -1,35 +1,66 @@
 ---
 title: Runner Agent
-description: Autonomous execution agent that runs Terraform, installs ArgoCD, and streams logs.
+description: Autonomous execution agent that runs OpenTofu, installs ArgoCD, and streams logs.
 ---
 
 # Runner Agent
 
-Runner is the execution engine. It's a Go binary packaged as a Docker container that runs in AWS ECS Fargate (ARM64). Runners claim jobs from the queue, assume temporary cloud credentials, execute Terraform, install ArgoCD, and stream logs back in real-time.
+Runner is the execution engine — a single Go binary shipped as a container image. Runners claim
+provisioning jobs from the queue, mint per-job cloud credentials keylessly, execute the `tofu`
+binary (OpenTofu), install ArgoCD, and stream logs back in real time. The binary is **CLI-free**:
+it bundles no `aws`/`gcloud`/`az`, and mints cluster tokens in-process via `runner kube-token` (see
+[Cloud Credentials](/runner/cloud-credentials)).
 
-## Key Facts
+## Key facts
 
 | Property | Value |
 |----------|-------|
-| Language | Go |
-| Runtime | ECS Fargate (ARM64 / Graviton) |
-| Registries | AWS ECR + GitHub Container Registry |
+| Language | Go (single binary) |
+| IaC engine | OpenTofu (`tofu`) `v1.9.0`, baked into the image |
+| Base image | Alpine 3.21, non-root `runner` user |
+| Registries | GitHub Container Registry (`ghcr.io/alethialabs-io/runner*`) |
 | Versioning | release-please (`runner-v*` tags). See [Release System](/concepts/release-system). |
-| Poll interval | 10 seconds |
-| Heartbeat interval | 30 seconds |
-| Idle scale-down | After 5 minutes ([Scale-to-Zero](/runner/scale-to-zero)) |
+| Poll interval | 10 seconds (`POST /api/jobs/claim`) |
+| Heartbeat interval | 30 seconds (`POST /api/runners/heartbeat`) |
+| tofu state | Console HTTP state proxy — no object-storage credential on the runner |
+| Cloud auth | Keyless OIDC per job (no static keys) |
 
-## Operator & Provisioning
+## Where a runner runs — the managed fleet vs. self-deployed
 
-A Runner is described by two orthogonal fields: **operator** (`managed` | `self`) and, for self runners, **provisioning** (`deployed` | `registered`). This yields three effective categories:
+The word "runtime" splits cleanly into two paths. Do not conflate them.
+
+| | Managed fleet | Self-deployed (AWS) |
+|---|---|---|
+| Operator | `managed` | `self` / `deployed` |
+| Substrate | **Hetzner VM warm pool** | AWS ECS Fargate (ARM64) |
+| Provisioned by | the in-app scaler (`apps/console/lib/fleet/`) | a `DEPLOY_RUNNER` job running `infra/templates/runner/aws/` |
+| Image source | GHCR per-cloud image, self-registers via `ALETHIA_RUNNER_BOOTSTRAP_TOKEN` | GHCR image, registration token injected as an ECS env var |
+| Scaling | 60s warm-pool loop, sized by queue depth ([Warm-pool scaling](/runner/scale-to-zero)) | ECS service `desired_count`, managed by the customer |
+| Billing | provisioned hours via `runner_usage_sessions` | the customer's own AWS bill |
+
+The **managed fleet** is Alethia running runners in the platform account and assuming into the
+customer cloud — cheap Hetzner VMs from a GHCR image, sized by an in-app scaler. **ECS Fargate is
+not the managed substrate anymore** (the retired AWS ECS + Lambda fleet lived under `infra/fleet-aws`
+and is gone). ECS Fargate is real only for a **self-deployed** runner, which a `DEPLOY_RUNNER` job
+provisions into the customer's own AWS account from `infra/templates/runner/aws/`. See
+[Operator & provisioning](#operator--provisioning) and [Self-operated runners](/runner/self-hosted).
+
+## Operator & provisioning
+
+A runner is described by two orthogonal axes: **operator** (`managed` | `self`) and, for self
+runners, **provisioning** (`deployed` | `registered`). This yields three effective categories:
 
 | Category | Operator | Provisioning | Description |
 |----------|----------|--------------|-------------|
-| **Managed** | `managed` | — | Alethia operates the runner in our own account (ECS Fargate) and bills it by provisioned hours. Automatic scaling, no user setup. |
-| **Self · Deployed** | `self` | `deployed` | Provisioned into the customer's cloud account by an existing runner running Terraform (console "Deploy" tab / `alethia runner deploy`). |
-| **Self · Registered** | `self` | `registered` | Customer brings their own runner — their own Terraform or just `alethia runner start` — and registers it for a token. For on-prem or air-gapped environments. |
+| **Managed** | `managed` | — | Alethia runs the runner in the platform account (Hetzner VM warm pool) and bills it by provisioned hours. Automatic scaling, no user setup. |
+| **Self · Deployed** | `self` | `deployed` | Provisioned into the customer's cloud by an existing runner running `tofu` (Console "Deploy" tab / `alethia runner deploy`). AWS lands on ECS Fargate. |
+| **Self · Registered** | `self` | `registered` | Customer brings their own runner — their own IaC or just `alethia runner start` — and registers it for a token. For on-prem or air-gapped environments. |
 
-## What Runner Does
+The legacy `ALETHIA_RUNNER_MODE` (`cloud-hosted`/`self-hosted`) still works as a back-compat
+fallback (`cloud-hosted` → `managed`, `self-hosted` → `self`), but `ALETHIA_RUNNER_OPERATOR` is
+canonical.
+
+## What runner does
 
 <Steps>
 
@@ -39,53 +70,65 @@ Every 10 seconds, calls `POST /api/jobs/claim`. See [Job Queue Pattern](/concept
 ### Claims atomically
 PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-execution.
 
-### Assumes credentials
-STS AssumeRole (AWS), RAM AssumeRole (Alibaba), WIF token exchange (GCP), or OIDC federated identity (Azure) — all zero stored credentials. Token clouds (DigitalOcean / Hetzner / Civo) use an API token, either stored encrypted or kept entirely in your own self-hosted runner. See [Cloud Credentials](/runner/cloud-credentials).
+### Mints credentials
+Keyless OIDC per job — AWS `AssumeRoleWithWebIdentity`, GCP Workload Identity Federation, Azure
+federated identity, Alibaba `AssumeRoleWithOIDC` — no stored cloud keys. Token clouds
+(DigitalOcean / Hetzner / Civo) use an API token, either stored encrypted or kept entirely in a
+self-operated runner. See [Cloud Credentials](/runner/cloud-credentials).
 
-### Executes Terraform
-`init` → `plan` → `apply` or `destroy`. Provisions **greenfield** infrastructure, or **attaches to
-existing** resources when the config marks a component "existing" (brownfield — e.g. deploy into an
-existing VPC/VNet). See [Job Execution](/runner/job-execution).
+### Executes OpenTofu
+`tofu init` → `tofu plan` → the [verify gate](/runner/job-execution/plan-jobs) → `tofu apply` or
+`tofu destroy`. Provisions **greenfield** infrastructure, or **attaches to existing** resources when
+the config marks a component "existing" (brownfield — e.g. an existing VPC/VNet). See
+[Job Execution](/runner/job-execution).
 
 ### Installs ArgoCD
-Helm chart deployment with App of Apps pattern. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+Helm chart deployment with the App-of-Apps pattern. See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
 ### Streams logs
-Batched POST every 2 seconds → Postgres LISTEN/NOTIFY → SSE → browser. See [Log Streaming](/runner/log-streaming).
+Batched POST every 2 seconds → Postgres `LISTEN/NOTIFY` → SSE → browser. See
+[Log Streaming](/runner/log-streaming).
 
 ### Reports results
-Updates job status with execution metadata, timing, and Terraform outputs.
+Updates job status with execution metadata (timing, tofu outputs, and the verify report on
+`execution_metadata["verify_result"]`).
 
 ### Sends heartbeat
 Every 30 seconds to confirm it is alive.
 
 </Steps>
 
-## Container Contents
+## Container contents
 
-The Docker image (Alpine 3.21, ARM64, non-root user) includes:
+The image builds `FROM` a shared `runner-base` (Alpine 3.21, non-root `runner` user). The base
+carries everything cloud-agnostic; each per-cloud image adds only that cloud's project template.
 
 | Tool | Purpose |
 |------|---------|
-| Go binary | The Runner executable |
-| Terraform 1.7.4 | Infrastructure provisioning |
+| Go binary (`runner`) | The runner executable — also the `kube-token` exec-credential plugin |
+| OpenTofu (`tofu`) `v1.9.0` | Infrastructure provisioning (SHA256-verified download, baked in) |
 | kubectl | Kubernetes cluster access |
 | Helm | ArgoCD and component installation |
-| AWS CLI | AWS credential handling |
-| Google Cloud SDK | GCP credential handling |
-| Azure CLI | Azure credential handling |
-| Infracost | Cost estimation |
-| Infrastructure templates | AWS, GCP, Azure Terraform modules + ArgoCD manifests |
+| Infracost `v0.10.39` | Cost estimation |
+| Infrastructure templates | Per-cloud project templates + runner + ArgoCD manifests |
+| podman / crun / fuse-overlayfs | Nested rootless sandbox runtime — **inert** until `ALETHIA_SANDBOX_BACKEND=container` |
+
+<Callout type="info">
+  **No cloud CLIs.** The image bundles **no** `aws-cli`, `gcloud`, or `azure-cli` — the
+  `Dockerfile`s say so explicitly. EKS/GKE/AKS cluster tokens are minted **in-process** by
+  `runner kube-token --provider <cloud>`, invoked by the exec-credential kubeconfig the runner
+  writes. See [Cloud Credentials](/runner/cloud-credentials).
+</Callout>
 
 ## Documentation
 
 <Cards>
-  <Card title="Architecture" href="/runner/architecture">Main loop, heartbeat, graceful shutdown</Card>
+  <Card title="Architecture" href="/runner/architecture">Main loop, heartbeat, sandbox seam, graceful shutdown</Card>
   <Card title="Job Execution" href="/runner/job-execution">Per-job-type execution details</Card>
-  <Card title="Cloud Credentials" href="/runner/cloud-credentials">Temporary credential assumption</Card>
+  <Card title="Cloud Credentials" href="/runner/cloud-credentials">Keyless, per-job credential minting</Card>
   <Card title="Log Streaming" href="/runner/log-streaming">Real-time log delivery</Card>
-  <Card title="Scale-to-Zero" href="/runner/scale-to-zero">Lambda scaler for cost optimization</Card>
-  <Card title="Self-Operated Runners" href="/runner/self-hosted">Running a runner you operate yourself</Card>
-  <Card title="Infrastructure Templates" href="/runner/infrastructure-templates">Terraform modules for all providers</Card>
+  <Card title="Warm-pool scaling" href="/runner/scale-to-zero">In-app scaler + Hetzner VM fleet</Card>
+  <Card title="Self-operated runners" href="/runner/self-hosted">Running a runner you operate yourself</Card>
+  <Card title="Infrastructure Templates" href="/runner/infrastructure-templates">OpenTofu modules for all providers</Card>
   <Card title="core Library" href="/runner/core">Shared Go packages</Card>
 </Cards>

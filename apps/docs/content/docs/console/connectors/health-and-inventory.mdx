@@ -10,7 +10,7 @@ Once a cloud account is connected, Alethia does two things **entirely server-sid
 resources.
 
 <Callout type="info">
-  Every connection is **platform-managed**: the control plane (the hosted service, or your own console when
+  Every cloud identity is **platform-managed**: the control plane (the hosted service, or your own console when
   self-hosted) mints the short-lived credentials on demand — it federates off the Alethia OIDC issuer, so it
   holds no standing cloud credential (Alibaba is even account-free). There is no "bring the token to a
   self-hosted runner" path.
@@ -22,7 +22,7 @@ The moment you connect (and continuously afterward), Alethia runs an **instant h
 
 1. **Auth** — assume the customer role / exchange the federated token / present the API token, using the
    platform credentials. Success proves access.
-2. **Provisioning-capability probe** — a small set of representative reads to confirm the connection can
+2. **Provisioning-capability probe** — a small set of representative reads to confirm the cloud identity can
    actually see what Alethia provisions into.
 
 The result is one of three statuses, surfaced on the connector card:
@@ -46,9 +46,9 @@ canvas and gives the verification agent real-world context.
 The inventory is maintained server-side:
 
 - **On connect** — a first sync populates the baseline.
-- **Reconciliation sweep** — an in-process scheduler (no external cron) re-lists per connection via the
+- **Reconciliation sweep** — an in-process scheduler (no external cron) re-lists per cloud identity via the
   cloud SDKs on a TTL cadence (health ~10 min, inventory ~1 h), upserts the typed `cloud_*` tables,
-  soft-removes anything no longer present, and **backfills** connections that were never synced. This is
+  soft-removes anything no longer present, and **backfills** cloud identities that were never synced. This is
   the reliable backstop and is **on by default**.
 - **Event-driven updates (opt-in, near-real-time)** — a per-cloud forwarder can stream change events so
   the inventory reflects a new/deleted resource within seconds (**AWS** EventBridge → Lambda; **GCP**
@@ -67,10 +67,10 @@ The inventory is a **minimized, encrypted, expiring projection** — the cloud s
 - **Encrypted at rest** — reconnaissance-sensitive attributes (CIDRs, IPs, endpoints, DNS domains) are
   sealed in a single AES-GCM `sensitive` blob per row, decrypted only in-app when a feature needs them.
 - **Expiring + purged** — soft-removed rows are garbage-collected after a retention window
-  (`ALETHIA_INVENTORY_RETENTION_DAYS`, default 7); **disconnecting a connection purges its inventory
+  (`ALETHIA_INVENTORY_RETENTION_DAYS`, default 7); **disconnecting a cloud identity purges its inventory
   entirely**.
 
-Storing this metadata doesn't weaken the keyless connection model — a resource id or CIDR is not a
+Storing this metadata doesn't weaken the keyless model — a resource id or CIDR is not a
 credential, and a breach grants no cloud access (that still requires the role trust, which Alethia holds
 no key for).
 

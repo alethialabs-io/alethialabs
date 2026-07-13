@@ -1,133 +1,73 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 480" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 380" width="100%" role="img" aria-label="Provisioning pipeline: design to tofu plan, a fail-closed verify gate, tofu apply, then ArgoCD">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="860" height="480" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="859" height="479" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="430" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Provisioning Pipeline — Form to Infrastructure</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="380" rx="12"/>
+  <rect x="0" y="0" width="840" height="380" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="379" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · PROVISIONING</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">Plan, verify (fail-closed), apply, then GitOps</text>
 
-  <!-- Stage 1: Project Form -->
-  <rect x="30" y="58" width="150" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
-  <text x="105" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Project Form</text>
-  <text x="105" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Console UI / Alethia CLI</text>
-  <text x="105" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">createProject()</text>
+  <!-- Design -->
+  <rect class="d-surface" x="28" y="140" width="132" height="66" rx="8"/>
+  <text class="d-label" x="94" y="168" text-anchor="middle" font-size="13" font-weight="600">Design</text>
+  <text class="d-sub mono" x="94" y="186" text-anchor="middle" font-size="9">config snapshot</text>
+  <text class="d-sub mono" x="94" y="198" text-anchor="middle" font-size="9">ProjectConfig → tfvars</text>
 
-  <!-- Arrow 1→2 -->
-  <line x1="180" y1="93" x2="210" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Plan -->
+  <rect class="d-surface" x="196" y="140" width="132" height="66" rx="8"/>
+  <text class="d-label" x="262" y="168" text-anchor="middle" font-size="13" font-weight="600">PLAN</text>
+  <text class="d-sub mono" x="262" y="186" text-anchor="middle" font-size="10">tofu plan</text>
+  <text class="d-sub mono" x="262" y="198" text-anchor="middle" font-size="9">plan JSON + Infracost</text>
 
-  <!-- Stage 2: Database -->
-  <rect x="218" y="58" width="150" height="70" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="293" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Database</text>
-  <text x="293" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">projects + component tables</text>
-  <text x="293" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">PostgreSQL</text>
+  <!-- Verify gate (emphasis) -->
+  <rect class="d-emph" x="364" y="132" width="140" height="82" rx="8"/>
+  <text class="d-emph-text" x="434" y="160" text-anchor="middle" font-size="13" font-weight="600">Verify gate</text>
+  <text class="d-emph-text mono" x="434" y="178" text-anchor="middle" font-size="9" opacity="0.85">fail-closed</text>
+  <text class="d-emph-text mono" x="434" y="192" text-anchor="middle" font-size="9" opacity="0.85">core/verify</text>
+  <text class="d-emph-text mono" x="434" y="204" text-anchor="middle" font-size="9" opacity="0.85">signed receipt</text>
 
-  <!-- Arrow 2→3 -->
-  <line x1="368" y1="93" x2="398" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Apply -->
+  <rect class="d-surface" x="540" y="140" width="132" height="66" rx="8"/>
+  <text class="d-label" x="606" y="168" text-anchor="middle" font-size="13" font-weight="600">DEPLOY</text>
+  <text class="d-sub mono" x="606" y="186" text-anchor="middle" font-size="10">tofu apply</text>
+  <text class="d-sub mono" x="606" y="198" text-anchor="middle" font-size="9">outputs → kubeconfig</text>
 
-  <!-- Stage 3: Config Snapshot -->
-  <rect x="406" y="58" width="150" height="70" rx="8" fill="#F59E0B10" stroke="#F59E0B40"/>
-  <text x="481" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#F59E0B">Config Snapshot</text>
-  <text x="481" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">provision_jobs.config_snapshot</text>
-  <text x="481" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">buildConfigSnapshot()</text>
+  <!-- ArgoCD -->
+  <rect class="d-surface" x="708" y="140" width="108" height="66" rx="8"/>
+  <text class="d-label" x="762" y="168" text-anchor="middle" font-size="13" font-weight="600">ArgoCD</text>
+  <text class="d-sub mono" x="762" y="186" text-anchor="middle" font-size="9">install +</text>
+  <text class="d-sub mono" x="762" y="198" text-anchor="middle" font-size="9">app manifests</text>
 
-  <!-- Arrow 3→4 -->
-  <line x1="556" y1="93" x2="586" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line class="d-edge" x1="160" y1="173" x2="196" y2="173" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="328" y1="173" x2="364" y2="173" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="504" y1="173" x2="540" y2="173" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="510" y="165" font-size="9">pass</text>
+  <line class="d-edge" x1="672" y1="173" x2="708" y2="173" marker-end="url(#ar)"/>
 
-  <!-- Stage 4: ProjectConfig -->
-  <rect x="594" y="58" width="120" height="70" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="654" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">ProjectConfig</text>
-  <text x="654" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Go struct</text>
-  <text x="654" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">JSON unmarshal</text>
+  <!-- Block branch -->
+  <path class="d-edge" d="M434 214 V270 H300 V282" marker-end="url(#ar)"/>
+  <rect class="d-surface2" x="196" y="282" width="208" height="46" rx="8"/>
+  <text class="d-label" x="300" y="304" text-anchor="middle" font-size="12" font-weight="600">Blocked before apply</text>
+  <text class="d-sub mono" x="300" y="320" text-anchor="middle" font-size="9">unless authorized verify.Override</text>
+  <text class="d-sub mono" x="446" y="248" font-size="9">hard failure</text>
 
-  <!-- Arrow 4→5 -->
-  <line x1="714" y1="93" x2="734" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="d-sub mono" x="540" y="300" font-size="9">report forwarded on execution_metadata["verify_result"]</text>
+  <text class="d-sub mono" x="540" y="316" font-size="9">rendered in the Console Plan tab</text>
 
-  <!-- Stage 5: tfvars -->
-  <rect x="742" y="58" width="88" height="70" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="786" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">tfvars</text>
-  <text x="786" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">.tfvars.json</text>
-  <text x="786" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">ProviderTfvars()</text>
-
-  <!-- Component tables detail -->
-  <rect x="30" y="156" width="338" height="140" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="199" y="178" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Component Tables (Stage 1 → 2)</text>
-
-  <rect x="44" y="190" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="89" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">projects</text>
-  <rect x="142" y="190" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="187" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_network</text>
-  <rect x="240" y="190" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="285" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_cluster</text>
-
-  <rect x="44" y="224" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="89" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_dns</text>
-  <rect x="142" y="224" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="187" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_databases</text>
-  <rect x="240" y="224" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="285" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_caches</text>
-
-  <rect x="44" y="258" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="89" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_queues</text>
-  <rect x="142" y="258" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="187" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_topics</text>
-  <rect x="240" y="258" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="285" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_secrets</text>
-
-  <!-- Provider tfvars detail -->
-  <rect x="406" y="156" width="424" height="140" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="618" y="178" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">ProviderTfvars() Mapping (Stage 4 → 5)</text>
-
-  <!-- AWS column -->
-  <rect x="420" y="190" width="124" height="96" rx="6" fill="#18181B" stroke="#FF9900"/>
-  <text x="482" y="210" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FF9900">AWS</text>
-  <text x="482" y="228" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">eks_cluster_version</text>
-  <text x="482" y="244" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vpc_cidr</text>
-  <text x="482" y="260" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">rds_config</text>
-  <text x="482" y="276" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">sqs_queues</text>
-
-  <!-- GCP column -->
-  <rect x="556" y="190" width="124" height="96" rx="6" fill="#18181B" stroke="#4285F4"/>
-  <text x="618" y="210" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#4285F4">GCP</text>
-  <text x="618" y="228" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">gke_cluster_version</text>
-  <text x="618" y="244" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">network_cidr</text>
-  <text x="618" y="260" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">cloud_sql_engine</text>
-  <text x="618" y="276" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">pubsub_topics</text>
-
-  <!-- Azure column -->
-  <rect x="692" y="190" width="124" height="96" rx="6" fill="#18181B" stroke="#0078D4"/>
-  <text x="754" y="210" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0078D4">Azure</text>
-  <text x="754" y="228" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">aks_cluster_version</text>
-  <text x="754" y="244" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vnet_cidr</text>
-  <text x="754" y="260" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">azure_db_engine</text>
-  <text x="754" y="276" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">service_bus_queues</text>
-
-  <!-- Terraform execution -->
-  <rect x="30" y="320" width="800" height="80" rx="8" fill="none" stroke="#3F3F46"/>
-  <text x="430" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Terraform Execution (Runner)</text>
-
-  <rect x="50" y="356" width="160" height="32" rx="6" fill="#27272A" stroke="#FF9900"/>
-  <text x="130" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FF9900">templates/project/aws/</text>
-
-  <rect x="230" y="356" width="160" height="32" rx="6" fill="#27272A" stroke="#4285F4"/>
-  <text x="310" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#4285F4">templates/project/gcp/</text>
-
-  <rect x="410" y="356" width="160" height="32" rx="6" fill="#27272A" stroke="#0078D4"/>
-  <text x="490" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#0078D4">templates/project/azure/</text>
-
-  <rect x="596" y="356" width="100" height="32" rx="6" fill="#18181B" stroke="#3F3F46"/>
-  <text x="646" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">plan / apply</text>
-
-  <rect x="716" y="356" width="100" height="32" rx="6" fill="#18181B" stroke="#3F3F46"/>
-  <text x="766" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">S3 state</text>
-
-  <!-- Arrow down from tfvars to terraform -->
-  <line x1="786" y1="128" x2="786" y2="148" stroke="#52525B" stroke-width="1"/>
-  <line x1="786" y1="148" x2="786" y2="296" stroke="#52525B" stroke-width="1"/>
-  <line x1="786" y1="296" x2="646" y2="296" stroke="#52525B" stroke-width="1"/>
-  <line x1="646" y1="296" x2="646" y2="318" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- Bottom summary -->
-  <text x="430" y="432" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">Config snapshot is immutable — a point-in-time freeze of the project configuration.</text>
-  <text x="430" y="450" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">No templating engine touches .tf files. Values flow through native terraform.tfvars.json.</text>
-  <text x="430" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#52525B">Plan hash validation ensures apply matches the exact configuration that was planned.</text>
+  <text class="d-sub mono" x="812" y="366" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

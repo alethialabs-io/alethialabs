@@ -11,10 +11,12 @@ SSO lets members sign in through **your** identity provider (IdP) instead of (or
 login. Alethia is the **Service Provider** that *consumes* your IdP — it never runs an identity provider of its
 own.
 
-You bring the IdP. Supported via standard protocols:
+You bring the IdP. Supported via standard protocols (see [OIDC](/standards/oidc) and [SAML & SCIM](/standards/scim-saml) for the protocol details):
 
-- **OIDC** — Okta · Microsoft Entra ID · Google Workspace · **AWS IAM Identity Center** · OneLogin · Ping · …
-- **SAML 2.0** — the same IdPs over SAML.
+- **[OIDC](/standards/oidc)** — Okta · Microsoft Entra ID · Google Workspace · **AWS IAM Identity Center** · OneLogin · Ping · …
+- **[SAML 2.0](/standards/scim-saml)** — the same IdPs over SAML.
+
+Under the hood SSO is the Better Auth `@better-auth/sso` plugin (shipped in the enterprise package); a provider stores either an `oidcConfig` or a `samlConfig` and can be scoped per organization (`sso_provider.organizationId`) or left instance-wide.
 
 <Callout type="info">
   There's nothing to run on Alethia's side — no Hydra, no Alethia-as-IdP. Each organization registers its own
