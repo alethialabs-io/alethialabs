@@ -104,6 +104,32 @@ func RunAwsBootstrap(template, issuerURL, region, roleName, stackName string) (s
 	return roleArn, nil
 }
 
+// RunAwsSetupScript writes the embedded installer to a temp file, runs it with the user's local
+// aws login (federating to the given Alethia issuer), and returns the created IAM role ARN parsed
+// from the CONFIG block. Keyless — direct OIDC, no external id.
+func RunAwsSetupScript(script, issuerURL string) (string, error) {
+	path, cleanup, err := writeTemp("alethia-aws-setup-*.sh", script)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	output, err := runStreaming("bash", path, issuerURL)
+	if err != nil {
+		return "", fmt.Errorf("aws setup failed: %w", err)
+	}
+
+	block, ok := extractBetweenMarkers(output)
+	if !ok {
+		return "", fmt.Errorf("could not find config in setup output")
+	}
+	roleArn := parseKeyValues(block)["role_arn"]
+	if roleArn == "" {
+		return "", fmt.Errorf("aws setup did not return a role ARN")
+	}
+	return roleArn, nil
+}
+
 // AzureIDs holds the federated identity values captured from the Azure setup.
 type AzureIDs struct {
 	TenantID       string

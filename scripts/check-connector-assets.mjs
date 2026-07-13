@@ -31,6 +31,10 @@ const PAIRS = [
 		"apps/console/public/alethia-bootstrap.yaml",
 	],
 	[
+		"infra/connector/aws/alethia-aws-setup.sh",
+		"apps/console/public/alethia-aws-setup.sh",
+	],
+	[
 		"infra/connector/aws/alethia-bootstrap.tf",
 		"apps/console/public/connector-terraform/aws.tf",
 	],

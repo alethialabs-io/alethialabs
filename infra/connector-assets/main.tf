@@ -23,6 +23,10 @@ locals {
       source       = "${path.module}/../connector/aws/alethia-bootstrap.yaml"
       content_type = "text/yaml"
     }
+    "alethia-aws-setup.sh" = {
+      source       = "${path.module}/../connector/aws/alethia-aws-setup.sh"
+      content_type = "text/x-shellscript"
+    }
     "alethia-gcp-setup.sh" = {
       source       = "${path.module}/../connector/gcp/alethia-gcp-setup.sh"
       content_type = "text/x-shellscript"
