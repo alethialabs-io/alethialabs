@@ -19,6 +19,7 @@ const (
 	gcpCloudShellURL     = "https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal"
 	azureCloudShellURL   = "https://shell.azure.com"
 	alibabaCloudShellURL = "https://shell.aliyun.com"
+	awsCloudShellURL     = "https://console.aws.amazon.com/cloudshell/home"
 )
 
 var connectorCmd = &cobra.Command{

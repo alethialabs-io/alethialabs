@@ -24,6 +24,7 @@ import {
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
 import { FieldHelp } from "@repo/ui/field-help";
+import { CopyButton } from "@repo/ui/copy-button";
 import {
 	ALETHIA_ISSUER_URL,
 	connectorAssetUrl,
@@ -70,12 +71,17 @@ interface AwsConnectionProps {
 }
 
 export function AwsConnection({ onComplete }: AwsConnectionProps) {
-	const [method, setMethod] = useState<"cloudformation" | "terraform">(
+	const [method, setMethod] = useState<"cloudformation" | "terraform" | "cli">(
 		"cloudformation",
 	);
 	const { state: verifyState, run, cancel } = useConnectionTest();
 
 	const templateUrl = connectorAssetUrl("alethia-bootstrap.yaml");
+	const scriptUrl = connectorAssetUrl("alethia-aws-setup.sh");
+	// AWS CloudShell can't preload a command, so the CLI path is copy-paste. No args — the script
+	// defaults the issuer and creates the OIDC provider + role.
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-aws-setup.sh`;
+	const cloudShellUrl = "https://console.aws.amazon.com/cloudshell/home";
 	// Pre-fill the issuer so a self-hosted console points the customer's trust at its OWN issuer. No
 	// ExternalId / platform-account params — the customer's role trusts the Alethia issuer directly.
 	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_IssuerUrl=${encodeURIComponent(ALETHIA_ISSUER_URL)}`;
@@ -122,14 +128,17 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 		>
 			<MethodTabs
 				value={method}
-				onChange={(id) => setMethod(id as "cloudformation" | "terraform")}
+				onChange={(id) =>
+					setMethod(id as "cloudformation" | "terraform" | "cli")
+				}
 				help={
 					<>
 						<b className="text-foreground">CloudFormation</b> is one click — it opens the AWS
-						console with everything pre-filled; nothing to install.{" "}
+						console with everything pre-filled.{" "}
+						<b className="text-foreground">AWS CLI / CloudShell</b> runs a script from the
+						browser (nothing to install).{" "}
 						<b className="text-foreground">Terraform</b> is for teams that manage
-						infrastructure as code: download the module and <code>apply</code> it. Both create
-						the same role.
+						infrastructure as code. All three create the same role.
 					</>
 				}
 				tabs={[
@@ -138,6 +147,12 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 						label: "CloudFormation",
 						sub: "Quick setup via AWS Console",
 						icon: <CloudIcon className="h-3.5 w-3.5" />,
+					},
+					{
+						id: "cli",
+						label: "AWS CLI / CloudShell",
+						sub: "Run a script in the browser",
+						icon: <Terminal className="h-3.5 w-3.5" />,
 					},
 					{
 						id: "terraform",
@@ -183,6 +198,56 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 							Once the stack is created, go to the{" "}
 							<b className="font-medium text-foreground">Outputs</b> tab and copy the{" "}
 							<b className="font-medium text-foreground">RoleArn</b>.
+						</p>
+					</Step>
+				</div>
+			) : method === "cli" ? (
+				<div className="space-y-6">
+					<Step n={1} title="Open AWS CloudShell">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Click below to open AWS CloudShell in your browser. The aws CLI is preinstalled
+							and already authenticated.
+						</p>
+						<div className="flex gap-3">
+							<Button
+								onClick={() => window.open(cloudShellUrl, "_blank")}
+								size="sm"
+								className="h-8 font-medium text-xs"
+								type="button"
+							>
+								<ExternalLink className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Open CloudShell
+							</Button>
+							<Button
+								onClick={handleDownload}
+								variant="outline"
+								size="sm"
+								className="h-8 border-border/60 font-medium text-xs"
+								type="button"
+							>
+								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download Script
+							</Button>
+						</div>
+					</Step>
+					<Step n={2} title="Run the setup command">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Paste this command in CloudShell (it can&apos;t be preloaded). It creates the
+							IAM OIDC provider + role and prints the role ARN.
+						</p>
+						<div className="flex items-start gap-2 rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[11px] text-foreground">
+							<span className="min-w-0 break-all">{cloudShellCmd}</span>
+							<CopyButton
+								text={cloudShellCmd}
+								className="mt-0.5 shrink-0 rounded p-1 hover:bg-muted"
+							/>
+						</div>
+					</Step>
+					<Step n={3} title="Copy Role ARN">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Copy the{" "}
+							<code className="rounded border border-border/50 bg-muted px-1 py-0.5">role_arn</code>{" "}
+							the script prints and paste it below.
 						</p>
 					</Step>
 				</div>
