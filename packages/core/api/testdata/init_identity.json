@@ -1,5 +1,4 @@
 {
 	"identity_id": "string",
-	"external_id": "string",
-	"platform_client_id": "string"
+	"external_id": "string"
 }

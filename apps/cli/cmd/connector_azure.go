@@ -25,20 +25,20 @@ var connectorAzureCmd = &cobra.Command{
 	Short: "Connect an Azure subscription",
 	Long: `Connect an Azure subscription using federated identity.
 
-The setup creates a service principal for Alethia's multi-tenant app (which trusts
-Alethia's OIDC issuer via a federated credential — no client secret) in your tenant
-and grants it a least-privilege role on the subscription. Alethia's platform app id
-is supplied automatically; you never enter it.
+The setup creates a user-assigned managed identity in your subscription (a plain ARM
+resource — no App Registration, no client secret) with a federated credential trusting
+Alethia's OIDC issuer, and grants it a least-privilege role. There is no platform Entra
+app: Alethia authenticates AS your managed identity, whose client id the setup prints.
 
 By default the setup runs with your local az CLI. Use --manual to run it in
-Azure Cloud Shell and paste back the tenant and subscription IDs.`,
+Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		apiClient := api.NewClient(token)
-		steps := []string{"Subscription", "Create app registration", "Connection test"}
+		steps := []string{"Subscription", "Create managed identity", "Connection test"}
 
 		ui.PrintStepper(steps, 0)
 		if connectorAzureSubscription == "" {
@@ -61,20 +61,12 @@ Azure Cloud Shell and paste back the tenant and subscription IDs.`,
 			fail(err)
 		}
 
-		// Alethia's platform Entra app id — the setup script requires it as ALETHIA_AZURE_CLIENT_ID.
-		// It's server-provided (fixed, non-secret); the customer never types it. Empty means this
-		// instance hasn't registered the Azure app, so a connect can only fail.
-		clientID := strings.TrimSpace(initResp.PlatformClientID)
-		if clientID == "" {
-			failf("This Alethia instance hasn't configured Azure connect (no platform app id set). Contact your Alethia operator.")
-		}
-
 		ui.PrintStepper(steps, 1)
 		var ids *cloudshell.AzureIDs
 		if connectorAzureManual {
-			ids, err = azureManualFlow(connectorAzureSubscription, clientID)
+			ids, err = azureManualFlow(connectorAzureSubscription)
 		} else {
-			ids, err = azureLocalFlow(connectorAzureSubscription, clientID)
+			ids, err = azureLocalFlow(connectorAzureSubscription)
 		}
 		if err != nil {
 			fail(err)
@@ -94,9 +86,9 @@ Azure Cloud Shell and paste back the tenant and subscription IDs.`,
 	},
 }
 
-// azureLocalFlow runs the setup script with the local az CLI, injecting Alethia's
-// platform app id (clientID) the script requires.
-func azureLocalFlow(subscriptionID, clientID string) (*cloudshell.AzureIDs, error) {
+// azureLocalFlow runs the setup script with the local az CLI. The script creates the
+// managed identity in the subscription and prints its client id (captured from output).
+func azureLocalFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
 	if err := cloudshell.EnsureAz(); err != nil {
 		ui.Error("az CLI not found on PATH")
 		ui.Muted("Install it: https://learn.microsoft.com/cli/azure/install-azure-cli")
@@ -105,33 +97,35 @@ func azureLocalFlow(subscriptionID, clientID string) (*cloudshell.AzureIDs, erro
 	}
 
 	ui.Info("Running setup via the local az CLI...")
-	return cloudshell.RunAzureSetup(connector.AzureSetupScript, subscriptionID, clientID)
+	return cloudshell.RunAzureSetup(connector.AzureSetupScript, subscriptionID)
 }
 
 // azureManualFlow guides the user through Azure Cloud Shell and prompts for the
-// resulting tenant/subscription IDs. The client id is Alethia's fixed platform app
-// id (clientID) — baked into the printed command, never entered by the user.
-func azureManualFlow(subscriptionID, clientID string) (*cloudshell.AzureIDs, error) {
+// resulting tenant/client/subscription IDs. The client id is the managed identity the
+// script creates in the subscription (printed in its output), not a platform app.
+func azureManualFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
 	ui.Info("Manual setup:")
 	fmt.Printf("  Open Azure Cloud Shell (%s) and run:\n\n", ui.LinkStyle.Render(azureCloudShellURL))
 	fmt.Printf(
-		"     curl -sO %s/alethia-azure-setup.sh && ALETHIA_AZURE_CLIENT_ID=%s bash alethia-azure-setup.sh %s\n\n",
-		connectorBaseURL, clientID, subscriptionID,
+		"     curl -sO %s/alethia-azure-setup.sh && bash alethia-azure-setup.sh %s\n\n",
+		connectorBaseURL, subscriptionID,
 	)
 	fmt.Println("  Then paste the values it prints below.")
 
-	ids := &cloudshell.AzureIDs{SubscriptionID: subscriptionID, ClientID: clientID}
+	ids := &cloudshell.AzureIDs{SubscriptionID: subscriptionID}
 	if err := ui.NewForm(huh.NewGroup(
 		huh.NewInput().Title("Tenant ID").Value(&ids.TenantID),
+		huh.NewInput().Title("Client ID").Description("The managed identity's application id").Value(&ids.ClientID),
 		huh.NewInput().Title("Subscription ID").Value(&ids.SubscriptionID),
 	)).Run(); err != nil {
 		return nil, err
 	}
 
 	ids.TenantID = strings.TrimSpace(ids.TenantID)
+	ids.ClientID = strings.TrimSpace(ids.ClientID)
 	ids.SubscriptionID = strings.TrimSpace(ids.SubscriptionID)
-	if ids.TenantID == "" || ids.SubscriptionID == "" {
-		return nil, fmt.Errorf("tenant and subscription IDs are both required")
+	if ids.TenantID == "" || ids.ClientID == "" || ids.SubscriptionID == "" {
+		return nil, fmt.Errorf("tenant, client, and subscription IDs are all required")
 	}
 	return ids, nil
 }

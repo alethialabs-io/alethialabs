@@ -149,8 +149,8 @@ pnpm dev:runner:logs                       # follow it
 - [ ] **P1** Hetzner API token; local Docker; run E1; commit proof; destroy.
 - [ ] **P2** AWS account + budget cap; `ALETHIA_OIDC_SIGNING_KEY` + **publicly-reachable JWKS**;
       `infra/connector-platform/aws` role trust applied; `ghcr.io/alethialabs-io/runner-aws` published;
-      live `tofu plan` reviewed; apply→destroy; then Azure (multi-tenant Entra app + `ALETHIA_AZURE_CLIENT_ID`).
-- [ ] **P3** promote dev→staging→main (squash-reconcile); prod vault flags (OIDC key, Azure client id);
+      live `tofu plan` reviewed; apply→destroy; then Azure (customer managed identity — no platform app).
+- [ ] **P3** promote dev→staging→main (squash-reconcile); prod vault flags (OIDC key);
       `fleet_pools` row with `warm_min ≥ 1`; re-prove E1+E2 on the prod domain.
 - [ ] **P4** real-VM canary (nested podman + IMDS-unreachable + squid egress); flip
       `FLEET_SANDBOX_CONTAINER` → `_EGRESS_ENFORCED=1` → `_ENFORCE_MANAGED=1`; `ALETHIA_BYO_IAC_ENABLED=true`;

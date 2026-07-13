@@ -1,22 +1,22 @@
-# Alethia Azure connector — Terraform parity with alethia-azure-setup.sh (keyless).
-# Alethia registers ONE multi-tenant Entra app whose federated-identity credential trusts
-# the Alethia OIDC issuer; the console + runner authenticate AS that app with a minted
-# assertion — no client secret. This module does NOT create an app or a federated
-# credential: it creates a service principal for Alethia's app in YOUR tenant and grants it
-# Contributor on the subscription. Outputs the tenant/subscription ids to paste back.
+# Alethia Azure connector — Terraform parity with alethia-azure-setup.sh (keyless, customer-side).
+#
+# Azure federation is implemented by Entra ID, but there is NO platform app to register and NO
+# client secret anywhere. This module creates, in YOUR subscription, a User-Assigned Managed
+# Identity (a plain ARM resource — no App Registration, no directory-admin rights) with a
+# federated-identity credential that trusts the Alethia OIDC issuer. Alethia authenticates AS
+# that identity by presenting a short-lived assertion its issuer mints (subject
+# `alethia-connector`, audience `api://AzureADTokenExchange`). You grant the identity a
+# least-privilege role on the subscription and paste three public ids back — parity with the
+# GCP Workload Identity Federation model (no platform Entra app, no `ALETHIA_AZURE_CLIENT_ID`).
 #
 # Usage:
 #   terraform init && terraform apply \
 #     -var "subscription_id=YOUR_SUBSCRIPTION_ID" \
-#     -var "alethia_client_id=ALETHIA_APP_ID"      # shown in the connect dialog
-#   terraform output            # tenant_id / subscription_id
+#     -var "issuer_url=https://alethialabs.io/api/oidc"   # your Alethia console's issuer
+#   terraform output            # tenant_id / subscription_id / client_id
 
 terraform {
   required_providers {
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = ">= 2.47"
-    }
     azurerm = {
       source  = "hashicorp/azurerm"
       version = ">= 3.80"
@@ -29,33 +29,69 @@ provider "azurerm" {
   subscription_id = var.subscription_id
 }
 
-provider "azuread" {}
-
 variable "subscription_id" {
   type        = string
   description = "The Azure subscription Alethia will provision into."
 }
 
-variable "alethia_client_id" {
+variable "issuer_url" {
   type        = string
-  description = "The Application (client) ID of Alethia's platform Entra app (shown in the connect dialog)."
+  description = "The Alethia OIDC issuer URL the managed identity federates off (your console's /api/oidc)."
+  default     = "https://alethialabs.io/api/oidc"
+}
+
+variable "location" {
+  type        = string
+  description = "Azure region for the connector resource group + managed identity (metadata only; not where clusters go)."
+  default     = "eastus"
+}
+
+variable "resource_group_name" {
+  type        = string
+  description = "Resource group that holds the Alethia connector managed identity."
+  default     = "alethia-connector"
+}
+
+# The fixed workload subject + audience the Alethia issuer mints. MUST equal WORKLOAD_SUBJECT
+# (lib/oidc/issuer.ts) and AZURE_TOKEN_AUDIENCE (lib/cloud-providers/session/azure.ts).
+locals {
+  workload_subject = "alethia-connector"
+  token_audience   = "api://AzureADTokenExchange"
 }
 
 data "azurerm_subscription" "current" {}
 
-# Creates the service principal (enterprise application) for Alethia's multi-tenant app in
-# THIS tenant. use_existing reconciles an already-present SP. No app object is registered
-# locally — the app lives in Alethia's tenant.
-resource "azuread_service_principal" "alethia" {
-  client_id    = var.alethia_client_id
-  use_existing = true
+# Resource group holding the connector identity. Metadata only — clusters land in their own groups.
+resource "azurerm_resource_group" "alethia" {
+  name     = var.resource_group_name
+  location = var.location
 }
 
-# Least-privilege custom role — replaces subscription Contributor. Enumerates only the
-# actions the Alethia project templates need. NOTE: this also FIXES a latent gap — Contributor
-# excludes Microsoft.Authorization/roleAssignments/write, which the templates require (the
-# external-dns DNS Zone Contributor assignment), so pure Contributor could not actually
-# provision an AKS Project. We add that write but CONSTRAIN it (below) to a single role.
+# The customer-owned identity Alethia authenticates AS. A User-Assigned Managed Identity — created
+# in YOUR subscription with no App Registration and no directory write. Its client id is per-customer
+# (returned below), NOT a shared platform app id.
+resource "azurerm_user_assigned_identity" "alethia" {
+  name                = "alethia-provisioner"
+  resource_group_name = azurerm_resource_group.alethia.name
+  location            = azurerm_resource_group.alethia.location
+}
+
+# Federated-identity credential: trusts the Alethia issuer for the fixed subject + audience. This is
+# what lets Alethia's minted assertion be exchanged for an Azure token as this identity — keyless.
+resource "azurerm_federated_identity_credential" "alethia" {
+  name                = "alethia-connector"
+  resource_group_name = azurerm_resource_group.alethia.name
+  parent_id           = azurerm_user_assigned_identity.alethia.id
+  audience            = [local.token_audience]
+  issuer              = var.issuer_url
+  subject             = local.workload_subject
+}
+
+# Least-privilege custom role — replaces subscription Contributor. Enumerates only the actions the
+# Alethia project templates need. NOTE: this also FIXES a latent gap — Contributor excludes
+# Microsoft.Authorization/roleAssignments/write, which the templates require (the external-dns DNS
+# Zone Contributor assignment), so pure Contributor could not actually provision an AKS project. We
+# add that write but CONSTRAIN it (below) to a single role.
 resource "azurerm_role_definition" "alethia_provisioner" {
   name        = "Alethia Provisioner"
   scope       = data.azurerm_subscription.current.id
@@ -117,13 +153,14 @@ locals {
   dns_zone_contributor_role_id = "befefa01-2a29-4197-83a8-272ff33ce314"
 }
 
-# Assign the custom role, with an ABAC condition constraining roleAssignments write/delete to the
-# single DNS Zone Contributor role. The connector can create the external-dns assignment the
-# templates need — and nothing else (no self-grant of Owner). This is the escalation control.
+# Assign the custom role to the managed identity, with an ABAC condition constraining
+# roleAssignments write/delete to the single DNS Zone Contributor role. The connector can create the
+# external-dns assignment the templates need — and nothing else (no self-grant of Owner). This is the
+# escalation control.
 resource "azurerm_role_assignment" "alethia_provisioner" {
   scope              = data.azurerm_subscription.current.id
   role_definition_id = azurerm_role_definition.alethia_provisioner.role_definition_resource_id
-  principal_id       = azuread_service_principal.alethia.object_id
+  principal_id       = azurerm_user_assigned_identity.alethia.principal_id
 
   condition_version = "2.0"
   condition         = <<-EOT
@@ -157,4 +194,9 @@ output "tenant_id" {
 output "subscription_id" {
   value       = var.subscription_id
   description = "Paste this into the Alethia connect sheet as Subscription ID."
+}
+
+output "client_id" {
+  value       = azurerm_user_assigned_identity.alethia.client_id
+  description = "Paste this into the Alethia connect sheet as Client ID (the managed identity's application id)."
 }
