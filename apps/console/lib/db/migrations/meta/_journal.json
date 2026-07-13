@@ -638,6 +638,20 @@
       "when": 1783938122766,
       "tag": "0090_faulty_dark_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1783952971657,
+      "tag": "0091_flashy_stingray",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1783952991063,
+      "tag": "0092_purge_argocd_admin_password_from_jobs",
+      "breakpoints": true
     }
   ]
 }

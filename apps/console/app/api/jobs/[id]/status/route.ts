@@ -25,6 +25,7 @@ import {
 	transitionEnv,
 } from "@/lib/db/env-status";
 import { jobs } from "@/lib/db/schema";
+import { scrubExecutionMetadata } from "@/lib/jobs/scrub-metadata";
 import { log } from "@/lib/observability/log";
 import { outcomeFromStatus, recordProvision } from "@/lib/observability/metrics";
 import { markJobSpan } from "@/lib/observability/trace";
@@ -61,6 +62,20 @@ export async function PUT(
 				{ error: `status must be one of: ${validStatuses.join(", ")}` },
 				{ status: 400 },
 			);
+		}
+
+		// Ingest-side secret gate (console's OWN trust boundary — the runner's scrub cannot be
+		// relied on: legacy / mid-rollout / self-registered runners post whatever they want, and
+		// update_job_status jsonb-merges execution_metadata verbatim into the jobs row). Drop any
+		// credential-named key (password/token/kubeconfig/private_key/…) from the blob BEFORE the
+		// RPC; `plan_result` subtrees are exempt from descent (raw tofu plan attribute keys
+		// legitimately collide) — see lib/jobs/scrub-metadata.ts. A non-empty drop list means a
+		// runner posted secret material — refuse-and-log, never persist.
+		const droppedSecretKeys = scrubExecutionMetadata(execution_metadata);
+		if (droppedSecretKeys.length > 0) {
+			jlog.warn("dropped secret-bearing execution_metadata key(s) at ingest", {
+				dropped: droppedSecretKeys,
+			});
 		}
 
 		const db = getServiceDb();
