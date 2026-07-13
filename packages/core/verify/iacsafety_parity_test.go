@@ -29,6 +29,11 @@ import (
 // BOTH directions: a newly uncovered allowlisted provider must be justified, and a
 // gap that gets closed in verify must be removed from the exception set.
 //
+// SCOPE: this guards the COMMITTED default allowlist (iacsafety.DefaultProviderAllowlist).
+// The runtime scanner reads iacsafety.AllowlistFromEnv(), which an operator can override via
+// ALETHIA_BYO_IAC_PROVIDER_ALLOWLIST — a provider added ONLY through that env var is a conscious
+// out-of-code choice and is intentionally not asserted here (there is nothing committed to check).
+//
 // HONEST SEVERITY OF A PARITY GAP (read from provisioner.RunDeployV2 in
 // packages/core/provisioner/deploy.go + Report.Unwaived in override.go):
 // a not_evaluable verdict is NOT a hard `tofu apply` block at the provisioner layer.
