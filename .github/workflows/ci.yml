@@ -138,6 +138,10 @@ jobs:
   e2e-browser:
     name: E2E (browser · Playwright hero path)
     runs-on: ubuntu-latest
+    # Heavy (console build + Playwright) and NOT a required merge check — run on the merge queue,
+    # pushes to main, and manual dispatch, but NOT on every PR push, to cut per-PR Actions minutes.
+    # (The nightly e2e workflows also cover these flows.)
+    if: github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     # Own parallel job, OFF the fast path: builds + boots the real console against a real Postgres
     # and drives the sellable happy-path in a headless browser (sign-in → org → connect-a-cloud
     # surface → design → Deploy/pending-changes → evidence/clusters). Fully hermetic: email-OTP with
@@ -218,6 +222,9 @@ jobs:
   e2e-elench-ai:
     name: E2E (browser · Elench AI journeys · scripted model)
     runs-on: ubuntu-latest
+    # Heavy (console build + Playwright) and NOT a required merge check — run on the merge queue,
+    # pushes to main, and manual dispatch, but NOT on every PR push, to cut per-PR Actions minutes.
+    if: github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     # The Elench AI journeys end-to-end with a SCRIPTED model (ALETHIA_AI_MOCK=1 → the
     # MockLanguageModelV3 in lib/config/ai-mock). Only the model is deterministic: the agent
     # route, extended thinking, orchestration markers, TOOL EXECUTION (PDP-gated reads against
