@@ -82,6 +82,27 @@ export function isBillingActive(status: BillingStatus): boolean {
 }
 
 /**
+ * True when a manual / off-Stripe grant has lapsed — the off-Stripe analogue of a
+ * non-renewed subscription. Enterprise is invoiced off-Stripe and marked paid directly
+ * (scripts/set-org-plan.mjs / the platform operator plane), writing `currentPeriodEnd`
+ * to the contract's term end. Nothing else reads that column, so without this check such
+ * a grant would stay paid forever. Scoped to grants with NO Stripe subscription so a real
+ * Stripe customer — whose renewal date the webhook maintains — is never affected (a late
+ * renewal webhook must never flicker a paying customer down to community mid-cycle). An
+ * open-ended grant (`currentPeriodEnd` null) never lapses.
+ */
+export function isManualGrantExpired(
+	billing: { stripeSubscriptionId: string | null; currentPeriodEnd: Date | null },
+	now: Date = new Date(),
+): boolean {
+	return (
+		billing.stripeSubscriptionId == null &&
+		billing.currentPeriodEnd != null &&
+		billing.currentPeriodEnd.getTime() < now.getTime()
+	);
+}
+
+/**
  * Resolves a billing record (plan + status) to entitlements: the plan's grant when
  * the subscription is live, the community baseline otherwise. The one place that
  * ties "active subscription" to "unlocked features".
