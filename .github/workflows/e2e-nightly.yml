@@ -60,7 +60,11 @@ jobs:
       contents: read
       id-token: write
     # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
-    timeout-minutes: 60
+    # Raised 60→90 to fit the opt-in day-2 SOAK window (BYOC A0.3): the base
+    # deploy→ArgoCD→teardown chain still finishes well inside the old bound (a tiny Talos
+    # cluster provisions in ~10-15m), and the soak adds a bounded ~10-25m of day-2 loops on
+    # that same cheap cluster (cents/hour). The finer step timeout below kills a hang first.
+    timeout-minutes: 90
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -232,12 +236,14 @@ jobs:
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
       #    normally — rather than the whole job hitting its cap. ──
-      # 45m step / 50m go-timeout: the test's own ctx is 40m (deploy wait 25m + the ArgoCD
-      # Healthy+Synced convergence assertion 8m + build headroom) plus teardown margin.
+      # 75m step / 80m go-timeout: the test's own ctx is 40m base (deploy wait 25m + the
+      # ArgoCD Healthy+Synced convergence assertion 8m + build headroom) PLUS the opt-in soak
+      # budget (window + drift/PVC bounds, BYOC A0.3), so a soak run has headroom; a non-soak
+      # run still finishes far inside this. All three exceed the ctx so the ctx cancels first.
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: 45
+        timeout-minutes: 75
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -245,6 +251,14 @@ jobs:
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
           ALETHIA_E2E_HCLOUD_REGION: ${{ env.E2E_REGION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
+          # ── Day-2 SOAK window (BYOC A0.3). Opt-in: default 10m on the real-apply runs,
+          #    overridable via vars.E2E_SOAK (e.g. a longer window, or a short one to trim
+          #    cost). Unset var ⇒ 10m. Runs AFTER the readiness+ArgoCD asserts and BEFORE the
+          #    guaranteed teardown: a liveness loop, a real DETECT_DRIFT → honest posture, a
+          #    1Gi PVC → Bound → cloud-side sweep-tag hard-fail, and an add-on health re-read.
+          #    Its machine-readable summary is written for the A0.4 proof/verdict capture. ──
+          ALETHIA_E2E_SOAK: ${{ vars.E2E_SOAK || '10m' }}
+          ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           # ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6). Opt-in, ON TOP of the base T2
           #    proof: only activates when a maintainer sets the repo VARS + the git-token SECRET.
           #    The repo URLs are non-secret vars; the git token is a SECRET consumed only via the
@@ -263,7 +277,7 @@ jobs:
           ALETHIA_E2E_ARGO_REPOS_REQUIRE: ${{ vars.E2E_ARGO_APPS_REPO != '' && '1' || '' }}
         run: |
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout 50m -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout 80m -v
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
@@ -280,6 +294,9 @@ jobs:
           ALETHIA_E2E_PROOF_OUTCOME: ${{ steps.t2.outcome }}
           ALETHIA_E2E_PROOF_RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
+          # Day-2 soak summary (BYOC A0.3), written by the T2 test; folded into the bundle +
+          # step-summary verdict when present (absent ⇒ the capture is unchanged).
+          ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}

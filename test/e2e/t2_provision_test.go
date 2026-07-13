@@ -138,8 +138,17 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	waitTimeout := resolveT2WaitTimeout(p)
 	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
 	// for the runner build. Derived from the provider row (hetzner 25m+8m+7m = 40m,
-	// bit-identical to the pre-table constant; managed clouds get their longer waits).
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+7*time.Minute)
+	// bit-identical to the pre-table constant; managed clouds get their longer waits). When
+	// the day-2 SOAK is enabled (BYOC A0.3) we widen the ctx by the soak window plus the
+	// drift-job + PVC-bind bounds, so a mid-soak ctx cancellation can't masquerade as a
+	// cluster drop. A soak parse error is loud here too (before any provisioning spend).
+	soakBudget := time.Duration(0)
+	if soakDur, soakOn, soakErr := parseSoakDuration(os.Getenv("ALETHIA_E2E_SOAK")); soakErr != nil {
+		t.Fatalf("A0.3 soak: %v", soakErr)
+	} else if soakOn {
+		soakBudget = soakDur + 15*time.Minute // drift wait (10m) + PVC bind (5m) headroom
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+7*time.Minute)
 	defer cancel()
 
 	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
@@ -364,6 +373,24 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
 	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
+
+	// (8) SOAK / day-2 window (BYOC A0.3). Opt-in via ALETHIA_E2E_SOAK — unset ⇒ a clean
+	//     skip (everything above is the unchanged base T2 proof). Runs AFTER the readiness +
+	//     ArgoCD asserts and BEFORE this function returns, so the GUARANTEED t.Cleanup
+	//     teardown (registered earlier) still tears the cluster down afterwards. It drives
+	//     the day-2 loops against the live cluster: a bounded liveness poll, a real
+	//     DETECT_DRIFT job → honest in-sync posture over the deploy's real state, a 1Gi PVC
+	//     → Bound → a cloud-side sweep-tag hard-fail on the backing volume, and an add-on
+	//     health re-read.
+	runT2Soak(t, ctx, cp, kc, soakParams{
+		project:      project,
+		env:          env,
+		provider:     provider,
+		region:       region,
+		clusterName:  clusterName,
+		deployJobID:  jobID,
+		expectedApps: expectedApps,
+	})
 }
 
 // assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least
@@ -406,9 +433,13 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 // pin its own cheapest shape. When reposEnabled (BYOC A0.6), it also wires the
 // apps-destination repo + appends the BYO chart add-on (repos.applyToSnapshot). Reuses the
 // control plane's own pool (same package).
-func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool) (string, error) {
-	jobID := newUUID()
-	snap := map[string]any{
+// t2BaseSnapshot builds the config_snapshot fields shared by the DEPLOY job and the soak's
+// follow-on DETECT_DRIFT job (BYOC A0.3). Both MUST carry the SAME `id`/project/env/provider/
+// region so their ProviderTfvars resolve identically — the drift's refresh-only plan
+// reconciles the deploy's exact recorded state. The seed add-ons are included for fidelity
+// (they are post-apply Helm, inert to a refresh-only plan).
+func t2BaseSnapshot(project, env, provider, region string) map[string]any {
+	return map[string]any{
 		"id":                "e2e-" + env,
 		"project_name":      project,
 		"environment_stage": env,
@@ -416,6 +447,11 @@ func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provid
 		"provider":          provider,
 		"addons":            seedAddOns(),
 	}
+}
+
+func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool) (string, error) {
+	jobID := newUUID()
+	snap := t2BaseSnapshot(project, env, provider, region)
 	// A0.6: wire the apps-destination repo + append the BYO chart add-on when the
 	// ArgoCD-with-repos proof is enabled. The git token is NOT written into the snapshot — it
 	// crosses via the control plane's git-token handler (see t2_argo_repos.go), so it never
