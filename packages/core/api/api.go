@@ -650,6 +650,9 @@ func (c *Client) GetCloudIdentities() ([]CloudIdentity, error) {
 type InitIdentityResponse struct {
 	IdentityID string `json:"identity_id"`
 	ExternalID string `json:"external_id"`
+	// PlatformClientID is Alethia's platform Entra app id (Azure only) — the CLI bakes it into the
+	// customer's setup command. Empty for other providers or an instance without Azure configured.
+	PlatformClientID string `json:"platform_client_id"`
 }
 
 // ConnectIdentityResponse is the SYNCHRONOUS result of submitting credentials — the

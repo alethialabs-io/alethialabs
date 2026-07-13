@@ -9,21 +9,22 @@ Runner is a single Go binary with a straightforward architecture: a main poll lo
 
 ## Main Loop
 
-```
-runner start
-  ├── Register with Alethia API
-  ├── Start heartbeat goroutine (every 30s)
-  └── Poll loop (every 10s)
-       ├── POST /api/jobs/claim
-       ├── If job claimed:
-       │    ├── Mint per-job cloud credentials (keyless OIDC)
-       │    ├── Execute job via the sandbox seam (OpenTofu, ArgoCD, …)
-       │    ├── Stream logs
-       │    └── Report result
-       └── If no job: sleep 10s, repeat
-```
+<Mermaid chart={`
+flowchart TD
+  Start([runner start]) --> Reg[Register with Alethia API]
+  Reg --> HB[Start heartbeat goroutine · every 30s]
+  Reg --> Poll{Poll loop · every 10s<br/>POST /api/jobs/claim}
+  Poll -->|no job| Sleep[sleep 10s]
+  Sleep --> Poll
+  Poll -->|job claimed| Mint[Mint per-job cloud creds · keyless OIDC]
+  Mint --> Exec[Execute via sandbox seam · tofu, ArgoCD]
+  Exec --> Logs[Stream logs]
+  Logs --> Report[Report result]
+  Report --> Poll
+`} />
 
-The poll loop runs on the main goroutine. The heartbeat runs as a background goroutine. Both share the Runner configuration.
+The poll loop runs on the main goroutine; the heartbeat runs as a background goroutine. Both share
+the runner configuration.
 
 Provisioning work runs through the **sandbox seam** (`packages/core/sandbox`), not by invoking the provisioner
 directly. For trusted Alethia templates the default `Passthrough` backend runs it in-process; on the managed
@@ -56,7 +57,7 @@ Runner receives its configuration via environment variables:
 | `ALETHIA_RUNNER_OPERATOR` | `managed` or `self` (the legacy `ALETHIA_RUNNER_MODE` with `cloud-hosted`/`self-hosted` still works as a back-compat fallback) |
 | `INFRACOST_API_KEY` | Optional, for cost estimation |
 
-The runner holds **no object-storage credentials**. Terraform state goes through the console **state proxy**
+The runner holds **no object-storage credentials**. tofu state goes through the console **state proxy**
 (`backend "http"` → `/api/jobs/{id}/state`) authenticated by a per-job token in `TF_HTTP_PASSWORD`, and cloud
 auth is minted per job via keyless OIDC — so a managed fleet VM's cloud-init carries no long-lived secret.
 Managed fleet VMs additionally self-register with a per-VM, short-TTL bootstrap token rather than any static
@@ -79,7 +80,7 @@ If a Runner crashes mid-job:
 1. Heartbeat stops arriving
 2. After 60 seconds, Alethia marks the Runner OFFLINE
 3. If no log updates for 5+ minutes, the job is marked FAILED
-4. User can retry the job — Terraform state is preserved in the console state proxy (`project-tofu-state`, with fenced locks so a reclaimed lock can't clobber a slow writer)
+4. User can retry the job — tofu state is preserved in the console state proxy (`project-tofu-state`, with fenced locks so a reclaimed lock can't clobber a slow writer)
 
 ## Graceful Shutdown
 
@@ -91,9 +92,12 @@ When Runner receives SIGINT or SIGTERM:
 4. Sends final heartbeat with OFFLINE status
 5. Exits
 
-The managed fleet runs disposable per-job Hetzner VMs (one job per VM); on scale-down the VM stops the
-container, which sends SIGTERM, so runners always attempt a graceful shutdown. (Self-hosted runners get the
-same on any orchestrator's stop signal.)
+In the managed fleet, a warm-pool VM claims jobs until the scaler decides it is surplus. Scale-down
+is a two-step **drain then destroy**: the controller marks the runner `DRAINING` (it stops claiming
+but finishes its in-flight job), and the next tick destroys it once idle — so the SIGTERM the VM
+sends always lands on a runner that already drained gracefully. See
+[Warm-pool scaling](/runner/scale-to-zero). (Self-operated runners get the same on any orchestrator's
+stop signal.)
 
 ## API Client
 
@@ -117,7 +121,7 @@ Runner and Alethia CLI both import from `packages/core/`:
 | Package | Purpose |
 |---------|---------|
 | `provisioner/` | Bootstrap, deploy, destroy orchestration |
-| `terraform/` | Terraform CLI wrapper (init, plan, apply, destroy) |
+| `tofu/` | OpenTofu CLI wrapper (init, plan, apply, destroy) — drives the `tofu` binary via `terraform-exec` |
 | `cloud/aws/` | AWS SDK for provisioning (keyless `AssumeRoleWithWebIdentity`, EKS kubeconfig) |
 | `cloud/` (`http_backend.go`) | The console HTTP state backend (per-job token via `TF_HTTP_PASSWORD`) — no storage credential on the runner |
 | `sandbox/` | The per-job isolation seam (Passthrough / Container backends) |

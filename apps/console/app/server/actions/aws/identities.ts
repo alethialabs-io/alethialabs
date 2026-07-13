@@ -67,7 +67,7 @@ export async function getVerifiedCloudIdentities(): Promise<
 
 /** Fetches verified cloud identities for a specific provider. */
 export async function getVerifiedCloudIdentitiesByProvider(
-	provider: "aws" | "gcp" | "azure",
+	provider: "aws" | "gcp" | "azure" | "alibaba",
 ): Promise<CloudIdentityOption[]> {
 	const scope = await activeScope();
 	if (!scope) return [];

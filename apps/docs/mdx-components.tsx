@@ -10,6 +10,7 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { File, Folder, Files } from 'fumadocs-ui/components/files';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Community, Enterprise } from './components/edition-badge';
+import { Mermaid } from './components/mermaid';
 
 export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
@@ -28,6 +29,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     Cards,
     Enterprise,
     Community,
+    Mermaid,
     img: (props: React.ComponentProps<'img'>) => {
       if (typeof props.src === 'string' && props.src.endsWith('.svg')) {
         return <img {...props} style={{ width: '100%', borderRadius: '0.5rem' }} />;

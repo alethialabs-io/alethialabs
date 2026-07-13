@@ -34,7 +34,9 @@ export interface CloudConnectSetup {
 	integrations: ConnectorWithConnection[];
 	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string } | null;
+	/** Azure additionally carries the platform Entra app id — the connect UI bakes it into the
+	 * customer's setup command (it's a fixed, non-secret operator value, never customer-entered). */
+	azureSetup: { identityId: string; clientId: string } | null;
 	extraSetup: Record<string, { identityId: string; externalId?: string }>;
 	/**
 	 * Whether THIS instance is configured to support a provider's connect flow (keyed by connector
@@ -133,7 +135,7 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 	// Viewers get a read-only board (the setup is null for them).
 	let awsSetup: { identityId: string } | null = null;
 	let gcpSetup: { identityId: string } | null = null;
-	let azureSetup: { identityId: string } | null = null;
+	let azureSetup: { identityId: string; clientId: string } | null = null;
 	const extraSetup: Record<string, { identityId: string; externalId?: string }> = {};
 
 	if (canManage) {

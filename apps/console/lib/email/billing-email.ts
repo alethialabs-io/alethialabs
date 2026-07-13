@@ -12,12 +12,14 @@ import type Stripe from "stripe";
 import { planMeta } from "@repo/plan-catalog";
 import { getEmailConfig } from "@repo/email/config";
 import type { EmailAttachment } from "@repo/email/send";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { planForPriceId } from "@/lib/billing/config";
 import { issueFactura } from "@/lib/billing/odoo-invoice";
 import { getStripe } from "@/lib/billing/stripe";
+import { planFromSubscription } from "@/lib/billing/sync";
+import type { BillingPlan } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
-import { organization } from "@/lib/db/schema";
+import { member, organization, user } from "@/lib/db/schema";
 import { CreditPackReceiptEmail, subject as creditPackSubject } from "@/emails/credit-pack-receipt";
 import { PaymentFailedEmail, subject as paymentFailedSubject } from "@/emails/payment-failed";
 import { ReceiptEmail, subject as receiptSubject } from "@/emails/receipt";
@@ -76,6 +78,19 @@ async function orgName(orgId: string | undefined): Promise<string> {
 		.where(eq(organization.id, orgId))
 		.limit(1);
 	return row?.name ?? "your organization";
+}
+
+/** The org owner's email (earliest owner membership) — the welcome recipient off the Stripe path. */
+async function ownerEmail(orgId: string | undefined): Promise<string | null> {
+	if (!orgId) return null;
+	const [row] = await getServiceDb()
+		.select({ email: user.email })
+		.from(member)
+		.innerJoin(user, eq(member.userId, user.id))
+		.where(and(eq(member.organizationId, orgId), eq(member.role, "owner")))
+		.orderBy(asc(member.createdAt))
+		.limit(1);
+	return row?.email ?? null;
 }
 
 /** Resolves the billing recipient — a known email wins, else the Stripe customer's. */
@@ -219,17 +234,24 @@ export async function sendSubscriptionCanceledEmail(
 
 /** One-time "welcome to your plan" email — rich onboarding into the tier. Sent once
  *  by the exactly-once claim in syncSubscriptionToBilling (trial or paid start). */
-export async function sendPlanWelcomeEmail(sub: Stripe.Subscription): Promise<void> {
-	const to = await recipient(sub.customer);
+/**
+ * The subscription-free core: welcome an org to a plan. Used by the Stripe path (via the adapter
+ * below) AND by the off-Stripe operator path (Enterprise activated without a Stripe subscription).
+ * Resolves the recipient from `to`, else the org owner's email. No-op if no recipient is found.
+ */
+export async function sendPlanWelcomeEmailForOrg(args: {
+	orgId: string | undefined;
+	plan: BillingPlan | null;
+	isTrial: boolean;
+	to?: string | null;
+}): Promise<void> {
+	const to = args.to ?? (await ownerEmail(args.orgId));
 	if (!to) return;
-	const priceId = sub.items.data[0]?.price.id;
-	const plan = priceId ? planForPriceId(priceId) : null;
-	const meta = planMeta(plan ?? "team");
-	const isTrial = sub.status === "trialing";
-	const features: FeatureRow[] =
-		meta.checkoutFeatures?.length
-			? meta.checkoutFeatures.map((f) => ({ title: f.title, detail: f.detail }))
-			: meta.highlights.map((h) => ({ title: h }));
+	const meta = planMeta(args.plan ?? "team");
+	const isTrial = args.isTrial;
+	const features: FeatureRow[] = meta.checkoutFeatures?.length
+		? meta.checkoutFeatures.map((f) => ({ title: f.title, detail: f.detail }))
+		: meta.highlights.map((h) => ({ title: h }));
 	const config = getEmailConfig();
 	await sendGuardedEmail({
 		from: config.from.general,
@@ -237,13 +259,23 @@ export async function sendPlanWelcomeEmail(sub: Stripe.Subscription): Promise<vo
 		to,
 		subject: planWelcomeSubject({ planName: meta.name, isTrial }),
 		react: WelcomeToPlanEmail({
-			orgName: await orgName(sub.metadata?.organization_id),
+			orgName: await orgName(args.orgId),
 			planName: meta.name,
 			tagline: meta.tagline,
 			isTrial,
 			features,
 		}),
 		devLog: `welcome to ${meta.name}${isTrial ? " (trial)" : ""}`,
+	});
+}
+
+/** Stripe-path adapter: derive {orgId, plan, isTrial, to} from the subscription and delegate. */
+export async function sendPlanWelcomeEmail(sub: Stripe.Subscription): Promise<void> {
+	await sendPlanWelcomeEmailForOrg({
+		orgId: sub.metadata?.organization_id,
+		plan: planFromSubscription(sub, sub.items.data[0]?.price.id),
+		isTrial: sub.status === "trialing",
+		to: await recipient(sub.customer),
 	});
 }
 

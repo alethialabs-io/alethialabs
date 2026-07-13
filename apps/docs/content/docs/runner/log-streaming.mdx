@@ -1,38 +1,33 @@
 ---
 title: Real-Time Log Streaming
-description: How Runner streams Terraform output to the browser in real-time.
+description: How the runner streams OpenTofu output to the browser in real-time.
 ---
 
 # Real-Time Log Streaming
 
-Runner streams all Terraform output back to Alethia in real-time. Users see `terraform plan` and `terraform apply` output in the browser as it happens.
+The runner streams all `tofu` output back to Alethia in real time. Users see `tofu plan` and
+`tofu apply` output in the browser as it happens.
 
 ## Architecture
 
-```
-Terraform process
-  ├── stdout ──► JobLogger (STDOUT) ──► Buffer ──► POST /api/jobs/{id}/logs
-  └── stderr ──► JobLogger (STDERR) ──► Buffer ──► POST /api/jobs/{id}/logs
-                                                          │
-                                                          ▼
-                                                   provision_job_logs table
-                                                          │
-                                                          ▼
-                                                   Postgres NOTIFY (on INSERT)
-                                                          │
-                                                          ▼
-                                                   Console LISTEN ──► SSE stream
-                                                          │
-                                                          ▼
-                                                   Browser EventSource
-```
+<Mermaid chart={`
+flowchart TD
+  Tofu[tofu process] --> Out[JobLogger STDOUT]
+  Tofu --> Err[JobLogger STDERR]
+  Out --> Buf[Buffer]
+  Err --> Buf
+  Buf -->|POST /api/jobs/id/logs| Tbl[(provision_job_logs)]
+  Tbl -->|NOTIFY on INSERT| Listen[Console LISTEN]
+  Listen -->|SSE stream| Browser[Browser EventSource]
+`} />
 
 ## JobLogger
 
-The `JobLogger` is a Go struct that wraps an `io.Writer`. It buffers output and flushes to the Alethia API periodically.
+The `JobLogger` is a Go struct that wraps an `io.Writer`. It buffers output and flushes to the
+Alethia API periodically.
 
 **Two loggers per job:**
-- **STDOUT logger** — captures normal Terraform output (plan details, resource progress)
+- **STDOUT logger** — captures normal `tofu` output (plan details, resource progress)
 - **STDERR logger** — captures errors and warnings
 
 **Buffer flush triggers:**
@@ -82,21 +77,23 @@ The job detail page renders logs in a terminal-like viewer:
 
 - **STDOUT** lines in default color (white/light gray)
 - **STDERR** lines in red
-- **SYSTEM** lines in blue (platform messages like "Assuming IAM role..." or "Starting terraform plan...")
+- **SYSTEM** lines in blue (platform messages like "Minting keyless credentials..." or "Starting tofu plan...")
 - Auto-scroll to bottom as new lines arrive
 - Manual scroll lock when the user scrolls up
 
 ## Local Echo
 
-All log output is also written to the container's stdout, which goes to CloudWatch Logs (for managed and deployed Runners running on Fargate) or the local terminal (for registered Runners). This provides a secondary log source for debugging.
+All log output is also written to the container's stdout — journald/`docker logs` on a managed
+Hetzner fleet VM, CloudWatch Logs for a self-deployed runner on ECS Fargate, or the local terminal
+for a registered runner. This provides a secondary log source for debugging.
 
 ## Timing
 
 | Event | Latency |
 |-------|---------|
-| Terraform writes to stdout | 0ms (piped to JobLogger) |
+| tofu writes to stdout | 0ms (piped to JobLogger) |
 | JobLogger buffer flush | ≤ 2 seconds (ticker interval) |
 | API POST to Alethia | ~50ms (network) |
 | Database INSERT | ~5ms |
 | NOTIFY → SSE delivery | ~50ms (server-sent event) |
-| **Total: Terraform output → browser** | **~2-3 seconds** |
+| **Total: tofu output → browser** | **~2-3 seconds** |

@@ -1,0 +1,79 @@
+---
+title: JWT, JWS & JOSE
+description: Where Alethia uses JSON Web Tokens and signatures — Better Auth sessions, HS256 CLI tokens, RS256 workload assertions, and the ed25519-signed Elench verify evidence receipts.
+---
+
+# JWT, JWS & JOSE
+
+## What the standard is
+
+**JOSE** (JSON Object Signing and Encryption) is the family of IETF standards for representing keys,
+signatures, and encryption over JSON. The two that matter here:
+
+- **JWS** ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515)) — a JSON Web Signature: a payload plus
+  a detached or compact signature, with a header naming the algorithm (`HS256`, `RS256`, `EdDSA`, …).
+- **JWT** ([RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)) — a JSON Web Token: a set of claims
+  (`sub`, `iss`, `aud`, `exp`, …) carried as a JWS. A signed JWT is verifiable and tamper-evident:
+  anyone with the key (symmetric) or public key (asymmetric) can confirm the claims were not altered.
+
+Alethia uses signed tokens in several distinct places, each with the algorithm that fits its trust
+boundary. It never encrypts tokens (no JWE) — every token here is *signed*, not secret-bearing.
+
+## How Alethia implements it
+
+| Surface | Format | Alg | Key | Lifetime | Code |
+|---|---|---|---|---|---|
+| Console web session | Better Auth session cookie (HTTP-only), backed by the `session` table | — | signed with `BETTER_AUTH_SECRET` | rolling | `lib/auth/index.ts` |
+| CLI access token | JWT | `HS256` | `CLI_JWT_SECRET` | 1 hour | `api/auth/cli/exchange` |
+| CLI refresh token | JWT | `HS256` | `CLI_JWT_SECRET` | 90 days | `api/auth/cli/exchange` |
+| Cloud workload assertion | JWT | `RS256` | `ALETHIA_OIDC_SIGNING_KEY` | ≤ 600s | `lib/oidc/issuer.ts` |
+| MCP access token | OAuth 2.1 token (OIDC provider) | — | Better Auth `mcp()` plugin | short | `lib/auth/index.ts` |
+| Verify evidence receipt | detached ed25519 signature over canonical JSON | `EdDSA` / ed25519 | `ALETHIA_RECEIPT_SIGNING_KEY` | per-apply | `packages/core/verify` |
+
+<Callout type="info">
+  The **web session is not a JWT** in this build — there is no `jwt()` plugin. It is a Better Auth
+  signed, HTTP-only session cookie referencing a `session` row (validated by Next.js middleware). The
+  genuine JWT/JWS surfaces are the CLI tokens, the workload assertions, and the MCP tokens. The verify
+  receipt is a JOSE-adjacent EdDSA signature, described below.
+</Callout>
+
+### CLI tokens (HS256)
+
+`apps/console/app/api/auth/cli/exchange/route.ts` mints access/refresh JWTs with the `jose` library
+(`new jose.SignJWT(...).setProtectedHeader({ alg: "HS256" })`). Claims: `sub` = profile id, `email`,
+`type` ∈ {`access`, `refresh`}, `iss`/`aud` set to placeholder `urn:example:*` values, and `exp` of
+1h / 90d respectively. `/api/auth/cli/refresh` verifies the refresh token
+(`jose.jwtVerify`, matching `iss`/`aud`), rejects any token whose `type !== "refresh"`, and issues a
+new 1-hour access token. See [device code](/standards/device-code) for the full flow.
+
+### Workload assertions (RS256)
+
+The [workload-identity](/standards/workload-identity) issuer signs its federation assertions RS256 —
+the widest-compatible alg for AWS/GCP/Azure token exchange — and publishes the public key at
+`/api/oidc/jwks` so clouds verify independently. Key rotation is supported by publishing a second
+(previous) key while the primary rolls over.
+
+### Elench verify receipts (ed25519)
+
+The [Elench](/elench) verify gate emits a per-apply **evidence receipt** — a precise, honest record of
+what was checked, against which plan, under which control set (`packages/core/verify/receipt.go`). The
+receipt binds to the exact plan via `plan_sha256` and pins `tofu_version` / `provider_versions` /
+`catalog_version`. When `ALETHIA_RECEIPT_SIGNING_KEY` is set (a base64 64-byte ed25519 private key,
+`packages/core/verify/signing.go`), `Sign()` produces a `SignedReceipt`: a detached **ed25519**
+([RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)) signature over the receipt's canonical JSON bytes,
+plus `algorithm: "ed25519"` and a short `key_id` (`KeyID` = first 8 bytes of SHA-256 of the public
+key). `Verify()` recomputes the canonical bytes and checks the signature — any tampering fails.
+
+<Callout type="warn">
+  **Root-of-trust honesty (from the code's own comments).** Signing is *additive evidence*, not a
+  precondition — an unset key attaches an **unsigned** receipt rather than blocking the apply. And a
+  signature from Alethia's runner only proves "Alethia asserted this". For a receipt to mean something
+  to a customer's auditor, sign with a customer-controlled key and/or anchor the signature in a
+  transparency log (e.g. Rekor). Key custody is a deployment decision, not baked in.
+</Callout>
+
+## Authoritative reference
+
+- [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) — JSON Web Token (JWT).
+- [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515) — JSON Web Signature (JWS).
+- [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — EdDSA (Ed25519).

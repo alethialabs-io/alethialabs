@@ -5,7 +5,7 @@ description: Keyless Azure access — authorize Alethia's federated app, no clie
 
 # Azure Connector
 
-Azure integration is **keyless**. Alethia registers **one multi-tenant Entra app** whose Federated
+Connecting Azure registers a **cloud identity** (`cloud_identities`) that is **keyless**. Alethia registers **one multi-tenant Entra app** whose Federated
 Identity Credential trusts the Alethia OIDC issuer. Both the console (verification) and the runner
 (provisioning) authenticate **as that app** by presenting a short-lived OIDC assertion; Azure validates
 it and issues an ARM access token. **You register no app and store no client secret** — you only grant
@@ -20,7 +20,7 @@ by removing the app's role assignment.
 
 ## Setup
 
-The connect dialog gives you a one-line `az` command (or a Terraform module). It does two things in your
+The connect dialog gives you a one-line `az` command (or an OpenTofu module). It does two things in your
 tenant — no app registration, no federated credential on your side:
 
 <Steps>
@@ -58,7 +58,7 @@ Existing VNets, subnets, and DNS zones are discovered separately by the server-s
 
 - **Tenant ID**
 - **Subscription ID**
-- The platform **Client ID** (Alethia's app id — the same for every connection)
+- The platform **Client ID** (Alethia's app id — the same for every cloud identity)
 
 **No client secrets, ever.** Revoke access by deleting the service principal (or its role assignment)
 in your tenant.

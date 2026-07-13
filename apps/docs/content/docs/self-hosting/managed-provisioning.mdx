@@ -5,7 +5,7 @@ description: Turn on the managed fleet so your instance provisions Kubernetes in
 
 # Managed provisioning — operator runbook
 
-In **managed** mode your instance runs the provisioning runners itself: a cheap Hetzner VM fleet claims each
+With the **managed** operator, your instance runs the provisioning runners itself: a cheap Hetzner VM fleet claims each
 customer's plan/deploy job, assumes into the customer's cloud (keyless OIDC, or a token for Hetzner), runs
 OpenTofu against Alethia's own project templates, and streams state + logs back through the console. The
 customer never runs a runner.
@@ -47,10 +47,10 @@ Do this once per cloud you want to offer. Full detail in
 
 | Cloud | Platform operator step | Customer step |
 | --- | --- | --- |
-| **AWS** | none (issuer key only) | `terraform apply infra/connector/aws` → paste **role ARN** |
-| **GCP** | none (issuer key only) | `terraform apply infra/connector/gcp` → paste **credential config** |
-| **Alibaba** | none (issuer key only) | `terraform apply infra/connector/alibaba` → paste **role ARN** |
-| **Azure** | register one multi-tenant Entra app + federated credential; set `ALETHIA_AZURE_CLIENT_ID` | `terraform apply infra/connector/azure` |
+| **AWS** | none (issuer key only) | `tofu apply infra/connector/aws` → paste **role ARN** |
+| **GCP** | none (issuer key only) | `tofu apply infra/connector/gcp` → paste **credential config** |
+| **Alibaba** | none (issuer key only) | `tofu apply infra/connector/alibaba` → paste **role ARN** |
+| **Azure** | register one multi-tenant Entra app + federated credential; set `ALETHIA_AZURE_CLIENT_ID` | `tofu apply infra/connector/azure` |
 | **Hetzner** | none | paste a Hetzner **API token** (token auth — no OIDC) |
 
 The connect UI for each provider only lights up once its platform prerequisite is satisfied
@@ -103,7 +103,7 @@ every tick (no restart). A paused (`enabled=false`) pool is skipped.
 
 For each cloud, end to end:
 
-1. **Connect** the cloud in the console (paste the role ARN / credential config / token). The connector
+1. **Connect** the cloud in the console (paste the role ARN / credential config / token). The cloud identity
    verifies server-side (no runner needed).
 2. **Create a project** targeting that cloud and a small cluster.
 3. **Plan** — a VM spins up in that cloud's pool, claims the job, and returns a plan + a `verify.Report`
@@ -124,7 +124,7 @@ provisions a self-managed **Talos** cluster.
   default 3600) vs. a slow multi-GB image pull, and the boot grace (`FLEET_BOOT_GRACE_SECONDS`).
 - **`runner-<cloud>` image pull fails** — the tag isn't published for that cloud; re-check step 2.
 - **Cloud auth fails on plan** — the connector's platform prerequisite (esp. Azure `ALETHIA_AZURE_CLIENT_ID`)
-  or the customer's connector `terraform apply` is missing / the issuer isn't publicly reachable.
+  or the customer's connector `tofu apply` is missing / the issuer isn't publicly reachable.
 
 ## Untrusted BYO (container sandbox, 3b)
 

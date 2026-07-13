@@ -1,0 +1,169 @@
+{
+  "_comment": "Alibaba static-credential fixture \u2014 OpenTofu v1.12.3 + aliyun/alicloud provider v1.285.0 (dummy ALICLOUD access/secret via provider block; RAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. An alicloud_ram_access_key (+ its alicloud_ram_user) \u2014 a long-lived static RAM credential. Expect: ALI-KEYLESS-001 FAIL => verdict fail (blocks).",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_access_key.ci",
+          "mode": "managed",
+          "type": "alicloud_ram_access_key",
+          "name": "ci",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "pgp_key": null,
+            "secret_file": null,
+            "timeouts": null,
+            "user_name": "alethia-ci"
+          },
+          "sensitive_values": {
+            "secret": true
+          }
+        },
+        {
+          "address": "alicloud_ram_user.ci",
+          "mode": "managed",
+          "type": "alicloud_ram_user",
+          "name": "ci",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "comments": null,
+            "display_name": null,
+            "email": null,
+            "force": null,
+            "mobile": null,
+            "name": "alethia-ci",
+            "timeouts": null
+          },
+          "sensitive_values": {}
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_access_key.ci",
+      "mode": "managed",
+      "type": "alicloud_ram_access_key",
+      "name": "ci",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "pgp_key": null,
+          "secret_file": null,
+          "timeouts": null,
+          "user_name": "alethia-ci"
+        },
+        "after_unknown": {
+          "create_time": true,
+          "encrypted_secret": true,
+          "id": true,
+          "key_fingerprint": true,
+          "secret": true,
+          "status": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "secret": true
+        }
+      }
+    },
+    {
+      "address": "alicloud_ram_user.ci",
+      "mode": "managed",
+      "type": "alicloud_ram_user",
+      "name": "ci",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "comments": null,
+          "display_name": null,
+          "email": null,
+          "force": null,
+          "mobile": null,
+          "name": "alethia-ci",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "alicloud": {
+        "name": "alicloud",
+        "full_name": "registry.opentofu.org/aliyun/alicloud",
+        "version_constraint": ">= 1.230.0, < 2.0.0",
+        "expressions": {
+          "access_key": {
+            "constant_value": "dummy-access-key-for-plan"
+          },
+          "region": {
+            "constant_value": "eu-central-1"
+          },
+          "secret_key": {
+            "constant_value": "dummy-secret-key-for-plan"
+          }
+        }
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_access_key.ci",
+          "mode": "managed",
+          "type": "alicloud_ram_access_key",
+          "name": "ci",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "user_name": {
+              "references": [
+                "alicloud_ram_user.ci.name",
+                "alicloud_ram_user.ci"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "alicloud_ram_user.ci",
+          "mode": "managed",
+          "type": "alicloud_ram_user",
+          "name": "ci",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "name": {
+              "constant_value": "alethia-ci"
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "relevant_attributes": [
+    {
+      "resource": "alicloud_ram_user.ci",
+      "attribute": [
+        "name"
+      ]
+    }
+  ],
+  "timestamp": "2026-07-13T14:47:54Z",
+  "errored": false
+}

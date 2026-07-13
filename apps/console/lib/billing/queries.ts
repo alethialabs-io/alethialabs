@@ -16,7 +16,11 @@ import {
 import type { Entitlements } from "@/lib/authz/types";
 import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
-import { COMMUNITY_ENTITLEMENTS, resolvePlanEntitlements } from "./plan";
+import {
+	COMMUNITY_ENTITLEMENTS,
+	isManualGrantExpired,
+	resolvePlanEntitlements,
+} from "./plan";
 
 /** Returns an org's billing record, or null if it has none (→ implicitly community). */
 export async function getOrgBilling(
@@ -41,6 +45,9 @@ export async function resolveOrgEntitlements(
 ): Promise<Entitlements> {
 	const billing = await getOrgBilling(orgId);
 	if (!billing) return COMMUNITY_ENTITLEMENTS;
+	// An off-Stripe grant (Enterprise contract) lapses at its term end — fail closed to
+	// community rather than granting paid features past a term nothing else enforces.
+	if (isManualGrantExpired(billing)) return COMMUNITY_ENTITLEMENTS;
 	return resolvePlanEntitlements(billing.plan, billing.status);
 }
 

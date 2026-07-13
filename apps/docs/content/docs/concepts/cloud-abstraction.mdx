@@ -109,9 +109,9 @@ When the user switches providers via the Provider Ribbon in the Design a Project
 
 All form fields reset to provider-appropriate defaults. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion) for how existing Projects are converted across providers.
 
-## Terraform Templates
+## OpenTofu Templates
 
-Each provider has its own set of Terraform templates:
+Each provider has its own set of OpenTofu templates:
 
 - `infra/templates/project/aws/` — EKS, Aurora, ElastiCache, DynamoDB, S3, ECR, etc.
 - `infra/templates/project/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, GCS, Artifact Registry, etc.
@@ -119,7 +119,7 @@ Each provider has its own set of Terraform templates:
 - `infra/templates/project/alibaba/` — ACK, ApsaraDB RDS, KVStore, Tablestore, OSS, CR, etc.
 - `infra/templates/project/hetzner/` — Talos Kubernetes + private network (Cilium CNI, hcloud CCM/CSI).
 
-The Runner selects the correct template directory based on the Project's cloud provider and generates `terraform.tfvars` from the Project configuration (`packages/core/cloud/<cloud>_provider.go` `ProviderTfvars`).
+The runner selects the correct template directory based on the project's cloud provider and generates `terraform.tfvars.json` (the tfvars file `tofu` reads) from the project configuration (`packages/core/cloud/<cloud>_provider.go` `ProviderTfvars`).
 
 ## Pluggable connectors
 

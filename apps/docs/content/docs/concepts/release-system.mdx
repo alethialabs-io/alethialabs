@@ -50,18 +50,18 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 
 **Workflow:** `.github/workflows/release-cli.yml`
 
-```
-release-please merges the CLI release PR → tag cli-v0.2.2
-  └── Checkout + Go setup
-       └── GoReleaser (-f apps/cli/.goreleaser.yml, --skip=validate)
-            ├── Build: darwin/amd64, darwin/arm64, linux/{amd64,arm64}, windows/{amd64,arm64}
-            ├── Archive: tar.gz per platform (zip on Windows) + checksums
-            ├── nfpm: .deb / .rpm / .apk (linux) → attached to the release
-            ├── GitHub Release: upload archives + packages + checksums
-            ├── Docker: ghcr.io/alethialabs-io/alethia (amd64+arm64 manifest)
-            ├── Homebrew: push Formula/alethia.rb to alethialabs-io/homebrew-tap
-            └── Scoop: push alethia.json to alethialabs-io/scoop-bucket
-```
+<Mermaid chart={`
+flowchart TD
+  Tag["tag cli-v0.2.2 (release-please)"] --> Setup["Checkout + Go setup"]
+  Setup --> GR["GoReleaser<br/>(-f apps/cli/.goreleaser.yml, --skip=validate)"]
+  GR --> Build["Build: darwin + linux + windows × amd64/arm64"]
+  GR --> Arch["Archive: tar.gz / zip + checksums"]
+  GR --> Nfpm["nfpm: .deb / .rpm / .apk"]
+  GR --> Rel["GitHub Release: archives + packages + checksums"]
+  GR --> Docker["Docker: ghcr.io/alethialabs-io/alethia (amd64+arm64)"]
+  GR --> Brew["Homebrew: Formula/alethia.rb → homebrew-tap"]
+  GR --> Scoop["Scoop: alethia.json → scoop-bucket"]
+`} />
 
 **GoReleaser config** (`apps/cli/.goreleaser.yml`):
 - Builds binaries across macOS/Linux/Windows × amd64/arm64 (`project_name: alethia`)
@@ -136,30 +136,31 @@ milestone — see the [Homebrew Core runbook](/cli/homebrew-core).
 
 **Workflow:** `.github/workflows/release-runner.yml`
 
-```
-Tag push (runner-v0.1.0)
-  └── Checkout
-       └── Stage templates
-            ├── infra/templates/project/aws → apps/runner/project-templates/aws
-            ├── infra/templates/project/gcp → apps/runner/project-templates/gcp
-            ├── infra/templates/project/azure → apps/runner/project-templates/azure
-            ├── infra/templates/runner → apps/runner/runner-templates
-            └── infra/templates/argocd → apps/runner/argocd-templates
-       └── Docker buildx (ARM64)
-            ├── Push to AWS ECR (eu-west-1)
-            └── Push to GitHub Container Registry (ghcr.io)
-       └── Publish release metadata
-            └── POST /api/releases/runner { version, release_notes }
-       └── Force new ECS Fargate deployment
-            └── aws ecs update-service --force-new-deployment
-```
+<Mermaid chart={`
+flowchart TD
+  Tag["tag push (runner-v0.1.0)"] --> CO["Checkout"]
+  CO --> Stage["Stage templates → build context<br/>(project/{aws,gcp,azure,…} + runner + argocd)"]
+  Stage --> BX["Docker buildx (multi-arch)"]
+  BX --> ECR["Push to AWS ECR"]
+  BX --> GHCR["Push to GHCR (ghcr.io)"]
+  ECR --> Meta["POST /api/releases/runner { version, release_notes }"]
+  GHCR --> Meta
+  Meta --> Roll["ECS roll: aws ecs update-service --force-new-deployment"]
+`} />
+
+<Callout type="warn">
+  The **ECS roll** at the end of this workflow updates the **self-deployed / release** runner service
+  — it is *not* how the managed fleet runs. Managed capacity comes from the in-app scaler booting
+  Hetzner VMs from the same GHCR image (see [Runner Scaling](/concepts/runner-scaling)). Publishing a
+  runner release makes the image available to both paths; only the self-deployed ECS service is rolled
+  here.
+</Callout>
 
 **Key details:**
-- **Template staging:** Infrastructure templates are copied into the Docker build context so the final image contains all Terraform modules for AWS, GCP, and Azure
-- **ARM64 only:** Runner runs on Graviton (ARM) Fargate tasks for cost efficiency
-- **Dual registry:** ECR for production Fargate deployment, GHCR for public access
-- **API publish:** Console is notified of new releases and can display version info in the UI
-- **Rolling deployment:** `--force-new-deployment` triggers ECS to launch new tasks with the updated image
+- **Template staging:** infrastructure templates are copied into the Docker build context so the final image carries all OpenTofu modules (AWS, GCP, Azure, Alibaba, Hetzner) plus the runner + ArgoCD templates
+- **Dual registry:** ECR for the ECS self-deployed path, GHCR for the managed fleet and public pulls
+- **API publish:** `POST /api/releases/runner` records a `runner_releases` row so the Console can show version info and detect outdated runners
+- **Rolling deployment:** `--force-new-deployment` rolls the ECS service that hosts the self-deployed runner
 
 ## Runner Dev Deployment
 

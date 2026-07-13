@@ -66,7 +66,7 @@ Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
 }
 ```
 
-On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update project component tables.
+On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract OpenTofu outputs and update project component tables.
 
 On FAILED, the project status is set to FAILED with the error message.
 
@@ -104,7 +104,7 @@ Downloads the plan artifact for apply execution.
 
 ### `POST /api/runners/register`
 
-Registers a new Runner. Returns the plaintext runner token (shown once). Used by Terraform during deployment; always creates an `operator=managed` runner — the request no longer takes a `mode` field.
+Registers a new Runner. Returns the plaintext runner token (shown once). Used by OpenTofu during deployment; always creates an `operator=managed` runner — the request no longer takes a `mode` field.
 
 **Body:**
 ```json

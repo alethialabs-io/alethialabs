@@ -10,6 +10,7 @@ import { recordActivity } from "@/lib/authz/activity";
 import {
 	BUILTIN_ROLE_IDS,
 	type BuiltInRole,
+	BUILT_IN_ROLE_DESCRIPTIONS,
 	BUILT_IN_ROLES,
 	PERMISSIONS,
 } from "@/lib/authz/registry";
@@ -32,14 +33,6 @@ const createRoleBody = z.object({
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
 const VALID_KEYS: ReadonlySet<string> = new Set(ALL_KEYS);
 
-/** Human descriptions for the built-in role templates (registry-as-code). */
-const BUILTIN_DESCRIPTIONS: Record<BuiltInRole, string> = {
-	owner: "Full control, including billing and member management.",
-	admin: "Everything except billing.",
-	operator: "Operate infrastructure (plan/deploy/destroy) and read alerts.",
-	viewer: "Read-only access.",
-};
-
 /** Keep only known, de-duplicated permission keys (no unsafe input reaches the DB). */
 function sanitize(keys: string[]): string[] {
 	return [...new Set(keys.filter((k) => VALID_KEYS.has(k)))];
@@ -52,7 +45,7 @@ function builtinRoleWires() {
 		return {
 			id: BUILTIN_ROLE_IDS[name],
 			name,
-			description: BUILTIN_DESCRIPTIONS[name],
+			description: BUILT_IN_ROLE_DESCRIPTIONS[name],
 			is_builtin: true,
 			permission_keys: keys === "*" ? ALL_KEYS : keys,
 		};
@@ -72,7 +65,7 @@ export async function GET(req: Request) {
 	try {
 		const db = getServiceDb();
 		const custom = await db
-			.select({ id: role.id, name: role.name })
+			.select({ id: role.id, name: role.name, description: role.description })
 			.from(role)
 			.where(and(eq(role.organization_id, actor.orgId), eq(role.is_builtin, false)));
 
@@ -92,7 +85,7 @@ export async function GET(req: Request) {
 		const customWires = custom.map((r) => ({
 			id: r.id,
 			name: r.name,
-			description: null,
+			description: r.description,
 			is_builtin: false,
 			permission_keys: byRole.get(r.id) ?? [],
 		}));

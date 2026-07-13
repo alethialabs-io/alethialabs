@@ -1,0 +1,112 @@
+{
+  "_comment": "Alibaba RRSA wildcard-subject fixture \u2014 OpenTofu v1.12.3 + aliyun/alicloud provider v1.285.0 (dummy ALICLOUD access/secret via provider block; RAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. An alicloud_ram_role whose Federated trust binds oidc:sub only with a StringLike wildcard (system:serviceaccount:*) \u2014 ANY pod from the cluster OIDC issuer can assume it. Expect: ALI-OIDC-001 FAIL => verdict fail (blocks).",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_role.external_secrets",
+          "mode": "managed",
+          "type": "alicloud_ram_role",
+          "name": "external_secrets",
+          "provider_name": "registry.opentofu.org/aliyun/alicloud",
+          "schema_version": 0,
+          "values": {
+            "assume_role_policy_document": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEquals\":{\"oidc:aud\":\"sts.aliyuncs.com\"},\"StringLike\":{\"oidc:sub\":\"system:serviceaccount:*\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":[\"acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo\"]}}],\"Version\":\"1\"}",
+            "description": null,
+            "force": null,
+            "role_name": "alethia-demo-extsecrets",
+            "tags": null,
+            "timeouts": null,
+            "version": "1"
+          },
+          "sensitive_values": {
+            "ram_users": [],
+            "services": []
+          }
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "alicloud_ram_role.external_secrets",
+      "mode": "managed",
+      "type": "alicloud_ram_role",
+      "name": "external_secrets",
+      "provider_name": "registry.opentofu.org/aliyun/alicloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "assume_role_policy_document": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEquals\":{\"oidc:aud\":\"sts.aliyuncs.com\"},\"StringLike\":{\"oidc:sub\":\"system:serviceaccount:*\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":[\"acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo\"]}}],\"Version\":\"1\"}",
+          "description": null,
+          "force": null,
+          "role_name": "alethia-demo-extsecrets",
+          "tags": null,
+          "timeouts": null,
+          "version": "1"
+        },
+        "after_unknown": {
+          "arn": true,
+          "create_time": true,
+          "document": true,
+          "id": true,
+          "max_session_duration": true,
+          "name": true,
+          "ram_users": true,
+          "role_id": true,
+          "services": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "ram_users": [],
+          "services": []
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "alicloud": {
+        "name": "alicloud",
+        "full_name": "registry.opentofu.org/aliyun/alicloud",
+        "version_constraint": ">= 1.230.0, < 2.0.0",
+        "expressions": {
+          "access_key": {
+            "constant_value": "dummy-access-key-for-plan"
+          },
+          "region": {
+            "constant_value": "eu-central-1"
+          },
+          "secret_key": {
+            "constant_value": "dummy-secret-key-for-plan"
+          }
+        }
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "alicloud_ram_role.external_secrets",
+          "mode": "managed",
+          "type": "alicloud_ram_role",
+          "name": "external_secrets",
+          "provider_config_key": "alicloud",
+          "expressions": {
+            "assume_role_policy_document": {},
+            "role_name": {
+              "constant_value": "alethia-demo-extsecrets"
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "timestamp": "2026-07-13T14:48:20Z",
+  "errored": false
+}

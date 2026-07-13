@@ -65,6 +65,31 @@ async function dueConnections() {
 		.limit(BATCH);
 }
 
+/**
+ * Cross-replica claim: atomically flip `last_tested_at` to now() for this identity, but only if it is
+ * still due by the health TTL (or never tested). Exactly the replica whose UPDATE flips the timestamp
+ * gets a row back (→ it owns the probe this tick); a racing replica's UPDATE matches zero rows and it
+ * skips — so a connection is probed by ONE replica per TTL window, not every replica (duplicate cloud
+ * API calls / rate-limit risk). Claiming here (not only in persistHealth) also rate-limits retries: a
+ * transient probe failure now waits out the TTL instead of being re-hit every tick.
+ */
+export async function claimDueConnection(id: string): Promise<boolean> {
+	const claimed = await getServiceDb()
+		.update(cloudIdentities)
+		.set({ last_tested_at: new Date() })
+		.where(
+			and(
+				eq(cloudIdentities.id, id),
+				or(
+					sql`${cloudIdentities.last_tested_at} is null`,
+					lt(cloudIdentities.last_tested_at, sql`now() - ${HEALTH_TTL}`),
+				),
+			),
+		)
+		.returning({ id: cloudIdentities.id });
+	return claimed.length > 0;
+}
+
 /** Persists a health probe result onto the identity (status + freshness). */
 async function persistHealth(
 	identityId: string,
@@ -100,18 +125,22 @@ export async function runConnectionSweep(): Promise<{
 		const slice = due.slice(i, i + CONCURRENCY);
 		await Promise.all(
 			slice.map(async (identity) => {
-				if (hasServerSideHealth(identity.provider)) {
-					const result = await probeHealth(identity).catch(() => null);
-					if (result) {
-						await persistHealth(identity.id, result);
-						if (result.status === "disconnected") disconnected += 1;
-						// Only re-inventory while we still have access.
-						if (
-							result.status !== "disconnected" &&
-							hasServerSideInventory(identity.provider)
-						) {
-							await syncCloudInventory(identity);
-						}
+				// No server-side path → nothing to probe (don't claim, so we never stamp last_tested_at
+				// on a self-managed connection we can't actually test).
+				if (!hasServerSideHealth(identity.provider)) return;
+				// Claim before probing: only the replica that flips last_tested_at proceeds; others skip
+				// this connection this tick (no duplicate cloud API calls across replicas).
+				if (!(await claimDueConnection(identity.id))) return;
+				const result = await probeHealth(identity).catch(() => null);
+				if (result) {
+					await persistHealth(identity.id, result);
+					if (result.status === "disconnected") disconnected += 1;
+					// Only re-inventory while we still have access.
+					if (
+						result.status !== "disconnected" &&
+						hasServerSideInventory(identity.provider)
+					) {
+						await syncCloudInventory(identity);
 					}
 				}
 			}),

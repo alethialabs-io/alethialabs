@@ -9,7 +9,15 @@
 // `user_id uuid` column + the RLS backstop; the auth instance is configured with
 // advanced.database.generateId = "uuid".
 
-import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+	bigint,
+	boolean,
+	integer,
+	pgTable,
+	text,
+	timestamp,
+	uuid,
+} from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
 	id: uuid().primaryKey().defaultRandom(),
@@ -78,7 +86,27 @@ export const verification = pgTable("verification", {
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 
+// Better Auth's built-in rate limiter (rateLimit: { storage: "database" }). One row
+// per limit bucket — the adapter keys on `key` (client-IP + normalized path), bumps
+// `count`, and stamps `lastRequest` (epoch ms). DB-backed so the counters are shared
+// across replicas / survive restarts (unlike the per-process lib/rate-limit.ts). Column
+// names/types mirror @better-auth/core's rateLimit model EXACTLY: key (unique string),
+// count (integer), lastRequest (bigint, ms epoch). Property keys are the camelCase
+// Better Auth field names; the drizzle instance's casing:"snake_case" maps lastRequest →
+// last_request. IDs are uuid to match every other Better Auth table here.
+export const rateLimit = pgTable("rate_limit", {
+	id: uuid().primaryKey().defaultRandom(),
+	// Client-IP + normalized auth path, e.g. "127.0.0.1/sign-in/email-otp".
+	key: text().notNull().unique(),
+	// Requests seen in the current window.
+	count: integer().notNull(),
+	// Epoch milliseconds of the most recent request in the window (Better Auth stores
+	// Date.now()); bigint to hold the full ms value.
+	lastRequest: bigint({ mode: "number" }).notNull(),
+});
+
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type Account = typeof account.$inferSelect;
 export type Verification = typeof verification.$inferSelect;
+export type RateLimit = typeof rateLimit.$inferSelect;

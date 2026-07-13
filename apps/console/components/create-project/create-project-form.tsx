@@ -43,7 +43,7 @@ import {
 } from "./templates";
 
 /** Clouds with full provisioning templates today — the only ones a project can target. */
-const PROVISIONABLE: CloudProviderSlug[] = ["aws", "gcp", "azure"];
+const PROVISIONABLE: CloudProviderSlug[] = ["aws", "gcp", "azure", "alibaba"];
 
 /** Maps the platform-selector id to the template preset id used by buildCreateInput. */
 const TEMPLATE_BY_PLATFORM: Record<string, TemplateId> = {
@@ -82,8 +82,12 @@ interface CreateProjectFormProps {
 	integrations: ConnectorWithConnection[];
 	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string } | null;
+	azureSetup: { identityId: string; clientId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
+	/** Per-connector-slug: whether this instance has the platform creds a cloud's connect needs
+	 * (e.g. Azure's app id). A cloud missing them can only fail to connect, so its tile says
+	 * "not enabled on this instance" instead of offering a doomed Connect (mirrors the board). */
+	platformConfigured: Record<string, boolean>;
 	/** Whether bring-your-own Helm charts are enabled (server flag) — shows the "start from a chart" path. */
 	byoHelmEnabled?: boolean;
 }
@@ -104,6 +108,7 @@ export function CreateProjectForm({
 	gcpSetup,
 	azureSetup,
 	extraSetup,
+	platformConfigured,
 	byoHelmEnabled,
 }: CreateProjectFormProps) {
 	const router = useRouter();
@@ -414,6 +419,7 @@ export function CreateProjectForm({
 							key={integration.id}
 							integration={integration}
 							canManage={canManage}
+							platformConfigured={platformConfigured[integration.slug] ?? true}
 							selected={cloud === integration.slug}
 							isConnecting={cloudConnect.connectingSlug === integration.slug}
 							onSelect={() => form.setValue("cloud", integration.slug)}
@@ -487,6 +493,8 @@ function BlockHead({
 interface CloudTileProps {
 	integration: ConnectorWithConnection;
 	canManage: boolean;
+	/** Whether this instance has the platform creds this cloud's connect needs (e.g. Azure's app id). */
+	platformConfigured: boolean;
 	selected: boolean;
 	isConnecting: boolean;
 	onSelect: () => void;
@@ -501,6 +509,7 @@ interface CloudTileProps {
 function CloudTile({
 	integration,
 	canManage,
+	platformConfigured,
 	selected,
 	isConnecting,
 	onSelect,
@@ -509,13 +518,17 @@ function CloudTile({
 	const connected = integration.connected;
 	const provisionable = arrayIncludes(PROVISIONABLE, integration.slug);
 	const selectable = connected && provisionable;
+	// Missing platform creds (e.g. Azure's app id) → a connect can only fail, so offer no Connect.
+	const platformUnavailable = !connected && !platformConfigured;
 	const label =
 		PROVIDERS[integration.slug as ConnectableCloudSlug]?.shortName ?? integration.name;
-	const status = !connected
-		? "Not connected"
-		: provisionable
-			? "Connected"
-			: "Provisioning soon";
+	const status = platformUnavailable
+		? "Not enabled on this instance"
+		: !connected
+			? "Not connected"
+			: provisionable
+				? "Connected"
+				: "Provisioning soon";
 
 	return (
 		<div
@@ -542,7 +555,7 @@ function CloudTile({
 				>
 					<Check className="size-3" />
 				</span>
-			) : !connected && canManage ? (
+			) : !connected && canManage && !platformUnavailable ? (
 				<button
 					type="button"
 					onClick={onConnect}

@@ -60,6 +60,11 @@ export function ClusterCard({
 		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`
 		: null;
 
+	// The ArgoCD admin password is never stored (it would be plaintext in our DB); it is
+	// retrieved on-demand from the cluster's argocd-initial-admin-secret. Show the command.
+	const argocdPasswordCmd =
+		"kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d";
+
 	return (
 		<div className="rounded-lg border border-border/50 bg-card p-5 space-y-4">
 			{/* Header */}
@@ -145,6 +150,16 @@ export function ClusterCard({
 								<ExternalLink className="h-3 w-3" />
 							</Button>
 						</a>
+					</div>
+					{/* Admin password is retrieved on-demand from the cluster, never stored. */}
+					<p className="text-[10px] text-muted-foreground">
+						Admin password (retrieve from the cluster):
+					</p>
+					<div className="flex items-center gap-2">
+						<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+							{argocdPasswordCmd}
+						</code>
+						<CopyButton value={argocdPasswordCmd} />
 					</div>
 				</div>
 			)}

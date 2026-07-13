@@ -118,18 +118,18 @@ In a Community build the package isn't installed, the `require` throws, `registe
 
 ## Request lifecycle
 
-```
-HTTP request
-   │
-   ├─ server action:  authorize(action, resource)
-   │      └─ getActiveScope(requireOwner()) → actor → getPdp().enforce(...) → 403 on deny
-   │
-   └─ CLI / stream route:  authorizeCli(req, action, resource)
-          └─ verify token → getActiveScope → enforce → 403
-                                   │
-                          query runs under withScope()/withOwnerScope()
-                          → PostgreSQL RLS restricts rows to the active org
-```
+<Mermaid chart={`
+flowchart TD
+  req[HTTP request]
+  req -->|server action| sa["authorize(action, resource)"]
+  req -->|CLI / stream route| cli["authorizeCli(req, action, resource)"]
+  sa --> scope["getActiveScope(requireOwner) → actor"]
+  cli --> vtok[verify token] --> scope
+  scope --> enforce["getPdp().enforce(...)"]
+  enforce -->|deny| forbid[403 Forbidden]
+  enforce -->|allow| query["query under withScope() / withOwnerScope()"]
+  query --> rls["PostgreSQL RLS restricts rows to the active org"]
+`} />
 
 Two independent gates on every path: the **PDP** (permission) and **RLS** (tenancy). On the CLI/stream paths — which use the service connection that bypasses RLS — the route additionally scopes its query explicitly by the active org, so the tenancy guarantee holds there too.
 

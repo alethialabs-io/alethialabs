@@ -100,3 +100,92 @@ func TestDeployMetadata_ScrubsClusterCredentials(t *testing.T) {
 		t.Errorf("expected public cluster_name to survive, got %v", metadata["cluster_name"])
 	}
 }
+
+// TestDeployMetadata_NoSecretBearingKeys is the whole-blob denylist tripwire over the REAL
+// persisted surface. It builds the metadata buildDeployMetadata produces for a full deploy and
+// asserts the credential denylist finds NOTHING to drop — i.e. the assembler forwards no
+// secret-named key at any depth. This is the regression guard for the P0 fixed here: the ArgoCD
+// admin password used to be persisted as top-level `metadata["argocd_admin_password"]`.
+// Re-introducing that line (or any *password / _token / secret_value / kubeconfig / private_key
+// key) makes scrubMetadataTree drop it → the returned path list is non-empty → this test fails.
+func TestDeployMetadata_NoSecretBearingKeys(t *testing.T) {
+	result := &provisioner.PlanResult{
+		ClusterName:     "prod-eks",
+		ClusterEndpoint: "https://abc.eks.amazonaws.com",
+		ClusterReady:    true,
+		ArgocdURL:       "https://argocd.prod.example.com",
+		Outputs: map[string]interface{}{
+			"eks_cluster_endpoint": "https://abc.eks.amazonaws.com",
+			// Non-secret handles must survive (their keys are not on the denylist).
+			"custom_secret_arns": map[string]any{"db-pass": "arn:aws:secretsmanager:...:db-pass"},
+		},
+	}
+
+	metadata := buildDeployMetadata(result)
+
+	// The denylist backstop must find nothing to remove from the assembled blob.
+	if dropped := scrubMetadataTree(metadata); len(dropped) > 0 {
+		t.Fatalf("buildDeployMetadata forwarded secret-bearing key(s) — did the argocd_admin_password leak return? dropped: %v", dropped)
+	}
+	// Non-vacuity: the non-secret ArgoCD URL is genuinely present (so the scan wasn't over empty).
+	if metadata["argocd_url"] != "https://argocd.prod.example.com" {
+		t.Errorf("expected non-secret argocd_url to survive, got %v", metadata["argocd_url"])
+	}
+}
+
+// TestScrubMetadataTree_DropsSecretsAnywhere proves the backstop actually removes credential-
+// bearing keys wherever they sit — top-level, inside a nested map, and inside a slice element —
+// while leaving non-secret keys intact. This is the "seeded password anywhere in the blob is
+// caught" assertion: it plants the SENTINEL under secret-named keys at every nesting shape and
+// asserts none survives serialization.
+func TestScrubMetadataTree_DropsSecretsAnywhere(t *testing.T) {
+	m := map[string]any{
+		"cluster_name": "prod-eks", // non-secret, survives
+		"argocd_url":   "https://argocd.example.com",
+		// Top-level secret — the exact shape of the P0 leak.
+		"argocd_admin_password": credSentinel,
+		// Nested map secret.
+		"outputs": map[string]any{
+			"kubeconfig":           "apiVersion: v1\n# " + credSentinel,
+			"api_token":            credSentinel,
+			"eks_cluster_endpoint": "https://abc", // non-secret, survives
+		},
+		// Secret inside a slice element.
+		"infra_services": []any{
+			map[string]any{"service": "argocd", "admin_password": credSentinel},
+		},
+	}
+
+	dropped := scrubMetadataTree(m)
+
+	blob, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal scrubbed metadata: %v", err)
+	}
+	if strings.Contains(string(blob), credSentinel) {
+		t.Fatalf("SECRET LEAK: a seeded credential survived scrubMetadataTree:\n%s", blob)
+	}
+
+	// Non-secret keys must survive.
+	if m["cluster_name"] != "prod-eks" {
+		t.Errorf("non-secret cluster_name was dropped")
+	}
+	outputs, ok := m["outputs"].(map[string]any)
+	if !ok || outputs["eks_cluster_endpoint"] != "https://abc" {
+		t.Errorf("non-secret nested output eks_cluster_endpoint was dropped: %v", m["outputs"])
+	}
+
+	// Every planted secret key must be reported as dropped (top-level, nested map, slice element).
+	for _, want := range []string{"argocd_admin_password", "outputs.kubeconfig", "outputs.api_token", "infra_services[0].admin_password"} {
+		found := false
+		for _, d := range dropped {
+			if d == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected dropped path %q, got %v", want, dropped)
+		}
+	}
+}

@@ -293,6 +293,11 @@ export interface IacScanReport {
 // (lib/crypto/secrets.ts). The plaintext is a JSON map of {fieldKey: value}.
 export interface EncryptedSecret {
 	v: number;
+	// Key id (keyring) that sealed this envelope — lets a leaked key be rotated online without
+	// downtime (decryption selects the matching key). ABSENT on legacy ciphertext written before
+	// rotation existed; those decrypt under the active ALETHIA_CRED_ENCRYPTION_KEY. New writes
+	// always stamp the active kid. See lib/crypto/secrets.ts.
+	kid?: string;
 	iv: string;
 	tag: string;
 	data: string;
@@ -377,7 +382,9 @@ export interface ExecutionMetadata {
 	 *  (a working cluster, not just "tofu apply exited 0"). Set by the runner on a real deploy. */
 	cluster_ready?: boolean;
 	argocd_url?: string;
-	argocd_admin_password?: string;
+	// The ArgoCD admin password is deliberately absent: the runner never persists it (it is
+	// retrieved on-demand from the cluster's argocd-initial-admin-secret), so it never appears
+	// in execution_metadata. See the runner's buildDeployMetadata + scrubMetadataTree.
 	outputs?: Record<string, unknown>;
 	cached_resources?:
 		| CachedResources
@@ -679,6 +686,21 @@ export interface ClassificationEnforcement {
 	require_verify_pass: boolean;
 	/** Minimum distinct approvals when approval is required (≥ 1). */
 	min_approvals: number;
+}
+
+/**
+ * The frozen per-dimension classification captured into a job's `config_snapshot` at
+ * enqueue time (B1.1). Keyed by classification dimension `key`; each entry is the sorted,
+ * de-duplicated list of assigned value slugs on that dimension. Environment-level
+ * assignments OVERRIDE the project's values per dimension (the environment is the more
+ * specific scope); dimensions the environment doesn't touch inherit the project's values.
+ * Keys and value arrays are sorted so the snapshot's `configuration_hash` is deterministic
+ * regardless of DB row order. The runner (B1.2+) maps this onto per-cloud resource
+ * tags/labels. Built by `resolveClassificationSnapshot` (lib/classification/snapshot.ts).
+ */
+export interface ClassificationSnapshot {
+	/** dimension `key` → sorted, de-duplicated assigned value slugs */
+	[dimension: string]: string[];
 }
 
 // ============================================================

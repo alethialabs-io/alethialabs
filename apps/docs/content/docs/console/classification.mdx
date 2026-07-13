@@ -1,6 +1,6 @@
 ---
 title: Classification
-description: Organize every resource with a governed taxonomy — named dimensions and their allowed values, assigned across projects, clusters, connectors, runners, members and more.
+description: Organize every resource with a governed taxonomy — named dimensions and their allowed values, assigned across projects, clusters, cloud identities, runners, members and more.
 ---
 
 # Classification
@@ -14,11 +14,10 @@ every resource is labeled from that closed vocabulary. Find it under **Settings 
 
 Three concepts, in a strict hierarchy:
 
-```
-Dimension (an axis)  ──▶  Value (an allowed answer)  ──▶  Assignment (pinned to a resource)
-  "Environment"             dev · staging · prod             this project's Environment = prod
-  "Team"                    platform · payments · …          this cluster's Team = platform, payments
-```
+<Mermaid chart={`
+flowchart LR
+  D["Dimension<br/>an axis — 'Environment'"] --> V["Value<br/>an allowed answer — dev · staging · prod"] --> A["Assignment<br/>pinned to a resource — this project's Environment = prod"]
+`} />
 
 - **Dimension** — a named axis: one question you can ask about every resource (*Environment*,
   *Team*, *Data classification*, *Cost center*). It has a label, an immutable `key` slug, an
@@ -26,7 +25,7 @@ Dimension (an axis)  ──▶  Value (an allowed answer)  ──▶  Assignment
 - **Value** — an allowed answer on that axis (`dev` / `staging` / `prod`). A closed set the admin
   curates; each value has a label, a slug, and an optional color accent.
 - **Assignment** — a value pinned to one concrete resource. This is what you set on a project, a
-  cluster, a connector, and so on.
+  cluster, a cloud identity, and so on.
 
 Two mental models that make it click:
 
@@ -55,7 +54,7 @@ and — if you can edit — a **picker** to change them:
 | Projects | Project → **Settings → General** |
 | Environments | A project's **Environments** |
 | Clusters | **Clusters** |
-| Connectors (cloud identities & credentials) | **Connectors** → a connector's detail |
+| Cloud identities (& pluggable connector credentials) | **Connectors** → a cloud identity's detail |
 | Runners | **Runners** |
 | Members | **Settings → Members** |
 | Roles | **Settings → Roles** |

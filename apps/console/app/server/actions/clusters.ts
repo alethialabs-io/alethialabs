@@ -30,7 +30,6 @@ export interface ClusterData {
 		cluster_arn: string | null;
 		cluster_version: string | null;
 		argocd_url: string | null;
-		argocd_admin_password: string | null;
 		status: string;
 	} | null;
 	project_databases: {
@@ -74,7 +73,6 @@ export async function getClusters(): Promise<ClusterData[]> {
 				cluster_outputs: projectCluster.provider_outputs,
 				cluster_version: projectCluster.cluster_version,
 				argocd_url: projectCluster.argocd_url,
-				argocd_admin_password: projectCluster.argocd_admin_password,
 				cluster_status: projectCluster.status,
 				dns_domain_name: projectDns.domain_name,
 				dns_enabled: projectDns.enabled,
@@ -153,7 +151,6 @@ export async function getClusters(): Promise<ClusterData[]> {
 						cluster_arn: r.cluster_outputs?.arn ?? null,
 						cluster_version: r.cluster_version,
 						argocd_url: r.argocd_url,
-						argocd_admin_password: r.argocd_admin_password,
 						status: r.cluster_status,
 					}
 				: null,

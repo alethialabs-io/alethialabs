@@ -61,4 +61,4 @@ The Clusters page subscribes to `projects` table UPDATE events. When a project's
 
 ## Data Source
 
-Cluster information comes from the DEPLOY job's `finalizeDeployment()` server action, which extracts Terraform outputs (cluster name, endpoint, ARN, ArgoCD URL, database/cache endpoints) and writes them to the project's component tables.
+Cluster information comes from the DEPLOY job's `finalizeDeployment()` server action, which extracts OpenTofu outputs (cluster name, endpoint, ARN, ArgoCD URL, database/cache endpoints) and writes them to the project's component tables.

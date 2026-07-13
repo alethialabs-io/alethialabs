@@ -7,7 +7,7 @@ description: The authored controls per cloud, what each detects, the engine's bl
 
 <Enterprise />
 
-The current catalog is **`elench-controls-0.1.0`**. `Evaluate` detects the plan's cloud and runs that
+The current catalog is **`elench-controls-0.4.0`**. `Evaluate` detects the plan's cloud and runs that
 provider's control set (a mixed or unknown plan runs all of them, so nothing is silently skipped). Every
 control records its `provider`, so a uniform posture UI can never imply coverage a control does not have.
 
@@ -36,6 +36,31 @@ control records its `provider`, so a uniform posture UI can never imply coverage
 | `AZURE-FED-001` | Federated credentials bind a subject | an `azuread_application_federated_identity_credential` with an empty or wildcard `subject` |
 | `AZURE-LEASTPRIV-001` | No Owner/Contributor assignments | an `azurerm_role_assignment` of `Owner` (fail) — **warns** on `Contributor` — scope annotated |
 
+## Alibaba Cloud
+
+Alibaba has a real RAM/OIDC authority surface — **RRSA** (RAM Roles for Service Accounts) is its
+workload-identity mechanism, the analogue of AWS IRSA / GCP WIF — so its control set mirrors the AWS
+one. RAM trust and policy documents share AWS IAM's statement shape; the one Alibaba-specific
+difference is the trust action (`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`).
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `ALI-KEYLESS-001` | No static RAM access keys | creating an `alicloud_ram_access_key` (use RRSA / AssumeRoleWithOIDC instead) |
+| `ALI-OIDC-001` | RRSA trust bound to a specific subject | an `alicloud_ram_role` whose Federated (RRSA) trust **lacks an `oidc:sub` condition**, or binds it only with a **`StringLike` wildcard** (any pod from the issuer can assume). Service-principal roles are out of scope; a computed trust doc → **not_evaluable**. |
+| `ALI-LEASTPRIV-001` | No over-broad RAM grants (named patterns) | an `alicloud_ram_policy` granting `Action:"*"` on `Resource:"*"` or using `Allow` + `NotAction`; or a **role/user/group** policy attachment of an admin-family System policy (`AdministratorAccess`, `AliyunRAMFullAccess` — control of RAM itself is admin one hop away). **Warns** on a service-level wildcard (`ecs:*`, …) with `Resource:"*"`. **Not-evaluable** when the policy body is computed, or for a non-admin System attachment (its body is never in the plan). |
+
+## Hetzner
+
+Hetzner is **token-auth** — the API token is the ceiling, with no OIDC/federation/IAM surface to bind —
+so its controls assert **network/firewall posture**, the attack surface a Hetzner plan can actually
+misconfigure. They are tuned so the shipped Talos template evaluates to **warns only** (never a
+hard block of the nightly apply).
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `HCLOUD-FW-001` | Every server is behind a firewall | an `hcloud_server` with **no firewall anywhere** — no known `firewall_ids`, no configuration reference to an `hcloud_firewall`, and no `hcloud_firewall_attachment` covering it (a bare public node). **Not-evaluable** (never a false brick) for unresolvable expressions, `label_selectors` / `apply_to` selection, or a plan without a configuration section. |
+| `HCLOUD-NET-001` | No world-open SSH; management ports flagged | a firewall rule opening **tcp/22** to the whole internet — including split-CIDR spellings that union to full coverage (Talos runs no SSH daemon; world-open 22 is always wrong). **Warns** on world-open Kubernetes API `6443` / Talos apid `50000`/`50001` (open by design today), any other world-open inbound rule, and very broad partial sources on 22. Computed source/port → **not_evaluable**. |
+
 ## Kubernetes
 
 A separate input path — `EvaluateManifests(yaml)` — decodes (multi-doc) manifests and runs the k8s set
@@ -59,18 +84,21 @@ pass, and workload kinds without a decodable pod spec are simply not counted.
   guessing:
 
   - **Computed bodies** (`after_unknown`) — interpolated IAM/trust/bucket policies → `not_evaluable`.
-  - **Managed-policy-by-ARN** — AWS-managed (non-admin) policies attached by ARN have no body in the
-    plan → coverage gap, not a pass.
+  - **Managed-policy bodies** — AWS-managed (non-admin) policies attached by ARN, and Alibaba's
+    non-admin System policies, have no body in the plan → coverage gap, not a pass.
   - **Cross-state / cross-module** — resources created in another state or module, permission
     boundaries, and SCPs are out of view.
-  - **AWS is deepest.** GCP/Azure cover the static-credential, federation-binding, and primitive-role
-    cases; the per-cloud `provider` on each control + the report makes coverage explicit.
+  - **AWS is deepest; Alibaba mirrors it.** GCP/Azure cover the static-credential, federation-binding,
+    and primitive-role cases; Hetzner is network **posture** (token-auth has no authority surface to
+    audit); the per-cloud `provider` on each control + the report makes coverage explicit.
 </Callout>
 
 ## Framework mapping
 
 Each control carries a small, conservative set of framework references (CIS / SOC 2 criteria), surfaced
-in the posture and the receipt.
+in the posture and the receipt. These map to controls, not certification — see
+[security & compliance readiness](/standards/security-and-compliance) for how the evidence supports an
+audit rather than replacing one.
 
 <Callout type="info">
   A wrong control-to-framework mapping (e.g. claiming a control satisfies "SOC 2 CC6.1" when it does

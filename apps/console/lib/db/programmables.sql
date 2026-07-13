@@ -1249,6 +1249,11 @@ CREATE OR REPLACE FUNCTION public.gc_authz_activity_log(
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_count INTEGER;
 BEGIN
+    -- Flag this transaction as the retention GC so the append-only WORM trigger
+    -- (authz_activity_log_worm, below) permits the pruning DELETE. SET LOCAL is
+    -- transaction-scoped, so it's automatically cleared when the GC txn ends and
+    -- can't leak the exemption to any later statement. No other caller sets this.
+    PERFORM set_config('app.authz_gc', 'on', true);
     WITH doomed AS (
         SELECT al.id
         FROM public.authz_activity_log al
@@ -1265,6 +1270,71 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION public.gc_authz_activity_log(INTERVAL, INTEGER) TO alethia_app;
+
+-- ── authz_activity_log: tenant-scoped RLS + GC-aware append-only WORM ─────────────────────────────
+-- The PDP governance/audit log is written on every enforce() and read by the Activity viewer /
+-- CLI. All three real paths — recordActivity (lib/authz/activity.ts), getActivityLog
+-- (app/server/actions/activity.ts), and gc_authz_activity_log (via the reconcile loop) — run under
+-- the BYPASSRLS service role (getServiceDb), so this table previously had NO tenant RLS and the app
+-- role held the blanket GRANT (SELECT/INSERT/UPDATE/DELETE) at the top of this file. Two gaps closed:
+--
+-- 1. DEFENSE-IN-DEPTH TENANT RLS. Enable RLS with an org-scoped SELECT policy (mirroring audit_log's
+--    key) and NO insert/update/delete policy. The service role bypasses RLS so the real read/write
+--    paths are unaffected; but should the least-privilege alethia_app role ever touch this table, a
+--    SELECT is org-filtered and every write/mutation is denied.
+ALTER TABLE public.authz_activity_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS authz_activity_select ON public.authz_activity_log;
+CREATE POLICY authz_activity_select ON public.authz_activity_log FOR SELECT
+  USING (org_id = current_setting('app.current_org', true)::uuid);
+
+-- 2. APPEND-ONLY WORM — but GC-aware. audit_log stays immutable via RLS alone (no UPDATE/DELETE
+--    policy), which binds only the app role, NOT the BYPASSRLS service role that writes this log. So
+--    (like breakglass_audit) a trigger makes the table immutable regardless of the caller's role. The
+--    difference from breakglass: this log HAS a legitimate deleter — the retention GC. An absolute
+--    WORM would block the GC's own prune. So the trigger is GC-aware: UPDATE and TRUNCATE are never
+--    permitted; DELETE is permitted ONLY while app.authz_gc='on', which ONLY gc_authz_activity_log
+--    sets (above), for its own transaction. This closes the casual/app/service tamper path while
+--    keeping retention working. (A superuser could still DISABLE the trigger or set app.authz_gc by
+--    hand — an out-of-band, itself-auditable act, not reachable from application code.) The INSERT
+--    append path is untouched, so recordActivity keeps writing.
+CREATE OR REPLACE FUNCTION public.authz_activity_log_worm()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    -- Only the retention GC may prune, and only while it has flagged its own txn.
+    IF current_setting('app.authz_gc', true) IS DISTINCT FROM 'on' THEN
+      RAISE EXCEPTION
+        'authz_activity_log is append-only: DELETE is only permitted by the retention GC (gc_authz_activity_log)'
+        USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN OLD; -- permitted GC delete proceeds (BEFORE-row trigger: RETURN OLD = allow)
+  END IF;
+  -- UPDATE (row) and TRUNCATE (statement): no legitimate case exists — always reject.
+  RAISE EXCEPTION 'authz_activity_log is append-only: % is not permitted', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS authz_activity_log_no_mutate ON public.authz_activity_log;
+CREATE TRIGGER authz_activity_log_no_mutate
+  BEFORE UPDATE OR DELETE ON public.authz_activity_log
+  FOR EACH ROW EXECUTE FUNCTION public.authz_activity_log_worm();
+
+DROP TRIGGER IF EXISTS authz_activity_log_no_truncate ON public.authz_activity_log;
+CREATE TRIGGER authz_activity_log_no_truncate
+  BEFORE TRUNCATE ON public.authz_activity_log
+  FOR EACH STATEMENT EXECUTE FUNCTION public.authz_activity_log_worm();
+
+-- Belt-and-braces: revoke the mutation grants outright (the top-of-file blanket GRANT hands the app
+-- role UPDATE/DELETE; strip them here) so the privilege isn't even present. The trigger is the hard
+-- stop; this removes the grant too. INSERT/SELECT stay revoke-free (SELECT is RLS-scoped above; the
+-- app role never inserts here — the service role does).
+REVOKE UPDATE, DELETE, TRUNCATE ON public.authz_activity_log FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON public.authz_activity_log FROM alethia_app';
+  END IF;
+END $$;
 
 -- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
 -- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /
@@ -1311,5 +1381,44 @@ DO $$ BEGIN
     EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON public.breakglass_audit FROM alethia_app';
     -- The app role has no business touching any break-glass table at all.
     EXECUTE 'REVOKE ALL ON public.breakglass_session, public.breakglass_audit, public.breakglass_approval FROM alethia_app';
+  END IF;
+END $$;
+
+-- ── Platform-operator plane (Enterprise contracts + their audit) ─────────────────────────────────
+-- SERVICE-ROLE ONLY, exactly like break-glass: RLS is enabled with NO app policy, so the
+-- least-privilege alethia_app role (the one behind every customer request) can neither read nor
+-- write these. They are written solely by the staff app (apps/admin) over the service connection;
+-- the console never touches them (it only owns the migration).
+ALTER TABLE public.enterprise_contract ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.platform_audit      ENABLE ROW LEVEL SECURITY;
+
+-- platform_audit is APPEND-ONLY (WORM). Unlike authz_activity_log this log has NO retention GC —
+-- there is no legitimate deleter — so the trigger is ABSOLUTE (the breakglass_audit pattern):
+-- UPDATE, DELETE and TRUNCATE are always rejected. Triggers are NOT bypassed by BYPASSRLS, so the
+-- row is immutable even against the service role that writes it. INSERT is untouched, so the
+-- attempt/result append path keeps working.
+CREATE OR REPLACE FUNCTION public.platform_audit_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'platform_audit is append-only: % is not permitted', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS platform_audit_no_mutate ON public.platform_audit;
+CREATE TRIGGER platform_audit_no_mutate
+  BEFORE UPDATE OR DELETE ON public.platform_audit
+  FOR EACH ROW EXECUTE FUNCTION public.platform_audit_immutable();
+
+DROP TRIGGER IF EXISTS platform_audit_no_truncate ON public.platform_audit;
+CREATE TRIGGER platform_audit_no_truncate
+  BEFORE TRUNCATE ON public.platform_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION public.platform_audit_immutable();
+
+-- Belt-and-braces: strip the mutation grants outright, and keep the app role out of both tables.
+REVOKE UPDATE, DELETE, TRUNCATE ON public.platform_audit FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE ALL ON public.enterprise_contract, public.platform_audit FROM alethia_app';
   END IF;
 END $$;

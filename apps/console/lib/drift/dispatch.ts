@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema/jobs";
 import { projectEnvironments } from "@/lib/db/schema/project-environments";
@@ -98,16 +98,28 @@ export async function sweepDriftSchedule(
 	for (const c of due) {
 		const src = latestDeployByEnv.get(c.environmentId);
 		if (!src) continue;
-		await db.insert(jobs).values({
-			user_id: src.user_id,
-			project_id: src.project_id,
-			environment_id: c.environmentId,
-			cloud_identity_id: src.cloud_identity_id,
-			job_type: "DETECT_DRIFT",
-			config_snapshot: src.config_snapshot,
-			status: "QUEUED",
-		});
-		enqueued++;
+		// Cross-replica dedup: the `uq_jobs_active_drift_per_env` partial unique index guarantees at most
+		// ONE in-flight DETECT_DRIFT per env, so a racing replica's concurrent INSERT for the same env
+		// is dropped instead of piling up a duplicate. Target + where must match the partial index
+		// (columns = environment_id, predicate = the in-flight-drift filter). `.returning` lets us count
+		// only the rows that actually landed (a dropped conflict returns none).
+		const inserted = await db
+			.insert(jobs)
+			.values({
+				user_id: src.user_id,
+				project_id: src.project_id,
+				environment_id: c.environmentId,
+				cloud_identity_id: src.cloud_identity_id,
+				job_type: "DETECT_DRIFT",
+				config_snapshot: src.config_snapshot,
+				status: "QUEUED",
+			})
+			.onConflictDoNothing({
+				target: jobs.environment_id,
+				where: sql`job_type = 'DETECT_DRIFT' AND status IN ('QUEUED', 'CLAIMED', 'PROCESSING')`,
+			})
+			.returning({ id: jobs.id });
+		if (inserted.length > 0) enqueued++;
 	}
 	if (enqueued > 0) notifyScaler();
 	return { enqueued };

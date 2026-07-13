@@ -31,7 +31,16 @@ var (
 // runStreaming runs a command, mirroring its combined output to stdout while
 // capturing it, and returns everything it printed.
 func runStreaming(name string, args ...string) (string, error) {
+	return runStreamingEnv(nil, name, args...)
+}
+
+// runStreamingEnv is runStreaming with extra `KEY=VALUE` variables appended to
+// the inherited process environment (e.g. the setup script's required inputs).
+func runStreamingEnv(extraEnv []string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	var buf bytes.Buffer
 	mw := io.MultiWriter(os.Stdout, &buf)
 	cmd.Stdout = mw

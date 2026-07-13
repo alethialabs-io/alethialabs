@@ -13,6 +13,7 @@ import {
 	smallint,
 	text,
 	timestamp,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import type {
@@ -115,6 +116,17 @@ export const jobs = pgTable(
 		index("idx_jobs_assigned_runner")
 			.on(t.assigned_runner_id)
 			.where(sql`assigned_runner_id IS NOT NULL`),
+		// Cross-replica dedup for the drift sweeper (lib/drift/dispatch.ts): at most ONE active
+		// DETECT_DRIFT job per environment. Two replicas ticking `sweepDriftSchedule` concurrently
+		// would otherwise each INSERT a drift job for the same due env. Paired with an
+		// `ON CONFLICT DO NOTHING` on the insert. Partial so it only constrains in-flight drift jobs —
+		// once a drift job leaves QUEUED/CLAIMED/PROCESSING (SUCCESS/FAILED/CANCELLED) it drops out of
+		// the index, so the env's next scheduled re-drift is free to enqueue.
+		uniqueIndex("uq_jobs_active_drift_per_env")
+			.on(t.environment_id)
+			.where(
+				sql`job_type = 'DETECT_DRIFT' AND status IN ('QUEUED', 'CLAIMED', 'PROCESSING')`,
+			),
 	],
 );
 

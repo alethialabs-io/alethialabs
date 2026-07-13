@@ -1,72 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 400" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 400" width="100%" role="img" aria-label="Release system: release-please cuts per-component tags that trigger the CLI GoReleaser pipeline and the runner image build">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
-    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="820" height="400" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Build, Release &amp; CI/CD Pipeline</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="400" rx="12"/>
+  <rect x="0" y="0" width="840" height="400" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="399" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · RELEASE</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">release-please cuts per-component tags</text>
 
-  <!-- Shared pipeline: Commit → release-please → Tag -->
-  <rect x="30" y="66" width="150" height="44" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="105" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">Conventional Commit</text>
-  <text x="105" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">feat(alethia): add …</text>
-  <line x1="180" y1="88" x2="210" y2="88" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- commits -->
+  <rect class="d-surface" x="28" y="160" width="140" height="70" rx="8"/>
+  <text class="d-label" x="98" y="188" text-anchor="middle" font-size="13" font-weight="600">Commits</text>
+  <text class="d-sub mono" x="98" y="206" text-anchor="middle" font-size="9">conventional</text>
+  <text class="d-sub mono" x="98" y="218" text-anchor="middle" font-size="9">feat/fix(scope)</text>
 
-  <rect x="218" y="66" width="150" height="44" rx="8" fill="#27272A" stroke="#8B5CF6"/>
-  <text x="293" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#8B5CF6">release-please</text>
-  <text x="293" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">auto PR + CHANGELOG</text>
-  <line x1="368" y1="88" x2="398" y2="88" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+  <!-- release-please -->
+  <rect class="d-emph" x="196" y="152" width="180" height="86" rx="8"/>
+  <text class="d-emph-text" x="286" y="180" text-anchor="middle" font-size="13" font-weight="600">release-please</text>
+  <text class="d-emph-text mono" x="286" y="200" text-anchor="middle" font-size="9" opacity="0.82">separate PRs / component</text>
+  <text class="d-emph-text mono" x="286" y="214" text-anchor="middle" font-size="9" opacity="0.82">merge → git tag</text>
+  <text class="d-emph-text mono" x="286" y="228" text-anchor="middle" font-size="9" opacity="0.82">cli-v* · runner-v*</text>
 
-  <rect x="406" y="66" width="100" height="44" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="456" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">Git Tag</text>
-  <text x="456" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">alethia-v0.1.8</text>
+  <line class="d-edge" x1="168" y1="195" x2="196" y2="195" marker-end="url(#ar)"/>
 
-  <!-- Fork -->
-  <line x1="506" y1="78" x2="546" y2="78" stroke="#52525B" stroke-width="1.5"/>
-  <line x1="546" y1="78" x2="546" y2="156" stroke="#52525B" stroke-width="1.5"/>
-  <line x1="546" y1="78" x2="546" y2="280" stroke="#52525B" stroke-width="1.5"/>
+  <!-- CLI lane -->
+  <rect class="d-surface" x="420" y="96" width="392" height="112" rx="8"/>
+  <text class="d-label" x="436" y="120" font-size="12" font-weight="600">CLI · release-cli.yml</text>
+  <text class="d-sub mono" x="436" y="136" font-size="9">GoReleaser · macOS/Linux/Windows × amd64/arm64</text>
+  <text class="d-sub mono" x="436" y="160" font-size="10">brew tap · scoop bucket</text>
+  <text class="d-sub mono" x="436" y="178" font-size="10">.deb / .rpm / .apk · GitHub Release</text>
+  <text class="d-sub mono" x="436" y="196" font-size="10">docker: ghcr.io/…/alethia · get.alethialabs.io</text>
 
-  <!-- Alethia path -->
-  <rect x="530" y="128" width="260" height="28" rx="6" fill="#22C55E10" stroke="#22C55E30"/>
-  <text x="660" y="146" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#22C55E">Alethia CLI Release</text>
+  <!-- Runner lane -->
+  <rect class="d-surface" x="420" y="224" width="392" height="104" rx="8"/>
+  <text class="d-label" x="436" y="248" font-size="12" font-weight="600">Runner · release-runner.yml</text>
+  <text class="d-sub mono" x="436" y="264" font-size="9">stage templates (aws/gcp/azure/argocd) into image</text>
+  <text class="d-sub mono" x="436" y="284" font-size="10">buildx → ECR + GHCR</text>
+  <text class="d-sub mono" x="436" y="302" font-size="10">POST /api/releases/runner → runner_releases · rolling deploy</text>
 
-  <line x1="546" y1="156" x2="546" y2="170" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line class="d-edge" x1="376" y1="180" x2="420" y2="152" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="380" y="150" font-size="9">cli-v*</text>
+  <line class="d-edge" x1="376" y1="210" x2="420" y2="260" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="380" y="252" font-size="9">runner-v*</text>
 
-  <rect x="530" y="174" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="590" y="196" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">GoReleaser</text>
+  <text class="d-sub mono" x="28" y="356" font-size="9">versioned components: alethia CLI + runner · manifest tracks current versions</text>
 
-  <line x1="650" y1="192" x2="668" y2="192" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="676" y="168" width="120" height="48" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="736" y="186" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">4 binaries</text>
-  <text x="736" y="200" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">darwin + linux</text>
-  <text x="736" y="212" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">amd64 + arm64</text>
-
-  <!-- Homebrew -->
-  <rect x="530" y="224" width="120" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="590" y="242" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Homebrew Tap</text>
-  <line x1="590" y1="210" x2="590" y2="220" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <!-- Runner path -->
-  <rect x="530" y="264" width="260" height="28" rx="6" fill="#F59E0B10" stroke="#F59E0B30"/>
-  <text x="660" y="282" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#F59E0B">Runner Release</text>
-
-  <line x1="546" y1="292" x2="546" y2="308" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <rect x="530" y="312" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="590" y="328" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Docker buildx</text>
-  <text x="590" y="342" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">ARM64</text>
-
-  <line x1="650" y1="330" x2="668" y2="330" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="676" y="304" width="120" height="26" rx="6" fill="#27272A" stroke="#FF9900"/>
-  <text x="736" y="321" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FF9900">ECR</text>
-
-  <rect x="676" y="338" width="120" height="26" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="736" y="355" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">GHCR</text>
-
-  <rect x="676" y="370" width="120" height="22" rx="6" fill="#27272A" stroke="#22C55E50"/>
-  <text x="736" y="385" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#22C55E">ECS deploy</text>
-  <line x1="736" y1="364" x2="736" y2="368" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+  <text class="d-sub mono" x="812" y="384" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

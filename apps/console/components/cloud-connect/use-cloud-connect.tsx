@@ -151,7 +151,7 @@ interface UseCloudConnectArgs {
 	integrations: ConnectorWithConnection[];
 	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string } | null;
+	azureSetup: { identityId: string; clientId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
 }
 
@@ -346,7 +346,12 @@ export function useCloudConnect({
 						description="Set up federated identity credentials to allow Alethia to provision infrastructure in your Azure subscription."
 					/>
 					<div className="px-6 py-6">
-						{azureSetup && <AzureConnection onComplete={handleAzureConnect} />}
+						{azureSetup && (
+							<AzureConnection
+								clientId={azureSetup.clientId}
+								onComplete={handleAzureConnect}
+							/>
+						)}
 					</div>
 				</SheetContent>
 			</Sheet>

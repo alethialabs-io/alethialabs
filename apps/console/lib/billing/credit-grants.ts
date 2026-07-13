@@ -14,8 +14,9 @@
 // credit (double allowance). The credit is the single "first $X free" mechanism.
 
 import type Stripe from "stripe";
-import { isStripeConfigured, planForPriceId } from "@/lib/billing/config";
+import { isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
+import { planFromSubscription } from "@/lib/billing/sync";
 import { planMeta } from "@repo/plan-catalog";
 
 /**
@@ -33,7 +34,10 @@ export async function ensureIncludedCredit(sub: Stripe.Subscription): Promise<vo
 		if (!orgId) return;
 
 		const item = sub.items.data[0];
-		const plan = item?.price.id ? planForPriceId(item.price.id) : null;
+		// Resolve from metadata.plan first (like syncSubscriptionToBilling): an Enterprise
+		// subscription is on a CUSTOM negotiated price whose id isn't in the STRIPE_PRICE_* map,
+		// so planForPriceId alone returns null and the org would silently get zero included credit.
+		const plan = planFromSubscription(sub, item?.price.id);
 		if (!plan) return;
 		const usd = planMeta(plan).includedCreditUsd ?? 0;
 		if (usd <= 0) return;

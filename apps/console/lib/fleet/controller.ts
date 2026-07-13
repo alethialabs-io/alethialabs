@@ -74,6 +74,17 @@ export interface ControllerDeps {
 	 *  Best-effort by contract — the controller wraps every call so a ledger write can NEVER break a
 	 *  reconcile (the ledger is observability, not a correctness dependency). */
 	recordAction(record: FleetActionRecord): Promise<void>;
+	/**
+	 * Cross-replica scale guard: run `apply` (the create/drain/destroy span for one provider's pool)
+	 * while holding a per-provider Postgres advisory lock, so at most ONE replica mutates a given
+	 * provider's pool per tick. Two replicas that each read "pool below target" and both create would
+	 * over-provision (up to R× VMs) — there is no DB lock on the create side otherwise. Returns true
+	 * if the lock was acquired (`apply` ran to completion); false if another replica already holds it
+	 * this tick (`apply` was NOT run — the caller no-ops). With a single replica the lock is always
+	 * free ⇒ always acquired ⇒ behaviour identical to pre-lock. Injected so the controller stays
+	 * DB-free + unit-testable (fakes just run `apply` and return true).
+	 */
+	withScaleLock(provider: string, apply: () => Promise<void>): Promise<boolean>;
 }
 
 /** Per-provider hysteresis carried across ticks (surplus-over-target counter). */
@@ -172,31 +183,52 @@ export async function reconcilePool(
 			.catch((err) => console.error("[fleet] recordAction failed:", err));
 	};
 
-	for (const a of actions) {
-		// Count the scaler action (no-op unless telemetry is on) — provider + action only.
-		recordScalerAction(project.provider, a.type);
-		if (a.type === "create") {
-			// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
-			// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.
-			const bootstrapToken = await deps.mintBootstrapToken();
-			await provider.create(resolved, {
-				location: a.location,
-				version: a.version,
-				bootstrapToken,
-			});
-			await record(a, null, { location: a.location, version: a.version });
-		} else if (a.type === "drain") {
-			await deps.drain(a.runnerId);
-			await record(a, a.runnerId, { instance_id: a.instanceId });
-		} else {
-			await provider.destroy(a.instanceId);
-			const runnerId = byInstance.get(a.instanceId)?.runnerId ?? null;
-			if (runnerId) await deps.retire(runnerId);
-			await record(a, runnerId, {
-				instance_id: a.instanceId,
-				location: byInstance.get(a.instanceId)?.location,
-			});
+	// Nothing to mutate this tick → no need to contend the scale lock (a pure no-op read pass, which
+	// every replica may run freely). The reads/telemetry/persistObserved above are idempotent.
+	if (actions.length === 0) return 0;
+
+	// Cross-replica guard: only ONE replica applies a given provider's create/drain/destroy per tick.
+	// A losing replica (another holds the lock this tick) skips the mutate span entirely — it does NOT
+	// wait+re-read a stale snapshot, so there is no sequential double-fire. The winner holds the lock
+	// (a Postgres advisory xact lock) across this pool's create calls until its tx commits. Single
+	// replica ⇒ lock always free ⇒ identical to pre-lock behaviour.
+	const acquired = await deps.withScaleLock(project.provider, async () => {
+		for (const a of actions) {
+			// Count the scaler action (no-op unless telemetry is on) — provider + action only.
+			recordScalerAction(project.provider, a.type);
+			if (a.type === "create") {
+				// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
+				// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.
+				const bootstrapToken = await deps.mintBootstrapToken();
+				await provider.create(resolved, {
+					location: a.location,
+					version: a.version,
+					bootstrapToken,
+				});
+				await record(a, null, { location: a.location, version: a.version });
+			} else if (a.type === "drain") {
+				await deps.drain(a.runnerId);
+				await record(a, a.runnerId, { instance_id: a.instanceId });
+			} else {
+				await provider.destroy(a.instanceId);
+				const runnerId = byInstance.get(a.instanceId)?.runnerId ?? null;
+				if (runnerId) await deps.retire(runnerId);
+				await record(a, runnerId, {
+					instance_id: a.instanceId,
+					location: byInstance.get(a.instanceId)?.location,
+				});
+			}
 		}
+	});
+
+	if (!acquired) {
+		// Another replica owns this provider's scaling this tick → we no-op. Convergence still holds:
+		// the holder applies now, and the next tick re-reads the (now up-to-date) pool.
+		flog.info("scale lock held by another replica; skipping apply", {
+			provider: project.provider,
+			actions: actions.length,
+		});
+		return 0;
 	}
 	return actions.length;
 }

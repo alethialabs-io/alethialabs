@@ -110,6 +110,15 @@ export const BUILTIN_ROLE_IDS: Record<BuiltInRole, string> = {
 	viewer: "00000000-0000-4000-8000-000000000004",
 };
 
+/** Human descriptions for the built-in roles — the single source (was duplicated in the
+ *  CLI roles route and the roles-manager UI). Seeded onto the built-in `role` rows. */
+export const BUILT_IN_ROLE_DESCRIPTIONS: Record<BuiltInRole, string> = {
+	owner: "Full control, including billing and member management.",
+	admin: "Everything except billing.",
+	operator: "Operate infrastructure (plan/deploy/destroy) and read alerts.",
+	viewer: "Read-only access.",
+};
+
 export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Full control, including billing + member management.
 	owner: "*",

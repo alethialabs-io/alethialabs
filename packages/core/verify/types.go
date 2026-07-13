@@ -20,7 +20,7 @@ package verify
 // the evidence: an old receipt is only meaningful against the controls + schema
 // that produced it, so this version is recorded and must be bumped whenever a
 // control's logic changes in a way that could alter a verdict.
-const CatalogVersion = "elench-controls-0.2.0"
+const CatalogVersion = "elench-controls-0.4.0"
 
 // Status is the outcome of a single control (or the overall verdict).
 type Status string

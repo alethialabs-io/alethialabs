@@ -1,11 +1,11 @@
 ---
 title: AWS Connector
-description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up with CloudFormation or Terraform.
+description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up with CloudFormation or OpenTofu.
 ---
 
 # AWS Connector
 
-AWS integration is **keyless and issuer-direct**: your account registers an **IAM OIDC provider** that trusts
+Connecting AWS registers a **cloud identity** (`cloud_identities`) that is **keyless and issuer-direct**: your account registers an **IAM OIDC provider** that trusts
 Alethia's OIDC issuer, plus an IAM role Alethia assumes via **`AssumeRoleWithWebIdentity`** — no access keys, no
 external id, and no trust in an Alethia AWS account. This is the same model GCP, Azure, and Alibaba use. See
 [Security Architecture](/concepts/security) for the full model.
@@ -19,7 +19,7 @@ stack or the role.
 
 ## Setup Methods
 
-<Tabs items={["CloudFormation (Recommended)", "Terraform"]}>
+<Tabs items={["CloudFormation (Recommended)", "OpenTofu"]}>
   <Tab value="CloudFormation (Recommended)">
     <Steps>
 
@@ -41,17 +41,17 @@ stack or the role.
 
     </Steps>
   </Tab>
-  <Tab value="Terraform">
+  <Tab value="OpenTofu">
     <Steps>
 
-    ### Apply the Terraform module
-    Download the module ("Download module" in the connect sheet) and run `terraform apply`. It creates the
+    ### Apply the OpenTofu module
+    Download the module ("Download module" in the connect sheet) and run `tofu apply`. It creates the
     IAM OIDC provider + role that trust the Alethia issuer. **No variables are required** — the defaults pin
     the issuer, audience (`sts.amazonaws.com`), and subject (`alethia-connector`). Self-hosters override
     `issuer_url` to point at their own console.
 
     ### Copy Role ARN
-    Copy the `role_arn` output from Terraform.
+    Copy the `role_arn` output from OpenTofu.
 
     ### Paste into Alethia
     Paste into the form and click "Connect."
@@ -67,11 +67,11 @@ after deleting the stack, remove the existing provider first (or reuse the stack
 
 ## Verification
 
-After submitting, Alethia verifies the connection **instantly, server-side** (no runner):
+After submitting, Alethia verifies the cloud identity **instantly, server-side** (no runner):
 
 1. The console mints a short-lived assertion and calls `sts:AssumeRoleWithWebIdentity` on your role
 2. Calls `sts:GetCallerIdentity` to confirm the assumed identity (proof of access)
-3. Runs a small capability probe (representative reads) → the connection is `Connected`, or `Degraded`
+3. Runs a small capability probe (representative reads) → the cloud identity is `Connected`, or `Degraded`
    when provisioning permissions are missing, or `Disconnected` when auth fails
 
 If verification fails, the error message explains what went wrong (e.g., trust policy misconfiguration,

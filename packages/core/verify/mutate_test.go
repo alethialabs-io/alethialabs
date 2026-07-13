@@ -183,6 +183,118 @@ func TestMutationFlipsVerdict(t *testing.T) {
 				m["role_definition_name"] = "Owner"
 			},
 		},
+		{
+			// Strip a server's firewall to a KNOWN-empty list — a bare public node.
+			// (The base is a REAL plan where firewall_ids is computed + proven by the
+			// configuration reference; a known-empty plan VALUE overrides that.)
+			name:      "HCLOUD-FW-001/strip-server-firewall",
+			base:      "hetzner_pass.json",
+			controlID: "HCLOUD-FW-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, `hcloud_server.control_planes["demo-cp-1"]`)
+				m["firewall_ids"] = []any{}
+			},
+		},
+		{
+			// Open SSH (tcp/22) to the whole internet on the firewall — Talos has no
+			// SSH, so this is always a hard fail even though the base rules are all
+			// confined to bounded CIDRs.
+			name:      "HCLOUD-NET-001/open-ssh-to-world",
+			base:      "hetzner_pass.json",
+			controlID: "HCLOUD-NET-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "hcloud_firewall.this")
+				rules, _ := m["rule"].([]any)
+				m["rule"] = append(rules, map[string]any{
+					"description": "SSH",
+					"direction":   "in",
+					"protocol":    "tcp",
+					"port":        "22",
+					"source_ips":  []any{"0.0.0.0/0", "::/0"},
+				})
+			},
+		},
+		{
+			name:      "ALI-KEYLESS-001/inject-ram-access-key",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-KEYLESS-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_access_key.leaked", "alicloud_ram_access_key", "alibaba",
+					map[string]any{"user_name": "ci-user"}, map[string]any{"secret": true})
+			},
+		},
+		{
+			// Widen the RRSA trust's oidc:sub from a pinned ServiceAccount to a
+			// StringLike wildcard — any pod from the cluster issuer could then assume.
+			name:      "ALI-OIDC-001/widen-sub-to-wildcard",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-OIDC-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "alicloud_ram_role.external_secrets")
+				m["assume_role_policy_document"] = `{"Version":"1","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"Federated":["acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo"]},"Condition":{"StringEquals":{"oidc:aud":"sts.aliyuncs.com"},"StringLike":{"oidc:sub":"system:serviceaccount:*"}}}]}`
+			},
+		},
+		{
+			// The System-managed-policy ATTACHMENT branch (isALIAdminSystemPolicy over
+			// policy_type/policy_name) — distinct from the inline policy_document
+			// wildcard path. Attaching AdministratorAccess is the most common real
+			// over-privilege pattern on Alibaba.
+			name:      "ALI-LEASTPRIV-001/attach-administrator-access",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_role_policy_attachment.admin", "alicloud_ram_role_policy_attachment", "alibaba",
+					map[string]any{
+						"role_name":   "app",
+						"policy_name": "AdministratorAccess",
+						"policy_type": "System",
+					}, map[string]any{})
+			},
+		},
+		{
+			// The Allow+NotAction evasion: everything-but-one-action on Resource:"*" is
+			// effectively over-broad. The grill proved v1 dropped the AWS twin's
+			// NotAction guard — this mutator keeps it from regressing again.
+			name:      "ALI-LEASTPRIV-001/widen-policy-to-notaction",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "alicloud_ram_policy.external_secrets_read")
+				m["policy_document"] = `{"Version":"1","Statement":[{"Effect":"Allow","NotAction":["oss:GetObject"],"Resource":["*"]}]}`
+			},
+		},
+		{
+			// The USER-attachment blind spot the grill probed: v1 matched only the role
+			// attachment type, so a user attachment of AdministratorAccess passed with
+			// "no resources in scope". Role/user/group are all in scope now.
+			name:      "ALI-LEASTPRIV-001/attach-admin-to-user",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_user_policy_attachment.admin", "alicloud_ram_user_policy_attachment", "alibaba",
+					map[string]any{
+						"user_name":   "ops",
+						"policy_name": "AdministratorAccess",
+						"policy_type": "System",
+					}, map[string]any{})
+			},
+		},
+		{
+			// The RAM-self-escalation family member on the GROUP attachment type:
+			// AliyunRAMFullAccess (control of RAM itself = admin one hop away, the
+			// IAMFullAccess analogue) must flip the verdict just like AdministratorAccess.
+			name:      "ALI-LEASTPRIV-001/attach-ramfullaccess-to-group",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-LEASTPRIV-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				injectCreate(plan, "alicloud_ram_group_policy_attachment.ram_full", "alicloud_ram_group_policy_attachment", "alibaba",
+					map[string]any{
+						"group_name":  "platform",
+						"policy_name": "AliyunRAMFullAccess",
+						"policy_type": "System",
+					}, map[string]any{})
+			},
+		},
 	}
 
 	// Assert every declared control has a mutator — parity with the corpus coverage

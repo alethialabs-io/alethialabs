@@ -19,6 +19,105 @@ type plannedResource struct {
 	provider     string
 	after        map[string]any
 	afterUnknown any
+	// configExprs are this resource's configuration expressions (from the plan's
+	// `configuration` section), keyed by attribute. They let a control reason
+	// honestly about a value that is computed until apply — e.g. an hcloud_server's
+	// `firewall_ids = [hcloud_firewall.this.id]` collapses to after_unknown:true in
+	// the change, but the configuration still shows the firewall REFERENCE. Nil when
+	// the plan carries no configuration (a bare change-only plan).
+	configExprs map[string]*tfjson.Expression
+	// modPrefix is the module address prefix ("" for root, "module.x." inside a
+	// module). Configuration references are module-local, so callers prefix them
+	// with this to compare against absolute plan addresses.
+	modPrefix string
+	// hasCfg records whether the plan's configuration section contained this
+	// resource at all (independent of whether it had any expressions).
+	hasCfg bool
+}
+
+// exprRefs returns the configuration references of attribute `attr` for this
+// resource, module-prefixed so they compare against absolute plan addresses.
+// Empty when the plan has no configuration or the attribute is not set from a
+// reference.
+func (r *plannedResource) exprRefs(attr string) []string {
+	if r.configExprs == nil {
+		return nil
+	}
+	e := r.configExprs[attr]
+	if e == nil || e.ExpressionData == nil {
+		return nil
+	}
+	out := make([]string, 0, len(e.References))
+	for _, ref := range e.References {
+		out = append(out, r.modPrefix+ref)
+	}
+	return out
+}
+
+// exprConstant returns the configuration constant value of attribute `attr`, and
+// whether one is present (a literal in the .tf source, e.g. firewall_ids = [123]).
+func (r *plannedResource) exprConstant(attr string) (any, bool) {
+	if r.configExprs == nil {
+		return nil, false
+	}
+	e := r.configExprs[attr]
+	if e == nil || e.ExpressionData == nil || e.ConstantValue == nil {
+		return nil, false
+	}
+	return e.ConstantValue, true
+}
+
+// hasConfig reports whether the plan carried configuration for this resource at
+// all — the difference between "attribute not configured" (config present, attr
+// absent: a real, judgeable fact) and "we cannot see the configuration" (an
+// honest not_evaluable).
+func (r *plannedResource) hasConfig() bool { return r.hasCfg }
+
+// baseAddress strips the instance key from a resource address
+// (hcloud_server.workers["w-1"] → hcloud_server.workers) so it can be matched
+// against configuration addresses, which are never instance-keyed.
+func baseAddress(addr string) string {
+	if i := strings.IndexByte(addr, '['); i > 0 {
+		return addr[:i]
+	}
+	return addr
+}
+
+// resourceConfig pairs a configuration resource's expressions with its module
+// prefix for reference resolution.
+type resourceConfig struct {
+	exprs     map[string]*tfjson.Expression
+	modPrefix string
+}
+
+// configExprIndex walks the plan's configuration and indexes each resource's
+// expressions by its module-prefixed base address. Returns nil when the plan has
+// no configuration section (callers then treat config-dependent judgments as
+// not_evaluable rather than guessing).
+func configExprIndex(plan *tfjson.Plan) map[string]resourceConfig {
+	if plan.Config == nil || plan.Config.RootModule == nil {
+		return nil
+	}
+	out := map[string]resourceConfig{}
+	var walk func(m *tfjson.ConfigModule, prefix string)
+	walk = func(m *tfjson.ConfigModule, prefix string) {
+		if m == nil {
+			return
+		}
+		for _, cr := range m.Resources {
+			if cr == nil {
+				continue
+			}
+			out[prefix+cr.Address] = resourceConfig{exprs: cr.Expressions, modPrefix: prefix}
+		}
+		for name, mc := range m.ModuleCalls {
+			if mc != nil {
+				walk(mc.Module, prefix+"module."+name+".")
+			}
+		}
+	}
+	walk(plan.Config.RootModule, "")
+	return out
 }
 
 // Evaluate runs the authored control set against a parsed OpenTofu plan and
@@ -50,6 +149,8 @@ func selectControls(providers []string, planned []plannedResource) []ControlResu
 		out := awsControls(planned)
 		out = append(out, gcpControls(planned)...)
 		out = append(out, azureControls(planned)...)
+		out = append(out, hetznerControls(planned)...)
+		out = append(out, alibabaControls(planned)...)
 		return out
 	}
 	var out []ControlResult
@@ -61,6 +162,10 @@ func selectControls(providers []string, planned []plannedResource) []ControlResu
 			out = append(out, gcpControls(planned)...)
 		case "azure":
 			out = append(out, azureControls(planned)...)
+		case "hetzner":
+			out = append(out, hetznerControls(planned)...)
+		case "alibaba":
+			out = append(out, alibabaControls(planned)...)
 		}
 	}
 	return out
@@ -79,6 +184,7 @@ func awsControls(planned []plannedResource) []ControlResult {
 // are being created/updated/replaced (skipping data sources, no-ops and pure
 // deletes, whose `after` is absent and which create no new authority).
 func gatherPlanned(plan *tfjson.Plan) []plannedResource {
+	cfg := configExprIndex(plan)
 	var out []plannedResource
 	for _, rc := range plan.ResourceChanges {
 		if rc == nil || rc.Change == nil {
@@ -94,13 +200,19 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 		if !ok {
 			continue // delete (after is null) or a non-object body
 		}
-		out = append(out, plannedResource{
+		pr := plannedResource{
 			address:      rc.Address,
 			rtype:        rc.Type,
 			provider:     rc.ProviderName,
 			after:        after,
 			afterUnknown: rc.Change.AfterUnknown,
-		})
+		}
+		if rcfg, ok := cfg[baseAddress(rc.Address)]; ok {
+			pr.configExprs = rcfg.exprs
+			pr.modPrefix = rcfg.modPrefix
+			pr.hasCfg = true
+		}
+		out = append(out, pr)
 	}
 	return out
 }
@@ -110,9 +222,10 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 // several clouds, so this is a set rather than a single best-effort guess: every
 // provider in it gets its controls run (see selectControls). Resource types with no
 // recognized prefix (utility providers like random_/tls_, or clouds without a
-// control set such as hcloud/cloudflare) contribute nothing here — the engine has no
+// control set such as cloudflare) contribute nothing here — the engine has no
 // controls to run over them, which the report states honestly rather than implying a
-// pass it never checked.
+// pass it never checked. hcloud_ IS recognized now (→ "hetzner") and alicloud_ (→
+// "alibaba"), so those plans run their control sets rather than being a vacuous pass.
 func detectProviders(planned []plannedResource) []string {
 	seen := map[string]bool{}
 	for _, r := range planned {
@@ -123,6 +236,10 @@ func detectProviders(planned []plannedResource) []string {
 			seen["gcp"] = true
 		case strings.HasPrefix(r.rtype, "azurerm_"), strings.HasPrefix(r.rtype, "azuread_"):
 			seen["azure"] = true
+		case strings.HasPrefix(r.rtype, "hcloud_"):
+			seen["hetzner"] = true
+		case strings.HasPrefix(r.rtype, "alicloud_"):
+			seen["alibaba"] = true
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -137,18 +254,24 @@ func detectProviders(planned []plannedResource) []string {
 // first underscore) that have an authored control set — a violation in one of these
 // providers is actually checked. Note "google" maps to the gcp control set and both
 // "azurerm"/"azuread" map to the azure set; the token is the raw terraform prefix.
+// "hcloud" is controlled by the Hetzner POSTURE set (firewall/network) — Hetzner is
+// token-auth with no keyless/OIDC surface, so those controls are network-shaped, not
+// authority-shaped, but the plan is genuinely inspected rather than vacuously passed.
 var controlledProviderTokens = map[string]bool{
-	"aws": true, "google": true, "azurerm": true, "azuread": true,
+	"aws": true, "google": true, "azurerm": true, "azuread": true, "hcloud": true,
+	"alicloud": true,
 }
 
 // supportedNoControlProviderTokens are provider prefixes the engine recognizes as a
-// LEGITIMATE vacuous pass: providers for which there is no keyless / OIDC-sub /
-// least-privilege control surface to assert, so a plan built only from them is
-// honestly a pass. Two groups:
+// LEGITIMATE vacuous pass: providers for which there is no control surface to assert,
+// so a plan built only from them is honestly a pass. Two groups:
 //
-//   - Clouds without a control set BY DESIGN. Hetzner (hcloud) is token-auth — the
-//     token is the ceiling, there is no OIDC/federation to bind, so the keyless
-//     controls do not apply (see the Hetzner posture). Cloudflare likewise.
+//   - Clouds without a control set BY DESIGN. Cloudflare is token-auth with no
+//     keyless/OIDC surface AND (unlike Hetzner) no server/firewall posture the gate
+//     yet inspects, so it stays here. NB Hetzner (hcloud) is NO LONGER here: it now
+//     has an authored POSTURE control set (see hetznerControls / controls_hetzner.go)
+//     — token-auth is still the ceiling, but its firewall/network config is a real,
+//     inspectable attack surface, so it moved into controlledProviderTokens.
 //   - CLUSTER-LAYER providers that create NO cloud-authority surface — the K8s
 //     bootstrap + in-cluster resources that co-occur in every real cluster plan
 //     (talos_, imager_, minio_, helm_, kubernetes_, kubectl_). None of them create a
@@ -159,17 +282,18 @@ var controlledProviderTokens = map[string]bool{
 //   - Utility providers that create no cloud authority at all: random_, tls_, null_,
 //     local_, time_, external_.
 //
-// NB this is a CLOUD-AUTHORITY allowlist, not a managed-cloud allowlist: `alicloud` is a
-// managed cloud but has NO authored control set yet, so it is deliberately LEFT OFF —
-// an Alibaba plan is honestly not_evaluable until alicloud controls exist (it has RAM/OIDC
-// authority, so it must eventually get real controls, not this allowlist).
+// NB this is a CLOUD-AUTHORITY allowlist, not a managed-cloud allowlist. `alicloud` is
+// NOT here: Alibaba has real RAM/OIDC authority and now has an authored control set
+// (see alibabaControls / controls_alibaba.go), so it lives in controlledProviderTokens
+// — its plans are genuinely inspected (keyless / RRSA-sub / least-priv), never a
+// no-controls pass.
 //
 // This allowlist is what makes the fail-closed backstop (controlEvaluableScope) safe:
 // it must NOT flip these legitimate plans to not_evaluable, only genuinely
 // unrecognized providers. When in doubt a provider is left OFF this list (the
 // fail-closed default) so an unknown cloud is surfaced rather than silently passed.
 var supportedNoControlProviderTokens = map[string]bool{
-	"hcloud": true, "cloudflare": true,
+	"cloudflare": true,
 	// cluster-layer, no cloud-authority surface (co-occur in every real cluster plan):
 	"talos": true, "imager": true, "minio": true,
 	"helm": true, "kubernetes": true, "kubectl": true,

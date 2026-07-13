@@ -11,10 +11,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	bearerMatches,
 	isInternalAuthorized,
+	isPlatformProvisionAuthorized,
 	timingSafeStrEqual,
 } from "@/lib/auth/internal-auth";
 
 const saved = process.env.ALETHIA_CRON_SECRET;
+const savedProvision = process.env.PLATFORM_PROVISION_SECRET;
 const SECRET = "s3cr3t-token-value";
 
 function reqWith(auth?: string): Request {
@@ -71,6 +73,27 @@ describe("isInternalAuthorized", () => {
 		expect(bearerMatches(reqWith("Bearer undefined"), undefined)).toBe(false);
 		expect(bearerMatches(reqWith("Bearer null"), null)).toBe(false);
 		expect(bearerMatches(reqWith("Bearer "), "")).toBe(false);
+	});
+});
+
+describe("isPlatformProvisionAuthorized", () => {
+	afterEach(() => {
+		if (savedProvision === undefined) delete process.env.PLATFORM_PROVISION_SECRET;
+		else process.env.PLATFORM_PROVISION_SECRET = savedProvision;
+	});
+
+	it("binds to its OWN secret, independent of the cron secret", () => {
+		process.env.PLATFORM_PROVISION_SECRET = "provision-only";
+		process.env.ALETHIA_CRON_SECRET = SECRET;
+		expect(isPlatformProvisionAuthorized(reqWith("Bearer provision-only"))).toBe(true);
+		// The broadly-shared cron secret must NOT authorize the provisioning routes.
+		expect(isPlatformProvisionAuthorized(reqWith(`Bearer ${SECRET}`))).toBe(false);
+	});
+
+	it("fail-closed when its secret is unset (operator plane inert)", () => {
+		delete process.env.PLATFORM_PROVISION_SECRET;
+		expect(isPlatformProvisionAuthorized(reqWith("Bearer anything"))).toBe(false);
+		expect(isPlatformProvisionAuthorized(reqWith("Bearer undefined"))).toBe(false);
 	});
 });
 
