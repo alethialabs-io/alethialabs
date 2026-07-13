@@ -56,8 +56,8 @@ docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -
 | `app` | Console (Next.js control plane) + the marketing site |
 | `docs` | This documentation, served at `/docs` |
 | `postgres` | Application database (Drizzle) |
-| `seaweedfs` | S3-compatible object storage (Terraform state + plan artifacts) |
-| `runner` | Executes provisioning jobs (Terraform) — runs as a self-operated runner |
+| `seaweedfs` | S3-compatible object storage (OpenTofu state + plan artifacts) |
+| `runner` | Executes provisioning jobs (OpenTofu) — runs as a self-operated runner |
 | `caddy` | Single ingress, automatic TLS |
 | `pgweb` | Optional DB browser (`--profile tools` → `:8081`) |
 

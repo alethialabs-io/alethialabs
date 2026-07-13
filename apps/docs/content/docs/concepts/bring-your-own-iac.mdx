@@ -135,7 +135,7 @@ proxy**. So:
 - State lives behind Alethia's **per-job state proxy**, keyed per environment. The runner holds no
   authoritative state and no object-storage credential — one job's token can only touch its own state.
 
-See [Terraform State Management](/concepts/terraform-state) for the state model, and
+See [OpenTofu State Management](/concepts/terraform-state) for the state model, and
 [Isolated Execution](/isolated-execution) for how the state-proxy source-drop is part of the sandbox.
 
 ## Cluster wiring is opportunistic
@@ -280,7 +280,7 @@ auto-queues the `IAC_SCAN`; once it lands `done`, the commit is pinned and Plan/
   <Card title="Elench (verification)" href="/elench">
     The fail-closed verify gate and signed evidence receipt every plan/apply flows through.
   </Card>
-  <Card title="Terraform State" href="/concepts/terraform-state">
+  <Card title="OpenTofu State" href="/concepts/terraform-state">
     How state is stored — and why Alethia overrides your backend with its per-job state proxy.
   </Card>
   <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">

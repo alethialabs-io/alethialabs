@@ -5,7 +5,7 @@ description: Workload Identity Federation setup with OIDC token exchange.
 
 # GCP Connector
 
-GCP integration uses **Workload Identity Federation (WIF)** with **direct OIDC** — your project's WIF pool
+Connecting GCP registers a **cloud identity** (`cloud_identities`) that uses **Workload Identity Federation (WIF)** with **direct OIDC** — your project's WIF pool
 trusts Alethia's issuer directly (no AWS hop), and Alethia federates in with a short-lived minted JWT. No
 service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
 
@@ -22,7 +22,7 @@ configuration for you (there is no JSON to copy). Both paths pin the same values
 `https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `alethia-connector`, and the fixed
 pool `alethia-pool` / provider `alethia-oidc-provider` / service account `alethia-provisioner`.
 
-<Tabs items={["Setup script (Cloud Shell)", "Terraform"]}>
+<Tabs items={["Setup script (Cloud Shell)", "OpenTofu"]}>
   <Tab value="Setup script (Cloud Shell)">
     <Steps>
 
@@ -41,17 +41,17 @@ pool `alethia-pool` / provider `alethia-oidc-provider` / service account `alethi
 
     </Steps>
   </Tab>
-  <Tab value="Terraform">
+  <Tab value="OpenTofu">
     <Steps>
 
     ### Apply the module
-    Download the module ("Download module" in the connect sheet) and run `terraform apply` (auth via your
+    Download the module ("Download module" in the connect sheet) and run `tofu apply` (auth via your
     `gcloud` login). It creates the same pool + OIDC provider + service account + binding.
 
     ### Enter the outputs
     Enter the `project_id` and `project_number` outputs in the connect sheet. For custom setups, the sheet's
     advanced **"Paste raw config JSON instead"** toggle accepts a full `external_account` config — e.g.
-    `terraform output credential_config` — instead of the two IDs.
+    `tofu output credential_config` — instead of the two IDs.
 
     ### Connect
     Click **Connect**.
@@ -70,7 +70,7 @@ the setup script, so it's a two-value copy.
 
 ## Verification
 
-Alethia verifies the connection **instantly, server-side** (no runner):
+Alethia verifies the cloud identity **instantly, server-side** (no runner):
 
 1. The console presents an OIDC token to GCP's Security Token Service (Workload Identity Federation)
 2. GCP validates the token against the registered issuer/subject and returns a short-lived access token

@@ -10,6 +10,14 @@ provision infrastructure into them. It drives the **same connection flow as the 
 [Connectors](/console/connectors) page**, but end-to-end from the CLI — there is no need to
 open a browser for the default flows.
 
+<Callout type="info">
+Each connection is a **[cloud identity](/concepts/glossary)** — the credential anchor a
+[project](/concepts/glossary) links to (`cloud_identity_id`). "Connector" is the catalog of provider
+*types*; the record `alethia connector` creates for your account is a cloud identity. A project
+points at exactly one. Every cloud-identity query is filtered by provider, so accounts never leak
+across providers.
+</Callout>
+
 Every connection uses **short-lived, keyless credentials** — AWS cross-account roles, GCP
 Workload Identity Federation, and Azure federated identity. No access keys or client secrets are
 ever created or stored. For the security model and how the [Runner](/runner) consumes these
@@ -27,7 +35,19 @@ versa.
 
 ## How It Works
 
-Each `connector` subcommand runs the same pipeline:
+Each `connector` subcommand runs the same three-stage pipeline, verified server-side:
+
+<Mermaid chart={`
+flowchart LR
+  A[alethia connector<br/>aws · gcp · azure · alibaba] --> B[Init pending<br/>cloud identity]
+  B --> C[Run provider setup<br/>IAM OIDC role · WIF pool · federated cred · RAM OIDC]
+  C --> D[Submit captured<br/>credentials]
+  D --> E[Server-side verify<br/>auth + permission probe]
+  E --> F{Verdict}
+  F --> G[Connected]
+  F --> H[Degraded]
+  F --> I[Disconnected]
+`} />
 
 <Steps>
 
@@ -65,10 +85,11 @@ server-side [asset inventory](/console/connectors/health-and-inventory).
 | GCP | Runs the installer inside your **Google Cloud Shell** (via local `gcloud`) | Cloud Shell is already authenticated to your GCP org and has every tool preinstalled |
 | AWS | Deploys CloudFormation with the **local `aws` CLI** | AWS CloudShell is browser-only — there is no remote-exec CLI |
 | Azure | Runs the setup script with the **local `az` CLI** | Azure Cloud Shell is browser-only — there is no remote-exec CLI |
+| Alibaba | Writes an IaC module you **apply yourself**, then paste the RAM role ARN | Alibaba has no browser one-liner installer — the flow is apply-then-paste (no `--manual` variant) |
 
-Every provider also supports `--manual`, which prints a link + command to run in the browser shell
-and prompts you to paste the result. Use it when you cannot or prefer not to install the local
-CLI.
+AWS, GCP, and Azure also support `--manual`, which prints a link + command to run in the browser
+shell and prompts you to paste the result. Use it when you cannot or prefer not to install the local
+CLI. Alibaba is always apply-then-paste (see [`alethia connector alibaba`](#alethia-connector-alibaba)).
 
 ## `alethia connector gcp`
 
@@ -263,6 +284,49 @@ alethia connector azure --subscription <subscription-id> --manual
 
   </Tab>
 </Tabs>
+
+## `alethia connector alibaba`
+
+Connect an Alibaba Cloud account using keyless `AssumeRoleWithOIDC`. Alibaba has no browser
+one-liner installer, so the flow is **apply-then-paste**: the CLI writes a small IaC module locally,
+you apply it in your Alibaba account, then paste back the resulting RAM role ARN.
+
+```bash
+alethia connector alibaba
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--region` | No | Alibaba region for the RAM provider. Defaults to `cn-hangzhou`. |
+| `--dir` | No | Directory to write the connector module into. Defaults to `./alethia-alibaba-connector`. |
+
+<Steps>
+
+### Initialize
+Alethia creates a pending [cloud identity](/concepts/glossary) for the connection.
+
+### Apply the connector module
+The CLI writes `main.tf` into the target directory. It creates a RAM OIDC provider trusting the
+Alethia issuer (`<control-plane>/api/oidc`) plus a RAM role. Authenticate to Alibaba (the `aliyun`
+CLI, or `ALICLOUD_ACCESS_KEY` / `ALICLOUD_SECRET_KEY`) and apply it:
+
+```bash
+cd alethia-alibaba-connector
+tofu init
+tofu apply -var "region=cn-hangzhou" -var "alethia_issuer_url=https://alethialabs.io/api/oidc"
+```
+
+<Callout type="info">
+The module is plain HCL — the CLI's printed hint says `terraform init` / `terraform apply`, but
+`tofu` runs it identically. Copy the `role_arn` output when the apply finishes.
+</Callout>
+
+### Connection test
+Paste the RAM role ARN (`acs:ram::…:role/…`) at the prompt. It is submitted, verified instantly
+server-side, and the identity is marked Connected (or Degraded/Disconnected). Alethia stores nothing
+but the role ARN — no AccessKey.
+
+</Steps>
 
 ## `alethia connector list`
 

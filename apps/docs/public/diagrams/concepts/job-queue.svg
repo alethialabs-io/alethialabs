@@ -1,92 +1,76 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 360" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Job queue: work is queued in Postgres and claimed atomically with FOR UPDATE SKIP LOCKED so exactly one runner executes each job">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
-    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/></marker>
-    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#22C55E"/></marker>
-    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#EF4444"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="820" height="360" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="359" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Job Queue — Lifecycle &amp; Atomic Claiming</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="420" rx="12"/>
+  <rect x="0" y="0" width="840" height="420" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="419" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · JOB QUEUE</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">Atomic claim — exactly one runner per job</text>
 
-  <!-- QUEUED -->
-  <rect x="30" y="80" width="110" height="60" rx="8" fill="#27272A" stroke="#F59E0B"/>
-  <text x="85" y="106" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#F59E0B">QUEUED</text>
-  <text x="85" y="124" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">User/CLI creates job</text>
+  <!-- producers -->
+  <rect class="d-surface" x="28" y="112" width="140" height="52" rx="8"/>
+  <text class="d-label" x="98" y="138" text-anchor="middle" font-size="13" font-weight="600">Console</text>
+  <text class="d-sub mono" x="98" y="154" text-anchor="middle" font-size="9">Plan / Apply / Destroy</text>
+  <rect class="d-surface" x="28" y="176" width="140" height="52" rx="8"/>
+  <text class="d-label" x="98" y="202" text-anchor="middle" font-size="13" font-weight="600">alethia CLI</text>
+  <text class="d-sub mono" x="98" y="218" text-anchor="middle" font-size="9">project plan/apply</text>
 
-  <line x1="140" y1="110" x2="172" y2="110" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- queue -->
+  <rect class="d-emph" x="212" y="120" width="196" height="100" rx="8"/>
+  <text class="d-emph-text" x="310" y="148" text-anchor="middle" font-size="13" font-weight="600">jobs (Postgres)</text>
+  <text class="d-emph-text mono" x="310" y="168" text-anchor="middle" font-size="9" opacity="0.82">claim_next_job()</text>
+  <text class="d-emph-text mono" x="310" y="184" text-anchor="middle" font-size="9" opacity="0.82">FOR UPDATE</text>
+  <text class="d-emph-text mono" x="310" y="198" text-anchor="middle" font-size="9" opacity="0.82">SKIP LOCKED</text>
+  <text class="d-emph-text mono" x="310" y="212" text-anchor="middle" font-size="9" opacity="0.7">config_snapshot frozen</text>
 
-  <!-- CLAIMED -->
-  <rect x="180" y="80" width="130" height="60" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
-  <text x="245" y="106" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">CLAIMED</text>
-  <text x="245" y="124" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Runner locks job</text>
+  <!-- runners racing -->
+  <rect class="d-surface" x="452" y="112" width="160" height="52" rx="8"/>
+  <text class="d-label" x="532" y="138" text-anchor="middle" font-size="13" font-weight="600">Runner A</text>
+  <text class="d-sub mono" x="532" y="154" text-anchor="middle" font-size="9">locks the row → claims</text>
+  <rect class="d-surface2" x="452" y="176" width="160" height="52" rx="8"/>
+  <text class="d-label" x="532" y="202" text-anchor="middle" font-size="13" font-weight="600">Runner B</text>
+  <text class="d-sub mono" x="532" y="218" text-anchor="middle" font-size="9">skips it → next or none</text>
 
-  <!-- FOR UPDATE SKIP LOCKED annotation -->
-  <rect x="165" y="155" width="160" height="40" rx="6" fill="#8B5CF610" stroke="#8B5CF640" stroke-dasharray="3 3"/>
-  <text x="245" y="172" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#8B5CF6">FOR UPDATE SKIP LOCKED</text>
-  <text x="245" y="186" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">exactly-once guarantee</text>
-  <line x1="245" y1="155" x2="245" y2="144" stroke="#8B5CF640" stroke-width="1" stroke-dasharray="3 3"/>
+  <line class="d-edge" x1="168" y1="138" x2="212" y2="150" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="168" y1="202" x2="212" y2="190" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="408" y1="150" x2="452" y2="138" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="408" y1="190" x2="452" y2="202" marker-end="url(#ar)"/>
 
-  <line x1="310" y1="110" x2="342" y2="110" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+  <!-- execution -->
+  <rect class="d-surface" x="656" y="120" width="156" height="100" rx="8"/>
+  <text class="d-label" x="734" y="146" text-anchor="middle" font-size="13" font-weight="600">Execute</text>
+  <text class="d-sub mono" x="734" y="166" text-anchor="middle" font-size="9">mint cloud creds</text>
+  <text class="d-sub mono" x="734" y="182" text-anchor="middle" font-size="9">run tofu · stream logs</text>
+  <text class="d-sub mono" x="734" y="198" text-anchor="middle" font-size="9">PUT /status</text>
+  <line class="d-edge" x1="612" y1="138" x2="656" y2="150" marker-end="url(#ar)"/>
 
-  <!-- PROCESSING -->
-  <rect x="350" y="80" width="150" height="60" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="425" y="106" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">PROCESSING</text>
-  <text x="425" y="124" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Terraform executing</text>
+  <!-- lifecycle -->
+  <rect class="d-surface" x="28" y="288" width="784" height="90" rx="8"/>
+  <text class="d-sub mono" x="44" y="312" font-size="9">JOB LIFECYCLE</text>
+  <rect class="d-surface2" x="44" y="324" width="120" height="38" rx="6"/><text class="d-label" x="104" y="348" text-anchor="middle" font-size="12">QUEUED</text>
+  <rect class="d-surface2" x="196" y="324" width="120" height="38" rx="6"/><text class="d-label" x="256" y="348" text-anchor="middle" font-size="12">CLAIMED</text>
+  <rect class="d-surface2" x="348" y="324" width="130" height="38" rx="6"/><text class="d-label" x="413" y="348" text-anchor="middle" font-size="12">PROCESSING</text>
+  <rect class="d-emph" x="510" y="324" width="120" height="38" rx="6"/><text class="d-emph-text" x="570" y="348" text-anchor="middle" font-size="12">SUCCESS</text>
+  <rect class="d-surface2" x="662" y="324" width="130" height="38" rx="6"/><text class="d-label" x="727" y="348" text-anchor="middle" font-size="11">FAILED · CANCELLED</text>
+  <line class="d-edge" x1="164" y1="343" x2="196" y2="343" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="316" y1="343" x2="348" y2="343" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="478" y1="343" x2="510" y2="343" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="630" y1="343" x2="662" y2="343" marker-end="url(#ar)"/>
 
-  <!-- Log streaming annotation -->
-  <rect x="360" y="155" width="130" height="32" rx="6" fill="#27272A" stroke="#3F3F46" stroke-dasharray="3 3"/>
-  <text x="425" y="175" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#8B5CF6">↑ Log streaming (2s)</text>
-  <line x1="425" y1="155" x2="425" y2="144" stroke="#3F3F4680" stroke-width="1" stroke-dasharray="3 3"/>
-
-  <!-- SUCCESS -->
-  <line x1="500" y1="98" x2="560" y2="80" stroke="#22C55E" stroke-width="1.5" marker-end="url(#arrow-green)"/>
-  <rect x="565" y="58" width="110" height="44" rx="8" fill="#27272A" stroke="#22C55E"/>
-  <text x="620" y="85" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#22C55E">SUCCESS</text>
-
-  <!-- FAILED -->
-  <line x1="500" y1="118" x2="560" y2="136" stroke="#EF4444" stroke-width="1.5" marker-end="url(#arrow-red)"/>
-  <rect x="565" y="114" width="110" height="44" rx="8" fill="#27272A" stroke="#EF4444"/>
-  <text x="620" y="141" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#EF4444">FAILED</text>
-
-  <!-- CANCELLED -->
-  <line x1="480" y1="140" x2="520" y2="180" stroke="#71717A" stroke-width="1" marker-end="url(#arrow)"/>
-  <rect x="525" y="170" width="110" height="36" rx="8" fill="#27272A" stroke="#71717A"/>
-  <text x="580" y="193" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#71717A">CANCELLED</text>
-
-  <!-- Sequence detail below -->
-  <line x1="30" y1="230" x2="790" y2="230" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="410" y="256" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#A1A1AA">Execution Flow</text>
-
-  <!-- Flow boxes -->
-  <rect x="30" y="274" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="90" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Create Job</text>
-  <line x1="150" y1="292" x2="168" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="176" y="274" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="236" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Runner Claims</text>
-  <line x1="296" y1="292" x2="314" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="322" y="274" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="382" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Assume Credentials</text>
-  <line x1="442" y1="292" x2="460" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="468" y="274" width="100" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="518" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Execute</text>
-  <line x1="568" y1="292" x2="586" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="594" y="274" width="100" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="644" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Report Result</text>
-  <line x1="694" y1="292" x2="712" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
-
-  <rect x="720" y="274" width="70" height="36" rx="6" fill="#27272A" stroke="#22C55E50"/>
-  <text x="755" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#22C55E">Finalize</text>
-
-  <!-- Step numbers -->
-  <text x="90" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">1</text>
-  <text x="236" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">2</text>
-  <text x="382" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">3</text>
-  <text x="518" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">4</text>
-  <text x="644" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">5</text>
-  <text x="755" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">6</text>
+  <text class="d-sub mono" x="812" y="404" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

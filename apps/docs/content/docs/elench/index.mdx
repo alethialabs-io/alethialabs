@@ -32,34 +32,19 @@ never the gate and has no write path.
 
 ## Layered architecture
 
-```
-        ┌────────────────────────── consumers ──────────────────────────┐
-        │  in-app agent UI    Claude Code   ChatGPT   Codex   Gemini/Zed │
-        └──────┬──────────────────┴───────────┴────────┴────────┬───────┘
-               │ native (AI SDK)         all via remote MCP      │ via MCP
-        ┌──────▼──────────────────────────────────────────────────▼──────┐
-        │  EXPOSURE — one adapter: remote MCP server (READ-ONLY at launch) │
-        └───────────────────────────────┬─────────────────────────────────┘
-                                         │
-        ┌────────────────────────────────▼────────────────────────────────┐
-        │  ELENCH CORE                                                     │
-        │   • Tool Registry (SSOT): audience-scoped, PDP-gated             │
-        │   • Agent runtime: agent = DATA (persona·mission·scope·memory)   │
-        │   • Supervisor: ledger orchestrator; sub-agents-as-tools          │
-        └──────┬───────────────────────────────────────┬──────────────────┘
-               │ calls                                  │ calls
-        ┌──────▼─────────────┐              ┌───────────▼────────────────────┐
-        │ Platform actions   │              │ VERIFICATION ENGINE             │
-        │ (PDP-gated)        │              │  • deterministic plan-JSON gate │
-        └────────────────────┘              │  • override / exception         │
-                                            │  • signed evidence receipt      │
-                                            │  • continuous drift re-check    │
-                                            └───────────┬─────────────────────┘
-                                                        │ new `verify` stage
-                                            ┌───────────▼──────────┐
-                                            │ Go runner (OpenTofu)  │
-                                            └──────────────────────┘
-```
+<Mermaid chart={`
+flowchart TD
+  UI[in-app agent UI]
+  EXT[Claude Code · ChatGPT · Codex · Gemini/Zed]
+  UI -->|native AI SDK| MCP
+  EXT -->|remote MCP| MCP
+  MCP[Exposure — one adapter: remote MCP server<br/>read-only at launch]
+  MCP --> CORE
+  CORE[Elench core<br/>Tool Registry SSOT · agent-as-data runtime · supervisor]
+  CORE -->|calls| ACT[Platform actions<br/>PDP-gated]
+  CORE -->|calls| VER[Verification engine<br/>plan-JSON gate · override · signed receipt · drift]
+  VER -->|new verify stage| RUN[Go runner · OpenTofu]
+`} />
 
 Two halves, joined at the runner:
 

@@ -1,105 +1,77 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 520" width="100%" fill="none" font-family="'Geist', 'Inter', system-ui, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Security: the Alethia OIDC issuer mints short-lived assertions that all four managed clouds federate against; no static keys are stored">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="a" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7" fill="#71717A"/></marker>
-    <marker id="a-mint" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7" fill="#D4D4D8"/></marker>
-    <pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse"><path d="M26 0 L0 0 0 26" fill="none" stroke="#FFFFFF" stroke-opacity="0.025" stroke-width="1"/></pattern>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
+  <rect class="d-bg" x="0" y="0" width="840" height="420" rx="12"/>
+  <rect x="0" y="0" width="840" height="420" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="419" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · SECURITY</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">Zero stored credentials — one OIDC issuer, four clouds</text>
 
-  <!-- canvas (dark signature theme) -->
-  <rect width="860" height="520" rx="14" fill="#0C0C0D"/>
-  <rect width="860" height="520" fill="url(#grid)"/>
-  <rect x="0.5" y="0.5" width="859" height="519" rx="14" fill="none" stroke="#FFFFFF" stroke-opacity="0.10"/>
+  <!-- Issuer -->
+  <rect class="d-emph" x="28" y="128" width="216" height="150" rx="8"/>
+  <text class="d-emph-text" x="136" y="158" text-anchor="middle" font-size="13" font-weight="600">Alethia OIDC issuer</text>
+  <text class="d-emph-text mono" x="136" y="180" text-anchor="middle" font-size="9" opacity="0.82">${APP_URL}/api/oidc</text>
+  <text class="d-emph-text mono" x="136" y="200" text-anchor="middle" font-size="9" opacity="0.82">mint ≤10min RS256</text>
+  <text class="d-emph-text mono" x="136" y="216" text-anchor="middle" font-size="9" opacity="0.82">sub=alethia-connector</text>
+  <text class="d-emph-text mono" x="136" y="232" text-anchor="middle" font-size="9" opacity="0.82">audience-scoped</text>
+  <text class="d-emph-text mono" x="136" y="256" text-anchor="middle" font-size="9" opacity="0.7">JWKS published · key rotates</text>
+  <text class="d-emph-text mono" x="136" y="270" text-anchor="middle" font-size="9" opacity="0.7">zero-downtime</text>
 
-  <!-- title -->
-  <text x="40" y="46" font-family="'Space Grotesk','Geist',system-ui,sans-serif" font-size="18" font-weight="600" fill="#FAFAFA">Zero-credential federation</text>
-  <text x="40" y="68" font-size="12.5" fill="#A1A1AA">One OIDC issuer mints a short-lived assertion. Each cloud federates it for a ~1&#8202;hour credential. Nothing static is stored.</text>
-  <text x="820" y="46" text-anchor="end" font-family="'Geist Mono',monospace" font-size="12" letter-spacing="1.5" fill="#71717A">[&#183;] SECURITY</text>
+  <!-- Clouds -->
+  <rect class="d-surface" x="312" y="112" width="220" height="46" rx="8"/>
+  <text class="d-label" x="332" y="140" font-size="12" font-weight="600">AWS</text>
+  <text class="d-sub mono" x="516" y="140" text-anchor="end" font-size="9">AssumeRoleWithWebIdentity</text>
 
-  <!-- ISSUER (trust root) -->
-  <rect x="300" y="96" width="260" height="86" rx="10" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.17"/>
-  <text x="430" y="124" text-anchor="middle" font-family="'Space Grotesk','Geist',system-ui,sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">
-    <tspan font-family="'Geist Mono',monospace" fill="#D4D4D8">[&#183;]</tspan><tspan dx="8">Alethia OIDC issuer</tspan>
-  </text>
-  <text x="430" y="145" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="10.5" fill="#A1A1AA">${APP_URL}/api/oidc</text>
-  <text x="430" y="166" text-anchor="middle" font-size="11" fill="#A1A1AA">Signs a &#8804;10&#8202;min assertion &#183; sub=alethia-connector &#183; per-cloud aud</text>
+  <rect class="d-surface" x="312" y="168" width="220" height="46" rx="8"/>
+  <text class="d-label" x="332" y="196" font-size="12" font-weight="600">GCP</text>
+  <text class="d-sub mono" x="516" y="196" text-anchor="end" font-size="9">Workload Identity Federation</text>
 
-  <!-- mint fan-out line -->
-  <line x1="430" y1="182" x2="430" y2="212" stroke="#D4D4D8" stroke-width="1.5" marker-end="url(#a-mint)"/>
-  <text x="446" y="201" font-family="'Geist Mono',monospace" font-size="10" fill="#D4D4D8">mint assertion (RS256, JWKS-verifiable)</text>
-  <line x1="110" y1="214" x2="750" y2="214" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="1"/>
+  <rect class="d-surface" x="312" y="224" width="220" height="46" rx="8"/>
+  <text class="d-label" x="332" y="252" font-size="12" font-weight="600">Azure</text>
+  <text class="d-sub mono" x="516" y="252" text-anchor="end" font-size="9">Federated identity (Entra)</text>
 
-  <!-- AWS -->
-  <g>
-    <line x1="110" y1="214" x2="110" y2="238" stroke="#52525B" stroke-width="1.5"/>
-    <rect x="30" y="238" width="160" height="234" rx="9" fill="none" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <rect x="30" y="238" width="160" height="30" rx="9" fill="#FFFFFF" fill-opacity="0.03"/>
-    <text x="110" y="258" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="11.5" letter-spacing="1" fill="#FAFAFA">AWS</text>
-    <rect x="46" y="284" width="128" height="52" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.12"/>
-    <text x="110" y="305" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">AssumeRoleWith</text>
-    <text x="110" y="320" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">WebIdentity</text>
-    <text x="110" y="352" text-anchor="middle" font-size="10" fill="#A1A1AA">IAM OIDC provider</text>
-    <text x="110" y="366" text-anchor="middle" font-size="10" fill="#71717A">no ExternalId</text>
-    <line x1="110" y1="378" x2="110" y2="400" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <rect x="46" y="404" width="128" height="30" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <text x="110" y="423" text-anchor="middle" font-size="10.5" fill="#D4D4D8">Temp creds &#183; ~1h</text>
-    <line x1="110" y1="434" x2="110" y2="450" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <text x="110" y="464" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="10" fill="#A1A1AA">tofu apply</text>
-  </g>
+  <rect class="d-surface" x="312" y="280" width="220" height="46" rx="8"/>
+  <text class="d-label" x="332" y="308" font-size="12" font-weight="600">Alibaba</text>
+  <text class="d-sub mono" x="516" y="308" text-anchor="end" font-size="9">AssumeRoleWithOIDC</text>
 
-  <!-- GCP -->
-  <g>
-    <line x1="303" y1="214" x2="303" y2="238" stroke="#52525B" stroke-width="1.5"/>
-    <rect x="223" y="238" width="160" height="234" rx="9" fill="none" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <rect x="223" y="238" width="160" height="30" rx="9" fill="#FFFFFF" fill-opacity="0.03"/>
-    <text x="303" y="258" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="11.5" letter-spacing="1" fill="#FAFAFA">GCP</text>
-    <rect x="239" y="284" width="128" height="52" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.12"/>
-    <text x="303" y="305" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">Workload Identity</text>
-    <text x="303" y="320" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">Federation</text>
-    <text x="303" y="352" text-anchor="middle" font-size="10" fill="#A1A1AA">STS token exchange</text>
-    <text x="303" y="366" text-anchor="middle" font-size="10" fill="#71717A">no SA key</text>
-    <line x1="303" y1="378" x2="303" y2="400" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <rect x="239" y="404" width="128" height="30" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <text x="303" y="423" text-anchor="middle" font-size="10.5" fill="#D4D4D8">Access token &#183; ~1h</text>
-    <line x1="303" y1="434" x2="303" y2="450" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <text x="303" y="464" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="10" fill="#A1A1AA">tofu apply</text>
-  </g>
+  <line class="d-edge" x1="244" y1="180" x2="312" y2="135" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="244" y1="195" x2="312" y2="191" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="244" y1="210" x2="312" y2="247" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="244" y1="225" x2="312" y2="303" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="252" y="120" font-size="9">assertion</text>
 
-  <!-- Azure -->
-  <g>
-    <line x1="557" y1="214" x2="557" y2="238" stroke="#52525B" stroke-width="1.5"/>
-    <rect x="477" y="238" width="160" height="234" rx="9" fill="none" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <rect x="477" y="238" width="160" height="30" rx="9" fill="#FFFFFF" fill-opacity="0.03"/>
-    <text x="557" y="258" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="11.5" letter-spacing="1" fill="#FAFAFA">AZURE</text>
-    <rect x="493" y="284" width="128" height="52" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.12"/>
-    <text x="557" y="305" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">Federated Identity</text>
-    <text x="557" y="320" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">(Entra ID)</text>
-    <text x="557" y="352" text-anchor="middle" font-size="10" fill="#A1A1AA">client assertion</text>
-    <text x="557" y="366" text-anchor="middle" font-size="10" fill="#71717A">no client secret</text>
-    <line x1="557" y1="378" x2="557" y2="400" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <rect x="493" y="404" width="128" height="30" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <text x="557" y="423" text-anchor="middle" font-size="10.5" fill="#D4D4D8">ARM token &#183; ~1h</text>
-    <line x1="557" y1="434" x2="557" y2="450" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <text x="557" y="464" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="10" fill="#A1A1AA">tofu apply</text>
-  </g>
+  <!-- Short-lived creds -->
+  <rect class="d-surface2" x="600" y="128" width="212" height="82" rx="8"/>
+  <text class="d-label" x="616" y="152" font-size="12" font-weight="600">Short-lived creds</text>
+  <text class="d-sub mono" x="616" y="172" font-size="9">~1h · auto-refresh via token file</text>
+  <text class="d-sub mono" x="616" y="188" font-size="9">no access key · no SA JSON</text>
+  <text class="d-sub mono" x="616" y="202" font-size="9">revoke = delete the role/SP</text>
+  <line class="d-edge" x1="532" y1="191" x2="600" y2="175" marker-end="url(#ar)"/>
 
-  <!-- Alibaba -->
-  <g>
-    <line x1="750" y1="214" x2="750" y2="238" stroke="#52525B" stroke-width="1.5"/>
-    <rect x="670" y="238" width="160" height="234" rx="9" fill="none" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <rect x="670" y="238" width="160" height="30" rx="9" fill="#FFFFFF" fill-opacity="0.03"/>
-    <text x="750" y="258" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="11.5" letter-spacing="1" fill="#FAFAFA">ALIBABA</text>
-    <rect x="686" y="284" width="128" height="52" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.12"/>
-    <text x="750" y="305" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">AssumeRoleWith</text>
-    <text x="750" y="320" text-anchor="middle" font-size="11" font-weight="500" fill="#E4E4E7">OIDC</text>
-    <text x="750" y="352" text-anchor="middle" font-size="10" fill="#A1A1AA">RAM OIDC provider</text>
-    <text x="750" y="366" text-anchor="middle" font-size="10" fill="#71717A">no AccessKey, no account</text>
-    <line x1="750" y1="378" x2="750" y2="400" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <rect x="686" y="404" width="128" height="30" rx="6" fill="#161618" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <text x="750" y="423" text-anchor="middle" font-size="10.5" fill="#D4D4D8">STS creds &#183; ~1h</text>
-    <line x1="750" y1="434" x2="750" y2="450" stroke="#52525B" stroke-width="1.5" marker-end="url(#a)"/>
-    <text x="750" y="464" text-anchor="middle" font-family="'Geist Mono',monospace" font-size="10" fill="#A1A1AA">tofu apply</text>
-  </g>
+  <!-- Backstops -->
+  <rect class="d-surface" x="600" y="228" width="212" height="98" rx="8"/>
+  <text class="d-label" x="616" y="252" font-size="12" font-weight="600">Runtime backstops</text>
+  <text class="d-sub mono" x="616" y="272" font-size="9">RLS on org_id (unbypassable)</text>
+  <text class="d-sub mono" x="616" y="288" font-size="9">state proxy · per-job token</text>
+  <text class="d-sub mono" x="616" y="304" font-size="9">untrusted BYO → container sandbox</text>
+  <text class="d-sub mono" x="616" y="320" font-size="9">domain-allowlist egress</text>
 
-  <!-- footer note -->
-  <text x="40" y="500" font-size="11" fill="#71717A">Only long-lived secret: the issuer signing key (control plane, never shared). Revoke by deleting the role / WIF config / service principal in your cloud.</text>
+  <text class="d-sub mono" x="28" y="360" font-size="9">only long-lived secret: the issuer signing key (ALETHIA_OIDC_SIGNING_KEY), held on the control plane, never shared.</text>
+
+  <text class="d-sub mono" x="812" y="404" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

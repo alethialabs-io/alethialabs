@@ -18,7 +18,7 @@ alethia is the command-line interface for the platform. It provides terminal-bas
 
 ## How It Works
 
-alethia is a **thin client** that communicates with the Alethia API over HTTPS. It does not run Terraform directly — instead, it queues jobs that [Runners](/runner) execute. The CLI handles:
+alethia is a **thin client** that communicates with the Alethia API over HTTPS. It does not run OpenTofu directly — instead, it queues jobs that [Runners](/runner) execute. The CLI handles:
 
 1. **Authentication** — [Device code flow](/concepts/authentication) with tokens stored locally
 2. **Configuration** — Creating and inspecting Projects

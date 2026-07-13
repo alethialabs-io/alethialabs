@@ -1,0 +1,52 @@
+---
+title: Standards & Protocols
+description: The open standards Alethia builds on — OAuth 2.0, OIDC, the Device Authorization Grant, cloud workload identity, JOSE, SAML/SCIM — with the exact code that implements each.
+---
+
+# Standards & Protocols
+
+Alethia authenticates people, machines, and cloud accounts entirely on published standards — no
+bespoke crypto, no proprietary handshake. Every credential is short-lived, scoped, and verifiable
+against a spec you can read. This section names each standard, shows the exact file/route/function
+that implements it, and links the authoritative spec so you can audit the claim yourself.
+
+Two design rules run through everything here:
+
+- **No long-lived secrets cross a trust boundary.** Console sessions, CLI tokens, and cloud
+  federation are all time-boxed. The only durable private keys (`ALETHIA_OIDC_SIGNING_KEY`,
+  `CLI_JWT_SECRET`, `ALETHIA_RECEIPT_SIGNING_KEY`) never leave the control plane.
+- **Claims are verifiable.** Cloud assertions verify against a published JWKS; verify-gate evidence
+  is ed25519-signed; the standards below define the wire format so a third party can check them.
+
+## Standards matrix
+
+| Protocol / Standard | Spec | Where it is used in Alethia | Status |
+|---|---|---|---|
+| [OAuth 2.0](/standards/oauth2) | [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749) | Console social sign-in (GitHub/Google native, GitLab/Bitbucket generic) via Better Auth | Live |
+| [OAuth 2.0 PKCE](/standards/oauth2) | [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636) | Better Auth authorization-code exchange for social sign-in | Live |
+| [OpenID Connect](/standards/oidc) | [OIDC Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | Enterprise SSO (Okta/Entra/Google/…) as Service Provider; MCP OAuth authorization server | Live <Enterprise /> |
+| [Device Authorization Grant](/standards/device-code) | [RFC 8628](https://www.rfc-editor.org/rfc/rfc8628) | `alethia login` / `alethia init` browser-approval flow → CLI JWT | Live (variant) |
+| [Workload Identity / OIDC federation](/standards/workload-identity) | [OIDC Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | Keyless cloud connectors: AWS STS, GCP WIF, Azure federated identity | Live |
+| [JWT / JWS](/standards/jose) | [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) · [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515) | CLI access/refresh tokens (HS256), workload assertions (RS256), MCP tokens | Live |
+| [EdDSA / ed25519](/standards/jose) | [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) | Elench verify-gate signed evidence receipts | Live |
+| [SAML 2.0](/standards/scim-saml) | [OASIS SAML 2.0](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf) | Enterprise SSO providers over SAML | Live <Enterprise /> |
+| [SCIM 2.0](/standards/scim-saml) | [RFC 7644](https://www.rfc-editor.org/rfc/rfc7644) | Directory provisioning — **not implemented** (JIT provisioning only) | Roadmap <Enterprise /> |
+| [SOC 2 control mapping](/standards/security-and-compliance) | [AICPA SOC 2](https://www.aicpa-cima.com/topic/audit-assurance/audit-and-assurance-greater-than-soc-2) | Tenant isolation, keyless creds, fail-closed verify, audit log | Readiness (no report yet) |
+
+<Callout type="info">
+  Status reads honestly. **Live** means shipped and exercised in the code paths cited on each page.
+  **Live (variant)** means the standard's intent is implemented with documented deviations (see the
+  device-code page). **Roadmap** means not built — do not assume it. **Readiness** means controls are
+  in place and mapped to a framework, but no formal third-party audit has been performed.
+</Callout>
+
+## How to read these pages
+
+Each page has the same three parts:
+
+1. **What the standard is** — one or two paragraphs, no marketing.
+2. **How Alethia implements it** — the real files, routes, functions, env vars, and tables.
+3. **The authoritative spec** — the IETF RFC, OASIS document, or `openid.net` reference.
+
+For the security model in prose, see [concepts/security](/concepts/security); for the authorization
+layer (roles, grants, the PDP), see [access control](/access-control).

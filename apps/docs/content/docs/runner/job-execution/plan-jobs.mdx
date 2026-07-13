@@ -1,40 +1,53 @@
 ---
 title: Plan Jobs
-description: How Runner executes PLAN jobs — terraform plan, structured output, and Infracost.
+description: How the runner executes PLAN jobs — tofu plan, the verify gate, structured output, and Infracost.
 ---
 
 # Plan Jobs
 
-PLAN jobs run `terraform plan` to preview infrastructure changes without applying them.
+`PLAN` jobs run `tofu plan` to preview infrastructure changes without applying them, and run the
+plan JSON through the [Elench verify gate](/elench/engine-internals) so the Plan tab shows both the
+diff and the policy verdict.
 
-## Execution Flow
+## Execution flow
 
 <Steps>
 
-### Assume cloud credentials
-Provider-specific: STS AssumeRole (AWS), WIF exchange (GCP), or federated identity (Azure). See [Cloud Credentials](/runner/cloud-credentials).
+### Mint cloud credentials
+Keyless per job — AWS `AssumeRoleWithWebIdentity`, GCP WIF, Azure federated identity, Alibaba
+`AssumeRoleWithOIDC`. No stored keys. See [Cloud Credentials](/runner/cloud-credentials).
 
-### Generate Terraform variables
-The project's config snapshot is transformed into `terraform.tfvars` by the provisioner. Each project component maps to specific Terraform variables.
+### Generate tofu variables
+The project's config snapshot is transformed into a tfvars map by the provisioner
+(`tofu.OverrideTfvarsFromMap`). Each environment component maps to specific tofu variables.
 
-### terraform init
-Initializes with the [S3-compatible state backend](/concepts/terraform-state):
+### tofu init
+Initializes against the **Console HTTP state proxy**, not a cloud bucket the runner can reach:
+```hcl
+backend "http" {}   # /api/jobs/{id}/state, auth via TF_HTTP_PASSWORD (per-job token)
 ```
-bucket = "project-terraform-state"
-key    = "{project}/{stage}/{region}/terraform.tfstate"
-```
+The runner holds no object-storage credentials. See [tofu state](/concepts/terraform-state).
 
-### terraform plan
+### tofu plan
 ```bash
-terraform plan -out=plan.tfplan
+tofu plan -out=plan.tfplan
 ```
 Generates a binary plan file describing what will change.
 
-### terraform show
+### tofu show (plan JSON)
 ```bash
-terraform show -json plan.tfplan
+tofu show -json plan.tfplan
 ```
-Converts the binary plan to structured JSON output for UI display.
+Converts the binary plan to structured JSON — the input both to the UI diff and to the verify gate.
+
+### Verify gate (fail-closed)
+`provisioner.RunDeployV2` calls `verify.Evaluate` on the plan JSON right after it is produced. The
+gate runs the deterministic Elench control set (keyless / least-privilege / OIDC-subject, with
+honest `not_evaluable` for what the plan can't show) and attaches a `verify.Report` to the result.
+On a PLAN this is **advisory** — the report is surfaced but nothing is applied — but the same code
+path is **fail-closed on apply**: a `DEPLOY` will refuse before `tofu apply` if a hard control is
+failing and unwaived. See [Deploy Jobs](/runner/job-execution/deploy-jobs) and
+[Engine internals](/elench/engine-internals).
 
 ### Infracost analysis (optional)
 If `INFRACOST_API_KEY` is configured:
@@ -44,20 +57,23 @@ infracost breakdown --path plan.json --format json
 Parses per-resource cost estimates. See [Cost Estimation](/concepts/cost-estimation).
 
 ### Upload plan artifact
-The binary `plan.tfplan` file is uploaded to S3-compatible storage (`plan-artifacts` bucket) for later use by DEPLOY jobs.
+The binary `plan.tfplan` is uploaded to the Console (`POST /api/jobs/{id}/plan-artifact`) for a
+later `DEPLOY` job to apply verbatim.
 
 ### Report results
-Job status → SUCCESS with execution metadata:
+Job status → SUCCESS with `execution_metadata`:
 - Resource change counts (add / change / destroy)
+- `verify_result` — the `verify.Report` (rendered in the Plan tab)
 - Cost breakdown (if Infracost ran)
 - Plan artifact reference
 
 </Steps>
 
-## What the User Sees
+## What the user sees
 
-After the plan completes, the [Plan tab](/console/jobs/plan-and-apply) in the project detail page shows:
-- Resource groups with create/update/delete actions
-- Per-resource costs
-- Total estimated monthly cost
-- An "Apply" button to proceed
+After the plan completes, the [Plan tab](/console/jobs/plan-and-apply) in the environment detail
+shows:
+- Resource groups with create / update / delete actions
+- The verify report — per-control `pass` / `fail` / `warn` / `not_evaluable`
+- Per-resource costs and total estimated monthly cost
+- An "Apply" button (blocked, or requiring an override, if a hard control failed)

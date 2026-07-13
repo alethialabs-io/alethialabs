@@ -1,0 +1,71 @@
+---
+title: OAuth 2.0 & PKCE
+description: Console social sign-in over OAuth 2.0 (RFC 6749) with PKCE (RFC 7636), implemented by Better Auth — GitHub/Google natively, GitLab/Bitbucket via the generic OAuth plugin.
+---
+
+# OAuth 2.0 & PKCE
+
+## What the standard is
+
+**OAuth 2.0** ([RFC 6749](https://www.rfc-editor.org/rfc/rfc6749)) is the authorization framework
+that lets a user grant an application access to a resource without sharing a password. The web flow
+Alethia uses is the **authorization-code grant**: the app redirects the user to the provider's
+authorization endpoint, the provider redirects back with a short-lived `code`, and the app exchanges
+that code at the token endpoint for an access token.
+
+**PKCE** ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), "Proof Key for Code Exchange") hardens
+that exchange against code-interception. The client generates a random `code_verifier`, sends its
+SHA-256 hash (`code_challenge`) on the authorization request, and presents the raw verifier at token
+exchange — so a stolen `code` is useless without the verifier.
+
+## How Alethia implements it
+
+The [Console](/concepts/glossary) delegates web sign-in to **Better Auth** (in-process, Drizzle
+adapter). The auth instance is built in `apps/console/lib/auth/index.ts`; the single catch-all route
+`apps/console/app/api/auth/[...all]/route.ts` serves every Better Auth endpoint (authorization start,
+callback, token exchange). Better Auth drives the authorization-code + PKCE handshake — the console
+never hand-rolls the flow.
+
+Four social providers are registered, in two ways:
+
+| Provider | Registration | Scopes requested |
+|---|---|---|
+| GitHub | native `socialProviders.github` | `repo` (+ Better Auth's `read:user`/`user:email` defaults) |
+| Google | native `socialProviders.google` | provider defaults |
+| GitLab | `genericOAuth` plugin (self-hosted base URL) | `read_api read_user read_repository read_registry openid profile email` |
+| Bitbucket | `genericOAuth` plugin | `account repository` |
+
+Native GitHub/Google use Better Auth's built-in provider configs. GitLab and Bitbucket go through the
+`genericOAuth` plugin (`import { genericOAuth } from "better-auth/plugins"`), configured with explicit
+`authorizationUrl` / `tokenUrl` / `userInfoUrl` in `genericOAuthConfigs`. Each provider is registered
+**only when its credentials are present** — a community deployment with no OAuth secrets simply falls
+back to email OTP.
+
+<Callout type="info">
+  The requested scopes are deliberately broad because the login account **is** the git-integration
+  account: the same OAuth token that authenticates the user also drives repository access for
+  provisioning (`mapProfileToUser` seeds the org slug from the provider login). Account linking is
+  enabled for all four (`accountLinking.trustedProviders`), so one person can attach GitHub, Google,
+  GitLab, and Bitbucket to a single Alethia identity.
+</Callout>
+
+### Where the token lands
+
+On callback, Better Auth exchanges the code (with PKCE) and creates a session — an HTTP-only cookie
+backed by the `session` table. Next.js middleware validates it on every request; the
+[PDP](/access-control/architecture) then resolves the active org and sets `app.current_org` for the
+coarse Postgres [RLS](/concepts/security) tenant guard. See
+[JWT / JWS](/standards/jose) for the token formats and [OIDC](/standards/oidc) for enterprise SSO.
+
+### The MCP authorization server
+
+Alethia also *acts as* an OAuth 2.1 authorization server for its Model Context Protocol endpoint. The
+`mcp()` plugin (also in `lib/auth/index.ts`) lets remote MCP clients register dynamically and obtain
+an access token that `/api/mcp` resolves into a PDP-scoped actor — no new authority beyond the token
+owner's normal scope.
+
+## Authoritative reference
+
+- [oauth.net/2](https://oauth.net/2/) — the OAuth 2.0 landing page and flow overview.
+- [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749) — The OAuth 2.0 Authorization Framework.
+- [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636) — Proof Key for Code Exchange (PKCE).

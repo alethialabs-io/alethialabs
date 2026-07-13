@@ -24,8 +24,8 @@ before `app` starts). Your `.env` is never overwritten.
 
 # Backups
 
-Two things hold state: **Postgres** and the **object store** (Terraform state +
-plan artifacts). Terraform state is the only un-regenerable data — back it up.
+Two things hold state: **Postgres** and the **object store** (OpenTofu state +
+plan artifacts). OpenTofu state is the only un-regenerable data — back it up.
 
 **Postgres** (schedule via cron):
 

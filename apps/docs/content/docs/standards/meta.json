@@ -1,0 +1,14 @@
+{
+  "title": "Standards & Protocols",
+  "icon": "ShieldCheck",
+  "pages": [
+    "index",
+    "oauth2",
+    "oidc",
+    "device-code",
+    "workload-identity",
+    "jose",
+    "scim-saml",
+    "security-and-compliance"
+  ]
+}

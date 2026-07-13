@@ -6,9 +6,12 @@ description: Complete reference for all alethia CLI commands organized by group.
 # Command Reference
 
 alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
-`org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`) plus top-level
-auth, identity, `billing`, `usage`, `activity`, and utility commands. All commands communicate with
-the Alethia API — they do not execute Terraform directly.
+`org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`,
+`classification`, `ops`) plus top-level auth (`login`/`logout`/`init`), identity
+(`whoami`/`config`/`open`), `billing`, `usage`, `activity`, and utility commands. All commands
+communicate with the Alethia [Console](/concepts/glossary) API — they never run
+[OpenTofu](/concepts/glossary) (the `tofu` binary) locally. Provisioning (`tofu plan`/`apply`/
+`destroy`) happens on a [Runner](/runner); the CLI only queues and observes it.
 
 Every command also accepts the [global flags](/cli/identity#output-formats) `-o, --output <table|json|csv>` and `--no-input`.
 
@@ -16,10 +19,13 @@ Every command also accepts the [global flags](/cli/identity#output-formats) `-o,
 
 ```
 alethia
-├── login [--force]
+├── init                             # first-run: pick control-plane URL, then log in
+├── login [-f/--force] [--web-origin <url>]
 ├── logout
 ├── whoami                            # current user, active org, role, plan, default runner
-├── config                            # show CLI config + file paths
+├── config                            # show resolved config + file paths + web-origin source
+│   ├── set <key> <value>            # key: web-origin
+│   ├── get [web-origin|active-org]
 │   └── clear-context                 # clear the active org
 ├── version
 ├── open [console|docs]               # aliases: docs, dashboard
@@ -35,10 +41,11 @@ alethia
 │   ├── list
 │   ├── create <name>
 │   └── delete <team_id>
-├── connector
+├── connector                        # manage cloud identities (credential anchors)
 │   ├── gcp [--project <id>] [--manual]
 │   ├── aws [--region <r>] [--role-name <name>] [--manual]
 │   ├── azure [--subscription <id>] [--manual]
+│   ├── alibaba [--region <r>] [--dir <path>]
 │   ├── list
 │   └── remove [provider] [-y/--yes]
 ├── project
@@ -93,13 +100,50 @@ alethia
 ├── fleet                             # managed warm pools (self-managed only)
 │   ├── list
 │   └── set <provider> [--warm-min <n>] [--max <n>] [--slots <n>] [--enabled] [--channel <c>] [--version <v>]
-└── activity [-n/--limit <N>]         # org delivery/activity log
+├── classification                   # alias: class — governed taxonomy on resources
+│   ├── dimensions                   # list the org's dimensions + their values
+│   ├── show <kind> <id>             # values assigned to a resource
+│   ├── assign <kind> <id> <dimension-key> <value-slug>
+│   └── unassign <kind> <id> <value-slug>
+├── activity [-n/--limit <N>]         # org delivery/activity log
+└── ops                              # break-glass incident recovery (privileged · audited · gated)
+    ├── session --reason <r>                                     # open a time-boxed session
+    ├── approve <action> <resource_id> --reason <r>              # 2nd operator mints a two-person token
+    ├── inspect-job <job_id> --reason <r>                        # blast: none (read-only, cross-tenant)
+    ├── retry-job <job_id> --reason <r>                          # blast: low
+    ├── cancel-job <job_id> --reason <r>                         # blast: low
+    ├── drain-runner <runner_id> --reason <r>                    # blast: low
+    ├── restart-runner <runner_id> --reason <r>                  # blast: medium
+    ├── unstick-env <env_id> --from <s,…> --to <s> --reason <r>  # blast: medium (status CAS)
+    ├── orphan-detect --project <id> --reason <r>                # blast: none (read-only, run-scoped)
+    ├── replay-webhook <stripe_event_id> [--send-emails] --reason <r>  # blast: low
+    ├── force-release-lock <state_key> --approval <id> --reason <r>    # blast: HIGH, two-person
+    ├── state-surgery <state_key> --approval <id> [--note <n>] --reason <r>  # HIGH, two-person, INERT
+    └── orphan-clean --project <id> --approval <id> --reason <r>       # HIGH, two-person, INERT
 ```
 
 <Callout type="info">
 `members`, `teams`, and the org-scoped commands operate on the **active organization** (set via
 `alethia org switch`). Override per-invocation with `--org <id>`. The `cluster` command is singular
 with a `clusters` alias, so both `alethia cluster list` and `alethia clusters list` work.
+</Callout>
+
+<Callout type="info">
+New in the reference above: [`init`](/cli/commands/init) (first-run setup), and the
+[`classification`](/cli/commands/classification) group (governed taxonomy — dimensions, values,
+and assignments). Both hit the same Console API as the [web console](/console/classification).
+</Callout>
+
+<Callout type="warn">
+**`alethia ops` is a privileged, staff-only surface** — terminal-first break-glass incident
+recovery, not a day-to-day command. Every verb hits the same audited `/api/breakglass/*` endpoints
+as the operator UI, requires a `--reason` recorded to an append-only audit *before* the act, and
+typed-confirms the resource id server-side. The whole group is gated behind
+`ALETHIA_BREAKGLASS_ENABLED` + a `BREAKGLASS_OPERATORS` allowlist; a non-operator (or a deployment
+that hasn't armed it) is refused with `403`/`404`. High-blast verbs (`force-release-lock`,
+`state-surgery`, `orphan-clean`) additionally require a two-person `--approval` token minted by a
+**different** operator via `alethia ops approve`, and `state-surgery`/`orphan-clean` ship **INERT**
+(fail-closed — they refuse rather than perform an unscoped mutation).
 </Callout>
 
 ## Interactive Selection

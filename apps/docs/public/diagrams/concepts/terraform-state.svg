@@ -1,62 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 400" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 400" width="100%" role="img" aria-label="OpenTofu state: the runner uses an HTTP backend through the Console state proxy with a per-job token; state lands in S3-compatible storage keyed by project, environment and region">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
-    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/></marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-  <rect width="820" height="400" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Terraform State Management — S3 Backend</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="400" rx="12"/>
+  <rect x="0" y="0" width="840" height="400" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="399" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · TOFU STATE</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">State flows through the Console proxy — the runner holds no storage key</text>
 
-  <!-- S3 Bucket -->
-  <rect x="260" y="60" width="300" height="200" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
-  <text x="410" y="84" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">project-tofu-state (S3)</text>
-  <text x="410" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">S3-compatible storage</text>
+  <!-- Runner -->
+  <rect class="d-surface" x="28" y="140" width="176" height="96" rx="8"/>
+  <text class="d-label" x="116" y="170" text-anchor="middle" font-size="13" font-weight="600">Runner</text>
+  <text class="d-sub mono" x="116" y="190" text-anchor="middle" font-size="10">tofu backend "http"</text>
+  <text class="d-sub mono" x="116" y="208" text-anchor="middle" font-size="9">no object-storage creds</text>
+  <text class="d-sub mono" x="116" y="222" text-anchor="middle" font-size="9">TF_HTTP_PASSWORD = per-job</text>
 
-  <!-- Path tree -->
-  <text x="290" y="128" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">api-backend-production-eu-west-1/</text>
-  <text x="310" y="148" font-family="Inter, monospace, sans-serif" font-size="10" fill="#22C55E">└── tofu.tfstate</text>
-  <text x="290" y="188" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">api-backend-staging-us-east-1/</text>
-  <text x="310" y="208" font-family="Inter, monospace, sans-serif" font-size="10" fill="#22C55E">└── tofu.tfstate</text>
+  <!-- State proxy -->
+  <rect class="d-emph" x="332" y="132" width="196" height="112" rx="8"/>
+  <text class="d-emph-text" x="430" y="162" text-anchor="middle" font-size="13" font-weight="600">Console state proxy</text>
+  <text class="d-emph-text mono" x="430" y="184" text-anchor="middle" font-size="9" opacity="0.82">/api/jobs/{id}/state</text>
+  <text class="d-emph-text mono" x="430" y="200" text-anchor="middle" font-size="9" opacity="0.82">per-job token · key-scoped</text>
+  <text class="d-emph-text mono" x="430" y="216" text-anchor="middle" font-size="9" opacity="0.82">object key derived server-side</text>
+  <text class="d-emph-text mono" x="430" y="232" text-anchor="middle" font-size="9" opacity="0.7">fenced locking</text>
 
-  <!-- Plan artifacts bucket -->
-  <rect x="600" y="60" width="190" height="80" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="695" y="84" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#FAFAFA">plan-artifacts</text>
-  <text x="695" y="102" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Binary plan.tfplan files</text>
-  <text x="695" y="118" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">validated via config hash</text>
+  <!-- Storage -->
+  <rect class="d-surface" x="656" y="140" width="156" height="96" rx="8"/>
+  <text class="d-label" x="734" y="170" text-anchor="middle" font-size="13" font-weight="600">S3-compatible</text>
+  <text class="d-sub mono" x="734" y="190" text-anchor="middle" font-size="9">SeaweedFS default</text>
+  <text class="d-sub mono" x="734" y="204" text-anchor="middle" font-size="9">MinIO · S3 · R2 · Garage</text>
+  <text class="d-sub mono" x="734" y="222" text-anchor="middle" font-size="9">swappable endpoint</text>
 
-  <!-- Lifecycle diagram below -->
-  <line x1="30" y1="290" x2="790" y2="290" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="410" y="314" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#A1A1AA">State Lifecycle During Operations</text>
+  <line class="d-edge" x1="204" y1="188" x2="332" y2="188" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="214" y="180" font-size="9">state read/write</text>
+  <line class="d-edge" x1="528" y1="188" x2="656" y2="188" marker-end="url(#ar)"/>
 
-  <!-- Plan -->
-  <rect x="50" y="332" width="140" height="48" rx="6" fill="#27272A" stroke="#F59E0B50"/>
-  <text x="120" y="352" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#F59E0B">terraform plan</text>
-  <text x="120" y="370" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">read state → compare</text>
+  <!-- key layout -->
+  <rect class="d-surface2" x="28" y="288" width="500" height="72" rx="8"/>
+  <text class="d-sub mono" x="44" y="312" font-size="9">PER-PROJECT / ENV / REGION KEY</text>
+  <text class="d-label mono" x="44" y="334" font-size="11">{project}-{environment}-{region}/tofu.tfstate</text>
+  <text class="d-sub mono" x="44" y="352" font-size="9">isolates projects and environments · persisted after each resource op → resumable retries</text>
 
-  <line x1="190" y1="356" x2="240" y2="356" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="d-sub mono" x="560" y="312" font-size="9">plan artifacts stored separately;</text>
+  <text class="d-sub mono" x="560" y="328" font-size="9">config-hash validated so a stale</text>
+  <text class="d-sub mono" x="560" y="344" font-size="9">plan can't be applied.</text>
 
-  <!-- Apply -->
-  <rect x="248" y="332" width="160" height="48" rx="6" fill="#27272A" stroke="#22C55E50"/>
-  <text x="328" y="352" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#22C55E">terraform apply</text>
-  <text x="328" y="370" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">read + write state per resource</text>
-
-  <line x1="408" y1="356" x2="458" y2="356" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- Destroy -->
-  <rect x="466" y="332" width="160" height="48" rx="6" fill="#27272A" stroke="#EF444450"/>
-  <text x="546" y="352" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#EF4444">terraform destroy</text>
-  <text x="546" y="370" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">read + remove from state</text>
-
-  <line x1="626" y1="356" x2="660" y2="356" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- Recovery -->
-  <rect x="668" y="332" width="120" height="48" rx="6" fill="#27272A" stroke="#8B5CF650"/>
-  <text x="728" y="352" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#8B5CF6">Failure?</text>
-  <text x="728" y="370" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">retry from saved state</text>
-
-  <!-- Key insight -->
-  <rect x="30" y="60" width="210" height="52" rx="6" fill="#22C55E10" stroke="#22C55E40"/>
-  <text x="135" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#22C55E">Cross-provider state</text>
-  <text x="135" y="96" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Same S3 backend regardless</text>
-  <text x="135" y="108" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">of AWS, GCP, or Azure project</text>
+  <text class="d-sub mono" x="812" y="384" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

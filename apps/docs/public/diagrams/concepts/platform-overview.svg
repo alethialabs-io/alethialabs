@@ -1,103 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 480" width="100%" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 400" width="100%" role="img" aria-label="Platform overview: Console and CLI queue jobs in Postgres; the Runner claims them, runs OpenTofu against a cloud, and streams logs back over SSE">
+  <style>
+    .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
+    .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
+    .d-eyebrow{fill:#71717a;letter-spacing:.14em}.d-edge{stroke:#8a8a8d;stroke-width:1.5;fill:none}
+    .d-edge-fill{fill:#8a8a8d}.d-grid{stroke:#f0f0f1;stroke-width:1}
+    text{font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}
+    .mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+    @media (prefers-color-scheme:dark){
+      .d-bg{fill:#101012}.d-surface{fill:#18181b;stroke:#2c2c30}.d-surface2{fill:#202023;stroke:#2c2c30}.d-emph{fill:#fafafa;stroke:#fafafa}
+      .d-title{fill:#fafafa}.d-label{fill:#d4d4d8}.d-sub{fill:#8a8a8d}.d-emph-text{fill:#18181b}
+      .d-eyebrow{fill:#8a8a8d}.d-edge{stroke:#71717a}.d-edge-fill{fill:#71717a}.d-grid{stroke:#1a1a1d}
+    }
+  </style>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#52525B"/>
-    </marker>
-    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/>
-    </marker>
-    <marker id="arrow-muted" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6" fill="#71717A"/>
-    </marker>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="d-grid" d="M28 0 H0 V28" fill="none"/></pattern>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path class="d-edge-fill" d="M0,0 L8,3 L0,6"/></marker>
   </defs>
-
-  <!-- Background -->
-  <rect width="820" height="480" rx="12" fill="#18181B"/>
-  <rect x="0.5" y="0.5" width="819" height="479" rx="12" fill="none" stroke="#3F3F46"/>
-
-  <!-- Title -->
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Platform Architecture</text>
-
-  <!-- User -->
-  <rect x="30" y="190" width="80" height="80" rx="40" fill="#27272A" stroke="#3F3F46"/>
-  <text x="70" y="224" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="20" fill="#A1A1AA">👤</text>
-  <text x="70" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">User</text>
+  <rect class="d-bg" x="0" y="0" width="840" height="400" rx="12"/>
+  <rect x="0" y="0" width="840" height="400" rx="12" fill="url(#grid)"/>
+  <rect class="d-surface" x="0.5" y="0.5" width="839" height="399" rx="12" fill="none"/>
+  <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · PLATFORM</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">Console + CLI queue jobs; the Runner executes OpenTofu</text>
 
   <!-- Console -->
-  <rect x="160" y="120" width="160" height="72" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="240" y="150" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Console</text>
-  <text x="240" y="170" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#A1A1AA">Web Control Plane</text>
-  <text x="240" y="184" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Next.js · TypeScript</text>
+  <rect class="d-surface" x="28" y="110" width="150" height="58" rx="8"/>
+  <text class="d-label" x="103" y="136" text-anchor="middle" font-size="13" font-weight="600">Console</text>
+  <text class="d-sub mono" x="103" y="153" text-anchor="middle" font-size="9">web · Next.js · TS</text>
 
-  <!-- Alethia -->
-  <rect x="160" y="268" width="160" height="72" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="240" y="298" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Alethia</text>
-  <text x="240" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#A1A1AA">CLI Tool</text>
-  <text x="240" y="332" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Go · Cobra · Bubble Tea</text>
+  <!-- CLI -->
+  <rect class="d-surface" x="28" y="196" width="150" height="58" rx="8"/>
+  <text class="d-label" x="103" y="222" text-anchor="middle" font-size="13" font-weight="600">alethia</text>
+  <text class="d-sub mono" x="103" y="239" text-anchor="middle" font-size="9">CLI · Go · Cobra</text>
 
-  <!-- Arrows: User → Console, User → Alethia -->
-  <line x1="110" y1="210" x2="155" y2="170" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="110" y1="250" x2="155" y2="290" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- Job Queue -->
-  <rect x="370" y="180" width="140" height="100" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
-  <text x="440" y="215" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Job Queue</text>
-  <text x="440" y="235" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#A1A1AA">PostgreSQL</text>
-  <text x="440" y="255" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">FOR UPDATE SKIP LOCKED</text>
-  <text x="440" y="270" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Atomic Claiming</text>
-
-  <!-- Arrows: Console → Queue, Alethia → Queue -->
-  <line x1="320" y1="156" x2="365" y2="210" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="320" y1="304" x2="365" y2="250" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Job queue -->
+  <rect class="d-emph" x="248" y="150" width="164" height="64" rx="8"/>
+  <text class="d-emph-text" x="330" y="178" text-anchor="middle" font-size="13" font-weight="600">Job queue</text>
+  <text class="d-emph-text mono" x="330" y="196" text-anchor="middle" font-size="9" opacity="0.82">Postgres · atomic claim</text>
 
   <!-- Runner -->
-  <rect x="560" y="190" width="140" height="80" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="630" y="222" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Runner</text>
-  <text x="630" y="242" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#A1A1AA">Execution Agent</text>
-  <text x="630" y="256" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Go · ECS Fargate</text>
+  <rect class="d-surface" x="482" y="150" width="150" height="64" rx="8"/>
+  <text class="d-label" x="557" y="176" text-anchor="middle" font-size="13" font-weight="600">Runner</text>
+  <text class="d-sub mono" x="557" y="194" text-anchor="middle" font-size="9">agent · Go · tofu</text>
 
-  <!-- Arrow: Queue → Runner -->
-  <line x1="510" y1="230" x2="555" y2="230" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
-  <text x="533" y="222" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#8B5CF6">claim</text>
+  <!-- Cloud -->
+  <rect class="d-surface" x="702" y="150" width="112" height="64" rx="8"/>
+  <text class="d-label" x="758" y="176" text-anchor="middle" font-size="13" font-weight="600">Cloud</text>
+  <text class="d-sub mono" x="758" y="194" text-anchor="middle" font-size="9">AWS·GCP·Azure</text>
+  <text class="d-sub mono" x="758" y="206" text-anchor="middle" font-size="9">Alibaba·Hetzner</text>
 
-  <!-- Cloud Providers -->
-  <rect x="680" y="74" width="110" height="40" rx="6" fill="#27272A" stroke="#FF9900"/>
-  <text x="735" y="98" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#FF9900">AWS</text>
+  <line class="d-edge" x1="178" y1="139" x2="246" y2="172" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="178" y1="225" x2="246" y2="192" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="412" y1="182" x2="482" y2="182" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="416" y="174" font-size="9">claim</text>
+  <line class="d-edge" x1="632" y1="182" x2="702" y2="182" marker-end="url(#ar)"/>
+  <text class="d-sub mono" x="636" y="174" font-size="9">apply</text>
 
-  <rect x="680" y="126" width="110" height="40" rx="6" fill="#27272A" stroke="#4285F4"/>
-  <text x="735" y="150" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#4285F4">GCP</text>
+  <!-- SSE loop back -->
+  <path class="d-edge" d="M557 214 V300 H103 V254" marker-end="url(#ar)"/>
+  <rect class="d-surface2" x="248" y="286" width="300" height="30" rx="6"/>
+  <text class="d-sub mono" x="264" y="305" font-size="10">LISTEN/NOTIFY → SSE · live logs + job status</text>
 
-  <rect x="680" y="178" width="110" height="40" rx="6" fill="#27272A" stroke="#0078D4"/>
-  <text x="735" y="202" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#0078D4">Azure</text>
+  <text class="d-sub mono" x="28" y="352" font-size="9">Runner claims a job atomically, mints short-lived cloud credentials, runs tofu, and streams results back.</text>
 
-  <!-- Group label for cloud -->
-  <rect x="670" y="60" width="130" height="170" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="735" y="54" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Cloud Providers</text>
-
-  <!-- Arrow: Runner → Cloud group -->
-  <line x1="700" y1="230" x2="700" y2="234" stroke="none"/>
-  <path d="M660,210 Q670,145 675,145" stroke="#52525B" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
-
-  <!-- Postgres LISTEN/NOTIFY feedback loop -->
-  <rect x="370" y="370" width="140" height="56" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-dasharray="4 4"/>
-  <text x="440" y="394" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#8B5CF6">Postgres LISTEN/NOTIFY</text>
-  <text x="440" y="412" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">WebSocket · postgres_changes</text>
-
-  <!-- Arrow: Runner → Realtime (logs) -->
-  <path d="M630,270 L630,398 L515,398" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrow-accent)" stroke-dasharray="6 3"/>
-  <text x="580" y="340" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#8B5CF6" transform="rotate(-90 580 340)">Log Streaming</text>
-
-  <!-- Arrow: Realtime → Console -->
-  <path d="M370,390 L240,390 L240,196" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrow-accent)" stroke-dasharray="6 3"/>
-
-  <!-- Arrow: Realtime → Alethia -->
-  <path d="M396,370 L300,340" stroke="#71717A" stroke-width="1" fill="none" marker-end="url(#arrow-muted)" stroke-dasharray="4 3"/>
-  <text x="336" y="362" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">HTTP poll</text>
-
-  <!-- Legend -->
-  <line x1="30" y1="454" x2="60" y2="454" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="68" y="458" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Data flow</text>
-
-  <line x1="140" y1="454" x2="170" y2="454" stroke="#8B5CF6" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#arrow-accent)"/>
-  <text x="178" y="458" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">Realtime</text>
+  <text class="d-sub mono" x="812" y="386" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

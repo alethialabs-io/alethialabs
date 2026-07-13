@@ -10,7 +10,7 @@ implement the Plan-Review-Apply workflow from the terminal.
 
 ## `alethia project plan`
 
-Queue a Terraform plan job.
+Queue an [OpenTofu](/concepts/glossary) plan job — the Runner runs `tofu plan`.
 
 ```bash
 alethia project plan [--project-id <id>] [--runner-id <id>] [--wait]
@@ -41,6 +41,13 @@ alethia project apply [--project-id <id>] [--runner-id <id>] [--plan-job-id <id>
 
 The `--plan-job-id` flag ensures the apply uses the exact plan you reviewed. If the Project configuration changed since the plan was generated, the job fails with a [config hash mismatch](/console/jobs/plan-and-apply).
 
+<Callout type="info">
+A DEPLOY job is `tofu plan` → **[verify](/concepts/glossary) gate** → `tofu apply` → ArgoCD scaffold.
+The verify gate is **fail-closed**: a hard control failure blocks *before* `tofu apply` unless an
+authorized override waives it. The report is attached to the job's `execution_metadata` and rendered
+in the console Plan tab — inspect it with `alethia jobs logs <apply-job-id> --follow`.
+</Callout>
+
 ## `alethia project destroy`
 
 Destroy a Project's provisioned infrastructure.
@@ -49,7 +56,7 @@ Destroy a Project's provisioned infrastructure.
 alethia project destroy [--project-id <id>] [--runner-id <id>] [--wait]
 ```
 
-Queues a DESTROY job. The Runner runs `terraform destroy` to tear down all resources. Terraform state is preserved, so accidental destroys can be recovered by re-applying.
+Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources. OpenTofu state is preserved (it lives behind the Console state proxy, not on the Runner), so accidental destroys can be recovered by re-applying.
 
 <Callout type="info">
 To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy`](/cli/commands/runners).

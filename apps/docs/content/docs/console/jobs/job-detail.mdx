@@ -20,7 +20,7 @@ The job detail page (`/dashboard/jobs/{id}`) shows the full execution state of a
 
 ### Log Viewer
 
-A full-height, monospace, auto-scrolling log area showing Terraform output in real-time:
+A full-height, monospace, auto-scrolling log area showing the runner's `tofu` (OpenTofu) output in real-time:
 
 - **STDOUT** — normal output (white/light gray)
 - **STDERR** — errors and warnings (red)
@@ -36,7 +36,9 @@ Three expandable sections below the logs:
 
 - **Job Details** — full metadata (ID, type, status, runner, all timestamps)
 - **Config Snapshot** — the project configuration at time of job creation (JSON)
-- **Execution Metadata** — Terraform outputs, cost data, cluster info (JSON)
+- **Execution Metadata** — OpenTofu outputs, cost data, cluster info, and the **`verify_result`** report (JSON)
+
+For PLAN and DEPLOY jobs, `execution_metadata["verify_result"]` carries the [verify gate](/console/jobs/plan-and-apply#verify-gate) report — the fail-closed policy evaluation over the plan JSON. The Console renders it as the **Verify Report** in the project's Plan tab; see [engine internals](/elench/engine-internals).
 
 ## Actions
 

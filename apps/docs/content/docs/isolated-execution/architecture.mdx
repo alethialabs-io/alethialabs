@@ -49,7 +49,7 @@ runner's ~5-minute token refresh stays visible to a long `apply`).
 The container can only contain what it isn't handed. Three source-drops keep the allowlist short and the
 fleet's boot configuration secret-free:
 
-- **Terraform state via a console proxy, not storage keys.** Project templates use an `http` backend pointed
+- **OpenTofu state via a console proxy, not storage keys.** Project templates use an `http` backend pointed
   at the console; auth is a **per-job, key-scoped** token, and the state object key is derived server-side
   from the job. The runner never holds an object-storage credential, and one job's token can only reach its
   own state.

@@ -91,15 +91,14 @@ your project to it.
 
 ## CIDR Block Validation
 
-The form validates CIDR notation in real-time and shows a breakdown:
+The form validates CIDR notation in real-time and shows a breakdown. For `10.0.0.0/16`:
 
-```
-10.0.0.0/16
-├── Total addresses: 65,536
-├── Usable IPs: 65,531
-├── Range: 10.0.0.0 – 10.0.255.255
-└── Size: Large
-```
+| Field | Value |
+|-------|-------|
+| Total addresses | 65,536 |
+| Usable IPs | 65,531 |
+| Range | 10.0.0.0 – 10.0.255.255 |
+| Size | Large |
 
 Common ranges:
 - `/16` — 65,536 addresses (recommended for production)

@@ -5,7 +5,7 @@ description: Keyless + account-free access via a RAM OIDC provider and AssumeRol
 
 # Alibaba Connector
 
-Alibaba integration is **keyless and account-free**. Alethia's control plane is its own OIDC issuer;
+Connecting Alibaba registers a **cloud identity** (`cloud_identities`) that is **keyless and account-free**. Alethia's control plane is its own OIDC issuer;
 you register a **RAM OIDC provider** that trusts it and a **RAM role** that trusts that provider. Alethia
 assumes the role by presenting a short-lived minted assertion (STS `AssumeRoleWithOIDC`) — Alethia holds
 no Alibaba account, generates no AccessKey, and stores nothing but the role ARN. See
@@ -20,7 +20,7 @@ and swaps for a ~1-hour credential. The only thing stored is the **RAM role ARN*
 
 ## Setup
 
-Apply the Terraform module (Download it from the connect dialog). It creates everything in **your**
+Apply the OpenTofu module (Download it from the connect dialog). It creates everything in **your**
 Alibaba account:
 
 <Steps>
@@ -39,14 +39,14 @@ The module attaches the RAM policies Alethia needs (ACK, VPC, ECS, SLB, EIP by d
 extend to match your Projects).
 
 ### Paste the role ARN into Alethia
-Run `terraform output` and paste `role_arn` — it looks like `acs:ram::<account>:role/<name>`. That's the
+Run `tofu output` and paste `role_arn` — it looks like `acs:ram::<account>:role/<name>`. That's the
 only value Alethia needs (the OIDC-provider ARN is derived from it).
 
 </Steps>
 
 ## Verification
 
-Alethia verifies the connection **instantly, server-side** (no runner):
+Alethia verifies the cloud identity **instantly, server-side** (no runner):
 
 1. The console mints an OIDC assertion (audience `sts.aliyuncs.com`) and calls Alibaba STS
    `AssumeRoleWithOIDC` with your role + provider ARNs

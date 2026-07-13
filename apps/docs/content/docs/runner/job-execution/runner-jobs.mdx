@@ -15,41 +15,50 @@ These job types manage Runner infrastructure.
   provisioning-only.
 </Callout>
 
+These are the **self-deployed** runner path — `operator=self`, `provisioning=deployed`. They are
+distinct from the [managed fleet](/runner/scale-to-zero), which the in-app scaler sizes over Hetzner
+VMs (no job runs to create a managed runner — it self-registers with a bootstrap token).
+
 ## DEPLOY_RUNNER
 
-Provisions a new self-operated (deployed) Runner into the customer's cloud account in ECS Fargate.
+Provisions a new self-deployed runner into the customer's cloud account. On AWS this is ECS Fargate,
+from [`infra/templates/runner/aws/`](/runner/infrastructure-templates/aws).
 
 <Steps>
 
 ### Use platform credentials
-Runner jobs use the platform's own cloud credentials (not the user's cloud identity).
+Runner lifecycle jobs use the platform's own cloud credentials (not a customer cloud identity).
 
-### Generate Terraform config
-Creates ECS task definition, IAM roles (execution + task), CloudWatch log group, security groups from the Runner templates.
+### Generate tofu config
+Writes the tfvars for the AWS runner template — an ECS cluster + Fargate service (ARM64), execution
++ task IAM roles, a CloudWatch log group, and security groups. State goes through the Console proxy
+(`backend "http"`).
 
-### terraform apply
+### tofu apply
 Provisions the infrastructure in the specified region.
 
 ### Register with Alethia
-Calls `POST /api/runners/register` to create a runner record. Returns the runner ID and token, which are injected as environment variables into the ECS task.
+Calls `POST /api/runners/register` to create a runner record. The runner ID and token are injected
+as environment variables into the ECS task.
 
 ### Report results
-Job status → SUCCESS. The new Runner boots, registers its heartbeat, and appears as ONLINE in the [Runners page](/console/runners).
+Job status → SUCCESS. The new runner boots, sends its first heartbeat, and appears as ONLINE on the
+[Runners page](/console/runners).
 
 </Steps>
 
 ## UPDATE_RUNNER
 
-Updates an existing Runner to the latest release.
+Updates an existing self-deployed runner to the latest release.
 
-1. Updates the ECS task definition with the latest Docker image tag
-2. Forces a new ECS Fargate deployment (`--force-new-deployment`)
-3. The old task drains gracefully, the new task starts with the updated image
+1. Updates the ECS task definition with the latest image tag.
+2. Forces a new ECS Fargate deployment (`--force-new-deployment`).
+3. The old task drains gracefully; the new task starts on the updated image.
 
 ## DESTROY_RUNNER
 
-Tears down a Runner's infrastructure.
+Tears down a self-deployed runner's infrastructure.
 
-1. Runs `terraform destroy` on the Runner's ECS resources
-2. Removes the runner registration from Alethia
-3. Any jobs assigned to this Runner are requeued to other available Runners
+1. Runs `tofu destroy` on the runner's ECS resources.
+2. Removes the runner registration from Alethia.
+3. Any jobs assigned to that runner are requeued to other available runners.
