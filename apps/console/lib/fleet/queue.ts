@@ -179,6 +179,37 @@ export async function insertFleetAction(record: FleetActionRecord): Promise<void
 		});
 }
 
+/**
+ * Cross-replica scale guard for one provider's pool. Opens a transaction, takes a NON-blocking
+ * per-provider advisory xact lock (`pg_try_advisory_xact_lock`), and only runs `apply` if it won the
+ * lock — auto-released when the tx commits/rolls back. A second replica ticking the same provider gets
+ * `false` immediately (no wait) and skips its whole apply span, so two replicas can't both create off
+ * the same stale pool snapshot (over-provision). Single replica ⇒ lock always free ⇒ `apply` always
+ * runs (identical to pre-lock).
+ *
+ * Key: `hashtextextended('fleet-scaler:' || provider, 0)` — a stable 64-bit key in the single-arg
+ * advisory-lock space. The `fleet-scaler:` prefix keeps it distinct from every other advisory lock in
+ * the repo: the Stripe webhook keys on `evt_…` ids, the claim admission on `alethia:claim:managed:…`,
+ * and the AI budget uses the two-int overload (a separate lock space entirely).
+ *
+ * The tx holds one pooled connection across this pool's create calls for the tick (low-frequency, one
+ * provider). `apply`'s own writes (create/drain/retire/recordAction) run on their own connections —
+ * the tx exists solely to hold the lock, so nested pool reads inside `apply` never self-deadlock.
+ */
+export async function tryFleetScaleLock(
+	provider: string,
+	apply: () => Promise<void>,
+): Promise<boolean> {
+	return getServiceDb().transaction(async (tx) => {
+		const rows = await tx.execute<{ locked: boolean }>(
+			sql`select pg_try_advisory_xact_lock(hashtextextended(${`fleet-scaler:${provider}`}, 0)) as locked`,
+		);
+		if (!rows[0]?.locked) return false;
+		await apply();
+		return true;
+	});
+}
+
 /** Mark a removed runner OFFLINE and close its open usage session at now(). */
 export async function retireRunner(runnerId: string): Promise<void> {
 	await getServiceDb().execute(sql`

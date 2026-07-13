@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_jobs_active_drift_per_env" ON "jobs" USING btree ("environment_id") WHERE job_type = 'DETECT_DRIFT' AND status IN ('QUEUED', 'CLAIMED', 'PROCESSING');

@@ -14,6 +14,7 @@ import {
 	markRunnerDraining,
 	retireRunner,
 	setRunnerObserved,
+	tryFleetScaleLock,
 } from "@/lib/fleet/queue";
 import { mintBootstrapToken } from "@/lib/runners/bootstrap-token";
 
@@ -34,5 +35,6 @@ export function makeDbDeps(): ControllerDeps {
 		bootGraceSeconds: BOOT_GRACE_SECONDS,
 		mintBootstrapToken: () => mintBootstrapToken(),
 		recordAction: (record) => insertFleetAction(record),
+		withScaleLock: (provider, apply) => tryFleetScaleLock(provider, apply),
 	};
 }
