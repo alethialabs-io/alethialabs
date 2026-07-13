@@ -6,7 +6,7 @@ import { getActiveScope } from "@/lib/auth/scope";
 import type { CloudProvider, ConnScope } from "@/lib/cloud-providers/connections";
 import { NextResponse } from "next/server";
 
-const PROVIDERS: readonly CloudProvider[] = ["aws", "gcp", "azure"];
+const PROVIDERS: readonly CloudProvider[] = ["aws", "gcp", "azure", "alibaba"];
 
 export function isCloudProvider(value: string): value is CloudProvider {
 	return (PROVIDERS as readonly string[]).includes(value);

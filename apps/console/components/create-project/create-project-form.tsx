@@ -43,7 +43,7 @@ import {
 } from "./templates";
 
 /** Clouds with full provisioning templates today — the only ones a project can target. */
-const PROVISIONABLE: CloudProviderSlug[] = ["aws", "gcp", "azure"];
+const PROVISIONABLE: CloudProviderSlug[] = ["aws", "gcp", "azure", "alibaba"];
 
 /** Maps the platform-selector id to the template preset id used by buildCreateInput. */
 const TEMPLATE_BY_PLATFORM: Record<string, TemplateId> = {

@@ -21,7 +21,7 @@ export interface ProviderCost {
 	items: CostItem[];
 }
 
-const PROVIDERS: CloudProviderSlug[] = ["aws", "gcp", "azure"];
+const PROVIDERS: CloudProviderSlug[] = ["aws", "gcp", "azure", "alibaba"];
 
 /** A provider-default cost input for the inferred stack (counts → resources). */
 function costInputForProvider(stack: InferredStack, provider: CloudProviderSlug) {
