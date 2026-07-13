@@ -96,7 +96,7 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 	if err := byoAppProjectTmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("render byo AppProject: %w", err)
 	}
-	labeled, err := injectCommonLabels(buf.String(), commonLabels)
+	labeled, err := InjectCommonLabels(buf.String(), commonLabels)
 	if err != nil {
 		return "", fmt.Errorf("label byo AppProject: %w", err)
 	}

@@ -14,11 +14,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// injectCommonLabels stamps `labels` onto metadata.labels of every ArgoCD Application/AppProject
+// InjectCommonLabels stamps `labels` onto metadata.labels of every ArgoCD Application/AppProject
 // document in a rendered (post-template) manifest string. It is the single label-injection point
-// shared by all three render paths — static infra Applications (RenderApplications), marketplace/
-// BYO add-on Applications (RenderManagedAddOns), and the hardened BYO AppProject
-// (RenderByoAppProject) — so classification/attribution labels land uniformly (BYOC B1.4).
+// shared by every render path — static infra Applications (RenderApplications), marketplace/BYO
+// add-on Applications (RenderManagedAddOns), the hardened BYO AppProject (RenderByoAppProject), and
+// the gitops-mode add-on seed (provisioner.writeAddOnGitOps) — so classification/attribution labels
+// land uniformly on every Application that reaches the cluster (BYOC B1.4).
 //
 // Guarantees:
 //   - Only documents whose top-level `kind` is Application or AppProject are labelled; every other
@@ -32,7 +33,7 @@ import (
 //
 // An empty/nil `labels` map returns the manifest unchanged (fast path), so callers can pass it
 // unconditionally.
-func injectCommonLabels(manifest string, labels map[string]string) (string, error) {
+func InjectCommonLabels(manifest string, labels map[string]string) (string, error) {
 	if len(labels) == 0 {
 		return manifest, nil
 	}

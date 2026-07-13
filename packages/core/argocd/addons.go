@@ -119,7 +119,7 @@ func RenderManagedAddOns(addons []types.AddOnInstall, commonLabels map[string]st
 		if err != nil {
 			return "", fmt.Errorf("failed to render add-on %s: %w", a.ID, err)
 		}
-		labeled, err := injectCommonLabels(manifest, commonLabels)
+		labeled, err := InjectCommonLabels(manifest, commonLabels)
 		if err != nil {
 			return "", fmt.Errorf("failed to label add-on %s: %w", a.ID, err)
 		}

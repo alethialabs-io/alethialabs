@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -51,7 +52,34 @@ func TestPruneOrphanAddOnManifests(t *testing.T) {
 func TestWriteAddOnGitOpsNoRepo(t *testing.T) {
 	vc := &types.ProjectConfig{}
 	vc.AddOns = []types.AddOnInstall{{ID: "loki", Mode: "gitops"}}
-	if err := writeAddOnGitOps(vc, "", io.Discard, io.Discard); err != nil {
+	if err := writeAddOnGitOps(vc, "", nil, io.Discard, io.Discard); err != nil {
 		t.Errorf("expected no-op without a repo, got %v", err)
+	}
+}
+
+// A gitops-mode add-on seeded into the customer repo must carry the SAME classification/sweep
+// labels as its managed-mode twin (BYOC B1.4) — the app-of-apps syncs it into the cluster as an
+// ArgoCD Application, so a sweeper/selector keying off alethia.io/project-id must match it.
+func TestRenderSeedManifest_StampsClassificationLabels(t *testing.T) {
+	labels := map[string]string{
+		"alethia.io/project-id":     "proj-1",
+		"alethia.io/environment-id": "env-1",
+		"alethia.io/tier":           "prod",
+	}
+	manifest, err := renderSeedManifest(types.AddOnInstall{
+		ID: "loki", Mode: "gitops", ChartRepo: "https://grafana.github.io/helm-charts",
+		Chart: "loki", Version: "6.6.0", Namespace: "logging",
+	}, labels)
+	if err != nil {
+		t.Fatalf("renderSeedManifest: %v", err)
+	}
+	for k, v := range labels {
+		if !strings.Contains(manifest, k+": "+v) {
+			t.Errorf("seeded manifest missing label %q: %q\n%s", k, v, manifest)
+		}
+	}
+	// The marketplace identity label must survive so prune-by-label still recognizes our file.
+	if !strings.Contains(manifest, "alethia.io/managed-by: addon-marketplace") {
+		t.Errorf("seeded manifest lost its managed-by label:\n%s", manifest)
 	}
 }

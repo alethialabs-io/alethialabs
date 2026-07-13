@@ -50,7 +50,7 @@ func RenderApplications(templatesDir string, facts *InfraFacts) (string, error) 
 		}
 
 		// Stamp classification/sweep labels onto the Application/AppProject docs (BYOC B1.4).
-		labeled, err := injectCommonLabels(rendered, facts.Labels)
+		labeled, err := InjectCommonLabels(rendered, facts.Labels)
 		if err != nil {
 			return "", fmt.Errorf("failed to label %s: %w", entry.Name(), err)
 		}

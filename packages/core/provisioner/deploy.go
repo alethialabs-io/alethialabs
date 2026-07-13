@@ -707,7 +707,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				}
 			}
 			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-			if gitErr := writeAddOnGitOps(vc, params.GitAccessToken, stdout, stderr); gitErr != nil {
+			if gitErr := writeAddOnGitOps(vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
 				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 			}
 		}

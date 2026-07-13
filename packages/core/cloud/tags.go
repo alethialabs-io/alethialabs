@@ -72,13 +72,26 @@ func classificationTags(config *types.ProjectConfig, st tagStyle) map[string]str
 // conflicts, keeping a guarded sweeper correctly scoped.
 func buildResourceTags(config *types.ProjectConfig, render func(name, value string) (string, string)) map[string]string {
 	out := make(map[string]string)
-	add := func(name, value string) {
+
+	// Reserve the rendered handle keys up front so NO classification dimension can occupy them.
+	// Emit-last ordering already makes a non-empty handle win, but reserving the KEYS keeps the
+	// handle authoritative even when its value is empty (e.g. an unset ID) or a dimension
+	// charset-folds onto the same key — a guarded sweeper must never key off an attacker-influenced
+	// value. handleKey derives the key deterministically (render's key depends only on the name).
+	handleKey := func(name string) string { k, _ := render(name, "x"); return k }
+	pidKey := handleKey("project-id")
+	eidKey := handleKey("environment-id")
+
+	add := func(name, value string, isHandle bool) {
 		if value == "" {
 			return
 		}
 		k, v := render(name, value)
 		if k == "" || v == "" {
 			return
+		}
+		if !isHandle && (k == pidKey || k == eidKey) {
+			return // a classification dimension may not shadow a reserved sweep-handle key
 		}
 		out[k] = v
 	}
@@ -91,11 +104,11 @@ func buildResourceTags(config *types.ProjectConfig, render func(name, value stri
 	for _, dim := range dims {
 		vals := append([]string(nil), config.Classification[dim]...)
 		sort.Strings(vals)
-		add(dim, strings.Join(vals, "_"))
+		add(dim, strings.Join(vals, "_"), false)
 	}
 
-	add("project-id", config.ID)
-	add("environment-id", config.EnvironmentID)
+	add("project-id", config.ID, true)
+	add("environment-id", config.EnvironmentID, true)
 	return out
 }
 

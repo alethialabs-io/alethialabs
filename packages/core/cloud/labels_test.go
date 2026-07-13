@@ -109,6 +109,25 @@ func TestClassificationLabels_HandleWinsOverCollidingDimension(t *testing.T) {
 	}
 }
 
+// The reserved-key guard keeps the sweep handle authoritative even when its VALUE is empty: an
+// unset config.ID must not let a dimension named "project-id" occupy the handle key (a guarded
+// sweeper must never key off an attacker-influenced value). With an empty ID the handle is simply
+// absent — never shadowed by the dimension.
+func TestClassificationLabels_EmptyIDDoesNotLetDimensionShadowHandle(t *testing.T) {
+	cfg := &types.ProjectConfig{
+		ID:             "", // unset — the handle value is empty
+		EnvironmentID:  "env-1",
+		Classification: map[string][]string{"project-id": {"attacker"}},
+	}
+	got := ClassificationLabels(cfg)
+	if _, present := got["alethia.io/project-id"]; present {
+		t.Errorf("empty ID must leave project-id absent, not filled by a dimension: %v", got)
+	}
+	if got["alethia.io/environment-id"] != "env-1" {
+		t.Errorf("environment-id handle should still be present: %v", got)
+	}
+}
+
 // Pathological dimension names/values (uppercase, spaces, unicode, symbols, over-length) must all
 // fold to valid k8s labels — never produce an invalid key/value that would make ArgoCD reject the
 // Application at apply time.
