@@ -16,6 +16,7 @@ export * from "./project-components";
 export * from "./project-environments";
 export * from "./promotions";
 export * from "./drift";
+export * from "./probes";
 export * from "./security";
 export * from "./runners";
 export * from "./runner-bootstrap-tokens";
