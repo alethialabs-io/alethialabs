@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"net"
 	"reflect"
 	"testing"
 
@@ -92,6 +93,106 @@ func TestHetznerProvider_ProviderTfvars_NoBuckets(t *testing.T) {
 	// The endpoint/region are always emitted (they carry safe defaults).
 	if tfvars["hetzner_s3_endpoint"] == nil || tfvars["hetzner_s3_region"] == nil {
 		t.Errorf("endpoint/region should still be emitted")
+	}
+}
+
+// TestHetznerProvider_ProviderTfvars_NodeTypes verifies the default node types are the
+// currently-orderable amd64 cpx22 for BOTH pools (cax11 ARM is capacity-unreliable, cpx11
+// is retired), that the control-plane type FOLLOWS the resolved worker type so a single
+// instance_types override moves both pools together, and that arch is derived per type.
+func TestHetznerProvider_ProviderTfvars_NodeTypes(t *testing.T) {
+	p := &hetznerProvider{}
+
+	// Default: both pools cpx22 (amd64). An amd64 default keeps need_arm64=false in the
+	// template (no arm64 Talos image built).
+	def := p.ProviderTfvars(baseHetznerConfig())
+	if def["worker_server_type"] != "cpx22" || def["control_plane_server_type"] != "cpx22" {
+		t.Errorf("default node types = worker %v / cp %v, want cpx22 / cpx22",
+			def["worker_server_type"], def["control_plane_server_type"])
+	}
+	if def["worker_arch"] != "amd64" || def["control_plane_arch"] != "amd64" {
+		t.Errorf("default arch = worker %v / cp %v, want amd64 / amd64",
+			def["worker_arch"], def["control_plane_arch"])
+	}
+
+	// Override amd64: a single instance_types pin moves the control plane too (no forced
+	// arm64 image build for a hard-coded arm CP).
+	amd := baseHetznerConfig()
+	amd.Cluster.InstanceTypes = []string{"cpx32"}
+	ov := p.ProviderTfvars(amd)
+	if ov["worker_server_type"] != "cpx32" || ov["control_plane_server_type"] != "cpx32" {
+		t.Errorf("amd64 override = worker %v / cp %v, want cpx32 / cpx32",
+			ov["worker_server_type"], ov["control_plane_server_type"])
+	}
+	if ov["worker_arch"] != "amd64" || ov["control_plane_arch"] != "amd64" {
+		t.Errorf("amd64 override arch = worker %v / cp %v, want amd64 / amd64",
+			ov["worker_arch"], ov["control_plane_arch"])
+	}
+
+	// Override ARM: the override still works both ways — cax11 puts BOTH pools on arm64.
+	arm := baseHetznerConfig()
+	arm.Cluster.InstanceTypes = []string{"cax11"}
+	av := p.ProviderTfvars(arm)
+	if av["worker_server_type"] != "cax11" || av["control_plane_server_type"] != "cax11" {
+		t.Errorf("arm override = worker %v / cp %v, want cax11 / cax11",
+			av["worker_server_type"], av["control_plane_server_type"])
+	}
+	if av["worker_arch"] != "arm64" || av["control_plane_arch"] != "arm64" {
+		t.Errorf("arm override arch = worker %v / cp %v, want arm64 / arm64",
+			av["worker_arch"], av["control_plane_arch"])
+	}
+}
+
+// TestHetznerProvider_ProviderTfvars_CIDRs verifies pod_cidr and service_cidr are
+// non-overlapping SUBNETS of network_cidr (required by Cilium native-routing over the
+// Hetzner private network — disjoint CIDRs break cross-node pod->apiserver routing).
+// It checks the default network AND a custom network_cidr override, so the derivation
+// tracks network_cidr rather than emitting the old hard-coded 10.244/10.96 constants.
+func TestHetznerProvider_ProviderTfvars_CIDRs(t *testing.T) {
+	p := &hetznerProvider{}
+
+	for _, network := range []string{"10.0.0.0/16", "172.16.0.0/16", "10.10.0.0/16"} {
+		cfg := baseHetznerConfig()
+		cfg.Network.CIDRBlock = network
+		tf := p.ProviderTfvars(cfg)
+
+		if tf["network_cidr"] != network {
+			t.Fatalf("network_cidr = %v, want %v", tf["network_cidr"], network)
+		}
+		pod, _ := tf["pod_cidr"].(string)
+		svc, _ := tf["service_cidr"].(string)
+
+		_, netNet, err := net.ParseCIDR(network)
+		if err != nil {
+			t.Fatalf("bad test network %q: %v", network, err)
+		}
+		for name, child := range map[string]string{"pod_cidr": pod, "service_cidr": svc} {
+			ip, childNet, err := net.ParseCIDR(child)
+			if err != nil {
+				t.Fatalf("%s %q unparseable: %v", name, child, err)
+			}
+			// child ⊂ parent: child prefix >= parent prefix AND child network address ∈ parent.
+			cOnes, _ := childNet.Mask.Size()
+			pOnes, _ := netNet.Mask.Size()
+			if cOnes < pOnes || !netNet.Contains(ip) {
+				t.Errorf("network %s: %s %s is not a subnet of network_cidr", network, name, child)
+			}
+		}
+		// pod and service must not overlap each other.
+		_, podNet, _ := net.ParseCIDR(pod)
+		_, svcNet, _ := net.ParseCIDR(svc)
+		if podNet.Contains(svcNet.IP) || svcNet.Contains(podNet.IP) {
+			t.Errorf("network %s: pod_cidr %s and service_cidr %s overlap", network, pod, svc)
+		}
+	}
+
+	// Spot-check the canonical default split documented in checks.tf.
+	def := p.ProviderTfvars(baseHetznerConfig())
+	if def["pod_cidr"] != "10.0.128.0/17" {
+		t.Errorf("default pod_cidr = %v, want 10.0.128.0/17", def["pod_cidr"])
+	}
+	if def["service_cidr"] != "10.0.96.0/19" {
+		t.Errorf("default service_cidr = %v, want 10.0.96.0/19", def["service_cidr"])
 	}
 }
 
