@@ -101,3 +101,15 @@ variable "subnet_id" {
   type        = string
   description = "Subnet ID for private access (delegated subnet)"
 }
+
+# BYOC B4.1: source CIDRs allowed to reach the Flexible Server via public-endpoint
+# firewall rules. Empty (default) creates NO firewall rules — the server stays private
+# (VNet-integrated, public access disabled) exactly as before. Non-empty adds one
+# allow rule per CIDR on the server's public endpoint. NB: Azure firewall rules apply
+# to the PUBLIC endpoint only and are mutually exclusive with delegated-subnet-only
+# private access, so this knob is intended for public-access DB topologies.
+variable "allowed_cidrs" {
+  type        = list(string)
+  description = "Source CIDRs allow-listed on the DB public endpoint (one firewall rule each). Empty = no rules, server stays private (unchanged)."
+  default     = []
+}

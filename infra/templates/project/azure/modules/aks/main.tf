@@ -37,6 +37,27 @@ resource "azurerm_kubernetes_cluster" "this" {
   # Kubernetes RBAC (AVD-AZU-0042) — safe to enable unconditionally.
   role_based_access_control_enabled = true
 
+  # AAD-integrated cluster-admin (BYOC B4.1). Rendered only when Entra admin group
+  # object IDs are supplied — an empty list leaves the block off so the cluster keeps
+  # plain Kubernetes RBAC (unchanged). azurerm 4.x dropped the `managed`/`azuread`
+  # args: AAD RBAC is always managed, so the block carries only admin_group_object_ids.
+  dynamic "azure_active_directory_role_based_access_control" {
+    for_each = length(var.admin_group_object_ids) > 0 ? [1] : []
+    content {
+      admin_group_object_ids = var.admin_group_object_ids
+    }
+  }
+
+  # API-server IP allow-list (BYOC B4.1, AVD-AZU-0041). Rendered only when authorized
+  # ranges are supplied — an empty list leaves the block off so the API server stays
+  # open to all source IPs (the pre-existing customer-configurable default).
+  dynamic "api_server_access_profile" {
+    for_each = length(var.authorized_ip_ranges) > 0 ? [1] : []
+    content {
+      authorized_ip_ranges = var.authorized_ip_ranges
+    }
+  }
+
   # --- Default node pool --------------------------------------------------
   default_node_pool {
     name                 = "default"

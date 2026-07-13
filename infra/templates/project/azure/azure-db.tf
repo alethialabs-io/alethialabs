@@ -19,5 +19,8 @@ module "azure_db" {
   iam_auth              = var.azure_db_iam_auth
   subnet_id             = var.provision_vnet ? module.vnet[0].subnet_id : var.vnet_id
 
+  # BYOC B4.1 DB CIDR allow-list (default-empty = behavior-preserving)
+  allowed_cidrs = var.azure_db_allowed_cidrs
+
   tags = local.azure_default_tags
 }
