@@ -59,7 +59,7 @@ import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 
 /** Clouds with full provisioning templates + a conversion mapping — the only valid duplicate targets. */
-const TARGET_PROVIDERS: CloudProviderSlug[] = ["aws", "gcp", "azure"];
+const TARGET_PROVIDERS: CloudProviderSlug[] = ["aws", "gcp", "azure", "alibaba"];
 
 /** Maps a design category to its label + the provider-metadata field naming that cloud's service. */
 const CATEGORY_SERVICE: Record<
