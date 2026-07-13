@@ -100,13 +100,24 @@ function getKeyring(): Keyring {
 	keys.set(activeKid, activeKey);
 
 	// Retired keys: every ALETHIA_CRED_ENCRYPTION_KEY_<kid>. The active kid always wins if a retired
-	// var reuses it (defensive — a retired key should never share the active kid).
+	// var reuses it (defensive — a retired key should never share the active kid). A MALFORMED retired
+	// key is skipped-with-warning rather than thrown: it must not poison the whole ring and take down
+	// the valid ACTIVE encrypt/decrypt path (ciphertext under that kid will still fail with a clear
+	// per-row error at decrypt time). The warning names only the env var, never key material.
 	for (const [name, value] of Object.entries(process.env)) {
 		if (!name.startsWith(RETIRED_KEY_PREFIX)) continue;
 		const kid = name.slice(RETIRED_KEY_PREFIX.length);
 		if (!kid || kid === activeKid) continue;
 		if (!value || !value.trim()) continue;
-		keys.set(kid, decodeKey(value, name));
+		try {
+			keys.set(kid, decodeKey(value, name));
+		} catch {
+			// eslint-disable-next-line no-console
+			console.warn(
+				`[secrets] ignoring malformed retired encryption key ${name} (must decode to ${KEY_BYTES} bytes); ` +
+					`ciphertext under kid "${kid}" will not be decryptable until it is fixed.`,
+			);
+		}
 	}
 
 	cachedKeyring = { activeKid, activeKey, keys };
@@ -157,16 +168,42 @@ export function encryptSecret(fields: Record<string, string>): EncryptedSecret {
 }
 
 /**
- * Decrypts an envelope back into the map of secret fields. Selects the key by the envelope's `kid`
- * from the keyring (throws a clear error if that kid isn't in the ring); a legacy envelope with NO
- * `kid` decrypts under the active ALETHIA_CRED_ENCRYPTION_KEY (that's the key it was written under).
- * Throws on tamper (bad auth tag).
+ * Attempts to decrypt an envelope under one key. Returns the fields on success, or `null` if the
+ * GCM auth tag doesn't verify (wrong key) or the plaintext isn't the expected JSON. GCM's
+ * authentication guarantees a wrong key can NEVER yield a false-positive result — so this is the
+ * safe primitive for "try each key in the ring" without risk of returning garbage.
+ */
+function tryDecryptWith(
+	key: Buffer,
+	envelope: EncryptedSecret,
+): Record<string, string> | null {
+	try {
+		const decipher = createDecipheriv(ALGO, key, Buffer.from(envelope.iv, "base64"));
+		decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
+		const plaintext = Buffer.concat([
+			decipher.update(Buffer.from(envelope.data, "base64")),
+			decipher.final(),
+		]);
+		return JSON.parse(plaintext.toString("utf8")) as Record<string, string>;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Decrypts an envelope back into the map of secret fields. A `kid`-stamped envelope decrypts under
+ * exactly that ring key (throws a clear error if the kid isn't in the ring, or if it fails to verify).
+ * A LEGACY envelope with NO `kid` is tried against the active key first and then every other ring key
+ * — it was written under whatever ALETHIA_CRED_ENCRYPTION_KEY was current at the time, which may since
+ * have been moved into the ring as a retired key. GCM's auth tag makes trying-all-keys safe (only the
+ * correct key authenticates), and it removes the "rotate before re-encrypting legacy rows" footgun: a
+ * premature active-key rotation no longer strands no-kid rows as long as the old key stays in the ring.
+ * Throws on tamper / when no key decrypts.
  */
 export function decryptSecret(
 	envelope: EncryptedSecret,
 ): Record<string, string> {
 	const ring = getKeyring();
-	let key: Buffer;
 	if (envelope.kid != null) {
 		const found = ring.keys.get(envelope.kid);
 		if (!found) {
@@ -176,21 +213,24 @@ export function decryptSecret(
 					`${envelope.kid} (base64, 32 bytes) or as the active ALETHIA_CRED_ENCRYPTION_KEY.`,
 			);
 		}
-		key = found;
-	} else {
-		key = ring.activeKey;
+		const fields = tryDecryptWith(found, envelope);
+		if (fields === null) {
+			throw new Error(
+				`Failed to decrypt secret under kid "${envelope.kid}" — the ciphertext is tampered or the ` +
+					"configured key for that kid is wrong.",
+			);
+		}
+		return fields;
 	}
-	const decipher = createDecipheriv(
-		ALGO,
-		key,
-		Buffer.from(envelope.iv, "base64"),
+	// Legacy no-kid: try the active key first, then every other ring key.
+	for (const key of [ring.activeKey, ...ring.keys.values()]) {
+		const fields = tryDecryptWith(key, envelope);
+		if (fields !== null) return fields;
+	}
+	throw new Error(
+		"Could not decrypt a legacy (no-kid) secret with any key in the keyring — the key it was " +
+			"written under is missing from the ring (add it, then re-run `db:reencrypt`).",
 	);
-	decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
-	const plaintext = Buffer.concat([
-		decipher.update(Buffer.from(envelope.data, "base64")),
-		decipher.final(),
-	]);
-	return JSON.parse(plaintext.toString("utf8")) as Record<string, string>;
 }
 
 /**

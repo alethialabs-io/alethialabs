@@ -180,4 +180,31 @@ describe("re-encrypt transforms over in-memory rows", () => {
 	it("reencryptSealedString passes null through", () => {
 		expect(reencryptSealedString(null).changed).toBe(false);
 	});
+
+	it("decrypts a legacy no-kid envelope via a RETIRED ring key (rotation-ordering footgun fixed)", () => {
+		resetKeyringCache();
+		// A no-kid ciphertext written under a key that has since been rotated OUT of active and moved
+		// to the retired ring (kid "1"). The active key ("2") can't decrypt it; the try-all-ring-keys
+		// fallback must find the retired key. This is exactly the scenario that previously stranded
+		// legacy rows when an operator rotated the active key before running db:reencrypt.
+		const legacy = seal(RETIRED_KEY, { token: "legacy-secret" }); // no kid stamped
+		expect(legacy.kid).toBeUndefined();
+		expect(decryptSecret(legacy)).toEqual({ token: "legacy-secret" });
+	});
+
+	it("skips a malformed RETIRED key instead of poisoning the ring — the active path still works", () => {
+		const badVar = "ALETHIA_CRED_ENCRYPTION_KEY_9";
+		process.env[badVar] = "not-valid-base64-32-bytes-!!!";
+		resetKeyringCache();
+		try {
+			// The bad retired var must be skipped-with-warning, not throw at ring build; the valid
+			// ACTIVE encrypt/decrypt path is unaffected.
+			const env = encryptSecret({ token: "still-works" });
+			expect(env.kid).toBe(ACTIVE_KID);
+			expect(decryptSecret(env)).toEqual({ token: "still-works" });
+		} finally {
+			delete process.env[badVar];
+			resetKeyringCache();
+		}
+	});
 });
