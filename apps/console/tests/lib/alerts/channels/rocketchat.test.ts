@@ -2,19 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // RocketChat channel sender (lib/alerts/channels/rocketchat.ts). Mocked boundary: stub
-// decryptSecret (so we don't need a real crypto key) and global fetch; assert the POSTed
-// {text, attachments} payload — severity→colour, field building, optional link, the test
-// (verify) synthetic context, and the missing-URL / non-2xx error paths.
+// decryptSecret (so we don't need a real crypto key) and the SSRF-guarded network sink
+// safeFetch (the sender's only outbound call); assert the POSTed {text, attachments}
+// payload — severity→colour, field building, optional link, the test (verify) synthetic
+// context, and the missing-URL / non-2xx error paths. (The SSRF guard is covered by
+// tests/unit/ssrf-guard.test.ts.)
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/crypto/secrets", () => ({ decryptSecret: vi.fn() }));
+vi.mock("@/lib/net/ssrf-guard", () => ({ safeFetch: vi.fn() }));
 
 import { rocketchatSender } from "@/lib/alerts/channels/rocketchat";
 import { decryptSecret } from "@/lib/crypto/secrets";
+import { safeFetch } from "@/lib/net/ssrf-guard";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertEventContext } from "@/types/jsonb.types";
+
+/** The mocked outbound sink — the sender POSTs through safeFetch, not global fetch. */
+const fetchMock = vi.mocked(safeFetch);
 
 const WEBHOOK = "https://chat.example.com/hooks/abc/xyz";
 
@@ -35,17 +42,14 @@ function lastBody(): {
 		title_link?: string;
 	}[];
 } {
-	const call = vi.mocked(fetch).mock.calls.at(-1);
-	if (!call) throw new Error("fetch was not called");
-	return JSON.parse((call[1] as RequestInit).body as string);
+	const call = fetchMock.mock.calls.at(-1);
+	if (!call) throw new Error("safeFetch was not called");
+	return JSON.parse(call[1]?.body as string);
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockResolvedValue({ ok: true, status: 200, statusText: "OK" } as never),
-	);
+	fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" } as never);
 });
 
 describe("rocketchatSender.send", () => {
@@ -59,8 +63,8 @@ describe("rocketchatSender.send", () => {
 
 		await rocketchatSender.send(channel, ctx);
 
-		expect(fetch).toHaveBeenCalledTimes(1);
-		const [url, init] = vi.mocked(fetch).mock.calls[0];
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchMock.mock.calls[0];
 		expect(url).toBe(WEBHOOK);
 		expect(init?.method).toBe("POST");
 		expect((init?.headers as Record<string, string>)["content-type"]).toBe(
@@ -159,7 +163,7 @@ describe("rocketchatSender.send", () => {
 		await expect(
 			rocketchatSender.send(channel, { title: "t" }),
 		).rejects.toThrow("RocketChat channel has no webhook URL configured");
-		expect(fetch).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it("throws (without calling fetch) when the channel secret is null", async () => {
@@ -167,11 +171,11 @@ describe("rocketchatSender.send", () => {
 		await expect(
 			rocketchatSender.send(channel, { title: "t" }),
 		).rejects.toThrow("no webhook URL configured");
-		expect(fetch).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it("surfaces a non-2xx response as an error carrying status + statusText", async () => {
-		vi.mocked(fetch).mockResolvedValue({
+		fetchMock.mockResolvedValue({
 			ok: false,
 			status: 503,
 			statusText: "Service Unavailable",
@@ -188,8 +192,8 @@ describe("rocketchatSender.verify", () => {
 		const channel = channelWith({ url: WEBHOOK });
 		await rocketchatSender.verify(channel);
 
-		expect(fetch).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(fetch).mock.calls[0][0]).toBe(WEBHOOK);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK);
 		const body = lastBody();
 		expect(body.text).toBe("*Test alert from Alethia*");
 		// info severity → grey
