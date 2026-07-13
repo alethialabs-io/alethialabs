@@ -1,0 +1,39 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "_comment": "HCLOUD-NET-001 hard fail: a firewall rule opens SSH (:22) to 0.0.0.0/0. Talos runs no SSH daemon, so world-open 22 is always a misconfiguration and blocks. The servers themselves are firewalled (HCLOUD-FW-001 passes), isolating the failure to the SSH exposure.",
+  "resource_changes": [
+    {
+      "address": "hcloud_firewall.this",
+      "mode": "managed",
+      "type": "hcloud_firewall",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "demo",
+          "rule": [
+            { "description": "SSH", "direction": "in", "protocol": "tcp", "port": "22", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Kubernetes API server", "direction": "in", "protocol": "tcp", "port": "6443", "source_ips": ["0.0.0.0/0", "::/0"] }
+          ]
+        },
+        "after_unknown": { "rule": [{}, {}] }
+      }
+    },
+    {
+      "address": "hcloud_server.control_plane",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "control_plane",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "demo-cp-1", "server_type": "cpx31", "location": "nbg1", "firewall_ids": [123] },
+        "after_unknown": { "public_net": true, "network": true }
+      }
+    }
+  ]
+}

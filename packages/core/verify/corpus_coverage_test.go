@@ -27,6 +27,9 @@ func declaredControlIDs() []string {
 	for _, c := range azureControls(nil) {
 		ids = append(ids, c.ID)
 	}
+	for _, c := range hetznerControls(nil) {
+		ids = append(ids, c.ID)
+	}
 	return ids
 }
 

@@ -23,5 +23,9 @@
   "all_unknown_provider.json": { "verdict": "not_evaluable", "controls": ["SCOPE-001"] },
   "aws_unknown_mixed.json": { "verdict": "not_evaluable", "controls": ["SCOPE-001"] },
   "alicloud_not_evaluable.json": { "verdict": "not_evaluable", "controls": ["SCOPE-001"] },
-  "hetzner_utility_pass.json": { "verdict": "pass", "controls": [] }
+  "hetzner_utility_pass.json": { "verdict": "pass", "controls": [] },
+  "hetzner_pass.json": { "verdict": "pass", "controls": ["HCLOUD-FW-001", "HCLOUD-NET-001"] },
+  "hetzner_shipped_warn.json": { "verdict": "warn", "controls": ["HCLOUD-NET-001"] },
+  "hetzner_fail_no_firewall.json": { "verdict": "fail", "controls": ["HCLOUD-FW-001"] },
+  "hetzner_fail_open_ssh.json": { "verdict": "fail", "controls": ["HCLOUD-NET-001"] }
 }

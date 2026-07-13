@@ -1,0 +1,69 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "_comment": "FAITHFUL mirror of the CURRENTLY SHIPPED Hetzner template's plan shape (the ONLY cloud with a real nightly apply). Servers carry firewall_ids = [hcloud_firewall.this.id] computed until apply (servers.tf lines 36 & 71 -> after_unknown.firewall_ids = [true]); the firewall opens Talos apid 50000/50001 and the Kubernetes API 6443 to 0.0.0.0/0 + ::/0 and confines everything else to the private CIDR (network.tf lines 75-120). PROOF OBLIGATION: under the new controls this MUST be warns-only with ZERO hard fails (else tonight's nightly apply hard-blocks at the gate). HCLOUD-FW-001 passes (firewall attached, id computed); HCLOUD-NET-001 warns x3 on the world-open management ports (open by design today) -> verdict warn.",
+  "resource_changes": [
+    {
+      "address": "hcloud_network.this",
+      "mode": "managed",
+      "type": "hcloud_network",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "demo", "ip_range": "10.100.0.0/16" },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "hcloud_firewall.this",
+      "mode": "managed",
+      "type": "hcloud_firewall",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "demo",
+          "rule": [
+            { "description": "Talos apid", "direction": "in", "protocol": "tcp", "port": "50000", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Talos apid (trustd)", "direction": "in", "protocol": "tcp", "port": "50001", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Kubernetes API server", "direction": "in", "protocol": "tcp", "port": "6443", "source_ips": ["0.0.0.0/0", "::/0"] },
+            { "description": "Intra-cluster TCP (private network)", "direction": "in", "protocol": "tcp", "port": "any", "source_ips": ["10.100.0.0/16"] },
+            { "description": "Intra-cluster UDP (private network)", "direction": "in", "protocol": "udp", "port": "any", "source_ips": ["10.100.0.0/16"] },
+            { "description": "Intra-cluster ICMP (private network)", "direction": "in", "protocol": "icmp", "source_ips": ["10.100.0.0/16"] }
+          ]
+        },
+        "after_unknown": { "rule": [{}, {}, {}, {}, {}, {}] }
+      }
+    },
+    {
+      "address": "hcloud_server.control_planes[\"demo-cp-1\"]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "control_planes",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "demo-cp-1", "server_type": "cpx31", "location": "nbg1" },
+        "after_unknown": { "firewall_ids": [true], "public_net": true, "network": true }
+      }
+    },
+    {
+      "address": "hcloud_server.workers[\"demo-worker-1\"]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "workers",
+      "provider_name": "registry.terraform.io/hetznercloud/hcloud",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "demo-worker-1", "server_type": "cpx31", "location": "nbg1" },
+        "after_unknown": { "firewall_ids": [true], "public_net": true, "network": true }
+      }
+    }
+  ]
+}
