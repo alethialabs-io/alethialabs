@@ -13,14 +13,13 @@
 //   3. Connection-sweeper redundant probing behind a claim CAS on `last_tested_at`
 //      (lib/cloud-providers/sweep.ts `claimDueConnection`) — one replica probes per TTL window.
 //
-// NOTE: `uq_jobs_active_drift_per_env` is authored in lib/db/schema/jobs.ts but NOT yet generated into
-// a migration (the orchestrator db:generates it). This suite creates it by hand in `beforeAll` so the
-// ON CONFLICT arbiter exists against an ephemeral/dev DB migrated from the current journal.
+// `uq_jobs_active_drift_per_env` (the ON CONFLICT arbiter) is created by migration 0087, which the
+// integration harness applies before this suite runs — so these tests exercise the real migrated index.
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 import postgres from "postgres";
-import { afterEach, beforeAll, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { claimDueConnection } from "@/lib/cloud-providers/sweep";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -40,15 +39,6 @@ const scaleLockKeySql = (provider: string) =>
 
 describeIfDb("multi-replica hardening — cross-replica double-fire guards", () => {
 	// Ensure the not-yet-generated partial-unique index exists (see file header). Idempotent.
-	beforeAll(async () => {
-		await getServiceDb().execute(sql`
-			CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_drift_per_env
-			  ON public.jobs (environment_id)
-			  WHERE job_type = 'DETECT_DRIFT'
-			    AND status IN ('QUEUED', 'CLAIMED', 'PROCESSING')
-		`);
-	});
-
 	const seededProjects: string[] = [];
 	const seededCloudIds: string[] = [];
 

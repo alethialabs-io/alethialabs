@@ -193,8 +193,11 @@ export async function insertFleetAction(record: FleetActionRecord): Promise<void
  * and the AI budget uses the two-int overload (a separate lock space entirely).
  *
  * The tx holds one pooled connection across this pool's create calls for the tick (low-frequency, one
- * provider). `apply`'s own writes (create/drain/retire/recordAction) run on their own connections —
- * the tx exists solely to hold the lock, so nested pool reads inside `apply` never self-deadlock.
+ * provider). `apply`'s own writes (create/drain/retire/recordAction) draw a SEPARATE connection from
+ * the same pool. This therefore requires `ALETHIA_DB_POOL_MAX >= 2` (the default is 10): at a pool
+ * size of 1 the lock tx pins the only connection and `apply`'s nested query can never acquire one →
+ * the scaler tick would wedge. Any realistic deployment runs a pool of several; a size-1 pool is a
+ * pathological config and would starve much of the app besides the scaler.
  */
 export async function tryFleetScaleLock(
 	provider: string,
