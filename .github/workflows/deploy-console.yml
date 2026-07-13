@@ -556,12 +556,12 @@ jobs:
             echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
             echo "COMPOSE_PROFILES=admin"
             # Platform-operator plane (Enterprise onboarding, apps/admin /orgs → console internal
-            # routes): dedicated provisioning bearer (NOT the cron secret) + the system-user inviter +
-            # the act-capable operator allowlist (distinct from SUPPORT_STAFF_EMAILS) + the Stripe
-            # Product for enterprise line items. Unset → the plane is inert / read-only.
+            # routes). The dedicated provisioning bearer is [auto] (bootstrap-secrets.sh, NOT the cron
+            # secret); the operator + system-user are the maintainer's own account (const, not
+            # secrets); the Stripe Product for enterprise line items comes from the vault ([ext]).
             emit PLATFORM_PROVISION_SECRET
-            emit PLATFORM_SYSTEM_USER_EMAIL
-            emit PLATFORM_ADMIN_EMAILS
+            echo "PLATFORM_ADMIN_EMAILS=borislav@alethialabs.io"
+            echo "PLATFORM_SYSTEM_USER_EMAIL=borislav@alethialabs.io"
             emit STRIPE_ENTERPRISE_PRODUCT_ID
             echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
             echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
