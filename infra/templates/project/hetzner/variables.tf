@@ -11,6 +11,17 @@ variable "environment" {
   type        = string
 }
 
+# Per-cloud classification labels emitted by the console (packages/core/cloud/tags.go, B1.2): the
+# project's frozen classification dimensions plus the mandatory `alethia_project-id` /
+# `alethia_environment-id` sweep handles (K8s/Talos label charset — `_`-namespaced, alnum bounds).
+# Merged into local.default_labels (applied to every hcloud resource) and the CSI driver's
+# volumeExtraLabels; the platform base labels always WIN a key collision (they sit on the merge RHS).
+variable "classification_tags" {
+  description = "Classification + sweep-handle labels to stamp on every hcloud resource + dynamically-provisioned volume. Platform base labels override on conflict."
+  type        = map(string)
+  default     = {}
+}
+
 variable "region" {
   description = "Hetzner Cloud location (e.g. fsn1, nbg1, hel1, ash, hil)."
   type        = string

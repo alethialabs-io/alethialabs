@@ -84,3 +84,28 @@ check "external_secrets_identity_present" {
     error_message = "provision_aks is true but the external-secrets managed identity or Key Vault URI is missing — the ESO ClusterSecretStore cannot authenticate."
   }
 }
+
+# Platform base tags must WIN over classification_tags: for every base key, the merged
+# azure_default_tags must carry the base value (never a classification override). Guards the merge
+# direction so a renamed classification dimension can never shadow platform bookkeeping.
+check "classification_base_tags_win" {
+  assert {
+    condition = alltrue([
+      for k, v in local.azure_base_tags : local.azure_default_tags[k] == v
+    ])
+    error_message = "A classification_tags entry overrode a platform base tag in azure_default_tags; base tags must sit on the merge RHS and win."
+  }
+}
+
+# No classification tag may be silently dropped: every key in var.classification_tags must survive
+# into the merged map verbatim, unless a platform base key legitimately overrode it. This lands the
+# mandatory alethia:project-id / alethia:environment-id sweep handles on the tagged resources.
+check "classification_tags_present" {
+  assert {
+    condition = alltrue([
+      for k, v in var.classification_tags :
+      local.azure_default_tags[k] == v || contains(keys(local.azure_base_tags), k)
+    ])
+    error_message = "A classification_tags entry was dropped from azure_default_tags; classification/sweep-handle tags must reach tagged resources."
+  }
+}

@@ -45,3 +45,28 @@ check "external_secrets_rrsa_role_present" {
     error_message = "Native KMS secrets exist on an ACK cluster but the external-secrets RRSA role reported no ARN — the ESO ClusterSecretStore cannot authenticate."
   }
 }
+
+# Platform base tags must WIN over classification_tags: for every base key, the merged common_tags
+# must carry the base value (never a classification override). Guards the merge direction so a
+# renamed classification dimension can never shadow platform bookkeeping.
+check "classification_base_tags_win" {
+  assert {
+    condition = alltrue([
+      for k, v in local.common_base_tags : local.common_tags[k] == v
+    ])
+    error_message = "A classification_tags entry overrode a platform base tag in common_tags; base tags must sit on the merge RHS and win."
+  }
+}
+
+# No classification tag may be silently dropped: every key in var.classification_tags must survive
+# into the merged map verbatim, unless a platform base key legitimately overrode it. This lands the
+# mandatory alethia:project-id / alethia:environment-id sweep handles on the tagged resources.
+check "classification_tags_present" {
+  assert {
+    condition = alltrue([
+      for k, v in var.classification_tags :
+      local.common_tags[k] == v || contains(keys(local.common_base_tags), k)
+    ])
+    error_message = "A classification_tags entry was dropped from common_tags; classification/sweep-handle tags must reach tagged resources."
+  }
+}

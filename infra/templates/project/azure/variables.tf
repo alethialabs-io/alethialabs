@@ -22,6 +22,17 @@ variable "project_name" {
   description = "Name of the project / client / product to be used in naming convention"
 }
 
+# Per-cloud classification tags emitted by the console (packages/core/cloud/tags.go, B1.2): the
+# project's frozen classification dimensions plus the mandatory `alethia:project-id` /
+# `alethia:environment-id` sweep handles (colon-namespaced keys). Merged into local.azure_default_tags
+# so it lands on every taggable resource; the platform base tags always WIN a key collision (they sit
+# on the merge RHS).
+variable "classification_tags" {
+  type        = map(string)
+  description = "Classification + sweep-handle tags to stamp on every taggable resource. Platform base tags override on conflict."
+  default     = {}
+}
+
 #########################################################################
 ##                   Network Variables                                 ##
 #########################################################################

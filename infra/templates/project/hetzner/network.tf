@@ -19,9 +19,7 @@ locals {
 resource "hcloud_network" "this" {
   name     = local.cluster_name
   ip_range = var.network_cidr
-  labels = {
-    cluster = local.cluster_name
-  }
+  labels   = local.default_labels
 }
 
 resource "hcloud_network_subnet" "nodes" {
@@ -40,10 +38,7 @@ resource "hcloud_primary_ip" "control_plane_ipv4" {
   datacenter  = local.region_datacenter
   type        = "ipv4"
   auto_delete = false
-  labels = {
-    cluster = local.cluster_name
-    role    = "control-plane"
-  }
+  labels      = merge(local.default_labels, { role = "control-plane" })
 }
 
 resource "hcloud_primary_ip" "worker_ipv4" {
@@ -52,10 +47,7 @@ resource "hcloud_primary_ip" "worker_ipv4" {
   datacenter  = local.region_datacenter
   type        = "ipv4"
   auto_delete = false
-  labels = {
-    cluster = local.cluster_name
-    role    = "worker"
-  }
+  labels      = merge(local.default_labels, { role = "worker" })
 }
 
 locals {
@@ -67,10 +59,8 @@ locals {
 # Firewall: allow Talos apid (50000/50001), the Kubernetes API (6443), and all
 # intra-cluster traffic on the private network.
 resource "hcloud_firewall" "this" {
-  name = local.cluster_name
-  labels = {
-    cluster = local.cluster_name
-  }
+  name   = local.cluster_name
+  labels = local.default_labels
 
   rule {
     description = "Talos apid"

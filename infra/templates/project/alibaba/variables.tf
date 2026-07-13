@@ -10,6 +10,17 @@ variable "project_name" {
   description = "Name of the project / client / product, used in the naming convention"
 }
 
+# Per-cloud classification tags emitted by the console (packages/core/cloud/tags.go, B1.2): the
+# project's frozen classification dimensions plus the mandatory `alethia:project-id` /
+# `alethia:environment-id` sweep handles (colon-namespaced keys). Merged into local.common_tags so
+# it lands on every taggable resource; the platform base tags always WIN a key collision (they sit
+# on the merge RHS).
+variable "classification_tags" {
+  type        = map(string)
+  description = "Classification + sweep-handle tags to stamp on every taggable resource. Platform base tags override on conflict."
+  default     = {}
+}
+
 variable "region" {
   type        = string
   description = "Alibaba Cloud region to deploy resources into (e.g. cn-hangzhou, ap-southeast-1)"
