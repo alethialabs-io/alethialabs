@@ -31,6 +31,10 @@ locals {
       source       = "${path.module}/../connector/azure/alethia-azure-setup.sh"
       content_type = "text/x-shellscript"
     }
+    "alethia-alibaba-setup.sh" = {
+      source       = "${path.module}/../connector/alibaba/alethia-alibaba-setup.sh"
+      content_type = "text/x-shellscript"
+    }
   }
 }
 

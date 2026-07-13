@@ -26,6 +26,8 @@ var (
 	ErrAwsNotFound = errors.New("aws CLI not found on PATH")
 	// ErrAzNotFound is returned when the az CLI is not on PATH.
 	ErrAzNotFound = errors.New("az CLI not found on PATH")
+	// ErrAliyunNotFound is returned when the aliyun CLI is not on PATH.
+	ErrAliyunNotFound = errors.New("aliyun CLI not found on PATH")
 )
 
 // runStreaming runs a command, mirroring its combined output to stdout while

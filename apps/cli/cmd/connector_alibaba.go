@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -18,8 +19,10 @@ import (
 )
 
 var (
-	connectorAlibabaRegion string
-	connectorAlibabaDir    string
+	connectorAlibabaRegion    string
+	connectorAlibabaDir       string
+	connectorAlibabaManual    bool
+	connectorAlibabaTerraform bool
 )
 
 const defaultAlibabaRegion = "cn-hangzhou"
@@ -29,17 +32,24 @@ var connectorAlibabaCmd = &cobra.Command{
 	Short: "Connect an Alibaba Cloud account",
 	Long: `Connect an Alibaba Cloud account using keyless AssumeRoleWithOIDC.
 
-Alethia is its own OIDC issuer. You apply a small OpenTofu/Terraform module in your
-Alibaba account that creates a RAM OIDC provider trusting Alethia plus a RAM role;
-Alethia assumes the role with a short-lived minted assertion — no AccessKey, nothing
-stored but the role ARN. Account-free: Alethia holds no Alibaba account.`,
+Alethia is its own OIDC issuer. A setup script creates, in your Alibaba account, a RAM
+OIDC provider trusting Alethia plus a RAM role; Alethia assumes the role with a
+short-lived minted assertion — no AccessKey, nothing stored but the role ARN. Keyless +
+account-free: Alethia holds no Alibaba account.
+
+By default the setup runs with your local aliyun CLI. Use --manual to run it in the
+Alibaba Cloud Shell and paste back the role ARN, or --terraform to apply the OpenTofu
+module instead.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		apiClient := api.NewClient(token)
-		steps := []string{"Initialize", "Apply Terraform module", "Connection test"}
+		steps := []string{"Initialize", "Create RAM role", "Connection test"}
+
+		origin, _ := types.ResolveWebOrigin()
+		issuer := strings.TrimRight(origin, "/") + "/api/oidc"
 
 		ui.PrintStepper(steps, 0)
 		initResp, err := initProviderIdentity(apiClient, "alibaba")
@@ -48,7 +58,15 @@ stored but the role ARN. Account-free: Alethia holds no Alibaba account.`,
 		}
 
 		ui.PrintStepper(steps, 1)
-		roleArn, err := alibabaSetupFlow()
+		var roleArn string
+		switch {
+		case connectorAlibabaTerraform:
+			roleArn, err = alibabaTerraformFlow(issuer)
+		case connectorAlibabaManual:
+			roleArn, err = alibabaManualFlow(issuer)
+		default:
+			roleArn, err = alibabaLocalFlow(issuer)
+		}
 		if err != nil {
 			fail(err)
 		}
@@ -63,10 +81,37 @@ stored but the role ARN. Account-free: Alethia holds no Alibaba account.`,
 	},
 }
 
-// alibabaSetupFlow writes the connector module to a local directory, guides the user to apply
+// alibabaLocalFlow runs the setup script with the local aliyun CLI (federating to this
+// control plane's issuer) and returns the created RAM role ARN parsed from its output.
+func alibabaLocalFlow(issuer string) (string, error) {
+	if err := cloudshell.EnsureAliyun(); err != nil {
+		ui.Error("aliyun CLI not found on PATH")
+		ui.Muted("Install it: https://www.alibabacloud.com/help/en/cli/install-cli")
+		ui.Muted("Or re-run with --manual to set it up in the Alibaba Cloud Shell.")
+		return "", err
+	}
+	ui.Info("Running setup via the local aliyun CLI...")
+	return cloudshell.RunAlibabaSetup(connector.AlibabaSetupScript, issuer)
+}
+
+// alibabaManualFlow guides the user through the Alibaba Cloud Shell and prompts for the
+// resulting RAM role ARN.
+func alibabaManualFlow(issuer string) (string, error) {
+	ui.Info("Manual setup:")
+	fmt.Printf("  Open the Alibaba Cloud Shell (%s) and run:\n\n", ui.LinkStyle.Render(alibabaCloudShellURL))
+	fmt.Printf(
+		"     curl -sO %s/alethia-alibaba-setup.sh && bash alethia-alibaba-setup.sh %s\n\n",
+		connectorBaseURL, issuer,
+	)
+	fmt.Printf("  Then paste the %s it prints below.\n", ui.ValueStyle.Render("role_arn"))
+
+	return promptAlibabaRoleArn()
+}
+
+// alibabaTerraformFlow writes the connector module to a local directory, guides the user to apply
 // it in their Alibaba account (with the issuer URL of THIS control plane), and prompts for the
-// resulting RAM role ARN. Alibaba has no one-liner installer, so the flow is apply-then-paste.
-func alibabaSetupFlow() (string, error) {
+// resulting RAM role ARN.
+func alibabaTerraformFlow(issuer string) (string, error) {
 	dir := connectorAlibabaDir
 	if dir == "" {
 		dir = "alethia-alibaba-connector"
@@ -83,15 +128,18 @@ func alibabaSetupFlow() (string, error) {
 	if region == "" {
 		region = defaultAlibabaRegion
 	}
-	origin, _ := types.ResolveWebOrigin()
-	issuer := strings.TrimRight(origin, "/") + "/api/oidc"
 
 	ui.Info("Apply the connector module in your Alibaba account:")
 	fmt.Printf("  1. Authenticate to Alibaba (aliyun CLI, or ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY).\n")
-	fmt.Printf("  2. Run:\n\n     cd %s\n     terraform init\n     terraform apply -var \"region=%s\" -var \"alethia_issuer_url=%s\"\n\n",
+	fmt.Printf("  2. Run:\n\n     cd %s\n     tofu init\n     tofu apply -var \"region=%s\" -var \"alethia_issuer_url=%s\"\n\n",
 		dir, region, issuer)
 	fmt.Printf("  3. Copy the %s output below.\n", ui.ValueStyle.Render("role_arn"))
 
+	return promptAlibabaRoleArn()
+}
+
+// promptAlibabaRoleArn asks the user to paste the RAM role ARN and validates it is non-empty.
+func promptAlibabaRoleArn() (string, error) {
 	var roleArn string
 	if err := ui.NewForm(huh.NewGroup(
 		huh.NewInput().
@@ -111,5 +159,7 @@ func alibabaSetupFlow() (string, error) {
 func init() {
 	connectorCmd.AddCommand(connectorAlibabaCmd)
 	connectorAlibabaCmd.Flags().StringVar(&connectorAlibabaRegion, "region", "", "Alibaba region for the RAM provider (default cn-hangzhou)")
-	connectorAlibabaCmd.Flags().StringVar(&connectorAlibabaDir, "dir", "", "Directory to write the Terraform module into (default ./alethia-alibaba-connector)")
+	connectorAlibabaCmd.Flags().StringVar(&connectorAlibabaDir, "dir", "", "Directory to write the OpenTofu module into (--terraform; default ./alethia-alibaba-connector)")
+	connectorAlibabaCmd.Flags().BoolVar(&connectorAlibabaManual, "manual", false, "Run setup in the Alibaba Cloud Shell and paste the result")
+	connectorAlibabaCmd.Flags().BoolVar(&connectorAlibabaTerraform, "terraform", false, "Apply the OpenTofu module instead of running the setup script")
 }
