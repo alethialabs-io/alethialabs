@@ -183,6 +183,37 @@ func TestMutationFlipsVerdict(t *testing.T) {
 				m["role_definition_name"] = "Owner"
 			},
 		},
+		{
+			// Strip a server's firewall to a KNOWN-empty list — a bare public node.
+			// (The base is a REAL plan where firewall_ids is computed + proven by the
+			// configuration reference; a known-empty plan VALUE overrides that.)
+			name:      "HCLOUD-FW-001/strip-server-firewall",
+			base:      "hetzner_pass.json",
+			controlID: "HCLOUD-FW-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, `hcloud_server.control_planes["demo-cp-1"]`)
+				m["firewall_ids"] = []any{}
+			},
+		},
+		{
+			// Open SSH (tcp/22) to the whole internet on the firewall — Talos has no
+			// SSH, so this is always a hard fail even though the base rules are all
+			// confined to bounded CIDRs.
+			name:      "HCLOUD-NET-001/open-ssh-to-world",
+			base:      "hetzner_pass.json",
+			controlID: "HCLOUD-NET-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "hcloud_firewall.this")
+				rules, _ := m["rule"].([]any)
+				m["rule"] = append(rules, map[string]any{
+					"description": "SSH",
+					"direction":   "in",
+					"protocol":    "tcp",
+					"port":        "22",
+					"source_ips":  []any{"0.0.0.0/0", "::/0"},
+				})
+			},
+		},
 	}
 
 	// Assert every declared control has a mutator — parity with the corpus coverage

@@ -1,0 +1,214 @@
+{
+  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. HCLOUD-FW-001 violation: hcloud_server with NO firewall_ids in configuration, no attachment, no apply_to -> bare public node -> hard fail.",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "hcloud_network.this",
+          "mode": "managed",
+          "type": "hcloud_network",
+          "name": "this",
+          "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+          "schema_version": 0,
+          "values": {
+            "delete_protection": false,
+            "expose_routes_to_vswitch": false,
+            "ip_range": "10.100.0.0/16",
+            "labels": null,
+            "name": "demo"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "hcloud_server.control_plane",
+          "mode": "managed",
+          "type": "hcloud_server",
+          "name": "control_plane",
+          "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+          "schema_version": 0,
+          "values": {
+            "allow_deprecated_images": null,
+            "backups": false,
+            "delete_protection": false,
+            "ignore_remote_firewall_ids": false,
+            "image": "debian-12",
+            "iso": null,
+            "keep_disk": false,
+            "labels": {
+              "cluster": "demo",
+              "role": "control-plane"
+            },
+            "location": "nbg1",
+            "name": "demo-cp-1",
+            "network": [],
+            "placement_group_id": null,
+            "public_net": [],
+            "rebuild_protection": false,
+            "rescue": null,
+            "server_type": "cpx31",
+            "shutdown_before_deletion": false,
+            "ssh_keys": null,
+            "timeouts": null,
+            "user_data": "9sPmzwZu7u8+strUGnJb//9LpaU="
+          },
+          "sensitive_values": {
+            "firewall_ids": [],
+            "labels": {},
+            "network": [],
+            "public_net": []
+          }
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "hcloud_network.this",
+      "mode": "managed",
+      "type": "hcloud_network",
+      "name": "this",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "delete_protection": false,
+          "expose_routes_to_vswitch": false,
+          "ip_range": "10.100.0.0/16",
+          "labels": null,
+          "name": "demo"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "hcloud_server.control_plane",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "control_plane",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "allow_deprecated_images": null,
+          "backups": false,
+          "delete_protection": false,
+          "ignore_remote_firewall_ids": false,
+          "image": "debian-12",
+          "iso": null,
+          "keep_disk": false,
+          "labels": {
+            "cluster": "demo",
+            "role": "control-plane"
+          },
+          "location": "nbg1",
+          "name": "demo-cp-1",
+          "network": [],
+          "placement_group_id": null,
+          "public_net": [],
+          "rebuild_protection": false,
+          "rescue": null,
+          "server_type": "cpx31",
+          "shutdown_before_deletion": false,
+          "ssh_keys": null,
+          "timeouts": null,
+          "user_data": "9sPmzwZu7u8+strUGnJb//9LpaU="
+        },
+        "after_unknown": {
+          "backup_window": true,
+          "datacenter": true,
+          "firewall_ids": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv6_address": true,
+          "ipv6_network": true,
+          "labels": {},
+          "network": [],
+          "primary_disk_size": true,
+          "public_net": [],
+          "status": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "firewall_ids": [],
+          "labels": {},
+          "network": [],
+          "public_net": []
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "hcloud": {
+        "name": "hcloud",
+        "full_name": "registry.opentofu.org/hetznercloud/hcloud",
+        "version_constraint": "1.66.0"
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "hcloud_network.this",
+          "mode": "managed",
+          "type": "hcloud_network",
+          "name": "this",
+          "provider_config_key": "hcloud",
+          "expressions": {
+            "ip_range": {
+              "constant_value": "10.100.0.0/16"
+            },
+            "name": {
+              "constant_value": "demo"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "hcloud_server.control_plane",
+          "mode": "managed",
+          "type": "hcloud_server",
+          "name": "control_plane",
+          "provider_config_key": "hcloud",
+          "expressions": {
+            "image": {
+              "constant_value": "debian-12"
+            },
+            "labels": {
+              "constant_value": {
+                "cluster": "demo",
+                "role": "control-plane"
+              }
+            },
+            "location": {
+              "constant_value": "nbg1"
+            },
+            "name": {
+              "constant_value": "demo-cp-1"
+            },
+            "server_type": {
+              "constant_value": "cpx31"
+            },
+            "user_data": {
+              "constant_value": "#cloud-config"
+            }
+          },
+          "schema_version": 0
+        }
+      ]
+    }
+  },
+  "timestamp": "2026-07-13T14:11:00Z",
+  "errored": false
+}

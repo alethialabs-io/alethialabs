@@ -23,7 +23,7 @@ package: **never report a pass on something we could not inspect.** Such cases a
 `not_evaluable` with a plain-language `coverage` note. A silent pass on an un-inspectable
 resource is exactly the false-PASS the verification claim must never make.
 
-## Controls (catalog `elench-controls-0.2.0`)
+## Controls (catalog `elench-controls-0.3.0`)
 
 `Evaluate` detects **every** recognized cloud present in the plan and runs the **union** of those
 providers' control sets — a single OpenTofu plan can mix clouds (an AWS EKS cluster alongside an Azure
@@ -39,14 +39,16 @@ plan whose resources belong to no controlled provider would otherwise run every 
 "nothing in scope" vacuous **pass** — a silent hole for any provider the gate can't reason about (a
 typo'd/custom provider, or AWS Cloud Control `awscc_`, whose resources the `aws_` controls never match).
 `SCOPE-001` closes it: a plan is **evaluable** iff every managed resource belongs to a provider that is
-either **controlled** (`aws`/`google`/`azurerm`/`azuread`) or on the **supported-no-controls allowlist**
-— clouds with no keyless/OIDC/least-priv surface *by design* (**Hetzner** `hcloud` is token-auth, the
-token is the ceiling; **Cloudflare**), the **cluster-layer** providers that co-occur in every real
+either **controlled** (`aws`/`google`/`azurerm`/`azuread`/`hcloud`) or on the **supported-no-controls
+allowlist** — clouds with no control surface *by design* (**Cloudflare** is token-auth with no
+server/firewall posture the gate yet inspects), the **cluster-layer** providers that co-occur in every real
 cluster plan and carry no cloud-authority surface (`talos`/`imager`/`minio`/`helm`/`kubernetes`/
 `kubectl` — they configure the cluster, not a cloud IAM identity), plus the utility providers that
 create no cloud authority (`random`/`tls`/`null`/`local`/`time`/`external`). Those legitimately stay a
 **pass** — Alethia's shipped Hetzner/Talos template is `hcloud`+`talos`+`imager`+`minio`+`helm`, so
-without the cluster-layer group a real Hetzner provision would wrongly flip to not_evaluable. Any
+without the cluster-layer group a real Hetzner provision would wrongly flip to not_evaluable (the
+`hcloud` half now runs its own **posture** control set — see the Hetzner table below — rather than being
+a vacuous pass). Any
 resource from a provider outside that union makes the report **`not_evaluable`** (with an honest
 per-resource note naming the unrecognized provider) rather than a pass — the gate never implies it
 checked infrastructure it cannot see. It does **not** blanket-deny: a controlled cloud's real violation
@@ -87,6 +89,24 @@ has no authored control set yet, so it is deliberately **off** the allowlist (it
 | `AZURE-KEYLESS-001` | No static app/SP secrets | creating an `azuread_application_password`/`azuread_service_principal_password` (use a federated identity credential) |
 | `AZURE-FED-001` | Federated credentials bind a subject | an `azuread_application_federated_identity_credential` with an empty or wildcard `subject` |
 | `AZURE-LEASTPRIV-001` | No Owner/Contributor assignments | an `azurerm_role_assignment` of `Owner` (fail) — **warns** on `Contributor` — scope annotated |
+
+**Hetzner** — *posture, not authority.* Hetzner is token-auth: the API token is the ceiling, there is
+no OIDC/federation/IAM surface to bind, so the keyless/OIDC-sub/least-priv controls do not apply. What a
+Hetzner plan *can* misconfigure is its network/firewall, so its control set asserts that. Hetzner is the
+only cloud with a real nightly apply, so these are tuned to keep the **shipped template warns-only**.
+
+*Real-plan shape (verified against OpenTofu 1.12.3 + hcloud 1.66.0; every `hetzner_*` corpus fixture is
+a real `tofu show -json` capture):* `firewall_ids` is a set-typed computed attribute — on a create plan
+it serializes as `after:null` + `after_unknown:true` for BOTH a firewalled and a bare server, so
+`HCLOUD-FW-001` judges from the plan's **`configuration`** section (`expressions.firewall_ids.references`).
+And a fully-known firewall `rule` list appears in `after_unknown` as per-element **all-false** maps
+(`source_ips: [false,false]`) — only a `true` leaf means unknown; treating any list as unknown would make
+the controls inert on every real plan (the exact defect an adversarial grill caught in v1).
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `HCLOUD-FW-001` | Every server is behind a firewall | an `hcloud_server` with **no firewall anywhere**: no known `firewall_ids` value, no configuration reference to an `hcloud_firewall`, and no `hcloud_firewall_attachment` whose config `server_ids` references it — a bare public node. **Pass** when the (computed) `firewall_ids` is proven by a config reference / non-empty literal, or an attachment covers it. **Not_evaluable** (never a false brick): `firewall_ids` from an unresolvable expression (var/local), attachments selecting by `label_selectors`, any firewall using `apply_to` (label-based BYO), or a plan with no configuration section at all. A **decoy** attachment covering only *other* servers does **not** neutralize the fail. |
+| `HCLOUD-NET-001` | No world-open SSH; management ports flagged | a firewall rule opening **tcp** SSH (`22`, or an `any`-port tcp rule subsuming 22) to the whole internet — where "whole internet" is a **union** judgment: `0.0.0.0/0`, `::/0`, or a split-CIDR spelling (`0.0.0.0/1` + `128.0.0.0/1`) that adds up to full coverage. Talos runs no SSH daemon, so world-open 22 is always wrong. **Warns** (by design, does not block) on world-open tcp Kubernetes API `6443` / Talos apid `50000`/`50001` (open on purpose today — the runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer), on any other world-open inbound rule (other tcp ports, **udp/icmp — never misjudged as SSH**), and on tcp/22 from a very broad partial source (v4 ≤ /8, v6 ≤ /16). Rules with computed source/port → **not_evaluable**. |
 
 Statuses: `pass` · `fail` (blocks apply) · `warn` (recorded, does not block) · `not_evaluable`.
 Overall verdict precedence: `fail` → `warn` → `not_evaluable` → `pass`.

@@ -133,8 +133,45 @@ func controlAddressPrefix(provider string) string {
 		return "google_"
 	case "azure":
 		return "azure" // azurerm_ / azuread_
+	case "hetzner":
+		return "hcloud_"
 	default:
 		return ""
+	}
+}
+
+// TestMultiProviderAwsPlusHetzner extends the union regression to hcloud: a plan
+// mixing a clean AWS role with an hcloud_server whose firewall_ids is KNOWN-empty
+// must run the Hetzner posture set and fail on the bare server — hcloud resources
+// in a mixed plan are not waved through just because another cloud is present.
+func TestMultiProviderAwsPlusHetzner(t *testing.T) {
+	plan := mustPlan(t, `{
+      "format_version": "1.2",
+      "resource_changes": [
+        {"address":"aws_iam_role.eks","mode":"managed","type":"aws_iam_role","name":"eks",
+         "provider_name":"registry.terraform.io/hashicorp/aws",
+         "change":{"actions":["create"],"after":{
+           "assume_role_policy":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"eks.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+         },"after_unknown":{}}},
+        {"address":"hcloud_server.bare","mode":"managed","type":"hcloud_server","name":"bare",
+         "provider_name":"registry.terraform.io/hetznercloud/hcloud",
+         "change":{"actions":["create"],"after":{"name":"n1","server_type":"cpx31","firewall_ids":[]},"after_unknown":{}}}
+      ]}`)
+	rep, err := Evaluate(t.Context(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Provider != "aws+hetzner" {
+		t.Errorf("provider = %q, want %q", rep.Provider, "aws+hetzner")
+	}
+	if rep.Verdict != StatusFail {
+		t.Fatalf("mixed AWS(clean)+hcloud(bare server): verdict = %q, want fail — the Hetzner controls did not run", rep.Verdict)
+	}
+	if fw := controlByID(t, rep, "HCLOUD-FW-001"); fw.Status != StatusFail {
+		t.Errorf("HCLOUD-FW-001 = %q, want fail (known-empty firewall_ids)", fw.Status)
+	}
+	if !hasControl(rep, "KEYLESS-001") {
+		t.Error("AWS control set missing from the mixed plan")
 	}
 }
 

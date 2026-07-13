@@ -1,0 +1,653 @@
+{
+  "_comment": "REAL plan JSON: captured via `tofu plan -out && tofu show -json` with OpenTofu v1.12.3 + hcloud provider 1.66.0 (no cloud credentials needed; HCLOUD_TOKEN dummy via env). NOT hand-crafted \u2014 the after_unknown shapes (set-typed firewall_ids collapsing to true; rule lists as per-element all-false maps) are exactly what production emits. Hardened Hetzner plan: every server firewall_ids = [hcloud_firewall.this.id] (computed -> configuration references prove attachment), all inbound rules confined to admin/private CIDRs. Expect: HCLOUD-FW-001 pass, HCLOUD-NET-001 pass -> verdict pass. Mutation-gate baseline.",
+  "format_version": "1.2",
+  "terraform_version": "1.12.3",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "hcloud_firewall.this",
+          "mode": "managed",
+          "type": "hcloud_firewall",
+          "name": "this",
+          "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+          "schema_version": 0,
+          "values": {
+            "apply_to": [],
+            "labels": {
+              "cluster": "demo"
+            },
+            "name": "demo",
+            "rule": [
+              {
+                "description": "Intra-cluster TCP (private network)",
+                "destination_ips": [],
+                "direction": "in",
+                "port": "any",
+                "protocol": "tcp",
+                "source_ips": [
+                  "10.100.0.0/16"
+                ]
+              },
+              {
+                "description": "Kubernetes API server (admin range)",
+                "destination_ips": [],
+                "direction": "in",
+                "port": "6443",
+                "protocol": "tcp",
+                "source_ips": [
+                  "203.0.113.0/24"
+                ]
+              },
+              {
+                "description": "Talos apid (admin range)",
+                "destination_ips": [],
+                "direction": "in",
+                "port": "50000-50001",
+                "protocol": "tcp",
+                "source_ips": [
+                  "203.0.113.0/24"
+                ]
+              }
+            ]
+          },
+          "sensitive_values": {
+            "apply_to": [],
+            "labels": {},
+            "rule": [
+              {
+                "destination_ips": [],
+                "source_ips": [
+                  false
+                ]
+              },
+              {
+                "destination_ips": [],
+                "source_ips": [
+                  false
+                ]
+              },
+              {
+                "destination_ips": [],
+                "source_ips": [
+                  false
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "address": "hcloud_network.this",
+          "mode": "managed",
+          "type": "hcloud_network",
+          "name": "this",
+          "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+          "schema_version": 0,
+          "values": {
+            "delete_protection": false,
+            "expose_routes_to_vswitch": false,
+            "ip_range": "10.100.0.0/16",
+            "labels": {
+              "cluster": "demo"
+            },
+            "name": "demo"
+          },
+          "sensitive_values": {
+            "labels": {}
+          }
+        },
+        {
+          "address": "hcloud_server.control_planes[\"demo-cp-1\"]",
+          "mode": "managed",
+          "type": "hcloud_server",
+          "name": "control_planes",
+          "index": "demo-cp-1",
+          "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+          "schema_version": 0,
+          "values": {
+            "allow_deprecated_images": null,
+            "backups": false,
+            "delete_protection": false,
+            "ignore_remote_firewall_ids": false,
+            "image": "debian-12",
+            "iso": null,
+            "keep_disk": false,
+            "labels": {
+              "cluster": "demo",
+              "role": "control-plane"
+            },
+            "location": "nbg1",
+            "name": "demo-cp-1",
+            "network": [],
+            "placement_group_id": null,
+            "public_net": [],
+            "rebuild_protection": false,
+            "rescue": null,
+            "server_type": "cpx31",
+            "shutdown_before_deletion": false,
+            "ssh_keys": null,
+            "timeouts": null,
+            "user_data": "9sPmzwZu7u8+strUGnJb//9LpaU="
+          },
+          "sensitive_values": {
+            "firewall_ids": [],
+            "labels": {},
+            "network": [],
+            "public_net": []
+          }
+        },
+        {
+          "address": "hcloud_server.workers[\"demo-worker-1\"]",
+          "mode": "managed",
+          "type": "hcloud_server",
+          "name": "workers",
+          "index": "demo-worker-1",
+          "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+          "schema_version": 0,
+          "values": {
+            "allow_deprecated_images": null,
+            "backups": false,
+            "delete_protection": false,
+            "ignore_remote_firewall_ids": false,
+            "image": "debian-12",
+            "iso": null,
+            "keep_disk": false,
+            "labels": {
+              "cluster": "demo",
+              "role": "worker"
+            },
+            "location": "nbg1",
+            "name": "demo-worker-1",
+            "network": [],
+            "placement_group_id": null,
+            "public_net": [],
+            "rebuild_protection": false,
+            "rescue": null,
+            "server_type": "cpx31",
+            "shutdown_before_deletion": false,
+            "ssh_keys": null,
+            "timeouts": null,
+            "user_data": "9sPmzwZu7u8+strUGnJb//9LpaU="
+          },
+          "sensitive_values": {
+            "firewall_ids": [],
+            "labels": {},
+            "network": [],
+            "public_net": []
+          }
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "hcloud_firewall.this",
+      "mode": "managed",
+      "type": "hcloud_firewall",
+      "name": "this",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "apply_to": [],
+          "labels": {
+            "cluster": "demo"
+          },
+          "name": "demo",
+          "rule": [
+            {
+              "description": "Intra-cluster TCP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "any",
+              "protocol": "tcp",
+              "source_ips": [
+                "10.100.0.0/16"
+              ]
+            },
+            {
+              "description": "Kubernetes API server (admin range)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "6443",
+              "protocol": "tcp",
+              "source_ips": [
+                "203.0.113.0/24"
+              ]
+            },
+            {
+              "description": "Talos apid (admin range)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "50000-50001",
+              "protocol": "tcp",
+              "source_ips": [
+                "203.0.113.0/24"
+              ]
+            }
+          ]
+        },
+        "after_unknown": {
+          "apply_to": [],
+          "id": true,
+          "labels": {},
+          "rule": [
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            }
+          ]
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "apply_to": [],
+          "labels": {},
+          "rule": [
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "address": "hcloud_network.this",
+      "mode": "managed",
+      "type": "hcloud_network",
+      "name": "this",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "delete_protection": false,
+          "expose_routes_to_vswitch": false,
+          "ip_range": "10.100.0.0/16",
+          "labels": {
+            "cluster": "demo"
+          },
+          "name": "demo"
+        },
+        "after_unknown": {
+          "id": true,
+          "labels": {}
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "labels": {}
+        }
+      }
+    },
+    {
+      "address": "hcloud_server.control_planes[\"demo-cp-1\"]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "control_planes",
+      "index": "demo-cp-1",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "allow_deprecated_images": null,
+          "backups": false,
+          "delete_protection": false,
+          "ignore_remote_firewall_ids": false,
+          "image": "debian-12",
+          "iso": null,
+          "keep_disk": false,
+          "labels": {
+            "cluster": "demo",
+            "role": "control-plane"
+          },
+          "location": "nbg1",
+          "name": "demo-cp-1",
+          "network": [],
+          "placement_group_id": null,
+          "public_net": [],
+          "rebuild_protection": false,
+          "rescue": null,
+          "server_type": "cpx31",
+          "shutdown_before_deletion": false,
+          "ssh_keys": null,
+          "timeouts": null,
+          "user_data": "9sPmzwZu7u8+strUGnJb//9LpaU="
+        },
+        "after_unknown": {
+          "backup_window": true,
+          "datacenter": true,
+          "firewall_ids": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv6_address": true,
+          "ipv6_network": true,
+          "labels": {},
+          "network": [],
+          "primary_disk_size": true,
+          "public_net": [],
+          "status": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "firewall_ids": [],
+          "labels": {},
+          "network": [],
+          "public_net": []
+        }
+      }
+    },
+    {
+      "address": "hcloud_server.workers[\"demo-worker-1\"]",
+      "mode": "managed",
+      "type": "hcloud_server",
+      "name": "workers",
+      "index": "demo-worker-1",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "allow_deprecated_images": null,
+          "backups": false,
+          "delete_protection": false,
+          "ignore_remote_firewall_ids": false,
+          "image": "debian-12",
+          "iso": null,
+          "keep_disk": false,
+          "labels": {
+            "cluster": "demo",
+            "role": "worker"
+          },
+          "location": "nbg1",
+          "name": "demo-worker-1",
+          "network": [],
+          "placement_group_id": null,
+          "public_net": [],
+          "rebuild_protection": false,
+          "rescue": null,
+          "server_type": "cpx31",
+          "shutdown_before_deletion": false,
+          "ssh_keys": null,
+          "timeouts": null,
+          "user_data": "9sPmzwZu7u8+strUGnJb//9LpaU="
+        },
+        "after_unknown": {
+          "backup_window": true,
+          "datacenter": true,
+          "firewall_ids": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv6_address": true,
+          "ipv6_network": true,
+          "labels": {},
+          "network": [],
+          "primary_disk_size": true,
+          "public_net": [],
+          "status": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "firewall_ids": [],
+          "labels": {},
+          "network": [],
+          "public_net": []
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "hcloud": {
+        "name": "hcloud",
+        "full_name": "registry.opentofu.org/hetznercloud/hcloud",
+        "version_constraint": "1.66.0"
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "hcloud_firewall.this",
+          "mode": "managed",
+          "type": "hcloud_firewall",
+          "name": "this",
+          "provider_config_key": "hcloud",
+          "expressions": {
+            "labels": {
+              "references": [
+                "local.cluster_name"
+              ]
+            },
+            "name": {
+              "references": [
+                "local.cluster_name"
+              ]
+            },
+            "rule": [
+              {
+                "description": {
+                  "constant_value": "Kubernetes API server (admin range)"
+                },
+                "direction": {
+                  "constant_value": "in"
+                },
+                "port": {
+                  "constant_value": "6443"
+                },
+                "protocol": {
+                  "constant_value": "tcp"
+                },
+                "source_ips": {
+                  "references": [
+                    "local.admin_cidr"
+                  ]
+                }
+              },
+              {
+                "description": {
+                  "constant_value": "Talos apid (admin range)"
+                },
+                "direction": {
+                  "constant_value": "in"
+                },
+                "port": {
+                  "constant_value": "50000-50001"
+                },
+                "protocol": {
+                  "constant_value": "tcp"
+                },
+                "source_ips": {
+                  "references": [
+                    "local.admin_cidr"
+                  ]
+                }
+              },
+              {
+                "description": {
+                  "constant_value": "Intra-cluster TCP (private network)"
+                },
+                "direction": {
+                  "constant_value": "in"
+                },
+                "port": {
+                  "constant_value": "any"
+                },
+                "protocol": {
+                  "constant_value": "tcp"
+                },
+                "source_ips": {
+                  "references": [
+                    "local.network_cidr"
+                  ]
+                }
+              }
+            ]
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "hcloud_network.this",
+          "mode": "managed",
+          "type": "hcloud_network",
+          "name": "this",
+          "provider_config_key": "hcloud",
+          "expressions": {
+            "ip_range": {
+              "references": [
+                "local.network_cidr"
+              ]
+            },
+            "labels": {
+              "references": [
+                "local.cluster_name"
+              ]
+            },
+            "name": {
+              "references": [
+                "local.cluster_name"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "hcloud_server.control_planes",
+          "mode": "managed",
+          "type": "hcloud_server",
+          "name": "control_planes",
+          "provider_config_key": "hcloud",
+          "expressions": {
+            "firewall_ids": {
+              "references": [
+                "hcloud_firewall.this.id",
+                "hcloud_firewall.this"
+              ]
+            },
+            "image": {
+              "constant_value": "debian-12"
+            },
+            "labels": {
+              "references": [
+                "local.cluster_name"
+              ]
+            },
+            "location": {
+              "constant_value": "nbg1"
+            },
+            "name": {
+              "references": [
+                "each.key"
+              ]
+            },
+            "server_type": {
+              "constant_value": "cpx31"
+            },
+            "user_data": {
+              "constant_value": "#cloud-config"
+            }
+          },
+          "schema_version": 0,
+          "for_each_expression": {
+            "constant_value": {
+              "demo-cp-1": {
+                "private_ip": "10.100.0.101"
+              }
+            }
+          }
+        },
+        {
+          "address": "hcloud_server.workers",
+          "mode": "managed",
+          "type": "hcloud_server",
+          "name": "workers",
+          "provider_config_key": "hcloud",
+          "expressions": {
+            "firewall_ids": {
+              "references": [
+                "hcloud_firewall.this.id",
+                "hcloud_firewall.this"
+              ]
+            },
+            "image": {
+              "constant_value": "debian-12"
+            },
+            "labels": {
+              "references": [
+                "local.cluster_name"
+              ]
+            },
+            "location": {
+              "constant_value": "nbg1"
+            },
+            "name": {
+              "references": [
+                "each.key"
+              ]
+            },
+            "server_type": {
+              "constant_value": "cpx31"
+            },
+            "user_data": {
+              "constant_value": "#cloud-config"
+            }
+          },
+          "schema_version": 0,
+          "for_each_expression": {
+            "constant_value": {
+              "demo-worker-1": {
+                "private_ip": "10.100.0.201"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "relevant_attributes": [
+    {
+      "resource": "hcloud_firewall.this",
+      "attribute": [
+        "id"
+      ]
+    }
+  ],
+  "timestamp": "2026-07-13T14:10:58Z",
+  "errored": false
+}
