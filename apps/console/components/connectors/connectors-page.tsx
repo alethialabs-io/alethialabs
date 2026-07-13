@@ -77,7 +77,7 @@ interface ConnectorsPageProps {
 	integrations: ConnectorWithConnection[];
 	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string; clientId: string } | null;
+	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
 	/** Per-slug: does this instance have the platform creds the cloud's probe needs. */
 	platformConfigured?: Record<string, boolean>;

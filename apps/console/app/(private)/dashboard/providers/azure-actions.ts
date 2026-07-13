@@ -27,20 +27,18 @@ export async function listAzureIdentities(): Promise<conn.ConnectionStatus[]> {
 }
 
 /**
- * Gets or creates a pending Azure identity (manage-gated, not activity-logged), plus the platform
- * Entra app id the connect UI bakes into the customer's setup command. `clientId` is Alethia's one
- * multi-tenant app — a fixed, non-secret operator value (never customer-entered); empty when the
- * operator hasn't configured Azure.
+ * Gets or creates a pending Azure identity (manage-gated, not activity-logged). Azure is keyless +
+ * customer-side now: the customer's setup script creates a managed identity and returns its client id,
+ * which the connect form collects — there is no platform Entra app id to thread through.
  */
 export async function initAzureIdentity(): Promise<{
 	identityId: string;
-	clientId: string;
 }> {
 	const actor = await authorizeQuiet("manage_identities", {
 		type: "cloud_identity",
 	});
 	const { identityId } = await conn.initIdentity(actor, "azure");
-	return { identityId, clientId: process.env.ALETHIA_AZURE_CLIENT_ID ?? "" };
+	return { identityId };
 }
 
 /** Validates the Azure GUIDs, persists them, and queues a connection test. */

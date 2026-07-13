@@ -16,9 +16,9 @@ import { sealSensitive, softRemoveUnseen } from "./upsert";
 const TIMEOUT_MS = 15_000;
 const ARM = "https://management.azure.com";
 
-/** Acquires an ARM bearer token as the platform app against the customer tenant (keyless), or throws. */
-async function azureToken(tenantId: string): Promise<string> {
-	const cred = assumeAzureIdentity(tenantId);
+/** Acquires an ARM bearer token as the customer managed identity against its tenant (keyless), or throws. */
+async function azureToken(tenantId: string, clientId: string): Promise<string> {
+	const cred = assumeAzureIdentity(tenantId, clientId);
 	const t = await cred.getToken("https://management.azure.com/.default");
 	if (!t?.token) throw new Error("Azure token acquisition returned no token");
 	return t.token;
@@ -59,7 +59,9 @@ export async function syncAzureInventory(
 	if (!subscriptionId) throw new Error("No Azure subscription id");
 	const tenantId = identity.credentials.tenant_id;
 	if (!tenantId) throw new Error("No Azure tenant id");
-	const token = await azureToken(tenantId);
+	const clientId = identity.credentials.client_id;
+	if (!clientId) throw new Error("No Azure client id");
+	const token = await azureToken(tenantId, clientId);
 	const db = getServiceDb();
 	const identityId = identity.id;
 

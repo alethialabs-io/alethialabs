@@ -79,19 +79,16 @@ type AzureIDs struct {
 
 // RunAzureSetup writes the embedded installer to a temp file, runs it against
 // the given subscription using the user's local az login, and returns the
-// captured tenant/client/subscription IDs. clientID is Alethia's platform Entra
-// app id — the script requires it as ALETHIA_AZURE_CLIENT_ID and errors without it.
-func RunAzureSetup(script, subscriptionID, clientID string) (*AzureIDs, error) {
+// captured tenant/client/subscription IDs. The script creates a managed identity
+// in the subscription and prints its client id — no platform app id is injected.
+func RunAzureSetup(script, subscriptionID string) (*AzureIDs, error) {
 	path, cleanup, err := writeTemp("alethia-azure-setup-*.sh", script)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
 
-	output, err := runStreamingEnv(
-		[]string{"ALETHIA_AZURE_CLIENT_ID=" + clientID},
-		"bash", path, subscriptionID,
-	)
+	output, err := runStreaming("bash", path, subscriptionID)
 	if err != nil {
 		return nil, fmt.Errorf("azure setup failed: %w", err)
 	}
