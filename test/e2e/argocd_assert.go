@@ -56,9 +56,11 @@ type argoAppState struct {
 
 // infraServiceArgoApps maps an `infra_services` decision (see
 // packages/core/argocd/decisions.go InfraServiceDecisions) to the ArgoCD Application
-// that ships it when the decision is "installed". Decisions with no Application of
-// their own are deliberately absent: "storage-class" is a StorageClass object and
-// "argocd-url" is an ingress on the ArgoCD install itself — neither has app health.
+// that ships it when the decision is "installed". Together with infraServiceNoApp it
+// must cover EVERY service decisions.go can record: an installed decision matching
+// neither is a hard derivation error (fail-closed — a renamed or newly added service
+// must WIDEN the assertion, never silently shrink it), and a unit test pins both
+// maps against the real InfraServiceDecisions service list.
 var infraServiceArgoApps = map[string]string{
 	// infra/templates/argocd/external-dns.yaml
 	"external-dns": "external-dns",
@@ -69,15 +71,45 @@ var infraServiceArgoApps = map[string]string{
 	"ingress": "aws-load-balancer-controller",
 }
 
+// infraServiceNoApp whitelists the decisions that genuinely ship NO ArgoCD
+// Application of their own: "storage-class" is a StorageClass object and
+// "argocd-url" is an ingress on the ArgoCD install itself — neither has app health.
+// Add a service here ONLY when its install truly has no Application to assert.
+var infraServiceNoApp = map[string]struct{}{
+	"storage-class": {},
+	"argocd-url":    {},
+}
+
+// alwaysRenderedArgoApps are the Applications infra/templates/argocd renders
+// UNCONDITIONALLY — no template render gate, no InfraServiceDecision records them,
+// and CleanupSkippedInfraServices never deletes them — so EVERY successful deploy
+// that ran the GitOps bootstrap (the tiers assert cluster_name, which gates that
+// whole block) must have them converged, regardless of provider or configuration:
+//   - external-secrets-operator: the operator Application in
+//     external-secrets-operator.yaml is ungated (only the per-cloud
+//     ClusterSecretStores inside the same template are conditional).
+//   - metrics-server: metrics-server.yaml has no gate at all.
+//
+// A template gaining a render gate must move its app out of here and into the
+// decision-derived mapping above.
+var alwaysRenderedArgoApps = []string{"external-secrets-operator", "metrics-server"}
+
 // DeriveExpectedArgoApps derives the ArgoCD Application names a successful deploy is
-// REQUIRED to have converged, from the job's persisted execution_metadata: every
-// `infra_services` decision with status "installed" that ships an Application, plus
-// every `addon_status` key (the runner records one per enabled add-on, named
+// REQUIRED to have converged: the always-rendered platform apps
+// (alwaysRenderedArgoApps), plus — from the job's persisted execution_metadata —
+// every `infra_services` decision with status "installed" that ships an Application,
+// plus every `addon_status` key (the runner records one per enabled add-on, named
 // `addon-<id>` — see packages/core/argocd/addons.go AllAddOnNames). Returns the names
-// sorted + de-duplicated. An empty derived set is an ERROR, not an empty assertion:
-// it would make the health check vacuous, which is exactly the hole this exists to
-// close — the tiers seed add-ons (seedAddOns) precisely so this never trips on the
-// lean kind/hetzner paths.
+// sorted + de-duplicated.
+//
+// FAIL-CLOSED in both directions:
+//   - an "installed" service that is in NEITHER infraServiceArgoApps NOR
+//     infraServiceNoApp is an error — a renamed/new decision must widen the
+//     assertion, never silently shrink it;
+//   - an empty derived set is an error, not an empty assertion (defense-in-depth;
+//     structurally unreachable while alwaysRenderedArgoApps is non-empty). The tiers
+//     additionally seed an add-on (seedAddOns) so the ADD-ON pipeline is always
+//     exercised too, not just the platform apps.
 func DeriveExpectedArgoApps(metaRaw []byte) ([]string, error) {
 	if len(metaRaw) == 0 {
 		return nil, errors.New("execution_metadata is empty — cannot derive the expected ArgoCD Application set")
@@ -94,13 +126,21 @@ func DeriveExpectedArgoApps(metaRaw []byte) ([]string, error) {
 	}
 
 	set := map[string]struct{}{}
+	for _, app := range alwaysRenderedArgoApps {
+		set[app] = struct{}{}
+	}
 	for _, d := range meta.InfraServices {
 		if d.Status != "installed" {
 			continue
 		}
 		if app, ok := infraServiceArgoApps[d.Service]; ok {
 			set[app] = struct{}{}
+			continue
 		}
+		if _, ok := infraServiceNoApp[d.Service]; ok {
+			continue
+		}
+		return nil, fmt.Errorf("unrecognized installed infra service %q in execution_metadata — add it to infraServiceArgoApps (it ships an Application) or infraServiceNoApp (it genuinely has none) in argocd_assert.go so the assertion widens instead of silently shrinking", d.Service)
 	}
 	for name := range meta.AddOnStatus {
 		set[name] = struct{}{}
