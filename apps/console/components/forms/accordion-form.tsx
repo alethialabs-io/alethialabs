@@ -107,15 +107,18 @@ export function AccordionForm<T extends FieldValues>({
 		return done ? "complete" : "empty";
 	}
 
-	/** Validate section `i`; on pass close it and open the next incomplete one (else complete). */
+	/** Validate section `i`; on pass, open the immediately-following section (linear). */
 	async function advance(i: number) {
 		const s = visible[i];
 		if (s.fields.length > 0) {
 			const ok = await form.trigger(s.fields, { shouldFocus: true });
 			if (!ok) return; // stay open — RHF paints the messages
 		}
-		const rest = visible.slice(i + 1);
-		const next = rest.find((x) => statusOf(x) !== "complete") ?? rest[0];
+		// Linear advance: open the next section (a terminal Review opens last). When this is
+		// the last section, the form is done — fire onComplete and close all. Submit lives in
+		// the sheet footer (always available), never on onComplete, so a terminal Review with
+		// no Continue button doesn't strand the form.
+		const next = visible[i + 1];
 		if (next) onOpenChange(next.id);
 		else {
 			onOpenChange("");

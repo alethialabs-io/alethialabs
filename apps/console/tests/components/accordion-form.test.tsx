@@ -127,3 +127,57 @@ describe("AccordionForm", () => {
 		expect(screen.queryByLabelText("email")).toBeNull();
 	});
 });
+
+/** A form ending in a terminal Review section — the roles/SSO sheet shape. Continue advances
+ *  linearly into Review; Review has no Continue (submit lives in the sheet footer). */
+function HarnessWithReview({ onComplete }: { onComplete?: () => void }) {
+	const [open, setOpen] = useState("identity");
+	const form = useForm<Values>({
+		resolver: zodResolver(schema),
+		defaultValues: { name: "Alice", email: "alice@example.com" },
+		mode: "onChange",
+	});
+	const sections: FormSectionDef<Values>[] = [
+		{
+			id: "identity",
+			title: "Identity",
+			fields: ["name"],
+			summary: (v) => v.name,
+			body: () => <input aria-label="name" readOnly value={form.watch("name")} />,
+		},
+		{
+			id: "review",
+			title: "Review",
+			fields: [],
+			terminal: true,
+			complete: () => true,
+			summary: () => "Ready",
+			body: () => <div>review-body</div>,
+		},
+	];
+	return (
+		<FormProvider {...form}>
+			<AccordionForm
+				sections={sections}
+				open={open}
+				onOpenChange={setOpen}
+				onComplete={onComplete}
+			/>
+		</FormProvider>
+	);
+}
+
+describe("AccordionForm — terminal Review section", () => {
+	it("advances into the terminal Review, which has no Continue and never fires onComplete", async () => {
+		const onComplete = vi.fn();
+		const user = userEvent.setup();
+		render(<HarnessWithReview onComplete={onComplete} />);
+
+		// One Continue (on Identity); Review is terminal → renders no Continue button.
+		await user.click(screen.getByRole("button", { name: "Continue" }));
+
+		expect(screen.getByText("review-body")).toBeTruthy(); // Review opened
+		expect(screen.queryByRole("button", { name: "Continue" })).toBeNull(); // no Continue on Review
+		expect(onComplete).not.toHaveBeenCalled(); // submit is external (footer), not onComplete
+	});
+});

@@ -6,6 +6,7 @@ import { and, desc, eq, gte, ilike, inArray, lt, lte, or, type SQL } from "drizz
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
+import { likeTerm } from "@/lib/db/like";
 import { authzActivityLog, user } from "@/lib/db/schema";
 
 export interface ActivityRow {
@@ -73,11 +74,6 @@ function activitySelect() {
 	};
 }
 
-/** Escapes the LIKE wildcards in a user-supplied search term. */
-function escapeLike(term: string): string {
-	return term.replace(/[\\%_]/g, (c) => `\\${c}`);
-}
-
 /**
  * A filtered, cursor-paginated page of the active org's Activity log — every recorded action +
  * denial — newest first (by insertion id). Community-real (the PDP writes it). Scoped by
@@ -104,7 +100,7 @@ export async function getActivityLog(query: ActivityQuery = {}): Promise<Activit
 		query.decision != null ? eq(authzActivityLog.decision, query.decision) : undefined,
 	];
 	if (query.search?.trim()) {
-		const like = `%${escapeLike(query.search.trim())}%`;
+		const like = likeTerm(query.search.trim());
 		conditions.push(
 			or(
 				ilike(user.name, like),

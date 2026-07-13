@@ -28,6 +28,8 @@ export const qk = {
 	supportCases: (filter: "all" | "active" | "resolved" = "all") =>
 		["support", "cases", filter] as const,
 	supportCase: (id: string) => ["support", "case", id] as const,
+	roles: (org: string, search?: string) =>
+		search ? (["roles", org, search] as const) : (["roles", org] as const),
 	classificationDimensions: (search?: string) =>
 		search
 			? (["classification", "dimensions", search] as const)

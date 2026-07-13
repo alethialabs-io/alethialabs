@@ -30,6 +30,8 @@ export const role = pgTable("role", {
 	id: uuid().primaryKey().defaultRandom(),
 	organization_id: uuid(),
 	name: text().notNull(),
+	/** Human description — built-ins seed from the registry; custom roles author their own. */
+	description: text(),
 	is_builtin: boolean().default(false).notNull(),
 });
 
