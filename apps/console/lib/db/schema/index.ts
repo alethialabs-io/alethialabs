@@ -38,6 +38,7 @@ export * from "./connector-health";
 export * from "./email";
 export * from "./stripe-webhook-event";
 export * from "./support";
+export * from "./platform";
 export * from "./classification";
 export * from "./breakglass";
 export * from "./widgets";
