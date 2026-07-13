@@ -5,8 +5,10 @@ package cloud
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +40,36 @@ func hetznerServerArch(serverType string) string {
 	return "amd64"
 }
 
+// cidrSubnet carves a sub-CIDR out of base, mirroring Terraform's cidrsubnet(): it
+// extends base's prefix by newBits and selects the netNum-th block within it (e.g.
+// cidrSubnet("10.0.0.0/16", 1, 1) => "10.0.128.0/17"). IPv4 only (the Hetzner template
+// is IPv4). Returns "" for an unparseable/oversized input so callers fall back to a
+// safe literal default.
+func cidrSubnet(base string, newBits, netNum int) string {
+	_, ipnet, err := net.ParseCIDR(base)
+	if err != nil {
+		return ""
+	}
+	ip := ipnet.IP.To4()
+	if ip == nil {
+		return ""
+	}
+	ones, _ := ipnet.Mask.Size()
+	newPrefix := ones + newBits
+	if newPrefix < 0 || newPrefix > 32 {
+		return ""
+	}
+	shift := uint(32 - newPrefix)
+	// netNum must fit within the newly added bits.
+	if newBits < 0 || (newBits < 32 && netNum >= (1<<uint(newBits))) || netNum < 0 {
+		return ""
+	}
+	sub := binary.BigEndian.Uint32(ip) | (uint32(netNum) << shift)
+	var out [4]byte
+	binary.BigEndian.PutUint32(out[:], sub)
+	return fmt.Sprintf("%d.%d.%d.%d/%d", out[0], out[1], out[2], out[3], newPrefix)
+}
+
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Node sizing: prefer an explicit/ resolved instance type, else a cheap, orderable
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
@@ -64,9 +96,18 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	controlPlaneType := workerType
 	controlPlaneCount := 1
 
-	// Non-overlapping CIDRs (private network vs pod vs service) — CCM route creation
-	// fails if the pod/service CIDRs overlap the Hetzner network CIDR.
+	// Pod + service CIDRs MUST be non-overlapping SUBNETS of network_cidr: the template
+	// runs Cilium in native-routing mode with ipv4NativeRoutingCIDR = network_cidr, and
+	// the node's `network_cidr via <gw> dev eth1` route + the private-network firewall
+	// only cover pods/services that live inside network_cidr. Disjoint CIDRs (the old
+	// hard-coded 10.244.0.0/16 / 10.96.0.0/12) break cross-node pod->apiserver routing —
+	// a real hel1 provision came up Ready then failed the datapath gate (a pod could not
+	// reach the API ClusterIP cross-node). Derive them from network_cidr with the same
+	// split checks.tf documents (pod = upper /17, service = /19), disjoint from the node
+	// subnet (first /24), so the invariant holds for ANY network_cidr override.
 	networkCIDR := orDefault(config.Network.CIDRBlock, "10.0.0.0/16")
+	podCIDR := orDefault(cidrSubnet(networkCIDR, 1, 1), "10.0.128.0/17")
+	serviceCIDR := orDefault(cidrSubnet(networkCIDR, 3, 3), "10.0.96.0/19")
 
 	tfvars := map[string]interface{}{
 		"project_name": config.ProjectName,
@@ -87,10 +128,10 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"worker_arch":        hetznerServerArch(workerType),
 		"control_plane_arch": hetznerServerArch(controlPlaneType),
 
-		// Networking (non-overlapping ranges).
+		// Networking (pod/service are non-overlapping subnets of network_cidr).
 		"network_cidr": networkCIDR,
-		"pod_cidr":     "10.244.0.0/16",
-		"service_cidr": "10.96.0.0/12",
+		"pod_cidr":     podCIDR,
+		"service_cidr": serviceCIDR,
 	}
 
 	// The hcloud provider authenticates from HCLOUD_TOKEN in the runner env (activated

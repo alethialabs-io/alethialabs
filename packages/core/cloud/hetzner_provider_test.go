@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"net"
 	"reflect"
 	"testing"
 
@@ -139,6 +140,59 @@ func TestHetznerProvider_ProviderTfvars_NodeTypes(t *testing.T) {
 	if av["worker_arch"] != "arm64" || av["control_plane_arch"] != "arm64" {
 		t.Errorf("arm override arch = worker %v / cp %v, want arm64 / arm64",
 			av["worker_arch"], av["control_plane_arch"])
+	}
+}
+
+// TestHetznerProvider_ProviderTfvars_CIDRs verifies pod_cidr and service_cidr are
+// non-overlapping SUBNETS of network_cidr (required by Cilium native-routing over the
+// Hetzner private network — disjoint CIDRs break cross-node pod->apiserver routing).
+// It checks the default network AND a custom network_cidr override, so the derivation
+// tracks network_cidr rather than emitting the old hard-coded 10.244/10.96 constants.
+func TestHetznerProvider_ProviderTfvars_CIDRs(t *testing.T) {
+	p := &hetznerProvider{}
+
+	for _, network := range []string{"10.0.0.0/16", "172.16.0.0/16", "10.10.0.0/16"} {
+		cfg := baseHetznerConfig()
+		cfg.Network.CIDRBlock = network
+		tf := p.ProviderTfvars(cfg)
+
+		if tf["network_cidr"] != network {
+			t.Fatalf("network_cidr = %v, want %v", tf["network_cidr"], network)
+		}
+		pod, _ := tf["pod_cidr"].(string)
+		svc, _ := tf["service_cidr"].(string)
+
+		_, netNet, err := net.ParseCIDR(network)
+		if err != nil {
+			t.Fatalf("bad test network %q: %v", network, err)
+		}
+		for name, child := range map[string]string{"pod_cidr": pod, "service_cidr": svc} {
+			ip, childNet, err := net.ParseCIDR(child)
+			if err != nil {
+				t.Fatalf("%s %q unparseable: %v", name, child, err)
+			}
+			// child ⊂ parent: child prefix >= parent prefix AND child network address ∈ parent.
+			cOnes, _ := childNet.Mask.Size()
+			pOnes, _ := netNet.Mask.Size()
+			if cOnes < pOnes || !netNet.Contains(ip) {
+				t.Errorf("network %s: %s %s is not a subnet of network_cidr", network, name, child)
+			}
+		}
+		// pod and service must not overlap each other.
+		_, podNet, _ := net.ParseCIDR(pod)
+		_, svcNet, _ := net.ParseCIDR(svc)
+		if podNet.Contains(svcNet.IP) || svcNet.Contains(podNet.IP) {
+			t.Errorf("network %s: pod_cidr %s and service_cidr %s overlap", network, pod, svc)
+		}
+	}
+
+	// Spot-check the canonical default split documented in checks.tf.
+	def := p.ProviderTfvars(baseHetznerConfig())
+	if def["pod_cidr"] != "10.0.128.0/17" {
+		t.Errorf("default pod_cidr = %v, want 10.0.128.0/17", def["pod_cidr"])
+	}
+	if def["service_cidr"] != "10.0.96.0/19" {
+		t.Errorf("default service_cidr = %v, want 10.0.96.0/19", def["service_cidr"])
 	}
 }
 

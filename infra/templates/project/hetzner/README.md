@@ -67,8 +67,8 @@ variable). Agents must never run `tofu plan` / `tofu apply`.
 | `worker_server_type` | `cpx22` | Worker server type (2 vCPU / 4 GB, amd64; orderable). |
 | `worker_arch` | `amd64` | Worker arch. |
 | `network_cidr` | `10.0.0.0/16` | Private network CIDR. |
-| `pod_cidr` | `10.244.0.0/16` | Cilium pod CIDR (must not overlap the others). |
-| `service_cidr` | `10.96.0.0/12` | Service CIDR (must not overlap the others). |
+| `pod_cidr` | `10.0.128.0/17` | Cilium pod CIDR. Must be a **subnet** of `network_cidr` (native routing) and not overlap the service/node subnets. |
+| `service_cidr` | `10.0.96.0/19` | Service CIDR. Must be a **subnet** of `network_cidr` and not overlap the pod/node subnets. |
 | `hcloud_token` | `""` | Optional; **only** for the in-cluster hcloud CCM secret. The providers use `HCLOUD_TOKEN` from the env. May be supplied via `TF_VAR_hcloud_token`. |
 | `buckets` | `[]` | Object Storage buckets (see below). Empty → the minio provider is never exercised. |
 | `hetzner_s3_endpoint` | `fsn1.your-objectstorage.com` | S3 endpoint **host** (no scheme). Only used when `buckets` is non-empty. |
