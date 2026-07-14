@@ -11,39 +11,22 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import type { CanvasNode } from "./graph/types";
-import { BucketNode } from "./nodes/bucket-node";
-import { CacheNode } from "./nodes/cache-node";
+import type { CanvasNode, NodeKind } from "./graph/types";
+import { NODE_REGISTRY } from "./graph/node-registry";
 import { ChartNode } from "./nodes/chart-node";
-import { ClusterNode } from "./nodes/cluster-node";
-import { DatabaseNode } from "./nodes/database-node";
-import { DnsNode } from "./nodes/dns-node";
-import { NetworkNode } from "./nodes/network-node";
-import { NosqlNode } from "./nodes/nosql-node";
-import { ProjectNode } from "./nodes/project-node";
-import { QueueNode } from "./nodes/queue-node";
-import { RegistryNode } from "./nodes/registry-node";
-import { RepositoriesNode } from "./nodes/repositories-node";
-import { SecretNode } from "./nodes/secret-node";
-import { TopicNode } from "./nodes/topic-node";
+import { ServiceNode } from "./nodes/service-node";
 import { DependencyEdge } from "./edges/dependency-edge";
 import { GatedEdge } from "./edges/gated-edge";
 
+// Every registry kind renders through the ONE data-driven card (ServiceNode → BaseNode), which
+// reads its facts + handles from NODE_REGISTRY — so a new kind is picked up here automatically and
+// this map can't drift from the SSOT. `chart` keeps its own component: BYO charts are persisted
+// out-of-band and carry detach / rescan actions, so they're more than a card.
 // Defined at module scope so React Flow doesn't warn about new objects per render.
 const nodeTypes: NodeTypes = {
-	project: ProjectNode,
-	network: NetworkNode,
-	cluster: ClusterNode,
-	database: DatabaseNode,
-	cache: CacheNode,
-	queue: QueueNode,
-	topic: TopicNode,
-	nosql: NosqlNode,
-	dns: DnsNode,
-	secret: SecretNode,
-	bucket: BucketNode,
-	registry: RegistryNode,
-	repositories: RepositoriesNode,
+	...Object.fromEntries(
+		(Object.keys(NODE_REGISTRY) as NodeKind[]).map((kind) => [kind, ServiceNode]),
+	),
 	chart: ChartNode,
 };
 
