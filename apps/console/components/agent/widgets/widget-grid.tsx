@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { LayoutDashboard } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { cn } from "@repo/ui/utils";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -82,6 +82,27 @@ export function WidgetGrid({ className }: { className?: string }) {
 		[widgets],
 	);
 
+	// The free cells of the visible area (content rows + one landing row), each with the
+	// contiguous free span to its right (1–2). These render as faint guide squares so the
+	// bento reads as an actual grid, and they ARE the click targets for the cell composer —
+	// so a click can only ever land on an empty cell, and the composer's width is clamped to
+	// the real free span (never overlapping a neighbouring widget).
+	const freeCells = useMemo(() => {
+		const occ = buildOccupancy(rectsOf());
+		const cells: { x: number; y: number; span: number }[] = [];
+		for (let y = 0; y <= maxRow; y++) {
+			for (let x = 0; x < GRID_COLS; x++) {
+				if (occ.has(`${x},${y}`)) continue;
+				let span = 1;
+				while (span < 2 && x + span < GRID_COLS && !occ.has(`${x + span},${y}`)) {
+					span++;
+				}
+				cells.push({ x, y, span });
+			}
+		}
+		return cells;
+	}, [rectsOf, maxRow]);
+
 	const onDragStart = useCallback(
 		(e: React.PointerEvent, id: string, mode: DragMode) => {
 			const w = widgets.find((x) => x.id === id);
@@ -154,8 +175,6 @@ export function WidgetGrid({ className }: { className?: string }) {
 						</div>
 					</div>
 				)}
-				{/* biome-ignore lint: background click opens the cell composer; keyboard users
-			    reach the same flow through the chat composer. */}
 				<div
 					ref={containerRef}
 					data-testid="widget-grid"
@@ -166,15 +185,29 @@ export function WidgetGrid({ className }: { className?: string }) {
 						// here…" always has somewhere to land.
 						minHeight: (maxRow + 1) * (ROW_H + GAP),
 					}}
-					onClick={(e) => {
-						// Only clicks on the grid BACKGROUND (not cards) open the composer.
-						if (e.target !== containerRef.current) return;
-						const cell = cellAt(e);
-						const occ = buildOccupancy(rectsOf());
-						if (collides(occ, { ...cell, colspan: 1, rowspan: 1 })) return;
-						setCellPrompt({ x: Math.min(cell.x, GRID_COLS - 1), y: cell.y });
-					}}
 				>
+					{/* Faint guide cells give the bento visible structure AND are the only
+					    click targets — clicking one opens the composer at that free cell,
+					    sized to its real free span. Hidden while a composer is already open. */}
+					{widgets.length > 0 &&
+						!cellPrompt &&
+						freeCells.map((c) => (
+							<button
+								key={`cell-${c.x}-${c.y}`}
+								type="button"
+								aria-label={`Add a widget at row ${c.y + 1}, column ${c.x + 1}`}
+								onClick={() => setCellPrompt(c)}
+								style={{
+									gridColumn: `${c.x + 1} / span 1`,
+									gridRow: `${c.y + 1} / span 1`,
+								}}
+								className="group/cell flex items-center justify-center border border-dashed border-border/60 text-transparent transition-colors hover:border-foreground/40 hover:bg-muted/40 hover:text-muted-foreground"
+							>
+								<span className="text-lg leading-none group-hover/cell:text-muted-foreground">
+									+
+								</span>
+							</button>
+						))}
 					{widgets.map((w) => (
 						<WidgetCard
 							key={w.id}

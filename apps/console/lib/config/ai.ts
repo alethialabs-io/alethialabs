@@ -21,8 +21,13 @@ export type ProviderId = "anthropic" | "openai";
 export interface AiModel {
 	/** Canonical `provider/native-id` key (also the ledger/cost/analytics key). */
 	id: string;
+	/** The product name (used for metering/analytics; NOT shown in the composer picker). */
 	name: string;
 	provider: ProviderId;
+	/** Intent label shown in the picker instead of the product name ("Fast" / "Thinking"). */
+	label: string;
+	/** One-line description of the intent, shown under the label. */
+	blurb: string;
 }
 
 /** Default role keys (native provider ids), each overridable via env. */
@@ -36,8 +41,20 @@ const DEFAULT_ADVISOR_MAX = "anthropic/claude-opus-4-8";
  * Native ids (Haiku 4.5 = cheapest tool-capable model; Sonnet 4.6 = opt-in upgrade).
  */
 export const AI_MODELS: AiModel[] = [
-	{ id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
-	{ id: "anthropic/claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic" },
+	{
+		id: "anthropic/claude-haiku-4-5",
+		name: "Claude Haiku 4.5",
+		provider: "anthropic",
+		label: "Fast",
+		blurb: "Quick answers for everyday questions",
+	},
+	{
+		id: "anthropic/claude-sonnet-4-6",
+		name: "Claude Sonnet 4.6",
+		provider: "anthropic",
+		label: "Thinking",
+		blurb: "Deeper reasoning for complex work",
+	},
 ];
 
 const ALLOWED_MODELS = new Set(AI_MODELS.map((m) => m.id));

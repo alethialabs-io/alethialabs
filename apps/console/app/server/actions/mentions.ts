@@ -71,15 +71,18 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 					sublabel: [j.status, j.cloud_provider].filter(Boolean).join(" · "),
 				})),
 			),
+			// Only CONNECTED connectors are mention-able — tagging a not-connected
+			// catalog entry is meaningless to Elench, and dumping the whole catalog on
+			// an empty `@` is the noise we're removing.
 			safe(async () =>
-				(await getConnectorsWithStatus()).map((c) => ({
-					id: c.name,
-					type: "connector" as const,
-					label: c.name,
-					sublabel: [c.group, c.connected ? "connected" : "not connected"]
-						.filter(Boolean)
-						.join(" · "),
-				})),
+				(await getConnectorsWithStatus())
+					.filter((c) => c.connected)
+					.map((c) => ({
+						id: c.name,
+						type: "connector" as const,
+						label: c.name,
+						sublabel: [c.group, "connected"].filter(Boolean).join(" · "),
+					})),
 			),
 			safe(async () =>
 				(await getRunnersWithReleases()).map((r) => ({

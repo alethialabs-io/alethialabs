@@ -34,7 +34,7 @@ beforeEach(() => {
 		widgets: [],
 		loading: false,
 		pinned: new Set<string>(),
-		cellPrompt: { x: 2, y: 1 },
+		cellPrompt: { x: 2, y: 1, span: 2 },
 		pendingCellRequest: null,
 		pendingCellTarget: null,
 	});
@@ -43,7 +43,7 @@ beforeEach(() => {
 describe("CellPrompt", () => {
 	it("submits on Enter — staging the cell-targeted request", async () => {
 		const user = userEvent.setup();
-		render(<CellPrompt cell={{ x: 2, y: 1 }} />);
+		render(<CellPrompt cell={{ x: 2, y: 1, span: 2 }} />);
 		await user.type(
 			screen.getByPlaceholderText("Describe what goes here…"),
 			"running jobs{Enter}",
@@ -58,7 +58,7 @@ describe("CellPrompt", () => {
 
 	it("cancels on Escape without staging anything", async () => {
 		const user = userEvent.setup();
-		render(<CellPrompt cell={{ x: 2, y: 1 }} />);
+		render(<CellPrompt cell={{ x: 2, y: 1, span: 2 }} />);
 		await user.type(
 			screen.getByPlaceholderText("Describe what goes here…"),
 			"nevermind{Escape}",
@@ -67,11 +67,17 @@ describe("CellPrompt", () => {
 		expect(useWidgetGridStore.getState().cellPrompt).toBeNull();
 	});
 
-	it("renders at the clicked cell", () => {
-		render(<CellPrompt cell={{ x: 2, y: 1 }} />);
+	it("renders at the clicked cell, spanning the free columns", () => {
+		render(<CellPrompt cell={{ x: 2, y: 1, span: 2 }} />);
 		const el = screen.getByTestId("cell-prompt");
 		expect(el.style.gridColumn).toBe("3 / span 2");
 		expect(el.style.gridRow).toBe("2 / span 1");
+	});
+
+	it("clamps its width to a single column when only one is free", () => {
+		render(<CellPrompt cell={{ x: 4, y: 0, span: 1 }} />);
+		const el = screen.getByTestId("cell-prompt");
+		expect(el.style.gridColumn).toBe("5 / span 1");
 	});
 });
 

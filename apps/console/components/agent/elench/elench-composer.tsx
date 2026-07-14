@@ -15,6 +15,7 @@ import {
 	ScrollText,
 	Server,
 	Square,
+	X,
 } from "lucide-react";
 import {
 	type KeyboardEvent,
@@ -126,6 +127,16 @@ export function ElenchComposer({
 		setAnchor(null);
 	}, [value, pending, mentions, onSend]);
 
+	/** Untag a resource — drop it from the reference list AND strip its `@token` from the text. */
+	const removeMention = useCallback((m: Mention) => {
+		setMentions((prev) =>
+			prev.filter((p) => !(p.id === m.id && p.type === m.type)),
+		);
+		setValue((v) =>
+			v.replaceAll(`@${m.label} `, "").replaceAll(`@${m.label}`, ""),
+		);
+	}, []);
+
 	const onKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
 			if (popoverOpen) {
@@ -165,7 +176,9 @@ export function ElenchComposer({
 			{popoverOpen && (
 				<div className="absolute bottom-full left-0 z-50 mb-2 w-full border border-border bg-popover shadow-md">
 					<div className="vx-eyebrow flex items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-[9px]">
-						Tag a resource
+						{anchor && anchor.query.length === 0
+							? "Your resources · type to search"
+							: "Tag a resource"}
 						{loading && <Loader2 className="h-3 w-3 animate-spin" />}
 					</div>
 					<div className="max-h-64 overflow-y-auto py-1">
@@ -225,6 +238,34 @@ export function ElenchComposer({
 					}
 					className="field-sizing-content max-h-56 min-h-[72px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
 				/>
+				{/* Tagged-resource chips — a plain <textarea> can't bold the @tokens inline, so
+				    the committed references show here as removable chips (clear "you tagged X"). */}
+				{mentions.length > 0 && (
+					<div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
+						{mentions.map((m) => {
+							const Icon = TYPE_ICON[m.type];
+							return (
+								<span
+									key={`${m.type}:${m.id}`}
+									className="inline-flex items-center gap-1.5 border border-border bg-muted px-2 py-0.5 text-xs text-foreground"
+								>
+									<Icon className="h-3 w-3 flex-none text-muted-foreground" />
+									<span className="max-w-[160px] truncate font-medium">
+										{m.label}
+									</span>
+									<button
+										type="button"
+										aria-label={`Remove ${m.label}`}
+										onClick={() => removeMention(m)}
+										className="flex-none text-muted-foreground transition-colors hover:text-foreground"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</span>
+							);
+						})}
+					</div>
+				)}
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
 					<div className="flex items-center gap-1.5">
 						<ElenchAskMode />

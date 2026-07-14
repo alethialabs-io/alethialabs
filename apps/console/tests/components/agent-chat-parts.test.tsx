@@ -106,7 +106,9 @@ describe("AgentChat part rendering", () => {
 		const { container } = renderChat(assistantTurn());
 		const markers = container.querySelectorAll('[data-variant="separator"]');
 		expect(markers).toHaveLength(1);
-		expect(screen.getByText(/plan · Claude Sonnet 4\.6/)).toBeInTheDocument();
+		// The separator names ONLY Elench + the phase — never the underlying model.
+		expect(screen.getByText(/Elench · Planning/)).toBeInTheDocument();
+		expect(screen.queryByText(/Claude Sonnet/)).not.toBeInTheDocument();
 	});
 
 	it("does not shimmer a DONE reasoning part while the turn still streams", () => {

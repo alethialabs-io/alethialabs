@@ -12,7 +12,11 @@ import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
  * the agent answers with ONE read tool + `pin_widget` at these coordinates); Esc
  * cancels. Rendered inside the CSS grid at the clicked cell.
  */
-export function CellPrompt({ cell }: { cell: { x: number; y: number } }) {
+export function CellPrompt({
+	cell,
+}: {
+	cell: { x: number; y: number; span: number };
+}) {
 	const submit = useWidgetGridStore((s) => s.submitCellPrompt);
 	const cancel = useWidgetGridStore((s) => s.setCellPrompt);
 	const [text, setText] = useState("");
@@ -21,7 +25,9 @@ export function CellPrompt({ cell }: { cell: { x: number; y: number } }) {
 		<div
 			data-testid="cell-prompt"
 			style={{
-				gridColumn: `${cell.x + 1} / span ${Math.min(2, 5 - cell.x)}`,
+				// `span` is the real number of free columns to the right (1–2), so the
+				// composer never overlaps a neighbouring widget.
+				gridColumn: `${cell.x + 1} / span ${cell.span}`,
 				gridRow: `${cell.y + 1} / span 1`,
 			}}
 			className="flex items-center gap-1.5 border border-dashed border-foreground/60 bg-background px-2"
