@@ -17,6 +17,7 @@ import { environmentDrift, jobs, projectEnvironments } from "@/lib/db/schema";
 import { newTraceparent } from "@/lib/observability/trace";
 import { structuralHash } from "@/lib/promotions/diff";
 import { notifyScaler } from "@/lib/scaler";
+import { getLatestProbesByEnv } from "./probes";
 import { getProjectAsFormData } from "./projects";
 
 /** Circuit breaker: stop auto-healing an env after this many consecutive failed deploys. */
@@ -117,6 +118,16 @@ export async function maybeAutoHeal(
 	if (enqueued) notifyScaler();
 }
 
+/** The latest cluster-alive probe facet of an env's reconcile state (BYOC B2). */
+export interface EnvProbeState {
+	/** True = API server answered, false = unreachable, null = never probed. */
+	reachable: boolean | null;
+	/** Short human-readable summary (esp. WHY unreachable). */
+	message: string | null;
+	/** When the last probe ran (RFC3339), null when never probed. */
+	probedAt: string | null;
+}
+
 /** Per-environment reconcile state for the console's stability badges. */
 export interface EnvReconcileState {
 	environmentId: string;
@@ -126,6 +137,11 @@ export interface EnvReconcileState {
 	/** True when the env's designed structure has moved ahead of what's deployed. */
 	deployPending: boolean;
 	lastDeployedAt: string | null;
+	/**
+	 * Latest cluster-alive signal (BYOC B2). `reachable` null = never probed. The console badge
+	 * pairs this with drift: drift answers "has it diverged?", probe answers "is it still up?".
+	 */
+	probe: EnvProbeState;
 }
 
 /** The reconcile state of every environment in a project (drift + config-vs-desired + auto-heal). */
@@ -139,6 +155,10 @@ export async function getEnvReconcileStates(
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId)),
 	);
+
+	// Latest cluster-alive probe per env (BYOC B2), fetched once for the project (org-scoped join
+	// inside). Envs never probed are simply absent → the badge shows null (never probed).
+	const probesByEnv = await getLatestProbesByEnv(projectId, actor.orgId);
 
 	return Promise.all(
 		envs.map(async (env) => {
@@ -161,12 +181,18 @@ export async function getEnvReconcileStates(
 					deployPending = false;
 				}
 			}
+			const probe = probesByEnv.get(env.id);
 			return {
 				environmentId: env.id,
 				autoHeal: env.auto_heal,
 				driftInSync: drift ? drift.in_sync : null,
 				deployPending,
 				lastDeployedAt: env.last_deployed_at?.toISOString() ?? null,
+				probe: {
+					reachable: probe ? probe.reachable : null,
+					message: probe ? probe.message : null,
+					probedAt: probe ? probe.probedAt : null,
+				},
 			};
 		}),
 	);

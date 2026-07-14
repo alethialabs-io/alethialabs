@@ -12,6 +12,10 @@ import {
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/app/server/actions/promotions";
+import {
+	probeResultToRecord,
+	recordProbeResult,
+} from "@/app/server/actions/probes";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import {
 	recordAddonHealth,
@@ -367,6 +371,47 @@ export async function PUT(
 						).catch((err) =>
 							jlog.error("persist security posture (drift) error", { err }),
 						);
+					}
+				}
+			}
+
+			// PROBE_CLUSTER: persist the runner's cluster-alive result (posted on
+			// execution_metadata.probe_result by RunProbe) as an append-only environment_probes
+			// history row, and — when the cluster just went dark (a true→false liveness transition)
+			// — raise a distinct critical outage alert exactly once. An unreachable cluster is a
+			// SUCCESSFUL probe with reachable=false (never a job failure), so this rides SUCCESS.
+			// Best-effort: a probe-ingest failure must never fail the runner's status update.
+			if (
+				job?.job_type === "PROBE_CLUSTER" &&
+				status === "SUCCESS" &&
+				job.project_id &&
+				job.environment_id
+			) {
+				const probe = job.execution_metadata?.probe_result;
+				if (probe) {
+					try {
+						const { becameUnreachable } = await recordProbeResult(
+							probeResultToRecord(
+								job.project_id,
+								job.environment_id,
+								probe,
+								new Date(),
+							),
+						);
+						if (becameUnreachable && job.org_id) {
+							emitAlertEventSafe(job.org_id, "system.project.cluster_unreachable", {
+								title: "Cluster unreachable",
+								summary:
+									probe.message ||
+									"A cluster-alive probe could not reach the environment's API server (it was reachable on the previous probe).",
+								severity: "critical",
+								job_id: jobId,
+								job_type: job.job_type,
+								project_id: job.project_id,
+							});
+						}
+					} catch (err) {
+						jlog.error("persist probe result error", { err });
 					}
 				}
 			}
