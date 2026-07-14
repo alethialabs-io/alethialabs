@@ -48,10 +48,54 @@ func TestRenderAddOnApplication(t *testing.T) {
 		"alethia.io/addon-id: kube-prometheus-stack",
 		"alethia.io/addon-mode: managed",
 		"retention: 15d", // the merged values, indented under helm.values
+		// ServerSideApply so large-CRD charts (kube-prometheus-stack) don't hit ArgoCD's
+		// 262144-byte client-side annotation limit on first apply.
+		"- ServerSideApply=true",
+		"- CreateNamespace=true",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Errorf("manifest missing %q\n---\n%s", want, manifest)
 		}
+	}
+}
+
+// TestRenderAddOnServerSideApply asserts every rendered add-on Application carries
+// ServerSideApply=true — for BOTH the marketplace (Helm-registry) shape and the git-source
+// (BYO) shape — so large-CRD charts don't exceed the client-side annotation-size limit.
+func TestRenderAddOnServerSideApply(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(a *types.AddOnInstall)
+	}{
+		{
+			name:   "marketplace",
+			mutate: func(a *types.AddOnInstall) { a.Source = "" }, // default Helm-registry shape
+		},
+		{
+			name: "git-source",
+			mutate: func(a *types.AddOnInstall) {
+				a.Source = "git"
+				a.Path = "charts/kube-prometheus-stack"
+				a.ChartRepo = "https://github.com/acme/apps"
+				a.Project = "byo-kube-prometheus-stack"
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := sampleAddOn()
+			tc.mutate(&a)
+			manifest, err := RenderAddOnApplication(a)
+			if err != nil {
+				t.Fatalf("render failed: %v", err)
+			}
+			if !strings.Contains(manifest, "- ServerSideApply=true") {
+				t.Errorf("%s manifest missing ServerSideApply=true\n---\n%s", tc.name, manifest)
+			}
+			if !strings.Contains(manifest, "- CreateNamespace=true") {
+				t.Errorf("%s manifest missing CreateNamespace=true\n---\n%s", tc.name, manifest)
+			}
+		})
 	}
 }
 

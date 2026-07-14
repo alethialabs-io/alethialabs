@@ -30,6 +30,9 @@ import (
 //     (no automated block, no prune, no self-heal) so an untrusted chart never auto-applies.
 //
 // CreateNamespace makes the target namespace on first sync; the sync-wave orders installs.
+// ServerSideApply is set on both shapes so large-CRD charts (e.g. kube-prometheus-stack's
+// monitoring.coreos.com CRDs) don't blow ArgoCD's 262144-byte client-side annotation limit
+// on first apply.
 var applicationTmpl = template.Must(template.New("addon-app").Parse(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -64,6 +67,7 @@ spec:
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
   {{- else }}
   syncPolicy:
     automated:
@@ -71,6 +75,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
   {{- end }}
   revisionHistoryLimit: 3
 `))
