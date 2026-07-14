@@ -169,6 +169,13 @@ export function hetznerDataServicesToAddOns(
 			namespace: NS.operators,
 			values: {},
 			syncWave: 0,
+			// The CRD each database's `Cluster` CR (sync-wave 1) needs. The runner applies the
+			// add-on Applications in wave order and BLOCKS on this CRD becoming Established before
+			// wave 1 — ArgoCD's sync-wave annotation does NOT order separate top-level
+			// Applications, so without this the operator and the Cluster CR race and the CR's first
+			// sync fails with `no matches for kind "Cluster"`. Name verified against the real chart
+			// (cloudnative-pg 0.22.1 renders clusters.postgresql.cnpg.io).
+			crds: ["clusters.postgresql.cnpg.io"],
 		});
 	}
 	for (const db of pgDatabases) {
