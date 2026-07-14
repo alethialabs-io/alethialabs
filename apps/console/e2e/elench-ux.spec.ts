@@ -123,6 +123,47 @@ test.describe("Elench rail", () => {
 	});
 });
 
+test.describe("Elench knowledge base", () => {
+	test("a named document saves, survives a reload, and counts against capacity", async ({
+		page,
+	}) => {
+		await openElench(page);
+		await page.getByRole("button", { name: "Knowledge", exact: true }).click();
+		await expect(page.getByTestId("knowledge-panel")).toBeVisible();
+
+		// It is a document LIST, not a textarea blob.
+		await expect(page.getByTestId("knowledge-doc")).toHaveCount(0);
+		await page.getByTestId("knowledge-add").click();
+
+		const title = `Runbook ${Date.now()}`;
+		await page.getByTestId("knowledge-doc-title").fill(title);
+		await page
+			.getByTestId("knowledge-doc-content")
+			.fill("Drain nodes before an apply. Owned by the platform team.");
+		await page.getByTestId("knowledge-doc-save").click();
+
+		const doc = page.getByTestId("knowledge-doc");
+		await expect(doc).toHaveCount(1);
+		await expect(doc).toContainText(title);
+		// The capacity meter reflects real size — knowledge is paid for on every turn.
+		await expect(page.getByTestId("knowledge-panel")).toContainText("/ 50.0k");
+
+		// Wait for the write to land before navigating — reloading over an in-flight server
+		// action aborts it (that's what "Saved." is there to tell you).
+		await expect(page.getByText("Saved.")).toBeVisible();
+
+		// It PERSISTED (a server row, not local state).
+		await page.reload();
+		await openElench(page);
+		await page.getByRole("button", { name: "Knowledge", exact: true }).click();
+		await expect(page.getByTestId("knowledge-doc")).toContainText(title);
+
+		// And it can be removed again.
+		await page.getByRole("button", { name: `Delete ${title}` }).click();
+		await expect(page.getByTestId("knowledge-doc")).toHaveCount(0);
+	});
+});
+
 test.describe("Elench artifacts", () => {
 	test("clicking an artifact opens a viewer and does NOT create a chat", async ({
 		page,

@@ -12,13 +12,26 @@ import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { agentContext } from "@/lib/db/schema";
 import type { AgentContext } from "@/lib/db/schema";
-import { buildProjectKnowledge, readAgentContext } from "@/lib/ai/project-knowledge";
+import {
+	buildProjectKnowledge,
+	KNOWLEDGE_LIMIT,
+	readAgentContext,
+} from "@/lib/ai/project-knowledge";
 
 const scopeSchema = z.string().uuid().nullish();
+
+/** One pinned knowledge document. Titles are required — an unnamed doc is unusable in a list. */
+const documentSchema = z.object({
+	id: z.string().min(1),
+	title: z.string().trim().min(1).max(200),
+	content: z.string().max(KNOWLEDGE_LIMIT),
+	updated_at: z.string(),
+});
+
 const upsertSchema = z.object({
 	projectId: z.string().uuid().nullish(),
 	instructions: z.string().max(10_000),
-	notes: z.string().max(50_000),
+	documents: z.array(documentSchema).max(50),
 });
 
 export type AgentContextInput = z.infer<typeof upsertSchema>;
@@ -39,9 +52,17 @@ export async function getAgentContext(
 export async function upsertAgentContext(
 	input: AgentContextInput,
 ): Promise<AgentContext> {
-	const { projectId, instructions, notes } = upsertSchema.parse(input);
+	const { projectId, instructions, documents } = upsertSchema.parse(input);
 	const owner = await requireOwner();
 	const scope = projectId ?? null;
+
+	// Everything here rides EVERY turn's system prompt, so the total is capped, not just each doc.
+	const total = documents.reduce((n, d) => n + d.content.length, 0);
+	if (total > KNOWLEDGE_LIMIT) {
+		throw new Error(
+			`Knowledge is ${total.toLocaleString()} characters — the limit is ${KNOWLEDGE_LIMIT.toLocaleString()}.`,
+		);
+	}
 
 	return withOwnerScope(owner, async (tx) => {
 		const [row] = await tx
@@ -51,11 +72,11 @@ export async function upsertAgentContext(
 				org_id: owner,
 				project_id: scope,
 				instructions,
-				notes,
+				documents,
 			})
 			.onConflictDoUpdate({
 				target: [agentContext.org_id, agentContext.project_id],
-				set: { instructions, notes, updated_at: new Date() },
+				set: { instructions, documents, updated_at: new Date() },
 			})
 			.returning();
 		return row;
