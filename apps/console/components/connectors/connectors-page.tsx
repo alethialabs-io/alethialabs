@@ -280,6 +280,18 @@ export function ConnectorsPage({
 		}
 	};
 
+	/** Re-verifies one specific cloud account from the manage sheet (a provider can hold several, and
+	 *  only some of them may be broken). */
+	const handleReverifyAccount = async (identityId: string) => {
+		try {
+			await reverifyCloudIdentity(identityId);
+			toast.success("Re-verifying…");
+			router.refresh();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to re-verify");
+		}
+	};
+
 	/** Renames a cloud account, then refreshes so the sheet shows the new name. */
 	const handleRename = async (identityId: string, name: string) => {
 		try {
@@ -321,13 +333,25 @@ export function ConnectorsPage({
 			} else if (integration.auth_method === "api_key") {
 				const result = await deleteConnectorCredential(integration.slug);
 				if (!result.ok) throw new Error(result.error);
+			} else {
+				// No branch matched — a new connector slug that nothing above handles. Fail loudly rather
+				// than falling through to the success toast below having done nothing.
+				throw new Error(
+					`No disconnect path for ${integration.slug}. This is a bug — please report it.`,
+				);
 			}
 			toast.success(`Disconnected ${integration.name}.`);
 			setDisconnectTarget(null);
 			router.refresh();
 		} catch (err) {
 			console.error("Disconnect error:", err);
-			toast.error(`Failed to disconnect ${integration.name}`);
+			// Surface the real reason. A ForbiddenError and a provider mismatch used to render as the
+			// same opaque string, which made a failed disconnect impossible to act on.
+			toast.error(
+				err instanceof Error
+					? err.message
+					: `Failed to disconnect ${integration.name}`,
+			);
 		} finally {
 			setIsDisconnecting(false);
 		}
@@ -512,6 +536,7 @@ export function ConnectorsPage({
 					selectedIntegration &&
 					setDisconnectTarget({ integration: selectedIntegration, identityId })
 				}
+				onReverifyAccount={handleReverifyAccount}
 				onRenameAccount={handleRename}
 			/>
 

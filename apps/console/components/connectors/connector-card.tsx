@@ -55,6 +55,10 @@ export function ConnectorCard({
 		integration.token_health === "refresh_failed";
 	const cloudFailed = integration.cloud_health === "failed";
 	const cloudTesting = integration.cloud_health === "testing";
+	// Authenticated, but the probe found provisioning permissions missing. NOT a failure — the
+	// connection works; it just can't see everything we'd provision into, so it stays "connected"
+	// and says so rather than reporting an unqualified green.
+	const cloudDegraded = integration.cloud_health === "degraded";
 	const accountCount = integration.accounts?.length ?? 0;
 
 	return (
@@ -128,7 +132,9 @@ export function ConnectorCard({
 								: needsReconnection
 									? "Needs reconnection"
 									: isConnected
-										? "Connected"
+										? cloudDegraded
+											? "Limited permissions"
+											: "Connected"
 										: cloudFailed
 											? "Verification failed"
 											: cloudTesting
@@ -174,19 +180,32 @@ export function ConnectorCard({
 				) : cloudTesting ? (
 					<Loader2 className="size-3.5 animate-spin text-muted-foreground" />
 				) : cloudFailed && canManage ? (
-					<Button
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						disabled={isConnecting}
-						onClick={onReverify}
-					>
-						{isConnecting ? (
-							<Loader2 className="mr-1 size-3.5 animate-spin" />
-						) : (
-							<RefreshCw className="mr-1 size-3.5" />
-						)}
-						Re-verify
-					</Button>
+					// Manage sits alongside Re-verify deliberately: re-verifying a connection whose stored
+					// credentials are simply WRONG will fail forever, so the sheet — where the account can be
+					// corrected or removed — has to be reachable from here. Without it a bad connect wedged.
+					<div className="flex items-center gap-1">
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 px-2.5 text-xs"
+							onClick={onManage}
+						>
+							Manage
+						</Button>
+						<Button
+							size="sm"
+							className="h-7 px-2.5 text-xs"
+							disabled={isConnecting}
+							onClick={onReverify}
+						>
+							{isConnecting ? (
+								<Loader2 className="mr-1 size-3.5 animate-spin" />
+							) : (
+								<RefreshCw className="mr-1 size-3.5" />
+							)}
+							Re-verify
+						</Button>
+					</div>
 				) : canManage ? (
 					<Button
 						size="sm"

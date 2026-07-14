@@ -453,31 +453,53 @@ describe("saveGcpIdentity", () => {
 // --- saveAzureIdentity ---
 
 describe("saveAzureIdentity", () => {
-	const G = "12345678-1234-1234-1234-123456789abc";
+	// Three DISTINCT GUIDs — the tenant, the managed identity's application id and the subscription
+	// name three different things. (This fixture used to reuse one GUID for all three, which is
+	// precisely the mis-paste that reaches Entra as AADSTS700016 and is now rejected.)
+	const TENANT = "12345678-1234-1234-1234-123456789abc";
+	const CLIENT = "22222222-2222-4222-8222-222222222222";
+	const SUB = "33333333-3333-4333-8333-333333333333";
 
 	it("validates the three GUIDs, names from the subscription prefix, and verifies server-side", async () => {
 		queue([{ id: "ci-az", provider: "azure", status: "testing", credentials: {} }], []);
 		queueVerify("azure");
-		const r = await saveAzureIdentity(SCOPE, "ci-az", G, G, G);
+		const r = await saveAzureIdentity(SCOPE, "ci-az", TENANT, CLIENT, SUB);
 		expect(r).toMatchObject({ identityId: "ci-az", verified: true, status: "connected" });
 		expect(db._sets[0]).toMatchObject({
-			name: "Azure Subscription (12345678...)",
-			credentials: { tenant_id: G, client_id: G, subscription_id: G },
+			name: "Azure Subscription (33333333...)",
+			credentials: { tenant_id: TENANT, client_id: CLIENT, subscription_id: SUB },
 		});
 		expect(db._values).toHaveLength(0);
 	});
 
 	it("rejects a bad tenant GUID before any db write", async () => {
-		await expect(saveAzureIdentity(SCOPE, "ci-az", "nope", G, G)).rejects.toThrow(
-			/Tenant ID/,
-		);
+		await expect(
+			saveAzureIdentity(SCOPE, "ci-az", "nope", CLIENT, SUB),
+		).rejects.toThrow(/Tenant ID/);
 		expect(db._sets).toHaveLength(0);
 	});
 
 	it("rejects a bad subscription GUID", async () => {
-		await expect(saveAzureIdentity(SCOPE, "ci-az", G, G, "nope")).rejects.toThrow(
-			/Subscription ID/,
-		);
+		await expect(
+			saveAzureIdentity(SCOPE, "ci-az", TENANT, CLIENT, "nope"),
+		).rejects.toThrow(/Subscription ID/);
+	});
+
+	// The reported bug: the connect form's paste parser swapped client ↔ subscription, so the
+	// subscription GUID was stored as the application id and Entra answered AADSTS700016. The CLI
+	// reaches this action directly, so the check has to live here too — not only in the form.
+	it("rejects a Subscription ID pasted into Client ID, before any db write", async () => {
+		await expect(
+			saveAzureIdentity(SCOPE, "ci-az", TENANT, SUB, SUB),
+		).rejects.toThrow(/Subscription ID/);
+		expect(db._sets).toHaveLength(0);
+	});
+
+	it("rejects a Tenant ID pasted into Client ID, before any db write", async () => {
+		await expect(
+			saveAzureIdentity(SCOPE, "ci-az", TENANT, TENANT, SUB),
+		).rejects.toThrow(/Tenant ID/);
+		expect(db._sets).toHaveLength(0);
 	});
 });
 

@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState } from "react";
-import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import type {
+	CloudAccountStatus,
+	ConnectorWithConnection,
+} from "@/app/server/actions/connectors";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
@@ -27,9 +30,34 @@ import {
 	Loader2,
 	Pencil,
 	Plus,
+	RefreshCw,
 	Unlink,
 	X,
 } from "lucide-react";
+
+/**
+ * The grayscale badge for one cloud account's health. `degraded` reads as `pending`, not `failed`:
+ * the account authenticated fine and is usable — it just can't see everything we provision into, so
+ * there is something left to do rather than something broken.
+ */
+function AccountStatusBadge({ status }: { status: CloudAccountStatus }) {
+	switch (status) {
+		case "connected":
+			return <StatusBadge status="connected" label="Connected" />;
+		case "degraded":
+			return (
+				<StatusBadge
+					status="degraded"
+					tier="pending"
+					label="Limited permissions"
+				/>
+			);
+		case "testing":
+			return <StatusBadge status="testing" tier="pending" label="Verifying…" />;
+		case "failed":
+			return <StatusBadge status="failed" label="Verification failed" />;
+	}
+}
 
 interface ConnectorDetailSheetProps {
 	integration: ConnectorWithConnection | null;
@@ -43,15 +71,17 @@ interface ConnectorDetailSheetProps {
 	onDisconnectConnector: () => void;
 	/** Disconnect a specific cloud account by identity id. */
 	onDisconnectAccount: (identityId: string) => void;
+	/** Re-run verification for a specific cloud account against its stored credentials. */
+	onReverifyAccount: (identityId: string) => Promise<void>;
 	/** Rename a cloud account. */
 	onRenameAccount: (identityId: string, name: string) => Promise<void>;
 }
 
 /**
- * The manage sheet for one connector. For clouds it lists every connected account
- * (each renamable / disconnectable) and offers "Add another account"; for git /
- * api_key connectors it offers connect or disconnect. Mutating affordances are
- * hidden unless `canManage`.
+ * The manage sheet for one connector. For clouds it lists every CONFIGURED account — including one
+ * that failed to verify, which is the only place it can be re-verified or removed — each renamable /
+ * disconnectable, and offers "Add another account"; for git / api_key connectors it offers connect or
+ * disconnect. Mutating affordances are hidden unless `canManage`.
  */
 export function ConnectorDetailSheet({
 	integration,
@@ -62,8 +92,10 @@ export function ConnectorDetailSheet({
 	onConnect,
 	onDisconnectConnector,
 	onDisconnectAccount,
+	onReverifyAccount,
 	onRenameAccount,
 }: ConnectorDetailSheetProps) {
+	const [reverifyingId, setReverifyingId] = useState<string | null>(null);
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [draft, setDraft] = useState("");
 	const [savingId, setSavingId] = useState<string | null>(null);
@@ -138,7 +170,13 @@ export function ConnectorDetailSheet({
 				<div className="space-y-6 px-6 py-5">
 					<div className="flex items-center gap-2">
 						{isConnected ? (
-							<StatusBadge status="connected" label="Connected" />
+							// Degraded still counts as connected — surface it here rather than reporting a
+							// flat "Connected" over an account that can't see what we provision into.
+							<AccountStatusBadge
+								status={
+									integration.cloud_health === "degraded" ? "degraded" : "connected"
+								}
+							/>
 						) : isComingSoon ? (
 							<Badge variant="secondary" className="text-xs">
 								Coming Soon
@@ -165,8 +203,10 @@ export function ConnectorDetailSheet({
 						{integration.description}
 					</p>
 
-					{/* Cloud accounts (multi-account) */}
-					{isCloud && isConnected && (
+					{/* Cloud accounts (multi-account). Gated on the account list, NOT on `isConnected`: an
+					    account whose verification failed is still listed here — it is the only place it can
+					    be re-verified or removed, and while it was hidden a broken connection was stuck. */}
+					{isCloud && accounts.length > 0 && (
 						<div className="space-y-3">
 							<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
 								Accounts
@@ -214,14 +254,33 @@ export function ConnectorDetailSheet({
 										) : (
 											<>
 												<div className="min-w-0 flex-1">
-													<div className="truncate text-xs font-medium text-foreground">
-														{acc.name}
+													<div className="flex items-center gap-1.5">
+														<span className="truncate text-xs font-medium text-foreground">
+															{acc.name}
+														</span>
+														<AccountStatusBadge status={acc.status} />
 													</div>
 													{acc.label && (
 														<div className="truncate font-mono text-[10px] text-muted-foreground">
 															{acc.label}
 														</div>
 													)}
+													{/* Why it failed / what it can't see. Without this the only signal was a
+													    generic red badge, and the fix was a guess. */}
+													{acc.status === "failed" && acc.lastError && (
+														<p className="mt-1 text-[10px] leading-relaxed text-destructive">
+															{acc.lastError}
+														</p>
+													)}
+													{acc.status === "degraded" &&
+														(acc.missingPermissions?.length ?? 0) > 0 && (
+															<p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+																Missing:{" "}
+																<span className="font-mono">
+																	{acc.missingPermissions?.join(", ")}
+																</span>
+															</p>
+														)}
 													{/* Classification (Workstream B) — chips + a picker for managers. */}
 													<ClassificationControl
 														kind="cloud_identity"
@@ -234,10 +293,34 @@ export function ConnectorDetailSheet({
 												</div>
 												{canManage && (
 													<>
+														{(acc.status === "failed" || acc.status === "degraded") && (
+															<Button
+																size="sm"
+																variant="ghost"
+																className="size-7 p-0 text-muted-foreground"
+																title="Re-verify with the stored credentials"
+																disabled={reverifyingId === acc.identityId}
+																onClick={async () => {
+																	setReverifyingId(acc.identityId);
+																	try {
+																		await onReverifyAccount(acc.identityId);
+																	} finally {
+																		setReverifyingId(null);
+																	}
+																}}
+															>
+																{reverifyingId === acc.identityId ? (
+																	<Loader2 className="size-3.5 animate-spin" />
+																) : (
+																	<RefreshCw className="size-3.5" />
+																)}
+															</Button>
+														)}
 														<Button
 															size="sm"
 															variant="ghost"
 															className="size-7 p-0 text-muted-foreground"
+															title="Rename"
 															onClick={() => startRename(acc.identityId, acc.name)}
 														>
 															<Pencil className="size-3.5" />
@@ -246,6 +329,7 @@ export function ConnectorDetailSheet({
 															size="sm"
 															variant="ghost"
 															className="size-7 p-0 text-destructive hover:text-destructive"
+															title="Remove this connection"
 															onClick={() => onDisconnectAccount(acc.identityId)}
 														>
 															<Unlink className="size-3.5" />

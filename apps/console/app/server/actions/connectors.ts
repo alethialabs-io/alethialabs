@@ -40,12 +40,25 @@ export type GitTokenHealth = "healthy" | "expired" | "refresh_failed";
 /** The four presentation groups the connectors page renders (from the design). */
 export type ConnectorGroup = "clouds" | "secrets" | "registries" | "apps";
 
-/** One connected cloud account (a verified cloud_identity row). */
+/** The health of one cloud account, mirroring `cloud_identities.status`. */
+export type CloudAccountStatus = "connected" | "degraded" | "testing" | "failed";
+
+/**
+ * One configured cloud account (a cloud_identity row a credential was actually submitted for —
+ * verified or not). Broken accounts are included deliberately: an unverified identity used to be
+ * invisible here, which left it with no disconnect affordance anywhere in the UI and no way to
+ * remove a connection whose credentials were wrong.
+ */
 export type CloudAccount = {
 	identityId: string;
 	name: string;
 	/** Short descriptor — account id / project / subscription. */
 	label?: string;
+	status: CloudAccountStatus;
+	/** Provisioning permissions the probe found MISSING (what makes an account `degraded`). */
+	missingPermissions?: string[];
+	/** Why verification failed (set when `status === "failed"`). */
+	lastError?: string;
 };
 
 /**
@@ -102,16 +115,20 @@ export type ConnectorWithConnection = Connector & {
 	credential_id?: string;
 	/** The presentation group (clouds / secrets / registries / apps). */
 	group: ConnectorGroup;
-	/** Connected accounts for cloud connectors (a provider can hold several). */
+	/** Configured accounts for cloud connectors — a provider can hold several, and a broken one is
+	 *  listed too (with its status) so it can be re-verified or removed. */
 	accounts?: CloudAccount[];
 	/**
-	 * For a not-yet-connected cloud connector whose latest verification is in flight
-	 * or failed — drives the "Verifying…" / "Verification failed → Re-verify" states.
+	 * The connector-level rollup shown on the card/row. `degraded` means at least one account
+	 * authenticated but is missing provisioning permissions — it is NOT a synonym for disconnected,
+	 * so the connector still reads as connected.
 	 */
-	cloud_health?: "testing" | "failed";
+	cloud_health?: "testing" | "failed" | "degraded";
 	/** The last verification error (set when `cloud_health === "failed"`). */
 	last_error?: string;
-	/** The cloud identity to re-verify (for a failed/testing cloud connector). */
+	/** Provisioning permissions missing across the connector's accounts (drives `degraded`). */
+	missing_permissions?: string[];
+	/** The cloud identity to re-verify (for a failed/testing/degraded cloud connector). */
 	reverify_identity_id?: string;
 };
 
@@ -148,6 +165,10 @@ export async function getConnectorsWithStatus(): Promise<
 				.from(account)
 				.where(eq(account.userId, userId))
 		: [];
+	// EVERY cloud identity — verified or not. A broken account must still reach the UI: it is the only
+	// thing that can carry a Re-verify or a Remove affordance, and while unverified rows were filtered
+	// out here a failed connection was unremovable. Newest first so the primary account per provider is
+	// the latest one.
 	const cloudIdentityRows = scope
 		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
 				tx
@@ -157,50 +178,39 @@ export async function getConnectorsWithStatus(): Promise<
 						provider: cloudIdentities.provider,
 						credentials: cloudIdentities.credentials,
 						scope: cloudIdentities.scope,
-					})
-					.from(cloudIdentities)
-					.where(eq(cloudIdentities.is_verified, true)),
-			)
-		: [];
-
-	// Latest non-verified cloud identity per provider — drives the "Verifying…" /
-	// "Verification failed → Re-verify" treatment for connectors with no connected
-	// account yet. Newest first so the first seen per provider is the latest attempt.
-	const cloudHealthRows = scope
-		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
-				tx
-					.select({
-						id: cloudIdentities.id,
-						provider: cloudIdentities.provider,
 						status: cloudIdentities.status,
 						last_error: cloudIdentities.last_error,
-						credentials: cloudIdentities.credentials,
+						missing_permissions: cloudIdentities.missing_permissions,
 					})
 					.from(cloudIdentities)
-					.where(eq(cloudIdentities.is_verified, false))
 					.orderBy(desc(cloudIdentities.updated_at)),
 			)
 		: [];
-	const cloudHealthByProvider = new Map<
-		string,
-		{ status: string; last_error: string | null; identityId: string }
-	>();
-	for (const r of cloudHealthRows) {
-		// Skip never-configured placeholders. initIdentity pre-creates a `pending` identity per
-		// provider (with empty credentials) just so the connect sheet has an id to bind to. If the
-		// background sweep ever probed one it would fail and flip it to `disconnected` — a phantom
-		// "Verification failed" for a connection the user never attempted. Only an identity that was
-		// actually submitted (has real credentials) may surface a failed/testing health here; the
-		// rest read as "Not connected". This also self-heals any rows already poisoned in prod.
-		if (!identityWasConfigured(r.provider, r.credentials)) continue;
-		if (!cloudHealthByProvider.has(r.provider)) {
-			cloudHealthByProvider.set(r.provider, {
-				status: r.status,
-				last_error: r.last_error,
-				identityId: r.id,
-			});
+
+	// Skip never-configured placeholders. initIdentity pre-creates a `pending` identity per provider
+	// (with empty credentials) just so the connect sheet has an id to bind to. If the background sweep
+	// ever probed one it would fail and flip it to `disconnected` — a phantom "Verification failed" for
+	// a connection the user never attempted. Only an identity a credential was actually submitted for
+	// is a real account; the rest read as "Not connected". This also self-heals rows poisoned in prod.
+	const configuredCloudRows = cloudIdentityRows.filter((r) =>
+		identityWasConfigured(r.provider, r.credentials),
+	);
+
+	/** Maps a `cloud_identities.status` onto the account status the UI renders. */
+	const accountStatus = (status: string): CloudAccountStatus => {
+		switch (status) {
+			case "connected":
+				return "connected";
+			case "degraded":
+				return "degraded";
+			case "testing":
+				return "testing";
+			// `disconnected` (access lost) and `failed` both present as a failed verification the user
+			// can retry or remove. `pending` only reaches here for a configured row mid-resubmit.
+			default:
+				return "failed";
 		}
-	}
+	};
 
 	// api_key connector credentials (dns/secrets/registry/observability), keyed by
 	// connector slug. Secrets stay encrypted here — only `is_verified` is needed.
@@ -265,53 +275,79 @@ export async function getConnectorsWithStatus(): Promise<
 		}
 
 		if (connector.category === "cloud") {
-			// A provider can hold several accounts — collect them all (org-scoped).
-			const rows = cloudIdentityRows.filter((ci) => ci.provider === slug);
-			if (rows.length > 0) {
-				const accounts: CloudAccount[] = rows.map((ci) => ({
-					identityId: ci.id,
-					name: ci.name,
-					label: accountLabel(ci.credentials),
-				}));
-				const primary = rows[0];
-				const creds = primary.credentials;
+			// A provider can hold several accounts — collect them all (org-scoped), broken ones included
+			// so each can carry its own Re-verify / Remove.
+			const rows = configuredCloudRows.filter((ci) => ci.provider === slug);
+			if (rows.length === 0) {
 				return {
 					...connector,
 					group,
-					connected: true,
-					scope: primary.scope,
-					accounts,
-					connection_details: {
-						account_id: creds?.account_id ?? undefined,
-						role_arn: creds?.role_arn ?? undefined,
-						project_id: creds?.project_id ?? undefined,
-						service_account_email: creds?.service_account_email ?? undefined,
-						tenant_id: creds?.tenant_id ?? undefined,
-						subscription_id: creds?.subscription_id ?? undefined,
-						cloud_identity_id: primary.id,
-					},
+					connected: false,
+					accounts: [],
+					connection_details: null,
 				};
 			}
-			const health = cloudHealthByProvider.get(slug);
-			// A disconnected identity (auth lost) surfaces like a failed verification — Re-verify.
-			const cloud_health =
-				health?.status === "failed" || health?.status === "disconnected"
-					? "failed"
-					: health?.status === "testing"
-						? "testing"
-						: undefined;
+
+			const accounts: CloudAccount[] = rows.map((ci) => ({
+				identityId: ci.id,
+				name: ci.name,
+				label: accountLabel(ci.credentials),
+				status: accountStatus(ci.status),
+				missingPermissions: ci.missing_permissions ?? undefined,
+				lastError: ci.last_error ?? undefined,
+			}));
+
+			// A `degraded` account authenticated fine — it just can't see everything we provision into.
+			// It still counts as connected; the missing permissions ride along as a warning.
+			const live = accounts.filter(
+				(a) => a.status === "connected" || a.status === "degraded",
+			);
+			const connected = live.length > 0;
+			const primary = rows.find((r) => r.id === live[0]?.identityId) ?? rows[0];
+			const creds = primary.credentials;
+
+			// Connector-level rollup for the card. Degraded outranks a clean connect (there's something
+			// to fix); a failed account only headlines when NOTHING is connected, so one broken account
+			// alongside a healthy one doesn't cry wolf — it surfaces on its own row in the sheet.
+			const degraded = accounts.filter((a) => a.status === "degraded");
+			const broken = accounts.filter((a) => a.status === "failed");
+			const testing = accounts.filter((a) => a.status === "testing");
+			const cloud_health: ConnectorWithConnection["cloud_health"] = degraded.length
+				? "degraded"
+				: connected
+					? undefined
+					: broken.length
+						? "failed"
+						: testing.length
+							? "testing"
+							: undefined;
+
+			// Whichever account the card's action should act on: the thing that needs attention.
+			const needsAttention = degraded[0] ?? broken[0] ?? testing[0];
+
 			return {
 				...connector,
 				group,
-				connected: false,
-				accounts: [],
-				connection_details: null,
+				connected,
+				scope: primary.scope,
+				accounts,
 				cloud_health,
-				last_error:
-					cloud_health === "failed"
-						? (health?.last_error ?? undefined)
-						: undefined,
-				reverify_identity_id: cloud_health ? health?.identityId : undefined,
+				last_error: cloud_health === "failed" ? broken[0]?.lastError : undefined,
+				missing_permissions: degraded.length
+					? [...new Set(degraded.flatMap((a) => a.missingPermissions ?? []))]
+					: undefined,
+				reverify_identity_id: needsAttention?.identityId,
+				connection_details: connected
+					? {
+							account_id: creds?.account_id ?? undefined,
+							role_arn: creds?.role_arn ?? undefined,
+							project_id: creds?.project_id ?? undefined,
+							service_account_email: creds?.service_account_email ?? undefined,
+							tenant_id: creds?.tenant_id ?? undefined,
+							subscription_id: creds?.subscription_id ?? undefined,
+							cloud_identity_id: primary.id,
+						}
+					: null,
 			};
 		}
 

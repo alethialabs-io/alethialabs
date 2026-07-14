@@ -55,6 +55,8 @@ export function ConnectorRow({
 		integration.token_health === "refresh_failed";
 	const cloudFailed = integration.cloud_health === "failed";
 	const cloudTesting = integration.cloud_health === "testing";
+	// Authenticated, but missing provisioning permissions. Still connected — see connector-card.tsx.
+	const cloudDegraded = integration.cloud_health === "degraded";
 	const accountCount = integration.accounts?.length ?? 0;
 
 	return (
@@ -114,7 +116,9 @@ export function ConnectorRow({
 								: needsReconnection
 									? "Needs reconnection"
 									: isConnected
-										? "Connected"
+										? cloudDegraded
+											? "Limited permissions"
+											: "Connected"
 										: cloudFailed
 											? "Verification failed"
 											: cloudTesting
@@ -176,19 +180,31 @@ export function ConnectorRow({
 				) : cloudTesting ? (
 					<Loader2 className="ml-auto size-3.5 animate-spin text-muted-foreground" />
 				) : cloudFailed && canManage ? (
-					<Button
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						disabled={isConnecting}
-						onClick={onReverify}
-					>
-						{isConnecting ? (
-							<Loader2 className="mr-1 size-3.5 animate-spin" />
-						) : (
-							<RefreshCw className="mr-1 size-3.5" />
-						)}
-						Re-verify
-					</Button>
+					// Manage alongside Re-verify — re-verifying wrong stored credentials fails forever, so
+					// the sheet (correct / remove the account) must be reachable. See connector-card.tsx.
+					<div className="flex items-center justify-end gap-1">
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 px-2.5 text-xs"
+							onClick={onManage}
+						>
+							Manage
+						</Button>
+						<Button
+							size="sm"
+							className="h-7 px-2.5 text-xs"
+							disabled={isConnecting}
+							onClick={onReverify}
+						>
+							{isConnecting ? (
+								<Loader2 className="mr-1 size-3.5 animate-spin" />
+							) : (
+								<RefreshCw className="mr-1 size-3.5" />
+							)}
+							Re-verify
+						</Button>
+					</div>
 				) : canManage ? (
 					<Button
 						size="sm"
