@@ -32,7 +32,7 @@ jobs:
   plan-out-safety:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Project templates must be plan-out-safe (no in-tofu k8s-apply resources)
         run: bash scripts/check-templates-plan-safe.sh
 
@@ -43,8 +43,8 @@ jobs:
       matrix:
         cloud: [aws, gcp, azure, hetzner, alibaba, local]
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 

@@ -145,7 +145,7 @@ jobs:
       # a green skip. (The gate below decides WHETHER to run; this makes the run honest.)
       ALETHIA_E2E_T2_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ── Proof-scrub self-test (BYOC A0.4). Runs UNCONDITIONALLY (no cloud, no secret) so
       #    the proof-bundle secret scrub is exercised on every nightly/dispatch: it seeds a
@@ -249,28 +249,28 @@ jobs:
             echo "::notice::T2 network override for $PROVIDER: $NET"
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.gate.outputs.run == 'true'
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.gate.outputs.run == 'true'
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         if: steps.gate.outputs.run == 'true'
         with:
           go-version: "1.25"
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@v2
         if: steps.gate.outputs.run == 'true'
         with:
           tofu_version: "1.9.0"
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         if: steps.gate.outputs.run == 'true'
         with:
           version: v3.16.4
-      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-kubectl@v5
         if: steps.gate.outputs.run == 'true'
 
       - name: Install hcloud CLI (belt-and-suspenders teardown)
@@ -299,7 +299,7 @@ jobs:
       #    (E2E_REGION defaults to us-east-1 for aws — set in the compute step). ──
       - name: Configure AWS credentials (OIDC)
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
           aws-region: ${{ env.E2E_REGION }}
@@ -421,7 +421,7 @@ jobs:
 
       - name: Upload proof artifact
         if: steps.gate.outputs.run == 'true' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
           path: demos/proofs/${{ matrix.provider }}/
@@ -430,7 +430,7 @@ jobs:
 
       - name: Upload runner log
         if: steps.gate.outputs.run == 'true' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}
           path: ${{ runner.temp }}/t2-runner.log
