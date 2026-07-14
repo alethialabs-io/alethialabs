@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
@@ -44,8 +45,12 @@ type stageDeployPayload struct {
 	CategoriesDir        string                      `json:"categories_dir"`
 	InfracostToken       string                      `json:"infracost_token,omitempty"`
 	VerifyOverride       *verify.Override            `json:"verify_override,omitempty"`
-	StateConsoleURL      string                      `json:"state_console_url"`
-	JobID                string                      `json:"job_id"`
+	// CostCeilingMonthlyUSD fail-closes a real apply whose Infracost estimate exceeds it
+	// (0 ⇒ disabled). Read from ALETHIA_COST_CEILING_MONTHLY_USD in the parent and carried
+	// in the payload so it survives the sandbox boundary (the container child sees no env).
+	CostCeilingMonthlyUSD float64 `json:"cost_ceiling_monthly_usd,omitempty"`
+	StateConsoleURL       string  `json:"state_console_url"`
+	JobID                 string  `json:"job_id"`
 }
 
 // stageDestroyPayload reconstructs provisioner.DestroyParams.
@@ -144,19 +149,35 @@ func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, p
 	cfg := *vc // shallow copy — don't mutate the caller's config
 	cfg.GitAccessToken = ""
 	return stageDeployPayload{
-		ProjectConfig:        &cfg,
-		CloudAccountID:       vc.CloudAccountID,
-		ConnectorCredentials: vc.ConnectorCredentials,
-		Provider:             provider,
-		DryRun:               dryRun,
-		PlanFile:             planFile,
-		TemplatesDir:         templatesDir,
-		CategoriesDir:        categoriesDir,
-		InfracostToken:       infracostToken,
-		VerifyOverride:       override,
-		StateConsoleURL:      stateConsoleURL,
-		JobID:                jobID,
+		ProjectConfig:         &cfg,
+		CloudAccountID:        vc.CloudAccountID,
+		ConnectorCredentials:  vc.ConnectorCredentials,
+		Provider:              provider,
+		DryRun:                dryRun,
+		PlanFile:              planFile,
+		TemplatesDir:          templatesDir,
+		CategoriesDir:         categoriesDir,
+		InfracostToken:        infracostToken,
+		VerifyOverride:        override,
+		CostCeilingMonthlyUSD: costCeilingFromEnv(),
+		StateConsoleURL:       stateConsoleURL,
+		JobID:                 jobID,
 	}
+}
+
+// costCeilingFromEnv parses the opt-in real-apply cost ceiling (monthly USD) from
+// ALETHIA_COST_CEILING_MONTHLY_USD. Unset, empty, unparseable, or non-positive ⇒ 0
+// (guard disabled). Read in the parent so it can be carried across the sandbox boundary.
+func costCeilingFromEnv() float64 {
+	raw := strings.TrimSpace(os.Getenv("ALETHIA_COST_CEILING_MONTHLY_USD"))
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
 }
 
 func buildDestroyPayload(vc *types.ProjectConfig, provider, templatesDir, categoriesDir,
@@ -184,16 +205,17 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 	vc.GitAccessToken = sec.GitToken
 
 	result, err := provisioner.RunDeployV2(ctx, provisioner.DeployParams{
-		ProjectConfig:  vc,
-		Provider:       p.Provider,
-		DryRun:         p.DryRun,
-		PlanFile:       p.PlanFile,
-		TemplatesDir:   p.TemplatesDir,
-		CategoriesDir:  p.CategoriesDir,
-		InfracostToken: p.InfracostToken,
-		GitAccessToken: sec.GitToken,
-		GitRepoTokens:  sec.GitTokens,
-		StateBackend:   &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		ProjectConfig:         vc,
+		Provider:              p.Provider,
+		DryRun:                p.DryRun,
+		PlanFile:              p.PlanFile,
+		TemplatesDir:          p.TemplatesDir,
+		CategoriesDir:         p.CategoriesDir,
+		InfracostToken:        p.InfracostToken,
+		CostCeilingMonthlyUSD: p.CostCeilingMonthlyUSD,
+		GitAccessToken:        sec.GitToken,
+		GitRepoTokens:         sec.GitTokens,
+		StateBackend:          &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
 		// Record the provisioning phase under the workdir so the runner can tell an
 		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
 		// Passthrough (same process) and container child (RW-mounted workdir) paths.

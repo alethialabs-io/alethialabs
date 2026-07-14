@@ -69,6 +69,11 @@ type DeployParams struct {
 	// a fail-closed apply can proceed deliberately. Nil means no waiver (the
 	// default — any hard control failure blocks apply).
 	VerifyOverride *verify.Override
+	// CostCeilingMonthlyUSD, when > 0, fail-closes a real apply whose Infracost
+	// estimated monthly cost exceeds it (or that could not be priced at all). 0 (the
+	// default) disables the guard, so existing callers are unaffected. Opt-in cost
+	// safety for the real-cloud e2e nightly; see costCeilingBlock.
+	CostCeilingMonthlyUSD float64
 }
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
@@ -515,6 +520,17 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		attachReceipt(&result, planFile, planJSON, nil, stdout)
 		fmt.Fprintln(stdout, "Dry-run complete. Plan and cost analysis finished.")
 		return &result, nil
+	}
+
+	// Fail-closed cost guard (opt-in; e2e cost safety). When a monthly-USD ceiling is
+	// configured, a real apply must not proceed if the Infracost estimate exceeds it — or if
+	// no estimate could be produced at all (a ceiling was asked for but the plan couldn't be
+	// priced). A zero ceiling (the default) is a no-op, so every existing caller is unchanged;
+	// enabling it requires a working INFRACOST_API_KEY. Runs only on the real-apply path
+	// (dry-run/plan jobs already returned above and never block on cost).
+	if blocked, msg := costCeilingBlock(result.CostBreakdown, params.CostCeilingMonthlyUSD); blocked {
+		telemetry.GateBlocked(ctx, provider.Name())
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	// Fail-closed backstop: a real apply must never proceed without a conclusive

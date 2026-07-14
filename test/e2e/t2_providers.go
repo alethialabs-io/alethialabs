@@ -235,6 +235,33 @@ func t2MergeClusterJSON(snapshot map[string]any) error {
 	return nil
 }
 
+// t2MergeNetworkJSON merges ALETHIA_E2E_NETWORK_JSON — a JSON object — into the seeded
+// config snapshot's `network` block (ProjectNetworkConfig: single_nat_gateway, …), the
+// sibling of t2MergeClusterJSON for network-tier knobs the `cluster` block can't carry.
+// AWS uses it to fold `single_nat_gateway:true` into the FULL snapshot only (one NAT vs
+// one-per-AZ ≈ halves the run's NAT cost) without editing the template default or the
+// A0.5 fidelity base. Absent/blank env ⇒ no-op. Malformed / non-object JSON ⇒ a LOUD error
+// (a workflow typo fails the run rather than silently provisioning the wrong network shape).
+func t2MergeNetworkJSON(snapshot map[string]any) error {
+	raw := strings.TrimSpace(os.Getenv("ALETHIA_E2E_NETWORK_JSON"))
+	if raw == "" {
+		return nil
+	}
+	var overrides map[string]any
+	if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+		return fmt.Errorf("ALETHIA_E2E_NETWORK_JSON must be a JSON object: %w", err)
+	}
+	network, _ := snapshot["network"].(map[string]any)
+	if network == nil {
+		network = map[string]any{}
+	}
+	for k, v := range overrides {
+		network[k] = v
+	}
+	snapshot["network"] = network
+	return nil
+}
+
 // t2ClusterKindPrefix maps a managed cloud to the resource-kind prefix its template's
 // `locals.tf` stamps on the cluster name (`eks-…`/`gke-…`/`aks-…`). Talos/ACK are absent
 // because they name the cluster bare `<project>-<env>` (no kind prefix) — see
