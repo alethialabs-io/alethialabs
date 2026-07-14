@@ -195,9 +195,15 @@ func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 	// shelling `gcloud container clusters get-credentials`. Endpoint + CA come from the
 	// tofu outputs (sensitive, consumed in-process — never persisted).
 	endpoint := extractOutputString(outputs, "gke_cluster_endpoint")
+	if endpoint == "" {
+		endpoint = extractOutputString(outputs, "cluster_endpoint") // BYO-IaC generic fallback
+	}
 	ca := extractOutputString(outputs, "gke_cluster_ca_certificate")
+	if ca == "" {
+		ca = extractOutputString(outputs, "cluster_ca_certificate") // BYO-IaC generic fallback
+	}
 	if endpoint == "" || ca == "" {
-		return fmt.Errorf("missing GKE endpoint/CA in tofu outputs (gke_cluster_endpoint/gke_cluster_ca_certificate)")
+		return fmt.Errorf("missing GKE endpoint/CA in tofu outputs (gke_cluster_endpoint/gke_cluster_ca_certificate or generic cluster_endpoint/cluster_ca_certificate)")
 	}
 	if !strings.HasPrefix(endpoint, "https://") {
 		endpoint = "https://" + endpoint

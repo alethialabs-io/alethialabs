@@ -321,6 +321,15 @@ func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 }
 
 func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
+	// BYO-IaC: if the module emitted a ready-made generic `kubeconfig` output, write it
+	// directly. This supports a self-managed / non-EKS cluster on AWS whose name EKS does
+	// not own — DescribeCluster below would 404 for it. Managed EKS emits no `kubeconfig`
+	// output and so falls through to the DescribeCluster path unchanged.
+	if kc := extractOutputString(outputs, "kubeconfig"); kc != "" {
+		fmt.Fprintf(stdout, "Writing BYO kubeconfig from tofu outputs...\n")
+		return writeRawKubeconfig(kc, stdout)
+	}
+
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no EKS cluster name in outputs")
