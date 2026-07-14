@@ -141,8 +141,17 @@ resource "aws_eks_addon" "ebs-csi" {
   # not by OpenTofu, so provider default_tags never touch them. `controller.extraVolumeTags` is the
   # only lever that stamps the classification + sweep-handle tags (var.eks_tags, base tags already
   # winning) onto every dynamically-provisioned `pvc-*` volume, so a guarded sweeper can reclaim
-  # them by environment. Whether the volumes actually carry the tags is only observable after a real
-  # apply with live PVCs (A0.3-gated); this wires the driver config that makes it happen.
+  # them by environment.
+  #
+  # ⚠️ UNPROVEN until A0.3's cloud-side sweep-tag check is green (BYOC A1.2). Whether the volumes
+  # actually carry these tags is only observable after a real apply with live PVCs — the AWS EBS-CSI
+  # `controller.extraVolumeTags` Helm value is asserted upstream but has never been verified against
+  # a real `pvc-*` volume in this program. This wires the driver config that SHOULD make it happen;
+  # A0.3's cloud-side check on a Bound volume is what upgrades it from "wired" to "proven".
+  # Fallback if extraVolumeTags turns out not to stamp: set the sweep tags via StorageClass
+  # `parameters.tagSpecification_N` (per-StorageClass) or the driver's `--extra-tags` flag
+  # (controller.additionalArgs) instead — both are driver-native tagging paths independent of the
+  # addon configuration_values.
   configuration_values = jsonencode({
     controller = {
       extraVolumeTags = var.eks_tags

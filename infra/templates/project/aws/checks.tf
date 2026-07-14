@@ -96,6 +96,23 @@ check "classification_tags_present" {
   }
 }
 
+# Karpenter-launched EC2 do NOT inherit the provider default_tags (Karpenter creates them via its
+# own AWS API calls), so they only carry the sweep handle if the EC2NodeClass spec.tags is stamped
+# from the `karpenter_node_tags` output (= local.aws_default_tags). Assert here that when Karpenter
+# is enabled the classification/sweep-handle tags are all present in aws_default_tags, so the output
+# can never ship without them and Karpenter EC2 can never escape the environment-scoped sweeper.
+# (This is the plan-time invariant; whether the renderer actually applies spec.tags is proven by the
+# A1.3 sweeper / A0.3-style cloud-side check on a real apply.)
+check "karpenter_node_tags_carry_sweep_handle" {
+  assert {
+    condition = !var.enable_karpenter || alltrue([
+      for k, v in var.classification_tags :
+      local.aws_default_tags[k] == v || contains(keys(local.aws_base_tags), k)
+    ])
+    error_message = "Karpenter is enabled but classification/sweep-handle tags are not fully present in aws_default_tags (the karpenter_node_tags output); Karpenter-launched EC2 would escape the environment-scoped sweeper."
+  }
+}
+
 # The external-secrets operator's IRSA role must exist whenever EKS is provisioned — without it
 # the AWS ClusterSecretStore is (correctly) not rendered and ExternalSecrets can never sync.
 check "eks_irsa_external_secrets_arn_present" {
