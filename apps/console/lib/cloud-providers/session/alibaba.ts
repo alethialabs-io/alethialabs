@@ -8,7 +8,6 @@
 // stored). `AssumeRoleWithOIDC` is an anonymous STS action — authenticated by the OIDC token itself,
 // so there is no AccessKey and no request signature. A successful assume is the proof of access.
 
-import { randomUUID } from "node:crypto";
 import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
 import type { CloudIdentity } from "@/lib/db/schema";
 
@@ -85,7 +84,10 @@ export async function assumeAlibabaRole(
 	const oidcToken = await mintWorkloadToken({ audience: ALIBABA_TOKEN_AUDIENCE });
 
 	// AssumeRoleWithOIDC is anonymous — the OIDC token authenticates the call, so there is no
-	// AccessKeyId / SignatureMethod / Signature. Params go in a form-encoded POST body.
+	// AccessKeyId / SignatureMethod / Signature. We deliberately send NO SignatureNonce/Timestamp
+	// either: those are signature common-params, and including them on an UNSIGNED request makes the
+	// RPC gateway treat it as a to-be-signed call and reject it with a missing-Signature error. Only the
+	// action-specific params go in the form-encoded POST body.
 	const params: Record<string, string> = {
 		Action: "AssumeRoleWithOIDC",
 		OIDCProviderArn: oidcProviderArn,
@@ -95,8 +97,6 @@ export async function assumeAlibabaRole(
 		DurationSeconds: "3600",
 		Version: "2015-04-01",
 		Format: "JSON",
-		SignatureNonce: randomUUID(),
-		Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
 	};
 	const body = new URLSearchParams(params).toString();
 

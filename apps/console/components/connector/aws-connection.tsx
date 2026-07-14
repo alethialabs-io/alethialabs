@@ -30,13 +30,7 @@ import {
 	connectorAssetUrl,
 } from "@/components/connector/connector-assets";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-	CheckCircle2,
-	CloudIcon,
-	Download,
-	ExternalLink,
-	Terminal,
-} from "lucide-react";
+import { CheckCircle2, Download, ExternalLink, Terminal } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -71,20 +65,18 @@ interface AwsConnectionProps {
 }
 
 export function AwsConnection({ onComplete }: AwsConnectionProps) {
-	const [method, setMethod] = useState<"cloudformation" | "terraform" | "cli">(
-		"cloudformation",
-	);
+	// OIDC-only + cloud-shell, at GCP parity: the browser CloudShell script is the default path,
+	// Terraform for IaC teams. (The CloudFormation quick-create was dropped — same keyless role, but
+	// not a cloud-shell flow, and its template pinned a stale thumbprint.)
+	const [method, setMethod] = useState<"terraform" | "cli">("cli");
 	const { state: verifyState, run, cancel } = useConnectionTest();
 
-	const templateUrl = connectorAssetUrl("alethia-bootstrap.yaml");
 	const scriptUrl = connectorAssetUrl("alethia-aws-setup.sh");
-	// AWS CloudShell can't preload a command, so the CLI path is copy-paste. No args — the script
-	// defaults the issuer and creates the OIDC provider + role.
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-aws-setup.sh`;
+	// AWS CloudShell can't preload a command, so the CLI path is copy-paste. Pass the issuer explicitly
+	// so a self-hosted console points the customer's trust at its OWN issuer (the script also defaults
+	// it, but passing it keeps hosted + self-host identical). Creates the OIDC provider + role.
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-aws-setup.sh ${ALETHIA_ISSUER_URL}`;
 	const cloudShellUrl = "https://console.aws.amazon.com/cloudshell/home";
-	// Pre-fill the issuer so a self-hosted console points the customer's trust at its OWN issuer. No
-	// ExternalId / platform-account params — the customer's role trusts the Alethia issuer directly.
-	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_IssuerUrl=${encodeURIComponent(ALETHIA_ISSUER_URL)}`;
 
 	const form = useForm<AwsRoleFormValues>({
 		resolver: zodResolver(awsRoleSchema),
@@ -92,10 +84,10 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 		mode: "onChange",
 	});
 
-	const handleDownload = () => {
+	const handleDownloadScript = () => {
 		const link = document.createElement("a");
-		link.href = "/alethia-bootstrap.yaml";
-		link.download = "alethia-bootstrap.yaml";
+		link.href = "/alethia-aws-setup.sh";
+		link.download = "alethia-aws-setup.sh";
 		document.body.appendChild(link);
 		link.click();
 		document.body.removeChild(link);
@@ -111,8 +103,8 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 			howItWorks={
 				<>
 					<p>
-						1. Launch the CloudFormation stack (or apply the Terraform module) — it creates
-						an IAM OIDC provider trusting Alethia&apos;s issuer and a role that trusts it.
+						1. Run the setup script in AWS CloudShell (or apply the Terraform module) — it
+						creates an IAM OIDC provider trusting Alethia&apos;s issuer and a role that trusts it.
 					</p>
 					<p>
 						2. Alethia authenticates with a signed token its issuer mints (≤10 min); AWS STS
@@ -120,34 +112,24 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 						credential — no key on either side.
 					</p>
 					<p>
-						3. The only thing stored is the role ARN (a public identifier). Delete the stack
-						or role to revoke access.
+						3. The only thing stored is the role ARN (a public identifier). Delete the role to
+						revoke access.
 					</p>
 				</>
 			}
 		>
 			<MethodTabs
 				value={method}
-				onChange={(id) =>
-					setMethod(id as "cloudformation" | "terraform" | "cli")
-				}
+				onChange={(id) => setMethod(id as "terraform" | "cli")}
 				help={
 					<>
-						<b className="text-foreground">CloudFormation</b> is one click — it opens the AWS
-						console with everything pre-filled.{" "}
 						<b className="text-foreground">AWS CLI / CloudShell</b> runs a script from the
 						browser (nothing to install).{" "}
 						<b className="text-foreground">Terraform</b> is for teams that manage
-						infrastructure as code. All three create the same role.
+						infrastructure as code. Both create the same keyless role.
 					</>
 				}
 				tabs={[
-					{
-						id: "cloudformation",
-						label: "CloudFormation",
-						sub: "Quick setup via AWS Console",
-						icon: <CloudIcon className="h-3.5 w-3.5" />,
-					},
 					{
 						id: "cli",
 						label: "AWS CLI / CloudShell",
@@ -163,45 +145,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 				]}
 			/>
 
-			{method === "cloudformation" ? (
-				<div className="space-y-6">
-					<Step n={1} title="Launch Stack">
-						<p className="max-w-sm text-muted-foreground text-xs">
-							Opens AWS CloudFormation with the template pre-filled. It creates an IAM OIDC
-							provider that trusts the Alethia issuer and a role Alethia assumes via web
-							identity. Acknowledge the IAM capabilities and create the stack.
-						</p>
-						<div className="flex gap-3">
-							<Button
-								onClick={() => window.open(launchStackUrl, "_blank")}
-								size="sm"
-								className="h-8 font-medium text-xs"
-								type="button"
-							>
-								<ExternalLink className="mr-1.5 h-3.5 w-3.5 opacity-70" />
-								Launch Stack in AWS
-							</Button>
-							<Button
-								onClick={handleDownload}
-								variant="outline"
-								size="sm"
-								className="h-8 border-border/60 font-medium text-xs"
-								type="button"
-							>
-								<CloudIcon className="mr-1.5 h-3.5 w-3.5 opacity-70" />
-								Download Template
-							</Button>
-						</div>
-					</Step>
-					<Step n={2} title="Copy Role ARN">
-						<p className="max-w-sm text-muted-foreground text-xs">
-							Once the stack is created, go to the{" "}
-							<b className="font-medium text-foreground">Outputs</b> tab and copy the{" "}
-							<b className="font-medium text-foreground">RoleArn</b>.
-						</p>
-					</Step>
-				</div>
-			) : method === "cli" ? (
+			{method === "cli" ? (
 				<div className="space-y-6">
 					<Step n={1} title="Open AWS CloudShell">
 						<p className="max-w-sm text-muted-foreground text-xs">
@@ -219,7 +163,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 								Open CloudShell
 							</Button>
 							<Button
-								onClick={handleDownload}
+								onClick={handleDownloadScript}
 								variant="outline"
 								size="sm"
 								className="h-8 border-border/60 font-medium text-xs"
@@ -317,9 +261,9 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 											IAM Role ARN
 										</FormLabel>
 										<FieldHelp title="IAM Role ARN">
-											The ARN of the role the setup created. Copy it from the
-											CloudFormation <b className="text-foreground">Outputs</b> tab (
-											<code className="text-foreground">RoleArn</code>), or from{" "}
+											The ARN of the role the setup created. Copy the{" "}
+											<code className="text-foreground">role_arn</code> the CloudShell
+											script prints, or run{" "}
 											<code className="text-foreground">terraform output role_arn</code>
 											. Looks like{" "}
 											<code className="text-foreground">
@@ -359,7 +303,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 				</Form>
 				<StoredNote
 					stored="only the IAM role ARN (a public identifier) — no access keys, secrets, or external id."
-					revoke="delete the CloudFormation stack (or the role) to cut Alethia's access."
+					revoke="delete the IAM role (and its OIDC provider) to cut Alethia's access."
 				/>
 			</VerifySection>
 		</ConnectSheetShell>

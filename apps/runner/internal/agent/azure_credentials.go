@@ -24,8 +24,9 @@ type azureTokenFetcher interface {
 const azureRefreshInterval = 5 * time.Minute
 
 // ActivateAzureFederated authenticates the runner to Azure KEYLESSLY for a `tofu apply`. It fetches a
-// short-lived OIDC assertion from the console (minted by the Alethia issuer for the platform Entra app),
-// writes it to a temp file, and points OpenTofu's azurerm/azuread providers at that FILE
+// short-lived OIDC assertion from the console (minted by the Alethia issuer; the customer's user-assigned
+// managed identity's federated credential trusts it), exchanged AS that customer identity (clientID).
+// It writes the assertion to a temp file and points OpenTofu's azurerm/azuread providers at that FILE
 // (ARM_OIDC_TOKEN_FILE_PATH) plus the Azure SDK / kubelogin path (AZURE_FEDERATED_TOKEN_FILE).
 //
 // Crucially it does NOT set the literal ARM_OIDC_TOKEN: azurerm prefers the literal when present and would

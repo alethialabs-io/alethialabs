@@ -32,7 +32,12 @@ ISSUER_URL="${ALETHIA_ISSUER_URL:-${2:-https://alethialabs.io/api/oidc}}"
 SUBJECT="alethia-connector"
 AUDIENCE="api://AzureADTokenExchange"
 # Region + names for the connector resource group + identity (metadata only; clusters land elsewhere).
-LOCATION="${ALETHIA_AZURE_LOCATION:-eastus}"
+# The region is functionally irrelevant — a UAMI is just an identity, federation doesn't care where it
+# lives — but the subscription's Allowed-Locations Azure Policy still gates WHERE it can be created, and
+# many subscriptions disallow `eastus`. So we don't hardcode: an explicit ALETHIA_AZURE_LOCATION wins,
+# otherwise we auto-pick the first region the policy permits (see create_rg_in_allowed_location below).
+CANDIDATE_LOCATIONS=("${ALETHIA_AZURE_LOCATION:-}" westeurope northeurope eastus westus2 uksouth germanywestcentral centralus)
+LOCATION=""
 RG_NAME="alethia-connector"
 UAMI_NAME="alethia-provisioner"
 FIC_NAME="alethia-connector"
@@ -44,12 +49,44 @@ az account set --subscription "${SUBSCRIPTION_ID}"
 TENANT_ID=$(az account show --query tenantId -o tsv)
 echo "    Tenant ID: ${TENANT_ID}"
 
-echo ""
-echo "==> Creating resource group ${RG_NAME} (${LOCATION})..."
-az group create --name "${RG_NAME}" --location "${LOCATION}" -o none
+# Resolve the resource-group region against the subscription's Allowed-Locations policy: reuse an
+# existing RG's region on a re-run (region is fixed at creation), else try each candidate until one is
+# allowed — skipping RequestDisallowedByAzure and surfacing any other error (auth/quota) verbatim.
+create_rg_in_allowed_location() {
+	local existing
+	existing=$(az group show --name "${RG_NAME}" --query location -o tsv 2>/dev/null || true)
+	if [ -n "${existing}" ]; then
+		LOCATION="${existing}"
+		echo "    Reusing existing resource group region: ${LOCATION}"
+		return 0
+	fi
+	local loc err
+	for loc in "${CANDIDATE_LOCATIONS[@]}"; do
+		[ -z "${loc}" ] && continue
+		if err=$(az group create --name "${RG_NAME}" --location "${loc}" -o none 2>&1); then
+			LOCATION="${loc}"
+			echo "    Resource group ${RG_NAME} created in ${LOCATION}"
+			return 0
+		fi
+		if printf '%s' "${err}" | grep -qiE 'RequestDisallowedByAzure|disallowed'; then
+			echo "    ${loc} is disallowed by your subscription's region policy — trying the next region..." >&2
+			continue
+		fi
+		# A different failure (auth, quota, …) — surface it and stop.
+		printf '%s\n' "${err}" >&2
+		return 1
+	done
+	echo "✗ None of the candidate regions were allowed by your subscription's Allowed-Locations policy." >&2
+	echo "  Re-run with an allowed region: ALETHIA_AZURE_LOCATION=<region> bash alethia-azure-setup.sh ${SUBSCRIPTION_ID}" >&2
+	return 1
+}
 
 echo ""
-echo "==> Creating the User-Assigned Managed Identity ${UAMI_NAME}..."
+echo "==> Creating resource group ${RG_NAME}..."
+create_rg_in_allowed_location
+
+echo ""
+echo "==> Creating the User-Assigned Managed Identity ${UAMI_NAME} (${LOCATION})..."
 # Idempotent — az identity create reconciles an existing identity.
 az identity create --name "${UAMI_NAME}" --resource-group "${RG_NAME}" --location "${LOCATION}" -o none
 CLIENT_ID=$(az identity show --name "${UAMI_NAME}" --resource-group "${RG_NAME}" --query clientId -o tsv)

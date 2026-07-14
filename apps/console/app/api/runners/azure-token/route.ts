@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Internal runner endpoint: mint a short-lived OIDC assertion for Azure provisioning. A runner
-// executing a `tofu apply` against Azure needs to authenticate as Alethia's platform Entra app
-// KEYLESSLY — it calls this route with its runner credentials, gets a freshly-minted assertion
-// (audience api://AzureADTokenExchange, subject alethia-connector), and hands it to OpenTofu's
-// azurerm provider via ARM_OIDC_TOKEN. No client secret ever reaches the runner. The console is
-// the only holder of the issuer signing key; the runner just fetches tokens over its authed channel.
+// executing a `tofu apply` against Azure authenticates KEYLESSLY as the CUSTOMER's user-assigned
+// managed identity (no platform Entra app) — it calls this route with its runner credentials, gets a
+// freshly-minted assertion (audience api://AzureADTokenExchange, subject alethia-connector) that the
+// customer identity's federated credential trusts, and hands it to OpenTofu's azurerm provider via
+// ARM_OIDC_TOKEN. No client secret ever reaches the runner. The console is the only holder of the
+// issuer signing key; the runner just fetches tokens over its authed channel.
 
 import { AZURE_TOKEN_AUDIENCE } from "@/lib/cloud-providers/session/azure";
 import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
