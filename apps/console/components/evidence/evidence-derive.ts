@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Pure derivations behind the Evidence surface — no JSX, no React, so the meter/triage/
-// grouping/sort math is unit-testable in isolation. The client component holds UI state and
-// feeds these; the design's visual layer maps the returned `tone`/`iconKey` to grayscale
-// Tailwind tokens + lucide icons.
+// Pure derivations behind the Evidence surface — no JSX, no React, so the status/grouping/
+// sort math is unit-testable in isolation and reusable server-side (the evidence server
+// action filters + groups the roll-up here, off the request path). The UI's visual layer
+// maps the returned `tone`/`iconKey` to grayscale Tailwind tokens + lucide icons.
 
 import { formatDistanceToNow } from "date-fns";
 import type {
 	EvidenceEnvRow,
-	EvidenceSummary,
 	EvidenceWaiver,
 	OrgEvidence,
 } from "@/lib/queries/evidence";
@@ -48,108 +47,7 @@ export function isStale(row: EvidenceEnvRow): boolean {
 	return Date.now() - new Date(t).getTime() > STALE_MS;
 }
 
-// ── Distribution meters ──────────────────────────────────────────────────────
-
-export interface MeterSegment {
-	key: string;
-	label: string;
-	count: number;
-	tone: Tone;
-}
-
-export interface Meter {
-	key: "verify" | "drift" | "security";
-	title: string;
-	scope: string;
-	headNum: number;
-	headLabel: string;
-	segments: MeterSegment[];
-}
-
-/** The three headline distribution meters (verify / drift / security) from the summary + rows. */
-export function buildMeters(ev: OrgEvidence): Meter[] {
-	const s = ev.summary;
-	const sec = sumSeverities(ev.rows);
-	return [
-		{
-			key: "verify",
-			title: "Verify",
-			scope: `${s.environments} env`,
-			headNum: s.verified,
-			headLabel: "verified",
-			segments: [
-				{ key: "pass", label: "Verified", count: s.verified, tone: "good" },
-				{ key: "warn", label: "Warnings", count: s.warning, tone: "warn" },
-				{ key: "fail", label: "Failing", count: s.failing, tone: "bad" },
-				{
-					key: "not_evaluable",
-					label: "Not evaluable",
-					count: s.notEvaluable,
-					tone: "unknown",
-				},
-				{
-					key: "unverified",
-					label: "Not verified",
-					count: s.unverified,
-					tone: "muted",
-				},
-			],
-		},
-		{
-			key: "drift",
-			title: "Drift",
-			scope: `${s.environments} env`,
-			headNum: s.inSync,
-			headLabel: "in sync",
-			segments: [
-				{ key: "inSync", label: "In sync", count: s.inSync, tone: "good" },
-				{ key: "drifted", label: "Drifted", count: s.drifted, tone: "bad" },
-				{
-					key: "driftUnknown",
-					label: "Not scanned",
-					count: s.driftUnknown,
-					tone: "muted",
-				},
-			],
-		},
-		{
-			key: "security",
-			title: "Security",
-			scope: `${s.environments - s.securityUnknown} scanned`,
-			headNum: s.criticalHighVulns,
-			headLabel: "crit + high",
-			segments: [
-				{ key: "critical", label: "Critical", count: sec.critical, tone: "bad" },
-				{ key: "high", label: "High", count: sec.high, tone: "warn" },
-				{ key: "medium", label: "Medium", count: sec.medium, tone: "unknown" },
-				{ key: "low", label: "Low", count: sec.low, tone: "muted" },
-			],
-		},
-	];
-}
-
-/** Σ each vulnerability severity across scanned environments. */
-export function sumSeverities(rows: EvidenceEnvRow[]): {
-	critical: number;
-	high: number;
-	medium: number;
-	low: number;
-} {
-	return rows.reduce(
-		(acc, r) => {
-			if (r.security?.scanned) {
-				acc.critical += r.security.critical;
-				acc.high += r.security.high;
-				acc.medium += r.security.medium;
-				acc.low += r.security.low;
-			}
-			return acc;
-		},
-		{ critical: 0, high: 0, medium: 0, low: 0 },
-	);
-}
-
-// ── Triage clusters ──────────────────────────────────────────────────────────
+// ── Status facet ─────────────────────────────────────────────────────────────
 
 export type TriageKey =
 	| "all"
@@ -162,21 +60,31 @@ export type TriageKey =
 	| "driftUnknown"
 	| "securityUnknown";
 
-export interface TriageItem {
-	key: TriageKey;
-	label: string;
-	value: number;
-	tone: Tone;
-}
+/** A selectable status the Status facet exposes (concrete keys only — never "all"). */
+export type StatusKey = Exclude<TriageKey, "all">;
 
-export interface TriageCluster {
-	key: "attention" | "gaps";
-	label: string;
-	items: TriageItem[];
+/** The Status facet's options, in triage order (needs-attention first, then coverage gaps).
+ * Single source of truth for both the facet labels and the server-side option counts. */
+export const STATUS_FACETS: { key: StatusKey; label: string }[] = [
+	{ key: "failing", label: "Failing" },
+	{ key: "drifted", label: "Drifted" },
+	{ key: "vulns", label: "Crit / high vulns" },
+	{ key: "waived", label: "Active waivers" },
+	{ key: "unverified", label: "Not verified" },
+	{ key: "notEvaluable", label: "Not evaluable" },
+	{ key: "driftUnknown", label: "Drift unknown" },
+	{ key: "securityUnknown", label: "Unscanned" },
+];
+
+const STATUS_KEYS = new Set<string>(STATUS_FACETS.map((f) => f.key));
+
+/** Narrows an arbitrary string to a concrete Status facet key (else drops it). */
+export function isStatusKey(s: string): s is StatusKey {
+	return STATUS_KEYS.has(s);
 }
 
 /** "project|env" keys of the environments named by an active waiver (for the `waived` filter). */
-function waivedEnvSet(waivers: EvidenceWaiver[]): Set<string> {
+export function waivedEnvSet(waivers: EvidenceWaiver[]): Set<string> {
 	const set = new Set<string>();
 	for (const w of waivers) {
 		if (w.active && w.projectName && w.environmentName) {
@@ -186,63 +94,7 @@ function waivedEnvSet(waivers: EvidenceWaiver[]): Set<string> {
 	return set;
 }
 
-/** The two triage clusters — "needs attention" (destructive) and "coverage gaps" (unknown). */
-export function buildTriage(summary: EvidenceSummary): TriageCluster[] {
-	return [
-		{
-			key: "attention",
-			label: "Needs attention",
-			items: [
-				{ key: "failing", label: "Failing", value: summary.failing, tone: "bad" },
-				{ key: "drifted", label: "Drifted", value: summary.drifted, tone: "bad" },
-				{
-					key: "vulns",
-					label: "Crit / high vulns",
-					value: summary.criticalHighVulns,
-					tone: "bad",
-				},
-				{
-					key: "waived",
-					label: "Active waivers",
-					value: summary.activeWaivers,
-					tone: "warn",
-				},
-			],
-		},
-		{
-			key: "gaps",
-			label: "Coverage gaps",
-			items: [
-				{
-					key: "unverified",
-					label: "Not verified",
-					value: summary.unverified,
-					tone: "unknown",
-				},
-				{
-					key: "notEvaluable",
-					label: "Not evaluable",
-					value: summary.notEvaluable,
-					tone: "unknown",
-				},
-				{
-					key: "driftUnknown",
-					label: "Drift unknown",
-					value: summary.driftUnknown,
-					tone: "unknown",
-				},
-				{
-					key: "securityUnknown",
-					label: "Unscanned",
-					value: summary.securityUnknown,
-					tone: "unknown",
-				},
-			],
-		},
-	];
-}
-
-/** Whether a row satisfies a triage filter (`all` matches everything). */
+/** Whether a row satisfies a single status filter (`all` matches everything). */
 export function matchesTriage(
 	row: EvidenceEnvRow,
 	key: TriageKey,
@@ -273,10 +125,31 @@ export function matchesTriage(
 	}
 }
 
+/** OR semantics for the multi-select Status facet: no selection matches everything,
+ * otherwise a row matches when it satisfies any one of the selected statuses. */
+export function matchesAnyStatus(
+	row: EvidenceEnvRow,
+	keys: TriageKey[],
+	waived: Set<string>,
+): boolean {
+	if (keys.length === 0) return true;
+	return keys.some((k) => matchesTriage(row, k, waived));
+}
+
 // ── Filter → group → sort pipeline ───────────────────────────────────────────
 
 export type GroupMode = "triage" | "project" | "stage";
 export type SortKey = "worst" | "stale" | "name";
+
+/** Narrows an arbitrary string to a GroupMode, defaulting to "triage". */
+export function toGroupMode(v: string | undefined): GroupMode {
+	return v === "project" || v === "stage" ? v : "triage";
+}
+
+/** Narrows an arbitrary string to a SortKey, defaulting to "worst". */
+export function toSortKey(v: string | undefined): SortKey {
+	return v === "stale" || v === "name" ? v : "worst";
+}
 
 export interface RowGroup {
 	key: string;
@@ -288,8 +161,10 @@ export interface RowGroup {
 
 export interface DeriveOptions {
 	search: string;
-	stage: string; // "all" | stage
-	triage: TriageKey;
+	/** Selected stages; empty = all stages. */
+	stages: string[];
+	/** Selected statuses (OR); empty = all. */
+	status: TriageKey[];
 	group: GroupMode;
 	sort: SortKey;
 }
@@ -331,16 +206,17 @@ const STAGE_ORDER: Record<string, number> = {
 	development: 2,
 };
 
-/** Filters rows by search + stage + triage, buckets them into groups, and sorts each group. */
+/** Filters rows by search + stages + status, buckets them into groups, and sorts each group. */
 export function deriveGroups(
 	ev: OrgEvidence,
 	opts: DeriveOptions,
 ): { groups: RowGroup[]; resultCount: number } {
 	const waived = waivedEnvSet(ev.waivers);
 	const q = opts.search.trim().toLowerCase();
+	const stageSet = opts.stages.length ? new Set(opts.stages) : null;
 	const filtered = ev.rows.filter((r) => {
-		if (opts.stage !== "all" && r.stage !== opts.stage) return false;
-		if (!matchesTriage(r, opts.triage, waived)) return false;
+		if (stageSet && !stageSet.has(r.stage)) return false;
+		if (!matchesAnyStatus(r, opts.status, waived)) return false;
 		if (!q) return true;
 		return [r.projectName, r.environmentName, r.region, r.provider ?? ""]
 			.join(" ")
