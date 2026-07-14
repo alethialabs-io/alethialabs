@@ -300,6 +300,56 @@ func TestT2MergeClusterJSON(t *testing.T) {
 	})
 }
 
+// TestT2MergeAzureAdminGroup covers the A2.2 AKS self-admin wiring: non-azure and absent env are
+// no-ops; for azure it lands the object id at cluster.provider_config.aks_admin_group_object_ids;
+// and it APPENDS (deduped) to any id already supplied via ALETHIA_E2E_CLUSTER_JSON.
+func TestT2MergeAzureAdminGroup(t *testing.T) {
+	const oid = "11111111-1111-1111-1111-111111111111"
+
+	t.Run("non-azure is a no-op", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID", oid)
+		snap := map[string]any{"provider": "aws"}
+		t2MergeAzureAdminGroup(snap, "aws")
+		if _, ok := snap["cluster"]; ok {
+			t.Error("non-azure provider must not add a cluster block")
+		}
+	})
+	t.Run("absent env is a no-op", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID", "")
+		snap := map[string]any{"provider": "azure"}
+		t2MergeAzureAdminGroup(snap, "azure")
+		if _, ok := snap["cluster"]; ok {
+			t.Error("absent env must not add a cluster block")
+		}
+	})
+	t.Run("azure lands the object id in provider_config", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID", oid)
+		snap := map[string]any{"provider": "azure"}
+		t2MergeAzureAdminGroup(snap, "azure")
+		pc := snap["cluster"].(map[string]any)["provider_config"].(map[string]any)
+		ids, ok := pc["aks_admin_group_object_ids"].([]any)
+		if !ok || len(ids) != 1 || ids[0] != oid {
+			t.Fatalf("aks_admin_group_object_ids = %#v, want [%s]", pc["aks_admin_group_object_ids"], oid)
+		}
+	})
+	t.Run("appends deduped to a cluster-json-supplied id", func(t *testing.T) {
+		const other = "22222222-2222-2222-2222-222222222222"
+		t.Setenv("ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID", oid)
+		snap := map[string]any{
+			"cluster": map[string]any{
+				"provider_config": map[string]any{
+					"aks_admin_group_object_ids": []any{other, oid}, // oid already present ⇒ deduped
+				},
+			},
+		}
+		t2MergeAzureAdminGroup(snap, "azure")
+		ids := snap["cluster"].(map[string]any)["provider_config"].(map[string]any)["aks_admin_group_object_ids"].([]any)
+		if len(ids) != 2 || ids[0] != other || ids[1] != oid {
+			t.Fatalf("aks_admin_group_object_ids = %#v, want [%s %s] (deduped, appended)", ids, other, oid)
+		}
+	})
+}
+
 // TestT2MergeNetworkJSON covers the network-block sibling of the cluster merge: the no-op
 // (absent env), a valid object merge into empty + pre-seeded network blocks, and the loud
 // error on malformed / non-object JSON.

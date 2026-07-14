@@ -2,6 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import {
+	DndContext,
+	type DragEndEvent,
+	type DragMoveEvent,
+	type DragStartEvent,
+	DragOverlay,
+	PointerSensor,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
 import { LayoutDashboard } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ScrollArea } from "@repo/ui/scroll-area";
@@ -13,12 +23,13 @@ import {
 	collides,
 	GRID_COLS,
 	type GridRect,
+	type Occupancy,
 	occupancyExcluding,
 } from "@/lib/widgets/layout";
 import { useWidgetRefresh } from "@/hooks/use-widget-refresh";
 import { ArtifactBrowser, SaveArtifactButton } from "./artifact-controls";
 import { CellPrompt } from "./cell-prompt";
-import { type DragMode, WidgetCard } from "./widget-card";
+import { type DragMode, WidgetBody, WidgetCard } from "./widget-card";
 
 /** Fixed row height (px) — pairs with `gap-2` (8px) for the cell math. */
 const ROW_H = 88;
@@ -155,7 +166,92 @@ export function WidgetGrid({ className }: { className?: string }) {
 		[widgets, cellAt, rectsOf, place],
 	);
 
+	// --- Pointer MOVE via dnd-kit (the SE resize handle still uses onDragStart above). A small
+	// activation distance keeps plain clicks (cell composer) working; a DragOverlay renders the
+	// live card clone that follows the cursor, and we map the pointer to a target cell for the
+	// same valid/invalid ghost + collision-checked commit as before.
+	const sensors = useSensors(
+		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+	);
+	const dragStartClient = useRef<{ x: number; y: number } | null>(null);
+	const dragGrab = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+	const dragOcc = useRef<Occupancy>(new Set<string>());
+
+	const onDndStart = useCallback(
+		(e: DragStartEvent) => {
+			const w = widgets.find((x) => x.id === String(e.active.id));
+			if (!w) return;
+			const ae = e.activatorEvent as PointerEvent;
+			dragStartClient.current = { x: ae.clientX, y: ae.clientY };
+			const cell = cellAt({ clientX: ae.clientX, clientY: ae.clientY });
+			dragGrab.current = { dx: cell.x - w.pos_x, dy: cell.y - w.pos_y };
+			dragOcc.current = occupancyExcluding(rectsOf(), w.id);
+			const rect: GridRect = {
+				x: w.pos_x,
+				y: w.pos_y,
+				colspan: w.colspan,
+				rowspan: w.rowspan,
+			};
+			setDrag({ id: w.id, mode: "move", rect, valid: true, grab: dragGrab.current, start: rect });
+		},
+		[widgets, cellAt, rectsOf],
+	);
+
+	const onDndMove = useCallback(
+		(e: DragMoveEvent) => {
+			const sc = dragStartClient.current;
+			if (!sc) return;
+			const cell = cellAt({ clientX: sc.x + e.delta.x, clientY: sc.y + e.delta.y });
+			setDrag((d) => {
+				if (!d) return d;
+				const next = clampToCols({
+					...d.rect,
+					x: cell.x - dragGrab.current.dx,
+					y: cell.y - dragGrab.current.dy,
+				});
+				return { ...d, rect: next, valid: !collides(dragOcc.current, next) };
+			});
+		},
+		[cellAt],
+	);
+
+	const onDndEnd = useCallback(
+		(_e: DragEndEvent) => {
+			setDrag((d) => {
+				if (d?.valid) place(d.id, d.rect);
+				return null;
+			});
+			dragStartClient.current = null;
+		},
+		[place],
+	);
+
+	const onDndCancel = useCallback(() => {
+		setDrag(null);
+		dragStartClient.current = null;
+	}, []);
+
+	// The widget being dragged (rendered in the overlay) sized to its pixel footprint.
+	const activeWidget = drag ? widgets.find((w) => w.id === drag.id) : null;
+	const overlaySize = (cols: number, rows: number) => {
+		const el = containerRef.current;
+		const cellW = el
+			? (el.getBoundingClientRect().width - GAP * (GRID_COLS - 1)) / GRID_COLS
+			: 160;
+		return {
+			width: cols * cellW + (cols - 1) * GAP,
+			height: rows * ROW_H + (rows - 1) * GAP,
+		};
+	};
+
 	return (
+		<DndContext
+			sensors={sensors}
+			onDragStart={onDndStart}
+			onDragMove={onDndMove}
+			onDragEnd={onDndEnd}
+			onDragCancel={onDndCancel}
+		>
 		<ScrollArea className={cn("h-full", className)}>
 			<div className="p-4">
 				<div className="mb-2 flex items-center justify-between">
@@ -239,5 +335,24 @@ export function WidgetGrid({ className }: { className?: string }) {
 				</div>
 			</div>
 		</ScrollArea>
+		{/* The floating clone that follows the cursor while dragging (sticks to the pointer). */}
+		<DragOverlay dropAnimation={null}>
+			{activeWidget ? (
+				<div
+					style={overlaySize(activeWidget.colspan, activeWidget.rowspan)}
+					className="flex cursor-grabbing flex-col overflow-hidden border border-foreground bg-background opacity-95 shadow-lg"
+				>
+					<div className="flex h-7 flex-none items-center border-b border-border px-2">
+						<span className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+							{activeWidget.title}
+						</span>
+					</div>
+					<div className="min-h-0 flex-1 overflow-hidden">
+						<WidgetBody widget={activeWidget} />
+					</div>
+				</div>
+			) : null}
+		</DragOverlay>
+		</DndContext>
 	);
 }

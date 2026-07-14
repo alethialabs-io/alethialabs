@@ -929,3 +929,14 @@ export interface ArtifactWidget {
 export interface ArtifactSpec {
 	widgets: ArtifactWidget[];
 }
+
+/**
+ * One priced resource from an Infracost breakdown, persisted on `environment_cost.resources`.
+ * `address` is the Terraform address — the same key the drift map uses — so a cost line can be
+ * attributed back to the canvas card that designed it.
+ */
+export interface CostResourceLine {
+	address: string;
+	resourceType: string;
+	monthlyCost: number;
+}

@@ -118,6 +118,8 @@ function unsupportedKindGateError(
 			"there is no managed pub/sub service — move the stack to a cloud with managed messaging (e.g. AWS SNS)",
 		nosql:
 			"there is no managed NoSQL service — move the stack to a cloud with one (e.g. AWS DynamoDB)",
+		secret:
+			"there is no cloud secret store — deploy the Vault marketplace add-on (or connect an external secret store) and reference its secrets from your workloads, or move the stack to a cloud with a managed secret store",
 	};
 	const detail = hint[kind] ?? `"${kind}" components have no provisioning path here`;
 	return new Error(

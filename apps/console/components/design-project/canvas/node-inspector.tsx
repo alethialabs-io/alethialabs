@@ -2,12 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
+import { CopyButton } from "@repo/ui/copy-button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
@@ -15,10 +16,17 @@ import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	NODE_STATUS_META,
-	useNodeReadiness,
+	useNodeStatus,
+	type NodeStatusState,
 } from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import {
+	collectionNodeId,
+	isCollectionKind,
+	kindFromCollectionId,
+} from "@/lib/canvas/collections";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
+import { CollectionPanel } from "./inspector/collection-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
@@ -73,6 +81,12 @@ export function InspectorPanel({
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	const def = node ? NODE_REGISTRY[node.data.kind] : null;
 	const schema = node ? getKindConfig(node.data.kind) : undefined;
+
+	// A collection card (the Secrets vault) is synthetic — it has no store row, so its id resolves to
+	// no node. It gets the list panel instead, which is where its resources are actually managed.
+	const collectionKind = inspectorNodeId ? kindFromCollectionId(inspectorNodeId) : null;
+	if (collectionKind) return <CollectionPanel kind={collectionKind} />;
+
 	if (!node || !def) return null;
 
 	const gated =
@@ -93,8 +107,22 @@ export function InspectorPanel({
 		? schema.summary(node.data.config, provider)
 		: undefined;
 
+	// A member of a collapsed kind has no card of its own on the board, so without a way back up
+	// you'd be stranded in a secret with no route to the vault it belongs to.
+	const parentCollection = isCollectionKind(node.data.kind) ? node.data.kind : null;
+
 	return (
 		<div className="flex h-full flex-col">
+			{parentCollection && (
+				<button
+					type="button"
+					onClick={() => openInspector(collectionNodeId(parentCollection))}
+					className="flex items-center gap-1.5 border-b border-border px-4 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<ArrowLeft className="h-3.5 w-3.5" />
+					{NODE_REGISTRY[parentCollection].collection?.title}
+				</button>
+			)}
 			<div className="flex items-start gap-3 border-b border-border p-4">
 				{Icon && (
 					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground">
@@ -281,17 +309,32 @@ function IdentityField({
 	);
 }
 
-/** A compact status strip under the inspector header: the node's resolved status pill + the most
- * actionable line (the first config issue when incomplete, else a state hint). Phase 2 extends this
- * with server-status actions (Deploy / Retry / Reconcile / View logs). */
+/** The default line for a state when the server gave us no message of its own. */
+const STATUS_HINT: Partial<Record<NodeStatusState, string>> = {
+	gated: "Cross-cloud core placement — won't provision until colocated.",
+	ready: "Configured and ready to deploy.",
+	live: "Provisioned and matching the design.",
+	"not-deployed": "Designed, but never applied.",
+	queued: "Waiting for a runner to claim the job.",
+	applying: "The runner is applying this resource now.",
+	updating: "An apply is changing this resource in place.",
+	"update-pending": "The design has moved ahead of what's deployed.",
+	destroying: "Teardown in flight.",
+	destroyed: "Torn down. Remove it from the design to clear it.",
+	failed: "The last apply failed.",
+	unreachable: "The cluster's API server did not answer the last probe.",
+};
+
+/**
+ * A compact status strip under the inspector header: the node's RESOLVED status (design readiness
+ * merged with the environment's server truth) and the most actionable line — the server's own
+ * failure message when there is one, else a hint for the state. Drift rides alongside as an
+ * overlay chip rather than replacing the state, because a drifted resource is still live.
+ */
 function StatusHeader({ nodeId }: { nodeId: string }) {
-	const readiness = useNodeReadiness(nodeId);
-	const meta = NODE_STATUS_META[readiness.state];
-	const message =
-		readiness.issue ??
-		(readiness.state === "gated"
-			? "Cross-cloud core placement — won't provision until colocated."
-			: "Configured and ready to deploy.");
+	const status = useNodeStatus(nodeId);
+	const meta = NODE_STATUS_META[status.state];
+	const drifted = status.drift.length;
 	return (
 		<div className="flex items-center gap-2.5 border-b border-border bg-surface-sunken/60 px-4 py-2.5">
 			<span className={cn("vx-status shrink-0", `vx-status--${meta.vx}`)}>
@@ -299,14 +342,21 @@ function StatusHeader({ nodeId }: { nodeId: string }) {
 				{meta.label}
 			</span>
 			<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-				{message}
+				{status.message ?? STATUS_HINT[status.state] ?? ""}
 			</span>
+			{drifted > 0 && (
+				<span
+					className="shrink-0 border border-border-strong px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+					title={status.drift.map((d) => d.address).join("\n")}
+				>
+					{drifted} drifted
+				</span>
+			)}
 		</div>
 	);
 }
 
-/** Read-only summary of a node: placement + its primitive config values. Provisioned
- * outputs (endpoints/ARNs) will surface here once the node carries live status. */
+/** Read-only summary of a node: placement, its resolved status, any drift, and its config values. */
 function Overview({
 	node,
 	provider,
@@ -314,8 +364,8 @@ function Overview({
 	node: CanvasNode;
 	provider: CloudProviderSlug | null;
 }) {
-	const readiness = useNodeReadiness(node.id);
-	const status = NODE_STATUS_META[readiness.state];
+	const status = useNodeStatus(node.id);
+	const meta = NODE_STATUS_META[status.state];
 	const def = NODE_REGISTRY[node.data.kind];
 	// Only show scalar config (skip nested objects/arrays — those have their own UIs).
 	const rows = Object.entries(node.data.config).filter(
@@ -330,10 +380,59 @@ function Overview({
 				<dd>{provider ? provider.toUpperCase() : "Inherits project"}</dd>
 				<dt className="text-muted-foreground">Status</dt>
 				<dd className="text-muted-foreground">
-					{status.label}
-					{readiness.issue ? ` — ${readiness.issue}` : ""}
+					{meta.label}
+					{status.message ? ` — ${status.message}` : ""}
 				</dd>
 			</dl>
+
+			{/* What the deploy actually PRODUCED. `endpoint` / `reader_endpoint` / `cluster_endpoint` /
+			    `argocd_url` / `repository_url` are all written by the deploy finalizer and were, until
+			    now, surfaced NOWHERE — you had to open the cloud console to find your own database's
+			    hostname. */}
+			{status.outputs.length > 0 && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">Endpoints</span>
+					<dl className="space-y-1">
+						{status.outputs.map((o) => (
+							<div
+								key={o.label}
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5"
+							>
+								<dt className="shrink-0 text-[11px] text-muted-foreground">
+									{o.label}
+								</dt>
+								<dd className="min-w-0 flex-1 truncate text-right font-mono text-[11px]">
+									{o.value}
+								</dd>
+								<CopyButton text={o.value} className="h-6 w-6 shrink-0" />
+							</div>
+						))}
+					</dl>
+				</div>
+			)}
+
+			{/* Drift is an overlay, not a state — it's listed on its own, per drifted resource, with
+			    the Terraform address that actually diverged. */}
+			{status.drift.length > 0 && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">
+						Drift · {status.drift.length} resource
+						{status.drift.length > 1 ? "s" : ""}
+					</span>
+					<ul className="space-y-1">
+						{status.drift.map((d) => (
+							<li
+								key={d.address}
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1 font-mono text-[10px]"
+							>
+								<span className="min-w-0 flex-1 truncate">{d.address}</span>
+								<span className="vx-eyebrow shrink-0 text-[9px]">{d.kind}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+
 			{rows.length > 0 && (
 				<div className="space-y-2 border-t border-border/60 pt-3">
 					<span className="vx-eyebrow">Configuration</span>

@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LayoutGrid, Minimize2, PanelLeft } from "lucide-react";
+import { ChevronLeft, LayoutGrid, Minimize2, PanelLeft } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import { ArtifactPanel } from "@/components/agent/artifact-panel";
 import { WidgetGrid } from "@/components/agent/widgets/widget-grid";
@@ -12,12 +12,19 @@ import { ThreadRail } from "@/components/agent/thread-rail";
 import type { AgentThread } from "@/lib/db/schema";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { useElenchWorkspaces } from "./use-elench-workspaces";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";
 
-/** Split-pane width bounds (px). */
-const SPLIT_MIN = 340;
-const SPLIT_MAX = 680;
-const SPLIT_DEFAULT = 440;
+/**
+ * Split-pane bounds as RATIOS of the split width (the panes sit ~50/50, so a fixed pixel
+ * threshold was far too small on a wide modal). Drag the right pane below a quarter of the
+ * split and it snaps closed; otherwise it's clamped to [25%, 75%] — so the pane is either
+ * collapsed or at least a quarter wide, with no dead band in between.
+ */
+const SNAP_RATIO = 0.25;
+const MAX_RATIO = 0.75;
+/** Initial width on first open (px), clamped into the ratio range. */
+const DEFAULT_WIDTH = 440;
 
 function clamp(n: number, lo: number, hi: number): number {
 	return Math.min(hi, Math.max(lo, n));
@@ -43,6 +50,7 @@ export function ElenchModal({
 	onNewChat,
 	onDeleteThread,
 	gallery,
+	knowledge,
 	children,
 }: {
 	isOrg: boolean;
@@ -55,8 +63,10 @@ export function ElenchModal({
 	onSelectThread: (id: string) => void;
 	onNewChat: () => void;
 	onDeleteThread: (id: string) => void;
-	/** The Artifacts gallery (org only) — shown in the main region when `galleryOpen`. */
+	/** The Artifacts library — replaces the chat in the main region when mainView=artifacts. */
 	gallery?: ReactNode;
+	/** The Knowledge panel — replaces the chat when mainView=knowledge. */
+	knowledge?: ReactNode;
 	children: ReactNode;
 }) {
 	const minimize = useElenchStore((s) => s.minimize);
@@ -64,9 +74,15 @@ export function ElenchModal({
 	// Rail state lives in the store so it survives a minimize→maximize round-trip.
 	const sidebarOpen = useElenchStore((s) => s.railOpen);
 	const setSidebarOpen = useElenchStore((s) => s.setRailOpen);
-	// The Artifacts gallery replaces the chat in the main region (org only).
-	const galleryOpen = useElenchStore((s) => s.galleryOpen);
-	const setGalleryOpen = useElenchStore((s) => s.setGalleryOpen);
+	// Which surface the main region shows (chat / artifacts / knowledge) — mutually exclusive.
+	const mainView = useElenchStore((s) => s.mainView);
+	const setMainView = useElenchStore((s) => s.setMainView);
+	// The workspace switcher (Chats + Projects) — stepping into a project re-scopes the whole
+	// surface via the store's ctx: its chats, its Knowledge row, its memory namespace.
+	const { projects: workspaces, activeProjectId, selectWorkspace } =
+		useElenchWorkspaces();
+	const activeWorkspaceName =
+		workspaces.find((w) => w.id === activeProjectId)?.name ?? "Chat";
 	// Both contexts persist threads now, so the rail shows for project as well as org.
 	const showSidebar = sidebarOpen;
 
@@ -79,19 +95,43 @@ export function ElenchModal({
 	const closeGrid = useArtifactStore((s) => s.closeGrid);
 	const splitOpen = !!artifact || gridOpen;
 
-	// Drag-resize the split pane from its left edge (distance from the modal's right gutter).
-	const [splitW, setSplitW] = useState(SPLIT_DEFAULT);
+	// Drag-resize the right pane from its left edge. Thresholds are RATIOS of the split row's
+	// own width (measured off `splitRef`), so they scale with the modal: below 25% it snaps
+	// closed (width 0, collapsed); the edge chevron — or dragging the handle back left —
+	// reopens it. Width persists across a collapse.
+	const splitRef = useRef<HTMLDivElement>(null);
+	const [splitW, setSplitW] = useState(DEFAULT_WIDTH);
+	const [collapsed, setCollapsed] = useState(false);
+	// Suppresses the width transition mid-drag so the pane tracks the cursor 1:1.
+	const [isDragging, setIsDragging] = useState(false);
 	const dragging = useRef(false);
+	// A freshly-opened split should never start collapsed.
+	useEffect(() => {
+		if (splitOpen) setCollapsed(false);
+	}, [splitOpen]);
 	const onHandleDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
 		dragging.current = true;
+		setIsDragging(true);
 		e.currentTarget.setPointerCapture(e.pointerId);
 	}, []);
 	const onHandleMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
 		if (!dragging.current) return;
-		setSplitW(clamp(window.innerWidth - e.clientX - 7, SPLIT_MIN, SPLIT_MAX));
+		const el = splitRef.current;
+		if (!el) return;
+		const r = el.getBoundingClientRect();
+		const w = r.right - e.clientX;
+		const snap = r.width * SNAP_RATIO;
+		if (w < snap) {
+			setCollapsed(true);
+		} else {
+			setCollapsed(false);
+			// Min width IS the snap threshold — the pane never rests below a quarter.
+			setSplitW(clamp(w, snap, r.width * MAX_RATIO));
+		}
 	}, []);
 	const onHandleUp = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
 		dragging.current = false;
+		setIsDragging(false);
 		e.currentTarget.releasePointerCapture(e.pointerId);
 	}, []);
 
@@ -107,8 +147,15 @@ export function ElenchModal({
 				{showSidebar && (
 					<div className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
 						<div className="flex items-center gap-2 px-3.5 py-3">
-							<AlethiaLogo className="h-6 w-auto text-foreground" />
-							<span className="text-sm font-semibold">Chat</span>
+							<AlethiaLogo className="h-6 w-auto flex-none text-foreground" />
+							{/* Name the workspace you're in — a project chat is a different place
+							    from the general assistant, and it should look like one. */}
+							<span
+								title={activeWorkspaceName}
+								className="min-w-0 flex-1 truncate text-sm font-semibold"
+							>
+								{activeWorkspaceName}
+							</span>
 							<button
 								type="button"
 								aria-label="Collapse sidebar"
@@ -125,16 +172,25 @@ export function ElenchModal({
 							onNew={onNewChat}
 							onDelete={onDeleteThread}
 							onOpenArtifacts={
-								gallery ? () => setGalleryOpen(true) : undefined
+								gallery ? () => setMainView("artifacts") : undefined
 							}
-							artifactsActive={galleryOpen}
+							artifactsActive={mainView === "artifacts"}
+							onOpenKnowledge={
+								knowledge ? () => setMainView("knowledge") : undefined
+							}
+							knowledgeActive={mainView === "knowledge"}
+							workspaces={workspaces}
+							activeProjectId={activeProjectId}
+							onSelectWorkspace={selectWorkspace}
 						/>
 					</div>
 				)}
 
 				<main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-					{gallery && galleryOpen ? (
+					{gallery && mainView === "artifacts" ? (
 						gallery
+					) : knowledge && mainView === "knowledge" ? (
+						knowledge
 					) : (
 						<>
 							{isEmpty ? (
@@ -223,24 +279,42 @@ export function ElenchModal({
 						</div>
 					)}
 
-					<div className="flex min-h-0 flex-1">
+					<div ref={splitRef} className="flex min-h-0 flex-1">
 						<div className="flex min-w-0 flex-1 flex-col">{children}</div>
 						{splitOpen && (
 							<>
+								{/* Cloudflare-style divider: a hairline 1px seam with a centered rounded
+								    grab-pill. Dragging resizes; below 25% of the split it snaps closed. */}
 								<button
 									type="button"
-									aria-label="Resize split view"
+									aria-label="Resize or collapse panel"
 									onPointerDown={onHandleDown}
 									onPointerMove={onHandleMove}
 									onPointerUp={onHandleUp}
-									className="w-2 flex-none cursor-col-resize border-x border-border bg-muted/40 transition-colors hover:bg-muted"
-								/>
+									className="group/split relative z-10 -mx-1 flex w-3 flex-none cursor-col-resize items-center justify-center"
+								>
+									<span className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" />
+									<span className="pointer-events-none h-12 w-1 rounded-full bg-muted-foreground/25 transition-colors group-hover/split:bg-muted-foreground/60" />
+								</button>
 								<div
-									style={{ width: splitW }}
-									className="flex-none overflow-hidden"
+									style={{ width: collapsed ? 0 : splitW }}
+									className={
+										"flex-none overflow-hidden" +
+										(isDragging ? "" : " transition-[width] duration-150 ease-out")
+									}
 								>
 									{artifact ? <ArtifactPanel /> : <WidgetGrid />}
 								</div>
+								{collapsed && (
+									<button
+										type="button"
+										aria-label="Expand panel"
+										onClick={() => setCollapsed(false)}
+										className="absolute right-0 top-1/2 z-20 flex size-7 -translate-y-1/2 items-center justify-center rounded-l-none border border-r-0 border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+									>
+										<ChevronLeft className="h-4 w-4" />
+									</button>
+								)}
 							</>
 						)}
 							</div>

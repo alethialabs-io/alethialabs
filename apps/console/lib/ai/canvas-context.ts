@@ -13,6 +13,14 @@ export interface CanvasContext {
 	form: Record<string, unknown>;
 	/** Current nodes (id · kind · name) so the model can target set_identity/update_config. */
 	nodes?: Array<{ id: string; kind: string; name?: string }>;
+	/** Nodes the user has selected on the board. */
+	selectedIds?: string[];
+	/**
+	 * The node whose inspector is open — the strongest signal of what "this" means. Without it,
+	 * "make this bigger" is unresolvable: the assistant could see the whole design and still had no
+	 * idea which node a pronoun referred to.
+	 */
+	inspectorNodeId?: string | null;
 }
 
 /** A compact, model-friendly summary of the current canvas for the system prompt. */
@@ -43,10 +51,32 @@ export function summarizeCanvas(ctx: CanvasContext | undefined): string {
 	];
 
 	if (ctx.nodes?.length) {
-		lines.push("Nodes (id · kind · name) — target these ids for set_identity/update_config:");
+		lines.push(
+			"Nodes (id · kind · name) — target these ids for set_identity/update_config/remove_node:",
+		);
 		for (const n of ctx.nodes) {
-			lines.push(`  - ${n.id} · ${n.kind}${n.name ? ` · ${n.name}` : ""}`);
+			const focus =
+				n.id === ctx.inspectorNodeId
+					? "  ← OPEN in the inspector"
+					: ctx.selectedIds?.includes(n.id)
+						? "  ← SELECTED"
+						: "";
+			lines.push(`  - ${n.id} · ${n.kind}${n.name ? ` · ${n.name}` : ""}${focus}`);
 		}
 	}
+
+	// What the user is looking at RIGHT NOW. Without it, "make this bigger" / "move that to GCP" /
+	// "delete it" are unresolvable — the assistant could see the whole design and still had no idea
+	// which node a pronoun referred to.
+	const focused = ctx.inspectorNodeId ?? ctx.selectedIds?.[0];
+	if (focused) {
+		const node = ctx.nodes?.find((n) => n.id === focused);
+		lines.push(
+			`The user is currently focused on: ${focused}${
+				node ? ` (${node.kind}${node.name ? ` · ${node.name}` : ""})` : ""
+			}. Resolve "this"/"it"/"that" to this node unless they say otherwise.`,
+		);
+	}
+
 	return lines.join("\n");
 }

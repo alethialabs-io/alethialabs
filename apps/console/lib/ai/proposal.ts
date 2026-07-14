@@ -40,6 +40,14 @@ export const aiActionSchema = z.discriminatedUnion("kind", [
 		nodeId: z.string(),
 		patch: z.record(z.string(), z.unknown()),
 	}),
+	// The assistant could add and reconfigure, but never REMOVE — so "drop the cache, we don't need
+	// it" was something it could reason about and not carry out. It's destructive, and therefore
+	// exactly as human-gated as everything else here: a PROPOSAL, applied only on accept, and the
+	// diff spells out what disappears.
+	z.object({
+		kind: z.literal("remove_node"),
+		nodeId: z.string(),
+	}),
 ]);
 
 export const aiProposalSchema = z.object({

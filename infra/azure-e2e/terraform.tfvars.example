@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Copy to terraform.tfvars and edit. Applied ONCE by the maintainer with an admin identity.
+
+# REQUIRED — the DEDICATED e2e subscription (never one holding prod/shared resources). Azure has no
+# permissions boundary, so this subscription IS the blast-radius boundary.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# The repo whose Actions runs may federate into the e2e SP (owner/repo). Default is the org repo.
+github_repo = "alethialabs-io/alethialabs"
+
+# The branch the scheduled nightly runs on (default branch). PRs/other branches cannot federate.
+e2e_github_branch = "main"
+
+# Optional: also trust a branch-restricted GitHub environment (adds a second federated credential).
+# e2e_github_environment = "production"
+
+# Region homing the stack's own metadata (action group RG). The e2e RUN region is set in the workflow.
+location = "germanywestcentral"
+
+# Monthly USD cost ceiling (0 < x <= 500). Alerts at 50/80/100% actual + 100% forecast.
+e2e_monthly_budget_usd = 100
+
+# Emails notified by the budget + action group. Empty = action group with no receivers.
+e2e_budget_alert_emails = ["you@alethialabs.io"]

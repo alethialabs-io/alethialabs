@@ -680,7 +680,7 @@ describe("planProject", () => {
 		);
 	});
 
-	it("queues a Hetzner job when only supported kinds are present (cluster/network/db-pg/cache/queue/secret/dns)", async () => {
+	it("queues a Hetzner job when only supported kinds are present (cluster/network/db-pg/cache/queue/dns)", async () => {
 		setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -694,13 +694,34 @@ describe("planProject", () => {
 					],
 					[projectCaches, [{ name: "cache", cloud_identity_id: null }]],
 					[projectQueues, [{ name: "queue", cloud_identity_id: null }]],
-					[projectSecrets, [{ name: "secret", cloud_identity_id: null }]],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
 		const r = await planProject("p1");
 		expect(r).toEqual({ jobId: "job-1" });
+	});
+
+	// Hetzner has NO cloud secret store and `hetznerProvider.ProviderTfvars` never emits
+	// `custom_secrets` (every managed cloud does) — so before the kind gate covered `secret`,
+	// the component was SILENTLY DROPPED and the deploy still reported SUCCESS. Fail closed.
+	it("fails closed on a secret component on hetzner (no silent drop)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectNetwork, [{ provision_network: true, cloud_identity_id: null }]],
+					[projectCluster, [{ cloud_identity_id: null }]],
+					[projectSecrets, [{ name: "api-key", cloud_identity_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "api-key" \(secret\) can't be provisioned on/,
+		);
+		// …and the message points the user at the real path (the Vault add-on), not a dead end.
+		await expect(planProject("p1")).rejects.toThrow(/Vault marketplace add-on/);
 	});
 
 	it("passes a managed cloud (aws) with topic/nosql/registry — supported there", async () => {

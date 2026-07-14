@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useQueryClient } from "@tanstack/react-query";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { motion } from "motion/react";
 import { Plus, Settings } from "lucide-react";
@@ -30,6 +31,7 @@ import { IacSourceCanvasProvider } from "@/components/design-project/byo/iac-sou
 import { IacSourceOverlay } from "@/components/design-project/byo/iac-source-overlay";
 import { getIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
+import { qk } from "@/lib/query/keys";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -43,6 +45,9 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
+import { ActivityRail } from "./activity-rail";
+import { CostChip } from "./cost-chip";
+import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
@@ -89,6 +94,7 @@ function CanvasInner({
 	byoIacEnabled,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
@@ -118,6 +124,7 @@ function CanvasInner({
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
+	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
 	// The project's effective cloud provider — drives the add-on sheet's requirement hints.
 	const effectiveProvider = useCanvasStore((s) =>
 		s.getEffectiveProvider(PROJECT_NODE_ID),
@@ -140,6 +147,25 @@ function CanvasInner({
 	useEffect(() => {
 		refreshCharts();
 	}, [refreshCharts]);
+
+	// Installed marketplace add-ons become NODES. They were configured in a sheet and explicitly not
+	// graph nodes, so an installed Grafana was invisible on the architecture — even though it's an
+	// ArgoCD Application whose health and sync are already in the database. Out-of-band like charts:
+	// never written by graphToForm, never part of the Deploy diff.
+	useEffect(() => {
+		const installed = (addonsQuery.data?.items ?? []).filter((a) => a.install?.enabled);
+		setAddonNodes(
+			installed.map((a) => ({
+				id: a.id,
+				name: a.name,
+				version: a.version,
+				namespace: a.namespace,
+				status: a.install?.status,
+				health: a.install?.health ?? null,
+				sync: a.install?.sync ?? null,
+			})),
+		);
+	}, [addonsQuery.data, setAddonNodes]);
 
 	// BYO IaC source is single-per-env, loaded out-of-band from getIacSource (and re-loaded after
 	// attach/detach/rescan). Only in edit mode with the feature on.
@@ -353,8 +379,36 @@ function CanvasInner({
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />
 
-			{/* Top-right: project settings + add a service. (Ask AI lives in the app shell now.) */}
+			{/* Top-left: what has run against this environment, and what's running now. */}
+			{projectId && environmentId && (
+				<ActivityRail projectId={projectId} environmentId={environmentId} />
+			)}
+
+			{/* Top-right: run a job · project settings · add a service. (Ask AI lives in the app shell.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+				{/* What this environment costs, from its last PLAN. The runner has always priced every
+				    plan with Infracost; nobody ever wrote the number down, so the product could not
+				    answer "what does production cost?". */}
+				{projectId && environmentId && <CostChip />}
+
+				{/* Every job type the platform can run — PLAN / AUDIT / DETECT_DRIFT / PROBE_CLUSTER —
+				    all of which existed server-side and none of which the board could ask for. */}
+				{projectId && environmentId && (
+					<RunMenu
+						projectId={projectId}
+						environmentId={environmentId}
+						onQueued={() => {
+							// The rail and the node statuses both key off the environment; nudge them so a
+							// queued job shows up immediately rather than on the next poll.
+							void queryClient.invalidateQueries({
+								queryKey: ["environment-jobs", projectId, environmentId],
+							});
+							void queryClient.invalidateQueries({
+								queryKey: qk.environmentStatus(projectId, environmentId),
+							});
+						}}
+					/>
+				)}
 				<Button
 					type="button"
 					variant="ghost"

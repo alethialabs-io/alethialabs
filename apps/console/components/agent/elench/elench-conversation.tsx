@@ -5,6 +5,7 @@
 import type { UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
+import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
@@ -239,23 +240,34 @@ export function ElenchConversation({
 			// Force a re-pull so the materialized rows appear on the grid.
 			useWidgetGridStore.setState({ threadId: null });
 			await hydrateGrid(tid);
-			useElenchStore.getState().setGalleryOpen(false);
+			useElenchStore.getState().setMainView("chat");
 			openGrid();
 			track("elench_artifact_opened", { context: isOrg ? "org" : "project" });
 		},
 		[activeId, startThread, hydrateGrid, openGrid, isOrg],
 	);
 
-	// The Artifacts gallery node (org only) — ElenchModal shows it in the main region while
-	// `galleryOpen`. "New artifact" is just a fresh chat (the empty landing's starter cards
-	// steer it); closing returns to the conversation.
-	const galleryNode = isOrg ? (
+	// The Artifacts library — available in EVERY chat (org and project alike): artifacts are an
+	// org-scoped library (`agent_artifacts` is unique on org_id+name), and — as in Claude, where
+	// the artifact library is workspace-level — a project conversation must be able to browse and
+	// open them too. `startThread` already carries the projectId, so opening one lands on a
+	// project-scoped grid.
+	const galleryNode = (
 		<AgentArtifactGallery
 			onOpenArtifact={(id, n) => void onOpenArtifactFromGallery(id, n)}
 			onNewArtifact={newChat}
-			onClose={() => useElenchStore.getState().setGalleryOpen(false)}
+			onClose={() => useElenchStore.getState().setMainView("chat")}
 		/>
-	) : undefined;
+	);
+
+	// The Knowledge panel — edits the pinned instructions/knowledge for THIS scope: the infra
+	// project's row in a project chat, the org-level row in an org chat (the Claude-Projects model).
+	const knowledgeNode = (
+		<AgentKnowledgePanel
+			projectId={projectId || null}
+			onClose={() => useElenchStore.getState().setMainView("chat")}
+		/>
+	);
 	const [accepted, setAccepted] = useState<Record<string, boolean>>({});
 	const renderToolPart = useMemo(
 		() =>
@@ -354,6 +366,7 @@ export function ElenchConversation({
 				onNewChat={newChat}
 				onDeleteThread={deleteThread}
 				gallery={galleryNode}
+				knowledge={knowledgeNode}
 			>
 				{body}
 			</ElenchModal>

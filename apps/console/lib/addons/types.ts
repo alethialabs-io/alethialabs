@@ -103,12 +103,20 @@ export interface AddOnInstallSpec {
 	chartRepo: string;
 	chart: string;
 	version: string;
-	/** How ArgoCD pulls the chart. Omitted / "helm" = a Helm-registry chart (chartRepo+chart);
+	/** How the add-on is delivered. Omitted / "helm" = a Helm-registry chart (chartRepo+chart);
 	 * "git" = a bring-your-own chart directory inside a git repo (chartRepo=git URL, path=chart
-	 * dir, version=git ref). Mirrors the Go `AddOnInstall.Source`. */
-	source?: "helm" | "git";
+	 * dir, version=git ref); "manifest" = a plain YAML manifest the RUNNER kubectl-applies
+	 * (chartRepo = the PINNED manifest URL, version = the release tag) — the operator rail, for
+	 * operators that ship as `kubectl apply` release manifests rather than charts (an ArgoCD
+	 * Application source cannot be a bare https://…yaml). Manifest add-ons get NO ArgoCD
+	 * Application and install BEFORE the chart Applications. Mirrors the Go `AddOnInstall.Source`. */
+	source?: "helm" | "git" | "manifest";
 	/** Chart directory within a git-source repo (source==="git"). Omitted for Helm charts. */
 	path?: string;
+	/** CRD names a manifest-source add-on establishes (e.g. "rabbitmqclusters.rabbitmq.com"). The
+	 * runner waits for each to reach condition=Established after applying, so a CR can't be synced
+	 * before the operator that owns its schema exists. Omitted for helm/git sources. */
+	crds?: string[];
 	/** ArgoCD AppProject the Application is placed in. Omitted = "infra" (marketplace default);
 	 * BYO charts are pinned to their hardened "byo-<slug>" project by the runner. */
 	project?: string;

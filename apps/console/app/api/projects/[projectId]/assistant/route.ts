@@ -20,6 +20,11 @@ import {
 	mentionsSchema,
 } from "@/lib/ai/mentions";
 import {
+	buildProjectKnowledge,
+	formatContextBlock,
+	readAgentContext,
+} from "@/lib/ai/project-knowledge";
+import {
 	cachedSystemMessage,
 	thinkingOptions,
 } from "@/lib/ai/provider-options";
@@ -75,8 +80,12 @@ function systemPrompt(projectId: string, canvas: CanvasContext | undefined): str
 		"  and rationale; when ready, point the user to review it (the result includes an openInCanvasUrl).",
 		"",
 		"EDIT THE DESIGN:",
-		"- Emit ONE `propose_changes` (set_identity on `project-root` / add_node / update_config) to add or",
-		"  change resources; the user accepts them onto the canvas. Use `list_service_options(provider)` to map",
+		"- Emit ONE `propose_changes` (set_identity on `project-root` / add_node / update_config /",
+		"  remove_node) to add, reconfigure, or REMOVE resources. A proposal is applied only when the user",
+		"  accepts it, and they are shown the EXACT actions first — so say what you mean plainly.",
+		"  Resolve \"this\" / \"it\" / \"that\" to the node the user is focused on (marked SELECTED or OPEN",
+		"  in the node list above) unless they name a different one.",
+		"  The user accepts them onto the canvas. Use `list_service_options(provider)` to map",
 		"  vague sizes onto real instance types / capacities, `cidr_for_hosts` for a network, `estimate_cost`",
 		"  for price. If a singleton already exists, `update_config` its id instead of `add_node`.",
 		"  add_node config keys by kind:",
@@ -179,9 +188,27 @@ export async function POST(
 		const mentionBlock = parsedMentions.success
 			? formatMentionsForPrompt(parsedMentions.data)
 			: "";
-		const system = mentionBlock
-			? `${systemPrompt(projectId, canvas)}\n\n${mentionBlock}`
-			: systemPrompt(projectId, canvas);
+
+		// The Claude-Projects model: this chat lives inside an infra project, so it inherits that
+		// project's pinned instructions + knowledge — layered UNDER the org-level ones (org policy
+		// first, project specifics second) — plus a derived block of the project's live state, so
+		// the very first answer is grounded without a tool round-trip. A project's context never
+		// leaks out to org chats.
+		const [orgCtx, projectCtx, derived] = await Promise.all([
+			readAgentContext(owner, null).catch(() => null),
+			readAgentContext(owner, projectId).catch(() => null),
+			buildProjectKnowledge(owner, projectId).catch(() => ""),
+		]);
+
+		const system = [
+			systemPrompt(projectId, canvas),
+			formatContextBlock("Organization", orgCtx),
+			formatContextBlock("Project", projectCtx),
+			derived,
+			mentionBlock,
+		]
+			.filter(Boolean)
+			.join("\n\n");
 
 		const modelMessages = await convertToModelMessages(messages);
 

@@ -61,6 +61,23 @@ const deployMetaSchema = z.object({
 		})
 		.optional()
 		.catch(undefined),
+	// In-cluster data-service endpoints, keyed by add-on id ("db-primary" / "cache-main" /
+	// "queue-jobs"). Hetzner's database/cache/queue deploy as ArgoCD Applications, so they have no
+	// tofu outputs — the runner READS these back from the cluster (never derives them from a chart
+	// fullname). `secret_ref` is a REFERENCE ("<namespace>/<name>") to the Secret the chart minted;
+	// a credential value is never carried here (the #427 precedent).
+	data_endpoints: z
+		.record(
+			z.string(),
+			z.object({
+				endpoint: z.string(),
+				port: z.number().optional(),
+				reader_endpoint: z.string().optional(),
+				secret_ref: z.string().optional(),
+			}),
+		)
+		.optional()
+		.catch(undefined),
 });
 
 // The BYO-IaC slice of a job's config_snapshot — the only key finalizeDeployment reads from it.
@@ -190,11 +207,13 @@ export async function finalizeDeployment(jobId: string) {
 
 	// Hetzner in-cluster data services deploy as ArgoCD Applications (addon-db-* / addon-cache-* /
 	// addon-queue-*), not managed cloud resources — so their status comes from the Application
-	// health, not tofu outputs. Reflect it onto the matching component rows. Endpoint discovery is
-	// chart-specific and deferred. Safe on the managed clouds: those Application names don't exist,
-	// so nothing matches and the tofu-output writeback below stays authoritative.
-	if (meta.addon_status) {
-		const addonStatus = meta.addon_status;
+	// health, not tofu outputs, and their connection endpoint is READ BACK from the cluster by the
+	// runner (`data_endpoints`, keyed by add-on id) rather than derived from a chart's fullname.
+	// Reflect both onto the matching component rows. Safe on the managed clouds: those Application
+	// names don't exist, so nothing matches and the tofu-output writeback below stays authoritative.
+	if (meta.addon_status || meta.data_endpoints) {
+		const addonStatus = meta.addon_status ?? {};
+		const dataEndpoints = meta.data_endpoints ?? {};
 		const statusForApp = (
 			appName: string,
 		): "ACTIVE" | "CREATING" | "FAILED" | null => {
@@ -215,10 +234,19 @@ export async function finalizeDeployment(jobId: string) {
 			.where(inEnv(projectDatabases));
 		for (const d of dbRows) {
 			const s = statusForApp(`addon-db-${d.name}`);
-			if (s)
+			const ep = dataEndpoints[`db-${d.name}`];
+			const patch: Record<string, unknown> = {};
+			if (s) patch.status = s;
+			if (ep?.endpoint) {
+				patch.endpoint = ep.endpoint;
+				if (ep.reader_endpoint) patch.reader_endpoint = ep.reader_endpoint;
+				// A REFERENCE to the chart-minted credential Secret ("<ns>/<name>") — never a value.
+				if (ep.secret_ref) patch.provider_outputs = { secret_ref: ep.secret_ref };
+			}
+			if (Object.keys(patch).length > 0)
 				await db
 					.update(projectDatabases)
-					.set({ status: s })
+					.set(patch)
 					.where(eq(projectDatabases.id, d.id));
 		}
 		const cacheRows = await db
@@ -227,10 +255,17 @@ export async function finalizeDeployment(jobId: string) {
 			.where(inEnv(projectCaches));
 		for (const c of cacheRows) {
 			const s = statusForApp(`addon-cache-${c.name}`);
-			if (s)
+			const ep = dataEndpoints[`cache-${c.name}`];
+			const patch: Record<string, unknown> = {};
+			if (s) patch.status = s;
+			if (ep?.endpoint) {
+				patch.endpoint = ep.endpoint;
+				if (ep.reader_endpoint) patch.reader_endpoint = ep.reader_endpoint;
+			}
+			if (Object.keys(patch).length > 0)
 				await db
 					.update(projectCaches)
-					.set({ status: s })
+					.set(patch)
 					.where(eq(projectCaches.id, c.id));
 		}
 		const queueRows = await db
@@ -239,10 +274,20 @@ export async function finalizeDeployment(jobId: string) {
 			.where(inEnv(projectQueues));
 		for (const q of queueRows) {
 			const s = statusForApp(`addon-queue-${q.name}`);
-			if (s)
+			const ep = dataEndpoints[`queue-${q.name}`];
+			const patch: Record<string, unknown> = {};
+			if (s) patch.status = s;
+			if (ep?.endpoint) {
+				// project_queues.endpoint is new (migration 0094) — databases and caches have had an
+				// endpoint column since day one, but queues never did, so an in-cluster RabbitMQ had
+				// nowhere to record its Service DNS name.
+				patch.endpoint = ep.endpoint;
+				if (ep.secret_ref) patch.provider_outputs = { secret_ref: ep.secret_ref };
+			}
+			if (Object.keys(patch).length > 0)
 				await db
 					.update(projectQueues)
-					.set({ status: s })
+					.set(patch)
 					.where(eq(projectQueues.id, q.id));
 		}
 	}

@@ -107,6 +107,26 @@ func TestExtractClusterName_Malformed(t *testing.T) {
 			outputs: map[string]interface{}{"gke_cluster_name": map[string]interface{}{"value": "gke-x"}, "aks_cluster_name": "aks-y"},
 			want:    "gke-x",
 		},
+		{
+			// BYO-IaC generic fallback: a doc-following customer module names its output
+			// `cluster_name`. It MUST be recognized, else the whole post-apply block
+			// (kubeconfig/reachability/ArgoCD/add-ons) is silently skipped (FT-1).
+			name:    "generic cluster_name recognized (BYO-IaC)",
+			outputs: map[string]interface{}{"cluster_name": map[string]interface{}{"value": "byo-cluster"}},
+			want:    "byo-cluster",
+		},
+		{
+			name:    "flat generic cluster_name recognized (BYO-IaC)",
+			outputs: map[string]interface{}{"cluster_name": "byo-flat"},
+			want:    "byo-flat",
+		},
+		{
+			// Provider-prefixed key must WIN when both are present so managed templates
+			// are unaffected by the generic fallback.
+			name:    "eks_cluster_name wins over generic cluster_name",
+			outputs: map[string]interface{}{"eks_cluster_name": "eks-managed", "cluster_name": "generic-byo"},
+			want:    "eks-managed",
+		},
 	}
 
 	for _, tt := range tests {
@@ -116,6 +136,23 @@ func TestExtractClusterName_Malformed(t *testing.T) {
 				t.Errorf("ExtractClusterName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestExtract_GenericByoOutputs proves the end-to-end BYO-IaC contract: a module that
+// emits ONLY the documented generic outputs (no provider-prefixed keys) yields a non-empty
+// cluster name AND endpoint. Before FT-1 both returned "", so deploy.go skipped kubeconfig,
+// reachability, ArgoCD and every add-on while still reporting success.
+func TestExtract_GenericByoOutputs(t *testing.T) {
+	outputs := map[string]interface{}{
+		"cluster_name":     map[string]interface{}{"value": "byo-k8s"},
+		"cluster_endpoint": map[string]interface{}{"value": "https://byo-k8s.example.com:6443"},
+	}
+	if got := ExtractClusterName(outputs); got != "byo-k8s" {
+		t.Errorf("ExtractClusterName(generic) = %q, want %q", got, "byo-k8s")
+	}
+	if got := ExtractClusterEndpoint(outputs); got != "https://byo-k8s.example.com:6443" {
+		t.Errorf("ExtractClusterEndpoint(generic) = %q, want %q", got, "https://byo-k8s.example.com:6443")
 	}
 }
 
@@ -149,9 +186,22 @@ func TestExtractClusterEndpoint_EdgeCases(t *testing.T) {
 			want:    "",
 		},
 		{
-			name:    "wrong key only",
-			outputs: map[string]interface{}{"cluster_endpoint": "https://nope"},
-			want:    "",
+			// BYO-IaC generic fallback: a doc-following customer module emits the neutral
+			// `cluster_endpoint` output. It MUST now be recognized (FT-1).
+			name:    "generic cluster_endpoint recognized (BYO-IaC)",
+			outputs: map[string]interface{}{"cluster_endpoint": "https://byo.example.com"},
+			want:    "https://byo.example.com",
+		},
+		{
+			name:    "nested generic cluster_endpoint recognized (BYO-IaC)",
+			outputs: map[string]interface{}{"cluster_endpoint": map[string]interface{}{"value": "https://byo-nested.example.com"}},
+			want:    "https://byo-nested.example.com",
+		},
+		{
+			// Provider-prefixed endpoint must WIN over the generic fallback.
+			name:    "eks_cluster_endpoint wins over generic cluster_endpoint",
+			outputs: map[string]interface{}{"eks_cluster_endpoint": "https://eks", "cluster_endpoint": "https://generic"},
+			want:    "https://eks",
 		},
 	}
 

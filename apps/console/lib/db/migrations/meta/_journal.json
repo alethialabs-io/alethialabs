@@ -659,6 +659,27 @@
       "when": 1783962683183,
       "tag": "0093_supreme_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1784033537481,
+      "tag": "0094_futuristic_franklin_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1784037803958,
+      "tag": "0095_thankful_wolfsbane",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1784041999055,
+      "tag": "0096_aspiring_bloodscream",
+      "breakpoints": true
     }
   ]
 }

@@ -159,7 +159,7 @@ export function AgentChat({
 		<div className={cn("flex min-h-0 flex-1 flex-col", className)}>
 			<MessageScrollerProvider autoScroll defaultScrollPosition="end">
 				<MessageScroller className="flex-1">
-					<MessageScrollerViewport>
+					<MessageScrollerViewport className="scrollbar-thin">
 						{/* The primitive pins a new user turn to the top by growing its trailing spacer
 						    to the viewport-bottom overshoot — but never shrinks it back, leaving a
 						    permanent blank region under short replies. Cap it to the viewport while a

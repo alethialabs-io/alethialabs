@@ -2,11 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
+import {
+	BookOpen,
+	Boxes,
+	LayoutDashboard,
+	MessagesSquare,
+	Plus,
+	Search,
+	Trash2,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
+import type { ElenchWorkspace } from "@/components/agent/elench/use-elench-workspaces";
 import type { AgentThread } from "@/lib/db/schema";
 import { cn } from "@repo/ui/utils";
 
@@ -20,6 +29,16 @@ interface ThreadRailProps {
 	onOpenArtifacts?: () => void;
 	/** True while the Artifacts gallery is the active view (highlights the nav item). */
 	artifactsActive?: boolean;
+	/** Open the Knowledge panel (modal only). When set, a "Knowledge" nav item shows. */
+	onOpenKnowledge?: () => void;
+	/** True while the Knowledge panel is the active view. */
+	knowledgeActive?: boolean;
+	/** The infra projects you can step into (the workspace switcher). */
+	workspaces?: ElenchWorkspace[];
+	/** The project workspace currently in scope; null = the general (org) assistant. */
+	activeProjectId?: string | null;
+	/** Step into a workspace (null = back to the general assistant). */
+	onSelectWorkspace?: (projectId: string | null) => void;
 }
 
 const DAY = 86_400_000;
@@ -62,6 +81,11 @@ export function ThreadRail({
 	onDelete,
 	onOpenArtifacts,
 	artifactsActive = false,
+	onOpenKnowledge,
+	knowledgeActive = false,
+	workspaces,
+	activeProjectId = null,
+	onSelectWorkspace,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 
@@ -107,7 +131,73 @@ export function ThreadRail({
 						Artifacts
 					</button>
 				)}
+				{onOpenKnowledge && (
+					<button
+						type="button"
+						onClick={onOpenKnowledge}
+						className={cn(
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							knowledgeActive && "border-border bg-muted",
+						)}
+					>
+						<BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
+						Knowledge
+					</button>
+				)}
 			</div>
+
+			{/* Workspace switcher — Claude's sidebar shape: a general "Chats" area (the org
+			    assistant) plus the Projects you can step into. Selecting one flips the store's
+			    ctx, which re-scopes the chat list, the Knowledge row, and the memory namespace.
+			    Without this, a project workspace was only reachable by opening Elench from that
+			    project's page, so all its pinned context was effectively invisible. */}
+			{onSelectWorkspace && (
+				<div className="flex flex-col border-b border-border px-2 pb-2.5">
+					<button
+						type="button"
+						onClick={() => onSelectWorkspace(null)}
+						className={cn(
+							"flex w-full items-center gap-2 rounded-none border-l-2 border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							activeProjectId === null && "border-l-foreground bg-muted",
+						)}
+					>
+						<MessagesSquare className="h-3.5 w-3.5 flex-none text-muted-foreground" />
+						Chats
+						<span className="ml-auto font-mono text-[9.5px] text-muted-foreground">
+							org
+						</span>
+					</button>
+
+					{workspaces && workspaces.length > 0 && (
+						<>
+							<div className="vx-eyebrow px-2.5 pb-1 pt-2.5 text-[9px]">
+								Projects
+							</div>
+							{workspaces.map((w) => (
+								<button
+									key={w.id}
+									type="button"
+									onClick={() => onSelectWorkspace(w.id)}
+									className={cn(
+										"flex w-full items-center gap-2 rounded-none border-l-2 border-transparent px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-muted",
+										activeProjectId === w.id && "border-l-foreground bg-muted",
+									)}
+								>
+									<Boxes className="h-3.5 w-3.5 flex-none text-muted-foreground" />
+									<span title={w.name} className="min-w-0 flex-1 truncate">
+										{w.name}
+									</span>
+									{w.provider && (
+										<span className="flex-none font-mono text-[9.5px] uppercase text-muted-foreground">
+											{w.provider}
+										</span>
+									)}
+								</button>
+							))}
+						</>
+					)}
+				</div>
+			)}
 
 			<div className="px-3.5 pb-2">
 				<div className="flex items-center gap-2 bg-muted px-2.5">

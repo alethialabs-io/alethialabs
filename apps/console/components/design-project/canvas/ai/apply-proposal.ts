@@ -23,6 +23,8 @@ export function applyProposal(proposal: AiProposalParsed): void {
 			store.setNodeIdentity(action.nodeId, action.cloudIdentityId, provider);
 		} else if (action.kind === "update_config") {
 			store.updateNodeConfig(action.nodeId, action.patch);
+		} else if (action.kind === "remove_node") {
+			store.removeNodes([action.nodeId]);
 		}
 	}
 }

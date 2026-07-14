@@ -1,0 +1,175 @@
+---
+title: The canvas
+description: How the architecture canvas is designed — what a card tells you, how status reads without colour, why some resources collapse into one card, and how detail changes with zoom.
+---
+
+# The canvas
+
+The Architecture view is where a project's infrastructure is designed, deployed, and kept honest.
+This page explains how to *read* it — the conventions are deliberate, and once you know them the
+board tells you a great deal at a glance.
+
+The canvas is **fully grayscale**. Nothing on it is colour-coded. That is a constraint, not an
+oversight: colour is the first thing to fail under a projector, a screenshot, colour-blindness, or a
+dark room. So every distinction you can see is carried by **shape, structure, and type** instead —
+and the one exception is the cloud provider's own brand mark, which stays in its original colours
+because it belongs to someone else.
+
+## What a card tells you
+
+Every resource is a card, and every card is built from the same four parts.
+
+### The glyph and the eyebrow
+
+Top-left: the service's icon and its kind, in uppercase mono. This is the fastest read — *what kind
+of thing is this*.
+
+### The facts
+
+The middle of the card is a small grid of the **two or three facts that actually matter for that
+service**. This is what makes a database look like a database and not like a DNS zone:
+
+| Resource | Reads as |
+| --- | --- |
+| Database | `PostgreSQL 16 · 0.5–4 · 7 d` |
+| Cache | `Valkey · cache.t3.medium · 2 · multi-AZ` |
+| Bucket | `private · on · 2 origins` |
+| Cluster | `1.31 · 2–5 · m5a.large` |
+| Topic | `3 subscriptions · push · pull` |
+
+A fact with no value yet draws a **muted dash**, so an unconfigured resource reads as unconfigured
+without having to open it.
+
+The facts are **cloud-honest**. On a compute-only cloud like Hetzner there is no managed database
+service, so a database is deployed as a CloudNativePG cluster *inside your Kubernetes cluster* — and
+the card says exactly that (`Runs as · CloudNativePG`) rather than implying a managed service that
+doesn't exist. The same is true of caches (Valkey) and queues (RabbitMQ).
+
+### The provider chip
+
+Which cloud account this resource lands in. A resource with no chip of its own **inherits the
+project's** cloud — that's the common case, and the chip says `inherits core`.
+
+### The classification rule
+
+The thin band across the **top edge** of the card says what kind of citizen the resource is:
+
+| Rule | Meaning |
+| --- | --- |
+| Solid, full ink | **Root** — the project itself, the anchor everything inherits from |
+| Solid, strong | **Core** — must sit on the project's cloud (network, cluster, data services) |
+| Hairline | **Periphery** — may live on a different cloud (DNS, buckets, registry, secrets, GitOps) |
+| Dashed | **External** — not managed by this design (a bring-your-own Helm chart or IaC module) |
+
+## Status without colour
+
+Status is shown by a **dot**, read by its fill and shape, with a short mono label beside it. There is
+no red and no green anywhere.
+
+| Dot | State | Means |
+| --- | --- | --- |
+| Solid | **Live** / **Ready** | Nominal. The calm state — it shows only the dot, no label. |
+| Hollow ring | **Needs setup** / **Not deployed** | Designed but incomplete, or never applied. |
+| Haloed | **Queued** / **Updating** / **Update pending** / **Destroying** | Something is pending. |
+| Blinking | **Applying** | A runner is changing this resource right now. |
+| Hollow-centre | **Failed** / **Unreachable** | A real, actionable break. |
+| Faint | **Gated** / **Destroyed** | Inert — it won't provision, or it's gone. |
+
+The canvas stays **calm when everything is fine**: a healthy resource shows a dot and nothing else.
+Anything that wants your attention carries a label. If the board is quiet, it's quiet because there
+is nothing to say.
+
+### One state, chosen deliberately
+
+A resource often has several truths at once — its design is invalid, *and* it's live, *and* it has
+drifted. The canvas picks one to show, in a fixed order:
+
+1. **Failed** — a real break outranks everything.
+2. **In flight** (queued · applying · updating · destroying) — what's *happening* outranks what's *wrong*.
+3. **Needs setup** — the design itself is invalid, so the next deploy will not work. This is shown
+   *even for a resource that is currently live*, because the deploy you are about to run is the thing
+   that matters.
+4. **Gated** — valid, but it won't provision (see below).
+5. **Destroyed**, then **Not deployed**.
+6. **Unreachable** — it exists, but the cluster's API server didn't answer the last probe.
+7. **Update pending** — live, but the design has moved ahead of what's deployed.
+8. **Live** / **Ready**.
+
+### Drift is an overlay, not a state
+
+If the real cloud has diverged from what Alethia recorded, the resource is still **Live** — it just
+carries a `2 drifted` chip alongside. Drift never replaces the state, it rides on top of it. The
+resource's panel lists exactly which Terraform resources diverged.
+
+Drift that can't confidently be traced back to a specific resource is reported **at the environment**
+rather than pinned to a card it might not belong to. An honest "2 resources drifted, unattributed" is
+better than a wrong badge on your database.
+
+### Gated
+
+A **core** resource placed on a different cloud than the project is drawn as **gated**. It can be
+designed and drawn, but the project will not provision until it's colocated. This mirrors the
+provisioner's own rule — the canvas will never let you believe something will deploy when it won't.
+
+## Regions — where a resource actually runs
+
+The board draws two nested regions, and puts each resource where it really lives:
+
+- The **VPC** — your network. It holds the cluster, and every managed data service.
+- The **cluster** — nested inside the VPC. It holds what runs as a workload in Kubernetes.
+
+Everything else — DNS, buckets, the container registry, secrets, the GitOps repository — sits
+**outside both**. That isn't an accident of layout: those are exactly the resources that have no VPC,
+which is why they're the ones allowed to live on a *different cloud* from the rest of the project.
+
+Drawn flat, a managed database and an in-cluster Grafana look like the same kind of thing. They are
+not: the database runs *in* the VPC but *outside* Kubernetes, and Grafana runs *inside* the cluster.
+The regions make that difference visible at a glance.
+
+<Callout>
+On a compute-only cloud like Hetzner there is no managed data plane, so databases, caches and queues
+deploy as Helm charts **inside your cluster** — and the board draws them there. The same design lays
+out differently on a different cloud, because it genuinely *deploys* differently.
+</Callout>
+
+Regions are derived from the resources inside them, so dragging a card simply re-shapes the region
+around it. They are background only — you can't select, drag, or delete one.
+
+## Collections — when one card stands for many
+
+A real project has thirty or forty secrets. Thirty cards would bury the architecture: the canvas
+would stop being a picture of your system and become a wall of near-identical boxes.
+
+So high-cardinality resources **collapse into a single card** — a vault. Secrets work this way today.
+The card shows the count, a few names, and **the state of its unhappiest member**: a vault holding one
+failed secret can never read *Live*. Collapsing hides the clutter, never the trouble.
+
+Open the vault to get the full list, filter it, add or remove entries, and click through to any single
+secret to configure it exactly as you would any other resource. Nothing is taken away — only the
+board is kept readable.
+
+<Callout>
+This is a rendering decision, not a data model. Every secret is still an individual resource with its
+own configuration, its own status, and its own line in the deploy diff.
+</Callout>
+
+## Detail follows zoom
+
+Cards shed **detail** before they shed **legibility**, so a large architecture stays readable:
+
+| Zoom | Shows |
+| --- | --- |
+| Far out | The glyph, the name, and a status dot |
+| Middle | Header, name, and the single most important fact |
+| Close in | The full card — facts, provider, status, everything |
+
+Zoom out to see the shape of the system; zoom in to work on it.
+
+## Reading the board quickly
+
+- **Everything quiet, dots only** — the environment is healthy and matches its design.
+- **A hollow-centre dot** — something failed or a cluster stopped answering. Start there.
+- **A blinking dot** — a deploy is in flight right now.
+- **Dashed borders** — resources you brought yourself; Alethia plans and verifies them but does not
+  own their definition.
+- **Faint dots** — inert. Either gated (won't provision) or already destroyed.

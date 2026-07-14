@@ -29,6 +29,9 @@ infrastructure as code. Both create everything in **your** Alibaba account:
 ### Create the RAM OIDC provider
 A RAM OIDC provider named `alethia` trusting Alethia's issuer (`https://alethialabs.io/api/oidc`), with
 client id `sts.aliyuncs.com`. The provider name is fixed — Alethia derives its ARN from your role ARN.
+The provider pins the issuer's **CA certificate fingerprints** (the stable intermediate/root, not the
+rotating Cloudflare edge leaf); if the issuer's cert chain ever rotates its CA, re-run the setup to refresh
+them.
 
 ### Create the RAM role
 A role whose trust policy allows `AssumeRoleWithOIDC` from that provider, scoped to Alethia's workload
@@ -36,8 +39,11 @@ identity (`oidc:sub = alethia-connector`, `oidc:aud = sts.aliyuncs.com`) — a w
 rejected.
 
 ### Attach provisioning permissions
-The module attaches the RAM policies Alethia needs (ACK, VPC, ECS, SLB, EIP by default; tighten or
-extend to match your Projects).
+The setup attaches **4 enumerated custom RAM policies** — `ComputeCluster` (ACK + its transitive node-pool
+ECS + API-server/Service SLB), `Network` (VPC/vSwitch/NAT/SNAT + EIP), `Data` (RDS/KVStore/OSS/Tablestore/
+KMS), and `EdgeReg` (Container Registry/AliDNS/MNS/WAF) — each listing the **specific
+create/read/modify/delete/tag actions** the templates issue, never a `service:*` wildcard or an admin
+policy. Service-linked roles ACK/NAT need are covered by a narrow `ram:CreateServiceLinkedRole`-only policy.
 
 ### Paste the role ARN into Alethia
 Run `tofu output` and paste `role_arn` — it looks like `acs:ram::<account>:role/<name>`. That's the

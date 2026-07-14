@@ -3,6 +3,7 @@
 
 import {
 	Archive,
+	Blocks,
 	Box,
 	Database,
 	GitBranch,
@@ -24,6 +25,7 @@ import {
 	DEFAULT_CACHE_NODE,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
+	getProvider,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import {
@@ -89,17 +91,64 @@ export const ROADMAP_ITEMS: RoadmapItem[] = [
 	},
 ];
 
+/** One fact on a node's card — a mono micro-label over a mono value. */
+export interface NodeFact {
+	label: string;
+	/** Formatted value. Empty string means "not set yet" (the card renders a muted dash). */
+	value: string;
+}
+
+/**
+ * How a kind renders on the canvas. The design system is grayscale — status reads through dot
+ * fill/shape, never hue — so a service is told apart by its GLYPH, its classification rule (the
+ * card's top border), and above all by its FACTS: the two or three things that actually matter
+ * for that service. A database reads "postgres 16 · 0.5–4 ACU · 7 d"; a bucket reads
+ * "private · versioned · 2 origins".
+ *
+ * Facts are cloud-honest. On a compute-only cloud (Hetzner) a database node is a CloudNativePG
+ * cluster running IN the customer's cluster, not a managed service — and the card says so.
+ */
+export interface NodeCardSpec<K extends NodeKind = NodeKind> {
+	/** In priority order. The `compact` LOD tier renders only the first; `full` renders up to 3. */
+	facts: (ctx: {
+		config: NodeConfigMap[K];
+		provider: CloudProviderSlug | null;
+	}) => NodeFact[];
+	/** Which connection nubs the card draws. Mirrors the derived edge topology (the store's
+	 * `deriveEdges`): the network sources the cluster, the cluster sources every leaf. Leaves are
+	 * targets only — the default. */
+	handles?: { source?: boolean; target?: boolean };
+}
+
 export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	kind: K;
 	schemaKey: SchemaKey;
 	cardinality: "singleton" | "array";
-	/** CORE must colocate on the project identity; PERIPHERY may diverge. */
-	classification: "core" | "periphery" | "root";
+	/** CORE must colocate on the project identity; PERIPHERY may diverge; ROOT is the project
+	 * anchor; EXTERNAL is not owned by the design (BYO chart / BYO IaC) and is drawn dashed. */
+	classification: "core" | "periphery" | "root" | "external";
 	/** False for resources with no cloud account (repositories = git). */
 	cloudScoped: boolean;
 	eyebrow: string;
 	label: string;
 	icon: LucideIcon;
+	/** Canvas card presentation — this IS the card. Every kind has one. */
+	card: NodeCardSpec<K>;
+	/**
+	 * High-cardinality kinds COLLAPSE into one card on the board. A real project carries 30–40
+	 * secrets; drawn as 30–40 cards they bury the architecture — the canvas stops being a picture of
+	 * the system and becomes a wall of near-identical boxes. Such a kind renders as a single vault
+	 * card instead, and its resources are managed as a list inside that card's panel.
+	 *
+	 * Only the VIEW collapses. The store still holds one node per resource, so graphToForm, the
+	 * staged-change diff, drift attribution and per-component status are all untouched.
+	 */
+	collection?: {
+		/** The card's title (plural — "Secrets"). */
+		title: string;
+		/** Singular noun, for the panel's actions ("Add a secret"). */
+		singular: string;
+	};
 	/** Add-palette presentation (group + cloud-indifferent subtitle). Present on every
 	 * ADDABLE kind; absent only for the fixed project root and out-of-band chart nodes. */
 	palette?: { group: PaletteGroup; subtitle: string };
@@ -117,6 +166,25 @@ export interface NodeKindDef<K extends NodeKind = NodeKind> {
 /** Per-kind registry: each entry's `defaultData` is typed to that kind's config fragment. */
 export type NodeRegistry = { [K in NodeKind]: NodeKindDef<K> };
 
+// ── card-fact helpers ───────────────────────────────────────────────────────
+// Compute-only clouds have no managed data plane: a database/cache/queue node compiles to an
+// in-cluster Helm chart instead (see hetzner-services.ts). The cards say so rather than implying
+// a managed service exists.
+const isInCluster = (provider: CloudProviderSlug | null) => provider === "hetzner";
+
+/** Human engine family for a database config (mirrors the inspector's `engineLabel`). */
+function dbEngineLabel(config: {
+	engine_family?: string | null;
+	engine?: string | null;
+	engine_version?: string | null;
+}): string {
+	const family =
+		config.engine_family ??
+		(config.engine?.includes("mysql") ? "mysql" : "postgres");
+	const name = family === "mysql" ? "MySQL" : "PostgreSQL";
+	return config.engine_version ? `${name} ${config.engine_version}` : name;
+}
+
 /**
  * Single source of truth for node kinds. The palette, command palette, React Flow
  * nodeTypes, and the graph⇄form mappers all derive from this table.
@@ -131,6 +199,14 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Project",
 		label: "Project",
 		icon: Box,
+		card: {
+			handles: { source: true },
+			facts: ({ config }) => [
+				{ label: "Region", value: config.region ?? "" },
+				{ label: "Stage", value: config.environment_stage ?? "" },
+				{ label: "Tofu", value: config.iac_version ?? "" },
+			],
+		},
 		defaultData: () => ({
 			project_name: "",
 			environment_stage: "development",
@@ -147,6 +223,22 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Network",
 		label: "Network",
 		icon: Network,
+		card: {
+			handles: { source: true },
+			facts: ({ config }) =>
+				config.provision_network === false
+					? [
+							{ label: "Mode", value: "existing" },
+							{ label: "Network", value: config.network_id ?? "" },
+						]
+					: [
+							{ label: "CIDR", value: config.cidr_block ?? "" },
+							{
+								label: "NAT",
+								value: config.single_nat_gateway === false ? "per-AZ" : "single",
+							},
+						],
+		},
 		palette: { group: "Networking", subtitle: "VPC / VNet & subnets" },
 		defaultData: () => ({
 			provision_network: true,
@@ -163,6 +255,25 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Cluster",
 		label: "Cluster",
 		icon: Server,
+		card: {
+			handles: { source: true, target: true },
+			facts: ({ config }) => {
+				// node_size is the cloud-indifferent capability; instance_types is the legacy
+				// concrete SKU the resolver falls back to. Show whichever the design actually set.
+				const size = config.node_size;
+				const shape = size
+					? `${size.vcpu} vCPU / ${size.memory_gb} GB`
+					: (config.instance_types?.[0] ?? "");
+				return [
+					{ label: "K8s", value: config.cluster_version ?? "" },
+					{
+						label: "Nodes",
+						value: `${config.node_min_size ?? 1}–${config.node_max_size ?? 1}`,
+					},
+					{ label: "Shape", value: shape },
+				];
+			},
+		},
 		palette: { group: "Compute", subtitle: "Managed Kubernetes (EKS · GKE · AKS)" },
 		defaultData: (provider) => ({
 			cluster_version: DEFAULT_K8S_VERSION[provider],
@@ -182,6 +293,32 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Database",
 		label: "Database",
 		icon: Database,
+		card: {
+			facts: ({ config, provider }) =>
+				isInCluster(provider)
+					? [
+							{ label: "Engine", value: dbEngineLabel(config) },
+							{
+								label: "Storage",
+								value: `${config.storage_gb ?? 10} GiB × ${config.replicas ?? 1}`,
+							},
+							{ label: "Runs as", value: "CloudNativePG" },
+						]
+					: [
+							{ label: "Engine", value: dbEngineLabel(config) },
+							{
+								label: "Capacity",
+								value: `${config.min_capacity ?? "?"}–${config.max_capacity ?? "?"}`,
+							},
+							{
+								label: "Backups",
+								value:
+									config.backup_retention_days != null
+										? `${config.backup_retention_days} d`
+										: "",
+							},
+						],
+		},
 		palette: { group: "Data", subtitle: "PostgreSQL · MySQL" },
 		defaultData: (provider) => {
 			const capacity = DB_CAPACITY[provider];
@@ -220,6 +357,27 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Cache",
 		label: "Cache",
 		icon: Zap,
+		card: {
+			facts: ({ config, provider }) =>
+				isInCluster(provider)
+					? [
+							// The in-cluster chart is always Valkey, whatever engine the config carries.
+							{ label: "Engine", value: "Valkey" },
+							{
+								label: "Storage",
+								value: `${config.storage_gb ?? config.memory_gb ?? 8} GiB`,
+							},
+							{ label: "Nodes", value: String(config.num_cache_nodes ?? 1) },
+						]
+					: [
+							{ label: "Engine", value: config.engine === "valkey" ? "Valkey" : "Redis" },
+							{ label: "Node", value: config.node_type ?? "" },
+							{
+								label: "Nodes",
+								value: `${config.num_cache_nodes ?? 1}${config.multi_az ? " · multi-AZ" : ""}`,
+							},
+						],
+		},
 		palette: { group: "Data", subtitle: "Redis · Valkey" },
 		defaultData: (provider) => ({
 			name: "primary",
@@ -253,6 +411,24 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Queue",
 		label: "Queue",
 		icon: ListOrdered,
+		card: {
+			facts: ({ config, provider }) =>
+				isInCluster(provider)
+					? [
+							{ label: "Runs as", value: "RabbitMQ" },
+							{ label: "Storage", value: `${config.storage_gb ?? 8} GiB` },
+						]
+					: [
+							{ label: "Delivery", value: config.ordered ? "FIFO" : "standard" },
+							{ label: "Visibility", value: `${config.visibility_timeout ?? 30} s` },
+							{
+								label: "Retain",
+								value: config.message_retention
+									? `${Math.round(config.message_retention / 86400)} d`
+									: "",
+							},
+						],
+		},
 		palette: { group: "Messaging", subtitle: "SQS · Pub/Sub · Service Bus" },
 		defaultData: () => ({
 			name: "queue",
@@ -270,6 +446,21 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Topic",
 		label: "Topic",
 		icon: Megaphone,
+		card: {
+			facts: ({ config }) => {
+				const subs = config.subscriptions ?? [];
+				return [
+					{ label: "Subscriptions", value: String(subs.length) },
+					{
+						label: "Protocols",
+						value:
+							subs.length === 0
+								? "none"
+								: [...new Set(subs.map((s) => s.protocol).filter(Boolean))].join(" · "),
+					},
+				];
+			},
+		},
 		palette: { group: "Messaging", subtitle: "Pub/Sub topics & subscriptions" },
 		defaultData: () => ({
 			name: "topic",
@@ -285,6 +476,16 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "NoSQL",
 		label: "NoSQL table",
 		icon: Table2,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Partition key", value: config.partition_key ?? "" },
+				{
+					label: "Mode",
+					value: config.capacity_mode === "provisioned" ? "provisioned" : "on-demand",
+				},
+				{ label: "PITR", value: config.point_in_time_recovery === false ? "off" : "on" },
+			],
+		},
 		palette: { group: "Data", subtitle: "DynamoDB · Firestore · Cosmos DB" },
 		defaultData: () => ({
 			name: "table",
@@ -304,6 +505,13 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "DNS",
 		label: "DNS",
 		icon: Globe,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Domain", value: config.domain_name ?? "" },
+				{ label: "Certificate", value: config.managed_certificate ? "managed" : "none" },
+				{ label: "WAF", value: config.waf_enabled ? "enabled" : "off" },
+			],
+		},
 		palette: { group: "Networking", subtitle: "DNS records, certificates & WAF" },
 		defaultData: () => ({
 			enabled: true,
@@ -321,6 +529,21 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Secret",
 		label: "Secret",
 		icon: KeyRound,
+		card: {
+			facts: ({ config }) =>
+				config.generate === false
+					? [{ label: "Value", value: "managed manually" }]
+					: [
+							{ label: "Value", value: "generated" },
+							{
+								label: "Length",
+								value: `${config.length ?? 32}${config.special_chars === false ? "" : " · symbols"}`,
+							},
+						],
+		},
+		// Secrets are the canonical high-cardinality kind — a real project has dozens. They collapse
+		// into one vault card; the individual secrets live in its panel.
+		collection: { title: "Secrets", singular: "secret" },
 		palette: { group: "Security", subtitle: "Managed secrets & credentials" },
 		defaultData: () => ({
 			name: "secret",
@@ -338,6 +561,19 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Bucket",
 		label: "Bucket",
 		icon: Archive,
+		card: {
+			facts: ({ config }) => {
+				const origins = config.cors_origins?.length ?? 0;
+				return [
+					{ label: "Access", value: config.public_access ? "public" : "private" },
+					{ label: "Versioning", value: config.versioning ? "on" : "off" },
+					{
+						label: "CORS",
+						value: origins > 0 ? `${origins} origin${origins > 1 ? "s" : ""}` : "none",
+					},
+				];
+			},
+		},
 		palette: { group: "Storage", subtitle: "Object storage for files and assets" },
 		defaultData: () => ({
 			name: "assets",
@@ -355,6 +591,19 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Registry",
 		label: "Container registry",
 		icon: Package,
+		card: {
+			facts: ({ config, provider }) => [
+				{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
+				{
+					label: "Tags",
+					value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
+				},
+				{
+					label: "Scanning",
+					value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
+				},
+			],
+		},
 		palette: { group: "DevOps", subtitle: "Private container images" },
 		defaultData: () => ({
 			name: "apps",
@@ -370,9 +619,48 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "GitOps",
 		label: "Repository",
 		icon: GitBranch,
+		card: {
+			facts: ({ config }) => [
+				{
+					label: "Repository",
+					value: (config.apps_destination_repo ?? "")
+						.replace(/^https?:\/\/(www\.)?(github|gitlab|bitbucket)\.com\//, "")
+						.replace(/\.git$/, ""),
+				},
+				{ label: "Syncs", value: "ArgoCD" },
+			],
+		},
 		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },
 		defaultData: () => ({
 			apps_destination_repo: "",
+		}),
+	},
+	// A marketplace add-on the cluster comes up with (Grafana, Loki, Vault, …). Browsed from the Add
+	// palette's Add-ons group and configured in a sheet — but until now it was explicitly NOT a graph
+	// node, so an installed Grafana was INVISIBLE on the architecture, even though it is an ArgoCD
+	// Application whose health and sync are already in the database. Persisted out-of-band in
+	// project_addons; defaultData is a placeholder (the real config always comes from the DB).
+	addon: {
+		kind: "addon",
+		schemaKey: "charts",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Add-on",
+		label: "Add-on",
+		icon: Blocks,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Chart", value: config.version },
+				{ label: "Health", value: config.health ?? "—" },
+				{ label: "Sync", value: config.sync ?? "—" },
+			],
+		},
+		defaultData: () => ({
+			id: "addon",
+			name: "addon",
+			version: "",
+			namespace: "default",
 		}),
 	},
 	// Bring-your-own Helm chart — added via the ⌘K "Sources" flow (not the palette), persisted
@@ -382,11 +670,27 @@ export const NODE_REGISTRY: NodeRegistry = {
 		kind: "chart",
 		schemaKey: "charts",
 		cardinality: "array",
-		classification: "periphery",
+		// Not owned by the design — the customer's own chart, pulled from their repo. Drawn dashed.
+		classification: "external",
 		cloudScoped: false,
 		eyebrow: "Helm chart",
 		label: "Helm chart",
 		icon: GitBranch,
+		// Chart nodes render through their own component (chart-node.tsx) because they carry
+		// out-of-band actions (detach / rescan); these facts keep the registry exhaustive and are
+		// what a generic renderer would show.
+		card: {
+			facts: ({ config }) => [
+				{
+					label: "Repo",
+					value: config.repoUrl
+						.replace(/^https?:\/\/(www\.)?/, "")
+						.replace(/\.git$/, ""),
+				},
+				{ label: "Ref", value: config.ref },
+				{ label: "Namespace", value: config.namespace },
+			],
+		},
 		defaultData: () => ({
 			id: "chart",
 			repoUrl: "",

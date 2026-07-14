@@ -25,7 +25,8 @@ export type NodeKind =
 	| "bucket"
 	| "registry"
 	| "repositories"
-	| "chart";
+	| "chart"
+	| "addon";
 
 /**
  * A bring-your-own Helm chart node's config. Unlike every other kind, this is NOT a
@@ -78,6 +79,31 @@ export type NodeConfigMap = {
 	registry: ProjectFormData["container_registries"][number];
 	// Out-of-band (not a ProjectFormData fragment) — see ByoChartNodeConfig.
 	chart: ByoChartNodeConfig;
+	// Out-of-band (project_addons) — a marketplace add-on the cluster comes up with.
+	addon: AddonNodeConfig;
+};
+
+/**
+ * An installed marketplace add-on (Grafana, Loki, Vault, …). Like chart nodes, these are persisted
+ * out-of-band in `project_addons` and never round-trip through the form graph — `graphToForm` reads
+ * only the kinds it knows, and the staged-change diff skips them.
+ *
+ * They were previously configured in a sheet and explicitly NOT graph nodes, so an installed Grafana
+ * was invisible on the architecture — even though it is an ArgoCD Application with health and sync
+ * already in the database.
+ */
+export type AddonNodeConfig = {
+	/** The catalog id (`kube-prometheus-stack`) — also its name on the card. */
+	id: string;
+	name: string;
+	/** Pinned chart version. */
+	version: string;
+	namespace: string;
+	status?: string;
+	/** ArgoCD health: Healthy | Progressing | Degraded | Missing | Unknown. */
+	health?: string | null;
+	/** ArgoCD sync state: Synced | OutOfSync | Unknown. */
+	sync?: string | null;
 };
 
 /** The config type for a single node kind (or the union across all kinds). */

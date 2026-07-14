@@ -162,8 +162,19 @@ func (cp *ControlPlane) SeedRunner(ctx context.Context) (id, token string, err e
 // bitnami-labs.github.io/sealed-secrets is dead upstream, so that add-on can never
 // sync anywhere; catalog fix tracked separately. Seed only charts whose repos are
 // proven alive, or the tier reds on upstream rot rather than on our spine.)
+// (sealed-secrets' dead chartRepo is FIXED — bitnami-labs.github.io → bitnami.github.io, PR #500 —
+// so the "seed only charts whose repos are proven alive" caveat above no longer excludes it; the
+// full surface below now carries it, and catalog-export.test.ts guards the whole set against that
+// class of rot.)
+//
+// FULL SURFACE: with ALETHIA_E2E_ALL_ADDONS=1 every tier seeds ALL 19 catalog add-ons instead of the
+// lean single seed — the maintainer's FULLY-TESTED bar ("every single add-on we have available").
+// The set is loaded from the generated fixture (SSOT = catalog.ts; see addon_surface.go), and a
+// stale/short fixture is a hard FAIL, never a silent fallback to a smaller set — a full-surface run
+// that quietly installed one add-on and reported green is exactly the vacuous proof the bar exists
+// to prevent.
 func seedAddOns() []types.AddOnInstall {
-	return []types.AddOnInstall{
+	lean := []types.AddOnInstall{
 		{
 			ID:        "reloader",
 			Mode:      "managed",
@@ -175,6 +186,12 @@ func seedAddOns() []types.AddOnInstall {
 			SyncWave:  1,
 		},
 	}
+	addons, err := SeedAddOnsForSurface(lean)
+	if err != nil {
+		// Fail loudly: the caller asked for the full surface and we cannot honour it.
+		panic(fmt.Sprintf("full add-on surface requested but unavailable: %v", err))
+	}
+	return addons
 }
 
 // SeedDeployJob enqueues a QUEUED DEPLOY job whose config_snapshot targets the local
