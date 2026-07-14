@@ -103,12 +103,19 @@ export function formatContextBlock(
 	return parts.join("\n\n");
 }
 
-/** Read the pinned context row for a scope (project_id NULL = the org-level row). */
+/**
+ * Read the pinned context row for a scope (project_id NULL = the org-level row).
+ *
+ * `ownerUserId` MUST be the **user id** (`requireOwner()` / `actor.userId`) — never `actor.orgId`.
+ * `withOwnerScope` sets both `current_owner` and `current_org` to whatever it's given, and these
+ * rows are written through `requireOwner()`, so reading under a different scope silently returns
+ * nothing (community hides it, since there orgId === userId; an enterprise org would not).
+ */
 export async function readAgentContext(
-	owner: string,
+	ownerUserId: string,
 	projectId: string | null,
 ): Promise<AgentContext | null> {
-	return withOwnerScope(owner, async (tx) => {
+	return withOwnerScope(ownerUserId, async (tx) => {
 		const [row] = await tx
 			.select()
 			.from(agentContext)
@@ -126,12 +133,13 @@ export async function readAgentContext(
 /**
  * Assemble the derived project-knowledge block from live state. Owner-scoped (RLS), so it can
  * only ever read the caller's own project. Returns "" if the project isn't visible.
+ * `ownerUserId` is the user id — see {@link readAgentContext} for why it must not be an org id.
  */
 export async function buildProjectKnowledge(
-	owner: string,
+	ownerUserId: string,
 	projectId: string,
 ): Promise<string> {
-	const facts = await withOwnerScope(owner, async (tx): Promise<ProjectFacts | null> => {
+	const facts = await withOwnerScope(ownerUserId, async (tx): Promise<ProjectFacts | null> => {
 		const [p] = await tx
 			.select()
 			.from(projects)
