@@ -1,7 +1,7 @@
 name: Mirror CLI
 
 # Publishes a read-only mirror of the CLI (apps/cli + its shared packages/core) to the public
-# alethialabs-io/alethia repo. Development happens here in the monorepo; the mirror is a browsable
+# alethialabs-io/alethia-cli repo. Development happens here in the monorepo; the mirror is a browsable
 # front door + focused issue target. Source-only — releases stay on the monorepo (GoReleaser →
 # tap/scoop/packages). See docs/concepts/release-system.mdx and the repo-strategy notes.
 #
@@ -42,7 +42,7 @@ jobs:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
           owner: alethialabs-io
-          repositories: alethia
+          repositories: alethia-cli
 
       - name: Build staging tree
         run: |
@@ -65,11 +65,11 @@ jobs:
 
       - name: Push to mirror
         env:
-          # GitHub App token scoped to the alethia mirror repo (minted above).
+          # GitHub App token scoped to the alethia-cli mirror repo (minted above).
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
-          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/alethialabs-io/alethia.git" "$RUNNER_TEMP/repo"
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/alethialabs-io/alethia-cli.git" "$RUNNER_TEMP/repo"
           cd "$RUNNER_TEMP/repo"
           # Replace the working tree with the staging snapshot (keep .git).
           find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
