@@ -66,6 +66,12 @@ gen_if_absent RELEASE_API_SECRET "$(hex)"
 # radius than a sweep). Both containers read the same assembled .env, so one shared value works.
 gen_if_absent PLATFORM_PROVISION_SECRET "$(hex)"
 gen_if_absent ALETHIA_OIDC_SIGNING_KEY "$(rsa_b64)"
+# Next.js Server Actions encryption key — shared by console/admin/marketing (all read the same
+# assembled .env). Unset ⇒ Next generates a RANDOM key per `next build`, so a user with a page open
+# across a deploy gets "Server Action was not found on the server" (the action reference minted by
+# the old build can't be validated by the new one). A stable value kills that skew. base64 → 32-byte
+# AES key. NEVER rotate casually — rotating forces every open tab to hard-reload once.
+gen_if_absent NEXT_SERVER_ACTIONS_ENCRYPTION_KEY "$(b64)"
 
 # Merge externals (KEY=VALUE lines) — these OVERRIDE, so editing the file + re-running
 # updates them. Do NOT quote values in the file; everything after the first '=' is the value.

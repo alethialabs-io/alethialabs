@@ -409,6 +409,10 @@ jobs:
             # fleet UI to customers. Constant here — the box is always hosted.
             echo "ALETHIA_DEPLOYMENT_MODE=hosted"
             emit BETTER_AUTH_SECRET
+            # Stable Next.js Server Actions encryption key — shared by console/admin/marketing (one
+            # .env, one env_file). Unset ⇒ random per build ⇒ "Server Action was not found" skew when
+            # a page is open across a deploy. Generated once into the vault by bootstrap-secrets.sh.
+            emit NEXT_SERVER_ACTIONS_ENCRYPTION_KEY
             emit CLI_JWT_SECRET
             # Auth brute-force rate-limit kill-switch (default on; set =0 in the vault to disable).
             # Emit so the disable path actually reaches the console.
