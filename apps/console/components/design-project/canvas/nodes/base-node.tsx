@@ -9,7 +9,7 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import type { NodeConfig } from "../graph/types";
-import { NODE_STATUS_META, useNodeReadiness } from "@/lib/canvas/node-status";
+import { NODE_STATUS_META, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
@@ -53,18 +53,19 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
 	const identity = useCanvasStore((s) => s.getEffectiveIdentity(id));
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
-	const readiness = useNodeReadiness(id);
+	const resolved = useNodeStatus(id);
 	const lod = useCanvasLod();
 	if (!node) return null;
 
 	const def = NODE_REGISTRY[node.data.kind];
 	const handles = def.card.handles ?? DEFAULT_HANDLES;
 	const Icon = def.icon;
-	const status = NODE_STATUS_META[readiness.state];
+	const status = NODE_STATUS_META[resolved.state];
 	const title = configName(node.data) || def.label;
-	// The canvas stays calm when everything is fine: the nominal "ready" state shows only its dot;
-	// states that want attention carry a label.
-	const showLabel = readiness.state !== "ready";
+	// The canvas stays calm when everything is fine: the two nominal states show only their dot;
+	// every state that wants attention carries a label.
+	const showLabel = resolved.state !== "ready" && resolved.state !== "live";
+	const drifted = resolved.drift.length;
 
 	// A node's `kind` discriminant and its registry entry are correlated at runtime, but TypeScript
 	// can't prove it through the keyed lookup (the same discriminated-union limitation the canvas
@@ -82,7 +83,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const statusEl = (
 		<span
 			className={cn("vx-status min-w-0", `vx-status--${status.vx}`)}
-			title={readiness.issue ?? status.label}
+			title={resolved.message ?? status.label}
 			suppressHydrationWarning
 		>
 			<span className="vx-status__dot" />

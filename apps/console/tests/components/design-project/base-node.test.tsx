@@ -17,6 +17,13 @@ import type {
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import {
+	EMPTY_ENVIRONMENT_STATUS,
+	type ComponentServerStatus,
+	type EnvironmentStatus,
+} from "@/lib/canvas/component-status";
+import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
+import type { ComponentStatus } from "@/lib/db/schema/enums";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** A canvas holding the project root plus one node of `kind`, both on `provider`. */
@@ -53,13 +60,27 @@ function seedCanvas<K extends NodeKind>(
 	return node;
 }
 
-/** React Flow's store supplies the viewport zoom the LOD hook reads (defaults to 1 → "full"). */
-function renderCard(id: string) {
+/**
+ * React Flow's store supplies the viewport zoom the LOD hook reads (defaults to 1 → "full").
+ * `env` seeds the environment's SERVER truth; omitted, the node falls back to design readiness —
+ * which is exactly what happens in the create flow and before the first status fetch lands.
+ */
+function renderCard(id: string, env?: Partial<EnvironmentStatus>) {
 	return render(
 		<ReactFlowProvider>
-			<BaseNode id={id} />
+			<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...env }}>
+				<BaseNode id={id} />
+			</EnvironmentStatusProvider>
 		</ReactFlowProvider>,
 	);
+}
+
+/** One component as `getEnvironmentComponentStatus` would return it. */
+function serverStatus(
+	lifecycle: ComponentStatus,
+	overrides: Partial<ComponentServerStatus> = {},
+): ComponentServerStatus {
+	return { lifecycle, message: null, drift: [], ...overrides };
 }
 
 beforeEach(() => {
@@ -128,12 +149,79 @@ describe("the card is cloud-honest", () => {
 	});
 });
 
-describe("status", () => {
+describe("design status (no server truth yet)", () => {
 	it("an incomplete node surfaces its blocking issue as a needs-setup card", () => {
 		seedCanvas("nosql", "aws", { name: "sessions", partition_key: "" });
 		renderCard("node-under-test");
 
-		// NODE_STATUS_META["needs-setup"].label
 		expect(screen.getByText("Needs setup")).toBeInTheDocument();
+	});
+
+	it("a valid, never-provisioned node is simply Ready (no label — the canvas stays calm)", () => {
+		seedCanvas("bucket", "aws", { name: "assets" });
+		renderCard("node-under-test");
+
+		// "ready" is nominal: the dot shows, the label is hidden.
+		expect(screen.queryByText("Needs setup")).not.toBeInTheDocument();
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+	});
+});
+
+// The states below all EXISTED in the database and reached nothing before W3. These are the proof
+// they now reach the card.
+describe("server status reaches the card", () => {
+	it("a provisioned component renders Live", () => {
+		seedCanvas("database", "aws", { name: "orders" });
+		renderCard("node-under-test", {
+			components: { "database:orders": serverStatus("ACTIVE") },
+		});
+		// "live" is nominal, so its label is hidden on the canvas — but the failure states aren't.
+		expect(screen.queryByText("Needs setup")).not.toBeInTheDocument();
+	});
+
+	it("a failed apply renders Failed", () => {
+		seedCanvas("database", "aws", { name: "orders" });
+		renderCard("node-under-test", {
+			components: {
+				"database:orders": serverStatus("FAILED", { message: "bad engine version" }),
+			},
+		});
+		expect(screen.getByText("Failed")).toBeInTheDocument();
+	});
+
+	it("an in-flight apply renders Applying", () => {
+		seedCanvas("database", "aws", { name: "orders" });
+		renderCard("node-under-test", {
+			components: { "database:orders": serverStatus("CREATING") },
+			activeJob: { id: "job-1", type: "DEPLOY", status: "PROCESSING" },
+		});
+		expect(screen.getByText("Applying")).toBeInTheDocument();
+	});
+
+	it("a live component whose design moved ahead renders Update pending", () => {
+		seedCanvas("database", "aws", { name: "orders" });
+		renderCard("node-under-test", {
+			components: { "database:orders": serverStatus("ACTIVE") },
+			updatePending: true,
+		});
+		expect(screen.getByText("Update pending")).toBeInTheDocument();
+	});
+
+	it("an unreachable cluster renders Unreachable", () => {
+		seedCanvas("cluster", "aws");
+		renderCard("node-under-test", {
+			components: { cluster: serverStatus("ACTIVE") },
+			probe: { reachable: false, message: "i/o timeout" },
+		});
+		expect(screen.getByText("Unreachable")).toBeInTheDocument();
+	});
+
+	it("keys off nodeStatusKey — a name mismatch means no server status, not a wrong one", () => {
+		seedCanvas("database", "aws", { name: "orders" });
+		renderCard("node-under-test", {
+			// status for a DIFFERENT database
+			components: { "database:analytics": serverStatus("FAILED") },
+		});
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 	});
 });
