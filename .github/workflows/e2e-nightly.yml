@@ -33,16 +33,19 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Cloud provider to prove (hetzner today; aws gated on vars.E2E_AWS_ROLE_ARN; azure later)."
+        description: "Cloud to prove. Each green-skips until a maintainer wires its gate secret/var (hetzner: HCLOUD_TOKEN; aws: vars.E2E_AWS_ROLE_ARN; gcp: vars.E2E_GCP_WIF_PROVIDER; azure: vars.E2E_AZURE_CLIENT_ID; alibaba: vars.E2E_ALIBABA_ROLE_ARN) + applies its OIDC/WIF/RAM stack."
         type: choice
         options:
           - hetzner
           - aws
+          - gcp
+          - azure
+          - alibaba
         default: hetzner
       region:
-        description: "Cloud region/location (hetzner: nbg1/fsn1/hel1)."
+        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure germanywestcentral, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
         type: string
-        default: nbg1
+        default: ""
 
 permissions:
   contents: read
@@ -83,14 +86,19 @@ jobs:
       cancel-in-progress: false
     strategy:
       fail-fast: false
+      # Never run more than 3 real provisions at once (cost + shared-account API pressure);
+      # the per-provider concurrency group already serializes same-cloud runs (BYOC A3.2).
+      max-parallel: 3
       matrix:
         # On the nightly `schedule` run the full set; on a manual `workflow_dispatch` run ONLY
         # the chosen provider (so dispatching "aws" doesn't also spin up hetzner). Derived from
-        # the input so the choice list is the single source of truth — when aws/azure are added,
-        # extend BOTH the `options:` above and the schedule array below (and wire their secret
-        # into the gate step's `case`). Removing the workflow-level concurrency block made
-        # `inputs.provider` otherwise dead; this keeps it live and honest.
-        provider: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["hetzner"]') }}
+        # the input so the choice list is the single source of truth. Every provider is in the
+        # schedule set but each GREEN-SKIPS until a maintainer sets its gate secret/var (the
+        # established inert pattern) — so setting the gate IS the "enable on cron" action, by
+        # design, and only happens AFTER that cloud's manual dispatch + kill-drill. To add a
+        # cloud: extend the `options:` above, this array, the gate `case`, the credential step,
+        # and the sweeper `case` in teardown.
+        provider: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["hetzner","aws","gcp","azure","alibaba"]') }}
     services:
       # Mirrors ci.yml's integration/provision-e2e jobs: a throwaway Postgres that
       # db:migrate turns into the real control-plane schema + programmables
@@ -118,6 +126,18 @@ jobs:
       # sets it → the aws path green-skips (mirrors the HCLOUD_TOKEN gate). The role itself is
       # assumed via OIDC below; no long-lived AWS keys ever exist.
       E2E_AWS_ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
+      # The GCP/Azure/Alibaba gates — all keyless, all repo VARIABLES (an OIDC/WIF handle is not
+      # sensitive). Empty until a maintainer applies that cloud's e2e stack (infra/gcp-e2e /
+      # infra/azure-e2e / infra/alibaba-e2e) and sets the var → that path green-skips. GCP uses
+      # Workload Identity Federation (no key file); Azure a federated Entra app; Alibaba a RAM
+      # OIDC role. The gate var is the WIF provider / client id / role ARN respectively.
+      E2E_GCP_WIF_PROVIDER: ${{ vars.E2E_GCP_WIF_PROVIDER }}
+      E2E_GCP_SERVICE_ACCOUNT: ${{ vars.E2E_GCP_SERVICE_ACCOUNT }}
+      E2E_AZURE_CLIENT_ID: ${{ vars.E2E_AZURE_CLIENT_ID }}
+      E2E_AZURE_TENANT_ID: ${{ vars.E2E_AZURE_TENANT_ID }}
+      E2E_AZURE_SUBSCRIPTION_ID: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
+      E2E_ALIBABA_ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
+      E2E_ALIBABA_OIDC_PROVIDER_ARN: ${{ vars.E2E_ALIBABA_OIDC_PROVIDER_ARN }}
       ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
@@ -144,9 +164,11 @@ jobs:
           PROVIDER: ${{ matrix.provider }}
         run: |
           case "$PROVIDER" in
-            hetzner) TOKEN="$HCLOUD_TOKEN";    SECRET_NAME="HCLOUD_TOKEN" ;;
-            aws)     TOKEN="$E2E_AWS_ROLE_ARN"; SECRET_NAME="E2E_AWS_ROLE_ARN (repo variable)" ;;
-            # azure) TOKEN="$AZURE_CREDS";   SECRET_NAME="AZURE_CREDS"   ;;
+            hetzner) TOKEN="$HCLOUD_TOKEN";              SECRET_NAME="HCLOUD_TOKEN (repo secret)" ;;
+            aws)     TOKEN="$E2E_AWS_ROLE_ARN";          SECRET_NAME="E2E_AWS_ROLE_ARN (repo variable)" ;;
+            gcp)     TOKEN="$E2E_GCP_WIF_PROVIDER";      SECRET_NAME="E2E_GCP_WIF_PROVIDER (repo variable)" ;;
+            azure)   TOKEN="$E2E_AZURE_CLIENT_ID";       SECRET_NAME="E2E_AZURE_CLIENT_ID (repo variable)" ;;
+            alibaba) TOKEN="$E2E_ALIBABA_ROLE_ARN";      SECRET_NAME="E2E_ALIBABA_ROLE_ARN (repo variable)" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
           if [ -n "$TOKEN" ]; then
@@ -157,26 +179,67 @@ jobs:
             echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. See demos/proofs/README.md."
           fi
 
-      # ── Deterministic, unique-per-run cluster identity. `<project>-<env>` is exactly
-      #    the `cluster` label the template stamps on every resource, and exactly what
-      #    the teardown filters on — so the belt-and-suspenders cleanup can only ever
-      #    match THIS run. ──
-      - name: Compute unique cluster name
+      # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
+      #    logical run identity: for hetzner it IS the `cluster` label every resource carries;
+      #    for the managed clouds the unique handle is the `alethia:environment-id=<env>` tag
+      #    (env = run_id-attempt) that label-at-source stamps and every sweeper filters on — so
+      #    the belt-and-suspenders cleanup can only ever match THIS run either way. Region:
+      #    the dispatch input wins; otherwise the per-provider cheap default. AWS MUST be
+      #    us-east-1 — the alethia-e2e-nightly role is region-locked there (infra/aws-oidc),
+      #    and eu-central-1 is a prod region the role forbids. Exported as the generalized
+      #    ALETHIA_E2E_REGION (the T2 harness reads this for every provider). ──
+      - name: Compute unique cluster name + region
         if: steps.gate.outputs.run == 'true'
         env:
           REGION_INPUT: ${{ github.event.inputs.region }}
+          PROVIDER: ${{ matrix.provider }}
         run: |
           PROJECT="alethia-nl"
           ENVNAME="${{ github.run_id }}-${{ github.run_attempt }}"
+          case "$PROVIDER" in
+            hetzner) DEFAULT_REGION="nbg1" ;;
+            aws)     DEFAULT_REGION="us-east-1" ;;
+            gcp)     DEFAULT_REGION="europe-west3" ;;
+            azure)   DEFAULT_REGION="germanywestcentral" ;;
+            alibaba) DEFAULT_REGION="eu-central-1" ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          REGION="${REGION_INPUT:-$DEFAULT_REGION}"
           {
             echo "E2E_PROJECT=$PROJECT"
             echo "E2E_ENV=$ENVNAME"
             echo "E2E_CLUSTER=$PROJECT-$ENVNAME"
-            echo "E2E_REGION=${REGION_INPUT:-nbg1}"
+            echo "E2E_REGION=$REGION"
+            # Generalized region the T2 harness resolves for every provider (resolveT2Region).
+            echo "ALETHIA_E2E_REGION=$REGION"
             # Wall-clock anchor for the proof bundle's duration_seconds (BYOC A0.4).
             echo "ALETHIA_E2E_PROOF_START_EPOCH=$(date -u +%s)"
           } >> "$GITHUB_ENV"
-          echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME (region ${REGION_INPUT:-nbg1})"
+          echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME ($PROVIDER, region $REGION)"
+
+      # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
+      #    (AWS m5a.4xlarge×2 SPOT ≈ $0.30/run); the harness cost guard HARD-FAILS a managed run
+      #    that inherits that default, so we pin a small node shape per provider here. Merged
+      #    into the snapshot `cluster` block (t2MergeClusterJSON): small instance ×1, min disk.
+      #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
+      #    are validated in each cloud's wave. ──
+      - name: Compute cheapest cluster shape
+        if: steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          case "$PROVIDER" in
+            hetzner) SHAPE="" ;;
+            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            azure)   SHAPE='{"instance_types":["Standard_B2s"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
+            alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          if [ -n "$SHAPE" ]; then
+            echo "ALETHIA_E2E_CLUSTER_JSON=$SHAPE" >> "$GITHUB_ENV"
+            echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
+          fi
 
       - uses: pnpm/action-setup@v4
         if: steps.gate.outputs.run == 'true'
@@ -224,14 +287,24 @@ jobs:
       #    (no long-lived keys). Only runs for the aws provider once a maintainer has applied
       #    infra/aws-oidc and set vars.E2E_AWS_ROLE_ARN; otherwise the gate above already
       #    green-skipped the whole run. The role is region-locked + boundary-capped + budgeted
-      #    (see infra/aws-oidc/e2e-nightly.tf). aws-region matches the role's locked region. ──
+      #    (see infra/aws-oidc/e2e-nightly.tf). aws-region MUST equal the role's locked region
+      #    (E2E_REGION defaults to us-east-1 for aws — set in the compute step). ──
       - name: Configure AWS credentials (OIDC)
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.E2E_REGION }}
           role-duration-seconds: 7200
+
+      # ── Signal to the T2 harness that AWS creds are configured. The provider table's
+      #    credsPresent() for aws requires ALETHIA_E2E_AWS_READY=1 AND a concrete handle
+      #    (AWS_ROLE_ARN/AWS_ACCESS_KEY_ID, exported by configure-aws-credentials above) — so a
+      #    missing/failed configure step surfaces as a HARD FAIL (under ALETHIA_E2E_T2_REQUIRE),
+      #    never a green skip. Without this, the aws run would ALWAYS fail the cred gate. ──
+      - name: Mark AWS ready for the T2 harness
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        run: echo "ALETHIA_E2E_AWS_READY=1" >> "$GITHUB_ENV"
 
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
@@ -249,7 +322,9 @@ jobs:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
           ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
-          ALETHIA_E2E_HCLOUD_REGION: ${{ env.E2E_REGION }}
+          # Generalized region (the compute step also exports this to $GITHUB_ENV; explicit here
+          # for clarity). resolveT2Region reads ALETHIA_E2E_REGION for every provider.
+          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
           # ── Day-2 SOAK window (BYOC A0.3). Opt-in: default 10m on the real-apply runs,
           #    overridable via vars.E2E_SOAK (e.g. a longer window, or a short one to trim
@@ -328,21 +403,41 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # ── GUARANTEED teardown. Runs on ANY outcome of the proof (pass/fail/timeout/
-      #    cancel) as long as we actually started provisioning. The graceful
-      #    `tofu destroy` already ran in-process on the normal path; this label-scoped
-      #    hcloud sweep is the guarantee for a hard-killed test process. It only ever
-      #    deletes resources labelled `cluster=$E2E_CLUSTER` — never account-wide. ──
-      # Hetzner teardown guarantee. The graceful in-process `tofu destroy` already ran on the
-      # normal path; this label-scoped hcloud sweep is the belt-and-suspenders for a hard-killed
-      # test. Scoped to `cluster=$E2E_CLUSTER` — never account-wide. AWS gets its own always()
-      # sweeper (scripts/e2e/aws-cleanup.sh) in BYOC A1.3/A1.4; until then the aws path doesn't
-      # provision (harness/template wiring lands in A1.2+), so there is nothing to sweep here.
-      - name: Guaranteed teardown (label-scoped hcloud cleanup)
-        if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner' && always()
+      # ── GUARANTEED teardown. Runs on ANY outcome of the proof (pass/fail/timeout/cancel) as
+      #    long as we actually started provisioning. The graceful in-process `tofu destroy`
+      #    already ran on the normal path; this scope-locked cloud sweep is the belt-and-
+      #    suspenders for a hard-killed test process. Every sweeper filters on THIS run's unique
+      #    handle — hetzner: label `cluster=$E2E_CLUSTER`; the managed clouds: the
+      #    `alethia:environment-id=$E2E_ENV` tag (+ per-cloud belt filters) — NEVER account-wide
+      #    (the shared-account near-wipe; see scope-destructive-cloud-ops).
+      #
+      #    FAIL-CLOSED: a provider that provisioned but has no sweeper script is a HARD ERROR,
+      #    never a silent skip — so a cloud can never be enabled (its gate set) without its
+      #    sweeper shipped alongside. Each cloud's sweeper lands in its wave (aws A1.3, gcp/azure
+      #    A2, alibaba A3.1); until then that cloud green-skips at the gate (run=false) and never
+      #    reaches here. ──
+      - name: Guaranteed teardown (scope-locked cloud sweep)
+        if: steps.gate.outputs.run == 'true' && always()
+        env:
+          PROVIDER: ${{ matrix.provider }}
         run: |
-          if [ -z "${E2E_CLUSTER:-}" ]; then
-            echo "::error::E2E_CLUSTER is unset — refusing to run an unscoped cleanup."
+          if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
+            echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped cleanup."
             exit 1
           fi
-          ./scripts/e2e/hcloud-cleanup.sh "$E2E_CLUSTER"
+          case "$PROVIDER" in
+            hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
+            aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
+            gcp)     SCRIPT="./scripts/e2e/gcp-cleanup.sh" ;;
+            azure)   SCRIPT="./scripts/e2e/azure-cleanup.sh" ;;
+            alibaba) SCRIPT="./scripts/e2e/alibaba-cleanup.sh" ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          if [ ! -x "$SCRIPT" ]; then
+            echo "::error::$PROVIDER provisioned but $SCRIPT is missing/not executable — refusing to leave resources unswept. Ship the sweeper before enabling this cloud's gate."
+            exit 1
+          fi
+          # hetzner takes the cluster label as arg1; the managed sweepers read the scope
+          # (E2E_ENV / E2E_PROJECT / E2E_REGION) from the environment. Passing $E2E_CLUSTER is
+          # harmless for the managed scripts (they ignore positional args).
+          "$SCRIPT" "$E2E_CLUSTER"

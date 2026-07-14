@@ -14,6 +14,16 @@ module "eks" {
 
   access_entries = local.merged_access_entries
 
+  # Grant cluster-admin to the identity that RUNS the apply (the Alethia runner's short-lived
+  # OIDC-federated principal — the platform assumed-role in managed mode, or the customer's
+  # identity for a self-hosted runner). Without this the runner authenticates to the EKS API
+  # (via the in-process `kube-token` exec-plugin) but is AUTHORIZED by nothing, so installing
+  # ArgoCD / the add-ons 401s and the whole post-apply spine fails — a real product gap, not an
+  # e2e-only concern. The module resolves an assumed-role SESSION ARN back to the underlying
+  # role ARN (data.aws_iam_session_context), so the access entry is stable across sessions. This
+  # is the keyless, short-lived cluster-access model (no static admin kubeconfig in state).
+  enable_cluster_creator_admin_permissions = var.enable_creator_admin
+
   ## Control plane logging
   create_cloudwatch_log_group            = true
   cluster_enabled_log_types              = var.cluster_enabled_log_types

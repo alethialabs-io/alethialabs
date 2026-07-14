@@ -79,8 +79,13 @@ var t2ProviderTable = map[string]t2Provider{
 	// (AWS_ACCESS_KEY_ID or AWS_ROLE_ARN) is actually in the environment, so a missing
 	// configure-step doesn't slip through as a green skip.
 	"aws": {
-		name:                "aws",
-		defaultRegion:       "eu-central-1",
+		name: "aws",
+		// us-east-1: the `alethia-e2e-nightly` role is region-LOCKED here (infra/aws-oidc
+		// `e2e_region`), and eu-central-1/eu-west-1 are prod regions the role explicitly
+		// forbids — so a default of anything but us-east-1 makes every AWS call AccessDenied.
+		// The workflow also exports ALETHIA_E2E_REGION=us-east-1 for the nightly; this is the
+		// local-run fallback.
+		defaultRegion:       "us-east-1",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
 		credsPresent: func() (bool, string) {
@@ -228,6 +233,76 @@ func t2MergeClusterJSON(snapshot map[string]any) error {
 	}
 	snapshot["cluster"] = cluster
 	return nil
+}
+
+// t2ClusterKindPrefix maps a managed cloud to the resource-kind prefix its template's
+// `locals.tf` stamps on the cluster name (`eks-…`/`gke-…`/`aks-…`). Talos/ACK are absent
+// because they name the cluster bare `<project>-<env>` (no kind prefix) — see
+// t2ValidateClusterName.
+var t2ClusterKindPrefix = map[string]string{
+	"aws":   "eks-",
+	"gcp":   "gke-",
+	"azure": "aks-",
+}
+
+// t2ValidateClusterName asserts the provider-reported `cluster_name` is the cluster THIS
+// run provisioned (proving the post-apply spine ran AND that we are looking at our own,
+// uniquely-named cluster — never a stale one). Naming differs per template `locals.tf`:
+//
+//   - hetzner / alibaba: exactly `<project>-<env>` (also the label the runner stamps).
+//   - aws / gcp / azure: `<kind>-<regionShort>-<env>-<project>` (e.g.
+//     `eks-ue1-<env>-<project>`). The region-short prefix is template-internal and NOT
+//     uniqueness-bearing; replicating the 40-row region maps here would just drift from
+//     the templates. So we assert the two parts that ARE meaningful and non-vacuous: the
+//     resource-kind prefix (proves the right kind of cluster) AND the `-<env>-<project>`
+//     suffix (env is `<run_id>-<attempt>`, globally unique per run — proves it is OUR
+//     cluster). This is exact enough to fail a stale/misnamed cluster, without coupling
+//     the harness to the region map.
+func t2ValidateClusterName(provider, project, env, got string) error {
+	if strings.TrimSpace(got) == "" {
+		return fmt.Errorf("cluster_name is empty — the post-apply spine was SKIPPED")
+	}
+	if prefix, ok := t2ClusterKindPrefix[provider]; ok {
+		suffix := "-" + env + "-" + project
+		if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+			return fmt.Errorf("cluster_name = %q, want %s<regionShort>%s (template locals.tf naming)", got, prefix, suffix)
+		}
+		return nil
+	}
+	// Talos (hetzner) + ACK (alibaba): bare `<project>-<env>`, an exact match.
+	if want := project + "-" + env; got != want {
+		return fmt.Errorf("cluster_name = %q, want %q", got, want)
+	}
+	return nil
+}
+
+// t2CostShapeRequired is the set of clouds whose TEMPLATE default node shape is expensive
+// (or unverified) enough that a real e2e run MUST pin a cheapest-shape override rather than
+// inherit it — e.g. AWS defaults to m5a.4xlarge×2 SPOT (16 vCPU each, ~$0.30/run) if
+// ALETHIA_E2E_CLUSTER_JSON is absent. Hetzner is exempt: its default (cpx22 ×1) is a proven
+// cents/run shape (see the HZ-DEFAULTS work). The nightly always injects a per-provider shape;
+// this guard makes a missing one a HARD FAIL so a workflow typo or a bare local managed run can
+// never silently burn large nodes.
+var t2CostShapeRequired = map[string]bool{
+	"aws":     true,
+	"gcp":     true,
+	"azure":   true,
+	"alibaba": true,
+}
+
+// t2RequireCostShape enforces the cost-shape override for the expensive-default clouds: under
+// ALETHIA_E2E_T2_REQUIRE (the nightly) a managed run with no ALETHIA_E2E_CLUSTER_JSON is a HARD
+// FAIL. Off CI (REQUIRE unset) it only warns — a local dev spinning a managed cluster on their
+// own account is trusted to size it, but is nudged. Returns (fatal bool, msg string).
+func t2RequireCostShape(provider string) (fatal bool, msg string) {
+	if !t2CostShapeRequired[provider] {
+		return false, ""
+	}
+	if strings.TrimSpace(os.Getenv("ALETHIA_E2E_CLUSTER_JSON")) != "" {
+		return false, ""
+	}
+	msg = fmt.Sprintf("provider %q has an expensive template default node shape but ALETHIA_E2E_CLUSTER_JSON is unset — refusing to provision the default (e.g. AWS m5a.4xlarge×2). Pin a cheapest shape (small instance ×1, single NAT, min disk).", provider)
+	return t2RequireIsHard(), msg
 }
 
 // t2Truthy reports whether an env value reads as an affirmative flag.

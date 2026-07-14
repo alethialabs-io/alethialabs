@@ -115,6 +115,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	credsOK, credsMsg := p.credsPresent()
 	t2RequireOrSkip(t, credsOK, credsMsg)
 
+	// Cost guard (BYOC F4): the managed clouds have expensive default node shapes (AWS
+	// m5a.4xlarge×2 ≈ $0.30/run), so a real run MUST pin a cheapest-shape override via
+	// ALETHIA_E2E_CLUSTER_JSON. Missing it is a HARD FAIL under REQUIRE (the nightly always
+	// injects one — this catches a workflow typo), a warning locally. Hetzner is exempt
+	// (proven cents/run default).
+	if fatal, msg := t2RequireCostShape(provider); msg != "" {
+		if fatal {
+			t.Fatalf("T2 cost guard: %s", msg)
+		}
+		t.Logf("T2 cost guard (warning): %s", msg)
+	}
+
 	// ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6) — the customer-repo half. Opt-in:
 	// a fully-absent config is a clean skip (base T2 A0.1–A0.5 still proves), but a REQUIRED
 	// run (the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is set)
@@ -300,12 +312,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 
 	// (1) ClusterName present + correct ⇒ the post-apply spine ran (it is gated on the
-	//     talos_cluster_name output) AND matches the unique name we asked for.
-	if meta.ClusterName == "" {
-		t.Fatal("cluster_name is empty in metadata — the post-apply spine was SKIPPED")
-	}
-	if meta.ClusterName != clusterName {
-		t.Fatalf("cluster_name = %q, want %q", meta.ClusterName, clusterName)
+	//     per-provider cluster-name output) AND matches the unique cluster THIS run asked
+	//     for. Each cloud names its cluster differently (Talos/ACK: `<project>-<env>`;
+	//     EKS/GKE/AKS: `<kind>-<regionShort>-<env>-<project>`), so the check is
+	//     provider-aware — see t2ValidateClusterName.
+	if err := t2ValidateClusterName(provider, project, env, meta.ClusterName); err != nil {
+		t.Fatalf("cluster_name assertion: %v", err)
 	}
 	// (2) cluster_ready ⇒ the reachability gate proved a live cluster, not just apply=0.
 	if !meta.ClusterReady {

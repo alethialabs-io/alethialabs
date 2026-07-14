@@ -58,7 +58,7 @@ func TestT2ProviderTableComplete(t *testing.T) {
 		waitTimeout  time.Duration
 	}{
 		"hetzner": {"nbg1", "8m", 25 * time.Minute},
-		"aws":     {"eu-central-1", "15m", 50 * time.Minute},
+		"aws":     {"us-east-1", "15m", 50 * time.Minute},
 		"gcp":     {"europe-west3-a", "15m", 50 * time.Minute},
 		"azure":   {"germanywestcentral", "15m", 50 * time.Minute},
 		"alibaba": {"eu-central-1", "15m", 50 * time.Minute},
@@ -149,9 +149,9 @@ func TestT2ResolveRegion(t *testing.T) {
 		{"hetzner default", "hetzner", nil, "nbg1"},
 		{"hetzner legacy fallback", "hetzner", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "fsn1"},
 		{"hetzner generalized wins over legacy", "hetzner", map[string]string{"ALETHIA_E2E_REGION": "hel1", "ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "hel1"},
-		{"aws default", "aws", nil, "eu-central-1"},
-		{"aws override", "aws", map[string]string{"ALETHIA_E2E_REGION": "us-east-1"}, "us-east-1"},
-		{"aws ignores legacy hcloud name", "aws", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "eu-central-1"},
+		{"aws default", "aws", nil, "us-east-1"},
+		{"aws override", "aws", map[string]string{"ALETHIA_E2E_REGION": "eu-west-2"}, "eu-west-2"},
+		{"aws ignores legacy hcloud name", "aws", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "us-east-1"},
 		{"gcp default", "gcp", nil, "europe-west3-a"},
 		{"azure default", "azure", nil, "germanywestcentral"},
 		{"alibaba override", "alibaba", map[string]string{"ALETHIA_E2E_REGION": "ap-southeast-1"}, "ap-southeast-1"},
@@ -363,4 +363,84 @@ func TestT2HetznerPathUnchanged(t *testing.T) {
 			t.Errorf("wait = %v, want %v", got, wantWait)
 		}
 	})
+}
+
+// TestT2ValidateClusterName pins the per-provider cluster-name check (BYOC A0.1 seam for
+// the AWS/GCP/Azure waves): Talos/ACK are an exact `<project>-<env>`; EKS/GKE/AKS are the
+// `<kind>-<regionShort>-<env>-<project>` shape asserted by kind-prefix + unique suffix.
+// The negative cases prove it is NOT vacuous — a stale/misnamed/wrong-kind name fails.
+func TestT2ValidateClusterName(t *testing.T) {
+	const project, env = "alethia-nl", "12345-1"
+	cases := []struct {
+		name          string
+		provider, got string
+		wantOK        bool
+	}{
+		// Bare-name clouds (exact match, mirrors the runner label).
+		{"hetzner exact", "hetzner", "alethia-nl-12345-1", true},
+		{"alibaba exact", "alibaba", "alethia-nl-12345-1", true},
+		{"hetzner wrong", "hetzner", "alethia-nl-99999-9", false},
+		{"hetzner empty", "hetzner", "", false},
+		// EKS/GKE/AKS: kind prefix + unique `-<env>-<project>` suffix, any regionShort.
+		{"aws ue1", "aws", "eks-ue1-12345-1-alethia-nl", true},
+		{"aws ec1", "aws", "eks-ec1-12345-1-alethia-nl", true},
+		{"gcp ew3", "gcp", "gke-ew3-12345-1-alethia-nl", true},
+		{"azure gwc", "azure", "aks-gwc-12345-1-alethia-nl", true},
+		// Non-vacuity: wrong kind, wrong run (stale), missing suffix, empty.
+		{"aws wrong kind", "aws", "gke-ue1-12345-1-alethia-nl", false},
+		{"aws stale env", "aws", "eks-ue1-99999-9-alethia-nl", false},
+		{"aws wrong project", "aws", "eks-ue1-12345-1-other", false},
+		{"aws no suffix", "aws", "eks-ue1", false},
+		{"aws empty", "aws", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := t2ValidateClusterName(tc.provider, project, env, tc.got)
+			if tc.wantOK && err != nil {
+				t.Fatalf("t2ValidateClusterName(%s, %q) = %v, want ok", tc.provider, tc.got, err)
+			}
+			if !tc.wantOK && err == nil {
+				t.Fatalf("t2ValidateClusterName(%s, %q) = ok, want error", tc.provider, tc.got)
+			}
+		})
+	}
+}
+
+// TestT2RequireCostShape covers the cost guard (BYOC F4): managed clouds must pin a cheapest
+// shape via ALETHIA_E2E_CLUSTER_JSON; missing it is fatal ONLY under REQUIRE. Hetzner is
+// exempt (proven cents/run default).
+func TestT2RequireCostShape(t *testing.T) {
+	cases := []struct {
+		name               string
+		provider           string
+		clusterJSON        string
+		require            bool
+		wantFatal, wantMsg bool
+	}{
+		{"aws no shape, require ⇒ fatal", "aws", "", true, true, true},
+		{"aws no shape, local ⇒ warn only", "aws", "", false, false, true},
+		{"aws with shape ⇒ ok", "aws", `{"instance_types":["t3.large"]}`, true, false, false},
+		{"gcp no shape, require ⇒ fatal", "gcp", "", true, true, true},
+		{"azure no shape, require ⇒ fatal", "azure", "", true, true, true},
+		{"alibaba no shape, require ⇒ fatal", "alibaba", "", true, true, true},
+		{"hetzner exempt (no shape, require)", "hetzner", "", true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearT2Env(t)
+			if tc.clusterJSON != "" {
+				t.Setenv("ALETHIA_E2E_CLUSTER_JSON", tc.clusterJSON)
+			}
+			if tc.require {
+				t.Setenv("ALETHIA_E2E_T2_REQUIRE", "1")
+			}
+			fatal, msg := t2RequireCostShape(tc.provider)
+			if fatal != tc.wantFatal {
+				t.Errorf("fatal = %v, want %v", fatal, tc.wantFatal)
+			}
+			if (msg != "") != tc.wantMsg {
+				t.Errorf("msg present = %v, want %v (msg=%q)", msg != "", tc.wantMsg, msg)
+			}
+		})
+	}
 }
