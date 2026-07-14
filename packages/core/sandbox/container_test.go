@@ -112,6 +112,8 @@ func TestBuildChildEnv_AllowlistsAndStripsSecrets(t *testing.T) {
 		"NO_PROXY=localhost,127.0.0.1",
 		// a per-job stage secret the parent stashed for the child
 		"ALETHIA_STAGE_GIT_TOKEN=ghp_x",
+		// per-repo BYO chart tokens (JSON map) — same ALETHIA_STAGE_* allowlist
+		`ALETHIA_STAGE_GIT_TOKENS={"https://gitlab.com/acme/chart":"glpat_y"}`,
 	}
 
 	child := buildChildEnv(parent, "/work/job-1")
@@ -125,7 +127,8 @@ func TestBuildChildEnv_AllowlistsAndStripsSecrets(t *testing.T) {
 		"AWS_CONFIG_FILE", "AWS_PROFILE", "AZURE_FEDERATED_TOKEN_FILE",
 		"TF_HTTP_PASSWORD", "TF_HTTP_USERNAME", "PATH",
 		"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
-		"ALETHIA_STAGE_GIT_TOKEN", "ALETHIA_RUNNER_EXEC_STAGE", "ALETHIA_STAGE_WORKDIR", "HOME",
+		"ALETHIA_STAGE_GIT_TOKEN", "ALETHIA_STAGE_GIT_TOKENS",
+		"ALETHIA_RUNNER_EXEC_STAGE", "ALETHIA_STAGE_WORKDIR", "HOME",
 	}
 	for _, k := range mustHave {
 		if !envHasKey(child, k) {

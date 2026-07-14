@@ -5,9 +5,18 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectRepositories } from "@/lib/db/schema";
+import { jobs, projectAddons, projectRepositories } from "@/lib/db/schema";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+
+/** Detects the git provider from a repo URL (defaults to github). */
+function providerFromRepo(repoUrl: string): PublicGitProvider {
+	return repoUrl.includes("gitlab")
+		? "gitlab"
+		: repoUrl.includes("bitbucket")
+			? "bitbucket"
+			: "github";
+}
 
 /** Returns the git provider token for the user who owns a job. */
 export async function POST(
@@ -73,13 +82,34 @@ export async function POST(
 			typeof snapIacSource.repo_url === "string"
 				? snapIacSource.repo_url
 				: "";
+		// Per-repo resolution: a runner asking for the token to clone a SPECIFIC repo — e.g. a BYO
+		// Helm chart on a different provider than the apps-destination repo — passes ?repo=<url>.
+		// We only honor it when the repo is one this job legitimately references (a compromised
+		// runner must not be able to phish a token for an arbitrary repo); otherwise we fall back
+		// to the default precedence below. BYO chart repos live on project_addons.chart_repo.
+		const requestedRepo =
+			new URL(req.url).searchParams.get("repo")?.trim() || "";
+		const byoChartRepos =
+			requestedRepo && job.project_id
+				? await db
+						.select({ chart_repo: projectAddons.chart_repo })
+						.from(projectAddons)
+						.where(eq(projectAddons.project_id, job.project_id))
+				: [];
+		const authorizedRepos = new Set(
+			[
+				repos?.apps_destination_repo,
+				iacRepoUrl,
+				scanRepoUrl,
+				...byoChartRepos.map((r) => r.chart_repo),
+			].filter((r): r is string => typeof r === "string" && r.length > 0),
+		);
+
 		const repoUrl =
-			iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
-		const gitProvider: PublicGitProvider = repoUrl.includes("gitlab")
-			? "gitlab"
-			: repoUrl.includes("bitbucket")
-				? "bitbucket"
-				: "github";
+			requestedRepo && authorizedRepos.has(requestedRepo)
+				? requestedRepo
+				: iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
+		const gitProvider: PublicGitProvider = providerFromRepo(repoUrl);
 
 		// Better Auth returns a fresh (auto-refreshed) token from the owner's
 		// linked `account`. No session needed — keyed by the job owner's userId.

@@ -26,7 +26,9 @@ import (
 // failed cluster. Returns whether any BYO charts were present (for logging). commonLabels are the
 // classification/sweep labels stamped onto the AppProject (BYOC B1.4); the BYO chart Applications
 // themselves are labelled by RenderManagedAddOns.
-func prepareByoCharts(vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) bool {
+// repoTokens maps a chart repo URL → its git token (for BYO charts on a different provider than the
+// apps-destination repo); token is the fallback used when a repo has no dedicated entry.
+func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) bool {
 	projName := argocd.ByoProjectName(vc.ProjectName)
 
 	var repos, namespaces []string
@@ -58,19 +60,25 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, commonLabels map[st
 		fmt.Fprintf(stderr, "Warning: could not apply BYO AppProject %s (charts will not sync until it exists): %v\n", projName, err)
 	}
 
-	// Per-repo credentials. Without a token, BYO Applications can't clone private repos — warn
-	// (public charts still work) but don't fail the deploy.
-	if token == "" {
-		fmt.Fprintln(stderr, "Warning: no git access token — private BYO chart repos will fail to sync (reconnect the git provider)")
-		return true
-	}
+	// Per-repo credentials. Each repo prefers its own token (repoTokens[repo], set when the chart
+	// lives on a different provider than the apps-destination repo) and falls back to the shared
+	// token. Without any token a private BYO Application can't clone — warn (public charts still
+	// work) but don't fail the deploy.
 	seen := map[string]bool{}
 	for _, repo := range repos {
 		if repo == "" || seen[repo] {
 			continue
 		}
 		seen[repo] = true
-		if err := argocd.ConfigureRepoCredentialsNamed(repo, token, argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
+		repoToken := repoTokens[repo]
+		if repoToken == "" {
+			repoToken = token
+		}
+		if repoToken == "" {
+			fmt.Fprintf(stderr, "Warning: no git access token for BYO repo %s — a private chart there will fail to sync (reconnect the git provider)\n", repo)
+			continue
+		}
+		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %v\n", repo, err)
 		}
 	}

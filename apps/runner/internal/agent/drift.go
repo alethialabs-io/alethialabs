@@ -56,7 +56,7 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 	if vc.IacSource != nil {
 		gitToken := vc.GitAccessToken
 		if gitToken == "" {
-			if fetched, ferr := w.api.FetchGitToken(job.ID); ferr != nil {
+			if fetched, ferr := w.api.FetchGitToken(job.ID, ""); ferr != nil {
 				fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", ferr)
 			} else {
 				gitToken = fetched

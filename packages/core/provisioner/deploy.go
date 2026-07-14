@@ -42,7 +42,11 @@ type DeployParams struct {
 	UpdateInfra    bool
 	InfracostToken string
 	GitAccessToken string
-	TemplatesDir   string
+	// GitRepoTokens maps a BYO chart repo URL → its git token, for charts whose repo lives on a
+	// different provider than the apps-destination repo (GitAccessToken). Empty/missing entries
+	// fall back to GitAccessToken. Only the BYO-chart credential path consults this.
+	GitRepoTokens map[string]string
+	TemplatesDir  string
 	// CategoriesDir is the root of the composable per-category modules
 	// (infra/templates/categories). When set, pluggable providers selected on the
 	// Project resources are composed into the plan; native resources are guarded off via tfvars.
@@ -695,7 +699,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
 			// and register their per-repo credentials BEFORE rendering the Applications, so the
 			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
-			prepareByoCharts(vc, params.GitAccessToken, facts.Labels, stdout, stderr)
+			prepareByoCharts(vc, params.GitAccessToken, params.GitRepoTokens, facts.Labels, stdout, stderr)
 
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {

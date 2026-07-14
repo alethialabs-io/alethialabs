@@ -26,7 +26,7 @@ func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stder
 
 	fmt.Fprintf(stdout, "Analyzing repository %s\n", repoURL)
 
-	token, err := w.api.FetchGitToken(job.ID)
+	token, err := w.api.FetchGitToken(job.ID, "")
 	if err != nil {
 		fmt.Fprintf(stderr, "No git token (%v); attempting public clone.\n", err)
 	}

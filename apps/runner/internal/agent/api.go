@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -351,8 +352,15 @@ func (c *RunnerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
 	return nil
 }
 
-func (c *RunnerAPIClient) FetchGitToken(jobID string) (string, error) {
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/git-token", c.baseURL, jobID), nil)
+// FetchGitToken mints the job owner's git provider token. When repoURL is non-empty the console
+// resolves the provider from THAT repo (validated against the job's repos) rather than the default
+// apps-destination precedence — so a BYO chart on a different provider gets the right token.
+func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
+	endpoint := fmt.Sprintf("%s/jobs/%s/git-token", c.baseURL, jobID)
+	if repoURL != "" {
+		endpoint += "?repo=" + url.QueryEscape(repoURL)
+	}
+	req, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
 		return "", err
 	}

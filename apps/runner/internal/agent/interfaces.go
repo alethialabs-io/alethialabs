@@ -16,7 +16,7 @@ type JobAPI interface {
 	// cancel missed on the wake stream (SSE disconnected at notify time) is still delivered.
 	Heartbeat() ([]string, error)
 	GetJob(jobID string) (*Job, error)
-	FetchGitToken(jobID string) (string, error)
+	FetchGitToken(jobID, repoURL string) (string, error)
 	// FetchStateToken mints the per-job tofu-state token for the http state backend;
 	// PurgeProjectState removes the state object after a successful destroy.
 	FetchStateToken(jobID string) (string, error)
