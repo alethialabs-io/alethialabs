@@ -792,6 +792,12 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 	if len(result.AddOnStatus) > 0 {
 		metadata["addon_status"] = result.AddOnStatus
 	}
+	if len(result.DataEndpoints) > 0 {
+		// In-cluster data-service endpoints (Hetzner database/cache/queue). Carries the Service DNS
+		// name + port + a credential REFERENCE ("<ns>/<secret>") — never a credential value, so the
+		// A0.0 secret-scrub denylist has nothing to strip here (the #427 precedent).
+		metadata["data_endpoints"] = result.DataEndpoints
+	}
 	if len(result.InfraServices) > 0 {
 		// Honest per-cloud infra-service install/skip decisions (reasons + statuses).
 		// Non-sensitive, safe to persist to the console alongside addon_status.

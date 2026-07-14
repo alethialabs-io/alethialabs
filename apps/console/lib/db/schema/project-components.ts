@@ -499,6 +499,13 @@ export const projectQueues = pgTable(
 		message_retention: integer().default(345600),
 		// Provider-specific queue knobs (SQS delay_seconds — no Azure/GCP equivalent).
 		provider_config: jsonb().$type<QueueProviderConfig>().default({}),
+		// Connection endpoint written back by the deploy finalizer. Databases + caches have had
+		// these since day one; queues never did, so an in-cluster RabbitMQ (Hetzner, where a queue
+		// deploys as an ArgoCD Application rather than a managed cloud resource) had nowhere to
+		// record its Service DNS name. `provider_outputs.secret_ref` carries a REFERENCE to the
+		// credential Secret ("<namespace>/<name>") — never the credential itself (#427).
+		endpoint: text(),
+		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),

@@ -105,6 +105,12 @@ type PlanResult struct {
 	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
 	// health read failed; the runner forwards it so the console can show real status.
 	AddOnStatus map[string]argocd.AddOnHealth
+	// DataEndpoints is the connection endpoint + credential REFERENCE for each in-cluster data
+	// service (Hetzner's database/cache/queue deploy as ArgoCD Applications, not managed cloud
+	// resources), keyed by add-on id (`db-primary`, `cache-main`, …). READ BACK from the cluster —
+	// chart Service names are never derived. Carries secret_ref ("<ns>/<name>"), never a credential
+	// value (the #427 precedent: no plaintext secrets in execution_metadata).
+	DataEndpoints map[string]argocd.DataEndpoint
 	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
 	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
 	SecurityPosture *argocd.SecurityPosture
@@ -793,6 +799,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				stdout,
 				stderr,
 			)
+			// In-cluster data services (Hetzner database/cache/queue) are ArgoCD Applications, so
+			// they have no tofu output carrying a connection string — the console showed NO endpoint
+			// at all ("endpoint discovery is chart-specific and deferred"). Now that they've
+			// converged, read their Service endpoint + credential REFERENCE back FROM THE CLUSTER.
+			// Never derived from a chart's fullname template: a wrong endpoint is worse than none.
+			if eps := argocd.ReadDataEndpoints(vc.AddOns, stdout, stderr); len(eps) > 0 {
+				fmt.Fprintf(stdout, "Read %d in-cluster data-service endpoint(s).\n", len(eps))
+				result.DataEndpoints = eps
+			}
 		}
 		// Read the cluster's Trivy-Operator vulnerability posture (L9). Best-effort +
 		// unconditional: `Scanned=false` when Trivy isn't installed, so the Evidence Security
