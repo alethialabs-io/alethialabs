@@ -10,9 +10,11 @@
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
+import { getPreviousEnvironmentCost } from "@/app/server/actions/cost";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
 import {
+	environmentCost,
 	environmentDrift,
 	environmentPromotions,
 	environmentProtectionRules,
@@ -619,6 +621,26 @@ async function buildGateContext(
 		? report.controls.filter((c) => c.status === "fail" && !waived.has(c.id)).length
 		: null;
 
+	// Cost: what this candidate plan priced, against what the TARGET environment cost before it.
+	// Both come from `environment_cost`, written whenever a PLAN succeeds. A first-ever pricing has
+	// no baseline, so the delta is null and the gate skips — rather than reading "+$412" for a
+	// number we simply didn't have before.
+	const [planCost] = await db
+		.select({ total_monthly: environmentCost.total_monthly })
+		.from(environmentCost)
+		.where(eq(environmentCost.plan_job_id, promotion.plan_job_id ?? ""))
+		.limit(1);
+	const priorCost = promotion.plan_job_id
+		? await getPreviousEnvironmentCost(
+				promotion.target_environment_id,
+				promotion.plan_job_id,
+			)
+		: null;
+	const costDelta =
+		planCost?.total_monthly != null && priorCost != null
+			? planCost.total_monthly - priorCost
+			: null;
+
 	// Approvals recorded so far.
 	const approvalRows = await db
 		.select()
@@ -633,9 +655,13 @@ async function buildGateContext(
 		candidateHash: promotion.candidate_hash ?? "",
 		predecessor,
 		verifyUnwaivedHardFailures,
-		// Cost baseline isn't persisted per-env yet, so the cost gate stays inert (skipped) until a
-		// prior cost is available; the rule remains toggleable and wires in once cost data flows.
-		costDelta: null,
+		// The cost delta this promotion carries: what the candidate plan priced, minus what the
+		// environment cost before it. Both are now persisted (environment_cost, written when a PLAN
+		// succeeds), so the cost gate finally EVALUATES — it has been inert since it was written,
+		// because this was hardcoded to null with the comment "cost baseline isn't persisted yet".
+		// Still null when the environment has never been priced before: that's no baseline, hence no
+		// delta, and the gate correctly skips rather than inventing a number.
+		costDelta,
 		approvals: { approved, required },
 		enforcedReasons,
 		nowMs: Date.now(),

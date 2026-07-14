@@ -24,6 +24,8 @@ export interface ComponentServerStatus {
 	 * nowhere in the product.
 	 */
 	outputs?: { label: string; value: string }[];
+	/** What this component costs per month, from the last PLAN's Infracost breakdown. */
+	monthlyCost?: number | null;
 	/** ArgoCD health, for components that are Applications (add-ons / charts). */
 	health?: string | null;
 	/** ArgoCD sync state. */
@@ -54,6 +56,13 @@ export interface EnvironmentStatus {
 	unattributedDrift: DriftDetail[];
 	/** When drift was last scanned; null when it never has been. */
 	driftScannedAt: string | null;
+	/**
+	 * What this environment costs per month, from its last PLAN. Null = never priced, which is an
+	 * honest "we don't know yet" rather than a misleading zero.
+	 */
+	monthlyCost: number | null;
+	/** The plan the cost came from, so the UI can say WHEN this was true. */
+	costCapturedAt: string | null;
 }
 
 /** The empty status — an environment that has never been deployed (or one we couldn't read). */
@@ -64,4 +73,6 @@ export const EMPTY_ENVIRONMENT_STATUS: EnvironmentStatus = {
 	probe: null,
 	unattributedDrift: [],
 	driftScannedAt: null,
+	monthlyCost: null,
+	costCapturedAt: null,
 };

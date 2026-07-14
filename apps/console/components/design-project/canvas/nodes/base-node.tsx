@@ -189,11 +189,31 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				<FactGrid facts={facts} compact={compact} />
 			</div>
 
+			{/* What this resource costs, from the last PLAN's Infracost breakdown. Absent until the
+			    environment has been planned — an honest silence rather than a fabricated $0. */}
+			{resolved.monthlyCost != null && (
+				<div className="flex items-center gap-2 border-t border-border/60 px-2.5 py-1.5">
+					<span className="font-mono text-[10px] text-foreground">
+						{formatMonthly(resolved.monthlyCost)}
+					</span>
+					{drifted > 0 && (
+						<span className="ml-auto border border-border-strong px-1 font-mono text-[9px] uppercase tracking-wide">
+							{drifted} drifted
+						</span>
+					)}
+				</div>
+			)}
+
 			{handles.source && (
 				<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
 			)}
 		</div>
 	);
+}
+
+/** A monthly figure, in the terse mono the board speaks. Money is precise (the design system's rule). */
+function formatMonthly(value: number): string {
+	return `$${value.toFixed(2)}/mo`;
 }
 
 /**

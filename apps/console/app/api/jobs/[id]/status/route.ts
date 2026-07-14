@@ -7,6 +7,7 @@ import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
 import { finalizeIacScan } from "@/app/server/actions/byo-iac";
 import { recordDriftPosture } from "@/app/server/actions/drift";
+import { recordEnvironmentCost } from "@/app/server/actions/cost";
 import {
 	advancePromotionOnPlan,
 	failPromotionForJob,
@@ -303,6 +304,25 @@ export async function PUT(
 						);
 					} else if (status === "SUCCESS") {
 						await move("planSuccess");
+
+						// Persist what this plan says the environment COSTS. The runner has already run
+						// Infracost (packages/core/infracost) and posted the breakdown; until now nobody
+						// wrote it down, which is why `estimated_monthly_cost` was a column nothing wrote
+						// and the cost promotion gate could never evaluate. Recorded BEFORE the promotion
+						// advances, so the gate below can actually see a delta.
+						// Best-effort: a plan that priced nothing (no Infracost key on the runner) is still
+						// a perfectly good plan — cost is an overlay, never a reason to fail the job.
+						if (job.project_id && job.environment_id && execution_metadata?.cost_breakdown) {
+							await recordEnvironmentCost({
+								projectId: job.project_id,
+								environmentId: job.environment_id,
+								planJobId: jobId,
+								costBreakdown: execution_metadata.cost_breakdown,
+							}).catch((err) =>
+								jlog.error("record environment cost error", { err }),
+							);
+						}
+
 						// If this PLAN backs a promotion, evaluate its gates now (deploy / await / block).
 						await advancePromotionOnPlan(jobId).catch((err) =>
 							jlog.error("advance promotion error", { err }),
