@@ -70,9 +70,17 @@ describe("NODE_REGISTRY palette metadata", () => {
 		// node-registry re-exports the extracted server-safe module, so the palette and the
 		// deploy-time guard (buildConfigSnapshot) can never diverge on what a cloud can't back.
 		expect(UNSUPPORTED_KINDS_BY_PROVIDER).toBe(SERVER_UNSUPPORTED_KINDS_BY_PROVIDER);
-		// bucket is NATIVE on Hetzner (Object Storage via the minio provider), so only
-		// topic/nosql/registry stay blocked.
-		expect(unsupportedKindsFor("hetzner")).toEqual(["topic", "nosql", "registry"]);
+		// bucket is NATIVE on Hetzner (Object Storage via the minio provider) and
+		// database/cache/queue run as in-cluster charts (hetzner-services.ts), so those stay
+		// addable. topic/nosql/registry have no path — and `secret` is blocked too: Hetzner has
+		// no cloud secret store and ProviderTfvars never emits `custom_secrets`, so before the
+		// gate the component was silently dropped while the deploy reported SUCCESS.
+		expect(unsupportedKindsFor("hetzner")).toEqual([
+			"topic",
+			"nosql",
+			"registry",
+			"secret",
+		]);
 		// A cloud with no blocked kinds (and an unknown/out-of-design slug) → empty.
 		expect(unsupportedKindsFor("aws")).toEqual([]);
 		expect(unsupportedKindsFor("digitalocean")).toEqual([]);
