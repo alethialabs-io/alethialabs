@@ -50,6 +50,18 @@ export interface IacEnvironment {
 	costByAddress: Record<string, number>;
 }
 
+/**
+ * The `components` key an external card is joined on — the BYO-IaC arm of `nodeStatusKey()`.
+ *
+ * It lives HERE, not beside the query, because `app/server/actions/component-status.ts` is a
+ * `"use server"` module: every export from one of those must be an async function, so a plain string
+ * helper cannot live there (the Next build rejects it — `tsc`, lint and vitest all pass regardless,
+ * so the build is the only thing that catches it).
+ */
+export function externalStatusKey(groupKey: string): string {
+	return `external:${groupKey}`;
+}
+
 /** What the server knows about ONE provisioned component. */
 export interface ComponentServerStatus {
 	/** The component row's lifecycle (PENDING … DESTROYED). */

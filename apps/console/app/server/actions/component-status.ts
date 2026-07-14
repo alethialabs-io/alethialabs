@@ -32,6 +32,7 @@ import {
 import type { ComponentStatus } from "@/lib/db/schema/enums";
 import {
 	EMPTY_ENVIRONMENT_STATUS,
+	externalStatusKey,
 	type ComponentServerStatus,
 	type EnvironmentStatus,
 	type IacEnvironment,
@@ -343,11 +344,6 @@ export async function getEnvironmentComponentStatus(
 		costCapturedAt: cost?.capturedAt ?? null,
 		iac,
 	};
-}
-
-/** The canvas key an external group's card is joined on (mirrors `nodeStatusKey`). */
-export function externalStatusKey(groupKey: string): string {
-	return `external:${groupKey}`;
 }
 
 /**

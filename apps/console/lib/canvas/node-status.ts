@@ -22,10 +22,11 @@ import type {
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { DriftDetail } from "@/types/jsonb.types";
-import type {
-	ComponentServerStatus,
-	EnvironmentStatus,
-	IacEnvironment,
+import {
+	externalStatusKey,
+	type ComponentServerStatus,
+	type EnvironmentStatus,
+	type IacEnvironment,
 } from "./component-status";
 import { useEnvironmentStatus } from "./environment-status-context";
 
@@ -118,7 +119,7 @@ const ARRAY_SCHEMA_KIND: Record<string, NodeKind> = {
  * is keyed by its group key — matching `externalStatusKey()` on the server.
  */
 export function nodeStatusKey(node: CanvasNode): string {
-	if (node.data.kind === "external") return `external:${node.data.config.key}`;
+	if (node.data.kind === "external") return externalStatusKey(node.data.config.key);
 	const def = NODE_REGISTRY[node.data.kind];
 	if (def.cardinality === "singleton") return node.data.kind;
 	const name = configName(node.data) ?? "";
