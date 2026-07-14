@@ -723,6 +723,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// read health back for the console. Non-fatal (like app-manifest generation): a bad
 		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
 		if len(vc.AddOns) > 0 {
+			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
+			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
+			// runner applies them server-side and waits for the CRDs they own to become
+			// Established — so a CR Application synced below (a RabbitmqCluster, a CNPG Cluster)
+			// can never race the operator that owns its schema. ArgoCD sync-waves do NOT order
+			// across separate top-level Applications, so this ordering must happen here.
+			if mErr := argocd.ApplyManifestAddOns(ctx, vc.AddOns, stdout, stderr); mErr != nil {
+				fmt.Fprintf(stderr, "Warning: operator manifest add-ons failed: %v\n", mErr)
+			}
+
 			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
 			// and register their per-repo credentials BEFORE rendering the Applications, so the
 			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
