@@ -14,6 +14,10 @@ import { withOwnerScope } from "@/lib/db";
 import { agentContext, jobs, projectEnvironments, projects } from "@/lib/db/schema";
 import type { AgentContext } from "@/lib/db/schema";
 
+// Re-exported for server callers; the constant itself lives in a client-safe module so a client
+// component can read it without dragging this (DB-bound) module into the browser bundle.
+export { KNOWLEDGE_LIMIT } from "./knowledge-limits";
+
 /** How many recent jobs the block summarizes (keeps the prompt cheap). */
 const RECENT_JOBS = 5;
 /** Hard cap on the whole derived block — a system prompt is paid for on every turn. */
@@ -81,8 +85,10 @@ export function formatProjectKnowledge(facts: ProjectFacts): string {
 }
 
 /**
- * Render an org/project context row (custom instructions + pinned notes) as a prompt block.
- * Returns "" when the row is empty, so it drops out of the prompt entirely.
+ * Render an org/project context row (custom instructions + pinned knowledge documents) as a
+ * prompt block. Each document keeps its TITLE, so the model can say which one it drew on —
+ * that's the point of a list of named docs over one opaque blob. Returns "" when nothing is
+ * pinned, so the block drops out of the prompt entirely.
  */
 export function formatContextBlock(
 	scope: "Organization" | "Project",
@@ -91,14 +97,18 @@ export function formatContextBlock(
 	if (!ctx) return "";
 	const parts: string[] = [];
 	const instructions = ctx.instructions.trim();
-	const notes = ctx.notes.trim();
 	if (instructions) {
 		parts.push(
 			`## ${scope} custom instructions (follow these)\n${instructions}`,
 		);
 	}
-	if (notes) {
-		parts.push(`## ${scope} knowledge (pinned by the user)\n${notes}`);
+
+	const docs = (ctx.documents ?? []).filter((d) => d.content.trim().length > 0);
+	if (docs.length > 0) {
+		const body = docs
+			.map((d) => `### ${d.title.trim()}\n${d.content.trim()}`)
+			.join("\n\n");
+		parts.push(`## ${scope} knowledge (pinned by the user)\n${body}`);
 	}
 	return parts.join("\n\n");
 }

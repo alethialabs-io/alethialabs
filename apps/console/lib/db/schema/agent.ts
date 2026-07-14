@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
+import type { KnowledgeDoc } from "@/types/jsonb.types";
 import {
 	index,
 	integer,
@@ -116,7 +117,17 @@ export const agentContext = pgTable(
 		project_id: uuid(),
 		/** Custom instructions, e.g. "this env is PCI — always require approval before apply". */
 		instructions: text().default("").notNull(),
-		/** Pinned free-text knowledge (our analogue of Claude's uploaded project docs). */
+		/**
+		 * Pinned knowledge as NAMED DOCUMENTS — the analogue of the files in a Claude Project's
+		 * knowledge base. Each rides every chat in this scope, so they're individually named and
+		 * removable rather than one opaque blob.
+		 */
+		documents: jsonb().$type<KnowledgeDoc[]>().default([]).notNull(),
+		/**
+		 * @deprecated The original single free-text blob. Superseded by `documents` (migration
+		 * backfilled any non-empty value into a "Notes" document). Kept so the column drop is a
+		 * separate, reversible step — nothing reads it any more.
+		 */
 		notes: text().default("").notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
