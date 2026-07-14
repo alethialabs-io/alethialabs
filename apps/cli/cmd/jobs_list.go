@@ -41,6 +41,7 @@ var jobTypeLabels = map[string]string{
 	string(types.JobTypeChartScan):     "Chart Scan",
 	string(types.JobTypeIacScan):       "IaC Scan",
 	string(types.JobTypeStateSurgery):  "State Surgery",
+	string(types.JobTypeProbeCluster):  "Probe Cluster",
 }
 
 var jobsListCmd = &cobra.Command{

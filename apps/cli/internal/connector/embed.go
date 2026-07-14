@@ -31,6 +31,14 @@ var AzureSetupScript string
 //go:embed aws-bootstrap.yaml
 var AwsBootstrapTemplate string
 
+// AwsSetupScript uses the aws CLI to register, in the user's AWS account, an IAM
+// OIDC provider trusting the Alethia issuer + a role Alethia assumes via
+// AssumeRoleWithWebIdentity, then prints the role ARN between "--- START CONFIG ---
+// / --- END CONFIG ---" markers. Takes the issuer URL as its first argument. Keyless.
+//
+//go:embed aws-setup.sh
+var AwsSetupScript string
+
 // AlibabaConnectorModule is the OpenTofu/Terraform module that registers, in the user's
 // Alibaba account, a RAM OIDC provider trusting the Alethia issuer + a RAM role. Applied
 // with `terraform apply` (auth via the user's aliyun creds); outputs role_arn. Keyless +
@@ -38,3 +46,11 @@ var AwsBootstrapTemplate string
 //
 //go:embed alibaba-connector.tf
 var AlibabaConnectorModule string
+
+// AlibabaSetupScript uses the aliyun CLI to register, in the user's Alibaba account,
+// a RAM OIDC provider trusting the Alethia issuer + a RAM role, then prints the role
+// ARN between "--- START CONFIG --- / --- END CONFIG ---" markers. Takes the issuer
+// URL as its first argument (or ALETHIA_ISSUER_URL). Keyless + account-free.
+//
+//go:embed alibaba-setup.sh
+var AlibabaSetupScript string

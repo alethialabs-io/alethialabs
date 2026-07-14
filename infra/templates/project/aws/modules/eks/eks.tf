@@ -14,6 +14,16 @@ module "eks" {
 
   access_entries = local.merged_access_entries
 
+  # Grant cluster-admin to the identity that RUNS the apply (the Alethia runner's short-lived
+  # OIDC-federated principal — the platform assumed-role in managed mode, or the customer's
+  # identity for a self-hosted runner). Without this the runner authenticates to the EKS API
+  # (via the in-process `kube-token` exec-plugin) but is AUTHORIZED by nothing, so installing
+  # ArgoCD / the add-ons 401s and the whole post-apply spine fails — a real product gap, not an
+  # e2e-only concern. The module resolves an assumed-role SESSION ARN back to the underlying
+  # role ARN (data.aws_iam_session_context), so the access entry is stable across sessions. This
+  # is the keyless, short-lived cluster-access model (no static admin kubeconfig in state).
+  enable_cluster_creator_admin_permissions = var.enable_creator_admin
+
   ## Control plane logging
   create_cloudwatch_log_group            = true
   cluster_enabled_log_types              = var.cluster_enabled_log_types
@@ -135,6 +145,29 @@ resource "aws_eks_addon" "ebs-csi" {
   addon_name               = "aws-ebs-csi-driver"
   addon_version            = data.aws_eks_addon_version.ebs_csi.version
   service_account_role_arn = module.irsa-ebs-csi.iam_role_arn
+
+  # The `tags` below tag the addon OBJECT itself; they do NOT reach the EBS volumes the CSI
+  # controller provisions at runtime for PVCs — those are created via the AWS API by the driver,
+  # not by OpenTofu, so provider default_tags never touch them. `controller.extraVolumeTags` is the
+  # only lever that stamps the classification + sweep-handle tags (var.eks_tags, base tags already
+  # winning) onto every dynamically-provisioned `pvc-*` volume, so a guarded sweeper can reclaim
+  # them by environment.
+  #
+  # ⚠️ UNPROVEN until A0.3's cloud-side sweep-tag check is green (BYOC A1.2). Whether the volumes
+  # actually carry these tags is only observable after a real apply with live PVCs — the AWS EBS-CSI
+  # `controller.extraVolumeTags` Helm value is asserted upstream but has never been verified against
+  # a real `pvc-*` volume in this program. This wires the driver config that SHOULD make it happen;
+  # A0.3's cloud-side check on a Bound volume is what upgrades it from "wired" to "proven".
+  # Fallback if extraVolumeTags turns out not to stamp: set the sweep tags via StorageClass
+  # `parameters.tagSpecification_N` (per-StorageClass) or the driver's `--extra-tags` flag
+  # (controller.additionalArgs) instead — both are driver-native tagging paths independent of the
+  # addon configuration_values.
+  configuration_values = jsonencode({
+    controller = {
+      extraVolumeTags = var.eks_tags
+    }
+  })
+
   tags = merge(
     var.eks_tags,
     tomap({ eks_addon = "ebs_csi" })

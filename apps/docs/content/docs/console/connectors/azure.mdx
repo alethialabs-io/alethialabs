@@ -1,45 +1,47 @@
 ---
 title: Azure Connector
-description: Keyless Azure access — authorize Alethia's federated app, no client secrets.
+description: Keyless Azure access — a managed identity in your own subscription, no client secrets.
 ---
 
 # Azure Connector
 
-Connecting Azure registers a **cloud identity** (`cloud_identities`) that is **keyless**. Alethia registers **one multi-tenant Entra app** whose Federated
-Identity Credential trusts the Alethia OIDC issuer. Both the console (verification) and the runner
-(provisioning) authenticate **as that app** by presenting a short-lived OIDC assertion; Azure validates
-it and issues an ARM access token. **You register no app and store no client secret** — you only grant
-Alethia's app a role in your tenant. See [Security Architecture](/concepts/security).
+Connecting Azure registers a **cloud identity** (`cloud_identities`) that is **keyless** and
+**customer-side**. You create a **user-assigned managed identity** in your own subscription (a plain ARM
+resource — no App Registration, no directory-admin rights) with a Federated Identity Credential that
+trusts the Alethia OIDC issuer. Both the console (verification) and the runner (provisioning) authenticate
+**as that identity** by presenting a short-lived OIDC assertion; Azure validates it and issues an ARM
+access token. **You store no client secret**, and there is **no platform Entra app** — parity with the GCP
+Workload Identity Federation model. See [Security Architecture](/concepts/security).
 
 <Callout type="info">
-**Is this safe?** You never create an app or a secret — you only grant Alethia's app a role in **your own**
-subscription. Alethia signs in with a short-lived token (≤10 min) that Entra ID verifies and swaps for a
-~1-hour credential. The only thing stored is your **tenant + subscription id** (public). **Revoke anytime**
-by removing the app's role assignment.
+**Is this safe?** You create the identity in **your own** subscription and grant it a least-privilege role.
+Alethia signs in with a short-lived token (≤10 min) that Entra ID verifies and swaps for a ~1-hour
+credential. The only things stored are your **tenant, subscription, and managed-identity client id** (all
+public). **Revoke anytime** by deleting the managed identity.
 </Callout>
 
 ## Setup
 
-The connect dialog gives you a one-line `az` command (or an OpenTofu module). It does two things in your
-tenant — no app registration, no federated credential on your side:
+The connect dialog gives you a one-line `az` command (or an OpenTofu module). It runs entirely in **your**
+subscription:
 
 <Steps>
 
-### Create a service principal for Alethia's app
-`az ad sp create --id <ALETHIA_AZURE_CLIENT_ID>` creates a service principal for Alethia's multi-tenant
-app in **your** tenant. The app itself lives in Alethia's tenant; you're just consenting to it.
+### Create the managed identity + federated credential
+`az identity create` provisions a user-assigned managed identity, and
+`az identity federated-credential create` adds a credential trusting the Alethia issuer (subject
+`alethia-connector`, audience `api://AzureADTokenExchange`). No App Registration, no secret.
 
-### Assign RBAC roles
-Grant that service principal appropriate roles on your subscription:
-- Contributor (or more granular roles for specific resource types)
-- User Access Administrator (for AKS AAD integration)
+### Assign the least-privilege role
+The script creates and assigns the **Alethia Provisioner** custom role — scoped to exactly the services
+the project templates create, with an ABAC condition that limits role-assignment writes to the single
+DNS Zone Contributor role (no path to self-escalation).
 
 ### Enter details in Alethia
-Paste back the two values the script prints:
+Paste back the three values the script prints:
 - **Tenant ID** — your Entra directory ID
+- **Client ID** — the managed identity's application id
 - **Subscription ID** — the target Azure subscription
-
-(The Client ID is Alethia's own app id — fixed, not something you provide.)
 
 </Steps>
 
@@ -47,8 +49,8 @@ Paste back the two values the script prints:
 
 Same as other providers — Alethia verifies access **instantly, server-side** (no runner):
 
-1. The console mints an OIDC assertion for Alethia's app and presents it to your tenant
-2. Azure validates it against the app's federated credential and returns an ARM access token
+1. The console mints an OIDC assertion for your managed identity and presents it to your tenant
+2. Azure validates it against the identity's federated credential and returns an ARM access token
 3. A small ARM read confirms provisioning access → `Connected` / `Degraded` / `Disconnected`
 
 Existing VNets, subnets, and DNS zones are discovered separately by the server-side
@@ -57,8 +59,8 @@ Existing VNets, subnets, and DNS zones are discovered separately by the server-s
 ## What's Stored
 
 - **Tenant ID**
+- **Client ID** (your managed identity's application id)
 - **Subscription ID**
-- The platform **Client ID** (Alethia's app id — the same for every cloud identity)
 
-**No client secrets, ever.** Revoke access by deleting the service principal (or its role assignment)
-in your tenant.
+**No client secrets, ever.** Revoke access by deleting the managed identity (or its role assignment)
+in your subscription.

@@ -89,3 +89,26 @@ variable "disk_size_gb" {
   description = "OS disk size in GB for each node"
   default     = 50
 }
+
+################################################################################
+# Access control (BYOC B4.1 knobs)
+################################################################################
+
+# Entra (Azure AD) group object IDs granted cluster-admin via AKS AAD-integrated
+# RBAC. Empty (default) leaves the azure_active_directory_role_based_access_control
+# block UNRENDERED — the cluster keeps Kubernetes RBAC only, exactly as before.
+variable "admin_group_object_ids" {
+  type        = list(string)
+  description = "Entra group OBJECT IDs (GUIDs, not names) mapped to admin_group_object_ids for AAD-integrated cluster-admin. Empty = no AAD admin-group integration (unchanged)."
+  default     = []
+}
+
+# CIDRs allowed to reach the AKS public API server. Empty (default) leaves the
+# api_server_access_profile block UNRENDERED — the API server stays reachable from
+# all source IPs (the customer-specific default called out in the resource comment /
+# suppressed AVD-AZU-0041), so provisioning by the external runner keeps working.
+variable "authorized_ip_ranges" {
+  type        = list(string)
+  description = "CIDRs allowed to reach the AKS public API server (api_server_access_profile.authorized_ip_ranges). Empty = open to all source IPs (unchanged)."
+  default     = []
+}

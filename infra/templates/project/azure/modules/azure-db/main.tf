@@ -104,6 +104,23 @@ resource "azurerm_postgresql_flexible_server" "this" {
 }
 
 ################################################################################
+# PostgreSQL public-endpoint firewall allow-list (BYOC B4.1)
+################################################################################
+
+# One firewall rule per allow-listed CIDR. Created only when var.allowed_cidrs is
+# non-empty, so the default (empty) leaves the server exactly as before — private,
+# VNet-integrated, no public firewall rules. Each CIDR is expanded to its first/last
+# address for the start/end IP range the resource requires.
+resource "azurerm_postgresql_flexible_server_firewall_rule" "allowlist" {
+  for_each = local.is_postgres ? { for cidr in var.allowed_cidrs : cidr => cidr } : {}
+
+  name             = "allow-${replace(replace(each.value, "/", "-"), ".", "-")}"
+  server_id        = azurerm_postgresql_flexible_server.this[0].id
+  start_ip_address = cidrhost(each.value, 0)
+  end_ip_address   = cidrhost(each.value, -1)
+}
+
+################################################################################
 # PostgreSQL Database
 ################################################################################
 

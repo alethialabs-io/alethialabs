@@ -23,7 +23,12 @@ locals {
     "us-west-2"      = "uw2"
   }
 
-  aws_default_tags = {
+  # Platform base tags. Classification + sweep-handle tags (var.classification_tags) are merged in
+  # UNDER these — base tags sit on the merge RHS so they always WIN a key collision, keeping the
+  # sweep handles and platform bookkeeping authoritative. This local fans out to ECR, EKS, the VPC,
+  # RDS, ElastiCache and SQS (see the `*_tags`/`resources_tags` module inputs), and via the EKS
+  # module into the EBS-CSI driver's extraVolumeTags for dynamically-provisioned volumes.
+  aws_base_tags = {
     "platform:environment" = "${var.environment}"
     "platform:customer"    = "${var.project_name}"
     "Project"              = "${var.project_name}"
@@ -32,6 +37,8 @@ locals {
     "Application"          = "alethia"
     "ManagedBy"            = "opentofu"
   }
+
+  aws_default_tags = merge(var.classification_tags, local.aws_base_tags)
 
 
   vpc_name = "vpc-${local.aws_regions_short[var.region]}-${var.environment}-${var.project_name}-common"

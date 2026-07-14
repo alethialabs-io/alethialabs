@@ -22,6 +22,17 @@ variable "project_name" {
   description = "Name of the project / client / product to be used in naming convention"
 }
 
+# Per-cloud classification labels emitted by the console (packages/core/cloud/tags.go, B1.2): the
+# project's frozen classification dimensions plus the mandatory `alethia_project-id` /
+# `alethia_environment-id` sweep handles (GCP label charset — lowercase, `_`-namespaced). Merged
+# into local.gcp_default_labels so it lands on every taggable resource; the platform base labels
+# always WIN a key collision (they sit on the merge RHS).
+variable "classification_tags" {
+  type        = map(string)
+  description = "Classification + sweep-handle labels to stamp on every taggable resource. Platform base labels override on conflict."
+  default     = {}
+}
+
 #########################################################################
 ##                   Networking Variables                              ##
 #########################################################################

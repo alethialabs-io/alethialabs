@@ -21,6 +21,7 @@ var (
 	connectorAwsRegion   string
 	connectorAwsRoleName string
 	connectorAwsManual   bool
+	connectorAwsScript   bool
 )
 
 const defaultAwsRoleName = "AlethiaProvisionerRole"
@@ -56,9 +57,12 @@ it from the AWS console and paste back the role ARN.`,
 
 		ui.PrintStepper(steps, 1)
 		var roleArn string
-		if connectorAwsManual {
+		switch {
+		case connectorAwsManual:
 			roleArn, err = awsManualFlow(issuerURL)
-		} else {
+		case connectorAwsScript:
+			roleArn, err = awsScriptFlow(issuerURL)
+		default:
 			roleArn, err = awsLocalFlow(issuerURL)
 		}
 		if err != nil {
@@ -100,6 +104,20 @@ func awsLocalFlow(issuerURL string) (string, error) {
 	)
 }
 
+// awsScriptFlow runs the aws-CLI setup script locally (federating to the given issuer) and
+// returns the created role ARN — an alternative to the CloudFormation stack for users who
+// prefer the shell path (mirrors the console's "AWS CLI / CloudShell" tab).
+func awsScriptFlow(issuerURL string) (string, error) {
+	if err := cloudshell.EnsureAws(); err != nil {
+		ui.Error("aws CLI not found on PATH")
+		ui.Muted("Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html")
+		ui.Muted(fmt.Sprintf("Or run it in AWS CloudShell (%s) with --manual.", awsCloudShellURL))
+		return "", err
+	}
+	ui.Info("Running the setup script via the local aws CLI...")
+	return cloudshell.RunAwsSetupScript(connector.AwsSetupScript, issuerURL)
+}
+
 // awsManualFlow prints a CloudFormation quick-create link and prompts for the
 // resulting role ARN.
 func awsManualFlow(issuerURL string) (string, error) {
@@ -134,4 +152,5 @@ func init() {
 	connectorAwsCmd.Flags().StringVar(&connectorAwsRegion, "region", "", "AWS region for the CloudFormation stack")
 	connectorAwsCmd.Flags().StringVar(&connectorAwsRoleName, "role-name", defaultAwsRoleName, "Name for the cross-account IAM role")
 	connectorAwsCmd.Flags().BoolVar(&connectorAwsManual, "manual", false, "Deploy from the AWS console and paste the role ARN")
+	connectorAwsCmd.Flags().BoolVar(&connectorAwsScript, "script", false, "Use the aws-CLI setup script instead of the CloudFormation stack")
 }

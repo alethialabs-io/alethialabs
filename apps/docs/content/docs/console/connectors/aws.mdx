@@ -19,7 +19,7 @@ stack or the role.
 
 ## Setup Methods
 
-<Tabs items={["CloudFormation (Recommended)", "OpenTofu"]}>
+<Tabs items={["CloudFormation (Recommended)", "AWS CLI / CloudShell", "OpenTofu"]}>
   <Tab value="CloudFormation (Recommended)">
     <Steps>
 
@@ -38,6 +38,23 @@ stack or the role.
 
     ### Paste into Alethia
     Paste the Role ARN into the Alethia form and click "Connect."
+
+    </Steps>
+  </Tab>
+  <Tab value="AWS CLI / CloudShell">
+    <Steps>
+
+    ### Open AWS CloudShell
+    Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home) — the `aws` CLI is
+    preinstalled and already authenticated. (Or run the script locally with a configured `aws` CLI.)
+
+    ### Run the setup script
+    Paste the one-liner from the connect sheet — `curl -sO …/alethia-aws-setup.sh && bash alethia-aws-setup.sh`.
+    It creates the same IAM OIDC provider + `AlethiaProvisionerRole` (with the four least-privilege
+    policies) and prints `role_arn`. Self-hosters pass their issuer as the first argument.
+
+    ### Copy Role ARN
+    Copy the `role_arn` the script prints and paste it into the form, then click "Connect."
 
     </Steps>
   </Tab>

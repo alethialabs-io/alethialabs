@@ -23,8 +23,10 @@ import (
 // Marketplace (Helm-registry) add-ons are untouched: they keep Source=="" → the "infra" project.
 // Best-effort like the rest of the add-on path — a failure here surfaces as an un-synced
 // Application (fail-closed: no credential / no project ⇒ the chart simply doesn't deploy), never a
-// failed cluster. Returns whether any BYO charts were present (for logging).
-func prepareByoCharts(vc *types.ProjectConfig, token string, stdout, stderr io.Writer) bool {
+// failed cluster. Returns whether any BYO charts were present (for logging). commonLabels are the
+// classification/sweep labels stamped onto the AppProject (BYOC B1.4); the BYO chart Applications
+// themselves are labelled by RenderManagedAddOns.
+func prepareByoCharts(vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) bool {
 	projName := argocd.ByoProjectName(vc.ProjectName)
 
 	var repos, namespaces []string
@@ -50,7 +52,7 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, stdout, stderr io.W
 	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q\n", len(repos), projName)
 
 	// Hardened AppProject locked to the BYO repos + namespaces.
-	if proj, err := argocd.RenderByoAppProject(projName, repos, namespaces); err != nil {
+	if proj, err := argocd.RenderByoAppProject(projName, repos, namespaces, commonLabels); err != nil {
 		fmt.Fprintf(stderr, "Warning: could not render BYO AppProject %s: %v\n", projName, err)
 	} else if err := argocd.ApplyManifest(proj, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "Warning: could not apply BYO AppProject %s (charts will not sync until it exists): %v\n", projName, err)

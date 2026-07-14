@@ -49,8 +49,14 @@ func RenderApplications(templatesDir string, facts *InfraFacts) (string, error) 
 			continue
 		}
 
+		// Stamp classification/sweep labels onto the Application/AppProject docs (BYOC B1.4).
+		labeled, err := InjectCommonLabels(rendered, facts.Labels)
+		if err != nil {
+			return "", fmt.Errorf("failed to label %s: %w", entry.Name(), err)
+		}
+
 		dstPath := filepath.Join(outDir, entry.Name())
-		if err := os.WriteFile(dstPath, []byte(rendered+"\n"), 0644); err != nil {
+		if err := os.WriteFile(dstPath, []byte(strings.TrimSpace(labeled)+"\n"), 0644); err != nil {
 			return "", fmt.Errorf("failed to write %s: %w", entry.Name(), err)
 		}
 	}

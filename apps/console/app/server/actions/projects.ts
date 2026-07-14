@@ -946,6 +946,10 @@ async function buildConfigSnapshot(
 			// M1: the Go provisioner reads `environment_stage` (frozen wire key) for the
 			// tofu state path + the `environment` tfvar — feed it the environment's name.
 			environment_stage: environment.name,
+			// B1.2: the environment's stable UUID (distinct from the human stage name), emitted
+			// by the runner as the `alethia:environment-id` tag so a guarded sweeper can scope
+			// destroys to exactly one environment's cloud resources.
+			environment_id: environment.id,
 			region: environment.region ?? project.region,
 			provider: identity.provider,
 			// B1.1: frozen per-dimension classification map ({ dimension_key: value_slug[] }),

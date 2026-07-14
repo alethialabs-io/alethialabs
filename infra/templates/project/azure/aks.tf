@@ -18,5 +18,9 @@ module "aks" {
   node_desired_size = var.aks_node_desired_size
   disk_size_gb      = var.aks_disk_size_gb
 
+  # BYOC B4.1 access-control knobs (both default-empty = behavior-preserving)
+  admin_group_object_ids = var.aks_admin_group_object_ids
+  authorized_ip_ranges   = var.aks_authorized_ip_ranges
+
   tags = local.azure_default_tags
 }

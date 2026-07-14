@@ -84,8 +84,9 @@ func ByoProjectName(slug string) string {
 
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos
 // + namespaces. Empty inputs are tolerated (an empty sourceRepos/destinations project simply
-// admits nothing) so a mis-built snapshot fails closed rather than wide-open.
-func RenderByoAppProject(name string, sourceRepos, namespaces []string) (string, error) {
+// admits nothing) so a mis-built snapshot fails closed rather than wide-open. commonLabels are the
+// classification/sweep labels stamped onto the AppProject (BYOC B1.4); pass nil to add none.
+func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLabels map[string]string) (string, error) {
 	data := byoProjectData{
 		Name:        name,
 		SourceRepos: dedupeNonEmpty(sourceRepos),
@@ -95,7 +96,11 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string) (string,
 	if err := byoAppProjectTmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("render byo AppProject: %w", err)
 	}
-	return buf.String(), nil
+	labeled, err := InjectCommonLabels(buf.String(), commonLabels)
+	if err != nil {
+		return "", fmt.Errorf("label byo AppProject: %w", err)
+	}
+	return labeled, nil
 }
 
 // ByoRepoSecretName is the deterministic ArgoCD repository-Secret name for a BYO chart repo:

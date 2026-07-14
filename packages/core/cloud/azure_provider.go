@@ -148,12 +148,26 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		tfvars["aks_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
 	}
 
+	// B4.1: cluster_admins → AKS admin_group_object_ids. Each admin's `groups` are Entra
+	// group OBJECT IDs; flatten+dedupe them. Only set when non-empty so the AAD-integrated
+	// RBAC block stays unrendered (Kubernetes-RBAC-only, unchanged) for the common case.
+	// The AKS-authorized-CIDR and DB-allow-list knobs (aks_authorized_ip_ranges /
+	// azure_db_allowed_cidrs) flow through the generic provider_config passthrough below.
+	if ids := azureAdminGroupObjectIDs(config.Cluster.ClusterAdmins); len(ids) > 0 {
+		tfvars["aks_admin_group_object_ids"] = ids
+	}
+
 	if !provisionVnet && config.Network.NetworkID != "" {
 		tfvars["vnet_id"] = config.Network.NetworkID
 	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
 	// are consumed above under a different tfvar name.
+	// B1.2: classification → resource tags (+ the always-on project-id/environment-id sweep
+	// handles), Azure-styled (`alethia:...`). Set before mergeProviderConfig so a user's
+	// provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
+	tfvars["classification_tags"] = classificationTags(config, azureTagStyle)
+
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "azure_waf", "managed_certificate")
 
@@ -198,6 +212,37 @@ func extractOutputString(outputs map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// azureAdminGroupObjectIDs flattens the Entra group object IDs carried by the project's
+// cluster_admins into a deduped list for the AKS admin_group_object_ids knob. Each admin
+// entry is a JSONB object ({username, groups[]}); its `groups` hold Entra group object
+// IDs. Returns nil when none are present so the caller leaves the AAD RBAC block off.
+func azureAdminGroupObjectIDs(admins []any) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, a := range admins {
+		m, ok := a.(map[string]any)
+		if !ok {
+			continue
+		}
+		groups, ok := m["groups"].([]any)
+		if !ok {
+			continue
+		}
+		for _, g := range groups {
+			s, ok := g.(string)
+			if !ok || s == "" {
+				continue
+			}
+			if _, dup := seen[s]; dup {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interface{} {

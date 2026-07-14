@@ -2,35 +2,41 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Keyless Azure connector setup. Alethia registers ONE multi-tenant Entra app whose
-# federated-identity credential trusts the Alethia OIDC issuer — the console + runner
-# authenticate AS that app with a minted assertion (no client secret anywhere). This
-# script does NOT create an app or a federated credential; it only creates a service
-# principal for Alethia's app in YOUR tenant and grants it Contributor on your
-# subscription. You store nothing — copy the Tenant ID + Subscription ID back to Alethia.
+# Keyless Azure connector setup — customer-side, no platform Entra app.
+#
+# Azure federation is implemented by Entra ID, but this creates NO App Registration and NO
+# client secret. It creates, in YOUR subscription, a User-Assigned Managed Identity (a plain
+# ARM resource — no directory-admin rights) with a federated-identity credential that trusts
+# the Alethia OIDC issuer. Alethia authenticates AS that identity by presenting a short-lived
+# assertion its issuer mints (subject `alethia-connector`, audience `api://AzureADTokenExchange`).
+# You grant it a least-privilege role on the subscription and paste three public ids back —
+# parity with the GCP Workload Identity Federation model. You store no secret.
 
 set -euo pipefail
 
-# The Application (client) ID of Alethia's platform app. The connect UI bakes this into the
-# command it shows you; override here if you're self-hosting a different platform app.
-ALETHIA_AZURE_CLIENT_ID="${ALETHIA_AZURE_CLIENT_ID:-}"
-
 if [ -z "${1:-}" ]; then
-  echo "Usage: ALETHIA_AZURE_CLIENT_ID=<app-id> $0 <SUBSCRIPTION_ID>"
+  echo "Usage: $0 <SUBSCRIPTION_ID> [ISSUER_URL]"
   echo ""
-  echo "Run this script in Azure Cloud Shell or locally with az CLI installed."
-  echo "It authorizes Alethia's app to provision infrastructure in your subscription."
-  exit 1
-fi
-
-if [ -z "${ALETHIA_AZURE_CLIENT_ID}" ]; then
-  echo "ERROR: ALETHIA_AZURE_CLIENT_ID is not set."
-  echo "Copy the exact command shown in the Alethia connect dialog — it includes the app id."
+  echo "Run this in Azure Cloud Shell or locally with the az CLI installed. It creates the"
+  echo "keyless managed-identity federation Alethia needs to provision into your subscription."
   exit 1
 fi
 
 SUBSCRIPTION_ID="$1"
-CLIENT_ID="${ALETHIA_AZURE_CLIENT_ID}"
+# The Alethia OIDC issuer the managed identity federates off. Defaults to the hosted issuer;
+# a self-hosted console passes its own (ALETHIA_ISSUER_URL env or arg 2). MUST match issuerUrl()
+# (lib/oidc/issuer.ts).
+ISSUER_URL="${ALETHIA_ISSUER_URL:-${2:-https://alethialabs.io/api/oidc}}"
+# The fixed subject + audience the Alethia issuer mints — MUST match WORKLOAD_SUBJECT
+# (lib/oidc/issuer.ts) and AZURE_TOKEN_AUDIENCE (lib/cloud-providers/session/azure.ts).
+SUBJECT="alethia-connector"
+AUDIENCE="api://AzureADTokenExchange"
+# Region + names for the connector resource group + identity (metadata only; clusters land elsewhere).
+LOCATION="${ALETHIA_AZURE_LOCATION:-eastus}"
+RG_NAME="alethia-connector"
+UAMI_NAME="alethia-provisioner"
+FIC_NAME="alethia-connector"
+ROLE_NAME="Alethia Provisioner"
 
 echo "==> Setting subscription to ${SUBSCRIPTION_ID}"
 az account set --subscription "${SUBSCRIPTION_ID}"
@@ -39,19 +45,31 @@ TENANT_ID=$(az account show --query tenantId -o tsv)
 echo "    Tenant ID: ${TENANT_ID}"
 
 echo ""
-echo "==> Creating a service principal for Alethia's app (${CLIENT_ID})..."
-EXISTING_SP=$(az ad sp list --filter "appId eq '${CLIENT_ID}'" --query "[0].id" -o tsv 2>/dev/null || true)
+echo "==> Creating resource group ${RG_NAME} (${LOCATION})..."
+az group create --name "${RG_NAME}" --location "${LOCATION}" -o none
 
-if [ -n "${EXISTING_SP}" ] && [ "${EXISTING_SP}" != "None" ]; then
-  SP_OBJECT_ID="${EXISTING_SP}"
-  echo "    Service principal already exists, skipping."
+echo ""
+echo "==> Creating the User-Assigned Managed Identity ${UAMI_NAME}..."
+# Idempotent — az identity create reconciles an existing identity.
+az identity create --name "${UAMI_NAME}" --resource-group "${RG_NAME}" --location "${LOCATION}" -o none
+CLIENT_ID=$(az identity show --name "${UAMI_NAME}" --resource-group "${RG_NAME}" --query clientId -o tsv)
+PRINCIPAL_ID=$(az identity show --name "${UAMI_NAME}" --resource-group "${RG_NAME}" --query principalId -o tsv)
+echo "    Client ID:    ${CLIENT_ID}"
+
+echo ""
+echo "==> Adding the federated credential (trusts the Alethia issuer)..."
+# The credential that lets Alethia's minted assertion be exchanged for a token AS this identity.
+if az identity federated-credential show \
+  --name "${FIC_NAME}" --identity-name "${UAMI_NAME}" --resource-group "${RG_NAME}" &>/dev/null; then
+  echo "    Federated credential already exists, updating."
+  az identity federated-credential update \
+    --name "${FIC_NAME}" --identity-name "${UAMI_NAME}" --resource-group "${RG_NAME}" \
+    --issuer "${ISSUER_URL}" --subject "${SUBJECT}" --audiences "${AUDIENCE}" -o none
 else
-  # Creates the SP for Alethia's multi-tenant app in THIS tenant (no new app is registered).
-  az ad sp create --id "${CLIENT_ID}" -o none
-  echo "    Service principal created."
-  echo "==> Waiting for Azure AD propagation..."
-  sleep 10
-  SP_OBJECT_ID=$(az ad sp list --filter "appId eq '${CLIENT_ID}'" --query "[0].id" -o tsv)
+  az identity federated-credential create \
+    --name "${FIC_NAME}" --identity-name "${UAMI_NAME}" --resource-group "${RG_NAME}" \
+    --issuer "${ISSUER_URL}" --subject "${SUBJECT}" --audiences "${AUDIENCE}" -o none
+  echo "    Federated credential created."
 fi
 
 echo ""
@@ -59,7 +77,6 @@ echo "==> Creating the least-privilege 'Alethia Provisioner' custom role..."
 # Enumerates only the actions Alethia's project templates need — in place of Contributor
 # (which is both over-broad AND lacks roleAssignments/write the templates require). Parity
 # with infra/connector/azure/main.tf.
-ROLE_NAME="Alethia Provisioner"
 ROLE_JSON="$(mktemp)"
 cat > "${ROLE_JSON}" <<JSON
 {
@@ -88,14 +105,18 @@ rm -f "${ROLE_JSON}"
 echo "    Custom role ready."
 
 echo ""
+echo "==> Waiting for the managed identity to propagate in Entra ID..."
+sleep 15
+
+echo ""
 echo "==> Assigning it (constrained: may only grant DNS Zone Contributor, no self-escalation)..."
-# ABAC condition: the SP can create/delete role assignments ONLY for DNS Zone Contributor
+# ABAC condition: the identity can create/delete role assignments ONLY for DNS Zone Contributor
 # (befefa01-2a29-4197-83a8-272ff33ce314) — the external-dns identity the templates create —
 # and nothing else (no path to Owner).
 DNS_ZONE_CONTRIB="befefa01-2a29-4197-83a8-272ff33ce314"
 CONDITION="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${DNS_ZONE_CONTRIB}})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${DNS_ZONE_CONTRIB}}))"
 EXISTING_ROLE=$(az role assignment list \
-  --assignee "${SP_OBJECT_ID}" \
+  --assignee "${PRINCIPAL_ID}" \
   --role "${ROLE_NAME}" \
   --scope "/subscriptions/${SUBSCRIPTION_ID}" \
   --query "[0].id" -o tsv 2>/dev/null || true)
@@ -103,7 +124,7 @@ if [ -n "${EXISTING_ROLE}" ]; then
   echo "    Role assignment already exists, skipping."
 else
   az role assignment create \
-    --assignee-object-id "${SP_OBJECT_ID}" \
+    --assignee-object-id "${PRINCIPAL_ID}" \
     --assignee-principal-type ServicePrincipal \
     --role "${ROLE_NAME}" \
     --scope "/subscriptions/${SUBSCRIPTION_ID}" \
@@ -115,11 +136,17 @@ fi
 
 echo ""
 echo "============================================================"
-echo "  Setup complete!"
+echo "  Setup complete! (keyless, customer-side managed identity)"
 echo "============================================================"
 echo ""
 echo "Copy these values into the Alethia dashboard:"
 echo ""
 echo "  Tenant ID:       ${TENANT_ID}"
 echo "  Subscription ID: ${SUBSCRIPTION_ID}"
+echo "  Client ID:       ${CLIENT_ID}"
 echo ""
+echo "--- START CONFIG (machine-readable, parsed by the Alethia CLI) ---"
+echo "tenant_id=${TENANT_ID}"
+echo "client_id=${CLIENT_ID}"
+echo "subscription_id=${SUBSCRIPTION_ID}"
+echo "--- END CONFIG ---"

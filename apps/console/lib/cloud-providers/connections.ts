@@ -4,6 +4,8 @@
 import { randomUUID } from "crypto";
 import { and, eq } from "drizzle-orm";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { captureServerException } from "@/lib/analytics/server";
+import { log } from "@/lib/observability/log";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, projects } from "@/lib/db/schema";
 import { encryptSecret } from "@/lib/crypto/secrets";
@@ -296,6 +298,36 @@ async function verifyConnectionInline(
 			updated_at: new Date(),
 		})
 		.where(eq(cloudIdentities.id, identityId));
+
+	// ── Observability (BYOC connector-parity debugging). Connect/verify failures are otherwise
+	//    INVISIBLE server-side: the probe never throws, the error is only persisted to
+	//    cloud_identities.last_error and returned to the browser — so nothing reached the logs or
+	//    error tracking. Emit a structured line for EVERY outcome (one `cloud connection verify`
+	//    body, level by severity) so PostHog logs carry the exact per-provider result, and report a
+	//    real exception to PostHog Error tracking on a hard failure so a broken keyless federation
+	//    (AWS/Azure/Alibaba OIDC trust, sub/aud mismatch, …) surfaces as an issue with the message.
+	//    Both channels are NEXT_PUBLIC_POSTHOG_KEY-gated (no key ⇒ no-op) and never throw. ──
+	const logFields = {
+		org_id: scope.orgId,
+		provider: identity.provider,
+		identity_id: identityId,
+		status: result.status,
+		last_error: result.error,
+		missing_permissions: result.missingPermissions.length
+			? result.missingPermissions.join(",")
+			: undefined,
+	};
+	if (result.status === "disconnected") {
+		log.error("cloud connection verify failed", logFields);
+		void captureServerException(
+			new Error(`Cloud connection verify failed for ${identity.provider}: ${result.error ?? "unknown error"}`),
+			{ orgId: scope.orgId, props: { provider: identity.provider, identity_id: identityId } },
+		);
+	} else if (result.status === "degraded") {
+		log.warn("cloud connection verify degraded (missing permissions)", logFields);
+	} else {
+		log.info("cloud connection verify succeeded", logFields);
+	}
 
 	// Ops alert on the transition into a healthy (connected/degraded) state.
 	if (ok && identity.status !== "connected" && scope.orgId) {

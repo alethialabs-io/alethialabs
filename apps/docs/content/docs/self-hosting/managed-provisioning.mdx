@@ -50,12 +50,12 @@ Do this once per cloud you want to offer. Full detail in
 | **AWS** | none (issuer key only) | `tofu apply infra/connector/aws` → paste **role ARN** |
 | **GCP** | none (issuer key only) | `tofu apply infra/connector/gcp` → paste **credential config** |
 | **Alibaba** | none (issuer key only) | `tofu apply infra/connector/alibaba` → paste **role ARN** |
-| **Azure** | register one multi-tenant Entra app + federated credential; set `ALETHIA_AZURE_CLIENT_ID` | `tofu apply infra/connector/azure` |
+| **Azure** | none (issuer key only) | `tofu apply infra/connector/azure` → paste **tenant + client + subscription ids** |
 | **Hetzner** | none | paste a Hetzner **API token** (token auth — no OIDC) |
 
 The connect UI for each provider only lights up once its platform prerequisite is satisfied
-(`computePlatformConfigured`): AWS/GCP/Alibaba track the issuer signing key, Azure additionally needs
-`ALETHIA_AZURE_CLIENT_ID`, Hetzner is always available.
+(`computePlatformConfigured`): AWS/GCP/Azure/Alibaba all track the issuer signing key alone, Hetzner is
+always available.
 
 ## 2. Runner images
 
@@ -123,8 +123,8 @@ provisions a self-managed **Talos** cluster.
 - **VM boots but never registers** — check the per-VM bootstrap token TTL (`FLEET_BOOTSTRAP_TOKEN_TTL_SECONDS`,
   default 3600) vs. a slow multi-GB image pull, and the boot grace (`FLEET_BOOT_GRACE_SECONDS`).
 - **`runner-<cloud>` image pull fails** — the tag isn't published for that cloud; re-check step 2.
-- **Cloud auth fails on plan** — the connector's platform prerequisite (esp. Azure `ALETHIA_AZURE_CLIENT_ID`)
-  or the customer's connector `tofu apply` is missing / the issuer isn't publicly reachable.
+- **Cloud auth fails on plan** — the customer's connector `tofu apply` is missing (no managed identity /
+  role), or the issuer isn't publicly reachable (`${APP_URL}/api/oidc/jwks` must resolve).
 
 ## Untrusted BYO (container sandbox, 3b)
 

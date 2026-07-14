@@ -16,14 +16,19 @@ terraform {
   }
 }
 
+# default_tags fans the classification + sweep-handle tags out to EVERY taggable AWS resource
+# (including ones not passed local.aws_default_tags, e.g. S3/DynamoDB/Route53/WAF), so a guarded
+# sweeper can scope destroys to one environment. The three platform base tags sit on the merge RHS
+# and WIN any key collision. Base keys are unnamespaced; classification keys are `alethia:`-scoped,
+# so in practice they never collide — the RHS ordering is the belt-and-suspenders guarantee.
 provider "aws" {
   region = var.region
   default_tags {
-    tags = {
+    tags = merge(var.classification_tags, {
       Environment = title(var.environment)
       Service     = var.project_name
       ManagedBy   = "opentofu"
-    }
+    })
   }
 }
 
@@ -32,11 +37,11 @@ provider "aws" {
   alias  = "virginia"
   region = "us-east-1"
   default_tags {
-    tags = {
+    tags = merge(var.classification_tags, {
       Environment = title(var.environment)
       Service     = var.project_name
       ManagedBy   = "opentofu"
-    }
+    })
   }
 }
 

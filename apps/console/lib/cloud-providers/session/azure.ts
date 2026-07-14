@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Azure session — KEYLESS. Alethia registers ONE multi-tenant Entra app whose federated-identity
-// credential trusts the Alethia OIDC issuer (lib/oidc/issuer.ts); the console authenticates as that app
-// against the CUSTOMER's tenant by presenting a freshly-minted assertion — no client secret anywhere.
-// The customer grants the app's service principal a role on their subscription; they store nothing.
+// Azure session — KEYLESS, customer-side. The customer creates a User-Assigned Managed Identity in
+// their own subscription with a federated-identity credential trusting the Alethia OIDC issuer
+// (lib/oidc/issuer.ts). The console authenticates AS that identity against the CUSTOMER's tenant by
+// presenting a freshly-minted assertion — no client secret, and NO platform Entra app. The identity's
+// client id is stored per-connection (credentials.client_id), so a self-hosted console needs only the
+// issuer configured (parity with AWS/GCP), not an `ALETHIA_AZURE_CLIENT_ID`.
 
 import { ClientAssertionCredential } from "@azure/identity";
 import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
@@ -12,21 +14,18 @@ import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
 /** The audience Azure AD expects for a federated-credential token exchange. */
 export const AZURE_TOKEN_AUDIENCE = "api://AzureADTokenExchange";
 
-/** Whether this instance can authenticate as the platform Azure app (app id + a working issuer). */
-export function azurePlatformConfigured(): boolean {
-	return !!process.env.ALETHIA_AZURE_CLIENT_ID && oidcIssuerConfigured();
-}
-
 /**
- * Builds a keyless credential for the customer tenant: the platform app id + a minted OIDC assertion as
- * the client assertion. Authenticates against `tenantId` (the CUSTOMER tenant stored on the identity),
- * NOT the app's home tenant — that's what lets one app reach every customer subscription. Throws if the
- * platform app / issuer isn't configured.
+ * Builds a keyless credential for the customer tenant: the customer identity's client id + a minted
+ * OIDC assertion as the client assertion. Authenticates against `tenantId` (the CUSTOMER tenant stored
+ * on the identity). `clientId` is the customer's managed-identity application id (credentials.client_id),
+ * not a platform app. Throws if the client id is missing or the issuer isn't configured.
  */
-export function assumeAzureIdentity(tenantId: string): ClientAssertionCredential {
-	const clientId = process.env.ALETHIA_AZURE_CLIENT_ID;
+export function assumeAzureIdentity(
+	tenantId: string,
+	clientId: string,
+): ClientAssertionCredential {
 	if (!clientId) {
-		throw new Error("Platform Azure app is not configured (ALETHIA_AZURE_CLIENT_ID).");
+		throw new Error("This Azure connection has no client id (managed-identity application id).");
 	}
 	if (!oidcIssuerConfigured()) {
 		throw new Error("The workload-identity issuer is not configured (ALETHIA_OIDC_SIGNING_KEY).");

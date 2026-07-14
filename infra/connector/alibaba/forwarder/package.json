@@ -1,0 +1,7 @@
+{
+  "name": "alethia-alibaba-asset-forwarder",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "description": "Alibaba Function Compute forwarder — normalizes ActionTrail VPC/VSwitch changes and POSTs them to the Alethia ingester. No dependencies (uses the Node 18+ global fetch)."
+}

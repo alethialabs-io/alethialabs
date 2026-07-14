@@ -279,11 +279,38 @@ export async function approvePromotion(
 	if (promotion.status !== "PENDING_APPROVAL")
 		throw new Error("This promotion is not awaiting approval");
 	await assertApprover(actor, rulesRow);
+	// Authorization done → run the shared service-role approval body (claim slot + re-evaluate gates).
+	await applyPromotionApproval(promotionId, actor.userId, comment);
+}
 
+/**
+ * Records `approverUserId`'s approval on a promotion and re-evaluates its gates — the SERVICE-ROLE
+ * body shared by `approvePromotion`. It does NOT authorize: the caller MUST have already verified the
+ * actor may approve (as `approvePromotion` does via assertApprover). It claims one slot through the
+ * race-safe per-slot CAS, then re-runs the SAME gate evaluation `advancePromotionOnPlan` runs after a
+ * PLAN completes — enqueuing the DEPLOY once every gate clears (or re-parking if approvals remain).
+ * Extracted as a service-role seam (analogous to advancePromotionOnPlan / finalizePromotionOnDeploy)
+ * so the BYOC B6.1 e2e harness can drive the real approval path against Postgres without a session —
+ * one source of truth, no divergent reimplementation of the gate logic.
+ */
+export async function applyPromotionApproval(
+	promotionId: string,
+	approverUserId: string,
+	comment?: string,
+): Promise<void> {
 	const db = getServiceDb();
-	// Record the caller's approval atomically: a transaction + per-slot CAS so two approvers racing
-	// this action can never collapse onto the same slot (which silently dropped one SOC2 approval).
-	const claim = await claimApprovalSlot(db, promotionId, actor.userId, comment);
+	const [promotion] = await db
+		.select()
+		.from(environmentPromotions)
+		.where(eq(environmentPromotions.id, promotionId))
+		.limit(1);
+	if (!promotion) throw new Error("Promotion not found");
+	if (promotion.status !== "PENDING_APPROVAL")
+		throw new Error("This promotion is not awaiting approval");
+
+	// Record the approval atomically: a transaction + per-slot CAS so two approvers racing this can
+	// never collapse onto the same slot (which silently dropped one SOC2 approval).
+	const claim = await claimApprovalSlot(db, promotionId, approverUserId, comment);
 	if (claim.outcome === "already_approved")
 		throw new Error("You have already approved this promotion");
 	if (claim.outcome === "no_slots") throw new Error("No pending approval slots remain");
@@ -292,8 +319,8 @@ export async function approvePromotion(
 		? await db.select().from(jobs).where(eq(jobs.id, promotion.plan_job_id)).limit(1)
 		: [];
 	if (!planJob) throw new Error("Promotion plan job not found");
-	const { ctx, rulesRow: freshRules } = await buildGateContext(db, promotion, planJob);
-	await applyGateDecision(db, promotion, freshRules, evaluateGates(ctx), planJob);
+	const { ctx, rulesRow } = await buildGateContext(db, promotion, planJob);
+	await applyGateDecision(db, promotion, rulesRow, evaluateGates(ctx), planJob);
 }
 
 /** Rejects a promotion (records the decision + cancels it). */

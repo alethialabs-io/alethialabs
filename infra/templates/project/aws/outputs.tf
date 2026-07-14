@@ -167,6 +167,21 @@ output "karpenter_sa_role" {
   value       = var.enable_karpenter ? module.irsa_karpenter.iam_role_arn : null
 }
 
+# Label-at-source for Karpenter-launched EC2 (BYOC A1.2). Karpenter provisions instances/volumes
+# via its OWN ec2:CreateFleet/RunInstances calls — NOT via OpenTofu — so the provider `default_tags`
+# (main.tf) and the EKS module `tags` NEVER reach them. The ONLY lever that stamps the classification
+# + sweep-handle tags (alethia:project-id / alethia:environment-id) onto Karpenter nodes is
+# `spec.tags` on the EC2NodeClass CR, which is applied post-apply by the runner. This output surfaces
+# the exact tag map (local.aws_default_tags — classification/sweep handles merged UNDER the winning
+# platform base tags, identical to eks_tags / the EBS-CSI extraVolumeTags) so the EC2NodeClass
+# renderer stamps it verbatim. Without it a guarded, environment-scoped sweeper cannot reclaim
+# Karpenter-launched EC2 (the CSI-PVC / orphan-instance leak class, gap G2). The tags are
+# non-sensitive, so harvesting this output into execution_metadata is safe.
+output "karpenter_node_tags" {
+  description = "Tag map the Karpenter EC2NodeClass spec.tags MUST carry so Karpenter-launched EC2/EBS inherit the classification + sweep-handle tags (provider default_tags do not reach Karpenter resources). Null when Karpenter is disabled."
+  value       = var.enable_karpenter ? local.aws_default_tags : null
+}
+
 output "fluentbit_sa_role_arn" {
   description = "IAM Role ARN for Fluent Bit Service Account"
   value       = module.irsa_fluentbit_cloudwatch.iam_role_arn

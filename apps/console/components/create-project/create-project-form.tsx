@@ -82,7 +82,7 @@ interface CreateProjectFormProps {
 	integrations: ConnectorWithConnection[];
 	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string; clientId: string } | null;
+	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
 	/** Per-connector-slug: whether this instance has the platform creds a cloud's connect needs
 	 * (e.g. Azure's app id). A cloud missing them can only fail to connect, so its tile says

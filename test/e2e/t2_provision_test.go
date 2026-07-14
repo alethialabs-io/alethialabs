@@ -115,12 +115,52 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	credsOK, credsMsg := p.credsPresent()
 	t2RequireOrSkip(t, credsOK, credsMsg)
 
+	// Cost guard (BYOC F4): the managed clouds have expensive default node shapes (AWS
+	// m5a.4xlarge×2 ≈ $0.30/run), so a real run MUST pin a cheapest-shape override via
+	// ALETHIA_E2E_CLUSTER_JSON. Missing it is a HARD FAIL under REQUIRE (the nightly always
+	// injects one — this catches a workflow typo), a warning locally. Hetzner is exempt
+	// (proven cents/run default).
+	if fatal, msg := t2RequireCostShape(provider); msg != "" {
+		if fatal {
+			t.Fatalf("T2 cost guard: %s", msg)
+		}
+		t.Logf("T2 cost guard (warning): %s", msg)
+	}
+
+	// ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6) — the customer-repo half. Opt-in:
+	// a fully-absent config is a clean skip (base T2 A0.1–A0.5 still proves), but a REQUIRED
+	// run (the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is set)
+	// or a PARTIAL config is a HARD FAIL — a half-wired secret can never silently disable it.
+	// Resolved here (before seeding) so a misconfig fails fast, and so the same config drives
+	// both the seeded snapshot and the assertion. Intentionally AFTER the provider-creds gate
+	// above: "required" means "if the base T2 proof runs, the repos proof must too" — with no
+	// cloud creds there is no cluster to prove anything on, so the whole test skips first. ──
+	repos := t2ArgoReposFromEnv()
+	reposEnabled, reposErr := repos.decide()
+	if reposErr != nil {
+		t.Fatalf("A0.6: %v", reposErr)
+	}
+	if reposEnabled {
+		t.Logf("A0.6: ArgoCD-with-repos ENABLED — apps repo %q + BYO chart repo %q will be wired and asserted", repos.appsRepo, repos.byoChartRepo)
+	} else {
+		t.Log("A0.6: ArgoCD-with-repos SKIPPED — no apps/BYO repo configured (set ALETHIA_E2E_ARGO_APPS_REPO + ALETHIA_E2E_ARGO_BYO_CHART_REPO + ALETHIA_E2E_GIT_TOKEN). Base T2 proof still runs.")
+	}
+
 	root := t2RepoRoot(t)
 	waitTimeout := resolveT2WaitTimeout(p)
 	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
 	// for the runner build. Derived from the provider row (hetzner 25m+8m+7m = 40m,
-	// bit-identical to the pre-table constant; managed clouds get their longer waits).
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+7*time.Minute)
+	// bit-identical to the pre-table constant; managed clouds get their longer waits). When
+	// the day-2 SOAK is enabled (BYOC A0.3) we widen the ctx by the soak window plus the
+	// drift-job + PVC-bind bounds, so a mid-soak ctx cancellation can't masquerade as a
+	// cluster drop. A soak parse error is loud here too (before any provisioning spend).
+	soakBudget := time.Duration(0)
+	if soakDur, soakOn, soakErr := parseSoakDuration(os.Getenv("ALETHIA_E2E_SOAK")); soakErr != nil {
+		t.Fatalf("A0.3 soak: %v", soakErr)
+	} else if soakOn {
+		soakBudget = soakDur + 15*time.Minute // drift wait (10m) + PVC bind (5m) headroom
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+7*time.Minute)
 	defer cancel()
 
 	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
@@ -169,7 +209,24 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// over HTTP from this same server.
 	t.Cleanup(cp.Close)
 
-	jobID, err := seedT2DeployJob(ctx, cp, project, env, provider, region)
+	// BYOC A0.5 — seed the console object graph (project + QUEUED env + reloader add-on row) and
+	// load the snapshot-fidelity fixture BEFORE seeding the DEPLOY job, so the job links to the env
+	// the replayed finalizeDeployment will drive to ACTIVE. Warn-only unless ALETHIA_E2E_A05_ENFORCE;
+	// a seed/fixture failure disables A0.5 and falls back to the unlinked lean seed (provisioning is
+	// never affected).
+	a05 := setupA05(t, ctx, cp, root, project, env, region)
+
+	// Build the runner-facing DEPLOY snapshot. `base` is the pre-repos/pre-cluster-json snapshot the
+	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
+	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
+	// override the runner actually consumes.
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, a05)
+	if err != nil {
+		t.Fatalf("build deploy snapshot: %v", err)
+	}
+	a05CheckFidelity(t, a05, base)
+
+	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph())
 	if err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
@@ -255,12 +312,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 
 	// (1) ClusterName present + correct ⇒ the post-apply spine ran (it is gated on the
-	//     talos_cluster_name output) AND matches the unique name we asked for.
-	if meta.ClusterName == "" {
-		t.Fatal("cluster_name is empty in metadata — the post-apply spine was SKIPPED")
-	}
-	if meta.ClusterName != clusterName {
-		t.Fatalf("cluster_name = %q, want %q", meta.ClusterName, clusterName)
+	//     per-provider cluster-name output) AND matches the unique cluster THIS run asked
+	//     for. Each cloud names its cluster differently (Talos/ACK: `<project>-<env>`;
+	//     EKS/GKE/AKS: `<kind>-<regionShort>-<env>-<project>`), so the check is
+	//     provider-aware — see t2ValidateClusterName.
+	if err := t2ValidateClusterName(provider, project, env, meta.ClusterName); err != nil {
+		t.Fatalf("cluster_name assertion: %v", err)
 	}
 	// (2) cluster_ready ⇒ the reachability gate proved a live cluster, not just apply=0.
 	if !meta.ClusterReady {
@@ -291,7 +348,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 
 	// (5) INDEPENDENT reachability: the runner wrote a host-usable kubeconfig to
 	//     $HOME/.alethia/kubeconfig (ConfigureKubeconfig). Read it and prove a node is
-	//     Ready via a fresh kubectl — the workflow's capture-e1.sh reuses this same
+	//     Ready via a fresh kubectl — the workflow's capture-proof.sh reuses this same
 	//     kubeconfig for the committed proof.
 	kc := assertT2KubeconfigNodesReady(t, ctx)
 
@@ -305,10 +362,72 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
 	}
 	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
-	if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
+
+	if reposEnabled {
+		// (7) ArgoCD-WITH-REPOS + BYO Helm CONVERGED (BYOC A0.6) — the #1 ask. The repo-apps
+		//     "apps" app-of-apps and the repo-byo "addon-<id>" chart must be GENUINELY in the
+		//     derived set (fail-closed, never hardcoded — a broken wiring yields an empty
+		//     derivation and fails here), their credential Secrets must be present (proving the
+		//     credential was seeded, without ever reading the token), and every expected app —
+		//     including the hardened manual-sync BYO chart, synced over its CR — must reach
+		//     Healthy+Synced.
+		byoApp := repos.byoAppName()
+		if e := t2AssertContains(expectedApps, "apps"); e != nil {
+			t.Fatalf("A0.6 repo-apps: %v", e)
+		}
+		if e := t2AssertContains(expectedApps, byoApp); e != nil {
+			t.Fatalf("A0.6 repo-byo: %v", e)
+		}
+		if e := assertRepoCredentialSecret(ctx, kc, "repo-apps"); e != nil {
+			t.Fatalf("A0.6 repo-apps credential: %v", e)
+		}
+		if e := assertRepoCredentialSecret(ctx, kc, repos.byoSecretName()); e != nil {
+			t.Fatalf("A0.6 repo-byo credential: %v", e)
+		}
+		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO synced over its CR)...", byoApp)
+		if e := AssertArgoReposConverge(ctx, kc, expectedApps, []string{byoApp}, ArgoAssertTimeout()); e != nil {
+			t.Fatalf("A0.6 ArgoCD-with-repos convergence failed: %v", e)
+		}
+		// Not vacuous: both repo-sourced apps must MANAGE ≥1 resource — an empty repo/chart
+		// renders nothing yet reports Healthy+Synced, which would prove a credentialed clone but
+		// NOT that GitOps actually deployed a workload.
+		if e := assertArgoAppManagesResources(ctx, kc, "apps"); e != nil {
+			t.Fatalf("A0.6 repo-apps workload: %v", e)
+		}
+		if e := assertArgoAppManagesResources(ctx, kc, byoApp); e != nil {
+			t.Fatalf("A0.6 repo-byo workload: %v", e)
+		}
+		t.Logf("A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra")
+	} else if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
 	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
+
+	// (7.5) CONSOLE → ACTIVE (BYOC A0.5). The runner reported SUCCESS via the SQL SSOT, but the Go
+	//       control plane stops there — it never runs the console's terminal orchestration. Replay
+	//       the REAL finalizeDeployment (the actual exported console action, via the tsx shim,
+	//       against this same Postgres) and assert the env is ACTIVE with the persisted add-on health
+	//       row it wrote from the runner's real execution_metadata. Warn-only unless
+	//       ALETHIA_E2E_A05_ENFORCE; a no-op when A0.5 setup was disabled.
+	runA05ConsoleActive(t, ctx, cp, a05, root, jobID)
+
+	// (8) SOAK / day-2 window (BYOC A0.3). Opt-in via ALETHIA_E2E_SOAK — unset ⇒ a clean
+	//     skip (everything above is the unchanged base T2 proof). Runs AFTER the readiness +
+	//     ArgoCD asserts and BEFORE this function returns, so the GUARANTEED t.Cleanup
+	//     teardown (registered earlier) still tears the cluster down afterwards. It drives
+	//     the day-2 loops against the live cluster: a bounded liveness poll, a real
+	//     DETECT_DRIFT job → honest in-sync posture over the deploy's real state, a 1Gi PVC
+	//     → Bound → a cloud-side sweep-tag hard-fail on the backing volume, and an add-on
+	//     health re-read.
+	runT2Soak(t, ctx, cp, kc, soakParams{
+		project:      project,
+		env:          env,
+		provider:     provider,
+		region:       region,
+		clusterName:  clusterName,
+		deployJobID:  jobID,
+		expectedApps: expectedApps,
+	})
 }
 
 // assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least
@@ -348,10 +467,16 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 // runner; the runner reads the provider from the snapshot. Node sizing defaults to the
 // template's cheapest cluster (1 control plane + 1 worker); ALETHIA_E2E_CLUSTER_JSON
 // (merged into the `cluster` block via t2MergeClusterJSON) lets each cloud's workflow
-// pin its own cheapest shape. Reuses the control plane's own pool (same package).
-func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string) (string, error) {
-	jobID := newUUID()
-	snap := map[string]any{
+// pin its own cheapest shape. When reposEnabled (BYOC A0.6), it also wires the
+// apps-destination repo + appends the BYO chart add-on (repos.applyToSnapshot). Reuses the
+// control plane's own pool (same package).
+// t2BaseSnapshot builds the config_snapshot fields shared by the DEPLOY job and the soak's
+// follow-on DETECT_DRIFT job (BYOC A0.3). Both MUST carry the SAME `id`/project/env/provider/
+// region so their ProviderTfvars resolve identically — the drift's refresh-only plan
+// reconciles the deploy's exact recorded state. The seed add-ons are included for fidelity
+// (they are post-apply Helm, inert to a refresh-only plan).
+func t2BaseSnapshot(project, env, provider, region string) map[string]any {
+	return map[string]any{
 		"id":                "e2e-" + env,
 		"project_name":      project,
 		"environment_stage": env,
@@ -359,21 +484,34 @@ func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provid
 		"provider":          provider,
 		"addons":            seedAddOns(),
 	}
-	// Merge the per-cloud cluster shape override (instance types, node counts,
-	// enable_karpenter, …) into the snapshot's `cluster` block. Malformed JSON is a loud
-	// failure — a workflow typo must not silently provision the wrong shape.
-	if err := t2MergeClusterJSON(snap); err != nil {
-		return "", err
-	}
+}
+
+// seedT2DeployJob enqueues a QUEUED DEPLOY job carrying the prebuilt runner-facing config_snapshot.
+// When `g` is non-nil (BYOC A0.5), the job is LINKED to the seeded console graph (project_id /
+// environment_id / org_id / user_id) so the replayed finalizeDeployment can drive that env to ACTIVE
+// and write its health rows; when nil (A0.5 disabled), it falls back to the unlinked legacy seed
+// (a random self-owned org, provisioning-only — the historical behavior). The `provider` column is
+// left NULL so the atomic claim's provider filter passes for the seeded runner; the runner reads the
+// provider from the snapshot.
+func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any, g *a05Graph) (string, error) {
+	jobID := newUUID()
 	snapshot, err := json.Marshal(snap)
 	if err != nil {
 		return "", err
 	}
-	_, err = cp.pool.Exec(ctx, `
-		INSERT INTO public.jobs
-		  (id, user_id, org_id, job_type, config_snapshot, status, provider)
-		VALUES ($1, $2, $2, 'DEPLOY', $3::jsonb, 'QUEUED', NULL)`,
-		jobID, newUUID(), string(snapshot))
+	if g != nil {
+		_, err = cp.pool.Exec(ctx, `
+			INSERT INTO public.jobs
+			  (id, user_id, org_id, project_id, environment_id, job_type, config_snapshot, status, provider)
+			VALUES ($1, $2, $3, $4, $5, 'DEPLOY', $6::jsonb, 'QUEUED', NULL)`,
+			jobID, g.userID, g.orgID, g.projectID, g.envID, string(snapshot))
+	} else {
+		_, err = cp.pool.Exec(ctx, `
+			INSERT INTO public.jobs
+			  (id, user_id, org_id, job_type, config_snapshot, status, provider)
+			VALUES ($1, $2, $2, 'DEPLOY', $3::jsonb, 'QUEUED', NULL)`,
+			jobID, newUUID(), string(snapshot))
+	}
 	if err != nil {
 		return "", fmt.Errorf("seed job: %w", err)
 	}

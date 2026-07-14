@@ -13,18 +13,22 @@ import {
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { FieldHelp } from "@repo/ui/field-help";
+import { CopyButton } from "@repo/ui/copy-button";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	ConnectSheetShell,
+	MethodTabs,
 	Step,
 	StoredNote,
 	VerifySection,
 } from "@/components/connector/connection-ui";
+import { connectorAssetUrl } from "@/components/connector/connector-assets";
 import {
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import { Download, ExternalLink } from "lucide-react";
+import { Download, ExternalLink, Terminal } from "lucide-react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 
@@ -167,6 +171,7 @@ export function AlibabaConnection({
 	onSave: (roleArn: string) => Promise<SaveResult>;
 }) {
 	const { state, run, cancel } = useConnectionTest();
+	const [method, setMethod] = useState<"cli" | "terraform">("cli");
 	const form = useForm<{ roleArn: string }>({
 		resolver: zodResolver(alibabaSchema),
 		defaultValues: { roleArn: "" },
@@ -175,11 +180,26 @@ export function AlibabaConnection({
 
 	const retry = state.phase === "failed";
 
-	/** Downloads the customer setup Terraform module (served from public/). */
+	const scriptUrl = connectorAssetUrl("alethia-alibaba-setup.sh");
+	// The script needs no arguments — it defaults the issuer and creates the RAM OIDC provider + role.
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-alibaba-setup.sh`;
+	const cloudShellUrl = "https://shell.aliyun.com";
+
+	/** Downloads the customer setup OpenTofu module (served from public/). */
 	const downloadModule = () => {
 		const a = document.createElement("a");
 		a.href = "/connector-terraform/alibaba.tf";
 		a.download = "alethia-alibaba.tf";
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+	};
+
+	/** Downloads the customer setup shell script (served from public/). */
+	const downloadScript = () => {
+		const a = document.createElement("a");
+		a.href = "/alethia-alibaba-setup.sh";
+		a.download = "alethia-alibaba-setup.sh";
 		document.body.appendChild(a);
 		a.click();
 		document.body.removeChild(a);
@@ -191,8 +211,8 @@ export function AlibabaConnection({
 			howItWorks={
 				<>
 					<p>
-						1. Apply the Terraform module — it creates a RAM OIDC provider trusting
-						Alethia&apos;s issuer and a role that trusts it.
+						1. Run the setup script (or apply the OpenTofu module) — it creates a RAM OIDC
+						provider trusting Alethia&apos;s issuer and a role that trusts it.
 					</p>
 					<p>
 						2. Alethia authenticates with a signed token its issuer mints (≤10 min);
@@ -205,46 +225,125 @@ export function AlibabaConnection({
 				</>
 			}
 		>
-			<div className="space-y-6">
-				<Step n={1} title="Create the RAM OIDC provider + role">
-					<p className="max-w-sm text-muted-foreground text-xs">
-						Apply the Terraform module below. It registers a RAM OIDC provider that trusts
-						Alethia&apos;s issuer and a role that trusts that provider (scoped to
-						Alethia&apos;s workload identity), then attaches provisioning permissions.
-					</p>
-					<div className="mt-2 flex flex-wrap items-center gap-3">
-						<Button
-							type="button"
-							size="sm"
-							className="h-8 font-medium text-xs"
-							onClick={downloadModule}
-						>
-							<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
-							Download module
-						</Button>
-						<a
-							href="/docs/console/connectors/alibaba"
-							target="_blank"
-							rel="noopener noreferrer"
-							className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
-						>
-							Full guide
-							<ExternalLink className="h-3 w-3" />
-						</a>
-					</div>
-				</Step>
+			<MethodTabs
+				value={method}
+				onChange={(id) => setMethod(id as "cli" | "terraform")}
+				help={
+					<>
+						<b className="text-foreground">Aliyun CLI</b> runs a script in the Alibaba Cloud
+						Shell — nothing to install, works from the browser.{" "}
+						<b className="text-foreground">OpenTofu</b> is for teams that manage infrastructure
+						as code: download the module and <code>apply</code> it. Both do the same thing.
+					</>
+				}
+				tabs={[
+					{
+						id: "cli",
+						label: "Aliyun CLI",
+						sub: "Quick setup via Cloud Shell",
+						icon: <Terminal className="h-3.5 w-3.5" />,
+					},
+					{
+						id: "terraform",
+						label: "OpenTofu / IaC",
+						sub: "Infrastructure as Code",
+						icon: <Terminal className="h-3.5 w-3.5" />,
+					},
+				]}
+			/>
 
-				<Step n={2} title="Paste the role ARN below">
-					<p className="max-w-sm text-muted-foreground text-xs">
-						Run{" "}
-						<code className="rounded border border-border/50 bg-muted px-1 py-0.5">terraform output</code>{" "}
-						and copy <code className="rounded border border-border/50 bg-muted px-1 py-0.5">role_arn</code> — it
-						looks like{" "}
-						<code className="rounded border border-border/50 bg-muted px-1 py-0.5">acs:ram::&lt;account&gt;:role/&lt;name&gt;</code>.
-						(Alethia derives the OIDC-provider ARN from it.)
-					</p>
-				</Step>
-			</div>
+			{method === "cli" ? (
+				<div className="space-y-6">
+					<Step n={1} title="Open the Alibaba Cloud Shell">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Click below to open the Alibaba Cloud Shell in your browser. The aliyun CLI is
+							preinstalled and already authenticated.
+						</p>
+						<div className="flex gap-3">
+							<Button
+								onClick={() => window.open(cloudShellUrl, "_blank")}
+								size="sm"
+								className="h-8 font-medium text-xs"
+								type="button"
+							>
+								<ExternalLink className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Open Cloud Shell
+							</Button>
+							<Button
+								onClick={downloadScript}
+								variant="outline"
+								size="sm"
+								className="h-8 border-border/60 font-medium text-xs"
+								type="button"
+							>
+								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download Script
+							</Button>
+						</div>
+					</Step>
+					<Step n={2} title="Run the setup command">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Paste this command in the Cloud Shell. It creates the RAM OIDC provider + role and
+							prints the role ARN.
+						</p>
+						<div className="flex items-start gap-2 rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[11px] text-foreground">
+							<span className="min-w-0 break-all">{cloudShellCmd}</span>
+							<CopyButton
+								text={cloudShellCmd}
+								className="mt-0.5 shrink-0 rounded p-1 hover:bg-muted"
+							/>
+						</div>
+					</Step>
+					<Step n={3} title="Paste the role ARN below">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Copy the{" "}
+							<code className="rounded border border-border/50 bg-muted px-1 py-0.5">role_arn</code>{" "}
+							the script prints and paste it below.
+						</p>
+					</Step>
+				</div>
+			) : (
+				<div className="space-y-6">
+					<Step n={1} title="Create the RAM OIDC provider + role">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Apply the OpenTofu module below. It registers a RAM OIDC provider that trusts
+							Alethia&apos;s issuer and a role that trusts that provider (scoped to
+							Alethia&apos;s workload identity), then attaches provisioning permissions.
+						</p>
+						<div className="mt-2 flex flex-wrap items-center gap-3">
+							<Button
+								type="button"
+								size="sm"
+								className="h-8 font-medium text-xs"
+								onClick={downloadModule}
+							>
+								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download module
+							</Button>
+							<a
+								href="/docs/console/connectors/alibaba"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
+							>
+								Full guide
+								<ExternalLink className="h-3 w-3" />
+							</a>
+						</div>
+					</Step>
+
+					<Step n={2} title="Paste the role ARN below">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Run{" "}
+							<code className="rounded border border-border/50 bg-muted px-1 py-0.5">tofu output</code>{" "}
+							and copy <code className="rounded border border-border/50 bg-muted px-1 py-0.5">role_arn</code> — it
+							looks like{" "}
+							<code className="rounded border border-border/50 bg-muted px-1 py-0.5">acs:ram::&lt;account&gt;:role/&lt;name&gt;</code>.
+							(Alethia derives the OIDC-provider ARN from it.)
+						</p>
+					</Step>
+				</div>
+			)}
 
 			<VerifySection
 				state={state}

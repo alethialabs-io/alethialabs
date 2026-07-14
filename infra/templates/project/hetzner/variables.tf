@@ -11,6 +11,17 @@ variable "environment" {
   type        = string
 }
 
+# Per-cloud classification labels emitted by the console (packages/core/cloud/tags.go, B1.2): the
+# project's frozen classification dimensions plus the mandatory `alethia_project-id` /
+# `alethia_environment-id` sweep handles (K8s/Talos label charset — `_`-namespaced, alnum bounds).
+# Merged into local.default_labels (applied to every hcloud resource) and the CSI driver's
+# volumeExtraLabels; the platform base labels always WIN a key collision (they sit on the merge RHS).
+variable "classification_tags" {
+  description = "Classification + sweep-handle labels to stamp on every hcloud resource + dynamically-provisioned volume. Platform base labels override on conflict."
+  type        = map(string)
+  default     = {}
+}
+
 variable "region" {
   description = "Hetzner Cloud location (e.g. fsn1, nbg1, hel1, ash, hil)."
   type        = string
@@ -36,15 +47,15 @@ variable "control_plane_count" {
 }
 
 variable "control_plane_server_type" {
-  description = "Hetzner server type for control-plane nodes (cax* = arm64, cx* = amd64)."
+  description = "Hetzner server type for control-plane nodes (cax* = arm64, cx*/cpx*/ccx* = amd64). Default cpx22 (2 vCPU / 4 GB, amd64) is a currently-orderable shared type; cax11 (ARM) is capacity-unreliable and cpx11 is retired."
   type        = string
-  default     = "cax11"
+  default     = "cpx22"
 }
 
 variable "control_plane_arch" {
-  description = "CPU architecture of the control-plane server type: arm64 (cax*) or amd64 (cx*)."
+  description = "CPU architecture of the control-plane server type: arm64 (cax*) or amd64 (cx*/cpx*/ccx*)."
   type        = string
-  default     = "arm64"
+  default     = "amd64"
 
   validation {
     condition     = contains(["arm64", "amd64"], var.control_plane_arch)
@@ -59,15 +70,15 @@ variable "worker_count" {
 }
 
 variable "worker_server_type" {
-  description = "Hetzner server type for worker nodes (cax* = arm64, cx* = amd64)."
+  description = "Hetzner server type for worker nodes (cax* = arm64, cx*/cpx*/ccx* = amd64). Default cpx22 (2 vCPU / 4 GB, amd64) is a currently-orderable shared type; cax11 (ARM) is capacity-unreliable and cpx11 is retired."
   type        = string
-  default     = "cax11"
+  default     = "cpx22"
 }
 
 variable "worker_arch" {
-  description = "CPU architecture of the worker server type: arm64 (cax*) or amd64 (cx*)."
+  description = "CPU architecture of the worker server type: arm64 (cax*) or amd64 (cx*/cpx*/ccx*)."
   type        = string
-  default     = "arm64"
+  default     = "amd64"
 
   validation {
     condition     = contains(["arm64", "amd64"], var.worker_arch)
