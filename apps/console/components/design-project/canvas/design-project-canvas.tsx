@@ -199,8 +199,14 @@ function CanvasInner({
 	}, [refreshIacSource]);
 
 	// While an ENABLED IaC source governs this env, the component graph isn't the source of truth —
-	// disable the Add palette + ⌘K component-add entirely (the overlay states why).
-	const iacGoverned = Boolean(iacSource?.enabled);
+	// so there is nothing to add to it: the Add palette and ⌘K component-add are disabled.
+	//
+	// This reads the SERVER's answer (the environment status), not the flag-gated `iacSource` fetch.
+	// Deriving it from `iacSource` meant an instance with the BYO-IaC flag off never learned the env
+	// was governed — so it happily offered to add components to an environment whose design is inert
+	// and will never be applied, while the module's own cards sat right there on the board. Whether
+	// the env IS governed is a fact about the environment; the flag only gates ATTACHING a new one.
+	const iacGoverned = envStatus.iac !== null;
 
 	// Repo-first on-ramp: the new-project "Bring your own Helm chart" path lands here with
 	// ?attachChart=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.

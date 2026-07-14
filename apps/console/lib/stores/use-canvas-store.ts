@@ -494,27 +494,43 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			setIacNodes: (groups) => {
-				const others = get().nodes.filter((n) => n.data.kind !== "external");
-				const iacNodes: CanvasNode[] = groups.map((g, i) => ({
-					id: `external-${g.key}`,
-					type: "external",
-					// Read-only: the customer's module owns these. There is nothing to delete here —
-					// removing a resource means editing their Terraform, not this board.
-					deletable: false,
-					position: { x: 120 + (i % 3) * 270, y: 340 + Math.floor(i / 3) * 150 },
-					data: {
-						kind: "external",
-						config: {
-							key: g.key,
-							mappedKind: g.kind,
-							module: g.module,
-							source: g.source,
-							members: g.members,
+				const prev = get().nodes;
+				// Where each external card already sits. This is fed by the environment-status query,
+				// which POLLS (every 30s, every 4s mid-deploy) — so without remembering positions, a
+				// card the user dragged somewhere sensible would snap back to the default grid on the
+				// next poll, over and over. The card's CONTENT still refreshes; only its place is kept.
+				const placed = new Map(
+					prev
+						.filter((n) => n.data.kind === "external")
+						.map((n) => [n.id, n.position] as const),
+				);
+				const others = prev.filter((n) => n.data.kind !== "external");
+				const iacNodes: CanvasNode[] = groups.map((g, i) => {
+					const id = `external-${g.key}`;
+					return {
+						id,
+						type: "external",
+						// Read-only: the customer's module owns these. There is nothing to delete here —
+						// removing a resource means editing their Terraform, not this board.
+						deletable: false,
+						position:
+							placed.get(id) ??
+							// Only a card the board has never seen needs a home.
+							{ x: 120 + (i % 3) * 300, y: 340 + Math.floor(i / 3) * 190 },
+						data: {
+							kind: "external",
+							config: {
+								key: g.key,
+								mappedKind: g.kind,
+								module: g.module,
+								source: g.source,
+								members: g.members,
+							},
+							cloud_identity_id: null,
+							provider: null,
 						},
-						cloud_identity_id: null,
-						provider: null,
-					},
-				}));
+					};
+				});
 				const next = [...others, ...iacNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
 			},
