@@ -682,9 +682,17 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
+	// The apply path normally skips Infracost (cost is estimated on the PLAN job). But when a
+	// cost ceiling is configured (ALETHIA_COST_CEILING_MONTHLY_USD > 0), the ceiling gate needs an
+	// estimate on THIS apply's own plan — so pass the Infracost token to make RunDeployV2 price the
+	// plan at its verify seam. No ceiling ⇒ "" ⇒ apply behaviour is unchanged (no Infracost run).
+	deployInfracostToken := ""
+	if costCeilingFromEnv() > 0 {
+		deployInfracostToken = os.Getenv("INFRACOST_API_KEY")
+	}
 	payload := buildDeployPayload(vc, provider, false, planFile,
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		"", buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
+		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StageDeploy, payload)
 	if err != nil {
 		return err

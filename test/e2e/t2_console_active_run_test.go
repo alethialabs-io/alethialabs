@@ -107,6 +107,12 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	if err := t2MergeClusterJSON(full); err != nil {
 		return nil, nil, err
 	}
+	// Merge the per-cloud network override into the `network` block (AWS: single_nat_gateway). On
+	// `full` ONLY — never `base`, the fidelity target — so A0.5's key-for-key fixture check stays
+	// intact while the real DEPLOY provisions the cheaper single-NAT shape.
+	if err := t2MergeNetworkJSON(full); err != nil {
+		return nil, nil, err
+	}
 	return base, full, nil
 }
 
