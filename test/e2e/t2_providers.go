@@ -262,6 +262,56 @@ func t2MergeNetworkJSON(snapshot map[string]any) error {
 	return nil
 }
 
+// t2MergeAzureAdminGroup wires the Entra admin-group OBJECT ID that authorizes the runner's
+// short-lived AAD token on a FRESH AKS cluster at create time (BYOC A2.2 self-admin) into the
+// snapshot's cluster.provider_config.aks_admin_group_object_ids — but ONLY for the azure provider
+// and ONLY when ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID is set. AKS AAD-integrated RBAC renders
+// only when the admin-group list is non-empty; on the managed default (empty) the runner's token
+// 401s the new API server (the EKS/GKE "runner never authorized" gap, on Azure). The object id is
+// environment-specific — it is the group the infra/azure-e2e stack outputs (with the e2e service
+// principal as a member) — so it is supplied at RUNTIME here, never committed. azure_provider.go's
+// resolveAKSAdminGroupObjectIDs maps this list through to the aks_admin_group_object_ids tfvar,
+// unioned with any cluster_admins. Runs AFTER t2MergeClusterJSON so it APPENDS to (deduped, never
+// clobbers) an object id already supplied via ALETHIA_E2E_CLUSTER_JSON. Absent env / non-azure ⇒
+// no-op; a blank-after-trim value is ignored.
+func t2MergeAzureAdminGroup(snapshot map[string]any, provider string) {
+	if provider != "azure" {
+		return
+	}
+	oid := strings.TrimSpace(os.Getenv("ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID"))
+	if oid == "" {
+		return
+	}
+	cluster, _ := snapshot["cluster"].(map[string]any)
+	if cluster == nil {
+		cluster = map[string]any{}
+	}
+	pc, _ := cluster["provider_config"].(map[string]any)
+	if pc == nil {
+		pc = map[string]any{}
+	}
+	existing, _ := pc["aks_admin_group_object_ids"].([]any)
+	seen := map[string]struct{}{}
+	out := make([]any, 0, len(existing)+1)
+	for _, v := range existing {
+		s, ok := v.(string)
+		if !ok || s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if _, dup := seen[oid]; !dup {
+		out = append(out, oid)
+	}
+	pc["aks_admin_group_object_ids"] = out
+	cluster["provider_config"] = pc
+	snapshot["cluster"] = cluster
+}
+
 // t2ClusterKindPrefix maps a managed cloud to the resource-kind prefix its template's
 // `locals.tf` stamps on the cluster name (`eks-…`/`gke-…`/`aks-…`). Talos/ACK are absent
 // because they name the cluster bare `<project>-<env>` (no kind prefix) — see
