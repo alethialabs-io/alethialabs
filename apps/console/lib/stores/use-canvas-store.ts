@@ -20,6 +20,7 @@ import type {
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 import type { CollectionPositions } from "@/lib/canvas/collections";
+import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 
 const PROJECT_NODE_ID = "project-root";
 const HISTORY_CAP = 50;
@@ -348,9 +349,9 @@ export const useCanvasStore = create<CanvasStore>()(
 			future: [],
 			baseline: [makeProjectNode()],
 			identities: [],
-			// Nodes render unconnected by default — the derived dependency edges stay computed (used
-			// for cross-cloud gating) but hidden until the user toggles connections on.
-			showConnections: false,
+			// Edges are ON: a dependency graph you have to opt into isn't a dependency graph. The
+			// derived edges (network → cluster → leaves) are what make the board readable as a system.
+			showConnections: true,
 			hiddenKinds: [],
 			collectionPositions: {},
 
@@ -384,7 +385,16 @@ export const useCanvasStore = create<CanvasStore>()(
 				const base = nodes.some((n) => n.id === PROJECT_NODE_ID)
 					? nodes
 					: [makeProjectNode(), ...nodes];
-				const withRoot = [...base, ...charts];
+				// A freshly-loaded graph arrives from formToGraph as a flat grid. Lay it out by ZONE so it
+				// opens looking like the system it describes. Positions aren't part of the staged diff
+				// (diffNodes compares config + placement, never position), so this can never register as
+				// a pending change.
+				const seeded = [...base, ...charts];
+				const provider = (id: string) =>
+					seeded.find((n) => n.id === id)?.data.provider ??
+					seeded.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
+					null;
+				const withRoot = applyLayout(seeded, layoutZoned(seeded, provider));
 				set({
 					nodes: withRoot,
 					edges: deriveEdges(withRoot),
@@ -664,7 +674,13 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			relayout: () => {
 				get().commit();
-				const next = layoutByKind(get().nodes);
+				// Zone-aware: the cluster's workloads inside the cluster, managed data in the VPC beside
+				// it, periphery clear of both — so the board lays out the way the system is actually
+				// shaped rather than as one row per kind.
+				const next = applyLayout(
+					get().nodes,
+					layoutZoned(get().nodes, (id) => get().getEffectiveProvider(id)),
+				);
 				// Drop the collection cards' pinned positions too, so a "tidy" re-anchors the vaults on
 				// their freshly-laid-out members instead of stranding them where they were dragged.
 				set({ nodes: next, collectionPositions: {}, dirty: true });
