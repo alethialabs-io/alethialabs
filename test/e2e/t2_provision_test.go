@@ -300,12 +300,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 
 	// (1) ClusterName present + correct ⇒ the post-apply spine ran (it is gated on the
-	//     talos_cluster_name output) AND matches the unique name we asked for.
-	if meta.ClusterName == "" {
-		t.Fatal("cluster_name is empty in metadata — the post-apply spine was SKIPPED")
-	}
-	if meta.ClusterName != clusterName {
-		t.Fatalf("cluster_name = %q, want %q", meta.ClusterName, clusterName)
+	//     per-provider cluster-name output) AND matches the unique cluster THIS run asked
+	//     for. Each cloud names its cluster differently (Talos/ACK: `<project>-<env>`;
+	//     EKS/GKE/AKS: `<kind>-<regionShort>-<env>-<project>`), so the check is
+	//     provider-aware — see t2ValidateClusterName.
+	if err := t2ValidateClusterName(provider, project, env, meta.ClusterName); err != nil {
+		t.Fatalf("cluster_name assertion: %v", err)
 	}
 	// (2) cluster_ready ⇒ the reachability gate proved a live cluster, not just apply=0.
 	if !meta.ClusterReady {

@@ -364,3 +364,44 @@ func TestT2HetznerPathUnchanged(t *testing.T) {
 		}
 	})
 }
+
+// TestT2ValidateClusterName pins the per-provider cluster-name check (BYOC A0.1 seam for
+// the AWS/GCP/Azure waves): Talos/ACK are an exact `<project>-<env>`; EKS/GKE/AKS are the
+// `<kind>-<regionShort>-<env>-<project>` shape asserted by kind-prefix + unique suffix.
+// The negative cases prove it is NOT vacuous — a stale/misnamed/wrong-kind name fails.
+func TestT2ValidateClusterName(t *testing.T) {
+	const project, env = "alethia-nl", "12345-1"
+	cases := []struct {
+		name          string
+		provider, got string
+		wantOK        bool
+	}{
+		// Bare-name clouds (exact match, mirrors the runner label).
+		{"hetzner exact", "hetzner", "alethia-nl-12345-1", true},
+		{"alibaba exact", "alibaba", "alethia-nl-12345-1", true},
+		{"hetzner wrong", "hetzner", "alethia-nl-99999-9", false},
+		{"hetzner empty", "hetzner", "", false},
+		// EKS/GKE/AKS: kind prefix + unique `-<env>-<project>` suffix, any regionShort.
+		{"aws ue1", "aws", "eks-ue1-12345-1-alethia-nl", true},
+		{"aws ec1", "aws", "eks-ec1-12345-1-alethia-nl", true},
+		{"gcp ew3", "gcp", "gke-ew3-12345-1-alethia-nl", true},
+		{"azure gwc", "azure", "aks-gwc-12345-1-alethia-nl", true},
+		// Non-vacuity: wrong kind, wrong run (stale), missing suffix, empty.
+		{"aws wrong kind", "aws", "gke-ue1-12345-1-alethia-nl", false},
+		{"aws stale env", "aws", "eks-ue1-99999-9-alethia-nl", false},
+		{"aws wrong project", "aws", "eks-ue1-12345-1-other", false},
+		{"aws no suffix", "aws", "eks-ue1", false},
+		{"aws empty", "aws", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := t2ValidateClusterName(tc.provider, project, env, tc.got)
+			if tc.wantOK && err != nil {
+				t.Fatalf("t2ValidateClusterName(%s, %q) = %v, want ok", tc.provider, tc.got, err)
+			}
+			if !tc.wantOK && err == nil {
+				t.Fatalf("t2ValidateClusterName(%s, %q) = ok, want error", tc.provider, tc.got)
+			}
+		})
+	}
+}

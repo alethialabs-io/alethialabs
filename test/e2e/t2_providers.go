@@ -230,6 +230,47 @@ func t2MergeClusterJSON(snapshot map[string]any) error {
 	return nil
 }
 
+// t2ClusterKindPrefix maps a managed cloud to the resource-kind prefix its template's
+// `locals.tf` stamps on the cluster name (`eks-…`/`gke-…`/`aks-…`). Talos/ACK are absent
+// because they name the cluster bare `<project>-<env>` (no kind prefix) — see
+// t2ValidateClusterName.
+var t2ClusterKindPrefix = map[string]string{
+	"aws":   "eks-",
+	"gcp":   "gke-",
+	"azure": "aks-",
+}
+
+// t2ValidateClusterName asserts the provider-reported `cluster_name` is the cluster THIS
+// run provisioned (proving the post-apply spine ran AND that we are looking at our own,
+// uniquely-named cluster — never a stale one). Naming differs per template `locals.tf`:
+//
+//   - hetzner / alibaba: exactly `<project>-<env>` (also the label the runner stamps).
+//   - aws / gcp / azure: `<kind>-<regionShort>-<env>-<project>` (e.g.
+//     `eks-ue1-<env>-<project>`). The region-short prefix is template-internal and NOT
+//     uniqueness-bearing; replicating the 40-row region maps here would just drift from
+//     the templates. So we assert the two parts that ARE meaningful and non-vacuous: the
+//     resource-kind prefix (proves the right kind of cluster) AND the `-<env>-<project>`
+//     suffix (env is `<run_id>-<attempt>`, globally unique per run — proves it is OUR
+//     cluster). This is exact enough to fail a stale/misnamed cluster, without coupling
+//     the harness to the region map.
+func t2ValidateClusterName(provider, project, env, got string) error {
+	if strings.TrimSpace(got) == "" {
+		return fmt.Errorf("cluster_name is empty — the post-apply spine was SKIPPED")
+	}
+	if prefix, ok := t2ClusterKindPrefix[provider]; ok {
+		suffix := "-" + env + "-" + project
+		if !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, suffix) {
+			return fmt.Errorf("cluster_name = %q, want %s<regionShort>%s (template locals.tf naming)", got, prefix, suffix)
+		}
+		return nil
+	}
+	// Talos (hetzner) + ACK (alibaba): bare `<project>-<env>`, an exact match.
+	if want := project + "-" + env; got != want {
+		return fmt.Errorf("cluster_name = %q, want %q", got, want)
+	}
+	return nil
+}
+
 // t2Truthy reports whether an env value reads as an affirmative flag.
 func t2Truthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
