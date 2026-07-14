@@ -44,39 +44,34 @@ func NewCloudProvider(provider string) (CloudProvider, error) {
 	}
 }
 
-// ExtractClusterName reads the K8s cluster name from OpenTofu outputs,
-// checking provider-specific output keys.
+// ExtractClusterName reads the K8s cluster name from OpenTofu outputs. It prefers the
+// provider-prefixed keys the managed templates emit; when none is present it falls back
+// to the generic `cluster_name` key. That generic fallback is the BYO-IaC output contract
+// (documented in bring-your-own-iac.mdx): a customer's own module names its output
+// `cluster_name`, and without this fallback ExtractClusterName returned "" for it — which
+// silently skipped kubeconfig, reachability, ArgoCD and every add-on while the deploy still
+// reported success. Provider-prefixed keys stay FIRST so managed templates are unchanged.
 func ExtractClusterName(outputs map[string]interface{}) string {
 	keys := []string{"eks_cluster_name", "gke_cluster_name", "aks_cluster_name", "talos_cluster_name", "ack_cluster_name"}
 	for _, key := range keys {
-		if val, ok := outputs[key]; ok {
-			if m, ok := val.(map[string]interface{}); ok {
-				if v, ok := m["value"].(string); ok {
-					return v
-				}
-			}
-			if s, ok := val.(string); ok {
-				return s
-			}
+		if v := extractOutputString(outputs, key); v != "" {
+			return v
 		}
 	}
-	return ""
+	// BYO-IaC generic fallback.
+	return extractOutputString(outputs, "cluster_name")
 }
 
-// ExtractClusterEndpoint reads the K8s cluster endpoint from OpenTofu outputs.
+// ExtractClusterEndpoint reads the K8s cluster endpoint from OpenTofu outputs. Like
+// ExtractClusterName it prefers the provider-prefixed keys and falls back to the generic
+// `cluster_endpoint` key that a BYO-IaC module emits.
 func ExtractClusterEndpoint(outputs map[string]interface{}) string {
 	keys := []string{"eks_cluster_endpoint", "gke_cluster_endpoint", "aks_cluster_endpoint", "talos_cluster_endpoint", "ack_cluster_endpoint"}
 	for _, key := range keys {
-		if val, ok := outputs[key]; ok {
-			if m, ok := val.(map[string]interface{}); ok {
-				if v, ok := m["value"].(string); ok {
-					return v
-				}
-			}
-			if s, ok := val.(string); ok {
-				return s
-			}
+		if v := extractOutputString(outputs, key); v != "" {
+			return v
 		}
 	}
-	return ""
+	// BYO-IaC generic fallback.
+	return extractOutputString(outputs, "cluster_endpoint")
 }
