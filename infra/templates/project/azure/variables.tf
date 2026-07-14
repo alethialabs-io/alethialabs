@@ -129,10 +129,19 @@ variable "aks_disk_size_gb" {
   }
 }
 
+# BYOC AZ-SELF-ADMIN (mirror of EKS #470): grant the apply/runner identity RBAC Cluster
+# Admin on the AKS cluster so it can install ArgoCD/add-ons over its own AAD token. Default
+# true. Turning it off requires aks_admin_group_object_ids (enforced by checks.tf below).
+variable "aks_enable_creator_admin" {
+  type        = bool
+  default     = true
+  description = "Grant the apply/runner identity 'Azure Kubernetes Service RBAC Cluster Admin' at cluster scope (default true). Without it (and no admin group) the runner cannot install ArgoCD."
+}
+
 # BYOC B4.1: Entra group OBJECT IDs (GUIDs, not names) granted cluster-admin via AKS
 # AAD-integrated RBAC. Sourced from the project's cluster_admins (each admin's `groups`
-# hold Entra group object IDs). Empty (default) = no AAD admin-group integration,
-# Kubernetes-RBAC-only, unchanged.
+# hold Entra group object IDs). Empty (default) = no customer admin group (the runner
+# still gets admin via aks_enable_creator_admin).
 variable "aks_admin_group_object_ids" {
   type        = list(string)
   default     = []

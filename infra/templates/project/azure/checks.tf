@@ -143,3 +143,14 @@ check "classification_tags_present" {
     error_message = "A classification_tags entry was dropped from azure_default_tags; classification/sweep-handle tags must reach tagged resources."
   }
 }
+
+# BYOC AZ-SELF-ADMIN (mirror of aws/modules/eks/checks.tf) — an AKS cluster the apply-runner
+# cannot administer is useless: with Azure RBAC for Kubernetes on, the runner's AAD token 401s
+# and it can never install ArgoCD/add-ons. Fail the PLAN if no runner-reachable admin path is
+# configured, so a future default flip can't silently brick provisioning instead of the plan.
+check "aks_runner_admin_path" {
+  assert {
+    condition     = var.aks_enable_creator_admin || length(var.aks_admin_group_object_ids) > 0
+    error_message = "AKS would have NO runner-reachable admin: set aks_enable_creator_admin=true (default — grants the apply-runner RBAC Cluster Admin), or provide aks_admin_group_object_ids. Without one, the runner cannot install ArgoCD."
+  }
+}
