@@ -175,6 +175,20 @@ func clusterReadyTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
+// addonConvergeTimeout bounds how long the deploy waits for the add-on Applications to reach
+// Healthy+Synced before reading their status for the console. Generous by default: a data service
+// (CNPG Cluster, Valkey, RabbitMQ) has to pull images, bind a PVC (hcloud CSI attach is ~30-60s)
+// and elect a primary. Best-effort — a timeout records the honest last-known status, it does not
+// fail the deploy. Tunable via ALETHIA_ADDON_CONVERGE_TIMEOUT (e.g. "5m"; "0" disables the wait).
+func addonConvergeTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_ADDON_CONVERGE_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return 10 * time.Minute
+}
+
 // clusterReadyRequireNode controls whether the gate waits for >=1 Ready node. Default true
 // (node-group clusters); set ALETHIA_CLUSTER_READY_REQUIRE_NODE=false for on-demand-node
 // clusters (e.g. Karpenter-only), where API-reachability alone is the bar.
@@ -743,7 +757,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
 			} else {
 				defer os.RemoveAll(addonDir)
-				if applyErr := argocd.ApplyAddOns(addonDir, stdout, stderr); applyErr != nil {
+				// Apply the Applications in ascending sync-wave order, waiting after each wave for
+				// the CRDs it establishes. ArgoCD's sync-wave annotation does NOT order separate
+				// top-level Applications, so a Helm operator (CloudNativePG) and an Application
+				// carrying a CR that needs its schema (a CNPG Cluster) would otherwise race — the
+				// CR's first sync failing with `no matches for kind`.
+				if applyErr := argocd.ApplyAddOnsInWaves(vc.AddOns, addonDir, stdout, stderr); applyErr != nil {
 					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
 				}
 			}
@@ -759,9 +778,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
+		//
+		// WAIT for convergence first. The read used to run the instant after `kubectl apply`, when
+		// every Application is still Progressing/Missing — so a database that was about to come up
+		// perfectly was persisted as "Creating"… and nothing ever refreshed it (the day-2 refresh
+		// only updates project_addons rows, and the synthesized Hetzner data-service specs have
+		// none). The wait is bounded and best-effort: an add-on that never converges is reported
+		// honestly rather than failing an otherwise-healthy cluster.
 		if len(vc.AddOns) > 0 {
-			result.AddOnStatus = argocd.ReadAddOnHealth(
+			result.AddOnStatus = argocd.WaitAddOnsHealthy(
+				ctx,
 				argocd.AllAddOnNames(vc.AddOns),
+				addonConvergeTimeout(),
 				stdout,
 				stderr,
 			)
