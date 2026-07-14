@@ -15,7 +15,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { environmentProbes, projects } from "@/lib/db/schema";
 import { shouldAlertUnreachable } from "@/lib/probes/schedule";
-import type { ProbeDetail, ProbeResult } from "@/types/jsonb.types";
+import type { ProbeDetail } from "@/types/jsonb.types";
 
 /** The latest cluster-alive state of an environment (the read shape for badges/reconcile). */
 export interface ProbeState {
@@ -65,27 +65,6 @@ export async function recordProbeResult(input: {
 
 	return {
 		becameUnreachable: shouldAlertUnreachable(prevReachable, input.reachable),
-	};
-}
-
-/**
- * Normalize a runner-posted ProbeResult into recordProbeResult input. `probed_at` is the
- * server clock at ingest — the honest "when the console learned it" axis (the runner's
- * ProbeResult carries no timestamp; environment_probes.probed_at defaults to now anyway).
- */
-export function probeResultToRecord(
-	projectId: string,
-	environmentId: string,
-	result: ProbeResult,
-	probedAt: Date,
-): Parameters<typeof recordProbeResult>[0] {
-	return {
-		projectId,
-		environmentId,
-		reachable: result.reachable,
-		message: result.message ?? null,
-		detail: result.detail ?? {},
-		probedAt: probedAt.toISOString(),
 	};
 }
 

@@ -12,10 +12,7 @@ import {
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/app/server/actions/promotions";
-import {
-	probeResultToRecord,
-	recordProbeResult,
-} from "@/app/server/actions/probes";
+import { recordProbeResult } from "@/app/server/actions/probes";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import {
 	recordAddonHealth,
@@ -390,14 +387,16 @@ export async function PUT(
 				const probe = job.execution_metadata?.probe_result;
 				if (probe) {
 					try {
-						const { becameUnreachable } = await recordProbeResult(
-							probeResultToRecord(
-								job.project_id,
-								job.environment_id,
-								probe,
-								new Date(),
-							),
-						);
+						// probed_at is the server clock at ingest — the honest "when the console learned
+						// it" axis (the runner's ProbeResult carries no timestamp).
+						const { becameUnreachable } = await recordProbeResult({
+							projectId: job.project_id,
+							environmentId: job.environment_id,
+							reachable: probe.reachable,
+							message: probe.message ?? null,
+							detail: probe.detail ?? {},
+							probedAt: new Date().toISOString(),
+						});
 						if (becameUnreachable && job.org_id) {
 							emitAlertEventSafe(job.org_id, "system.project.cluster_unreachable", {
 								title: "Cluster unreachable",
