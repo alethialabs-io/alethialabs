@@ -666,6 +666,13 @@
       "when": 1784033537481,
       "tag": "0094_futuristic_franklin_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1784037803958,
+      "tag": "0095_thankful_wolfsbane",
+      "breakpoints": true
     }
   ]
 }
