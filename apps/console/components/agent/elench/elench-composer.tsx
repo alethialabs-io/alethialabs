@@ -30,6 +30,7 @@ import type {
 	MentionResult,
 	MentionType,
 } from "@/lib/ai/mentions";
+import { ScrollArea } from "@repo/ui/scroll-area";
 import { cn } from "@repo/ui/utils";
 import {
 	ElenchAskMode,
@@ -238,7 +239,8 @@ export function ElenchComposer({
 						Tag a resource
 						{loading && <Loader2 className="h-3 w-3 animate-spin" />}
 					</div>
-					<div className="max-h-64 overflow-y-auto py-1">
+					<ScrollArea className="max-h-64 [&_[data-slot=scroll-area-viewport]>div]:!block">
+						<div className="py-1">
 						{results.length === 0 && !loading && (
 							<div className="px-3 py-2 text-xs text-muted-foreground">
 								No matching resources.
@@ -269,7 +271,8 @@ export function ElenchComposer({
 								</button>
 							);
 						})}
-					</div>
+						</div>
+					</ScrollArea>
 				</div>
 			)}
 
