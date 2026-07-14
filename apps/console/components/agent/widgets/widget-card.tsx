@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useDraggable } from "@dnd-kit/core";
 import { GripVertical, RefreshCw, Snowflake, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
@@ -27,8 +28,9 @@ function blockOf(w: ThreadWidget): DashboardBlock | undefined {
 	return w.data.block;
 }
 
-/** The widget's body: a dashboard block, or its source tool's registry body. */
-function WidgetBody({ widget }: { widget: ThreadWidget }) {
+/** The widget's body: a dashboard block, or its source tool's registry body. Exported so the
+ * grid's drag overlay can render a live clone of the card being dragged. */
+export function WidgetBody({ widget }: { widget: ThreadWidget }) {
 	const block = blockOf(widget);
 	if (block) return <DashboardBlockBody block={block} />;
 	const def = widget.source ? WIDGET_REGISTRY[widget.source.tool] : undefined;
@@ -67,6 +69,11 @@ export function WidgetCard({
 	const setMode = useWidgetGridStore((s) => s.setMode);
 	const widgets = useWidgetGridStore((s) => s.widgets);
 	const [kb, setKb] = useState<{ mode: DragMode; rect: GridRect } | null>(null);
+	// Pointer move is handled by dnd-kit: the grip is the drag handle and a DragOverlay
+	// (owned by the grid) follows the cursor, so the source card just dims while active.
+	const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
+		id: widget.id,
+	});
 
 	const rect: GridRect = kb?.rect ?? {
 		x: widget.pos_x,
@@ -112,6 +119,7 @@ export function WidgetCard({
 
 	return (
 		<div
+			ref={setNodeRef}
 			role="group"
 			aria-label={widget.title}
 			data-testid="widget-card"
@@ -123,6 +131,8 @@ export function WidgetCard({
 			className={cn(
 				"group/widget relative flex min-h-0 flex-col overflow-hidden border border-border bg-background",
 				kb && "border-foreground",
+				// While dragging, the floating overlay is the live copy — dim the source.
+				isDragging && "opacity-40",
 			)}
 			onKeyDown={(e) => {
 				if (!kb) return;
@@ -147,17 +157,18 @@ export function WidgetCard({
 			}}
 		>
 			<div className="flex h-7 flex-none items-center gap-1.5 border-b border-border px-2">
-				{/* Drag to move (pointer); Enter/Space enters keyboard-move mode (arrows move,
-				    Shift+arrows resize) — replacing the two removed keyboard buttons. */}
+				{/* Drag to move (dnd-kit — a DragOverlay follows the cursor); Enter/Space enters
+				    keyboard-move mode (arrows move, Shift+arrows resize). */}
 				<button
 					type="button"
+					{...attributes}
+					{...listeners}
 					aria-label={`Move ${widget.title} — drag, or press Enter for keyboard mode`}
 					aria-pressed={!!kb}
 					className={cn(
-						"flex h-full cursor-grab items-center text-muted-foreground hover:text-foreground",
+						"flex h-full cursor-grab touch-none items-center text-muted-foreground hover:text-foreground",
 						kb && "text-foreground",
 					)}
-					onPointerDown={(e) => onDragStart(e, widget.id, "move")}
 					onKeyDown={(e) => {
 						if (!kb && (e.key === "Enter" || e.key === " ")) {
 							e.preventDefault();
