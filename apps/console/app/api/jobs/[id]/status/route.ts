@@ -28,6 +28,7 @@ import {
 } from "@/lib/db/env-status";
 import { jobs } from "@/lib/db/schema";
 import { scrubExecutionMetadata } from "@/lib/jobs/scrub-metadata";
+import { releaseStateLocksForJob } from "@/lib/runners/state-lock";
 import { log } from "@/lib/observability/log";
 import { outcomeFromStatus, recordProvision } from "@/lib/observability/metrics";
 import { markJobSpan } from "@/lib/observability/trace";
@@ -85,12 +86,32 @@ export async function PUT(
 		const [updateRow] = await db.execute<{ applied: boolean }>(
 			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb) as applied`,
 		);
+		// A terminal post means this runner's tofu process has EXITED — cleanly or not. That is the only
+		// moment the control plane can know no writer is left on the state, so it is the only safe moment
+		// to release a lock tofu never unlocked itself (killed by a cancel, an OOM, a crash). Fires on the
+		// rejected path too: a runner reporting FAILED into an already-CANCELLED job is still a runner
+		// that has stopped. Housekeeping — it must never sink the report, hence the catch.
+		if (status === "SUCCESS" || status === "FAILED" || status === "CANCELLED") {
+			const released = await releaseStateLocksForJob(jobId).catch((err) => {
+				jlog.error("failed to release state locks for terminal job", { err: String(err) });
+				return 0;
+			});
+			if (released > 0) {
+				jlog.warn("released a state lock its terminal job never unlocked (tofu was killed)", {
+					released,
+					job_status: status,
+				});
+			}
+		}
+
 		// FALSE = the update was a no-op because the job is already terminal in a DIFFERENT state
 		// (e.g. the console cancelled it while this callback was in flight). The DB status is
 		// authoritative, so skip ALL terminal side-effects — env→ACTIVE via finalizeDeployment, the
 		// success alert, usage billing — that would otherwise run off the stale request `status` and
 		// resurrect/bill a cancelled job. (A same-status re-post applies, so the runner's CANCELLED
-		// teardown post still flows through below with its orphan_risk metadata.)
+		// teardown post still flows through below with its orphan_risk metadata; a DIFFERENT-status
+		// late report no longer loses its metadata either — update_job_status merges it out-of-band
+		// under `late_report` rather than discarding the whole UPDATE row.)
 		if (!updateRow?.applied) {
 			jlog.info("job-status callback was a no-op (job already terminal); skipping side-effects", {
 				attempted_status: status,

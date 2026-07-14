@@ -55,6 +55,25 @@ export async function forceReleaseStateLock(stateKey: string): Promise<boolean> 
 	return !!rows[0]?.force_release_tofu_state_lock;
 }
 
+/**
+ * Releases any state lock still held by a job that has just gone terminal. Safe precisely because the
+ * runner posts terminal only AFTER its tofu process has exited — so no live writer remains, just a
+ * lock nobody will ever unlock (tofu's UNLOCK never arrives when it is killed: a cancel, an OOM, a
+ * runner crash). Without this the lock strands for its full 3h TTL and every later job on that state
+ * — the DESTROY sent to clean up the mess included — dies with "state already locked".
+ *
+ * Rotates + bumps the fencing `generation` rather than deleting the row, so even a zombie writer is
+ * fenced out instead of corrupting state. Scoped strictly to locks THIS job holds. Returns how many
+ * were released (normally 0 — tofu unlocked itself — or 1).
+ */
+export async function releaseStateLocksForJob(jobId: string): Promise<number> {
+	const db = getServiceDb();
+	const rows = await db.execute<{ released: number }>(
+		sql`select release_tofu_state_locks_for_job(${jobId}::uuid) as released`,
+	);
+	return Number(rows[0]?.released ?? 0);
+}
+
 /** The fence: true iff a LIVE lock with this exact id is held for the state key. */
 export async function validateStateLock(
 	stateKey: string,
