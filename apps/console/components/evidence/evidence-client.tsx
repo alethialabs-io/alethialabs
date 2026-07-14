@@ -2,37 +2,42 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Evidence surface — the org-wide "keep proving it" roll-up. One fetched roll-up drives
-// three distribution meters, a triage strip, a search/group/sort/stage toolbar, a single
-// grouped environment-posture table (with an inline peek + full detail drawer), and the
-// recorded-waivers panel. Read-only: the data is produced by the PLAN/DEPLOY + DETECT_DRIFT
-// jobs — this page never mutates anything.
+// The Evidence surface — the org-wide "keep proving it" roll-up. A single Activity-style
+// filter bar (search + Status/Stage facets + Group/Sort selects) drives a server-side
+// re-fetch of the grouped environment-posture table (with an inline peek + full detail
+// drawer) and the recorded-waivers panel. Read-only: the data is produced by the
+// PLAN/DEPLOY + DETECT_DRIFT jobs — this page never mutates anything.
 
-import { useEffect, useMemo, useState } from "react";
+import { Layers, ShieldAlert } from "lucide-react";
 import { useParams } from "next/navigation";
-import { Skeleton } from "@repo/ui/skeleton";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FacetFilter } from "@repo/ui/facet-filter";
 import {
-	buildMeters,
-	buildTriage,
-	deriveGroups,
-	stageLabel,
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@repo/ui/select";
+import {
+	type EvidenceResult,
+	getOrgEvidence,
+} from "@/app/server/actions/evidence";
+import { SettingsSearch } from "@/components/settings/settings-ui";
+import {
 	type EvidenceEnvRow,
 	type GroupMode,
 	type SortKey,
-	type TriageKey,
+	toGroupMode,
+	toSortKey,
 } from "./evidence-derive";
 import { EvidenceDrawer } from "./evidence-drawer";
-import { EvidenceMeters } from "./evidence-meters";
 import { EvIcon } from "./evidence-status";
 import { EvidenceTable } from "./evidence-table";
-import { EvidenceToolbar, type StagePill } from "./evidence-toolbar";
-import { EvidenceTriage } from "./evidence-triage";
 import { EvidenceWaivers } from "./evidence-waivers";
 import { downloadReceipt } from "./receipt-download";
-import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
-import type { OrgEvidence } from "@/lib/queries/evidence";
 
-const STAGE_ORDER = ["production", "staging", "development"];
+const SEARCH_DEBOUNCE = 300;
 
 /** The default drawer tab for a row — Report if verified, else Receipt, else Drift. */
 function defaultTab(row: EvidenceEnvRow): string {
@@ -41,13 +46,26 @@ function defaultTab(row: EvidenceEnvRow): string {
 	return "drift";
 }
 
-/** The Evidence page body once data has loaded. */
-function EvidenceLoaded({ data, org }: { data: OrgEvidence; org: string }) {
+/**
+ * The Evidence page. Seeded with the server-rendered default view, then re-fetches through
+ * the same server action whenever a filter changes (all filtering is server-side).
+ */
+export function EvidenceClient({ initial }: { initial: EvidenceResult }) {
+	const { org } = useParams<{ org: string }>();
+
+	// Filters.
 	const [search, setSearch] = useState("");
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const [stages, setStages] = useState<string[]>([]);
+	const [status, setStatus] = useState<string[]>([]);
 	const [group, setGroup] = useState<GroupMode>("triage");
 	const [sort, setSort] = useState<SortKey>("worst");
-	const [stage, setStage] = useState("all");
-	const [triage, setTriage] = useState<TriageKey>("all");
+
+	// Server view (seeded from the route's first paint).
+	const [result, setResult] = useState<EvidenceResult>(initial);
+	const [loading, setLoading] = useState(false);
+
+	// Row interaction.
 	const [expandedId, setExpandedId] = useState<string | null>(null);
 	const [drawerId, setDrawerId] = useState<string | null>(null);
 	const [drawerTab, setDrawerTab] = useState("report");
@@ -59,40 +77,67 @@ function EvidenceLoaded({ data, org }: { data: OrgEvidence; org: string }) {
 		return () => clearTimeout(t);
 	}, [toast]);
 
-	const meters = useMemo(() => buildMeters(data), [data]);
-	const triageClusters = useMemo(
-		() => buildTriage(data.summary),
-		[data.summary],
-	);
-	const { groups, resultCount } = useMemo(
-		() => deriveGroups(data, { search, stage, triage, group, sort }),
-		[data, search, stage, triage, group, sort],
-	);
+	// Debounce the free-text search so it doesn't refetch on every keystroke.
+	useEffect(() => {
+		const id = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE);
+		return () => clearTimeout(id);
+	}, [search]);
 
-	const stages: StagePill[] = useMemo(() => {
-		const counts = new Map<string, number>();
-		for (const r of data.rows) counts.set(r.stage, (counts.get(r.stage) ?? 0) + 1);
-		const present = [...counts.keys()].sort(
-			(a, b) => STAGE_ORDER.indexOf(a) - STAGE_ORDER.indexOf(b),
-		);
-		return [
-			{ key: "all", label: "All stages", count: data.rows.length },
-			...present.map((s) => ({
-				key: s,
-				label: stageLabel(s),
-				count: counts.get(s) ?? 0,
+	// Re-fetch the grouped view server-side whenever a filter changes. `initial` already
+	// reflects the default query, so skip the redundant fetch on first mount.
+	const firstRun = useRef(true);
+	useEffect(() => {
+		if (firstRun.current) {
+			firstRun.current = false;
+			return;
+		}
+		let cancelled = false;
+		setLoading(true);
+		getOrgEvidence({
+			search: debouncedSearch.trim() || undefined,
+			stages: stages.length ? stages : undefined,
+			status: status.length ? status : undefined,
+			group,
+			sort,
+		})
+			.then((r) => {
+				if (!cancelled) setResult(r);
+			})
+			.finally(() => {
+				if (!cancelled) setLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [debouncedSearch, stages, status, group, sort]);
+
+	const statusOptions = useMemo(
+		() =>
+			result.statusOptions.map((o) => ({
+				value: o.value,
+				label: o.label,
+				hint: String(o.count),
 			})),
-		];
-	}, [data.rows]);
-
-	const projectCount = useMemo(
-		() => new Set(data.rows.map((r) => r.projectId)).size,
-		[data.rows],
+		[result.statusOptions],
+	);
+	const stageOptions = useMemo(
+		() =>
+			result.stageOptions.map((o) => ({
+				value: o.value,
+				label: o.label,
+				hint: String(o.count),
+			})),
+		[result.stageOptions],
 	);
 
-	const drawerRow =
-		data.rows.find((r) => r.environmentId === drawerId) ?? null;
-	const filtered = search !== "" || stage !== "all" || triage !== "all";
+	// The drawer opens only on a currently-visible row, so it's always in the grouped set.
+	const drawerRow = useMemo(() => {
+		for (const g of result.groups) {
+			const row = g.rows.find((r) => r.environmentId === drawerId);
+			if (row) return row;
+		}
+		return null;
+	}, [result.groups, drawerId]);
 
 	/** Opens the detail drawer on a valid default tab for the row. */
 	const openDrawer = (row: EvidenceEnvRow) => {
@@ -106,69 +151,82 @@ function EvidenceLoaded({ data, org }: { data: OrgEvidence; org: string }) {
 		setToast(downloadReceipt(row.verify.receipt, row.verify.jobId));
 	};
 
-	const resetFilters = () => {
-		setSearch("");
-		setStage("all");
-		setTriage("all");
-	};
-
 	return (
 		<div className="pb-20">
-			{/* identity line */}
-			<div className="mb-5 flex items-center gap-3">
-				<EvIcon name="shield-check" size={17} className="text-text-primary" />
-				<span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-text-tertiary">
-					Org evidence
-				</span>
-				<span className="h-3 w-px bg-border-strong" />
-				<span className="font-mono text-[11px] text-text-secondary">{org}</span>
-				<span className="font-mono text-[11px] text-text-disabled">
-					· {data.summary.environments} environments · {projectCount} projects
-				</span>
-				<span className="flex-1" />
-				<span className="hidden font-mono text-[10px] uppercase tracking-wide text-text-disabled sm:inline">
-					Read-only · Keep proving it
+			{/* filter bar — the app-wide filter language (see settings/activity) */}
+			<div className="mb-4 flex flex-wrap items-center gap-2.5">
+				<SettingsSearch
+					value={search}
+					onChange={setSearch}
+					placeholder="Filter by project or environment…"
+					className="w-[240px] flex-1"
+				/>
+				<FacetFilter
+					label="Status"
+					icon={ShieldAlert}
+					options={statusOptions}
+					value={status}
+					onChange={setStatus}
+					searchPlaceholder="Search statuses…"
+					emptyText="No statuses."
+				/>
+				<FacetFilter
+					label="Stage"
+					icon={Layers}
+					options={stageOptions}
+					value={stages}
+					onChange={setStages}
+					searchPlaceholder="Search stages…"
+					emptyText="No stages."
+				/>
+				<Select value={group} onValueChange={(v) => setGroup(toGroupMode(v))}>
+					<SelectTrigger size="sm" className="w-auto gap-1.5">
+						<span className="text-text-tertiary">Group</span>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="triage">Triage</SelectItem>
+						<SelectItem value="project">Project</SelectItem>
+						<SelectItem value="stage">Stage</SelectItem>
+					</SelectContent>
+				</Select>
+				<Select value={sort} onValueChange={(v) => setSort(toSortKey(v))}>
+					<SelectTrigger size="sm" className="w-auto gap-1.5">
+						<span className="text-text-tertiary">Sort</span>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="worst">Worst</SelectItem>
+						<SelectItem value="stale">Stale</SelectItem>
+						<SelectItem value="name">Name</SelectItem>
+					</SelectContent>
+				</Select>
+				<span className="ml-auto font-mono text-[11px] text-text-tertiary">
+					<b className="font-semibold text-text-primary">
+						{result.resultCount}
+					</b>{" "}
+					of {result.total} environments
 				</span>
 			</div>
 
-			<div className="flex flex-col gap-3.5">
-				<EvidenceMeters meters={meters} />
-				<EvidenceTriage
-					clusters={triageClusters}
-					active={triage}
-					onSelect={setTriage}
-				/>
-			</div>
-
-			<div className="mt-5 flex flex-col gap-3.5">
-				<EvidenceToolbar
-					search={search}
-					onSearch={setSearch}
-					group={group}
-					onGroup={setGroup}
-					sort={sort}
-					onSort={setSort}
-					stage={stage}
-					onStage={setStage}
-					stages={stages}
-					resultCount={resultCount}
-					total={data.summary.environments}
-					filtered={filtered}
-					onReset={resetFilters}
-				/>
+			<div
+				className={
+					loading
+						? "opacity-60 transition-opacity"
+						: "transition-opacity"
+				}
+			>
 				<EvidenceTable
-					groups={groups}
+					groups={result.groups}
 					expandedId={expandedId}
-					onToggle={(id) =>
-						setExpandedId((cur) => (cur === id ? null : id))
-					}
+					onToggle={(id) => setExpandedId((cur) => (cur === id ? null : id))}
 					onOpen={openDrawer}
 					onDownload={download}
 				/>
-			</div>
 
-			<div className="mt-6">
-				<EvidenceWaivers waivers={data.waivers} />
+				<div className="mt-6">
+					<EvidenceWaivers waivers={result.waivers} />
+				</div>
 			</div>
 
 			<EvidenceDrawer
@@ -188,23 +246,4 @@ function EvidenceLoaded({ data, org }: { data: OrgEvidence; org: string }) {
 			)}
 		</div>
 	);
-}
-
-/** The Evidence page: loading skeleton until the roll-up hydrates, then the full surface. */
-export function EvidenceClient() {
-	const { org } = useParams<{ org: string }>();
-	const { data, isPending } = useEvidenceQuery();
-
-	if (isPending || !data) {
-		return (
-			<div className="space-y-4">
-				<Skeleton className="h-4 w-64" />
-				<Skeleton className="h-28 w-full rounded-lg" />
-				<Skeleton className="h-20 w-full rounded-lg" />
-				<Skeleton className="h-72 w-full rounded-lg" />
-			</div>
-		);
-	}
-
-	return <EvidenceLoaded data={data} org={org} />;
 }
