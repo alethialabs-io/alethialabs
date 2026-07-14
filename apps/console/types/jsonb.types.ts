@@ -315,9 +315,28 @@ export interface IacScanFinding {
 	detail: string;
 }
 
+// One resource DECLARED by a BYO IaC module, as inventoried by the static IAC_SCAN walk
+// (packages/core/iacsafety). This is the pre-plan skeleton the canvas draws so a BYO-IaC
+// environment reads as an architecture before it has ever been planned.
+//
+// Declared, NOT expanded: the static gate never evaluates HCL, so a `count = 3` block
+// appears once here where a plan reports three. A real plan's `resource_changes` therefore
+// SUPERSEDES this wholesale — see lib/canvas/iac-inventory.ts.
+export interface IacScanResource {
+	/** The Terraform address — the key cost, drift and verify findings all join on. */
+	address: string;
+	/** Resource type, e.g. "aws_s3_bucket". */
+	type: string;
+	/** Local name, e.g. "assets". */
+	name: string;
+	/** Module path prefix — absent/"" for the root module, else "module.vpc". */
+	module?: string;
+}
+
 // project_iac_sources.scan_report / execution_metadata.iac_scan_result — the result of an
 // IAC_SCAN job: the runner clones the repo, pins the commit it checked out, inventories the
-// module (providers + module sources) and validates it. `ok=false` blocks provisioning.
+// module (providers + module sources + resources) and validates it. `ok=false` blocks
+// provisioning. Keep in lockstep with the Go `types.IacScanReport`.
 export interface IacScanReport {
 	ok: boolean;
 	/** Whether `tofu validate` ran clean on the root module. */
@@ -327,6 +346,12 @@ export interface IacScanReport {
 	providers: string[];
 	/** Module sources referenced by the root module (registry / git / local paths). */
 	modules: string[];
+	/**
+	 * The module's declared resources. OPTIONAL on purpose: rows scanned by a runner older
+	 * than W8 have no inventory, and the canvas must degrade to the PLAN-derived one rather
+	 * than fabricate an empty architecture. Absent ≠ "the module has no resources".
+	 */
+	resources?: IacScanResource[];
 	/** The commit the scan actually checked out — finalizeIacScan pins it onto the row's
 	 *  commit_sha so deploys apply exactly what was scanned (TOCTOU protection). */
 	commit_sha?: string;

@@ -98,6 +98,10 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+				// Only a `resource` provisions anything (see walk.go).
+				if blk.Type == "resource" && len(blk.Labels) > 1 {
+					s.recordResource(blk.Labels[0], blk.Labels[1], moduleDir)
+				}
 			case "import":
 				s.walkJSONImportBlock(blk, rel)
 			case "data":
@@ -230,7 +234,11 @@ func (s *scanner) walkJSONModuleBlock(blk *hcl.Block, rel, moduleDir string) {
 			"module source is not a static string literal and cannot be verified")
 		return
 	}
-	s.recordModuleSource(v.AsString(), rel, attr.Range.Start.Line, moduleDir)
+	callName := ""
+	if len(blk.Labels) > 0 {
+		callName = blk.Labels[0]
+	}
+	s.recordModuleSource(v.AsString(), rel, attr.Range.Start.Line, moduleDir, callName)
 }
 
 // sweepJSONDangerousKeys re-reads the raw JSON and flags, at any depth and

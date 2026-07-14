@@ -287,10 +287,11 @@ func runIacScanStage(ctx context.Context, p stageIacScanPayload, workDir string,
 		Findings:  toIacFindings(rep.Findings),
 		Providers: nonNilStrings(rep.Providers),
 		Modules:   nonNilStrings(rep.Modules),
+		Resources: toIacResources(rep.Resources),
 		CommitSHA: p.CommitSHA,
 	}
-	fmt.Fprintf(stdout, "Static gate: ok=%v (providers=%v, %d module(s), %d finding(s))\n",
-		rep.OK, report.Providers, len(report.Modules), len(report.Findings))
+	fmt.Fprintf(stdout, "Static gate: ok=%v (providers=%v, %d module(s), %d resource(s), %d finding(s))\n",
+		rep.OK, report.Providers, len(report.Modules), len(report.Resources), len(report.Findings))
 
 	// Only run tofu (which executes provider plugins) on a module the static gate cleared.
 	if rep.OK {
@@ -384,6 +385,22 @@ func toIacFindings(in []iacsafety.Finding) []types.IacScanFinding {
 			File:     f.File,
 			Line:     f.Line,
 			Detail:   f.Detail,
+		})
+	}
+	return out
+}
+
+// toIacResources converts the static gate's declared resource inventory to the
+// console-contract IacResource shape, stamping each with its Terraform address (the key
+// cost / drift / verify all join on). Always non-nil so `resources` serializes as [].
+func toIacResources(in []iacsafety.Resource) []types.IacResource {
+	out := make([]types.IacResource, 0, len(in))
+	for _, r := range in {
+		out = append(out, types.IacResource{
+			Address: r.Address(),
+			Type:    r.Type,
+			Name:    r.Name,
+			Module:  r.Module,
 		})
 	}
 	return out

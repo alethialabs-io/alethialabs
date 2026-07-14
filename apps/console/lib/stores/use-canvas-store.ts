@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ByoChartState } from "@/app/server/actions/byo-charts";
+import type { IacGroup } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	NODE_REGISTRY,
@@ -151,11 +152,13 @@ function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
 }
 
 /**
- * Kinds persisted OUT-OF-BAND (project_addons) rather than through the form graph: BYO Helm charts
- * and marketplace add-ons. They're loaded straight from the server, never written by `graphToForm`,
- * and must never appear in the Deploy diff — they aren't staged changes.
+ * Kinds persisted OUT-OF-BAND rather than through the form graph: BYO Helm charts and marketplace
+ * add-ons (`project_addons`), and the external cards of a bring-your-own IaC module
+ * (`project_iac_sources` + the last plan). They're loaded straight from the server, never written by
+ * `graphToForm`, and must never appear in the Deploy diff — they aren't staged changes. Deploying a
+ * card the design does not own would be the Deploy button lying.
  */
-export const OUT_OF_BAND = new Set<NodeKind>(["chart", "addon"]);
+export const OUT_OF_BAND = new Set<NodeKind>(["chart", "addon", "external"]);
 
 /** A staged difference between the canvas (desired) and the saved baseline. */
 export interface PendingChange {
@@ -289,6 +292,9 @@ interface CanvasStore {
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
 	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
 	setChartNodes: (charts: ByoChartState[]) => void;
+	/** Replace the external cards of a BYO IaC module (out-of-band; read-only; not a staged
+	 * change). Built by `buildIacInventory` from the module's scan + last plan. */
+	setIacNodes: (groups: IacGroup[]) => void;
 	/** Replace all marketplace add-on nodes (out-of-band; not a staged change). */
 	setAddonNodes: (
 		addons: {
@@ -484,6 +490,32 @@ export const useCanvasStore = create<CanvasStore>()(
 					},
 				}));
 				const next = [...others, ...addonNodes];
+				set({ nodes: next, edges: deriveEdges(next) });
+			},
+
+			setIacNodes: (groups) => {
+				const others = get().nodes.filter((n) => n.data.kind !== "external");
+				const iacNodes: CanvasNode[] = groups.map((g, i) => ({
+					id: `external-${g.key}`,
+					type: "external",
+					// Read-only: the customer's module owns these. There is nothing to delete here —
+					// removing a resource means editing their Terraform, not this board.
+					deletable: false,
+					position: { x: 120 + (i % 3) * 270, y: 340 + Math.floor(i / 3) * 150 },
+					data: {
+						kind: "external",
+						config: {
+							key: g.key,
+							mappedKind: g.kind,
+							module: g.module,
+							source: g.source,
+							members: g.members,
+						},
+						cloud_identity_id: null,
+						provider: null,
+					},
+				}));
+				const next = [...others, ...iacNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
 			},
 

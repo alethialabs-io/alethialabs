@@ -5,6 +5,7 @@ import {
 	Archive,
 	Blocks,
 	Box,
+	Boxes,
 	Database,
 	GitBranch,
 	Globe,
@@ -19,6 +20,7 @@ import {
 	Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { OTHER_GROUP } from "@/lib/canvas/iac-inventory";
 import {
 	AUTOSCALER,
 	DB_CAPACITY,
@@ -50,8 +52,9 @@ export type SchemaKey =
 	| "secrets"
 	| "storage_buckets"
 	| "container_registries"
-	// Chart nodes are out-of-band (project_addons), never written into ProjectFormData — this key
-	// exists only to satisfy the exhaustive registry; the graph⇄form mappers never read it.
+	// Chart / add-on / external nodes are OUT-OF-BAND (project_addons, project_iac_sources) and are
+	// never written into ProjectFormData — this key exists only to satisfy the exhaustive registry;
+	// the graph⇄form mappers never read it. See OUT_OF_BAND_KINDS in use-canvas-store.ts.
 	| "charts";
 
 /** Display order of the Add-palette groups (mirrors the provisionable service types). */
@@ -697,6 +700,54 @@ export const NODE_REGISTRY: NodeRegistry = {
 			chartPath: "",
 			ref: "HEAD",
 			namespace: "default",
+		}),
+	},
+	// One card of a bring-your-own IaC module: every resource of one KIND, in one Terraform
+	// module. Out-of-band and read-only — derived from the module's IAC_SCAN inventory (or, once
+	// planned, its plan's resource_changes) by lib/canvas/iac-inventory.ts; never addable, never
+	// in the Deploy diff. A BYO module is 50–200 resources, and 200 cards is the wall of boxes the
+	// collection rule exists to prevent — so it groups, exactly as the Secrets vault does.
+	external: {
+		kind: "external",
+		schemaKey: "charts",
+		cardinality: "array",
+		// The customer's own module. Alethia plans, prices, drifts and audits it — it does not own
+		// its definition. Drawn dashed.
+		classification: "external",
+		cloudScoped: false,
+		eyebrow: "External",
+		label: "External resources",
+		icon: Boxes,
+		// Rendered by the ONE data-driven card (BaseNode), which resolves the glyph + eyebrow through
+		// `mappedKind` so the group wears its kind's face. The card's title is the Terraform module,
+		// so the facts answer: how much, of what, and how sure are we.
+		//
+		// `Source` is the honesty fact. A PLAN's addresses are exact and count/for_each-expanded; the
+		// static scan's are merely DECLARED — a `count = 3` block is one line there, three in reality.
+		// Saying which one you're looking at is the difference between a fact and a guess.
+		card: {
+			facts: ({ config }) => {
+				const types = [...new Set(config.members.map((m) => m.type))];
+				const n = config.members.length;
+				return [
+					{ label: "Resources", value: n === 1 ? "1" : String(n) },
+					{
+						label: "Types",
+						value:
+							types.length <= 2
+								? types.join(" · ")
+								: `${types.slice(0, 2).join(" · ")} +${types.length - 2}`,
+					},
+					{ label: "Source", value: config.source === "plan" ? "planned" : "declared" },
+				];
+			},
+		},
+		defaultData: () => ({
+			key: `${OTHER_GROUP}|`,
+			mappedKind: null,
+			module: "",
+			source: "scan" as const,
+			members: [],
 		}),
 	},
 };

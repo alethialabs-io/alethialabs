@@ -91,6 +91,35 @@ const iacSnapshotSchema = z
 	.catch({});
 
 /**
+ * Move a BYO IaC module's own lifecycle (`project_iac_sources.status`) as its jobs run.
+ *
+ * This column shipped with the table and NOTHING ever wrote it — it sat at its PENDING default
+ * forever, so a fully-live BYO environment still read "never deployed" everywhere. It is what the
+ * canvas's external cards resolve their state through, so the in-flight and failed states have to be
+ * real, not just the terminal ones `finalizeDeployment` writes.
+ *
+ * No-op for a template environment: no `project_iac_sources` row matches, so the UPDATE touches
+ * nothing. Best-effort by construction — a status callback must never fail on this.
+ */
+export async function setIacSourceStatus(
+	projectId: string,
+	environmentId: string,
+	status: "CREATING" | "DESTROYING" | "FAILED",
+	message: string | null = null,
+) {
+	const db = getServiceDb();
+	await db
+		.update(projectIacSources)
+		.set({ status, status_message: message, updated_at: new Date() })
+		.where(
+			and(
+				eq(projectIacSources.project_id, projectId),
+				eq(projectIacSources.environment_id, environmentId),
+			),
+		);
+}
+
+/**
  * After a DEPLOY job succeeds, persist terraform outputs to the project component
  * tables. Service path — runs on the BYPASSRLS connection (runner-triggered).
  *
@@ -129,11 +158,17 @@ export async function finalizeDeployment(jobId: string) {
 	if (job.job_type === "DEPLOY" || job.job_type === "DESTROY") {
 		const snap = iacSnapshotSchema.parse(job.config_snapshot ?? {});
 		if (snap.iac_source) {
+			const deploying = job.job_type === "DEPLOY";
 			await db
 				.update(projectIacSources)
 				.set({
-					deployed_commit_sha:
-						job.job_type === "DEPLOY" ? (snap.iac_source.commit_sha ?? null) : null,
+					deployed_commit_sha: deploying ? (snap.iac_source.commit_sha ?? null) : null,
+					// The module's own lifecycle. `status` shipped on this table from the start and
+					// NOTHING has ever written it — it sat at its PENDING default forever, so a BYO
+					// environment could be fully live and every surface still read "not deployed".
+					// The canvas's external cards resolve their state through this column.
+					status: deploying ? "ACTIVE" : "DESTROYED",
+					status_message: null,
 					updated_at: new Date(),
 				})
 				.where(
