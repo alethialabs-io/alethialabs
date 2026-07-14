@@ -63,6 +63,16 @@ export default defineConfig({
 			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
 		},
 
+		// The Architecture canvas journeys. One SHARED persona (the `setup` project) rather than a
+		// signup per test: these are about the board, and a handful of hermetic signups in a row trips
+		// Better Auth's per-IP rate limit — the same reason elench-ai shares one.
+		{
+			name: "canvas",
+			testMatch: /architecture-canvas\.spec\.ts/,
+			dependencies: ["setup"],
+			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+		},
+
 		// Everything else (the broader smoke specs) self-signs-up per test via the auth fixture, so
 		// no shared storageState here. Kept separate so `--project=hero` stays clean + fast in CI.
 		{
@@ -72,6 +82,7 @@ export default defineConfig({
 				/hero-happy-path\.spec\.ts/,
 				/elench-ai\.spec\.ts/,
 				/elench-live\.spec\.ts/,
+				/architecture-canvas\.spec\.ts/,
 			],
 			use: { ...devices["Desktop Chrome"] },
 		},
