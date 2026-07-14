@@ -27,6 +27,7 @@ import {
 } from "@/lib/canvas/collections";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
 import { CollectionPanel } from "./inspector/collection-panel";
+import { ExternalPanel } from "./inspector/external-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
@@ -88,6 +89,12 @@ export function InspectorPanel({
 	if (collectionKind) return <CollectionPanel kind={collectionKind} />;
 
 	if (!node || !def) return null;
+
+	// An EXTERNAL card belongs to a bring-your-own IaC module. It has no editable config — changing
+	// one of those resources means editing the customer's Terraform, not this panel — so it gets the
+	// read-only member list instead of the config form (which would otherwise render an editable name
+	// field and write a `name` into a config that has none).
+	if (node.data.kind === "external") return <ExternalPanel nodeId={node.id} />;
 
 	const gated =
 		def.classification === "core" &&

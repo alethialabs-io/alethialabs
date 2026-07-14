@@ -20,6 +20,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectIacSources,
 	projectNetwork,
 	projectNosqlTables,
 	projectQueues,
@@ -33,13 +34,16 @@ import {
 	EMPTY_ENVIRONMENT_STATUS,
 	type ComponentServerStatus,
 	type EnvironmentStatus,
+	type IacEnvironment,
 } from "@/lib/canvas/component-status";
 import { attributeDrift, kindForResourceType, type DriftTarget } from "@/lib/canvas/drift-map";
+import { buildIacInventory, parsePlanInventory } from "@/lib/canvas/iac-inventory";
 import { getLatestEnvironmentCost } from "@/app/server/actions/cost";
 import { structuralHash } from "@/lib/promotions/diff";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
+import type { DriftDetail } from "@/types/jsonb.types";
 
 /** A component row reduced to what status needs. `name` is absent for singleton kinds. */
 type StatusRow = {
@@ -269,34 +273,54 @@ export async function getEnvironmentComponentStatus(
 			.then((r) => r[0]),
 	]);
 
-	// Attribute each drifted resource back onto the node that designed it. Anything we can't place
-	// (unknown resource type, or an ambiguous kind) rolls up to the environment — never dropped.
-	const { byKey, unattributed } = attributeDrift(driftRow?.details ?? [], targets);
-	for (const [key, details] of byKey) {
-		const component = components[key];
-		if (component) component.drift = details;
-	}
-
-	// Cost, from the environment's last PLAN. Infracost prices by Terraform ADDRESS — the same key
-	// drift uses — so a cost line lands on the card that designed it via the same map. Lines we can't
-	// place still count toward the environment total; they're just not shown on a card, which is the
-	// same honesty rule as drift: never attribute a number to a resource it might not belong to.
 	const cost = await getLatestEnvironmentCost(projectId, envId).catch(() => null);
-	if (cost) {
-		for (const line of cost.resources) {
-			const kind = kindForResourceType(line.resourceType);
-			if (!kind) continue;
-			const candidates = targets.filter((t) => t.kind === kind);
-			// Only attribute when it's unambiguous — one node of that kind, or one whose name the
-			// address actually contains.
-			const match =
-				candidates.length === 1
-					? candidates[0]
-					: candidates.find((t) => t.name && line.address.includes(t.name));
-			if (!match) continue;
-			const component = components[match.key];
-			if (!component) continue;
-			component.monthlyCost = (component.monthlyCost ?? 0) + line.monthlyCost;
+
+	// Is this environment governed by a bring-your-own IaC module? If so its component rows are
+	// INERT — designed but never provisioned, because the module replaced the template — and the
+	// architecture is the module's own resources.
+	const iac = await getIacEnvironment(projectId, envId);
+
+	let unattributed: DriftDetail[];
+
+	if (iac) {
+		// EXACT-ADDRESS attribution. A BYO module's resources ARE Terraform addresses, and so are the
+		// drift details and the cost lines — so they join on the nose, with no heuristic.
+		//
+		// This also closes a real bug: attributing a BYO module's drift through the type→kind + name
+		// heuristic below badged the INERT design rows, so a customer module's `aws_eks_*` drift
+		// showed up on a design cluster node that does not exist in their cloud. The board lied.
+		unattributed = attributeToIacGroups(components, iac, driftRow?.details ?? [], cost);
+	} else {
+		// Template env: attribute each drifted resource back onto the node that designed it. Anything
+		// we can't place (unknown resource type, or an ambiguous kind) rolls up to the environment —
+		// never dropped.
+		const attribution = attributeDrift(driftRow?.details ?? [], targets);
+		unattributed = attribution.unattributed;
+		for (const [key, details] of attribution.byKey) {
+			const component = components[key];
+			if (component) component.drift = details;
+		}
+
+		// Cost, from the environment's last PLAN. Infracost prices by Terraform ADDRESS — the same key
+		// drift uses — so a cost line lands on the card that designed it via the same map. Lines we can't
+		// place still count toward the environment total; they're just not shown on a card, which is the
+		// same honesty rule as drift: never attribute a number to a resource it might not belong to.
+		if (cost) {
+			for (const line of cost.resources) {
+				const kind = kindForResourceType(line.resourceType);
+				if (!kind) continue;
+				const candidates = targets.filter((t) => t.kind === kind);
+				// Only attribute when it's unambiguous — one node of that kind, or one whose name the
+				// address actually contains.
+				const match =
+					candidates.length === 1
+						? candidates[0]
+						: candidates.find((t) => t.name && line.address.includes(t.name));
+				if (!match) continue;
+				const component = components[match.key];
+				if (!component) continue;
+				component.monthlyCost = (component.monthlyCost ?? 0) + line.monthlyCost;
+			}
 		}
 	}
 
@@ -317,7 +341,135 @@ export async function getEnvironmentComponentStatus(
 		driftScannedAt: driftRow?.scanned_at.toISOString() ?? null,
 		monthlyCost: cost?.totalMonthly ?? null,
 		costCapturedAt: cost?.capturedAt ?? null,
+		iac,
 	};
+}
+
+/** The canvas key an external group's card is joined on (mirrors `nodeStatusKey`). */
+export function externalStatusKey(groupKey: string): string {
+	return `external:${groupKey}`;
+}
+
+/**
+ * Resolve the BYO IaC module governing this environment, and derive its architecture.
+ *
+ * Two inventory sources, in strict precedence (see lib/canvas/iac-inventory.ts): the last
+ * SUCCESSFUL plan's `resource_changes` (exact, count/for_each-expanded — and the same addresses
+ * cost/drift/verify speak), else the IAC_SCAN's declared skeleton, which lands for free at attach
+ * time with no cloud credentials. Returns null for a template environment.
+ */
+async function getIacEnvironment(
+	projectId: string,
+	envId: string,
+): Promise<IacEnvironment | null> {
+	const db = getServiceDb();
+	const [row] = await db
+		.select()
+		.from(projectIacSources)
+		.where(
+			and(
+				eq(projectIacSources.project_id, projectId),
+				eq(projectIacSources.environment_id, envId),
+				eq(projectIacSources.enabled, true),
+			),
+		)
+		.limit(1);
+	if (!row) return null;
+
+	// The last SUCCESSFUL plan for this env — its resource_changes are the real, expanded inventory.
+	const [planJob] = await db
+		.select({ metadata: jobs.execution_metadata })
+		.from(jobs)
+		.where(
+			and(
+				eq(jobs.project_id, projectId),
+				eq(jobs.environment_id, envId),
+				eq(jobs.job_type, "PLAN"),
+				eq(jobs.status, "SUCCESS"),
+			),
+		)
+		.orderBy(desc(jobs.created_at))
+		.limit(1);
+
+	const planMembers = parsePlanInventory(planJob?.metadata?.plan_result ?? null);
+	const groups = buildIacInventory({
+		scanResources: row.scan_report?.resources ?? null,
+		planMembers,
+	});
+
+	return {
+		source: {
+			repoUrl: row.repo_url,
+			ref: row.ref,
+			path: row.path,
+			commitSha: row.commit_sha,
+			deployedCommitSha: row.deployed_commit_sha,
+			scanStatus: row.scan_status,
+			// An unscanned module is an honest unknown, not a pass — the deploy gate treats it as
+			// blocking, and so must the board.
+			scanOk: row.scan_report ? row.scan_report.ok : null,
+			status: row.status,
+			statusMessage: row.status_message,
+		},
+		groups,
+		// Filled by attributeToIacGroups, which already walks the cost lines.
+		costByAddress: {},
+	};
+}
+
+/**
+ * Attribute drift and cost onto the external cards by EXACT Terraform address, and register each
+ * group in `components` so the canvas resolves it through the same channel as every other node.
+ *
+ * Returns the drift that belongs to no group — a resource the module builds but neither the scan nor
+ * the last plan knows about (e.g. it was added since). It rolls up to the environment rather than
+ * being pinned to a card it may not belong to, exactly as unattributable template drift does.
+ */
+function attributeToIacGroups(
+	components: Record<string, ComponentServerStatus>,
+	iac: IacEnvironment,
+	details: DriftDetail[],
+	cost: { resources: { address: string; monthlyCost: number }[] } | null,
+): DriftDetail[] {
+	const groups = iac.groups;
+
+	// address → group key. One pass, so attribution is O(resources), not O(resources × groups).
+	const owner = new Map<string, string>();
+	for (const group of groups) {
+		for (const member of group.members) owner.set(member.address, group.key);
+	}
+
+	for (const group of groups) {
+		components[externalStatusKey(group.key)] = {
+			// A BYO module applies atomically, so every card in it shares the MODULE's lifecycle
+			// (project_iac_sources.status, which finalizeDeployment now writes). The per-group
+			// refinement — which of these resources the last plan would still change — happens
+			// client-side in `resolveExternalStatus`, where the plan actions live.
+			lifecycle: iac.source.status,
+			message: iac.source.statusMessage,
+			drift: [],
+		};
+	}
+
+	const unattributed: DriftDetail[] = [];
+	for (const detail of details) {
+		const key = owner.get(detail.address);
+		const component = key ? components[externalStatusKey(key)] : undefined;
+		if (component) component.drift.push(detail);
+		else unattributed.push(detail);
+	}
+
+	for (const line of cost?.resources ?? []) {
+		const key = owner.get(line.address);
+		const component = key ? components[externalStatusKey(key)] : undefined;
+		if (!component) continue; // still counts toward the env total; just not shown on a card
+		component.monthlyCost = (component.monthlyCost ?? 0) + line.monthlyCost;
+		// Per-address, so a card's panel can say WHICH resource costs the money.
+		iac.costByAddress[line.address] =
+			(iac.costByAddress[line.address] ?? 0) + line.monthlyCost;
+	}
+
+	return unattributed;
 }
 
 /**

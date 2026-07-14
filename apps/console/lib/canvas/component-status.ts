@@ -8,6 +8,47 @@
 
 import type { ComponentStatus } from "@/lib/db/schema/enums";
 import type { DriftDetail } from "@/types/jsonb.types";
+import type { IacGroup } from "./iac-inventory";
+
+/**
+ * The bring-your-own IaC module governing this environment, when one does (v1 "replace mode":
+ * the module, not the component design, is the source of truth). Null for a template env.
+ */
+export interface IacEnvironment {
+	/** The attached module: where it comes from, whether it's safe, and what's live. */
+	source: {
+		repoUrl: string;
+		ref: string | null;
+		path: string;
+		/** The commit the last successful scan pinned — what a deploy would apply. */
+		commitSha: string | null;
+		/** The commit the last successful DEPLOY applied. Null = never deployed. */
+		deployedCommitSha: string | null;
+		/** unscanned | scanning | done | failed. */
+		scanStatus: string;
+		/**
+		 * The safety gate's verdict. `false` means the module is REJECTED and will not provision.
+		 * `null` means never scanned — an honest unknown, not a pass.
+		 */
+		scanOk: boolean | null;
+		/** The module's own provisioning lifecycle (project_iac_sources.status). */
+		status: ComponentStatus;
+		statusMessage: string | null;
+	};
+	/**
+	 * The module's architecture as external cards. Empty when it has been neither scanned by a
+	 * W8-or-later runner nor planned — in which case the board says so rather than drawing nothing
+	 * and implying the module is empty.
+	 */
+	groups: IacGroup[];
+	/**
+	 * Monthly cost per Terraform address, from the last PLAN's Infracost breakdown. This is what lets
+	 * a card's panel answer "which of these resources costs the money", not just "this group costs
+	 * $40". An address absent here was never priced (free, or unpriceable) — which is NOT $0, so the
+	 * panel says nothing rather than a confident zero.
+	 */
+	costByAddress: Record<string, number>;
+}
 
 /** What the server knows about ONE provisioned component. */
 export interface ComponentServerStatus {
@@ -63,6 +104,11 @@ export interface EnvironmentStatus {
 	monthlyCost: number | null;
 	/** The plan the cost came from, so the UI can say WHEN this was true. */
 	costCapturedAt: string | null;
+	/**
+	 * The BYO IaC module governing this environment, or null for a template env. When present, the
+	 * component design is inert and `iac.groups` — not `components` — is the architecture.
+	 */
+	iac: IacEnvironment | null;
 }
 
 /** The empty status — an environment that has never been deployed (or one we couldn't read). */
@@ -75,4 +121,5 @@ export const EMPTY_ENVIRONMENT_STATUS: EnvironmentStatus = {
 	driftScannedAt: null,
 	monthlyCost: null,
 	costCapturedAt: null,
+	iac: null,
 };

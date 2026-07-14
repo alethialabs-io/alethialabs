@@ -3,7 +3,10 @@
 
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { finalizeDeployment } from "@/app/server/actions/deployments";
+import {
+	finalizeDeployment,
+	setIacSourceStatus,
+} from "@/app/server/actions/deployments";
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
 import { finalizeIacScan } from "@/app/server/actions/byo-iac";
 import { recordDriftPosture } from "@/app/server/actions/drift";
@@ -249,9 +252,10 @@ export async function PUT(
 			// environment_id). Legacy / non-project jobs without one simply skip the update.
 			if (job?.project_id && job.environment_id) {
 				const environmentId = job.environment_id;
+				const projectId = job.project_id;
 				const envMeta = {
 					orgId: job.org_id,
-					projectId: job.project_id,
+					projectId,
 				};
 				// Route EVERY env-status write through the CAS RPC (lib/db/env-status.ts) so a
 				// late/racing runner callback can't clobber a newer terminal state (last-writer-wins).
@@ -260,11 +264,26 @@ export async function PUT(
 				// update surfaces via that alert; converging it is the B2c reconciler backstop.
 				const move = (context: EnvTransitionContext) =>
 					transitionEnv(db, environmentId, context, jobId, envMeta);
+				// A BYO IaC module carries its OWN lifecycle on project_iac_sources.status (the canvas's
+				// external cards read their state from it). The terminal states are written by
+				// finalizeDeployment; these are the in-flight and failed ones, so the module's cards can
+				// show "applying" and "failed" rather than silently sitting at their last terminal state.
+				// No-op on a template env (no row matches). Best-effort — never fail a status callback.
+				const moveIac = (
+					s: "CREATING" | "DESTROYING" | "FAILED",
+					msg: string | null = null,
+				) =>
+					setIacSourceStatus(projectId, environmentId, s, msg).catch((err) =>
+						jlog.error("set iac source status", { err }),
+					);
+
 				if (job.job_type === "DEPLOY") {
 					if (status === "PROCESSING") {
 						await move("deployStart");
+						await moveIac("CREATING");
 					} else if (status === "FAILED") {
 						await move("deployFailed");
+						await moveIac("FAILED", error_message || null);
 						// A promotion's deploy failed → mark the promotion FAILED (no-op otherwise).
 						await failPromotionForJob(jobId).catch((err) =>
 							jlog.error("fail promotion (deploy) error", { err }),
@@ -285,8 +304,10 @@ export async function PUT(
 				} else if (job.job_type === "DESTROY") {
 					if (status === "PROCESSING") {
 						await move("destroyStart");
+						await moveIac("DESTROYING");
 					} else if (status === "FAILED") {
 						await move("destroyFailed");
+						await moveIac("FAILED", error_message || null);
 					} else if (status === "SUCCESS") {
 						// A successful DESTROY tore down the env's infra — clear the BYO-IaC
 						// deployed-commit pin so the source can be detached again (finalizeDeployment
