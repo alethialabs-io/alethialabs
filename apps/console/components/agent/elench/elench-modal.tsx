@@ -12,6 +12,7 @@ import { ThreadRail } from "@/components/agent/thread-rail";
 import type { AgentThread } from "@/lib/db/schema";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { useElenchWorkspaces } from "./use-elench-workspaces";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";
 
 /**
@@ -76,6 +77,12 @@ export function ElenchModal({
 	// Which surface the main region shows (chat / artifacts / knowledge) — mutually exclusive.
 	const mainView = useElenchStore((s) => s.mainView);
 	const setMainView = useElenchStore((s) => s.setMainView);
+	// The workspace switcher (Chats + Projects) — stepping into a project re-scopes the whole
+	// surface via the store's ctx: its chats, its Knowledge row, its memory namespace.
+	const { projects: workspaces, activeProjectId, selectWorkspace } =
+		useElenchWorkspaces();
+	const activeWorkspaceName =
+		workspaces.find((w) => w.id === activeProjectId)?.name ?? "Chat";
 	// Both contexts persist threads now, so the rail shows for project as well as org.
 	const showSidebar = sidebarOpen;
 
@@ -140,8 +147,15 @@ export function ElenchModal({
 				{showSidebar && (
 					<div className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
 						<div className="flex items-center gap-2 px-3.5 py-3">
-							<AlethiaLogo className="h-6 w-auto text-foreground" />
-							<span className="text-sm font-semibold">Chat</span>
+							<AlethiaLogo className="h-6 w-auto flex-none text-foreground" />
+							{/* Name the workspace you're in — a project chat is a different place
+							    from the general assistant, and it should look like one. */}
+							<span
+								title={activeWorkspaceName}
+								className="min-w-0 flex-1 truncate text-sm font-semibold"
+							>
+								{activeWorkspaceName}
+							</span>
 							<button
 								type="button"
 								aria-label="Collapse sidebar"
@@ -165,6 +179,9 @@ export function ElenchModal({
 								knowledge ? () => setMainView("knowledge") : undefined
 							}
 							knowledgeActive={mainView === "knowledge"}
+							workspaces={workspaces}
+							activeProjectId={activeProjectId}
+							onSelectWorkspace={selectWorkspace}
 						/>
 					</div>
 				)}
