@@ -36,7 +36,22 @@
 # Usage:
 #   ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=us-east-1 ./scripts/e2e/aws-cleanup.sh
 #   (positional $1 accepted for call-site symmetry with hcloud-cleanup.sh but IGNORED.)
-#   DRY_RUN=1 ...   # list what WOULD be deleted, delete + verify nothing
+#   DRY_RUN=1 ...     # list what WOULD be deleted, delete + verify nothing
+#   PREFLIGHT=1 ...   # BEFORE provisioning: sweep PRIOR-run e2e orphans (any other e2e-<env>),
+#                     #   NOT this run. Best-effort + loud (warns on residual, never exit 1).
+#
+# ── PREFLIGHT (stale-cluster preflight, BYOC A1.4) ──────────────────────────────────────────
+# A prior nightly that was hard-killed before BOTH its graceful destroy AND its always() sweep
+# leaks billable resources that keep costing until the NEXT run notices. PREFLIGHT=1 runs before
+# provisioning and sweeps those orphans. It discovers every OTHER e2e run's handle via
+# `resourcegroupstaggingapi get-tag-values` (all values of the `alethia:project-id` key), keeps
+# only `e2e-`-prefixed values, EXCLUDES this run, re-validates each against the same specificity +
+# prod/shared denylist guards, and runs the identical scope-locked sweep+verify per orphan. It is
+# safe to sweep another e2e-* handle because same-cloud nightly runs are SERIALIZED (the
+# `e2e-nightly-aws` concurrency group) — so any other e2e-* value is a prior-run orphan, never a
+# concurrent sibling. Posture is best-effort: a residual orphan emits `::warning::` but does NOT
+# fail (a flaky tag/API call must not red an otherwise-healthy provisioning night; the per-run
+# always() teardown stays the fail-closed guarantee for THIS run, and the next preflight retries).
 #
 # Requires: awscli v2 (digest-pinned in the workflow), configured creds (OIDC in CI), jq.
 set -euo pipefail
@@ -47,6 +62,7 @@ ENV="${ALETHIA_E2E_ENV:-}"
 # empty → delete nothing, verify nothing, exit green while the real region bills (grill F3).
 REGION="${ALETHIA_E2E_REGION:-}"
 DRY_RUN="${DRY_RUN:-0}"
+PREFLIGHT="${PREFLIGHT:-0}"
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 DETACH_TIMEOUT="${DETACH_TIMEOUT:-180}"
 
@@ -90,8 +106,11 @@ CLUSTER="" # discovered below (eks-<regionShort>-<env>-<project>); may be found 
 
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION" AWS_PAGER=""
 
-echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
-[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+# The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
+if [ "$PREFLIGHT" != "1" ]; then
+	echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
+	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+fi
 
 assert_scope() {
 	if [ -z "${PROJECT_ID_TAG#e2e-}" ]; then
@@ -457,6 +476,78 @@ verify_swept() {
 	[ -n "$residue" ] && echo "::notice::aws cleanup: network residue still tagged (non-billable, will age out): $(printf '%s ' $residue)"
 	return 0
 }
+
+# ── sweep_env <env> — the full scope-locked sweep + verify for ONE run's ENV. Sets the
+#    ENV/PROJECT_ID_TAG/CLUSTER globals the sweep functions read, then runs them in the same strict
+#    dependency order as the normal path. Returns verify_swept's status (0 clean / 1 leak); DRY_RUN
+#    lists only and returns 0. Used by PREFLIGHT to sweep each discovered prior-run orphan. ──
+sweep_env() {
+	ENV="$1"
+	PROJECT_ID_TAG="e2e-${ENV}"
+	CLUSTER=""
+	assert_scope
+	discover_cluster
+	sweep_instances
+	sweep_load_balancers
+	sweep_eks
+	sweep_nat_and_eips
+	sweep_volumes
+	sweep_network
+	[ "$DRY_RUN" = "1" ] && return 0
+	verify_swept
+}
+
+# ── list_orphan_envs — every OTHER e2e run's ENV that still has project-id-tagged resources in this
+#    region (prior-run orphans). Discovers all values of the `alethia:project-id` tag key via
+#    get-tag-values, keeps only `e2e-`-prefixed values (never a real prod project-id), strips the
+#    prefix, EXCLUDES this run (SELF_ENV), and re-validates each against the SAME specificity +
+#    prod/shared denylist guards as the top-of-file ENV guards — so a preflight can never widen past
+#    a genuine prior nightly. Empty output ⇒ nothing to sweep. ──
+list_orphan_envs() {
+	local vals v oenv
+	vals="$(aws resourcegroupstaggingapi get-tag-values --key alethia:project-id \
+		--query 'TagValues[]' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+	while IFS= read -r v; do
+		[ -n "$v" ] || continue
+		case "$v" in e2e-*) ;; *) continue ;; esac # e2e-prefixed values only — never prod project-ids
+		oenv="${v#e2e-}"
+		[ "$oenv" = "$SELF_ENV" ] && continue # skip THIS run (its own teardown handles it)
+		printf '%s' "$oenv" | grep -Eq '^[a-z0-9][a-z0-9._-]{4,62}$' || continue
+		case "$oenv" in
+		prod | prod-* | production | production-* | staging | staging-* | main | alethia | alethia-* | data) continue ;;
+		esac
+		printf '%s\n' "$oenv"
+	done <<<"$vals" | sort -u
+}
+
+# ── PREFLIGHT: sweep prior-run e2e orphans (NOT this run), best-effort + loud. ──
+SELF_ENV="$ENV"
+if [ "$PREFLIGHT" = "1" ]; then
+	echo "→ aws STALE PREFLIGHT in ${REGION}: sweeping prior-run e2e orphans (excludes this run ${SELF_ENV})"
+	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+	orphans="$(list_orphan_envs || true)"
+	if [ -z "$orphans" ]; then
+		echo "✓ preflight: no prior-run e2e orphans in ${REGION} — nothing to sweep"
+		exit 0
+	fi
+	# shellcheck disable=SC2086
+	echo "  orphan run ENVs found: $(printf '%s ' $orphans)"
+	residual=0
+	while IFS= read -r oenv; do
+		[ -n "$oenv" ] || continue
+		echo "── preflight sweep: prior run ${oenv} ──"
+		if ! sweep_env "$oenv"; then
+			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
+			residual=1
+		fi
+	done <<<"$orphans"
+	if [ "$residual" = "1" ]; then
+		echo "⚠ preflight finished with residual orphans (see warnings above) — continuing (best-effort, non-fatal)"
+	else
+		echo "✓ preflight complete — all prior-run e2e orphans in ${REGION} swept"
+	fi
+	exit 0 # preflight never blocks the provisioning run
+fi
 
 # ── Orchestrate, in strict dependency order. ──
 discover_cluster

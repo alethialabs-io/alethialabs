@@ -22,7 +22,10 @@ import {
 	StoredNote,
 	VerifySection,
 } from "@/components/connector/connection-ui";
-import { connectorAssetUrl } from "@/components/connector/connector-assets";
+import {
+	ALETHIA_ISSUER_URL,
+	connectorAssetUrl,
+} from "@/components/connector/connector-assets";
 import {
 	type VerifyOutcome,
 	useConnectionTest,
@@ -181,8 +184,9 @@ export function AlibabaConnection({
 	const retry = state.phase === "failed";
 
 	const scriptUrl = connectorAssetUrl("alethia-alibaba-setup.sh");
-	// The script needs no arguments — it defaults the issuer and creates the RAM OIDC provider + role.
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-alibaba-setup.sh`;
+	// Pass the issuer explicitly so a self-hosted console points the customer's trust at its OWN issuer
+	// (the script also defaults it). Creates the RAM OIDC provider + role.
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-alibaba-setup.sh ${ALETHIA_ISSUER_URL}`;
 	const cloudShellUrl = "https://shell.aliyun.com";
 
 	/** Downloads the customer setup OpenTofu module (served from public/). */

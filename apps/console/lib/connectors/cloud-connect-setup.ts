@@ -39,7 +39,8 @@ export interface CloudConnectSetup {
 	/**
 	 * Whether THIS instance is configured to support a provider's connect flow (keyed by connector
 	 * slug). Managed clouds (aws/gcp/azure/alibaba) federate into the customer's role off Alethia's OIDC
-	 * issuer — without the issuer (and, for Azure, its app id) a connect can only ever fail. Git providers
+	 * issuer — without the issuer configured a connect can only ever fail (Azure needs no platform app id — it
+	 * authenticates as the customer's own UAMI, parity with AWS/GCP/Alibaba). Git providers
 	 * (github/gitlab/bitbucket) need an OAuth app registered in Better Auth — without its
 	 * client id/secret `linkSocial` rejects. In both cases the UI says "not enabled on this
 	 * instance" up-front instead of offering a doomed Connect. Token clouds

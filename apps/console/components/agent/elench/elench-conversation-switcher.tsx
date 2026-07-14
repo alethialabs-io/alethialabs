@@ -6,6 +6,7 @@ import { ChevronDown, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AgentThread } from "@/lib/db/schema";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { ScrollArea } from "@repo/ui/scroll-area";
 
 /** "13m ago" etc. */
 function relTime(d: Date): string {
@@ -80,7 +81,7 @@ export function ElenchConversationSwitcher({
 						{filtered.length > 0 && (
 							<div className="vx-eyebrow px-2 pb-1 pt-2 text-[9px]">Recent</div>
 						)}
-						<div className="max-h-[240px] overflow-y-auto">
+						<ScrollArea className="max-h-[240px] [&_[data-slot=scroll-area-viewport]>div]:!block">
 							{filtered.map((t) => (
 								<button
 									key={t.id}
@@ -102,7 +103,7 @@ export function ElenchConversationSwitcher({
 									</span>
 								</button>
 							))}
-						</div>
+						</ScrollArea>
 						<div className="my-1.5 h-px bg-border" />
 					</>
 				)}

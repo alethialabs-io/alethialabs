@@ -47,7 +47,7 @@ func (w *Runner) executeChartScan(ctx context.Context, job *Job, stdout, stderr 
 
 	// Parent clone (trusted: has the git token + egress). The chart lands under the
 	// RW-mounted workdir so the untrusted render sees it without any token/egress.
-	token, err := w.api.FetchGitToken(job.ID)
+	token, err := w.api.FetchGitToken(job.ID, "")
 	if err != nil {
 		fmt.Fprintf(stderr, "No git token (%v); attempting public clone.\n", err)
 	}

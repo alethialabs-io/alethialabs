@@ -87,7 +87,21 @@ tofu apply -var 'e2e_budget_alert_emails=["you@alethialabs.io"]'
 
 # 2. Publish the role ARN as the repo Actions VARIABLE the nightly gates on.
 gh variable set E2E_AWS_ROLE_ARN -b "$(tofu output -raw e2e_nightly_role_arn)"
+
+# 3. (A1.4) Cost ceiling — set the Infracost API key SECRET so the apply's plan can be priced,
+#    then (optionally) the monthly-USD ceiling VARIABLE. The in-process runner fail-closes a real
+#    apply whose estimated monthly cost exceeds the ceiling — or that can't be priced at all, so
+#    the ceiling REQUIRES the key (without it the guard refuses rather than apply blind). Default
+#    is $300/mo (a monthly-estimate guard: a cheap single-NAT t3.large×1 EKS run ≈ $150–200/mo, so
+#    $300 catches a runaway shape while leaving headroom). Omit the var to accept the default.
+gh secret set INFRACOST_API_KEY -b "<your infracost api key>"   # free at infracost.io
+gh variable set E2E_AWS_COST_CEILING_USD -b "300"               # optional; default 300
 ```
+
+The A1.4 nightly also runs a **stale-cluster preflight** before provisioning (`PREFLIGHT=1
+scripts/e2e/aws-cleanup.sh`): it sweeps leaked `e2e-*` orphans from prior hard-killed runs
+(scope-locked, never this run, never prod) and folds `single_nat_gateway=true` into the AWS run
+(one NAT vs one-per-AZ). No extra IAM — the existing `tag:GetTagValues` + sweep permissions cover it.
 
 Until `E2E_AWS_ROLE_ARN` is set, the AWS path of `e2e-nightly.yml` **green-skips** (mirrors the
 Hetzner `HCLOUD_TOKEN` gate). A1.1 ships the identity + the `aws` dispatch choice; A1.2–A1.4 wire

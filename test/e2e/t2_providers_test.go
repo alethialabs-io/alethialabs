@@ -35,6 +35,7 @@ var allResolutionEnvVars = []string{
 	"ALETHIA_E2E_REGION", "ALETHIA_E2E_HCLOUD_REGION",
 	"ALETHIA_CLUSTER_READY_TIMEOUT", "ALETHIA_E2E_T2_WAIT",
 	"ALETHIA_E2E_T2_REQUIRE", "ALETHIA_E2E_CLUSTER_JSON",
+	"ALETHIA_E2E_NETWORK_JSON",
 	"ALETHIA_E2E_ARGO_TIMEOUT",
 }
 
@@ -295,6 +296,68 @@ func TestT2MergeClusterJSON(t *testing.T) {
 		t.Setenv("ALETHIA_E2E_CLUSTER_JSON", `[1,2,3]`)
 		if err := t2MergeClusterJSON(map[string]any{}); err == nil {
 			t.Fatal("a JSON array must be rejected (cluster override must be an object)")
+		}
+	})
+}
+
+// TestT2MergeNetworkJSON covers the network-block sibling of the cluster merge: the no-op
+// (absent env), a valid object merge into empty + pre-seeded network blocks, and the loud
+// error on malformed / non-object JSON.
+func TestT2MergeNetworkJSON(t *testing.T) {
+	t.Run("absent is a no-op", func(t *testing.T) {
+		clearT2Env(t)
+		snap := map[string]any{"provider": "aws"}
+		if err := t2MergeNetworkJSON(snap); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := snap["network"]; ok {
+			t.Error("absent NETWORK_JSON must not add a network block")
+		}
+	})
+	t.Run("single_nat_gateway merges into empty snapshot", func(t *testing.T) {
+		clearT2Env(t)
+		t.Setenv("ALETHIA_E2E_NETWORK_JSON", `{"single_nat_gateway":true}`)
+		snap := map[string]any{"provider": "aws"}
+		if err := t2MergeNetworkJSON(snap); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		network, ok := snap["network"].(map[string]any)
+		if !ok {
+			t.Fatalf("network block missing/wrong type: %#v", snap["network"])
+		}
+		if network["single_nat_gateway"] != true {
+			t.Errorf("single_nat_gateway = %v, want true", network["single_nat_gateway"])
+		}
+	})
+	t.Run("merges over a pre-seeded network block", func(t *testing.T) {
+		clearT2Env(t)
+		t.Setenv("ALETHIA_E2E_NETWORK_JSON", `{"single_nat_gateway":true}`)
+		snap := map[string]any{
+			"network": map[string]any{"network_cidr": "10.0.0.0/16", "single_nat_gateway": false},
+		}
+		if err := t2MergeNetworkJSON(snap); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		network := snap["network"].(map[string]any)
+		if network["network_cidr"] != "10.0.0.0/16" {
+			t.Errorf("pre-seeded key was dropped: %#v", network)
+		}
+		if network["single_nat_gateway"] != true {
+			t.Errorf("override did not win: single_nat_gateway = %v", network["single_nat_gateway"])
+		}
+	})
+	t.Run("malformed JSON is a loud error", func(t *testing.T) {
+		clearT2Env(t)
+		t.Setenv("ALETHIA_E2E_NETWORK_JSON", `{not valid json`)
+		if err := t2MergeNetworkJSON(map[string]any{}); err == nil {
+			t.Fatal("malformed NETWORK_JSON must be a loud error, got nil")
+		}
+	})
+	t.Run("non-object JSON is a loud error", func(t *testing.T) {
+		clearT2Env(t)
+		t.Setenv("ALETHIA_E2E_NETWORK_JSON", `[1,2,3]`)
+		if err := t2MergeNetworkJSON(map[string]any{}); err == nil {
+			t.Fatal("a JSON array must be rejected (network override must be an object)")
 		}
 	})
 }

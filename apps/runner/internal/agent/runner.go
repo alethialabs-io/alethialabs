@@ -627,10 +627,34 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 
 	gitToken := vc.GitAccessToken
 	if gitToken == "" {
-		if fetched, err := w.api.FetchGitToken(job.ID); err != nil {
+		if fetched, err := w.api.FetchGitToken(job.ID, ""); err != nil {
 			fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", err)
 		} else {
 			gitToken = fetched
+		}
+	}
+
+	// Per-repo tokens for bring-your-own (git-source) charts: each may live on a different
+	// provider than the apps-destination repo, so resolve a token per distinct chart repo (the
+	// console picks the provider from that repo, validated against the job). Resolved here in the
+	// parent — the values cross the sandbox boundary as secrets and the child registers the
+	// per-repo ArgoCD repository credentials before the BYO Applications sync.
+	gitTokens := map[string]string{}
+	for i := range vc.AddOns {
+		if !vc.AddOns[i].IsGitSource() {
+			continue
+		}
+		repo := vc.AddOns[i].ChartRepo
+		if repo == "" {
+			continue
+		}
+		if _, done := gitTokens[repo]; done {
+			continue
+		}
+		if fetched, err := w.api.FetchGitToken(job.ID, repo); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to fetch git token for %s: %v\n", repo, err)
+		} else if fetched != "" {
+			gitTokens[repo] = fetched
 		}
 	}
 
@@ -658,14 +682,22 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
+	// The apply path normally skips Infracost (cost is estimated on the PLAN job). But when a
+	// cost ceiling is configured (ALETHIA_COST_CEILING_MONTHLY_USD > 0), the ceiling gate needs an
+	// estimate on THIS apply's own plan — so pass the Infracost token to make RunDeployV2 price the
+	// plan at its verify seam. No ceiling ⇒ "" ⇒ apply behaviour is unchanged (no Infracost run).
+	deployInfracostToken := ""
+	if costCeilingFromEnv() > 0 {
+		deployInfracostToken = os.Getenv("INFRACOST_API_KEY")
+	}
 	payload := buildDeployPayload(vc, provider, false, planFile,
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		"", buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
+		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StageDeploy, payload)
 	if err != nil {
 		return err
 	}
-	sec := stageSecrets{GitToken: gitToken, StateToken: stateBackend.Token}
+	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token}
 
 	// Run the untrusted provisioning work through the isolation seam. Passthrough runs
 	// runDeployStage in-process; the container backend re-execs it in a per-job container.
@@ -797,7 +829,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	planGitToken := vc.GitAccessToken
 	if planGitToken == "" {
-		if fetched, err := w.api.FetchGitToken(job.ID); err != nil {
+		if fetched, err := w.api.FetchGitToken(job.ID, ""); err != nil {
 			fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", err)
 		} else {
 			planGitToken = fetched
