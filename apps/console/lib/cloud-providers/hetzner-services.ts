@@ -48,17 +48,45 @@ export const HETZNER_CHARTS = {
 		chart: "cluster",
 		version: "0.0.11",
 	},
-	/** Valkey (OSS Redis fork) — one release per cache node. */
+	/**
+	 * Valkey (OSS Redis fork) — one release per cache node, from the UPSTREAM VALKEY PROJECT'S
+	 * OWN chart (valkey-io/valkey-helm), which ships the official `docker.io/valkey/valkey` image.
+	 *
+	 * NOT Bitnami: `bitnami/valkey` 1.0.6 was DELETED from the Bitnami index (`helm show chart`
+	 * → "no chart version found for valkey-1.0.6"), so ArgoCD could not even fetch it — Hetzner
+	 * caches were broken in production. Broadcom's Bitnami wind-down also relocated
+	 * `docker.io/bitnami/*` images to `bitnamilegacy/*`, so staying on Bitnami means an
+	 * unmaintained, unpatched image archive. This chart is first-party and maintained.
+	 *
+	 * ⚠️ Its value schema is NOTHING like Bitnami's — see hetznerCacheValues() for the mapping,
+	 * which is verified against `helm show values`/`helm template`, never guessed.
+	 */
 	valkey: {
-		chartRepo: "https://charts.bitnami.com/bitnami",
+		chartRepo: "https://valkey-io.github.io/valkey-helm",
 		chart: "valkey",
-		version: "1.0.6",
+		version: "0.10.0",
 	},
-	/** RabbitMQ — the SQS analogue, one release per queue node. */
+	/**
+	 * RabbitMQ — the SQS analogue, one release per queue node. Pulls the OFFICIAL upstream
+	 * `docker.io/rabbitmq` image (the chart digest-pins it), app v4.3.x.
+	 *
+	 * NOT Bitnami: `bitnami/rabbitmq` 14.7.0's default image
+	 * `docker.io/bitnami/rabbitmq:3.13.7-debian-12-r2` is HTTP 404 — Broadcom relocated the
+	 * Bitnami catalog's images to `bitnamilegacy/*` — so every fresh Hetzner queue
+	 * ImagePullBackOff'd. The Bitnami-hosted `rabbitmq-cluster-operator` chart is NOT an escape:
+	 * it still pulls `docker.io/bitnami/*`.
+	 *
+	 * Durable upgrade path (deliberately NOT taken here): the OFFICIAL RabbitMQ Cluster Operator
+	 * (rabbitmq/cluster-operator, images `rabbitmqoperator/*`) ships as a `kubectl apply` release
+	 * manifest, which the new `source: "manifest"` add-on rail can now install — but a
+	 * RabbitmqCluster CR is not a Helm chart, so delivering the per-queue CR (and reading its
+	 * health back) needs the inline-manifest + CR-health work. This chart keeps queues on the
+	 * Helm rail (so ArgoCD health/status keeps working) with official images, today.
+	 */
 	rabbitmq: {
-		chartRepo: "https://charts.bitnami.com/bitnami",
+		chartRepo: "https://cloudpirates-io.github.io/helm-charts",
 		chart: "rabbitmq",
-		version: "14.7.0",
+		version: "0.21.9",
 	},
 } as const;
 
@@ -168,30 +196,6 @@ export function hetznerDataServicesToAddOns(
 
 	// Caches → Valkey (standalone, or replication when >1 node).
 	for (const cache of caches) {
-		const nodes = posInt(cache.num_cache_nodes, 1);
-		const storageGb = posInt(cache.storage_gb ?? cache.memory_gb, 8);
-		// Bitnami charts key the PVC class as `persistence.storageClass` (NOT the k8s spec's
-		// `storageClassName`); replicas get the same volume size so the "per node" copy and
-		// the "N GiB × nodes" summary stay true (the chart default would silently be 8Gi).
-		const values: Record<string, unknown> = {
-			architecture: nodes > 1 ? "replication" : "standalone",
-			primary: {
-				persistence: {
-					size: `${storageGb}Gi`,
-					storageClass: HCLOUD_STORAGE_CLASS,
-				},
-			},
-			replica: {
-				replicaCount: Math.max(0, nodes - 1),
-				persistence: {
-					size: `${storageGb}Gi`,
-					storageClass: HCLOUD_STORAGE_CLASS,
-				},
-			},
-		};
-		if (cache.engine_version) {
-			values.image = { tag: cache.engine_version };
-		}
 		specs.push({
 			id: `cache-${cache.name}`,
 			mode: "managed",
@@ -199,7 +203,7 @@ export function hetznerDataServicesToAddOns(
 			chart: HETZNER_CHARTS.valkey.chart,
 			version: HETZNER_CHARTS.valkey.version,
 			namespace: NS.cache,
-			values,
+			values: hetznerCacheValues(cache),
 			syncWave: 1,
 		});
 	}
@@ -213,16 +217,71 @@ export function hetznerDataServicesToAddOns(
 			chart: HETZNER_CHARTS.rabbitmq.chart,
 			version: HETZNER_CHARTS.rabbitmq.version,
 			namespace: NS.queue,
-			values: {
-				replicaCount: 1,
-				persistence: {
-					size: `${posInt(queue.storage_gb, 8)}Gi`,
-					storageClass: HCLOUD_STORAGE_CLASS,
-				},
-			},
+			values: hetznerQueueValues(queue),
 			syncWave: 1,
 		});
 	}
 
 	return specs;
+}
+
+/**
+ * Helm values for one cache node, against the UPSTREAM valkey-io chart's REAL schema — which is
+ * nothing like the Bitnami chart this replaced. Every key below was verified with
+ * `helm show values` + `helm template` (a guessed mapping is how you ship a chart that silently
+ * ignores your sizing, or that hard-errors at sync):
+ *
+ *  - `dataStorage.{enabled,requestedSize,className}` — the primary's PVC (Bitnami used
+ *    `primary.persistence.{size,storageClass}`).
+ *  - `replica.{enabled,replicas}` — replicas are ADDITIONAL to the primary, so N nodes ⇒
+ *    `replicas: N-1` (asserted in the tests: 3 nodes renders 3 pods, not 4).
+ *  - `replica.persistence.{size,storageClass}` — MANDATORY when replicas are on: the chart
+ *    hard-fails with "Replica mode requires persistent storage" if it is missing. This is exactly
+ *    the trap a translated-by-eye mapping falls into.
+ */
+export function hetznerCacheValues(
+	cache: CacheInput,
+): Record<string, unknown> {
+	const nodes = posInt(cache.num_cache_nodes, 1);
+	const storageGb = posInt(cache.storage_gb ?? cache.memory_gb, 8);
+	const size = `${storageGb}Gi`;
+
+	const values: Record<string, unknown> = {
+		dataStorage: {
+			enabled: true,
+			requestedSize: size,
+			className: HCLOUD_STORAGE_CLASS,
+		},
+		replica: {
+			enabled: nodes > 1,
+			// The primary is not a replica — N nodes ⇒ N-1 replicas.
+			replicas: Math.max(0, nodes - 1),
+			// Required whenever replica.enabled: the chart refuses to render without it. Same
+			// volume size as the primary so "N GiB per node" stays true.
+			persistence: { size, storageClass: HCLOUD_STORAGE_CLASS },
+		},
+	};
+	if (cache.engine_version) {
+		values.image = { tag: cache.engine_version };
+	}
+	return values;
+}
+
+/**
+ * Helm values for one queue node. The chart pulls the OFFICIAL upstream `docker.io/rabbitmq`
+ * image (digest-pinned by the chart), not a Bitnami image — the previous `bitnami/rabbitmq`
+ * chart's default image tag is now HTTP 404 (Broadcom relocated it to `bitnamilegacy/*`), so
+ * every fresh Hetzner queue ImagePullBackOff'd. Keys verified with `helm template`.
+ */
+export function hetznerQueueValues(
+	queue: QueueInput,
+): Record<string, unknown> {
+	return {
+		replicaCount: 1,
+		persistence: {
+			enabled: true,
+			size: `${posInt(queue.storage_gb, 8)}Gi`,
+			storageClass: HCLOUD_STORAGE_CLASS,
+		},
+	};
 }
