@@ -53,13 +53,21 @@ locals {
 
   gcp_default_labels = merge(var.classification_tags, local.gcp_base_labels)
 
-  # Naming conventions
-  vpc_name = "vpc-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
-  gke_name = "gke-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
+  # var.region may be a REGION (europe-west3) or a ZONE (europe-west3-a) — a zonal GKE cluster is a
+  # valid, cheaper topology (the T2 e2e default provisions one), and the GKE module passes
+  # `location = var.region` verbatim, so a zone is intentional there. But the short-name lookup below
+  # is keyed by REGION, and a zone value ("europe-west3-a") has no map key → a plan-time "key does not
+  # exist in map". So derive the region key first: strip a trailing "-<letter>" zone suffix when
+  # present, otherwise use var.region as-is. Every short-name reference indexes by this derived key.
+  gcp_region_key = can(regex("-[a-z]$", var.region)) ? substr(var.region, 0, length(var.region) - 2) : var.region
 
-  cloud_sql_name        = "sql-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
-  memorystore_name      = "redis-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
-  cloud_dns_name        = "dns-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
-  cloud_armor_name      = "armor-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
-  secret_manager_prefix = "${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"
+  # Naming conventions
+  vpc_name = "vpc-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  gke_name = "gke-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+
+  cloud_sql_name        = "sql-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  memorystore_name      = "redis-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  cloud_dns_name        = "dns-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  cloud_armor_name      = "armor-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  secret_manager_prefix = "${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
 }
