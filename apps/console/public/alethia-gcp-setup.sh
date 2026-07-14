@@ -60,9 +60,37 @@ else
 fi
 
 echo ""
+echo "==> Creating custom provisioning roles (management-only; no data-plane access)..."
+# Custom roles replace the data-plane-broad predefined admin roles (storage.admin/datastore.owner/
+# pubsub.admin/iam.serviceAccountAdmin/browser) — they strip GCS object data, Firestore document data,
+# Pub/Sub publish/consume, three SA verbs, and org/folder hierarchy reads. Matches infra/connector/gcp/main.tf.
+# Idempotent: create if absent, else update the permission set (gcloud undeletes a soft-deleted role).
+upsert_role() {
+  local id="$1" title="$2" perms="$3"
+  if gcloud iam roles describe "${id}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    gcloud iam roles update "${id}" --project="${PROJECT_ID}" --title="${title}" \
+      --permissions="${perms}" --stage=GA --quiet >/dev/null
+  else
+    gcloud iam roles create "${id}" --project="${PROJECT_ID}" --title="${title}" \
+      --permissions="${perms}" --stage=GA --quiet >/dev/null
+  fi
+  echo "    custom role ${id} ready."
+}
+upsert_role alethiaStorageProvisioner "Alethia Storage Bucket Provisioner" \
+  "storage.buckets.create,storage.buckets.delete,storage.buckets.get,storage.buckets.list,storage.buckets.update,storage.buckets.getIamPolicy,storage.buckets.setIamPolicy"
+upsert_role alethiaFirestoreProvisioner "Alethia Firestore Provisioner" \
+  "datastore.databases.create,datastore.databases.delete,datastore.databases.get,datastore.databases.getMetadata,datastore.databases.list,datastore.databases.update,datastore.indexes.create,datastore.indexes.delete,datastore.indexes.get,datastore.indexes.list,datastore.indexes.update,datastore.operations.get,datastore.operations.list"
+upsert_role alethiaPubSubProvisioner "Alethia Pub/Sub Provisioner" \
+  "pubsub.topics.create,pubsub.topics.delete,pubsub.topics.get,pubsub.topics.list,pubsub.topics.update,pubsub.topics.attachSubscription,pubsub.subscriptions.create,pubsub.subscriptions.delete,pubsub.subscriptions.get,pubsub.subscriptions.list,pubsub.subscriptions.update"
+upsert_role alethiaServiceAccountProvisioner "Alethia Add-on SA Provisioner" \
+  "iam.serviceAccounts.create,iam.serviceAccounts.delete,iam.serviceAccounts.get,iam.serviceAccounts.list,iam.serviceAccounts.update,iam.serviceAccounts.getIamPolicy,iam.serviceAccounts.setIamPolicy"
+upsert_role alethiaProjectReader "Alethia Project Reader" \
+  "resourcemanager.projects.get"
+
+echo ""
 echo "==> Granting least-privilege provisioning roles to the service account..."
-# Enumerated predefined roles covering exactly the services Alethia provisions —
-# in place of account-wide roles/editor. Matches infra/connector/gcp/main.tf.
+# Predefined roles for services whose Google-maintained admin set is tightly scoped + churns (GKE, etc.),
+# plus the five custom roles above. In place of account-wide roles/editor. Matches infra/connector/gcp/main.tf.
 for ROLE in \
   roles/container.admin \
   roles/compute.networkAdmin \
@@ -73,12 +101,12 @@ for ROLE in \
   roles/dns.admin \
   roles/artifactregistry.admin \
   roles/secretmanager.admin \
-  roles/storage.admin \
-  roles/datastore.owner \
-  roles/pubsub.admin \
-  roles/iam.serviceAccountAdmin \
   roles/iam.serviceAccountUser \
-  roles/browser; do
+  "projects/${PROJECT_ID}/roles/alethiaStorageProvisioner" \
+  "projects/${PROJECT_ID}/roles/alethiaFirestoreProvisioner" \
+  "projects/${PROJECT_ID}/roles/alethiaPubSubProvisioner" \
+  "projects/${PROJECT_ID}/roles/alethiaServiceAccountProvisioner" \
+  "projects/${PROJECT_ID}/roles/alethiaProjectReader"; do
   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="${ROLE}" \
