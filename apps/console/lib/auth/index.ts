@@ -202,6 +202,13 @@ export const auth = betterAuth({
 		accountLinking: {
 			enabled: true,
 			trustedProviders: ["github", "google", "gitlab", "bitbucket"],
+			// The git providers are connected FOR THEIR REPOS, so the linked account's email
+			// routinely differs from the console login email (e.g. a Google/email-OTP login
+			// linking a GitHub account under a different address). Without this, Better Auth
+			// rejects the link on an email mismatch and redirects back with an error — which is
+			// exactly the "login works but Connect GitHub/GitLab/Bitbucket doesn't" symptom on
+			// prod. Safe because every provider here is in `trustedProviders` (OAuth-verified).
+			allowDifferentEmails: true,
 		},
 	},
 	databaseHooks: {
