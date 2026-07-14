@@ -45,6 +45,8 @@ type StatusRow = {
 	status: ComponentStatus;
 	status_message: string | null;
 	name?: string;
+	/** Output columns written by the deploy finalizer (endpoint / argocd_url / …). */
+	outputs?: Record<string, string | null | undefined>;
 };
 
 /** Singleton component tables — one row per environment, keyed in the canvas by kind alone. */
@@ -151,6 +153,84 @@ export async function getEnvironmentComponentStatus(
 		}),
 	);
 
+	// The deploy's OUTPUTS — the connection details the finalizer writes and the product never
+	// showed. Fetched per-table because the column names differ (a cluster has an endpoint and an
+	// ArgoCD URL; a database has a writer and a reader).
+	const [clusterOut, dbOut, cacheOut, registryOut] = await Promise.all([
+		db
+			.select({
+				cluster_endpoint: projectCluster.cluster_endpoint,
+				argocd_url: projectCluster.argocd_url,
+			})
+			.from(projectCluster)
+			.where(
+				and(
+					eq(projectCluster.project_id, projectId),
+					eq(projectCluster.environment_id, envId),
+				),
+			)
+			.limit(1)
+			.then((r) => r[0]),
+		db
+			.select({
+				name: projectDatabases.name,
+				endpoint: projectDatabases.endpoint,
+				reader_endpoint: projectDatabases.reader_endpoint,
+			})
+			.from(projectDatabases)
+			.where(
+				and(
+					eq(projectDatabases.project_id, projectId),
+					eq(projectDatabases.environment_id, envId),
+				),
+			),
+		db
+			.select({
+				name: projectCaches.name,
+				endpoint: projectCaches.endpoint,
+				reader_endpoint: projectCaches.reader_endpoint,
+			})
+			.from(projectCaches)
+			.where(
+				and(
+					eq(projectCaches.project_id, projectId),
+					eq(projectCaches.environment_id, envId),
+				),
+			),
+		db
+			.select({
+				name: projectContainerRegistries.name,
+				repository_url: projectContainerRegistries.repository_url,
+			})
+			.from(projectContainerRegistries)
+			.where(
+				and(
+					eq(projectContainerRegistries.project_id, projectId),
+					eq(projectContainerRegistries.environment_id, envId),
+				),
+			),
+	]);
+
+	setOutputs(components, "cluster", [
+		["API endpoint", clusterOut?.cluster_endpoint],
+		["ArgoCD", clusterOut?.argocd_url],
+	]);
+	for (const row of dbOut) {
+		setOutputs(components, `database:${row.name}`, [
+			["Writer", row.endpoint],
+			["Reader", row.reader_endpoint],
+		]);
+	}
+	for (const row of cacheOut) {
+		setOutputs(components, `cache:${row.name}`, [
+			["Endpoint", row.endpoint],
+			["Reader", row.reader_endpoint],
+		]);
+	}
+	for (const row of registryOut) {
+		setOutputs(components, `registry:${row.name}`, [["Repository", row.repository_url]]);
+	}
+
 	const [activeJobRow, driftRow, probeRow] = await Promise.all([
 		db
 			.select({ id: jobs.id, job_type: jobs.job_type, status: jobs.status })
@@ -233,6 +313,20 @@ async function isDeployPending(
 	} catch {
 		return false;
 	}
+}
+
+/** Attach the non-empty outputs to a component, if it exists. */
+function setOutputs(
+	components: Record<string, ComponentServerStatus>,
+	key: string,
+	pairs: [string, string | null | undefined][],
+) {
+	const component = components[key];
+	if (!component) return;
+	const outputs = pairs
+		.filter((p): p is [string, string] => !!p[1])
+		.map(([label, value]) => ({ label, value }));
+	if (outputs.length) component.outputs = outputs;
 }
 
 /** Record one component row under its canvas key, and register it as a drift-attribution target. */

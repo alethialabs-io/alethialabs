@@ -17,6 +17,13 @@ export interface ComponentServerStatus {
 	message: string | null;
 	/** Drifted resources attributed to this component. Empty when in sync. */
 	drift: DriftDetail[];
+	/**
+	 * What the deploy actually PRODUCED — the connection details you'd otherwise open the cloud
+	 * console to find. Every one of these columns (`endpoint`, `reader_endpoint`, `cluster_endpoint`,
+	 * `argocd_url`, `repository_url`) is written by the deploy finalizer and, until now, was shown
+	 * nowhere in the product.
+	 */
+	outputs?: { label: string; value: string }[];
 	/** ArgoCD health, for components that are Applications (add-ons / charts). */
 	health?: string | null;
 	/** ArgoCD sync state. */
