@@ -1,6 +1,6 @@
 ---
 title: AWS Connector
-description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up with CloudFormation or OpenTofu.
+description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up in AWS CloudShell or with OpenTofu.
 ---
 
 # AWS Connector
@@ -14,33 +14,15 @@ external id, and no trust in an Alethia AWS account. This is the same model GCP,
 **Is this safe?** You create the trust entirely in **your own** AWS account — Alethia never sees a key.
 It signs in with a short-lived token (≤10 min) that AWS verifies and swaps for a ~1-hour credential. The
 only thing Alethia stores is the **role ARN** (a public identifier). **Revoke anytime** by deleting the
-stack or the role.
+IAM role (and its OIDC provider).
 </Callout>
 
 ## Setup Methods
 
-<Tabs items={["CloudFormation (Recommended)", "AWS CLI / CloudShell", "OpenTofu"]}>
-  <Tab value="CloudFormation (Recommended)">
-    <Steps>
+Two equivalent, keyless paths — the **AWS CloudShell** script (nothing to install) or the **OpenTofu**
+module. Both create the same IAM OIDC provider + `AlethiaProvisionerRole` in your account.
 
-    ### Launch CloudFormation Stack
-    Click "Launch Stack in AWS" — this opens the AWS Console with a pre-filled CloudFormation template
-    (the issuer URL is filled in for you) that creates:
-    - An **IAM OIDC provider** for the Alethia issuer (`https://alethialabs.io/api/oidc`)
-    - `AlethiaProvisionerRole` — an IAM role whose trust policy allows **only** `sts:AssumeRoleWithWebIdentity`
-      from that provider, pinned to the fixed audience (`sts.amazonaws.com`) and subject (`alethia-connector`)
-
-    ### Acknowledge and Create
-    In the AWS Console, acknowledge that CloudFormation will create IAM resources, then click "Create stack."
-
-    ### Copy Role ARN
-    After the stack completes (~1 minute), go to the Outputs tab and copy the Role ARN.
-
-    ### Paste into Alethia
-    Paste the Role ARN into the Alethia form and click "Connect."
-
-    </Steps>
-  </Tab>
+<Tabs items={["AWS CLI / CloudShell", "OpenTofu"]}>
   <Tab value="AWS CLI / CloudShell">
     <Steps>
 
@@ -50,8 +32,10 @@ stack or the role.
 
     ### Run the setup script
     Paste the one-liner from the connect sheet — `curl -sO …/alethia-aws-setup.sh && bash alethia-aws-setup.sh`.
-    It creates the same IAM OIDC provider + `AlethiaProvisionerRole` (with the four least-privilege
-    policies) and prints `role_arn`. Self-hosters pass their issuer as the first argument.
+    It creates the **IAM OIDC provider** for the Alethia issuer + `AlethiaProvisionerRole` (whose trust
+    allows **only** `sts:AssumeRoleWithWebIdentity` from that provider, pinned to audience
+    `sts.amazonaws.com` and subject `alethia-connector`), attaches the five least-privilege policies, and
+    prints `role_arn`. Self-hosters pass their issuer as the first argument.
 
     ### Copy Role ARN
     Copy the `role_arn` the script prints and paste it into the form, then click "Connect."
@@ -79,7 +63,7 @@ stack or the role.
 
 <Callout type="info">
 One IAM OIDC provider per issuer URL is allowed per AWS account, so connect an account **once**. To reconnect
-after deleting the stack, remove the existing provider first (or reuse the stack).
+after deleting the role, re-run the script (it reuses the existing provider) or remove the provider first.
 </Callout>
 
 ## Verification
@@ -107,13 +91,16 @@ Manager, DynamoDB, SQS/SNS, ECR, S3, KMS envelope keys, CloudWatch Logs + Kinesi
 Balancer Controller, EBS CSI, Karpenter).
 
 <Callout type="info">
-**Least-privilege by default — no account admin.** The setup attaches **four scoped policies** instead of
-`AdministratorAccess`: `…-Compute`, `…-Data`, `…-Edge` (each limited to exactly the services above), and an
-action-enumerated `…-IAM` policy. The IAM policy lets the templates create the EKS/IRSA roles they need but
-**explicitly denies** attaching `AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess` to anything, scopes
-`PassRole` to the provisioned services, and denies all `organizations:*`/`account:*` — so the role **cannot
-escalate to admin**. A defence-in-depth **permissions boundary** on the created roles is the next hardening
-increment. The OIDC trust is independent of all this.
+**Least-privilege by default — no account admin, fully action-enumerated.** The setup attaches **five scoped
+policies** instead of `AdministratorAccess`: `…-ComputeNet`, `…-ComputeScale`, `…-Data`, `…-Edge` — the
+data-plane, each listing the **specific `ec2:`/`eks:`/`rds:`/… actions** the templates issue (not
+`service:*`; split into net/scale to fit AWS's 6144-char managed-policy limit) — plus an action-enumerated
+`…-IAM` policy. The IAM policy lets the templates create the EKS/IRSA roles they need but **explicitly
+denies** attaching `AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess` to anything, scopes `PassRole` to
+the provisioned services, and denies all `organizations:*`/`account:*`/billing — so the role **cannot
+escalate to admin**. Reads stay `Describe*`/`Get*`/`List*` so a template/module bump doesn't break a real
+apply. A defence-in-depth **permissions boundary** on the created roles is the next hardening increment. The
+OIDC trust is independent of all this.
 </Callout>
 
 ## What's Stored

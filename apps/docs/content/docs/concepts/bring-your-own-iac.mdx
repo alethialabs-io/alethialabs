@@ -143,11 +143,61 @@ See [OpenTofu State Management](/concepts/terraform-state) for the state model, 
 Alethia's post-apply steps — the reachability gate, kubeconfig capture, ArgoCD install, infra-services —
 key off the module's OpenTofu **outputs**:
 
-- A module that outputs **`cluster_name`** (and `cluster_endpoint`) opportunistically gets the
+- A module that outputs **`cluster_name`** (and the kubeconfig inputs below) opportunistically gets the
   reachability gate and ArgoCD/GitOps wiring, exactly like a template-provisioned cluster.
 - A module that outputs **neither degrades gracefully**: Alethia provisions it, captures its outputs, and
   stops there — no kubeconfig probe, no ArgoCD. Perfectly valid for a module that provisions something
   other than a cluster.
+
+### The cluster-output contract
+
+The runner reads the cluster wiring from your outputs. For each field it checks the **provider-prefixed**
+key the built-in templates emit first, then falls back to the **generic** key — so a BYO module only needs
+to emit the generic names:
+
+| Field | Generic key (BYO) | Provider-prefixed keys (templates) | Purpose |
+| --- | --- | --- | --- |
+| Cluster name | `cluster_name` | `eks_cluster_name` · `gke_cluster_name` · `aks_cluster_name` · `talos_cluster_name` · `ack_cluster_name` | **Gates all post-apply wiring.** Empty ⇒ Alethia treats the deploy as cluster-less and skips kubeconfig/reachability/ArgoCD/add-ons. |
+| API endpoint | `cluster_endpoint` | `eks_cluster_endpoint` · `gke_cluster_endpoint` · `aks_cluster_endpoint` · … | The API server URL the kubeconfig points at. |
+| Cluster CA | `cluster_ca_certificate` | `gke_cluster_ca_certificate` · `aks_cluster_ca_certificate` | Base64 CA the kubeconfig trusts (GKE/AKS-style clouds). |
+| Ready kubeconfig | `kubeconfig` | (Talos/ACK emit `kubeconfig` directly) | A complete kubeconfig. If present it is used **verbatim** — for a self-managed / non-cloud-managed cluster (incl. a non-EKS cluster on AWS, where it short-circuits the EKS `DescribeCluster` path). |
+
+How the two kubeconfig shapes are used:
+
+- **Managed-style (AWS/GCP/Azure):** emit `cluster_name` + `cluster_endpoint` + `cluster_ca_certificate`.
+  The runner builds a kubeconfig whose auth is its own in-process keyless token minter (`kube-token`) — no
+  static credential in your outputs.
+- **Self-managed (Talos, ACK, or any cluster you hold the PKI for):** emit a complete **`kubeconfig`**
+  output. The runner writes it verbatim.
+
+<Callout type="warn">
+  **Emit the generic names, not a bare hand-rolled variant.** Only the keys above are recognized. A module
+  that names its output, say, `k8s_cluster` instead of `cluster_name` provisions fine but its cluster name
+  reads back empty — so Alethia **silently skips** kubeconfig, the reachability gate, ArgoCD and every
+  add-on while still reporting the deploy *successful*. This was the FT-1 bug; the fix is that the runner
+  now accepts the documented generic keys — your module must actually emit them.
+</Callout>
+
+### Required: your module must self-admin the cluster
+
+Alethia installs ArgoCD (and every add-on) over the kubeconfig from your outputs. That kubeconfig
+authenticates as **the identity your provisioning runner runs as** — so **your module MUST grant that
+identity `cluster-admin` on the cluster it creates.** Alethia cannot inject this for you (it never holds a
+static admin credential for a BYO cluster); if you skip it, the cluster comes up reachable but the ArgoCD
+install **401s** and the deploy fails at the GitOps step. Grant it in-module, at create time:
+
+| Cloud | Grant the apply/runner identity cluster-admin via |
+| --- | --- |
+| **AWS (EKS)** | An `aws_eks_access_entry` + `aws_eks_access_policy_association` (`AmazonEKSClusterAdminPolicy`) for the runner's IAM role — or add it to `access_entries` / the aws-auth mapping — so the role that ran `apply` is a cluster admin. |
+| **GCP (GKE)** | Bind the runner's service account `roles/container.admin` (or `roles/container.clusterAdmin`) on the project/cluster. |
+| **Azure (AKS)** | An `azurerm_role_assignment` of **Azure Kubernetes Service RBAC Cluster Admin** to the runner principal (Azure-RBAC clusters), or include its Entra group in the cluster's `admin_group_object_ids`. |
+| **Talos / self-managed** | Emit an **admin** `kubeconfig` output (the Talos provider's admin kubeconfig already is cluster-admin). |
+
+<Callout type="info">
+  This is the **self-admin contract**: the runner is only ever as privileged on your cluster as your module
+  makes it. Granting cluster-admin to the apply identity is the one thing the code cannot force and the doc
+  must state plainly — without it, "BYO IaC + Alethia services" cannot converge.
+</Callout>
 
 ## Verification: the same gate as templates
 

@@ -22,5 +22,8 @@ module "aks" {
   admin_group_object_ids = var.aks_admin_group_object_ids
   authorized_ip_ranges   = var.aks_authorized_ip_ranges
 
+  # BYOC AZ-SELF-ADMIN — grant the apply/runner identity RBAC Cluster Admin (default true).
+  enable_creator_admin = var.aks_enable_creator_admin
+
   tags = local.azure_default_tags
 }

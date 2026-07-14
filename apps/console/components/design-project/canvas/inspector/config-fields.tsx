@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -22,7 +22,10 @@ import {
 } from "@repo/ui/select";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import { RepositorySelector } from "@/components/repository-selector";
+import { ListField } from "./list-field";
+import { SubresourceField } from "./subresource-field";
 import {
 	REGION_LABELS,
 	groupRegions,
@@ -88,10 +91,14 @@ function FieldControl({
 	field,
 	ctx,
 	onChange,
+	id,
 }: {
 	field: FieldDef;
 	ctx: FieldCtx;
 	onChange: (patch: Config) => void;
+	/** Ties the control to its <Label>. Without it the label is decorative and screen readers —
+	 * and every accessible query — can't find the input. */
+	id?: string;
 }) {
 	const { provider, config } = ctx;
 	const raw = field.get ? field.get(config) : config[field.key];
@@ -110,6 +117,7 @@ function FieldControl({
 		case "text":
 			return (
 				<Input
+					id={id}
 					value={(raw as string) ?? ""}
 					placeholder={resolve(field.placeholder, ctx)}
 					className={cn("h-9 text-sm", field.mono && "font-mono")}
@@ -128,6 +136,7 @@ function FieldControl({
 			const isFloat = field.float || (typeof step === "number" && step < 1);
 			return (
 				<Input
+					id={id}
 					type="number"
 					min={resolve(field.min, ctx)}
 					max={resolve(field.max, ctx)}
@@ -155,7 +164,7 @@ function FieldControl({
 					value={(raw as string) || options[0]?.value || ""}
 					onValueChange={patch}
 				>
-					<SelectTrigger className="h-9 text-sm">
+					<SelectTrigger id={id} className="h-9 text-sm">
 						<SelectValue placeholder={resolve(field.placeholder, ctx)} />
 					</SelectTrigger>
 					<SelectContent>
@@ -204,6 +213,29 @@ function FieldControl({
 					onChange={(v) => patch(v || "")}
 				/>
 			);
+
+		case "list":
+			return (
+				<ListField
+					ariaLabel={field.label}
+					value={Array.isArray(raw) ? (raw as string[]) : []}
+					placeholder={field.item?.placeholder}
+					mono={field.item?.mono ?? field.mono}
+					// Blank rows are dropped on write: an empty CIDR isn't a value, and letting one
+					// through would fail zod at deploy with a confusing message.
+					onChange={(next) => patch(next.filter((v) => v.trim() !== ""))}
+				/>
+			);
+
+		case "subresource":
+			return field.sub ? (
+				<SubresourceField
+					spec={field.sub}
+					provider={ctx.provider}
+					value={Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []}
+					onChange={patch}
+				/>
+			) : null;
 	}
 }
 
@@ -217,6 +249,7 @@ function FieldRow({
 	ctx: FieldCtx;
 	onChange: (patch: Config) => void;
 }) {
+	const fieldId = useId();
 	const raw = field.get ? field.get(ctx.config) : ctx.config[field.key];
 	const unit = resolve(field.unit, ctx);
 	const label = unit ? `${field.label} (${unit})` : field.label;
@@ -244,12 +277,28 @@ function FieldRow({
 		field.full ||
 		field.type === "radio-card" ||
 		field.type === "region" ||
-		field.type === "repository";
+		field.type === "repository" ||
+		field.type === "list" ||
+		field.type === "subresource";
+
+	// Composite controls (list / subresource / radio-card) label their own inner rows, so the
+	// section label stays decorative for those; everything else gets a real label→control binding.
+	const composite =
+		field.type === "list" ||
+		field.type === "subresource" ||
+		field.type === "radio-card";
 
 	return (
 		<div className={cn("space-y-1.5", full && "col-span-full")}>
-			<Label className="text-xs">{label}</Label>
-			<FieldControl field={field} ctx={ctx} onChange={onChange} />
+			<Label htmlFor={composite ? undefined : fieldId} className="text-xs">
+				{label}
+			</Label>
+			<FieldControl
+				field={field}
+				ctx={ctx}
+				onChange={onChange}
+				id={composite ? undefined : fieldId}
+			/>
 			{field.description && field.type !== "radio-card" && (
 				<p className="text-xs text-muted-foreground">{field.description}</p>
 			)}
@@ -263,6 +312,12 @@ function sectionSummary(section: SectionDef, ctx: FieldCtx): string {
 	for (const field of section.fields) {
 		if (chips.length >= 2) break;
 		if (field.type === "switch") continue;
+		// A list of twelve CIDRs is not a one-line summary; count them instead.
+		if (field.type === "list" || field.type === "subresource") {
+			const items = field.get ? field.get(ctx.config) : ctx.config[field.key];
+			if (Array.isArray(items) && items.length > 0) chips.push(`${items.length}`);
+			continue;
+		}
 		if (field.visibleWhen && !field.visibleWhen(ctx.config, ctx)) continue;
 		const raw = field.get ? field.get(ctx.config) : ctx.config[field.key];
 		if (raw == null || raw === "") continue;
@@ -291,11 +346,22 @@ function Section({
 	ctx: FieldCtx;
 	onChange: (patch: Config) => void;
 }) {
+	const advanced = section.tier === "advanced";
+	// Advanced = provider-specific knobs. Collapsed by default, so the portable fields stay the
+	// thing you see first; you have to deliberately open the door to leave cloud-indifferent ground.
 	const [open, setOpen] = useState(section.defaultOpen ?? false);
 	const summary = sectionSummary(section, ctx);
 	const fields = section.fields.filter(
 		(f) => !f.visibleWhen || f.visibleWhen(ctx.config, ctx),
 	);
+
+	// A section scoped to clouds this project isn't on doesn't exist for it.
+	if (
+		section.providerScope &&
+		(!ctx.provider || !section.providerScope.includes(ctx.provider))
+	) {
+		return null;
+	}
 
 	// A section whose every field is hidden (e.g. provider-gated sizing) renders nothing.
 	if (fields.length === 0) return null;
@@ -304,14 +370,26 @@ function Section({
 		<Collapsible
 			open={open}
 			onOpenChange={setOpen}
-			className="rounded-lg border border-border"
+			className={cn(
+				"rounded-lg border border-border",
+				advanced && "bg-surface-sunken/40",
+			)}
 		>
 			<CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
-				<span className="min-w-0">
-					<span className="block text-sm font-medium">{section.title}</span>
-					{!open && summary && (
-						<span className="block truncate text-xs text-muted-foreground">
-							{summary}
+				<span className="flex min-w-0 flex-1 items-center gap-2">
+					<span className="min-w-0">
+						<span className="block text-sm font-medium">{section.title}</span>
+						{!open && summary && (
+							<span className="block truncate text-xs text-muted-foreground">
+								{summary}
+							</span>
+						)}
+					</span>
+					{/* Badge the cloud whose knobs these are, so it's obvious the field is not portable. */}
+					{advanced && ctx.provider && (
+						<span className="ml-1 inline-flex shrink-0 items-center gap-1 border border-border-strong px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+							<ProviderIcon provider={ctx.provider} size={10} />
+							only
 						</span>
 					)}
 				</span>

@@ -132,7 +132,7 @@ jobs:
       # Workload Identity Federation (no key file); Azure a federated Entra app; Alibaba a RAM
       # OIDC role. The gate var is the WIF provider / client id / role ARN respectively.
       E2E_GCP_WIF_PROVIDER: ${{ vars.E2E_GCP_WIF_PROVIDER }}
-      E2E_GCP_SERVICE_ACCOUNT: ${{ vars.E2E_GCP_SERVICE_ACCOUNT }}
+      E2E_GCP_SA_EMAIL: ${{ vars.E2E_GCP_SA_EMAIL }}
       E2E_AZURE_CLIENT_ID: ${{ vars.E2E_AZURE_CLIENT_ID }}
       E2E_AZURE_TENANT_ID: ${{ vars.E2E_AZURE_TENANT_ID }}
       E2E_AZURE_SUBSCRIPTION_ID: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
@@ -234,7 +234,7 @@ jobs:
           NET=""
           case "$PROVIDER" in
             hetzner) SHAPE="" ;;
-            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}'; NET='{"single_nat_gateway":true}' ;;
+            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
             gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
             azure)   SHAPE='{"instance_types":["Standard_B2s"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
             alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
@@ -313,6 +313,79 @@ jobs:
       - name: Mark AWS ready for the T2 harness
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
         run: echo "ALETHIA_E2E_AWS_READY=1" >> "$GITHUB_ENV"
+
+      # ── GCP: exchange the GitHub OIDC token for the Workload-Identity-Federated service account
+      #    (no key file). Only runs for the gcp provider once a maintainer has applied infra/gcp-e2e
+      #    and set vars.E2E_GCP_WIF_PROVIDER + vars.E2E_GCP_SA_EMAIL; otherwise the gate above already
+      #    green-skipped the whole run. google-github-actions/auth mints/exports the short-lived
+      #    federated credentials; setup-gcloud puts `gcloud` on PATH for the T2 harness + sweeper.
+      #    This uses the job's `id-token: write` — SAFE because the workflow is schedule/dispatch-only
+      #    (program invariant 1), never reachable from a PR. ──
+      - name: Configure GCP credentials (WIF / OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.E2E_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.E2E_GCP_SA_EMAIL }}
+      - name: Install gcloud CLI
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── Azure: federated (OIDC) login — no client secret. Only runs for the azure provider once a
+      #    maintainer has applied infra/azure-e2e + set the three E2E_AZURE_* vars; otherwise the gate
+      #    green-skipped. `az` is preinstalled on the runner. We ALSO export ARM_USE_OIDC +
+      #    ARM_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID to the job env so OpenTofu's azurerm provider
+      #    authenticates from the SAME federated token (the T2 harness reads ARM_*). Uses the job's
+      #    `id-token: write` — schedule/dispatch-only, never PR-reachable (invariant 1). ──
+      - name: Configure Azure credentials (OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.E2E_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.E2E_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
+      - name: Export ARM_* for the azurerm OpenTofu provider (federated OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'azure'
+        run: |
+          {
+            echo "ARM_USE_OIDC=true"
+            echo "ARM_CLIENT_ID=${{ vars.E2E_AZURE_CLIENT_ID }}"
+            echo "ARM_TENANT_ID=${{ vars.E2E_AZURE_TENANT_ID }}"
+            echo "ARM_SUBSCRIPTION_ID=${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}"
+          } >> "$GITHUB_ENV"
+
+      # ── Alibaba: keyless RAM OIDC. Install aliyun-cli (release tgz, like the hcloud step) for the
+      #    sweeper, then fetch a GitHub OIDC token (audience sts.aliyuncs.com) to a file and export the
+      #    RAM-OIDC trio that BOTH the aliyun CLI sweeper AND the alicloud OpenTofu provider read:
+      #    ALICLOUD_OIDC_TOKEN_FILE + ALICLOUD_ROLE_ARN + ALICLOUD_OIDC_PROVIDER_ARN. Only runs for the
+      #    alibaba provider once a maintainer has applied infra/alibaba-e2e + set the two E2E_ALIBABA_*
+      #    vars; otherwise the gate green-skipped. The OIDC token comes from the job's `id-token: write`
+      #    (ACTIONS_ID_TOKEN_REQUEST_* are injected into the step) — schedule/dispatch-only (invariant 1). ──
+      - name: Configure Alibaba credentials (RAM OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'alibaba'
+        env:
+          ALIYUN_CLI_VERSION: "3.0.263"
+          ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
+          OIDC_PROVIDER_ARN: ${{ vars.E2E_ALIBABA_OIDC_PROVIDER_ARN }}
+        run: |
+          curl -fsSL "https://github.com/aliyun/aliyun-cli/releases/download/v${ALIYUN_CLI_VERSION}/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" \
+            | tar -xz aliyun
+          sudo mv aliyun /usr/local/bin/aliyun
+          aliyun version
+          # Fetch the GitHub OIDC token (RAM audience) to a file the CLI + tofu provider both read.
+          TOKEN_FILE="${RUNNER_TEMP}/alibaba-oidc-token"
+          curl -fsSL "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.aliyuncs.com" \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            | jq -r '.value' > "$TOKEN_FILE"
+          if [ ! -s "$TOKEN_FILE" ]; then
+            echo "::error::failed to mint the Alibaba RAM OIDC token — refusing to continue."
+            exit 1
+          fi
+          {
+            echo "ALICLOUD_OIDC_TOKEN_FILE=$TOKEN_FILE"
+            echo "ALICLOUD_ROLE_ARN=$ROLE_ARN"
+            echo "ALICLOUD_OIDC_PROVIDER_ARN=$OIDC_PROVIDER_ARN"
+          } >> "$GITHUB_ENV"
 
       # ── Stale-cluster preflight (BYOC A1.4). BEFORE provisioning, sweep any leaked e2e
       #    orphans from PRIOR runs — a nightly hard-killed before both its graceful destroy AND
@@ -481,3 +554,106 @@ jobs:
           # (ALETHIA_E2E_ENV / _PROJECT / _REGION) from the environment. Passing $E2E_CLUSTER is
           # harmless for the managed scripts (they ignore positional args).
           "$SCRIPT" "$E2E_CLUSTER"
+
+  # ── A3.2 verdict rollup. The `provision` matrix is fail-fast:false, so every cloud runs to its
+  #    own verdict; this fan-in job (always()) reads each leg's uploaded proof bundle, prints ONE
+  #    5-row (hetzner/aws/gcp/azure/alibaba) PASS/FAIL/SKIP table to the run's step summary, and on
+  #    ANY red opens a title-deduped tracking issue. Per-leg outcome is NOT available from a matrix
+  #    `needs.*.result` (that's only the aggregate), so we derive it from each leg's
+  #    provision-summary.json (present ⇒ ran: outcome==success is PASS, else FAIL; absent ⇒ the leg
+  #    green-skipped at the gate ⇒ SKIP). A wholesale matrix failure that produced NO per-leg bundle
+  #    (infra died before capture) is still surfaced as red so it can't hide. The `gh issue create`
+  #    is guarded to schedule/dispatch runs only (never a fork/PR — invariant 1; the job holds no
+  #    cloud privilege regardless, only `issues: write`). ──
+  rollup:
+    name: Nightly verdict rollup (5-cloud table + dedup issue)
+    needs: [provision]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all per-provider proof artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: e2e-proof-*-${{ github.run_id }}
+          path: proofs
+          merge-multiple: false
+      - name: Roll up per-provider verdicts (+ dedup issue on red)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX_RESULT: ${{ needs.provision.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          providers="hetzner aws gcp azure alibaba"
+          reds=""
+          {
+            echo "## E2E nightly — 5-cloud verdict rollup"
+            echo
+            echo "matrix result: \`${MATRIX_RESULT}\` · [run](${RUN_URL})"
+            echo
+            echo "| cloud | status | detail |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for p in $providers; do
+            summary="$(find "proofs/e2e-proof-${p}-${RUN_ID}" -type f -name provision-summary.json 2>/dev/null | head -1 || true)"
+            if [ -z "$summary" ]; then
+              # No proof bundle for this leg ⇒ it green-skipped at the gate (no secret/var wired).
+              status="SKIP"
+              detail="gate off — no secret/var wired"
+            else
+              outcome="$(jq -r '.outcome // "unknown"' "$summary" 2>/dev/null || echo unknown)"
+              verdict="$(jq -r '.verdict // ""' "$summary" 2>/dev/null || echo "")"
+              detail="${verdict:-$outcome}"
+              if [ "$outcome" = "success" ]; then
+                status="PASS"
+              else
+                status="FAIL"
+                reds="$reds $p"
+              fi
+            fi
+            # Escape the pipe so a verdict string can't break the markdown table.
+            detail="${detail//|/\\|}"
+            echo "| ${p} | ${status} | ${detail} |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          # A wholesale matrix failure that produced no per-leg bundle (e.g. infra died before the
+          # always() capture) is still red — surface it so a leg that never emitted a bundle can't hide.
+          if [ "$MATRIX_RESULT" = "failure" ] && [ -z "${reds// /}" ]; then
+            echo "| (job) | FAIL | provision matrix failed with no per-leg proof bundle |" >> "$GITHUB_STEP_SUMMARY"
+            reds="$reds job"
+          fi
+          echo "reds:${reds:-<none>}"
+          # Dedup tracking issue on ANY red — schedule/dispatch runs only.
+          if [ -z "${reds// /}" ]; then
+            echo "::notice::nightly rollup all-green (no FAIL legs) — no issue filed."
+            exit 0
+          fi
+          if [ "$EVENT_NAME" != "schedule" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "::warning::red legs (${reds}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only)."
+            exit 0
+          fi
+          for cloud in $reds; do
+            title="e2e nightly: ${cloud} RED"
+            existing="$(gh issue list --state open --search "${title} in:title" --json title \
+              --jq "[.[] | select(.title == \"${title}\")] | length" 2>/dev/null || echo 0)"
+            if [ "${existing:-0}" -gt 0 ]; then
+              echo "::notice::an open issue titled '${title}' already exists — skipping create (deduped)."
+              continue
+            fi
+            body_file="${RUNNER_TEMP}/issue-body-${cloud}.md"
+            {
+              printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\`."
+              printf '%s\n\n' "Run: ${RUN_URL}"
+              printf '%s\n' "See the run's step-summary rollup + the \`e2e-proof-${cloud}-${RUN_ID}\` artifact for the failing stage (deploy stage / cost / leak / stale sweep)."
+              printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title — close it once \`${cloud}\` is green again._"
+            } > "$body_file"
+            gh issue create --title "$title" --body-file "$body_file" \
+              && echo "::notice::filed tracking issue: ${title}" \
+              || echo "::warning::could not create issue '${title}' (continuing)."
+          done

@@ -17,6 +17,9 @@ import {
 	CanvasDock,
 	useDockState,
 } from "@/components/design-project/canvas/canvas-dock";
+import { EMPTY_ENVIRONMENT_STATUS } from "@/lib/canvas/component-status";
+import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
+import { useEnvironmentStatusQuery } from "@/lib/query/use-environment-status-query";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { cn } from "@repo/ui/utils";
 
@@ -38,6 +41,17 @@ export function ProjectShell({
 	const onArchitecture = pathname.endsWith("/architecture");
 	const dock = useDockState(onArchitecture);
 
+	// The environment's server truth (component lifecycles, the in-flight job, drift, cluster
+	// liveness) — fetched ONCE here, because the shell is the only place that wraps BOTH the board
+	// and the docked inspector. Forty cards each running their own query would be forty round-trips
+	// and forty poll timers; instead every node picks its row out of this by `nodeStatusKey()`.
+	// An absent `environment_id` resolves to the project's default env server-side, exactly as the
+	// Architecture page does.
+	const envStatus = useEnvironmentStatusQuery(
+		projectId,
+		searchParams.get("environment_id"),
+	);
+
 	// Leaving Architecture closes the canvas-only inspector (the assistant stays open).
 	useEffect(() => {
 		if (!onArchitecture && inspectorNodeId) openInspector(null);
@@ -56,29 +70,31 @@ export function ProjectShell({
 	};
 
 	return (
-		<div className="-m-4 flex h-[calc(100dvh-3.5rem)] sm:-m-6 lg:-m-8 xl:-m-10">
-			<div
-				className={cn(
-					"relative min-w-0 flex-1",
-					dock && "border-r border-border",
-				)}
-			>
-				{/* Architecture fills the board full-bleed; other views scroll with padding. */}
-				{onArchitecture ? (
-					<div className="h-full">{children}</div>
-				) : (
-					<div className="h-full overflow-y-auto p-4 sm:p-6 lg:p-8 xl:p-10">
-						{children}
-					</div>
-				)}
-			</div>
+		<EnvironmentStatusProvider value={envStatus.data ?? EMPTY_ENVIRONMENT_STATUS}>
+			<div className="-m-4 flex h-[calc(100dvh-3.5rem)] sm:-m-6 lg:-m-8 xl:-m-10">
+				<div
+					className={cn(
+						"relative min-w-0 flex-1",
+						dock && "border-r border-border",
+					)}
+				>
+					{/* Architecture fills the board full-bleed; other views scroll with padding. */}
+					{onArchitecture ? (
+						<div className="h-full">{children}</div>
+					) : (
+						<div className="h-full overflow-y-auto p-4 sm:p-6 lg:p-8 xl:p-10">
+							{children}
+						</div>
+					)}
+				</div>
 
-			<CanvasDock
-				dock={dock}
-				projectId={projectId}
-				identities={identities}
-				onDestroyEnvironment={handleDestroy}
-			/>
-		</div>
+				<CanvasDock
+					dock={dock}
+					projectId={projectId}
+					identities={identities}
+					onDestroyEnvironment={handleDestroy}
+				/>
+			</div>
+		</EnvironmentStatusProvider>
 	);
 }

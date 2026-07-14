@@ -27,24 +27,12 @@ OIDC_PROVIDER_NAME="alethia"
 ROLE_NAME="AlethiaProvisioner"
 SLR_POLICY_NAME="${ROLE_NAME}-ServiceLinkedRoles"
 
-# System RAM policies attached to the provisioning role — one per Alibaba service the project
-# templates create (never AliyunRAMFullAccess). Parity with main.tf's provisioning_policies.
-PROVISIONING_POLICIES=(
-  AliyunCSFullAccess
-  AliyunVPCFullAccess
-  AliyunECSFullAccess
-  AliyunSLBFullAccess
-  AliyunEIPFullAccess
-  AliyunRDSFullAccess
-  AliyunContainerRegistryFullAccess
-  AliyunKvstoreFullAccess
-  AliyunDNSFullAccess
-  AliyunKMSFullAccess
-  AliyunMNSFullAccess
-  AliyunOSSFullAccess
-  AliyunOTSFullAccess
-  AliyunYundunWAFFullAccess
-)
+# Enumerated least-privilege CUSTOM policies (no service:*) — parity with main.tf locals
+# (provisioning_custom_policies). Each validated via aliyun ram CreatePolicy. Bucket -> policy doc.
+POLICY_COMPUTECLUSTER='{"Version":"1","Statement":[{"Effect":"Allow","Action":["cs:CreateCluster","cs:DeleteCluster","cs:ModifyCluster","cs:ModifyClusterConfiguration","cs:UpgradeCluster","cs:MigrateCluster","cs:CreateClusterNodePool","cs:ModifyClusterNodePool","cs:DeleteClusterNodePool","cs:ScaleClusterNodePool","cs:RepairClusterNodePool","cs:AttachInstances","cs:GrantPermissions","cs:TagResources","cs:UntagResources","cs:Describe*","cs:Get*","cs:List*","cs:CheckControlPlaneLogEnable","ecs:RunInstances","ecs:CreateInstance","ecs:DeleteInstance","ecs:DeleteInstances","ecs:StartInstance","ecs:StopInstance","ecs:StopInstances","ecs:ModifyInstanceAttribute","ecs:ModifyInstanceSpec","ecs:ReplaceSystemDisk","ecs:CreateSecurityGroup","ecs:DeleteSecurityGroup","ecs:AuthorizeSecurityGroup","ecs:AuthorizeSecurityGroupEgress","ecs:RevokeSecurityGroup","ecs:RevokeSecurityGroupEgress","ecs:ModifySecurityGroupPolicy","ecs:CreateDisk","ecs:DeleteDisk","ecs:AttachDisk","ecs:DetachDisk","ecs:ResizeDisk","ecs:CreateNetworkInterface","ecs:DeleteNetworkInterface","ecs:AttachNetworkInterface","ecs:DetachNetworkInterface","ecs:CreateKeyPair","ecs:ImportKeyPair","ecs:DeleteKeyPairs","ecs:AttachKeyPair","ecs:CreateLaunchTemplate","ecs:CreateLaunchTemplateVersion","ecs:DeleteLaunchTemplate","ecs:TagResources","ecs:UntagResources","ecs:Describe*","ecs:List*","slb:CreateLoadBalancer","slb:DeleteLoadBalancer","slb:ModifyLoadBalancerInstanceSpec","slb:ModifyLoadBalancerInternetSpec","slb:SetLoadBalancerName","slb:CreateLoadBalancerTCPListener","slb:CreateLoadBalancerUDPListener","slb:CreateLoadBalancerHTTPListener","slb:CreateLoadBalancerHTTPSListener","slb:DeleteLoadBalancerListener","slb:StartLoadBalancerListener","slb:StopLoadBalancerListener","slb:SetLoadBalancerTCPListenerAttribute","slb:AddBackendServers","slb:RemoveBackendServers","slb:SetBackendServers","slb:AddVServerGroupBackendServers","slb:CreateVServerGroup","slb:DeleteVServerGroup","slb:ModifyVServerGroupBackendServers","slb:TagResources","slb:UntagResources","slb:Describe*","slb:List*"],"Resource":"*"}]}'
+POLICY_NETWORK='{"Version":"1","Statement":[{"Effect":"Allow","Action":["vpc:CreateVpc","vpc:DeleteVpc","vpc:ModifyVpcAttribute","vpc:CreateVSwitch","vpc:DeleteVSwitch","vpc:ModifyVSwitchAttribute","vpc:CreateNatGateway","vpc:DeleteNatGateway","vpc:ModifyNatGatewayAttribute","vpc:CreateSnatEntry","vpc:DeleteSnatEntry","vpc:ModifySnatEntry","vpc:CreateRouteEntry","vpc:DeleteRouteEntry","vpc:AssociateRouteTable","vpc:TagResources","vpc:UnTagResources","vpc:Describe*","vpc:List*","vpc:Get*","vpc:AllocateEipAddress","vpc:ReleaseEipAddress","vpc:AssociateEipAddress","vpc:UnassociateEipAddress","vpc:ModifyEipAddressAttribute","vpc:DescribeEipAddresses","eip:AllocateEipAddress","eip:ReleaseEipAddress","eip:AssociateEipAddress","eip:UnassociateEipAddress","eip:ModifyEipAddressAttribute","eip:TagResources","eip:UnTagResources","eip:DescribeEipAddresses","eip:Describe*","eip:List*"],"Resource":"*"}]}'
+POLICY_DATA='{"Version":"1","Statement":[{"Effect":"Allow","Action":["rds:CreateDBInstance","rds:DeleteDBInstance","rds:ModifyDBInstanceSpec","rds:ModifyDBInstanceConnectionString","rds:AllocateInstancePublicConnection","rds:ModifySecurityIps","rds:CreateDatabase","rds:DeleteDatabase","rds:CreateAccount","rds:DeleteAccount","rds:ResetAccountPassword","rds:ModifyAccountDescription","rds:GrantAccountPrivilege","rds:RevokeAccountPrivilege","rds:ModifyBackupPolicy","rds:ModifyDBInstanceMaintainTime","rds:TagResources","rds:UntagResources","rds:Describe*","rds:List*","kvstore:CreateInstance","kvstore:DeleteInstance","kvstore:ModifyInstanceSpec","kvstore:ModifyInstanceAttribute","kvstore:ModifyInstanceMaintainTime","kvstore:ModifySecurityIps","kvstore:ModifyInstanceConnection","kvstore:AllocateInstancePublicConnection","kvstore:ResetAccountPassword","kvstore:TagResources","kvstore:UntagResources","kvstore:Describe*","kvstore:List*","oss:PutBucket","oss:PutBucketAcl","oss:PutBucketVersioning","oss:PutBucketTagging","oss:PutBucketLogging","oss:PutBucketEncryption","oss:DeleteBucket","oss:DeleteBucketTagging","oss:GetBucketInfo","oss:GetBucketAcl","oss:GetBucketVersioning","oss:GetBucketTagging","oss:GetBucketLocation","oss:GetBucketStat","oss:ListBuckets","oss:GetObject","oss:PutObject","oss:DeleteObject","oss:ListObjects","oss:AbortMultipartUpload","ots:CreateInstance","ots:DeleteInstance","ots:UpdateInstance","ots:GetInstance","ots:ListInstance","ots:InsertInstanceTag","ots:DeleteInstanceTag","ots:CreateTable","ots:DeleteTable","ots:UpdateTable","ots:DescribeTable","ots:ListTable","ots:Get*","ots:List*","ots:Describe*","kms:CreateSecret","kms:UpdateSecret","kms:PutSecretValue","kms:GetSecretValue","kms:UpdateSecretVersionStage","kms:DeleteSecret","kms:RestoreSecret","kms:TagResource","kms:UntagResource","kms:DescribeSecret","kms:ListSecrets","kms:ListSecretVersionIds","kms:Describe*","kms:List*","kms:Get*"],"Resource":"*"}]}'
+POLICY_EDGEREG='{"Version":"1","Statement":[{"Effect":"Allow","Action":["cr:CreateInstance","cr:GetInstance","cr:GetInstanceEndpoint","cr:ListInstance","cr:ListInstanceEndpoint","cr:CreateNamespace","cr:UpdateNamespace","cr:DeleteNamespace","cr:GetNamespace","cr:ListNamespace","cr:CreateInstanceVpcEndpointLinkedVpc","cr:TagResources","cr:UntagResources","cr:Get*","cr:List*","alidns:AddDomain","alidns:DeleteDomain","alidns:ChangeDomainGroup","alidns:UpdateDomainRemark","alidns:AddDomainRecord","alidns:UpdateDomainRecord","alidns:DeleteDomainRecord","alidns:SetDomainRecordStatus","alidns:TagResources","alidns:UntagResources","alidns:Describe*","alidns:List*","alidns:Get*","mns:CreateQueue","mns:DeleteQueue","mns:SetQueueAttributes","mns:GetQueueAttributes","mns:ListQueue","mns:CreateTopic","mns:DeleteTopic","mns:SetTopicAttributes","mns:GetTopicAttributes","mns:ListTopic","mns:TagResources","mns:UntagResources","mns:Get*","mns:List*","yundun-waf:CreateInstance","yundun-waf:DeleteInstance","yundun-waf:ModifyInstance","yundun-waf:DescribeInstance","yundun-waf:DescribeInstanceInfo","yundun-waf:DescribeInstanceSpecInfo","yundun-waf:Describe*","yundun-waf:Get*","yundun-waf:List*"],"Resource":"*"}]}'
 
 for bin in aliyun openssl; do
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -145,11 +133,25 @@ else
 fi
 
 echo ""
-echo "==> Attaching least-privilege system policies (one per provisioned service)..."
-for policy in "${PROVISIONING_POLICIES[@]}"; do
-  aliyun ram AttachPolicyToRole --PolicyType System --PolicyName "${policy}" --RoleName "${ROLE_NAME}" >/dev/null 2>&1 || true
-done
-echo "    Attached ${#PROVISIONING_POLICIES[@]} policies."
+echo "==> Creating + attaching the enumerated least-privilege custom policies..."
+# Upsert each custom policy (create if absent, else roll a new default version) then attach it. These
+# replace the per-service System *FullAccess policies with enumerated action sets.
+upsert_policy() {
+  local name="$1" doc="$2"
+  if aliyun ram GetPolicy --PolicyType Custom --PolicyName "${name}" >/dev/null 2>&1; then
+    aliyun ram CreatePolicyVersion --PolicyName "${name}" --PolicyDocument "${doc}" \
+      --SetAsDefault true --RotateExistingVersions true >/dev/null 2>&1 || true
+  else
+    aliyun ram CreatePolicy --PolicyName "${name}" --PolicyDocument "${doc}" \
+      --Description "Enumerated least-priv (no service:*) for the Alethia provisioner." >/dev/null
+  fi
+  aliyun ram AttachPolicyToRole --PolicyType Custom --PolicyName "${name}" --RoleName "${ROLE_NAME}" >/dev/null 2>&1 || true
+  echo "    ${name} ready + attached."
+}
+upsert_policy "${ROLE_NAME}-ComputeCluster" "${POLICY_COMPUTECLUSTER}"
+upsert_policy "${ROLE_NAME}-Network"        "${POLICY_NETWORK}"
+upsert_policy "${ROLE_NAME}-Data"           "${POLICY_DATA}"
+upsert_policy "${ROLE_NAME}-EdgeReg"        "${POLICY_EDGEREG}"
 
 echo ""
 echo "==> Creating the service-linked-role policy (ACK/NAT first-use; non-escalating)..."

@@ -37,6 +37,60 @@ func TestProviderTfvars_GenericPassthrough(t *testing.T) {
 	}
 }
 
+// AKS admin-group object ids (BYOC B4.1 + A2.2) are the UNION of cluster_admins' groups and an
+// explicit provider_config["aks_admin_group_object_ids"] list — deduped, sorted, and set on the
+// aks_admin_group_object_ids tfvar; the provider_config key is reserved so it is NOT re-injected
+// verbatim. When neither source supplies an id, the tfvar is absent (AAD RBAC block stays off).
+func TestAzureProviderTfvars_AKSAdminGroupUnion(t *testing.T) {
+	t.Run("union of cluster_admins + provider_config, deduped+sorted", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			ProjectName: "p",
+			Cluster: types.ProjectClusterConfig{
+				ClusterAdmins: []any{
+					map[string]any{"username": "ops", "groups": []any{"bbbb", "cccc"}},
+				},
+				ProviderConfig: map[string]any{
+					"aks_admin_group_object_ids": []any{"aaaa", "cccc"}, // cccc dup, aaaa new
+				},
+			},
+		}
+		tf := (&azureProvider{}).ProviderTfvars(cfg)
+		ids, ok := tf["aks_admin_group_object_ids"].([]string)
+		if !ok {
+			t.Fatalf("aks_admin_group_object_ids type = %T, want []string", tf["aks_admin_group_object_ids"])
+		}
+		want := []string{"aaaa", "bbbb", "cccc"}
+		if len(ids) != len(want) {
+			t.Fatalf("ids = %#v, want %#v", ids, want)
+		}
+		for i := range want {
+			if ids[i] != want[i] {
+				t.Fatalf("ids = %#v, want %#v (deduped+sorted)", ids, want)
+			}
+		}
+	})
+	t.Run("provider_config-only (the e2e self-admin path)", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			ProjectName: "p",
+			Cluster: types.ProjectClusterConfig{
+				ProviderConfig: map[string]any{"aks_admin_group_object_ids": []any{"dddd"}},
+			},
+		}
+		tf := (&azureProvider{}).ProviderTfvars(cfg)
+		ids, _ := tf["aks_admin_group_object_ids"].([]string)
+		if len(ids) != 1 || ids[0] != "dddd" {
+			t.Fatalf("ids = %#v, want [dddd]", tf["aks_admin_group_object_ids"])
+		}
+	})
+	t.Run("absent when neither source supplies an id", func(t *testing.T) {
+		cfg := &types.ProjectConfig{ProjectName: "p"}
+		tf := (&azureProvider{}).ProviderTfvars(cfg)
+		if _, ok := tf["aks_admin_group_object_ids"]; ok {
+			t.Error("aks_admin_group_object_ids should be absent so the AAD RBAC block stays off")
+		}
+	})
+}
+
 // Typed mappings must win over a same-named provider_config key (merge-if-absent),
 // so the UI can't accidentally clobber a validated value.
 func TestProviderTfvars_TypedWinsOverPassthrough(t *testing.T) {

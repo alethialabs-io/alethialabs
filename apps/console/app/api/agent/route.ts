@@ -18,6 +18,10 @@ import {
 	mentionsSchema,
 } from "@/lib/ai/mentions";
 import {
+	formatContextBlock,
+	readAgentContext,
+} from "@/lib/ai/project-knowledge";
+import {
 	cachedSystemMessage,
 	thinkingOptions,
 } from "@/lib/ai/provider-options";
@@ -216,7 +220,19 @@ export async function POST(req: Request) {
 					`with position {x: ${cellTarget.x}, y: ${cellTarget.y}}, sized to fit the content.`,
 				].join(" ")
 			: "";
-		const system = [systemPrompt(mode), mentionBlock, cellBlock]
+		// The org-level pinned context (custom instructions + knowledge) rides EVERY org chat —
+		// the Claude-Projects model, where a workspace's instructions are inherited by its chats.
+		// Project-scoped context deliberately does NOT leak in here.
+		//
+		// Scope with actor.userId, NOT actor.orgId: withOwnerScope() sets current_owner AND
+		// current_org to whatever it's handed, and the Knowledge panel writes these rows through
+		// requireOwner() (= the user id). Reading with orgId would look under a different scope
+		// and silently find nothing in an enterprise org (community accidentally works, since
+		// there orgId === userId). guard.ts states the convention: actor.userId for withOwnerScope.
+		const orgCtx = await readAgentContext(actor.userId, null).catch(() => null);
+		const orgBlock = formatContextBlock("Organization", orgCtx);
+
+		const system = [systemPrompt(mode), orgBlock, mentionBlock, cellBlock]
 			.filter(Boolean)
 			.join("\n\n");
 

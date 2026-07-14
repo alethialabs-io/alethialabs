@@ -17,6 +17,7 @@ import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
+import { ProposalDiff } from "@/components/design-project/canvas/ai/proposal-diff";
 import { proposeOperationInputSchema } from "@/lib/ai/operation";
 import { proposeChangesInputSchema } from "@/lib/ai/proposal";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
@@ -101,33 +102,40 @@ export function projectRenderToolPart({
 			const isAccepted = accepted[proposal.id];
 			return (
 				<ToolResultFrame part={part} title="Changes">
-				<div className="flex w-full items-center justify-between border border-border px-2.5 py-1.5">
-					<span className="font-mono text-xs">{proposal.label}</span>
-					{isAccepted ? (
-						<span className="vx-status vx-status--active">
-							<span className="vx-status__dot" />
-							Added
-						</span>
-					) : (
-						<Button
-							type="button"
-							size="sm"
-							className="h-6 px-2 text-[11px]"
-							onClick={() => {
-								applyProposal(proposal);
-								setAccepted((a) => ({ ...a, [proposal.id]: true }));
-								addToolResult({
-									tool: "propose_changes",
-									toolCallId: part.toolCallId,
-									output: { status: "accepted", label: proposal.label },
-								});
-							}}
-						>
-							<Check className="mr-1 h-3 w-3" />
-							Accept
-						</Button>
-					)}
-				</div>
+					<div className="w-full border border-border">
+						<div className="flex items-center justify-between px-2.5 py-1.5">
+							<span className="font-mono text-xs">{proposal.label}</span>
+							{isAccepted ? (
+								<span className="vx-status vx-status--active">
+									<span className="vx-status__dot" />
+									Applied
+								</span>
+							) : (
+								<Button
+									type="button"
+									size="sm"
+									className="h-6 px-2 text-[11px]"
+									onClick={() => {
+										applyProposal(proposal);
+										setAccepted((a) => ({ ...a, [proposal.id]: true }));
+										addToolResult({
+											tool: "propose_changes",
+											toolCallId: part.toolCallId,
+											output: { status: "accepted", label: proposal.label },
+										});
+									}}
+								>
+									<Check className="mr-1 h-3 w-3" />
+									Accept
+								</Button>
+							)}
+						</div>
+
+						{/* WHAT ACCEPT WILL ACTUALLY DO. The card used to show only the model's own
+						    one-line label while Accept applied a list of actions the user never saw —
+						    you were asked to approve a summary and the payload got applied. */}
+						<ProposalDiff actions={proposal.actions} />
+					</div>
 				</ToolResultFrame>
 			);
 		}

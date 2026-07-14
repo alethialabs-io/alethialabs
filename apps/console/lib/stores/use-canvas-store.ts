@@ -19,6 +19,8 @@ import type {
 	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
+import type { CollectionPositions } from "@/lib/canvas/collections";
+import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 
 const PROJECT_NODE_ID = "project-root";
 const HISTORY_CAP = 50;
@@ -148,6 +150,13 @@ function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
 	return placed;
 }
 
+/**
+ * Kinds persisted OUT-OF-BAND (project_addons) rather than through the form graph: BYO Helm charts
+ * and marketplace add-ons. They're loaded straight from the server, never written by `graphToForm`,
+ * and must never appear in the Deploy diff — they aren't staged changes.
+ */
+export const OUT_OF_BAND = new Set<NodeKind>(["chart", "addon"]);
+
 /** A staged difference between the canvas (desired) and the saved baseline. */
 export interface PendingChange {
 	id: string;
@@ -228,7 +237,7 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 	for (const n of nodes) {
 		// The project root isn't a provisionable add; chart nodes are persisted out-of-band
 		// (project_addons) so they never belong in the Deploy diff.
-		if (n.id === PROJECT_NODE_ID || n.data.kind === "chart") continue;
+		if (n.id === PROJECT_NODE_ID || OUT_OF_BAND.has(n.data.kind)) continue;
 		const prev = base.get(n.id);
 		if (!prev) {
 			changes.push({ id: n.id, op: "new", kind: n.data.kind, name: nodeName(n) });
@@ -240,7 +249,7 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 		}
 	}
 	for (const n of baseline) {
-		if (n.id === PROJECT_NODE_ID || n.data.kind === "chart") continue;
+		if (n.id === PROJECT_NODE_ID || OUT_OF_BAND.has(n.data.kind)) continue;
 		if (!cur.has(n.id)) {
 			changes.push({ id: n.id, op: "removed", kind: n.data.kind, name: nodeName(n) });
 		}
@@ -280,6 +289,18 @@ interface CanvasStore {
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
 	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
 	setChartNodes: (charts: ByoChartState[]) => void;
+	/** Replace all marketplace add-on nodes (out-of-band; not a staged change). */
+	setAddonNodes: (
+		addons: {
+			id: string;
+			name: string;
+			version: string;
+			namespace: string;
+			status?: string;
+			health?: string | null;
+			sync?: string | null;
+		}[],
+	) => void;
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
 	/** Add a node with an explicit config + placement (used by Ask AI proposals). */
 	addNodeWithConfig: (
@@ -300,6 +321,11 @@ interface CanvasStore {
 	undo: () => void;
 	redo: () => void;
 	reset: () => void;
+
+	/** Where each collection card (the Secrets vault) sits. A collection has no store row of its own,
+	 * and its members' positions are never drawn, so the collapsed card needs a position here. */
+	collectionPositions: CollectionPositions;
+	setCollectionPosition: (kind: NodeKind, position: { x: number; y: number }) => void;
 
 	/** Canvas view prefs (ephemeral UI state, not persisted). */
 	showConnections: boolean;
@@ -342,10 +368,11 @@ export const useCanvasStore = create<CanvasStore>()(
 			future: [],
 			baseline: [makeProjectNode()],
 			identities: [],
-			// Nodes render unconnected by default — the derived dependency edges stay computed (used
-			// for cross-cloud gating) but hidden until the user toggles connections on.
-			showConnections: false,
+			// Edges are ON: a dependency graph you have to opt into isn't a dependency graph. The
+			// derived edges (network → cluster → leaves) are what make the board readable as a system.
+			showConnections: true,
 			hiddenKinds: [],
+			collectionPositions: {},
 
 			setIdentities: (identities) => set({ identities }),
 
@@ -373,11 +400,20 @@ export const useCanvasStore = create<CanvasStore>()(
 				// Preserve any already-loaded BYO chart nodes across a form reseed — they're
 				// out-of-band (loaded from getProjectByoCharts), not part of the form graph, so the
 				// incoming form-derived `nodes` never contain them and would otherwise wipe them.
-				const charts = get().nodes.filter((n) => n.data.kind === "chart");
+				const charts = get().nodes.filter((n) => OUT_OF_BAND.has(n.data.kind));
 				const base = nodes.some((n) => n.id === PROJECT_NODE_ID)
 					? nodes
 					: [makeProjectNode(), ...nodes];
-				const withRoot = [...base, ...charts];
+				// A freshly-loaded graph arrives from formToGraph as a flat grid. Lay it out by ZONE so it
+				// opens looking like the system it describes. Positions aren't part of the staged diff
+				// (diffNodes compares config + placement, never position), so this can never register as
+				// a pending change.
+				const seeded = [...base, ...charts];
+				const provider = (id: string) =>
+					seeded.find((n) => n.id === id)?.data.provider ??
+					seeded.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
+					null;
+				const withRoot = applyLayout(seeded, layoutZoned(seeded, provider));
 				set({
 					nodes: withRoot,
 					edges: deriveEdges(withRoot),
@@ -420,6 +456,34 @@ export const useCanvasStore = create<CanvasStore>()(
 					},
 				}));
 				const next = [...nonChart, ...chartNodes];
+				set({ nodes: next, edges: deriveEdges(next) });
+			},
+
+			setAddonNodes: (addons) => {
+				const others = get().nodes.filter((n) => n.data.kind !== "addon");
+				const addonNodes: CanvasNode[] = addons.map((a, i) => ({
+					id: `addon-${a.id}`,
+					type: "addon",
+					// Not keyboard-deletable: an add-on is removed by disabling it (which tears down its
+					// ArgoCD Application), never by a stray Backspace on the board.
+					deletable: false,
+					position: { x: 120 + (i % 2) * 270, y: 520 + Math.floor(i / 2) * 150 },
+					data: {
+						kind: "addon",
+						config: {
+							id: a.id,
+							name: a.name,
+							version: a.version,
+							namespace: a.namespace,
+							status: a.status,
+							health: a.health,
+							sync: a.sync,
+						},
+						cloud_identity_id: null,
+						provider: null,
+					},
+				}));
+				const next = [...others, ...addonNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
 			},
 
@@ -634,6 +698,12 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			commitBaseline: () => set((s) => ({ baseline: structuredClone(s.nodes), dirty: false })),
 
+			setCollectionPosition: (kind, position) =>
+				set((s) => ({
+					collectionPositions: { ...s.collectionPositions, [kind]: position },
+					dirty: true,
+				})),
+
 			toggleConnections: () => set((s) => ({ showConnections: !s.showConnections })),
 
 			toggleKindVisibility: (kind) =>
@@ -651,8 +721,16 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			relayout: () => {
 				get().commit();
-				const next = layoutByKind(get().nodes);
-				set({ nodes: next, dirty: true });
+				// Zone-aware: the cluster's workloads inside the cluster, managed data in the VPC beside
+				// it, periphery clear of both — so the board lays out the way the system is actually
+				// shaped rather than as one row per kind.
+				const next = applyLayout(
+					get().nodes,
+					layoutZoned(get().nodes, (id) => get().getEffectiveProvider(id)),
+				);
+				// Drop the collection cards' pinned positions too, so a "tidy" re-anchors the vaults on
+				// their freshly-laid-out members instead of stranding them where they were dragged.
+				set({ nodes: next, collectionPositions: {}, dirty: true });
 			},
 
 			getNode: (id) => get().nodes.find((n) => n.id === id),
@@ -676,12 +754,13 @@ export const useCanvasStore = create<CanvasStore>()(
 			name: "design-project-canvas-draft",
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
-			// Persist the graph + baseline (so the pending-changes diff survives reload);
-			// identities are server data and history is ephemeral.
+			// Persist the graph + baseline (so the pending-changes diff survives reload) and where the
+			// collection cards were dragged to; identities are server data and history is ephemeral.
 			partialize: (state) => ({
 				nodes: state.nodes,
 				edges: state.edges,
 				baseline: state.baseline,
+				collectionPositions: state.collectionPositions,
 			}),
 		},
 	),

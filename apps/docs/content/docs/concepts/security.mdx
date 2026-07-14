@@ -19,10 +19,10 @@ Console takes a different approach. The platform never stores cloud credentials.
 |----------|-----------|---------|
 | AWS | `AssumeRoleWithWebIdentity` directly into the customer role (IAM OIDC provider — no platform account, no ExternalId) | ~1 hour, auto-refreshed |
 | GCP | Workload Identity Federation (OIDC token exchange) | ~1 hour, auto-refreshed |
-| Azure | Federated Identity via Entra ID (client assertion / `ARM_OIDC_TOKEN`) | ~1 hour, auto-refreshed |
+| Azure | Client assertion into the customer's user-assigned managed identity (federated credential — no platform Entra app) | ~1 hour, auto-refreshed |
 | Alibaba | `AssumeRoleWithOIDC` (anonymous — no AccessKey, no Alethia Alibaba account) | ~1 hour, auto-refreshed |
 
-The only long-lived secret is the issuer's **signing key** (`ALETHIA_OIDC_SIGNING_KEY`), held on the control plane and never shared — clouds verify assertions against the published JWKS. If the user wants to revoke access, they delete the IAM role / WIF config / service principal / RAM role in their cloud account. There is nothing to leak from the Console side.
+The only long-lived secret is the issuer's **signing key** (`ALETHIA_OIDC_SIGNING_KEY`), held on the control plane and never shared — clouds verify assertions against the published JWKS. If the user wants to revoke access, they delete the IAM role / WIF config / managed identity / RAM role in their cloud account. There is nothing to leak from the Console side.
 
 ## The Alethia OIDC issuer (workload identity)
 
@@ -96,12 +96,15 @@ the IAM roles for the in-cluster controllers (external-dns, the AWS Load Balance
 Karpenter, …).
 
 <Callout type="info">
-**Least-privilege by default — no account admin.** The setup attaches **four scoped policies** instead of
-`AdministratorAccess`: Compute / Data / Edge (each limited to exactly the services above) and an
-action-enumerated IAM policy that lets the templates create the roles they need but **explicitly denies**
-attaching admin-grade managed policies (`AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess`), scopes
-`PassRole` to the provisioned services, and denies `organizations:*`/`account:*` — so the connector **cannot
-escalate to admin**. A permissions boundary on the created roles is the next hardening increment. See the
+**Least-privilege by default — no account admin, fully action-enumerated.** The setup attaches **five
+scoped policies** instead of `AdministratorAccess`: `ComputeNet`, `ComputeScale`, `Data`, `Edge` (the
+data-plane, split into net/scale to stay under AWS's 6144-char managed-policy limit — each lists the
+**specific `ec2:`/`eks:`/`rds:`/… actions** the templates issue, not `service:*`), and an action-enumerated
+`IAM` policy that lets the templates create the roles they need but **explicitly denies** attaching
+admin-grade managed policies (`AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess`), scopes `PassRole`
+to the provisioned services, and denies `organizations:*`/`account:*`/billing — so the connector **cannot
+escalate to admin**. (Reads stay `Describe*`/`Get*`/`List*` so a template/module bump doesn't break a real
+apply.) A permissions boundary on the created roles is the next hardening increment. See the
 [AWS connector guide](/console/connectors/aws).
 </Callout>
 
@@ -136,34 +139,41 @@ Registry, Secret Manager, Cloud Storage, Firestore, Pub/Sub, and the workload-id
 bindings for in-cluster controllers.
 
 <Callout type="info">
-**Least-privilege by default — no `roles/editor`.** The service account is granted the **minimal set of
-predefined `*.admin` roles** for exactly the services above (container / compute.network / compute.security /
-servicenetworking / cloudsql / redis / dns / artifactregistry / secretmanager / storage / datastore /
-pubsub, plus `iam.serviceAccountAdmin`+`User` for the add-on identities). The templates were **refactored to
-resource-scoped IAM** — external-dns gets `dns.admin` on the project's managed zone (not project-wide), and a
-legacy project-level workload-identity binding was removed — so the provisioner needs **no project
-`setIamPolicy`**, closing the owner-equivalent escalation path. The one remaining residual,
-`iam.serviceAccountAdmin`, is escalation-adjacent (setIamPolicy on SAs) and is a candidate for a
-resource-conditioned custom role later.
+**Least-privilege by default — no `roles/editor`.** The service account gets **10 predefined roles + 5
+custom roles**. The predefined roles are kept for services whose Google-maintained admin set is already
+tightly scoped and churns with new features (container / compute.network / compute.security /
+servicenetworking / cloudsql / redis / dns / artifactregistry / secretmanager, plus `iam.serviceAccountUser`)
+— hand-enumerating those buys nothing. The **5 custom roles replace the predefined admin roles that bundled
+data-plane access a provisioner must never hold**, granting management verbs only: GCS bucket mgmt *without
+object data*, Firestore database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without
+publish/consume*, add-on SA mgmt (dropping undelete/enable/disable), and a project-metadata reader
+(replacing `roles/browser`, no folder/org hierarchy reads). The templates also use **resource-scoped IAM**
+(zone-scoped external-dns; per-secret accessor; per-GSA workloadIdentityUser), so the provisioner needs **no
+project `setIamPolicy`**. `secretmanager.admin` is kept predefined on purpose — dropping
+`secretmanager.versions.access` breaks the provider's secret-version refresh. See the
+[GCP connector guide](/console/connectors/gcp).
 </Callout>
 
 ## Azure: Federated Identity
 
-Azure is keyless with **no per-customer app registration**. Alethia registers **one multi-tenant Entra
-app** (in Alethia's own tenant) with a federated-identity credential trusting the Alethia OIDC issuer
-(subject `alethia-connector`, audience `api://AzureADTokenExchange`) — and **no client secret**.
+Azure is keyless and **customer-side** — there is **no platform Entra app** and no `ALETHIA_AZURE_CLIENT_ID`.
+The customer creates a **user-assigned managed identity** in their own subscription (a plain ARM resource —
+no App Registration, no directory-admin rights) with a **federated-identity credential** trusting the
+Alethia OIDC issuer (subject `alethia-connector`, audience `api://AzureADTokenExchange`). The console and the
+runner authenticate **as that customer identity** (its `client_id` is stored per-connection) via a client
+assertion — **no client secret**. This is parity with the GCP Workload Identity Federation model.
 
 ### Setup
 
-The customer runs the connect script, which creates only a **service principal for Alethia's app** in
-their tenant and grants it Contributor on the target subscription. They register no app of their own and
-store nothing:
+The customer runs the connect script (Azure Cloud Shell or OpenTofu), which creates everything in **their**
+subscription and stores nothing but three public identifiers:
 
-1. `az ad sp create --id <Alethia's app id>` — a service principal for the platform app in their tenant
-2. `az role assignment create` — grants it the appropriate RBAC role on the subscription
+1. `az identity create` — a user-assigned managed identity in the customer's subscription
+2. `az identity federated-credential create` — a credential trusting the Alethia issuer (subject
+   `alethia-connector`, audience `api://AzureADTokenExchange`)
+3. `az role definition/assignment create` — the least-privilege **Alethia Provisioner** custom role (below)
 
-(Operator setup of the multi-tenant app is documented in
-[Managed cloud connectors](/self-hosting/managed-cloud-connectors).)
+The customer pastes back their **tenant id**, **subscription id**, and the **managed identity's client id**.
 
 ### Runtime Flow
 
@@ -176,8 +186,8 @@ sequenceDiagram
   Note over R: tofu runs; the runner re-mints into the token file so long applies refresh
 `} />
 
-No client secret is ever generated or stored. Access revocation is instant by deleting the service
-principal in the customer tenant.
+No client secret is ever generated or stored. Access revocation is instant by deleting the managed
+identity (or its role assignment) in the customer's subscription.
 
 ### Permissions scope
 
@@ -187,7 +197,7 @@ Registry, Key Vault (+ secrets), Storage, Service Bus, Cosmos DB, WAF policy, an
 role assignments for in-cluster workload identity.
 
 <Callout type="info">
-**Least-privilege by default — a custom role, not `Contributor`.** The app's service principal is granted a
+**Least-privilege by default — a custom role, not `Contributor`.** The customer's managed identity is granted a
 **custom role definition** ("Alethia Provisioner") enumerating only the actions the services above need —
 including the AKS credential-list and per-resource-provider registration that `Contributor` omits (so this
 also *fixes* a gap: pure `Contributor` cannot create the external-dns role assignment the templates require).
@@ -225,12 +235,15 @@ SNAT), EIP, RDS, Container Registry EE, KVStore (Redis), AliDNS, KMS, Message Se
 (OTS), and WAF.
 
 <Callout type="info">
-**Least-privilege by attached policy — never account admin.** The Alibaba RAM role attaches **one per-service
-system policy for each service Alethia provisions** (`AliyunCS/VPC/ECS/SLB/EIP FullAccess` for the core ACK
-path, plus RDS/ContainerRegistry/Kvstore/DNS/KMS/MNS/OSS/OTS/WAF for the optional modules) — never
-`AliyunRAMFullAccess` or an admin policy. The service-linked roles ACK/NAT need are covered by a **narrow
-custom policy granting only `ram:CreateServiceLinkedRole`** (service-linked roles are cloud-managed with
-fixed permissions, so this can't escalate). See the [Alibaba connector guide](/console/connectors/alibaba).
+**Least-privilege by enumerated custom policy — never account admin.** The Alibaba RAM role attaches **4
+enumerated custom policies** (replacing the per-service `*FullAccess` System policies): `ComputeCluster`
+(ACK + its transitive node-pool ECS + API-server/Service SLB), `Network` (VPC/vSwitch/NAT/SNAT + EIP),
+`Data` (RDS/KVStore/OSS/Tablestore/KMS), and `EdgeReg` (Container Registry/AliDNS/MNS/WAF). Each lists the
+**specific create/read/modify/delete/tag actions** the templates issue (reads stay `Describe*`/`Get*`/`List*`
+so a provider bump doesn't break a real apply) — never `service:*`, `AliyunRAMFullAccess`, or an admin
+policy. The service-linked roles ACK/NAT need are covered by a **narrow custom policy granting only
+`ram:CreateServiceLinkedRole`** (service-linked roles are cloud-managed with fixed permissions, so this
+can't escalate). See the [Alibaba connector guide](/console/connectors/alibaba).
 </Callout>
 
 ## Key rotation

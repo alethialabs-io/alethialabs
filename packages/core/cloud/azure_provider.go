@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -148,12 +149,15 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		tfvars["aks_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
 	}
 
-	// B4.1: cluster_admins → AKS admin_group_object_ids. Each admin's `groups` are Entra
-	// group OBJECT IDs; flatten+dedupe them. Only set when non-empty so the AAD-integrated
-	// RBAC block stays unrendered (Kubernetes-RBAC-only, unchanged) for the common case.
-	// The AKS-authorized-CIDR and DB-allow-list knobs (aks_authorized_ip_ranges /
-	// azure_db_allowed_cidrs) flow through the generic provider_config passthrough below.
-	if ids := azureAdminGroupObjectIDs(config.Cluster.ClusterAdmins); len(ids) > 0 {
+	// B4.1 + A2.2: cluster_admins → AKS admin_group_object_ids, UNIONed with an explicit
+	// provider_config["aks_admin_group_object_ids"] list (the e2e self-admin seam). Only set
+	// when non-empty so the AAD-integrated RBAC block stays unrendered (Kubernetes-RBAC-only,
+	// unchanged) for the common case. The AKS-authorized-CIDR and DB-allow-list knobs
+	// (aks_authorized_ip_ranges / azure_db_allowed_cidrs) still flow through the generic
+	// provider_config passthrough below; aks_admin_group_object_ids is consumed HERE (and
+	// reserved from that passthrough) so the two sources merge instead of one clobbering the
+	// other.
+	if ids := resolveAKSAdminGroupObjectIDs(config.Cluster); len(ids) > 0 {
 		tfvars["aks_admin_group_object_ids"] = ids
 	}
 
@@ -168,7 +172,10 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	// provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, azureTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	// aks_admin_group_object_ids is consumed above (unioned from cluster_admins + the explicit
+	// provider_config list), so reserve it from the generic passthrough — otherwise a
+	// provider_config value would be re-injected verbatim and could drop the cluster_admins half.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "aks_admin_group_object_ids")
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "azure_waf", "managed_certificate")
 
 	return tfvars
@@ -186,9 +193,15 @@ func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.P
 	// long-lived admin cert) survives AKS local-account hardening and leaks nothing durable.
 	// Endpoint + CA come from the tofu outputs (non-secret; the admin cert is never surfaced).
 	endpoint := extractOutputString(outputs, "aks_cluster_endpoint")
+	if endpoint == "" {
+		endpoint = extractOutputString(outputs, "cluster_endpoint") // BYO-IaC generic fallback
+	}
 	ca := extractOutputString(outputs, "aks_cluster_ca_certificate")
+	if ca == "" {
+		ca = extractOutputString(outputs, "cluster_ca_certificate") // BYO-IaC generic fallback
+	}
 	if endpoint == "" || ca == "" {
-		return fmt.Errorf("missing AKS endpoint/CA in tofu outputs (aks_cluster_endpoint/aks_cluster_ca_certificate)")
+		return fmt.Errorf("missing AKS endpoint/CA in tofu outputs (aks_cluster_endpoint/aks_cluster_ca_certificate or generic cluster_endpoint/cluster_ca_certificate)")
 	}
 	fmt.Fprintf(stdout, "Configuring kubeconfig for AKS cluster %s...\n", clusterName)
 	return writeExecKubeconfig(
@@ -212,6 +225,49 @@ func extractOutputString(outputs map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// resolveAKSAdminGroupObjectIDs collects the Entra group OBJECT IDs to grant AKS
+// AAD-integrated cluster-admin from BOTH supported sources, unioned + deduped + sorted so
+// the resulting tfvar is deterministic:
+//
+//   - config.Cluster.ClusterAdmins (B4.1) — each admin's `groups` hold Entra group object IDs.
+//   - config.Cluster.ProviderConfig["aks_admin_group_object_ids"] — an explicit list. This is
+//     the e2e self-admin seam (BYOC A2.2): AAD-integrated RBAC only renders when the admin
+//     group list is non-empty (aks/main.tf), so on the managed-cluster default (empty) the
+//     runner's short-lived AAD token 401s the fresh API server — the same "runner never
+//     authorized" gap seen on EKS/GKE. The infra/azure-e2e stack outputs an Entra admin group
+//     (with the e2e service principal as a member) whose object id the e2e cluster JSON drops
+//     here (via ALETHIA_E2E_CLUSTER_JSON → the snapshot's cluster.provider_config), so the
+//     runner is authorized at create time. The customer default is unchanged: neither source
+//     supplying an id leaves this nil and the AAD RBAC block off (Kubernetes-RBAC-only).
+func resolveAKSAdminGroupObjectIDs(cluster types.ProjectClusterConfig) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		if _, dup := seen[s]; dup {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, id := range azureAdminGroupObjectIDs(cluster.ClusterAdmins) {
+		add(id)
+	}
+	if raw, ok := cluster.ProviderConfig["aks_admin_group_object_ids"]; ok {
+		if list, ok := raw.([]any); ok {
+			for _, v := range list {
+				if s, ok := v.(string); ok {
+					add(s)
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // azureAdminGroupObjectIDs flattens the Entra group object IDs carried by the project's

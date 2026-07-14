@@ -1,0 +1,330 @@
+[
+	{
+		"id": "argo-rollouts",
+		"mode": "managed",
+		"chartRepo": "https://argoproj.github.io/argo-helm",
+		"chart": "argo-rollouts",
+		"version": "2.37.7",
+		"namespace": "argo-rollouts",
+		"values": {},
+		"syncWave": 2
+	},
+	{
+		"id": "cert-manager",
+		"mode": "managed",
+		"chartRepo": "https://charts.jetstack.io",
+		"chart": "cert-manager",
+		"version": "v1.15.3",
+		"namespace": "cert-manager",
+		"values": {
+			"crds": {
+				"enabled": true
+			}
+		},
+		"syncWave": 1
+	},
+	{
+		"id": "external-dns",
+		"mode": "managed",
+		"chartRepo": "https://kubernetes-sigs.github.io/external-dns/",
+		"chart": "external-dns",
+		"version": "1.15.0",
+		"namespace": "external-dns",
+		"values": {
+			"provider": {
+				"name": "cloudflare"
+			}
+		},
+		"syncWave": 2
+	},
+	{
+		"id": "falco",
+		"mode": "managed",
+		"chartRepo": "https://falcosecurity.github.io/charts",
+		"chart": "falco",
+		"version": "4.9.0",
+		"namespace": "falco",
+		"values": {},
+		"syncWave": 2
+	},
+	{
+		"id": "goldilocks",
+		"mode": "managed",
+		"chartRepo": "https://charts.fairwinds.com/stable",
+		"chart": "goldilocks",
+		"version": "9.0.0",
+		"namespace": "goldilocks",
+		"values": {},
+		"syncWave": 4
+	},
+	{
+		"id": "harbor",
+		"mode": "managed",
+		"chartRepo": "https://helm.goharbor.io",
+		"chart": "harbor",
+		"version": "1.15.1",
+		"namespace": "harbor",
+		"values": {
+			"persistence": {
+				"persistentVolumeClaim": {
+					"registry": {
+						"size": "50Gi"
+					}
+				}
+			}
+		},
+		"syncWave": 2
+	},
+	{
+		"id": "ingress-nginx",
+		"mode": "managed",
+		"chartRepo": "https://kubernetes.github.io/ingress-nginx",
+		"chart": "ingress-nginx",
+		"version": "4.11.2",
+		"namespace": "ingress-nginx",
+		"values": {},
+		"syncWave": 1
+	},
+	{
+		"id": "keda",
+		"mode": "managed",
+		"chartRepo": "https://kedacore.github.io/charts",
+		"chart": "keda",
+		"version": "2.15.1",
+		"namespace": "keda",
+		"values": {},
+		"syncWave": 2
+	},
+	{
+		"id": "kube-prometheus-stack",
+		"mode": "managed",
+		"chartRepo": "https://prometheus-community.github.io/helm-charts",
+		"chart": "kube-prometheus-stack",
+		"version": "61.9.0",
+		"namespace": "monitoring",
+		"values": {
+			"grafana": {
+				"enabled": true
+			},
+			"prometheus": {
+				"prometheusSpec": {
+					"retention": "15d",
+					"storageSpec": {
+						"volumeClaimTemplate": {
+							"spec": {
+								"resources": {
+									"requests": {
+										"storage": "20Gi"
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"syncWave": 2
+	},
+	{
+		"id": "kyverno",
+		"mode": "managed",
+		"chartRepo": "https://kyverno.github.io/kyverno/",
+		"chart": "kyverno",
+		"version": "3.2.6",
+		"namespace": "kyverno",
+		"values": {},
+		"syncWave": 1
+	},
+	{
+		"id": "loki",
+		"mode": "managed",
+		"chartRepo": "https://grafana.github.io/helm-charts",
+		"chart": "loki",
+		"version": "6.6.0",
+		"namespace": "monitoring",
+		"values": {
+			"deploymentMode": "SingleBinary",
+			"loki": {
+				"commonConfig": {
+					"replication_factor": 1
+				},
+				"storage": {
+					"type": "filesystem"
+				},
+				"schemaConfig": {
+					"configs": [
+						{
+							"from": "2024-01-01",
+							"store": "tsdb",
+							"object_store": "filesystem",
+							"schema": "v13",
+							"index": {
+								"prefix": "index_",
+								"period": "24h"
+							}
+						}
+					]
+				},
+				"limits_config": {
+					"retention_period": "336h"
+				}
+			},
+			"read": {
+				"replicas": 1
+			},
+			"write": {
+				"replicas": 1
+			},
+			"backend": {
+				"replicas": 1
+			}
+		},
+		"syncWave": 3
+	},
+	{
+		"id": "minio",
+		"mode": "managed",
+		"chartRepo": "https://charts.min.io/",
+		"chart": "minio",
+		"version": "5.2.0",
+		"namespace": "minio",
+		"values": {
+			"mode": "standalone",
+			"persistence": {
+				"size": "50Gi"
+			}
+		},
+		"syncWave": 2
+	},
+	{
+		"id": "opentelemetry-collector",
+		"mode": "managed",
+		"chartRepo": "https://open-telemetry.github.io/opentelemetry-helm-charts",
+		"chart": "opentelemetry-collector",
+		"version": "0.108.0",
+		"namespace": "observability",
+		"values": {
+			"mode": "deployment",
+			"image": {
+				"repository": "otel/opentelemetry-collector-contrib"
+			},
+			"config": {
+				"receivers": {
+					"otlp": {
+						"protocols": {
+							"grpc": {},
+							"http": {}
+						}
+					}
+				},
+				"exporters": {
+					"debug": {}
+				},
+				"service": {
+					"pipelines": {
+						"traces": {
+							"receivers": [
+								"otlp"
+							],
+							"exporters": [
+								"debug"
+							]
+						},
+						"metrics": {
+							"receivers": [
+								"otlp"
+							],
+							"exporters": [
+								"debug"
+							]
+						},
+						"logs": {
+							"receivers": [
+								"otlp"
+							],
+							"exporters": [
+								"debug"
+							]
+						}
+					}
+				}
+			}
+		},
+		"syncWave": 3
+	},
+	{
+		"id": "reloader",
+		"mode": "managed",
+		"chartRepo": "https://stakater.github.io/stakater-charts",
+		"chart": "reloader",
+		"version": "1.1.0",
+		"namespace": "reloader",
+		"values": {},
+		"syncWave": 1
+	},
+	{
+		"id": "sealed-secrets",
+		"mode": "managed",
+		"chartRepo": "https://bitnami.github.io/sealed-secrets",
+		"chart": "sealed-secrets",
+		"version": "2.16.1",
+		"namespace": "kube-system",
+		"values": {},
+		"syncWave": 1
+	},
+	{
+		"id": "tempo",
+		"mode": "managed",
+		"chartRepo": "https://grafana.github.io/helm-charts",
+		"chart": "tempo",
+		"version": "1.10.3",
+		"namespace": "monitoring",
+		"values": {},
+		"syncWave": 3
+	},
+	{
+		"id": "trivy-operator",
+		"mode": "managed",
+		"chartRepo": "https://aquasecurity.github.io/helm-charts/",
+		"chart": "trivy-operator",
+		"version": "0.24.1",
+		"namespace": "trivy-system",
+		"values": {
+			"trivy": {
+				"ignoreUnfixed": true
+			}
+		},
+		"syncWave": 2
+	},
+	{
+		"id": "vault",
+		"mode": "managed",
+		"chartRepo": "https://helm.releases.hashicorp.com",
+		"chart": "vault",
+		"version": "0.28.1",
+		"namespace": "vault",
+		"values": {
+			"server": {
+				"ha": {
+					"enabled": false
+				}
+			},
+			"ui": {
+				"enabled": true
+			}
+		},
+		"syncWave": 2
+	},
+	{
+		"id": "velero",
+		"mode": "managed",
+		"chartRepo": "https://vmware-tanzu.github.io/helm-charts",
+		"chart": "velero",
+		"version": "7.2.1",
+		"namespace": "velero",
+		"values": {
+			"snapshotsEnabled": true
+		},
+		"syncWave": 3
+	}
+]

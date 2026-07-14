@@ -8,9 +8,38 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// writeRawKubeconfig writes a ready-made kubeconfig verbatim to the per-worker HOME path
+// and points KUBECONFIG at it. Used when the OpenTofu run already emitted a working
+// kubeconfig as an output — the self-managed clouds (Talos/Hetzner, ACK/Alibaba) and a
+// BYO-IaC module that emits a generic `kubeconfig` output — so there is no cloud API call
+// or exec-plugin to wire. Mirrors writeExecKubeconfig's HOME-based, 0600, per-worker path.
+func writeRawKubeconfig(kubeconfig string, stdout io.Writer) error {
+	if strings.TrimSpace(kubeconfig) == "" {
+		return fmt.Errorf("empty kubeconfig")
+	}
+	// Absolute, HOME-based path (not cwd-relative) so concurrent worker subprocesses —
+	// which share a cwd but each have a private HOME — never read each other's kubeconfig.
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	kubeDir := filepath.Join(home, ".alethia")
+	if err := os.MkdirAll(kubeDir, 0700); err != nil {
+		return err
+	}
+	kubeconfigPath := filepath.Join(kubeDir, "kubeconfig")
+	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
+		return err
+	}
+	_ = os.Setenv("KUBECONFIG", kubeconfigPath)
+	fmt.Fprintf(stdout, "Kubeconfig written to %s\n", kubeconfigPath)
+	return nil
+}
 
 // runnerBinaryPath resolves the absolute path of the running binary, for use as a
 // Kubernetes exec-credential-plugin `command`. Falls back to "runner" (PATH lookup)

@@ -416,7 +416,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			"Encrypt secrets so they're safe to commit to Git — the controller decrypts them in-cluster.",
 		docsUrl: "https://github.com/bitnami-labs/sealed-secrets#helm-chart",
 		license: "Apache-2.0",
-		chartRepo: "https://bitnami-labs.github.io/sealed-secrets",
+		chartRepo: "https://bitnami.github.io/sealed-secrets",
 		chart: "sealed-secrets",
 		version: "2.16.1",
 		namespace: "kube-system",

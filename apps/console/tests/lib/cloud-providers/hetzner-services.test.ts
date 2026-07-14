@@ -71,52 +71,84 @@ describe("hetznerDataServicesToAddOns — databases (CloudNativePG)", () => {
 	});
 });
 
-describe("hetznerDataServicesToAddOns — caches (Valkey)", () => {
-	it("explicit storage_gb wins over the memory_gb fallback", () => {
+// The cache chart moved from Bitnami (whose valkey 1.0.6 was DELETED from the index — ArgoCD
+// could not fetch it, so Hetzner caches were broken in prod) to the UPSTREAM valkey-io chart.
+// Its value schema is completely different, so these assertions are written against the keys the
+// real chart actually reads (verified with `helm show values` + `helm template`) — a mapping
+// translated by eye ships a chart that silently ignores sizing, or hard-fails at sync.
+describe("hetznerDataServicesToAddOns — caches (Valkey, upstream valkey-io chart)", () => {
+	it("targets the upstream valkey-io chart, not Bitnami", () => {
+		const specs = hetznerDataServicesToAddOns({ caches: [{ name: "primary" }] });
+		const spec = specs.find((s) => s.id === "cache-primary");
+		expect(spec?.chartRepo).toBe("https://valkey-io.github.io/valkey-helm");
+		expect(spec?.chartRepo).not.toContain("bitnami");
+	});
+
+	it("explicit storage_gb wins over the memory_gb fallback (dataStorage.requestedSize)", () => {
 		const specs = hetznerDataServicesToAddOns({
 			caches: [{ name: "primary", memory_gb: 4, storage_gb: 32 }],
 		});
-		const primary = values(specs.find((s) => s.id === "cache-primary")).primary;
-		expect(primary.persistence).toMatchObject({ size: "32Gi" });
+		const v = values(specs.find((s) => s.id === "cache-primary"));
+		expect(v.dataStorage).toMatchObject({
+			enabled: true,
+			requestedSize: "32Gi",
+			className: "hcloud-volumes",
+		});
 	});
 
-	it("uses the Bitnami `persistence.storageClass` key (NOT storageClassName) on primary and replica", () => {
+	it("uses the chart's REAL storage keys (dataStorage.requestedSize/className)", () => {
+		const specs = hetznerDataServicesToAddOns({
+			caches: [{ name: "primary", storage_gb: 32 }],
+		});
+		const v = values(specs.find((s) => s.id === "cache-primary"));
+		const ds = v.dataStorage as Record<string, unknown>;
+		// The Bitnami keys are gone — asserting their ABSENCE is what keeps a future edit from
+		// silently reintroducing values this chart ignores.
+		expect(v).not.toHaveProperty("primary");
+		expect(v).not.toHaveProperty("architecture");
+		expect(ds).not.toHaveProperty("size");
+		expect(ds).not.toHaveProperty("storageClass");
+		expect(ds.requestedSize).toBe("32Gi");
+		expect(ds.className).toBe("hcloud-volumes");
+	});
+
+	it("replicas are ADDITIONAL to the primary (N nodes ⇒ N-1 replicas) and carry mandatory persistence", () => {
 		const specs = hetznerDataServicesToAddOns({
 			caches: [{ name: "primary", storage_gb: 32, num_cache_nodes: 3 }],
 		});
-		const v = values(specs.find((s) => s.id === "cache-primary"));
-		const primaryPersistence = v.primary.persistence as Record<string, unknown>;
-		const replica = v.replica as Record<string, unknown>;
-		const replicaPersistence = replica.persistence as Record<string, unknown>;
-
-		expect(primaryPersistence.storageClass).toBe("hcloud-volumes");
-		expect(primaryPersistence).not.toHaveProperty("storageClassName");
-		expect(replicaPersistence.storageClass).toBe("hcloud-volumes");
-		expect(replicaPersistence).not.toHaveProperty("storageClassName");
+		const replica = values(specs.find((s) => s.id === "cache-primary"))
+			.replica as Record<string, unknown>;
+		expect(replica.enabled).toBe(true);
+		// 3 nodes = 1 primary + 2 replicas. (Bitnami's key was `replicaCount`.)
+		expect(replica.replicas).toBe(2);
+		// MANDATORY when replicas are on: the chart hard-errors with "Replica mode requires
+		// persistent storage" without it — the exact trap a guessed mapping falls into.
+		expect(replica.persistence).toMatchObject({
+			size: "32Gi",
+			storageClass: "hcloud-volumes",
+		});
 	});
 
-	it("sizes replica volumes the same as the primary so 'per node' holds", () => {
+	it("a single-node cache disables replication (no replica StatefulSet)", () => {
 		const specs = hetznerDataServicesToAddOns({
-			caches: [{ name: "primary", storage_gb: 32, num_cache_nodes: 3 }],
+			caches: [{ name: "solo", storage_gb: 8 }],
 		});
-		const v = values(specs.find((s) => s.id === "cache-primary"));
-		expect(v.primary.persistence).toMatchObject({ size: "32Gi" });
-		const replica = v.replica as Record<string, unknown>;
-		expect(replica.replicaCount).toBe(2);
-		expect(replica.persistence).toMatchObject({ size: "32Gi" });
+		const replica = values(specs.find((s) => s.id === "cache-solo"))
+			.replica as Record<string, unknown>;
+		expect(replica.enabled).toBe(false);
+		expect(replica.replicas).toBe(0);
 	});
 
 	it("falls back to memory_gb, then the 8Gi default", () => {
 		const specs = hetznerDataServicesToAddOns({
-			caches: [
-				{ name: "mem", memory_gb: 4 },
-				{ name: "bare" },
-			],
+			caches: [{ name: "mem", memory_gb: 4 }, { name: "bare" }],
 		});
-		expect(values(specs.find((s) => s.id === "cache-mem")).primary.persistence)
-			.toMatchObject({ size: "4Gi" });
-		expect(values(specs.find((s) => s.id === "cache-bare")).primary.persistence)
-			.toMatchObject({ size: "8Gi" });
+		expect(values(specs.find((s) => s.id === "cache-mem")).dataStorage).toMatchObject(
+			{ requestedSize: "4Gi" },
+		);
+		expect(values(specs.find((s) => s.id === "cache-bare")).dataStorage).toMatchObject(
+			{ requestedSize: "8Gi" },
+		);
 	});
 });
 
@@ -131,11 +163,23 @@ describe("hetznerDataServicesToAddOns — queues (RabbitMQ)", () => {
 			.toMatchObject({ size: "64Gi" });
 	});
 
-	it("uses the Bitnami `persistence.storageClass` key (NOT storageClassName)", () => {
+	it("uses the chart's `persistence.storageClass` key (NOT the k8s storageClassName)", () => {
 		const specs = hetznerDataServicesToAddOns({ queues: [{ name: "jobs" }] });
 		const persistence = values(specs.find((s) => s.id === "queue-jobs")).persistence;
+		expect(persistence.enabled).toBe(true);
 		expect(persistence.storageClass).toBe("hcloud-volumes");
 		expect(persistence).not.toHaveProperty("storageClassName");
+	});
+
+	// bitnami/rabbitmq 14.7.0's default image (docker.io/bitnami/rabbitmq:3.13.7-debian-12-r2) is
+	// now HTTP 404 — Broadcom relocated the Bitnami images to bitnamilegacy/* — so every fresh
+	// Hetzner queue ImagePullBackOff'd. The replacement chart pulls the OFFICIAL docker.io/rabbitmq
+	// image. Guard the repo so nobody drifts back onto the archive.
+	it("does NOT use a Bitnami chart (its images were relocated and 404)", () => {
+		const specs = hetznerDataServicesToAddOns({ queues: [{ name: "jobs" }] });
+		const spec = specs.find((s) => s.id === "queue-jobs");
+		expect(spec?.chartRepo).not.toContain("bitnami");
+		expect(spec?.chartRepo).toBe("https://cloudpirates-io.github.io/helm-charts");
 	});
 });
 

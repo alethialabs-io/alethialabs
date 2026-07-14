@@ -12,17 +12,26 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
  * without pulling the whole canvas registry into the server bundle.
  *
  * Compute-only Hetzner runs data services as in-cluster Helm charts (Postgres→CloudNativePG,
- * cache→Valkey, queue→RabbitMQ) and provisions buckets natively via Object Storage (the
+ * cache→Valkey, queue→RabbitMQ — see lib/cloud-providers/hetzner-services.ts, which synthesizes them
+ * as ArgoCD add-on Applications) and provisions buckets natively via Object Storage (the
  * aminueza/minio provider — see infra/templates/project/hetzner/buckets.tf); topic (SNS) and nosql
  * (DynamoDB) have no clean single-chart OSS equal and registry has no native Hetzner path, so those
  * stay hidden in the palette and rejected at deploy (the Harbor marketplace add-on covers registry
  * in-cluster). When a provider gains a native path for a kind, drop it from this map and BOTH the
  * palette and the deploy gate follow.
+ *
+ * `secret` is blocked on Hetzner: there is NO cloud secret store (the runner already says so —
+ * argocd/decisions.go externalSecretsStoreDecision: "Hetzner has no cloud secret store — use the Vault
+ * connector"), and `hetznerProvider.ProviderTfvars` never emits `custom_secrets` (every managed cloud
+ * does). Before this gate the component was SILENTLY DROPPED and the deploy still reported SUCCESS —
+ * exactly the failure mode this map exists to prevent. In-cluster secrets (Vault add-on + an ESO
+ * ClusterSecretStore over a Vault backend) is a real feature with its own init/unseal design, not a
+ * silent no-op; until it lands, reject the kind honestly.
  */
 export const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 	Record<CloudProviderSlug, readonly NodeKind[]>
 > = {
-	hetzner: ["topic", "nosql", "registry"],
+	hetzner: ["topic", "nosql", "registry", "secret"],
 };
 
 /**

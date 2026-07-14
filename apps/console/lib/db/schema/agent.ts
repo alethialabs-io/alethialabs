@@ -9,6 +9,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	unique,
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
@@ -96,3 +97,41 @@ export const agentMemory = pgTable(
 
 export type AgentMemory = typeof agentMemory.$inferSelect;
 export type NewAgentMemory = typeof agentMemory.$inferInsert;
+
+// Elench context — the persistent KNOWLEDGE + CUSTOM INSTRUCTIONS that ride every chat in a
+// scope. This is the Claude-Projects model: a project is a self-contained workspace whose
+// instructions/knowledge are inherited by each of its chats and never leak out of it.
+//   project_id NULL -> the ORG-level row: applies to the general (org) agent, and is layered
+//                      UNDER every project's row (org policy first, project specifics second).
+//   project_id set  -> that infra project's own row.
+// The scope pair mirrors memoryNamespace(org, project?) 1:1 (lib/agent/memory-path.ts), so an
+// agent's pinned context and its memory are keyed the same way.
+export const agentContext = pgTable(
+	"agent_context",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		user_id: uuid().notNull(),
+		// Owner scope (community org_id = user_id), matching the projects/artifacts RLS pattern.
+		org_id: uuid(),
+		project_id: uuid(),
+		/** Custom instructions, e.g. "this env is PCI — always require approval before apply". */
+		instructions: text().default("").notNull(),
+		/** Pinned free-text knowledge (our analogue of Claude's uploaded project docs). */
+		notes: text().default("").notNull(),
+		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [
+		// Exactly one row per (owner, scope). NULLS NOT DISTINCT so the org-level row
+		// (project_id IS NULL) is unique too — Postgres otherwise treats every NULL as distinct
+		// and would happily allow duplicate org rows.
+		unique("uq_agent_context_scope")
+			.on(t.org_id, t.project_id)
+			.nullsNotDistinct(),
+		index("idx_agent_context_org").on(t.org_id),
+		index("idx_agent_context_project").on(t.project_id),
+	],
+);
+
+export type AgentContext = typeof agentContext.$inferSelect;
+export type NewAgentContext = typeof agentContext.$inferInsert;

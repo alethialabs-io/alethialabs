@@ -107,6 +107,11 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	if err := t2MergeClusterJSON(full); err != nil {
 		return nil, nil, err
 	}
+	// A2.2: append the Azure AKS admin-group object id (self-admin) into cluster.provider_config
+	// when ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID is set (azure only) — AFTER the cluster-json
+	// merge so it augments, never clobbers, any id supplied there. On `full` ONLY (never `base`,
+	// the A0.5 fidelity target).
+	t2MergeAzureAdminGroup(full, provider)
 	// Merge the per-cloud network override into the `network` block (AWS: single_nat_gateway). On
 	// `full` ONLY — never `base`, the fidelity target — so A0.5's key-for-key fixture check stays
 	// intact while the real DEPLOY provisions the cheaper single-NAT shape.

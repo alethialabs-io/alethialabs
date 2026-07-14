@@ -88,29 +88,103 @@ resource "google_service_account" "alethia" {
   depends_on = [google_project_service.apis]
 }
 
-# Least-privilege: the enumerated predefined roles covering exactly the services
-# Alethia's project templates provision — in place of the account-wide roles/editor.
-# NOTE: the templates were refactored to resource-level IAM bindings (zone-scoped
-# external-dns; no project workloadIdentityUser), so the provisioner needs NO
-# resourcemanager.projectIamAdmin (which would be owner-equivalent). Tighten or
-# extend to match the Projects you run.
+# Least-privilege. Two kinds of grant:
+#   (1) Predefined roles for services whose Google-maintained admin set is already tightly scoped and
+#       churns with new features (GKE especially) — hand-enumerating those into custom roles is a
+#       maintenance trap and buys nothing (they carry no cross-service or data-exfil surface).
+#   (2) CUSTOM roles for the services whose predefined admin role bundles DATA-PLANE access a
+#       provisioner must never hold — GCS object data, Firestore document data, Pub/Sub message
+#       publish/consume, and the org/folder hierarchy reads of roles/browser. The custom roles below
+#       grant management verbs only (create/delete/get/list/update/[set]IamPolicy).
+# NOTE: the templates use resource-level IAM bindings (zone-scoped external-dns; per-secret accessor;
+# per-GSA workloadIdentityUser), so the provisioner needs NO resourcemanager.projectIamAdmin.
+# secretmanager.admin is KEPT predefined on purpose: dropping secretmanager.versions.access breaks the
+# google provider's secret-version refresh (AccessSecretVersion on read) — tighten only with a real-apply.
 resource "google_project_iam_member" "alethia_provisioner" {
   for_each = toset([
-    "roles/container.admin",                 # GKE clusters + node pools
+    "roles/container.admin",                 # GKE clusters + node pools (churns per release — keep)
     "roles/compute.networkAdmin",            # VPC, subnets, router, NAT, global addresses
     "roles/compute.securityAdmin",           # firewall rules, Cloud Armor, SSL certs
     "roles/servicenetworking.networksAdmin", # private-services peering (Cloud SQL / Memorystore)
     "roles/cloudsql.admin",                  # Cloud SQL
     "roles/redis.admin",                     # Memorystore
-    "roles/dns.admin",                       # Cloud DNS managed zones
+    "roles/dns.admin",                       # Cloud DNS managed zones (+ zone-scoped setIamPolicy)
     "roles/artifactregistry.admin",          # Artifact Registry
-    "roles/secretmanager.admin",             # Secret Manager
-    "roles/storage.admin",                   # GCS buckets + bucket IAM
-    "roles/datastore.owner",                 # Firestore (uses Datastore IAM)
-    "roles/pubsub.admin",                    # Pub/Sub
-    "roles/iam.serviceAccountAdmin",         # create the add-on GSAs (e.g. external-dns)
+    "roles/secretmanager.admin",             # Secret Manager (kept — see note re: versions.access)
     "roles/iam.serviceAccountUser",          # actAs the node/add-on SAs
-    "roles/browser",                         # data.google_project / client-config reads
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.alethia.email}"
+}
+
+# ── Custom roles: management-only replacements for the data-plane-broad predefined admin roles. ──
+resource "google_project_iam_custom_role" "storage_provisioner" {
+  role_id     = "alethiaStorageProvisioner"
+  project     = var.project_id
+  title       = "Alethia Storage Bucket Provisioner"
+  description = "Create/manage GCS buckets + bucket IAM; NO object data access (replaces roles/storage.admin)."
+  permissions = [
+    "storage.buckets.create", "storage.buckets.delete", "storage.buckets.get",
+    "storage.buckets.list", "storage.buckets.update",
+    "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy",
+  ]
+}
+
+resource "google_project_iam_custom_role" "firestore_provisioner" {
+  role_id     = "alethiaFirestoreProvisioner"
+  project     = var.project_id
+  title       = "Alethia Firestore Provisioner"
+  description = "Create/manage Firestore databases + indexes; NO entity data access (replaces roles/datastore.owner)."
+  permissions = [
+    "datastore.databases.create", "datastore.databases.delete", "datastore.databases.get",
+    "datastore.databases.getMetadata", "datastore.databases.list", "datastore.databases.update",
+    "datastore.indexes.create", "datastore.indexes.delete", "datastore.indexes.get",
+    "datastore.indexes.list", "datastore.indexes.update",
+    "datastore.operations.get", "datastore.operations.list",
+  ]
+}
+
+resource "google_project_iam_custom_role" "pubsub_provisioner" {
+  role_id     = "alethiaPubSubProvisioner"
+  project     = var.project_id
+  title       = "Alethia Pub/Sub Provisioner"
+  description = "Create/manage topics + subscriptions; NO publish/consume (replaces roles/pubsub.admin)."
+  permissions = [
+    "pubsub.topics.create", "pubsub.topics.delete", "pubsub.topics.get",
+    "pubsub.topics.list", "pubsub.topics.update", "pubsub.topics.attachSubscription",
+    "pubsub.subscriptions.create", "pubsub.subscriptions.delete", "pubsub.subscriptions.get",
+    "pubsub.subscriptions.list", "pubsub.subscriptions.update",
+  ]
+}
+
+resource "google_project_iam_custom_role" "sa_provisioner" {
+  role_id     = "alethiaServiceAccountProvisioner"
+  project     = var.project_id
+  title       = "Alethia Add-on SA Provisioner"
+  description = "Create/manage the add-on GSAs (external-dns/external-secrets) + their IAM (replaces roles/iam.serviceAccountAdmin; drops undelete/enable/disable)."
+  permissions = [
+    "iam.serviceAccounts.create", "iam.serviceAccounts.delete", "iam.serviceAccounts.get",
+    "iam.serviceAccounts.list", "iam.serviceAccounts.update",
+    "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy",
+  ]
+}
+
+resource "google_project_iam_custom_role" "project_reader" {
+  role_id     = "alethiaProjectReader"
+  project     = var.project_id
+  title       = "Alethia Project Reader"
+  description = "Read project metadata for data.google_project (replaces roles/browser; no folder/org hierarchy reads)."
+  permissions = ["resourcemanager.projects.get"]
+}
+
+resource "google_project_iam_member" "alethia_provisioner_custom" {
+  for_each = toset([
+    google_project_iam_custom_role.storage_provisioner.id,
+    google_project_iam_custom_role.firestore_provisioner.id,
+    google_project_iam_custom_role.pubsub_provisioner.id,
+    google_project_iam_custom_role.sa_provisioner.id,
+    google_project_iam_custom_role.project_reader.id,
   ])
   project = var.project_id
   role    = each.value

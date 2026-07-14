@@ -105,6 +105,12 @@ type PlanResult struct {
 	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
 	// health read failed; the runner forwards it so the console can show real status.
 	AddOnStatus map[string]argocd.AddOnHealth
+	// DataEndpoints is the connection endpoint + credential REFERENCE for each in-cluster data
+	// service (Hetzner's database/cache/queue deploy as ArgoCD Applications, not managed cloud
+	// resources), keyed by add-on id (`db-primary`, `cache-main`, …). READ BACK from the cluster —
+	// chart Service names are never derived. Carries secret_ref ("<ns>/<name>"), never a credential
+	// value (the #427 precedent: no plaintext secrets in execution_metadata).
+	DataEndpoints map[string]argocd.DataEndpoint
 	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
 	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
 	SecurityPosture *argocd.SecurityPosture
@@ -173,6 +179,20 @@ func clusterReadyTimeout() time.Duration {
 		}
 	}
 	return 15 * time.Minute
+}
+
+// addonConvergeTimeout bounds how long the deploy waits for the add-on Applications to reach
+// Healthy+Synced before reading their status for the console. Generous by default: a data service
+// (CNPG Cluster, Valkey, RabbitMQ) has to pull images, bind a PVC (hcloud CSI attach is ~30-60s)
+// and elect a primary. Best-effort — a timeout records the honest last-known status, it does not
+// fail the deploy. Tunable via ALETHIA_ADDON_CONVERGE_TIMEOUT (e.g. "5m"; "0" disables the wait).
+func addonConvergeTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_ADDON_CONVERGE_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return 10 * time.Minute
 }
 
 // clusterReadyRequireNode controls whether the gate waits for >=1 Ready node. Default true
@@ -694,6 +714,17 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
 			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
+		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
+		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
+		// EC2NodeClass spec.tags (from the karpenter_node_tags output) is the ONLY lever that
+		// stamps the classification + sweep-handle tags onto launched instances/volumes (gap G2).
+		// Non-fatal like the add-on path: a node-class hiccup must not fail an otherwise-healthy
+		// cluster — the operator sees the warning and Karpenter still runs (it just can't scale
+		// until the CR lands). The apply retries because the CRDs sync in asynchronously.
+		setStage("karpenter")
+		if kErr := applyKarpenterNodeClass(ctx, result.Outputs, facts, stdout, stderr); kErr != nil {
+			fmt.Fprintf(stderr, "Warning: Karpenter EC2NodeClass/NodePool setup skipped: %v\n", kErr)
+		}
 		// Remove infra-service objects earlier deploys applied but this render skipped
 		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
 		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
@@ -712,6 +743,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// read health back for the console. Non-fatal (like app-manifest generation): a bad
 		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
 		if len(vc.AddOns) > 0 {
+			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
+			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
+			// runner applies them server-side and waits for the CRDs they own to become
+			// Established — so a CR Application synced below (a RabbitmqCluster, a CNPG Cluster)
+			// can never race the operator that owns its schema. ArgoCD sync-waves do NOT order
+			// across separate top-level Applications, so this ordering must happen here.
+			if mErr := argocd.ApplyManifestAddOns(ctx, vc.AddOns, stdout, stderr); mErr != nil {
+				fmt.Fprintf(stderr, "Warning: operator manifest add-ons failed: %v\n", mErr)
+			}
+
 			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
 			// and register their per-repo credentials BEFORE rendering the Applications, so the
 			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
@@ -722,7 +763,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
 			} else {
 				defer os.RemoveAll(addonDir)
-				if applyErr := argocd.ApplyAddOns(addonDir, stdout, stderr); applyErr != nil {
+				// Apply the Applications in ascending sync-wave order, waiting after each wave for
+				// the CRDs it establishes. ArgoCD's sync-wave annotation does NOT order separate
+				// top-level Applications, so a Helm operator (CloudNativePG) and an Application
+				// carrying a CR that needs its schema (a CNPG Cluster) would otherwise race — the
+				// CR's first sync failing with `no matches for kind`.
+				if applyErr := argocd.ApplyAddOnsInWaves(vc.AddOns, addonDir, stdout, stderr); applyErr != nil {
 					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
 				}
 			}
@@ -738,12 +784,30 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
+		//
+		// WAIT for convergence first. The read used to run the instant after `kubectl apply`, when
+		// every Application is still Progressing/Missing — so a database that was about to come up
+		// perfectly was persisted as "Creating"… and nothing ever refreshed it (the day-2 refresh
+		// only updates project_addons rows, and the synthesized Hetzner data-service specs have
+		// none). The wait is bounded and best-effort: an add-on that never converges is reported
+		// honestly rather than failing an otherwise-healthy cluster.
 		if len(vc.AddOns) > 0 {
-			result.AddOnStatus = argocd.ReadAddOnHealth(
+			result.AddOnStatus = argocd.WaitAddOnsHealthy(
+				ctx,
 				argocd.AllAddOnNames(vc.AddOns),
+				addonConvergeTimeout(),
 				stdout,
 				stderr,
 			)
+			// In-cluster data services (Hetzner database/cache/queue) are ArgoCD Applications, so
+			// they have no tofu output carrying a connection string — the console showed NO endpoint
+			// at all ("endpoint discovery is chart-specific and deferred"). Now that they've
+			// converged, read their Service endpoint + credential REFERENCE back FROM THE CLUSTER.
+			// Never derived from a chart's fullname template: a wrong endpoint is worse than none.
+			if eps := argocd.ReadDataEndpoints(vc.AddOns, stdout, stderr); len(eps) > 0 {
+				fmt.Fprintf(stdout, "Read %d in-cluster data-service endpoint(s).\n", len(eps))
+				result.DataEndpoints = eps
+			}
 		}
 		// Read the cluster's Trivy-Operator vulnerability posture (L9). Best-effort +
 		// unconditional: `Scanned=false` when Trivy isn't installed, so the Evidence Security

@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in the bootstrap workflow.
+# Apply this ONLY into a DEDICATED, throwaway e2e GCP project — never a prod/shared project.
+
+# The dedicated e2e project the nightly provisions into (REQUIRED).
+project_id = "alethia-e2e-nightly"
+
+# The billing account the e2e project is linked to (REQUIRED for the budget). XXXXXX-XXXXXX-XXXXXX.
+billing_account_id = "000000-000000-000000"
+
+# The region the nightly provisions in (must NOT be a prod-adjacent region). Default europe-west3.
+# region = "europe-west3"
+
+# GitHub OIDC scoping — owner/repo + the branch `schedule` runs on. The provider's attribute
+# condition pins BOTH exactly (StringEquals-equivalent), so PRs/forks/other branches cannot federate.
+# github_repo    = "alethialabs-io/alethialabs"
+# e2e_github_ref = "refs/heads/main"
+
+# Monthly cost ceiling (USD) — alerts at 50/80/100% actual + 100% forecast onto the Pub/Sub topic.
+# e2e_monthly_budget_usd = 100
