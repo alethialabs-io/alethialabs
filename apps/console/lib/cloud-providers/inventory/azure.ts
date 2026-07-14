@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Azure inventory — virtual networks + their subnets via ARM, using the platform app token. Upserts
-// into the shared typed tables. Verifiable in a hosted env with ALETHIA_AZURE_* configured.
+// Azure inventory — virtual networks + their subnets via ARM, authenticating AS the customer's
+// user-assigned managed identity (keyless, no platform app). Upserts into the shared typed tables.
+// Verifiable in a hosted env with the OIDC issuer configured.
 
 import { getServiceDb } from "@/lib/db";
 import {

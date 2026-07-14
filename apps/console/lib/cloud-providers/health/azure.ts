@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Azure health — server-side. Alethia's multi-tenant app (ALETHIA_AZURE_*) authenticates and accesses
-// the customer subscription that granted it access (the managed model; mirrors the runner's federated
-// identity, but from the console). Token via @azure/identity, then a cheap ARM "list locations" call.
-// NOTE: requires platform Azure credentials to be configured — verifiable in a hosted/staging env, not
-// in local dev without them (it returns a clear DISCONNECTED reason rather than a 5-min timeout).
+// Azure health — server-side. The console authenticates AS the customer's User-Assigned Managed
+// Identity (its client_id is stored per-connection) against the customer's tenant, presenting a minted
+// OIDC assertion as the client assertion — no platform Entra app, no client secret. Token via
+// @azure/identity, then a cheap ARM "list locations" call. NOTE: requires the OIDC issuer to be
+// configured (ALETHIA_OIDC_SIGNING_KEY); it returns a clear DISCONNECTED reason rather than a timeout.
 
 import type { CloudIdentity } from "@/lib/db/schema";
 import { assumeAzureIdentity } from "../session/azure";
@@ -18,8 +18,8 @@ function disconnected(error: string): HealthResult {
 	return { status: "disconnected", accountId: null, error, missingPermissions: [] };
 }
 
-/** Probes an Azure connection: acquire an ARM token via the platform app, then list the subscription's
- * locations (proves access to the customer subscription). Never throws. */
+/** Probes an Azure connection: acquire an ARM token AS the customer's managed identity, then list the
+ * subscription's locations (proves access to the customer subscription). Never throws. */
 export async function probeAzureHealth(
 	identity: Pick<CloudIdentity, "credentials">,
 ): Promise<HealthResult> {

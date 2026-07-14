@@ -200,34 +200,25 @@ describe("parseWifConfig", () => {
 // --- initIdentity ---
 
 describe("initIdentity", () => {
-	it("reuses an existing pending row without an external id for a non-role cloud", async () => {
+	it("reuses an existing pending row without minting anything (non-role cloud)", async () => {
 		queue([{ id: "ci-gcp" }]);
 		const r = await initIdentity(SCOPE, "gcp");
 		expect(r).toEqual({ identityId: "ci-gcp" });
 		expect(db._values).toHaveLength(0); // no insert
 	});
 
-	it("returns the stored external id when a role-cloud pending row already has one", async () => {
-		queue([{ id: "ci-aws", credentials: { external_id: "ext-existing" } }]);
+	it("reuses an existing keyless AWS pending row without minting an external id", async () => {
+		// AWS is keyless direct-OIDC now — no ExternalId is minted, backfilled, or returned.
+		queue([{ id: "ci-aws", credentials: {} }]);
 		const r = await initIdentity(SCOPE, "aws");
-		expect(r).toEqual({ identityId: "ci-aws", externalId: "ext-existing" });
+		expect(r).toEqual({ identityId: "ci-aws" });
 		expect(db._sets).toHaveLength(0); // no backfill update
 	});
 
-	it("backfills a missing external id on an existing role-cloud pending row", async () => {
-		queue([{ id: "ci-aws", credentials: {} }], []); // select, then update
-		const r = await initIdentity(SCOPE, "aws");
-		expect(typeof r.externalId).toBe("string");
-		expect(r.externalId).toHaveLength(36);
-		// the backfilled external_id is exactly what was written
-		expect(db._sets[0].credentials).toEqual({ external_id: r.externalId });
-	});
-
-	it("creates a fresh pending row with a generated external id for a role cloud", async () => {
+	it("creates a fresh keyless pending row with empty credentials for AWS (no external id)", async () => {
 		queue([], [{ id: "ci-new" }]); // no existing, then insert returning
 		const r = await initIdentity(SCOPE, "aws");
-		expect(r.identityId).toBe("ci-new");
-		expect(typeof r.externalId).toBe("string");
+		expect(r).toEqual({ identityId: "ci-new" });
 		const inserted = db._values[0];
 		expect(inserted).toMatchObject({
 			user_id: "user-1",
@@ -237,13 +228,20 @@ describe("initIdentity", () => {
 			name: "AWS Connection (Pending)",
 			is_verified: false,
 		});
-		expect(inserted.credentials).toEqual({ external_id: r.externalId });
+		expect(inserted.credentials).toEqual({});
+	});
+
+	it("creates a keyless Alibaba pending row with empty credentials (no external id)", async () => {
+		queue([], [{ id: "ci-ali" }]);
+		const r = await initIdentity(SCOPE, "alibaba");
+		expect(r).toEqual({ identityId: "ci-ali" });
+		expect(db._values[0].credentials).toEqual({});
 	});
 
 	it("creates a token-cloud pending row with empty credentials and no external id", async () => {
 		queue([], [{ id: "ci-do" }]);
 		const r = await initIdentity(SCOPE, "digitalocean");
-		expect(r).toEqual({ identityId: "ci-do", externalId: undefined });
+		expect(r).toEqual({ identityId: "ci-do" });
 		expect(db._values[0].credentials).toEqual({});
 	});
 });
@@ -565,20 +563,20 @@ describe("reverifyConnection", () => {
 // --- disconnectIdentity ---
 
 describe("disconnectIdentity", () => {
-	it("preserves the external id for a role cloud, orphans projects, and emits a revoked alert", async () => {
+	it("clears all credentials for keyless AWS, orphans projects, and emits a revoked alert", async () => {
 		queue(
-			[{ provider: "aws", credentials: { external_id: "ext-keep", role_arn: "arn:x" } }], // provider+cred select
+			[{ provider: "aws" }], // provider-assert select (provider only)
 			[{ org_id: "org-1" }], // reset update returning
 			[], // projects update
 		);
 		const r = await disconnectIdentity(SCOPE, "ci-1", "aws");
 		expect(r).toEqual({ success: true });
-		// identity reset (sets[0]) keeps ONLY the external_id
+		// AWS is keyless — the reset (sets[0]) clears ALL credentials (no ExternalId to preserve).
 		expect(db._sets[0]).toMatchObject({
 			name: "AWS Connection (Pending)",
 			status: "pending",
 			is_verified: false,
-			credentials: { external_id: "ext-keep" },
+			credentials: {},
 		});
 		expect(db._sets[0].credentials).not.toHaveProperty("role_arn");
 		// projects reset (sets[1]) orphans the FK

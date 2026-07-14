@@ -73,18 +73,28 @@ variable "provisioning_policies" {
   description = "System RAM policy names attached to the provisioning role (one per provisioned service)."
 }
 
-# The issuer's TLS cert chain — Alibaba requires the issuer cert fingerprints on the OIDC provider.
-# We supply every fingerprint in the presented chain so validation succeeds regardless of which
-# cert Alibaba pins.
+# The issuer's TLS cert chain — Alibaba pins the issuer cert fingerprints on the OIDC provider. We pin
+# only the CA certs (intermediate + root, via the `is_ca` filter — order-independent), NOT the leaf:
+# alethialabs.io is fronted by a Cloudflare tunnel whose LEAF cert rotates frequently, so a leaf-pinned
+# provider would silently stop validating after a rotation, whereas the issuing CA is stable. When the CA
+# itself rotates, re-apply this stack (or re-run alethia-alibaba-setup.sh) to refresh the fingerprints.
 data "tls_certificate" "issuer" {
   url = var.alethia_issuer_url
+}
+
+locals {
+  # Prefer the CA fingerprints; fall back to the whole chain if none is flagged is_ca (defensive).
+  issuer_ca_fingerprints = [for c in data.tls_certificate.issuer.certificates : c.sha1_fingerprint if c.is_ca]
+  issuer_fingerprints = length(local.issuer_ca_fingerprints) > 0 ? local.issuer_ca_fingerprints : [
+    for c in data.tls_certificate.issuer.certificates : c.sha1_fingerprint
+  ]
 }
 
 resource "alicloud_ims_oidc_provider" "alethia" {
   oidc_provider_name = "alethia"
   issuer_url         = var.alethia_issuer_url
   client_ids         = ["sts.aliyuncs.com"]
-  fingerprints       = [for c in data.tls_certificate.issuer.certificates : c.sha1_fingerprint]
+  fingerprints       = local.issuer_fingerprints
   description        = "Trust the Alethia control-plane OIDC issuer for keyless AssumeRoleWithOIDC."
 }
 

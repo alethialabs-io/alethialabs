@@ -18,6 +18,25 @@ function isAccessDenied(e: unknown): boolean {
 	return s.includes("forbidden") || s.includes("nopermission") || s.includes("not authorized");
 }
 
+/**
+ * True when an AssumeRoleWithOIDC failure looks like the OIDC provider can no longer validate the
+ * issuer's TLS certificate — i.e. the pinned CA fingerprint(s) went stale after the issuer's cert
+ * rotated (alethialabs.io is behind a rotating Cloudflare edge). The keyless console can't re-push
+ * fingerprints itself (it has no standing Alibaba credential), so we turn this into an actionable
+ * message telling the operator to re-run the idempotent setup script.
+ */
+function isFingerprintFailure(e: unknown): boolean {
+	const s = errorMessage(e).toLowerCase();
+	return (
+		s.includes("fingerprint") ||
+		s.includes("idtoken") ||
+		s.includes("id token") ||
+		s.includes("verify") ||
+		s.includes("certificate") ||
+		s.includes("oidcprovider")
+	);
+}
+
 /** Probes one Alibaba cloud identity's health server-side. Never throws — failures map to a status. */
 export async function probeAlibabaHealth(
 	identity: Pick<CloudIdentity, "credentials">,
@@ -55,10 +74,14 @@ export async function probeAlibabaHealth(
 			missingPermissions,
 		};
 	} catch (e) {
+		// A stale-fingerprint failure isn't recoverable keyless — guide the operator to re-run setup.
+		const error = isFingerprintFailure(e)
+			? `${errorMessage(e)} — the issuer's TLS certificate may have rotated. Re-run alethia-alibaba-setup.sh in your Alibaba Cloud Shell (or re-apply the Terraform module) to refresh the OIDC provider's CA fingerprints, then Re-verify.`
+			: errorMessage(e);
 		return {
 			status: "disconnected",
 			accountId,
-			error: errorMessage(e),
+			error,
 			missingPermissions: [],
 		};
 	}
