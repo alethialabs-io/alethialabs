@@ -79,8 +79,13 @@ var t2ProviderTable = map[string]t2Provider{
 	// (AWS_ACCESS_KEY_ID or AWS_ROLE_ARN) is actually in the environment, so a missing
 	// configure-step doesn't slip through as a green skip.
 	"aws": {
-		name:                "aws",
-		defaultRegion:       "eu-central-1",
+		name: "aws",
+		// us-east-1: the `alethia-e2e-nightly` role is region-LOCKED here (infra/aws-oidc
+		// `e2e_region`), and eu-central-1/eu-west-1 are prod regions the role explicitly
+		// forbids — so a default of anything but us-east-1 makes every AWS call AccessDenied.
+		// The workflow also exports ALETHIA_E2E_REGION=us-east-1 for the nightly; this is the
+		// local-run fallback.
+		defaultRegion:       "us-east-1",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
 		credsPresent: func() (bool, string) {

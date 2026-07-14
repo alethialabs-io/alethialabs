@@ -58,7 +58,7 @@ func TestT2ProviderTableComplete(t *testing.T) {
 		waitTimeout  time.Duration
 	}{
 		"hetzner": {"nbg1", "8m", 25 * time.Minute},
-		"aws":     {"eu-central-1", "15m", 50 * time.Minute},
+		"aws":     {"us-east-1", "15m", 50 * time.Minute},
 		"gcp":     {"europe-west3-a", "15m", 50 * time.Minute},
 		"azure":   {"germanywestcentral", "15m", 50 * time.Minute},
 		"alibaba": {"eu-central-1", "15m", 50 * time.Minute},
@@ -149,9 +149,9 @@ func TestT2ResolveRegion(t *testing.T) {
 		{"hetzner default", "hetzner", nil, "nbg1"},
 		{"hetzner legacy fallback", "hetzner", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "fsn1"},
 		{"hetzner generalized wins over legacy", "hetzner", map[string]string{"ALETHIA_E2E_REGION": "hel1", "ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "hel1"},
-		{"aws default", "aws", nil, "eu-central-1"},
-		{"aws override", "aws", map[string]string{"ALETHIA_E2E_REGION": "us-east-1"}, "us-east-1"},
-		{"aws ignores legacy hcloud name", "aws", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "eu-central-1"},
+		{"aws default", "aws", nil, "us-east-1"},
+		{"aws override", "aws", map[string]string{"ALETHIA_E2E_REGION": "eu-west-2"}, "eu-west-2"},
+		{"aws ignores legacy hcloud name", "aws", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "us-east-1"},
 		{"gcp default", "gcp", nil, "europe-west3-a"},
 		{"azure default", "azure", nil, "germanywestcentral"},
 		{"alibaba override", "alibaba", map[string]string{"ALETHIA_E2E_REGION": "ap-southeast-1"}, "ap-southeast-1"},
