@@ -8,6 +8,7 @@ import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
+import { CopyButton } from "@repo/ui/copy-button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
@@ -383,6 +384,32 @@ function Overview({
 					{status.message ? ` — ${status.message}` : ""}
 				</dd>
 			</dl>
+
+			{/* What the deploy actually PRODUCED. `endpoint` / `reader_endpoint` / `cluster_endpoint` /
+			    `argocd_url` / `repository_url` are all written by the deploy finalizer and were, until
+			    now, surfaced NOWHERE — you had to open the cloud console to find your own database's
+			    hostname. */}
+			{status.outputs.length > 0 && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">Endpoints</span>
+					<dl className="space-y-1">
+						{status.outputs.map((o) => (
+							<div
+								key={o.label}
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5"
+							>
+								<dt className="shrink-0 text-[11px] text-muted-foreground">
+									{o.label}
+								</dt>
+								<dd className="min-w-0 flex-1 truncate text-right font-mono text-[11px]">
+									{o.value}
+								</dd>
+								<CopyButton text={o.value} className="h-6 w-6 shrink-0" />
+							</div>
+						))}
+					</dl>
+				</div>
+			)}
 
 			{/* Drift is an overlay, not a state — it's listed on its own, per drifted resource, with
 			    the Terraform address that actually diverged. */}

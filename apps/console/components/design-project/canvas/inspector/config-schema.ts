@@ -51,7 +51,24 @@ export type FieldType =
 	| "radio-card"
 	| "switch"
 	| "region"
-	| "repository";
+	| "repository"
+	// A `string[]` column — CIDR allow-lists, CORS origins, cluster admins, global replicas.
+	| "list"
+	// A typed row editor over a JSONB array of objects. First use: `topic.subscriptions`, a column
+	// that has existed since the baseline migration with no way at all to edit it in the product.
+	| "subresource";
+
+/** A row editor over a JSONB array of objects. */
+export interface SubresourceSpec {
+	/** The fields shown for each row. Rows are plain records — the engine's erasure seam. */
+	fields: FieldDef<Record<string, unknown>>[];
+	/** A fresh row. */
+	create: () => Record<string, unknown>;
+	/** The row's heading. */
+	title: (item: Record<string, unknown>, index: number) => string;
+	/** Singular noun, for "Add a subscription". */
+	singular: string;
+}
 
 export interface FieldDef<C = AnyConfig> {
 	key: string;
@@ -85,13 +102,33 @@ export interface FieldDef<C = AnyConfig> {
 	get?: (config: C) => unknown;
 	/** Nested write escape hatch — returns the patch to merge into config. */
 	set?: (value: unknown, config: C) => Partial<C>;
+	/** `list` only: the shape of one row. */
+	item?: { placeholder?: string; mono?: boolean };
+	/** `subresource` only: the row editor's definition. */
+	sub?: SubresourceSpec;
 }
+
+/**
+ * A section's tier. Every column the database can store is definable, but TIERED, so the
+ * cloud-indifferent design story survives contact with the long tail of per-cloud knobs:
+ *
+ *   essentials — the portable fields. What you'd set on any cloud.
+ *   sizing     — capacity and scale.
+ *   security   — access, encryption, admins.
+ *   advanced   — PROVIDER-SPECIFIC knobs. Collapsed, and badged with the cloud it belongs to, so
+ *                it's obvious you're leaving portable ground.
+ */
+export type SectionTier = "essentials" | "sizing" | "security" | "advanced";
 
 export interface SectionDef<C = AnyConfig> {
 	id: string;
 	title: string;
 	defaultOpen?: boolean;
 	fields: FieldDef<C>[];
+	/** Defaults to `essentials`. `advanced` collapses by default and shows a provider badge. */
+	tier?: SectionTier;
+	/** Only render for these clouds. A section for knobs that simply don't exist elsewhere. */
+	providerScope?: CloudProviderSlug[];
 }
 
 export interface KindConfig<C = AnyConfig> {
@@ -228,6 +265,13 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						description: "One shared NAT (cheaper) vs one per availability zone.",
 						visibleWhen: (c) => c.provision_network !== false,
 					},
+					{
+						key: "allowed_cidr_blocks",
+						type: "list",
+						label: "Allowed CIDR blocks",
+						description: "Extra networks permitted to reach resources in this VPC.",
+						item: { mono: true, placeholder: "10.1.0.0/16" },
+					},
 				],
 			},
 		],
@@ -274,8 +318,46 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "sizing",
 				title: "Node sizing",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
+					// The cloud-INDIFFERENT way to size: the Go resolver maps a capability to the nearest
+					// per-cloud instance type at provision time. The panel has never exposed it, so the
+					// only way to size a cluster was to pick a concrete SKU and lose portability.
+					{
+						key: "node_size_vcpu",
+						type: "number",
+						label: "vCPU per node",
+						min: 1,
+						max: 96,
+						optional: true,
+						placeholder: "2",
+						description: "Portable sizing — mapped to the nearest instance type on any cloud.",
+						get: (c) => c.node_size?.vcpu ?? null,
+						set: (v, c) => ({
+							node_size:
+								v == null
+									? undefined
+									: { vcpu: Number(v), memory_gb: c.node_size?.memory_gb ?? 8 },
+						}),
+					},
+					{
+						key: "node_size_memory",
+						type: "number",
+						label: "Memory per node",
+						unit: "GB",
+						min: 1,
+						max: 768,
+						optional: true,
+						placeholder: "8",
+						get: (c) => c.node_size?.memory_gb ?? null,
+						set: (v, c) => ({
+							node_size:
+								v == null
+									? undefined
+									: { vcpu: c.node_size?.vcpu ?? 2, memory_gb: Number(v) },
+						}),
+					},
 					{ key: "node_min_size", type: "number", label: "Min nodes", min: 1, max: 100 },
 					{
 						key: "node_desired_size",
@@ -285,6 +367,48 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						max: 100,
 					},
 					{ key: "node_max_size", type: "number", label: "Max nodes", min: 1, max: 100 },
+					{
+						key: "node_disk_size_gb",
+						type: "number",
+						label: "Node disk",
+						unit: "GB",
+						min: 20,
+						max: 2000,
+						optional: true,
+						placeholder: "per-cloud default",
+						description: "Worker root volume. Empty uses the cloud's default (EKS 50 · GKE 50 · AKS 100).",
+					},
+				],
+			},
+			{
+				id: "security",
+				title: "Security",
+				tier: "security",
+				fields: [
+					{
+						key: "cluster_admins",
+						type: "list",
+						label: "Cluster admins",
+						description:
+							"Principals granted cluster-admin RBAC at create time — the mechanism the runner uses to authorize itself against the cluster it just built.",
+						item: { mono: true, placeholder: "arn:aws:iam::…:role/platform-oncall" },
+						// The column is `ClusterAdmin[]` ({ username, groups }). The list edits the
+						// usernames; the group binding stays cluster-admin, which is the only thing this
+						// mechanism grants. Existing groups on a row are preserved on edit.
+						get: (c) => (c.cluster_admins ?? []).map((a) => a.username),
+						set: (v, c) => {
+							const existing = c.cluster_admins ?? [];
+							return {
+								cluster_admins: (v as string[]).map((username) => ({
+									username,
+									groups:
+										existing.find((a) => a.username === username)?.groups ?? [
+											"system:masters",
+										],
+								})),
+							};
+						},
+					},
 				],
 			},
 		],
@@ -385,12 +509,52 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "security",
 				title: "Security",
+				tier: "security",
 				fields: [
 					{
 						key: "iam_auth",
 						type: "switch",
 						label: "IAM authentication",
 						description: "Authenticate with short-lived cloud IAM tokens instead of a password.",
+					},
+					{
+						key: "backup_retention_days",
+						type: "number",
+						label: "Backup retention",
+						unit: "days",
+						min: 0,
+						max: 35,
+						optional: true,
+						placeholder: "7",
+						description:
+							"0 disables automated backups. Point-in-time restore covers this window.",
+					},
+				],
+			},
+			{
+				id: "db-advanced",
+				title: "Advanced",
+				tier: "advanced",
+				fields: [
+					{
+						key: "engine_version",
+						type: "text",
+						label: "Engine version",
+						mono: true,
+						placeholder: "cloud default",
+						description: "Pin an exact engine version. Empty tracks the template's default.",
+					},
+					{
+						key: "instance_class",
+						type: "text",
+						label: "Instance class",
+						mono: true,
+						placeholder: "resolver default",
+						description:
+							"A concrete provider SKU (db.r6g.large · db-custom-2-7680 · GP_Gen5_2). Overrides the portable capacity above — and gives up portability.",
+						// Serverless capacity is the portable path; this is the escape hatch. Meaningless
+						// for the in-cluster CloudNativePG path.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 				],
 			},
@@ -442,7 +606,22 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				title: "Sizing",
 				defaultOpen: true,
 				fields: [
-					{ key: "num_cache_nodes", type: "number", label: "Nodes", min: 1, max: 6 },
+						// The cloud-INDIFFERENT size. The Go resolver maps it to the nearest cache SKU on any
+					// cloud; `node_type` is the concrete override that gives up portability.
+					{
+						key: "memory_gb",
+						type: "number",
+						label: "Memory",
+						unit: "GB",
+						min: 0.5,
+						max: 512,
+						float: true,
+						optional: true,
+						placeholder: "resolver default",
+						description: "Portable sizing — mapped to the nearest cache tier on any cloud.",
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+					},
+				{ key: "num_cache_nodes", type: "number", label: "Nodes", min: 1, max: 6 },
 					{
 						key: "storage_gb",
 						type: "number",
@@ -461,6 +640,35 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Multi-AZ",
 						description: "Replicate across availability zones for failover.",
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+					},
+				],
+			},
+			{
+				id: "cache-network",
+				title: "Network",
+				tier: "security",
+				fields: [
+					{
+						key: "allowed_cidr_blocks",
+						type: "list",
+						label: "Allowed CIDR blocks",
+						description: "Extra networks permitted to reach the cache. The cluster always can.",
+						item: { mono: true, placeholder: "10.1.0.0/16" },
+					},
+				],
+			},
+			{
+				id: "cache-advanced",
+				title: "Advanced",
+				tier: "advanced",
+				fields: [
+					{
+						key: "engine_version",
+						type: "text",
+						label: "Engine version",
+						mono: true,
+						placeholder: "cloud default",
+						description: "Pin an exact engine version. Empty tracks the template's default.",
 					},
 				],
 			},
@@ -499,6 +707,26 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 					{
+						key: "message_retention",
+						type: "number",
+						label: "Message retention",
+						unit: "days",
+						min: 1,
+						max: 14,
+						optional: true,
+						placeholder: "4",
+						description: "How long an unconsumed message is kept before it's dropped.",
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+						// Stored in SECONDS (SQS's unit); the field speaks days.
+						get: (c) =>
+							c.message_retention != null
+								? Math.round(c.message_retention / 86400)
+								: null,
+						set: (v) => ({
+							message_retention: v == null ? null : Number(v) * 86400,
+						}),
+					},
+					{
 						key: "storage_gb",
 						type: "number",
 						label: "Storage",
@@ -524,11 +752,61 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "general",
 				title: "General",
+				tier: "essentials",
 				defaultOpen: true,
 				fields: [nameField()],
 			},
+			{
+				id: "subscriptions",
+				title: "Subscriptions",
+				tier: "essentials",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "subscriptions",
+						type: "subresource",
+						label: "Subscriptions",
+						description:
+							"Who receives messages published to this topic. Without one, a topic delivers nowhere.",
+						sub: {
+							singular: "subscription",
+							create: () => ({ protocol: "https", endpoint: "" }),
+							title: (item) =>
+								typeof item.endpoint === "string" && item.endpoint
+									? item.endpoint
+									: "",
+							fields: [
+								{
+									key: "protocol",
+									type: "select",
+									label: "Protocol",
+									options: [
+										{ value: "https", label: "HTTPS" },
+										{ value: "sqs", label: "Queue" },
+										{ value: "email", label: "Email" },
+										{ value: "lambda", label: "Function" },
+									],
+								},
+								{
+									key: "endpoint",
+									type: "text",
+									label: "Endpoint",
+									mono: true,
+									placeholder: "https://example.com/events",
+									full: true,
+								},
+							],
+						},
+					},
+				],
+			},
 		],
-		summary: (c) => c.name || "topic",
+		summary: (c) => {
+			const subs = c.subscriptions?.length ?? 0;
+			return subs === 0
+				? c.name || "topic"
+				: `${subs} subscription${subs > 1 ? "s" : ""}`;
+		},
 	},
 
 	nosql: {
@@ -554,6 +832,29 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 							(provider ? NOSQL[provider].keyTypes : [{ value: "S", label: "String" }]).map(
 								(k) => ({ value: k.value, label: k.label }),
 							),
+					},
+					{
+						key: "sort_key",
+						type: "text",
+						label: "Sort key",
+						mono: true,
+						placeholder: "optional",
+						description: "A range key. Together with the partition key it forms a composite key.",
+						// Not every cloud's table model has a range key.
+						visibleWhen: (_c, { provider }) =>
+							!provider || NOSQL[provider].supportsRangeKey !== false,
+					},
+					{
+						key: "sort_key_type",
+						type: "select",
+						label: "Sort key type",
+						options: ({ provider }) =>
+							(provider ? NOSQL[provider].keyTypes : [{ value: "S", label: "String" }]).map(
+								(k) => ({ value: k.value, label: k.label }),
+							),
+						visibleWhen: (c, { provider }) =>
+							!!c.sort_key &&
+							(!provider || NOSQL[provider].supportsRangeKey !== false),
 					},
 				],
 			},
@@ -581,6 +882,21 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "switch",
 						label: "Point-in-time recovery",
 						description: "Continuous backups for restore to any second in the retention window.",
+					},
+				],
+			},
+			{
+				id: "nosql-replication",
+				title: "Replication",
+				tier: "advanced",
+				fields: [
+					{
+						key: "global_replicas",
+						type: "list",
+						label: "Global replica regions",
+						description:
+							"Replicate the table to these regions. Only on clouds whose table service supports global tables.",
+						item: { mono: true, placeholder: "us-east-1" },
 					},
 				],
 			},
@@ -754,6 +1070,15 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Managed TLS certificate",
 					},
 					{ key: "waf_enabled", type: "switch", label: "Web application firewall (WAF)" },
+					{
+						key: "zone_id",
+						type: "text",
+						label: "Existing zone ID",
+						mono: true,
+						placeholder: "create a new zone",
+						description:
+							"Attach to a hosted zone you already own instead of creating one (Z0123… · projects/…/managedZones/… ).",
+					},
 				],
 			},
 		],
