@@ -37,15 +37,16 @@ resource "azurerm_kubernetes_cluster" "this" {
   # Kubernetes RBAC (AVD-AZU-0042) — safe to enable unconditionally.
   role_based_access_control_enabled = true
 
-  # AAD-integrated cluster-admin (BYOC B4.1). Rendered only when Entra admin group
-  # object IDs are supplied — an empty list leaves the block off so the cluster keeps
-  # plain Kubernetes RBAC (unchanged). azurerm 4.x dropped the `managed`/`azuread`
-  # args: AAD RBAC is always managed, so the block carries only admin_group_object_ids.
-  dynamic "azure_active_directory_role_based_access_control" {
-    for_each = length(var.admin_group_object_ids) > 0 ? [1] : []
-    content {
-      admin_group_object_ids = var.admin_group_object_ids
-    }
+  # AAD-integrated cluster with Azure RBAC for Kubernetes (BYOC AZ-SELF-ADMIN — the Azure
+  # analogue of EKS #470). Rendered UNCONDITIONALLY: the provisioning runner authenticates
+  # to AKS with its own AAD workload-identity token (apps/runner/internal/agent/kube_token.go),
+  # which is only authorized when Azure RBAC is on AND the apply identity holds an RBAC role
+  # (granted by azurerm_role_assignment.runner_cluster_admin below). `admin_group_object_ids`
+  # (BYOC B4.1) still grants the customer's Entra groups cluster-admin; empty = none. azurerm
+  # 4.x: AAD RBAC is always managed, so the block carries only these two args.
+  azure_active_directory_role_based_access_control {
+    azure_rbac_enabled     = true
+    admin_group_object_ids = var.admin_group_object_ids
   }
 
   # API-server IP allow-list (BYOC B4.1, AVD-AZU-0041). Rendered only when authorized
@@ -106,4 +107,24 @@ resource "azurerm_kubernetes_cluster_node_pool" "extra" {
   max_pods              = 110
 
   tags = local.common_tags
+}
+
+################################################################################
+# Runner cluster-admin (BYOC AZ-SELF-ADMIN — mirror of EKS #470)
+################################################################################
+
+# The runner reaches AKS via its OWN AAD (workload-identity) token; with Azure RBAC for
+# Kubernetes enabled on the cluster above, that token is unauthorized (401 → ArgoCD/kubectl
+# fail) unless the apply identity holds an RBAC role. Grant the CURRENT apply principal
+# (data.azurerm_client_config.current = the runner's own identity — no Graph read, no extra
+# input) cluster-admin at the cluster scope so it can install ArgoCD + add-ons. Gated by
+# enable_creator_admin (default true); when off, the top-level checks.tf guard requires an
+# admin_group_object_ids path instead so the cluster is never left with no runner admin.
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_role_assignment" "runner_cluster_admin" {
+  count                = var.enable_creator_admin ? 1 : 0
+  scope                = azurerm_kubernetes_cluster.this.id
+  role_definition_name = "Azure Kubernetes Service RBAC Cluster Admin"
+  principal_id         = data.azurerm_client_config.current.object_id
 }

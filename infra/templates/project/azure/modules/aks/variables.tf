@@ -94,12 +94,22 @@ variable "disk_size_gb" {
 # Access control (BYOC B4.1 knobs)
 ################################################################################
 
-# Entra (Azure AD) group object IDs granted cluster-admin via AKS AAD-integrated
-# RBAC. Empty (default) leaves the azure_active_directory_role_based_access_control
-# block UNRENDERED — the cluster keeps Kubernetes RBAC only, exactly as before.
+# BYOC AZ-SELF-ADMIN (mirror of EKS #470): grant the apply/runner identity the built-in
+# "Azure Kubernetes Service RBAC Cluster Admin" role at cluster scope so it can install
+# ArgoCD/add-ons over its own AAD workload-identity token. Default true; turning it off
+# requires an admin_group_object_ids path (enforced by the top-level checks.tf guard).
+variable "enable_creator_admin" {
+  type        = bool
+  description = "Grant the apply/runner identity RBAC Cluster Admin on the AKS cluster (default true). Mirrors EKS enable_creator_admin (#470)."
+  default     = true
+}
+
+# Entra (Azure AD) group object IDs granted cluster-admin via AKS AAD-integrated RBAC.
+# Empty (default) grants no customer admin group; the runner still gets admin via
+# enable_creator_admin. (AAD + Azure RBAC are now always on — see main.tf.)
 variable "admin_group_object_ids" {
   type        = list(string)
-  description = "Entra group OBJECT IDs (GUIDs, not names) mapped to admin_group_object_ids for AAD-integrated cluster-admin. Empty = no AAD admin-group integration (unchanged)."
+  description = "Entra group OBJECT IDs (GUIDs, not names) mapped to admin_group_object_ids for AAD-integrated cluster-admin. Empty = no customer admin group (the runner still gets admin via enable_creator_admin)."
   default     = []
 }
 
