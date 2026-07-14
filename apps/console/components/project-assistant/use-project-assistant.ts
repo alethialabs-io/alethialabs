@@ -27,6 +27,11 @@ export function snapshotCanvas(): CanvasContext | undefined {
 			kind: n.data.kind,
 			name: configName(n.data),
 		})),
+		// What the user is LOOKING AT. Without this, "make this bigger" is unresolvable — the
+		// assistant could see the whole design but had no idea which node you had selected, so a
+		// pronoun could only ever be guessed at.
+		selectedIds: store.selectedIds,
+		inspectorNodeId: store.inspectorNodeId,
 	};
 }
 
