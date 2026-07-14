@@ -47,30 +47,101 @@ variable "role_name" {
   description = "Name of the RAM role Alethia assumes to provision infrastructure."
 }
 
-# The system RAM policies granted to the provisioning role — one per Alibaba service Alethia's
-# project templates create (never account admin / AliyunRAMFullAccess). A given Project uses a
-# subset; the role is the union. If you only run a narrower set of Projects, trim this list.
-variable "provisioning_policies" {
-  type = list(string)
-  default = [
-    # Core ACK + networking path.
-    "AliyunCSFullAccess",  # ACK managed clusters + node pools
-    "AliyunVPCFullAccess", # VPC, vSwitch, NAT, SNAT
-    "AliyunECSFullAccess", # ECS (consumed transitively by ACK node pools)
-    "AliyunSLBFullAccess", # SLB (ACK API-server LB + LoadBalancer Services)
-    "AliyunEIPFullAccess", # Elastic IP
-    # Optional modules — each attached so the corresponding Project feature can provision.
-    "AliyunRDSFullAccess",               # RDS
-    "AliyunContainerRegistryFullAccess", # CR Enterprise Edition
-    "AliyunKvstoreFullAccess",           # KVStore (Redis)
-    "AliyunDNSFullAccess",               # AliDNS
-    "AliyunKMSFullAccess",               # KMS
-    "AliyunMNSFullAccess",               # Message Service (MNS)
-    "AliyunOSSFullAccess",               # OSS
-    "AliyunOTSFullAccess",               # Tablestore (OTS)
-    "AliyunYundunWAFFullAccess",         # WAF v3
-  ]
-  description = "System RAM policy names attached to the provisioning role (one per provisioned service)."
+# Enumerated least-privilege CUSTOM policies — one per service group, replacing the per-service System
+# `*FullAccess` policies. No `service:*` wildcards: each bucket lists the specific create/read/modify/
+# delete/tag actions the template's modules issue (reads lean permissive — `Describe*/Get*/List*` — so a
+# provider bump doesn't break a real apply). Grouped into 4 buckets, each well under RAM's ~6144-char
+# per-policy limit. Every action name was validated via `aliyun ram CreatePolicy` (all accepted). The
+# `cs:` (ACK) action names are the least-documented — if a real ACK provision fails, widen that bucket
+# first (its Describe*/Get*/List* reads are already permissive).
+locals {
+  provisioning_custom_policies = {
+    # ACK cluster + its transitively-created node-pool ECS + API-server/Service SLB.
+    ComputeCluster = [
+      "cs:CreateCluster", "cs:DeleteCluster", "cs:ModifyCluster", "cs:ModifyClusterConfiguration",
+      "cs:UpgradeCluster", "cs:MigrateCluster", "cs:CreateClusterNodePool", "cs:ModifyClusterNodePool",
+      "cs:DeleteClusterNodePool", "cs:ScaleClusterNodePool", "cs:RepairClusterNodePool",
+      "cs:AttachInstances", "cs:GrantPermissions", "cs:TagResources", "cs:UntagResources",
+      "cs:Describe*", "cs:Get*", "cs:List*", "cs:CheckControlPlaneLogEnable",
+      "ecs:RunInstances", "ecs:CreateInstance", "ecs:DeleteInstance", "ecs:DeleteInstances",
+      "ecs:StartInstance", "ecs:StopInstance", "ecs:StopInstances", "ecs:ModifyInstanceAttribute",
+      "ecs:ModifyInstanceSpec", "ecs:ReplaceSystemDisk", "ecs:CreateSecurityGroup",
+      "ecs:DeleteSecurityGroup", "ecs:AuthorizeSecurityGroup", "ecs:AuthorizeSecurityGroupEgress",
+      "ecs:RevokeSecurityGroup", "ecs:RevokeSecurityGroupEgress", "ecs:ModifySecurityGroupPolicy",
+      "ecs:CreateDisk", "ecs:DeleteDisk", "ecs:AttachDisk", "ecs:DetachDisk", "ecs:ResizeDisk",
+      "ecs:CreateNetworkInterface", "ecs:DeleteNetworkInterface", "ecs:AttachNetworkInterface",
+      "ecs:DetachNetworkInterface", "ecs:CreateKeyPair", "ecs:ImportKeyPair", "ecs:DeleteKeyPairs",
+      "ecs:AttachKeyPair", "ecs:CreateLaunchTemplate", "ecs:CreateLaunchTemplateVersion",
+      "ecs:DeleteLaunchTemplate", "ecs:TagResources", "ecs:UntagResources", "ecs:Describe*", "ecs:List*",
+      "slb:CreateLoadBalancer", "slb:DeleteLoadBalancer", "slb:ModifyLoadBalancerInstanceSpec",
+      "slb:ModifyLoadBalancerInternetSpec", "slb:SetLoadBalancerName", "slb:CreateLoadBalancerTCPListener",
+      "slb:CreateLoadBalancerUDPListener", "slb:CreateLoadBalancerHTTPListener",
+      "slb:CreateLoadBalancerHTTPSListener", "slb:DeleteLoadBalancerListener",
+      "slb:StartLoadBalancerListener", "slb:StopLoadBalancerListener",
+      "slb:SetLoadBalancerTCPListenerAttribute", "slb:AddBackendServers", "slb:RemoveBackendServers",
+      "slb:SetBackendServers", "slb:AddVServerGroupBackendServers", "slb:CreateVServerGroup",
+      "slb:DeleteVServerGroup", "slb:ModifyVServerGroupBackendServers", "slb:TagResources",
+      "slb:UntagResources", "slb:Describe*", "slb:List*",
+    ]
+    # VPC / vSwitch / NAT / SNAT + Elastic IP (both the vpc: and split-out eip: namespaces).
+    Network = [
+      "vpc:CreateVpc", "vpc:DeleteVpc", "vpc:ModifyVpcAttribute", "vpc:CreateVSwitch",
+      "vpc:DeleteVSwitch", "vpc:ModifyVSwitchAttribute", "vpc:CreateNatGateway", "vpc:DeleteNatGateway",
+      "vpc:ModifyNatGatewayAttribute", "vpc:CreateSnatEntry", "vpc:DeleteSnatEntry", "vpc:ModifySnatEntry",
+      "vpc:CreateRouteEntry", "vpc:DeleteRouteEntry", "vpc:AssociateRouteTable", "vpc:TagResources",
+      "vpc:UnTagResources", "vpc:Describe*", "vpc:List*", "vpc:Get*",
+      "vpc:AllocateEipAddress", "vpc:ReleaseEipAddress", "vpc:AssociateEipAddress",
+      "vpc:UnassociateEipAddress", "vpc:ModifyEipAddressAttribute", "vpc:DescribeEipAddresses",
+      "eip:AllocateEipAddress", "eip:ReleaseEipAddress", "eip:AssociateEipAddress",
+      "eip:UnassociateEipAddress", "eip:ModifyEipAddressAttribute", "eip:TagResources",
+      "eip:UnTagResources", "eip:DescribeEipAddresses", "eip:Describe*", "eip:List*",
+    ]
+    # RDS + KVStore(Redis) + OSS + Tablestore(OTS) + KMS secrets.
+    Data = [
+      "rds:CreateDBInstance", "rds:DeleteDBInstance", "rds:ModifyDBInstanceSpec",
+      "rds:ModifyDBInstanceConnectionString", "rds:AllocateInstancePublicConnection", "rds:ModifySecurityIps",
+      "rds:CreateDatabase", "rds:DeleteDatabase", "rds:CreateAccount", "rds:DeleteAccount",
+      "rds:ResetAccountPassword", "rds:ModifyAccountDescription", "rds:GrantAccountPrivilege",
+      "rds:RevokeAccountPrivilege", "rds:ModifyBackupPolicy", "rds:ModifyDBInstanceMaintainTime",
+      "rds:TagResources", "rds:UntagResources", "rds:Describe*", "rds:List*",
+      "kvstore:CreateInstance", "kvstore:DeleteInstance", "kvstore:ModifyInstanceSpec",
+      "kvstore:ModifyInstanceAttribute", "kvstore:ModifyInstanceMaintainTime", "kvstore:ModifySecurityIps",
+      "kvstore:ModifyInstanceConnection", "kvstore:AllocateInstancePublicConnection",
+      "kvstore:ResetAccountPassword", "kvstore:TagResources", "kvstore:UntagResources",
+      "kvstore:Describe*", "kvstore:List*",
+      "oss:PutBucket", "oss:PutBucketAcl", "oss:PutBucketVersioning", "oss:PutBucketTagging",
+      "oss:PutBucketLogging", "oss:PutBucketEncryption", "oss:DeleteBucket", "oss:DeleteBucketTagging",
+      "oss:GetBucketInfo", "oss:GetBucketAcl", "oss:GetBucketVersioning", "oss:GetBucketTagging",
+      "oss:GetBucketLocation", "oss:GetBucketStat", "oss:ListBuckets", "oss:GetObject", "oss:PutObject",
+      "oss:DeleteObject", "oss:ListObjects", "oss:AbortMultipartUpload",
+      "ots:CreateInstance", "ots:DeleteInstance", "ots:UpdateInstance", "ots:GetInstance",
+      "ots:ListInstance", "ots:InsertInstanceTag", "ots:DeleteInstanceTag", "ots:CreateTable",
+      "ots:DeleteTable", "ots:UpdateTable", "ots:DescribeTable", "ots:ListTable", "ots:Get*",
+      "ots:List*", "ots:Describe*",
+      "kms:CreateSecret", "kms:UpdateSecret", "kms:PutSecretValue", "kms:GetSecretValue",
+      "kms:UpdateSecretVersionStage", "kms:DeleteSecret", "kms:RestoreSecret", "kms:TagResource",
+      "kms:UntagResource", "kms:DescribeSecret", "kms:ListSecrets", "kms:ListSecretVersionIds",
+      "kms:Describe*", "kms:List*", "kms:Get*",
+    ]
+    # Container Registry + AliDNS + Message Service + WAF v3.
+    EdgeReg = [
+      "cr:CreateInstance", "cr:GetInstance", "cr:GetInstanceEndpoint", "cr:ListInstance",
+      "cr:ListInstanceEndpoint", "cr:CreateNamespace", "cr:UpdateNamespace", "cr:DeleteNamespace",
+      "cr:GetNamespace", "cr:ListNamespace", "cr:CreateInstanceVpcEndpointLinkedVpc", "cr:TagResources",
+      "cr:UntagResources", "cr:Get*", "cr:List*",
+      "alidns:AddDomain", "alidns:DeleteDomain", "alidns:ChangeDomainGroup", "alidns:UpdateDomainRemark",
+      "alidns:AddDomainRecord", "alidns:UpdateDomainRecord", "alidns:DeleteDomainRecord",
+      "alidns:SetDomainRecordStatus", "alidns:TagResources", "alidns:UntagResources", "alidns:Describe*",
+      "alidns:List*", "alidns:Get*",
+      "mns:CreateQueue", "mns:DeleteQueue", "mns:SetQueueAttributes", "mns:GetQueueAttributes",
+      "mns:ListQueue", "mns:CreateTopic", "mns:DeleteTopic", "mns:SetTopicAttributes",
+      "mns:GetTopicAttributes", "mns:ListTopic", "mns:TagResources", "mns:UntagResources", "mns:Get*",
+      "mns:List*",
+      "yundun-waf:CreateInstance", "yundun-waf:DeleteInstance", "yundun-waf:ModifyInstance",
+      "yundun-waf:DescribeInstance", "yundun-waf:DescribeInstanceInfo", "yundun-waf:DescribeInstanceSpecInfo",
+      "yundun-waf:Describe*", "yundun-waf:Get*", "yundun-waf:List*",
+    ]
+  }
 }
 
 # The issuer's TLS cert chain — Alibaba pins the issuer cert fingerprints on the OIDC provider. We pin
@@ -123,11 +194,24 @@ resource "alicloud_ram_role" "alethia" {
   max_session_duration = 3600
 }
 
+# The 4 enumerated custom provisioning policies (see the locals above) + their attachments — replacing
+# the per-service System `*FullAccess` policies. Each is `Resource: "*"` (enumerated ACTION sets; RAM
+# ARN scoping is inconsistent across these services, so action-scoping is the reliable lever).
+resource "alicloud_ram_policy" "provision" {
+  for_each    = local.provisioning_custom_policies
+  policy_name = "${var.role_name}-${each.key}"
+  policy_document = jsonencode({
+    Version   = "1"
+    Statement = [{ Effect = "Allow", Action = each.value, Resource = "*" }]
+  })
+  description = "Enumerated least-priv (no service:*) for the ${each.key} services Alethia provisions."
+}
+
 resource "alicloud_ram_role_policy_attachment" "provision" {
-  for_each    = toset(var.provisioning_policies)
+  for_each    = alicloud_ram_policy.provision
   role_name   = alicloud_ram_role.alethia.id
-  policy_name = each.value
-  policy_type = "System"
+  policy_name = each.value.policy_name
+  policy_type = "Custom"
 }
 
 # ACK (and NAT) require the caller to create service-linked roles on first use in an account.
