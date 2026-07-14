@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { randomUUID } from "crypto";
 import { and, eq } from "drizzle-orm";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { captureServerException } from "@/lib/analytics/server";
@@ -35,8 +34,11 @@ export type CloudProvider =
 	| "hetzner"
 	| "civo";
 
-/** Clouds that assume a role with an ExternalId condition (zero stored credentials). */
-const ROLE_CLOUDS: ReadonlySet<CloudProvider> = new Set(["aws", "alibaba"]);
+// NB: AWS and Alibaba are KEYLESS direct-OIDC now — AssumeRoleWithWebIdentity (AWS) and
+// AssumeRoleWithOIDC (Alibaba) take NO ExternalId, and the customer's trust policy pins the issuer
+// sub/aud, not an ExternalId. So there is no longer any "ExternalId role cloud": all managed clouds
+// federate keyless, and the only stored value is the role ARN (a public identifier). The vestigial
+// `external_id` minting was removed (it was stored + surfaced but never used by any assume).
 /** Clouds with no role-federation — connected via a scoped API token (encrypted at rest). */
 const TOKEN_CLOUDS: ReadonlySet<CloudProvider> = new Set([
 	"digitalocean",
@@ -90,9 +92,9 @@ export type ConnectionStatus = {
  * Gets or creates a **pending** identity row for the org+provider. Repeated
  * "Connect" clicks reuse the single dangling pending row rather than piling up
  * empties; once an account is verified a fresh pending row is created on the next
- * connect — which is how one provider holds more than one account. For AWS/Alibaba
- * it also guarantees a stable external_id in the credentials. New rows are created
- * `scope: 'org'` so every org member (subject to role) sees them.
+ * connect — which is how one provider holds more than one account. New rows are
+ * created `scope: 'org'` so every org member (subject to role) sees them. All
+ * managed clouds are keyless (no ExternalId), so the pending row carries no secret.
  */
 export async function initIdentity(
 	scope: ConnScope,
@@ -111,28 +113,8 @@ export async function initIdentity(
 		)
 		.limit(1);
 
-	if (existing) {
-		if (!ROLE_CLOUDS.has(provider)) return { identityId: existing.id };
+	if (existing) return { identityId: existing.id };
 
-		const externalId = existing.credentials?.external_id ?? undefined;
-		if (externalId) return { identityId: existing.id, externalId };
-
-		const newExternalId = randomUUID();
-		await db
-			.update(cloudIdentities)
-			.set({
-				credentials: { ...existing.credentials, external_id: newExternalId },
-			})
-			.where(
-				and(
-					eq(cloudIdentities.id, existing.id),
-					eq(cloudIdentities.org_id, scope.orgId),
-				),
-			);
-		return { identityId: existing.id, externalId: newExternalId };
-	}
-
-	const externalId = ROLE_CLOUDS.has(provider) ? randomUUID() : undefined;
 	const [created] = await db
 		.insert(cloudIdentities)
 		.values({
@@ -141,12 +123,12 @@ export async function initIdentity(
 			scope: "org",
 			provider,
 			name: PENDING_NAME[provider],
-			credentials: externalId ? { external_id: externalId } : {},
+			credentials: {},
 			is_verified: false,
 		})
 		.returning({ id: cloudIdentities.id });
 
-	return { identityId: created.id, externalId };
+	return { identityId: created.id };
 }
 
 /** Maps an identity row to the wire ConnectionStatus shape. */
@@ -610,7 +592,7 @@ export async function saveAzureIdentity(
 			),
 		);
 
-	// Azure verifies server-side (platform app token + an ARM read) — no runner.
+	// Azure verifies server-side (auth AS the customer's managed identity + an ARM read) — no runner.
 	return verifyConnectionInline(scope, identityId);
 }
 
@@ -747,7 +729,7 @@ export async function reverifyConnection(
 }
 
 /**
- * Resets an identity to its pending state (preserving the AWS external_id) and
+ * Resets an identity to its pending state (clearing all stored credentials) and
  * orphans any projects that referenced it.
  */
 export async function disconnectIdentity(
@@ -759,13 +741,10 @@ export async function disconnectIdentity(
 
 	// Load the row (by id + org) and assert its provider matches the caller's arg. The update below
 	// filters by id + org only (id is the PK), so a mismatched `provider` would relabel the row with the
-	// wrong PENDING_NAME and mishandle the role-cloud external_id preservation. Fail loudly on a mismatch;
-	// a missing row keeps the old no-op behavior (the update simply affects nothing).
+	// wrong PENDING_NAME. Fail loudly on a mismatch; a missing row keeps the old no-op behavior (the
+	// update simply affects nothing).
 	const [identity] = await db
-		.select({
-			provider: cloudIdentities.provider,
-			credentials: cloudIdentities.credentials,
-		})
+		.select({ provider: cloudIdentities.provider })
 		.from(cloudIdentities)
 		.where(
 			and(
@@ -780,10 +759,8 @@ export async function disconnectIdentity(
 		);
 	}
 
-	let credentials: CloudCredentials = {};
-	if (ROLE_CLOUDS.has(provider)) {
-		credentials = { external_id: identity?.credentials?.external_id };
-	}
+	// All managed clouds are keyless — disconnect clears credentials entirely (no ExternalId to preserve).
+	const credentials: CloudCredentials = {};
 
 	const [disconnected] = await db
 		.update(cloudIdentities)

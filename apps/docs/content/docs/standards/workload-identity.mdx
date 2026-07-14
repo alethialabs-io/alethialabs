@@ -78,10 +78,12 @@ Connection validation asserts the audience contains `workloadIdentityPools` (`co
 </Tab>
 <Tab value="Azure">
 
-`apps/console/lib/cloud-providers/session/azure.ts`. Alethia registers **one multi-tenant Entra app**
-(`ALETHIA_AZURE_CLIENT_ID`) whose **federated-identity credential** trusts the Alethia issuer. The
-console authenticates as that app via a client assertion (the minted JWT) — keyless, no client
-secret. The federated-credential `subject` must equal `alethia-connector`.
+`apps/console/lib/cloud-providers/session/azure.ts`. Each customer creates a **User-Assigned Managed
+Identity** in their **own** subscription with a **federated-identity credential** trusting the Alethia
+issuer — there is no platform Entra app and no `ALETHIA_AZURE_CLIENT_ID`. The console authenticates
+**as that customer identity** (its `client_id` is stored per-connection) via a client assertion (the
+minted JWT) — keyless, no client secret. The federated-credential `subject` must equal
+`alethia-connector` and its `audience` `api://AzureADTokenExchange`.
 
 </Tab>
 <Tab value="Hetzner">

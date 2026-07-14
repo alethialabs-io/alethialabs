@@ -61,18 +61,29 @@ if [ -z "${ACCOUNT_ID}" ]; then
 fi
 echo "    Account ID: ${ACCOUNT_ID}"
 
-# Alibaba requires the issuer cert-chain SHA1 fingerprints on the OIDC provider. Supply every
-# fingerprint in the presented chain so validation succeeds regardless of which cert Alibaba pins.
+# Alibaba pins the issuer's TLS cert-chain SHA1 fingerprints on the OIDC provider. We register the
+# CA certs (the intermediate + root — every cert in the presented chain EXCEPT the leaf), NOT the leaf:
+# alethialabs.io is fronted by a Cloudflare tunnel whose LEAF cert rotates frequently, so a leaf-pinned
+# provider would silently stop validating after a rotation, whereas the issuing CA is stable for months/
+# years. If the chain has only one cert (no intermediate presented), fall back to pinning it. When the CA
+# itself eventually rotates, the fix is to RE-RUN this script (idempotent — it UpdateOIDCProviders the
+# fingerprints); the keyless console cannot refresh them itself (it has no standing Alibaba credential).
 echo ""
-echo "==> Fetching the issuer TLS fingerprints (${ISSUER_URL})..."
+echo "==> Fetching the issuer CA fingerprints (${ISSUER_URL})..."
 ISSUER_HOST=$(printf '%s' "${ISSUER_URL}" | sed -E 's#^https?://([^/]+).*#\1#')
 TMPD=$(mktemp -d)
 trap 'rm -rf "${TMPD}"' EXIT
 echo | openssl s_client -servername "${ISSUER_HOST}" -connect "${ISSUER_HOST}:443" -showcerts 2>/dev/null >"${TMPD}/chain.txt"
 awk -v d="${TMPD}" '/-----BEGIN CERTIFICATE-----/{n++} n{print >(d"/cert"n".pem")}' "${TMPD}/chain.txt"
+# Count the certs in the presented chain (cert1 = leaf, cert2..N = intermediate/root CAs).
+CERT_COUNT=$(ls "${TMPD}"/cert*.pem 2>/dev/null | wc -l | tr -d ' ')
 FINGERPRINTS=""
 for cert in "${TMPD}"/cert*.pem; do
   [ -f "${cert}" ] || continue
+  # Skip the leaf (cert1) when the chain also presents CA certs — pin only the stable CA(s).
+  if [ "${CERT_COUNT}" -gt 1 ] && [ "${cert}" = "${TMPD}/cert1.pem" ]; then
+    continue
+  fi
   fp=$(openssl x509 -in "${cert}" -noout -fingerprint -sha1 2>/dev/null | sed 's/.*=//; s/://g' | tr '[:upper:]' '[:lower:]')
   [ -n "${fp}" ] && FINGERPRINTS="${FINGERPRINTS:+${FINGERPRINTS},}${fp}"
 done
@@ -80,7 +91,7 @@ if [ -z "${FINGERPRINTS}" ]; then
   echo "ERROR: could not read the issuer TLS fingerprints from ${ISSUER_HOST}." >&2
   exit 1
 fi
-echo "    Fingerprints: ${FINGERPRINTS}"
+echo "    CA fingerprints: ${FINGERPRINTS}"
 
 echo ""
 echo "==> Creating the RAM OIDC provider '${OIDC_PROVIDER_NAME}'..."

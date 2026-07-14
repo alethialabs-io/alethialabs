@@ -228,9 +228,13 @@ jobs:
         env:
           PROVIDER: ${{ matrix.provider }}
         run: |
+          # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
+          # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
+          # the run's NAT cost); the A0.5 fidelity base is untouched. Other clouds leave it unset.
+          NET=""
           case "$PROVIDER" in
             hetzner) SHAPE="" ;;
-            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}'; NET='{"single_nat_gateway":true}' ;;
             gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
             azure)   SHAPE='{"instance_types":["Standard_B2s"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
             alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
@@ -239,6 +243,10 @@ jobs:
           if [ -n "$SHAPE" ]; then
             echo "ALETHIA_E2E_CLUSTER_JSON=$SHAPE" >> "$GITHUB_ENV"
             echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
+          fi
+          if [ -n "$NET" ]; then
+            echo "ALETHIA_E2E_NETWORK_JSON=$NET" >> "$GITHUB_ENV"
+            echo "::notice::T2 network override for $PROVIDER: $NET"
           fi
 
       - uses: pnpm/action-setup@v4
@@ -306,6 +314,22 @@ jobs:
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
         run: echo "ALETHIA_E2E_AWS_READY=1" >> "$GITHUB_ENV"
 
+      # ── Stale-cluster preflight (BYOC A1.4). BEFORE provisioning, sweep any leaked e2e
+      #    orphans from PRIOR runs — a nightly hard-killed before both its graceful destroy AND
+      #    its always() sweep keeps billing until something notices. PREFLIGHT=1 discovers every
+      #    OTHER e2e-<env> handle in the region and sweeps it scope-locked (never this run, never
+      #    prod). Best-effort + loud: it warns on residual but exits 0, so a flaky tag/API call
+      #    can't red an otherwise-healthy provisioning night (the always() teardown stays the
+      #    fail-closed guarantee for THIS run). Same-cloud runs are serialized by the concurrency
+      #    group, so any other e2e-* handle is genuinely an orphan. aws-only (its sweeper). ──
+      - name: Stale-cluster preflight (sweep prior-run e2e orphans)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        env:
+          PREFLIGHT: "1"
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+        run: ./scripts/e2e/aws-cleanup.sh
+
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
       #    normally — rather than the whole job hitting its cap. ──
@@ -350,6 +374,16 @@ jobs:
           ALETHIA_E2E_ARGO_BYO_CHART_NAMESPACE: ${{ vars.E2E_ARGO_BYO_CHART_NAMESPACE }}
           ALETHIA_E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
           ALETHIA_E2E_ARGO_REPOS_REQUIRE: ${{ vars.E2E_ARGO_APPS_REPO != '' && '1' || '' }}
+          # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
+          #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
+          #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
+          #    Both are aws-relevant: the secret enables the estimate, the var (default $300/mo, a
+          #    monthly-estimate guard dominated by the always-on EKS control plane + single NAT ⇒ a
+          #    cheap run ≈ $150–200/mo) catches a runaway shape. Enabling the ceiling REQUIRES the
+          #    secret — without it the guard fail-closes (a ceiling with no estimate refuses). For
+          #    non-aws providers the ceiling is unset ⇒ no cost gate (their waves add their own). ──
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (vars.E2E_AWS_COST_CEILING_USD || '300') || '' }}
         run: |
           GOWORK=off go test -tags=e2e_t2 ./... \
             -run TestT2RealCloudProvisioning -count=1 -timeout 80m -v

@@ -29,7 +29,7 @@ Go to **Connectors** in the sidebar. Connect your cloud account:
 <Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
     1. Click **Connect** on the AWS card
-    2. Deploy the provided **CloudFormation template** in your AWS account (it creates an IAM OIDC provider trusting the Alethia issuer + a role — no external id)
+    2. Run the setup script in **AWS CloudShell** (or apply the OpenTofu module) — it creates an IAM OIDC provider trusting the Alethia issuer + a role (no access keys, no external id)
     3. Paste the resulting **Role ARN** back into Alethia
     4. Alethia verifies the new cloud identity by assuming the role via `AssumeRoleWithWebIdentity`
   </Tab>
@@ -41,9 +41,9 @@ Go to **Connectors** in the sidebar. Connect your cloud account:
   </Tab>
   <Tab value="Azure">
     1. Click **Connect** on the Azure card
-    2. Run the one-line `az ad sp create --id <ALETHIA_AZURE_CLIENT_ID>` — you consent to Alethia's multi-tenant Entra app in **your** tenant (you register no app, store no secret)
-    3. Assign it RBAC roles (Contributor + User Access Administrator) on your subscription
-    4. Enter **Tenant ID** and **Subscription ID** (the Client ID is Alethia's own, fixed)
+    2. Run the setup script in **Azure Cloud Shell** — it creates a **User-Assigned Managed Identity** in your own subscription with a federated credential trusting the Alethia issuer, and a least-privilege provisioning role (you register no app, store no secret)
+    3. Enter the three values it prints — **Tenant ID**, **Subscription ID**, and the identity's **Client ID**
+    4. Alethia verifies by authenticating **as that identity** via a federated token exchange (no client secret)
   </Tab>
 </Tabs>
 

@@ -79,9 +79,27 @@ describe("assumeAlibabaRole (AssumeRoleWithOIDC)", () => {
 		expect(params.get("RoleArn")).toBe(identity.credentials.role_arn);
 		expect(params.get("OIDCProviderArn")).toBe(identity.credentials.oidc_provider_arn);
 		expect(params.get("OIDCToken")).toBeTruthy();
-		// Anonymous call — no AccessKey / signature.
+		// Anonymous call — no AccessKey / signature, and none of the signature common-params either:
+		// sending SignatureNonce/Timestamp on an UNSIGNED request makes the RPC gateway expect a
+		// signature and reject the call.
 		expect(params.get("AccessKeyId")).toBeNull();
 		expect(params.get("Signature")).toBeNull();
+		expect(params.get("SignatureNonce")).toBeNull();
+		expect(params.get("SignatureMethod")).toBeNull();
+		expect(params.get("Timestamp")).toBeNull();
+		// Exactly the action-specific param set (plus Version/Format) — nothing signature-adjacent.
+		expect([...params.keys()].sort()).toEqual(
+			[
+				"Action",
+				"DurationSeconds",
+				"Format",
+				"OIDCProviderArn",
+				"OIDCToken",
+				"RoleArn",
+				"RoleSessionName",
+				"Version",
+			].sort(),
+		);
 	});
 
 	it("throws when the issuer is not configured", async () => {
