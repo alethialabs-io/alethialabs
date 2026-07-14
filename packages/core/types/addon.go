@@ -17,14 +17,28 @@ type AddOnInstall struct {
 	ChartRepo string `json:"chartRepo"`
 	Chart     string `json:"chart"`
 	Version   string `json:"version"`
-	// Source selects how ArgoCD pulls the chart. "" / "helm" = a chart from a Helm registry
+	// Source selects how the add-on is delivered. "" / "helm" = a chart from a Helm registry
 	// (ChartRepo is the registry URL, Chart is the chart name, Version is the chart version).
 	// "git" = a chart directory inside a git repo — a bring-your-own (BYO) chart: ChartRepo is
 	// the git URL, Path is the chart directory, Version is the git ref. BYO charts render into a
 	// hardened per-project AppProject (Project) with manual sync.
+	//
+	// "manifest" = a plain YAML manifest the RUNNER kubectl-applies (NOT an ArgoCD Application):
+	// ChartRepo is the pinned manifest URL and Version is the release tag it is pinned to. This is
+	// the OPERATOR rail — Kubernetes operators (e.g. RabbitMQ's cluster-operator) ship as a
+	// `kubectl apply` release manifest, not a Helm chart, and an ArgoCD Application source cannot
+	// be a bare https://…yaml (only a git repo, a Helm chart, or a plugin). It reuses the same
+	// server-side-apply path the CNI/CSI bootstrap manifests already take. Manifest add-ons are
+	// applied BEFORE the Helm/git Applications render, so the CRDs they own exist by the time a
+	// CR that depends on them (a RabbitmqCluster, a CNPG Cluster) is synced.
 	Source string `json:"source,omitempty"`
 	// Path is the chart directory within a git-source repo (Source=="git"). Empty for Helm charts.
 	Path string `json:"path,omitempty"`
+	// CRDs are the CustomResourceDefinition names a manifest-source add-on establishes (e.g.
+	// "rabbitmqclusters.rabbitmq.com"). After applying the manifest the runner waits for each to
+	// reach condition=Established, so a CR wave can never race the operator that owns its schema
+	// (ArgoCD sync-waves do NOT order across separate top-level Applications). Empty otherwise.
+	CRDs []string `json:"crds,omitempty"`
 	// Project is the ArgoCD AppProject the Application is placed in. Empty = "infra" (the
 	// marketplace default). BYO charts are pinned to a hardened "byo-<slug>" project the runner
 	// sets at deploy time.
@@ -40,3 +54,9 @@ type AddOnInstall struct {
 // IsGitSource reports whether this install pulls a chart from a git repo (a BYO chart) rather
 // than a Helm registry.
 func (a AddOnInstall) IsGitSource() bool { return a.Source == "git" }
+
+// IsManifestSource reports whether this install is a plain YAML manifest the runner
+// kubectl-applies (the operator rail) rather than anything ArgoCD renders as an Application.
+// Such add-ons get NO ArgoCD Application — the renderer skips them and the health read must not
+// expect one.
+func (a AddOnInstall) IsManifestSource() bool { return a.Source == "manifest" }

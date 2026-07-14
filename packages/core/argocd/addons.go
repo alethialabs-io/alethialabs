@@ -120,6 +120,13 @@ func RenderManagedAddOns(addons []types.AddOnInstall, commonLabels map[string]st
 		if a.Mode != "managed" {
 			continue
 		}
+		// Manifest-source add-ons (the operator rail) are kubectl-applied by the runner
+		// (ApplyManifestAddOns) BEFORE this render — they get no ArgoCD Application at all, so
+		// rendering one would produce an Application whose source is a bare YAML URL, which
+		// ArgoCD cannot resolve.
+		if a.IsManifestSource() {
+			continue
+		}
 		manifest, err := RenderAddOnApplication(a)
 		if err != nil {
 			return "", fmt.Errorf("failed to render add-on %s: %w", a.ID, err)
@@ -226,10 +233,13 @@ func splitLines(s string) []string {
 }
 
 // ManagedAddOnNames returns the ArgoCD Application names for the managed add-ons, sorted.
+// Manifest-source add-ons are EXCLUDED: they have no Application, so listing them here would make
+// PruneManagedAddOns treat every other managed Application as undesired-but-present… and, worse,
+// would have the prune expect an Application that can never exist.
 func ManagedAddOnNames(addons []types.AddOnInstall) []string {
 	var names []string
 	for _, a := range addons {
-		if a.Mode == "managed" {
+		if a.Mode == "managed" && !a.IsManifestSource() {
 			names = append(names, AddOnAppName(a.ID))
 		}
 	}
@@ -239,10 +249,15 @@ func ManagedAddOnNames(addons []types.AddOnInstall) []string {
 
 // AllAddOnNames returns the ArgoCD Application names for every enabled add-on (managed +
 // gitops), sorted — the health read-back reads them all (gitops child apps are named the
-// same `addon-<id>`, created by the app-of-apps).
+// same `addon-<id>`, created by the app-of-apps). Manifest-source add-ons are EXCLUDED: the runner
+// kubectl-applies them, so ArgoCD has no Application for them and a health read would honestly
+// report them Missing/Unknown forever.
 func AllAddOnNames(addons []types.AddOnInstall) []string {
 	names := make([]string, 0, len(addons))
 	for _, a := range addons {
+		if a.IsManifestSource() {
+			continue
+		}
 		names = append(names, AddOnAppName(a.ID))
 	}
 	sort.Strings(names)
