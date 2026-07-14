@@ -421,6 +421,7 @@ jobs:
           cd test/e2e
           GOWORK=off go vet -tags=e2e_t1 ./...
           GOWORK=off go vet -tags=e2e_t2 ./...
+          GOWORK=off go vet -tags=e2e_b6 ./...
           GOWORK=off go test ./...
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
@@ -495,6 +496,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
         run: pnpm -F console db:migrate
+      # B6.1 — the gated-promotion chain is console + DB logic (no cloud, no kind), so it runs here
+      # first (fast feedback) against the SAME migrated Postgres: it drives the REAL exported console
+      # actions (advancePromotionOnPlan → applyPromotionApproval → finalizeDeployment +
+      # finalizePromotionOnDeploy) via the tsx shim and asserts the classification gate blocks, the
+      # approval clears it, the DEPLOY reaches SUCCESS through the update_job_status SSOT, and the
+      # promotion finalizes. ALETHIA_E2E_B6_REQUIRE=1 makes a missing prereq a hard fail (never a skip).
+      - name: B6.1 — gated dev→staging promotion (classification gate → approval → deploy → finalize)
+        working-directory: test/e2e
+        env:
+          ALETHIA_E2E_B6_REQUIRE: "1"
+        run: GOWORK=off go test -tags=e2e_b6 ./... -run TestB6GatedPromotion -count=1 -timeout 8m -v
       # 25m: the test's own ctx is 20m (deploy wait 8m + ArgoCD Healthy+Synced
       # convergence assertion 8m + build/boot headroom) plus teardown margin.
       - name: T1 — real runner claims from the control plane and provisions kind
