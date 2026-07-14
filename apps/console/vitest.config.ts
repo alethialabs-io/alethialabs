@@ -65,6 +65,11 @@ export default defineConfig({
 				"lib/reconcile/converge.ts",
 				"lib/reconcile/reap.ts",
 				"lib/reconcile/gc.ts",
+				// BYOC B2.3 probe dispatch + ingest/query: real-SQL, verified by tests/integration/
+				// probes-b23.test.ts. The pure scheduler (lib/probes/schedule.ts) stays in scope,
+				// unit-covered by tests/lib/probes/schedule.test.ts.
+				"lib/probes/dispatch.ts",
+				"app/server/actions/probes.ts",
 			],
 			// Thresholds are report-only for now; ratchet up as suites land (see TESTING.md).
 		},

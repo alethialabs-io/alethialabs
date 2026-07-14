@@ -69,6 +69,13 @@ export const CATEGORIES: CatalogCategory[] = [
 			ev("destroy.completed", "system.project.destroyed", "Destroy completed", "warning", true),
 			ev("reap.gave_up", "system.project.reap_gave_up", "Auto-teardown gave up", "critical", true),
 			ev("drift.detected", "system.project.drift", "Drift detected", "warning"),
+			ev(
+				"cluster.unreachable",
+				"system.project.cluster_unreachable",
+				"Cluster unreachable",
+				"critical",
+				true,
+			),
 			ev("status.conflict", "system.project.status_conflict", "Environment status conflict", "warning", true),
 		],
 	},
