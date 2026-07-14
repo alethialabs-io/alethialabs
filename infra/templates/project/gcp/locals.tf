@@ -41,11 +41,17 @@ locals {
     "africa-south1"           = "af1"
   }
 
-  gcp_default_labels = {
+  # Platform base labels. Classification + sweep-handle labels (var.classification_tags) are merged
+  # in UNDER these — base labels sit on the merge RHS so they always WIN a key collision, keeping
+  # the sweep handles and platform bookkeeping authoritative. This local is applied to every
+  # taggable GCP resource (GKE, Cloud SQL, Memorystore, Cloud Storage, Artifact Registry, ...).
+  gcp_base_labels = {
     "environment" = var.environment
     "service"     = var.project_name
     "managed-by"  = "opentofu"
   }
+
+  gcp_default_labels = merge(var.classification_tags, local.gcp_base_labels)
 
   # Naming conventions
   vpc_name = "vpc-${local.gcp_regions_short[var.region]}-${var.environment}-${var.project_name}"

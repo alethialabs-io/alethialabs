@@ -157,15 +157,24 @@ describe("attachIacSource", () => {
 		await expect(attachIacSource(input)).rejects.toThrow(/already has an IaC source/);
 	});
 
-	it("rejects when the environment has deployed template state (destroy first)", async () => {
-		setupDb({
-			select: new Map<unknown, RowsResolver>([
-				[projectIacSources, []],
-				[projectEnvironments, [{ status: "ACTIVE" }]],
-			]),
-		});
-		await expect(attachIacSource(input)).rejects.toThrow(/destroy the environment first/);
-	});
+	// attach-over-live-state (BYOC B5.2 adversarial case): a replace-mode BYO source must
+	// NOT attach to an environment that holds (or is mid-flight toward) template/BYO state —
+	// it would orphan those resources. The guard set is every status that implies live or
+	// possibly-half-applied state; assert EACH is rejected, not just ACTIVE (a partial guard
+	// that only caught ACTIVE would silently let a QUEUED/PROVISIONING/FAILED/DESTROYING env
+	// be attached-over).
+	it.each(["QUEUED", "PROVISIONING", "ACTIVE", "FAILED", "DESTROYING"])(
+		"rejects attach when the environment holds live/in-flight state (status=%s)",
+		async (status) => {
+			setupDb({
+				select: new Map<unknown, RowsResolver>([
+					[projectIacSources, []],
+					[projectEnvironments, [{ status }]],
+				]),
+			});
+			await expect(attachIacSource(input)).rejects.toThrow(/destroy the environment first/);
+		},
+	);
 
 	it("rejects an implausible repo URL", async () => {
 		setupDb({});

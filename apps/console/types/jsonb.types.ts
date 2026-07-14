@@ -121,6 +121,49 @@ export interface DriftDetail {
 	kind: string;
 }
 
+/**
+ * Honest structured result of a cluster-alive probe (BYOC B2) — mirrors the Go
+ * `provisioner.ProbeResult` (packages/core/provisioner, built in B2.2). Stored on
+ * `environment_probes.detail`; produced by a PROBE_CLUSTER job that dials the env's
+ * cluster API server. Every field is optional because a probe records only what it
+ * could observe: an unreachable cluster fills `error` and little else; a reachable one
+ * fills the health fields. NEVER holds a secret (no kubeconfig / token / cert material).
+ */
+export interface ProbeDetail {
+	/** Cluster API-server endpoint the probe dialed (host:port or URL), when known. */
+	endpoint?: string;
+	/** How liveness was checked, e.g. "apiserver-readyz" | "apiserver-version". */
+	method?: string;
+	/** HTTP status the API-server health endpoint returned, when it answered. */
+	statusCode?: number;
+	/** Kubernetes server version reported by a reachable API server. */
+	serverVersion?: string;
+	/** Nodes the probe saw, and how many were Ready — omitted when it didn't list nodes. */
+	nodeCount?: number;
+	readyNodeCount?: number;
+	/** Round-trip latency of the liveness check, in milliseconds. */
+	latencyMs?: number;
+	/** Failure reason when unreachable (dial error / TLS / timeout) — a message, never a secret. */
+	error?: string;
+}
+
+/**
+ * The honest outcome of a cluster-alive probe (BYOC B2) — mirrors the Go
+ * `provisioner.ProbeResult` (packages/core/provisioner, built in B2.2). Posted by a
+ * PROBE_CLUSTER job on `execution_metadata.probe_result` and ingested by the job-status
+ * route into an `environment_probes` history row. An UNREACHABLE cluster is a SUCCESSFUL
+ * probe with `reachable=false` (the honest "it's down" signal) — never a job failure —
+ * and carries NO secret (no kubeconfig / token / cert material).
+ */
+export interface ProbeResult {
+	/** True when the cluster API server answered the liveness probe. */
+	reachable: boolean;
+	/** Short human-readable summary for the console badge (esp. WHY unreachable). Never a secret. */
+	message?: string;
+	/** Structured, non-secret probe detail (mirrors environment_probes.detail). */
+	detail?: ProbeDetail;
+}
+
 export interface SubnetInfo {
 	ID: string;
 	CIDR: string;
@@ -404,6 +447,10 @@ export interface ExecutionMetadata {
 	verify_receipt?: SignedReceipt;
 	// DETECT_DRIFT jobs: the per-environment drift posture (packages/core/drift).
 	drift_posture?: DriftPosture;
+	// PROBE_CLUSTER jobs: the cluster-alive probe result (BYOC B2). An unreachable cluster is a
+	// SUCCESS with reachable=false — the status route ingests it into environment_probes and
+	// alerts on a true→false liveness transition.
+	probe_result?: ProbeResult;
 	// DEPLOY jobs: post-apply ArgoCD health/sync per managed marketplace add-on, keyed by
 	// the ArgoCD Application name ("addon-<id>"). Written back to project_addons by the
 	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.

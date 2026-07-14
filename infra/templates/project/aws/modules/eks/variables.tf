@@ -98,6 +98,12 @@ variable "access_entries" {
   default     = {}
 }
 
+variable "enable_creator_admin" {
+  type        = bool
+  description = "Grant cluster-admin to the identity running the apply (the Alethia runner). Required for the runner to install ArgoCD/add-ons post-apply — the keyless, short-lived cluster-access model. Default true; there is no supported managed-provisioning path where the provisioner should NOT administer the cluster it just created."
+  default     = true
+}
+
 ################################################################################
 # Node group defaults 
 ################################################################################

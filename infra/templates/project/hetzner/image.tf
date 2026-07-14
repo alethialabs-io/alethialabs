@@ -54,10 +54,7 @@ resource "imager_image" "arm64" {
   architecture = "arm"
   location     = var.region
   description  = "${local.cluster_name}-talos-${var.talos_version}-arm64"
-  labels = {
-    os      = "talos"
-    cluster = local.cluster_name
-  }
+  labels       = merge(local.default_labels, { os = "talos" })
 }
 
 resource "imager_image" "amd64" {
@@ -66,10 +63,7 @@ resource "imager_image" "amd64" {
   architecture = "x86"
   location     = var.region
   description  = "${local.cluster_name}-talos-${var.talos_version}-amd64"
-  labels = {
-    os      = "talos"
-    cluster = local.cluster_name
-  }
+  labels       = merge(local.default_labels, { os = "talos" })
 }
 
 locals {

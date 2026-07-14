@@ -53,7 +53,7 @@ data "helm_template" "hcloud_csi" {
     value = "token"
   }
 
-  # ── Stamp the cluster label on every DYNAMICALLY-provisioned volume. ──
+  # ── Stamp the platform + classification labels on every DYNAMICALLY-provisioned volume. ──
   # A PVC-created hcloud Volume (`pvc-<uuid>`) is created by the CSI CONTROLLER at
   # runtime, not by this template — so it carries none of our labels, and `tofu destroy`
   # (which only knows template-managed resources) does not delete it. Destroying a cluster
@@ -66,10 +66,18 @@ data "helm_template" "hcloud_csi" {
   # Telling the driver to label what it creates closes the gap at the source: the volumes
   # become label-visible, so the EXISTING cluster-scoped sweep reclaims them with no
   # widening of its blast radius. Requires chart >= 2.14.0 (pinned above).
-  set {
-    name  = "controller.volumeExtraLabels.cluster"
-    value = local.cluster_name
-  }
+  #
+  # local.default_labels carries the load-bearing `cluster` base label (which the money-guard
+  # below still asserts) PLUS the classification + `alethia_project-id`/`alethia_environment-id`
+  # sweep handles (B1.3), so a guarded sweeper can scope by environment too. It is passed via
+  # `values` (not a `set` block) because classification label keys may contain `.` (valid in the
+  # K8s label charset) — a dot in a helm `set` NAME is a path separator and would nest/break the
+  # key, whereas a yamlencoded map is immune.
+  values = [yamlencode({
+    controller = {
+      volumeExtraLabels = local.default_labels
+    }
+  })]
 
   # Make hcloud-volumes the default StorageClass.
   set {

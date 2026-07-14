@@ -652,6 +652,13 @@
       "when": 1783952991063,
       "tag": "0092_purge_argocd_admin_password_from_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1783962683183,
+      "tag": "0093_supreme_the_enforcers",
+      "breakpoints": true
     }
   ]
 }

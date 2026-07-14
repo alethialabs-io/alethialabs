@@ -6,8 +6,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 # Talos Kubernetes on Hetzner Cloud
 
 Minimal, self-managed [Talos Linux](https://www.talos.dev/) Kubernetes cluster on
-Hetzner Cloud: a single control plane + N workers, on the cheapest arm64 path by
-default. Modeled on
+Hetzner Cloud: a single control plane + N workers, on a cheap, currently-orderable
+amd64 shared-vCPU path by default (`cpx22`; override to `cax*` for ARM when capacity
+permits). Modeled on
 [hcloud-talos/terraform-hcloud-talos](https://github.com/hcloud-talos/terraform-hcloud-talos).
 
 The runner copies this template verbatim, feeds it a `.tfvars.json`, then runs
@@ -60,14 +61,14 @@ variable). Agents must never run `tofu plan` / `tofu apply`.
 | `talos_version` | `v1.9.5` | Talos Linux version. |
 | `kubernetes_version` | `""` | Kubernetes version; empty → Talos default. |
 | `control_plane_count` | `1` | Number of control-plane nodes. |
-| `control_plane_server_type` | `cax11` | CP server type. |
-| `control_plane_arch` | `arm64` | CP arch (`arm64` for cax*, `amd64` for cx*). |
+| `control_plane_server_type` | `cpx22` | CP server type (2 vCPU / 4 GB, amd64; orderable). `cax11` ARM is capacity-unreliable, `cpx11` retired. |
+| `control_plane_arch` | `amd64` | CP arch (`arm64` for cax*, `amd64` for cx*/cpx*/ccx*). |
 | `worker_count` | `1` | Number of worker nodes. |
-| `worker_server_type` | `cax11` | Worker server type. |
-| `worker_arch` | `arm64` | Worker arch. |
+| `worker_server_type` | `cpx22` | Worker server type (2 vCPU / 4 GB, amd64; orderable). |
+| `worker_arch` | `amd64` | Worker arch. |
 | `network_cidr` | `10.0.0.0/16` | Private network CIDR. |
-| `pod_cidr` | `10.244.0.0/16` | Cilium pod CIDR (must not overlap the others). |
-| `service_cidr` | `10.96.0.0/12` | Service CIDR (must not overlap the others). |
+| `pod_cidr` | `10.0.128.0/17` | Cilium pod CIDR. Must be a **subnet** of `network_cidr` (native routing) and not overlap the service/node subnets. |
+| `service_cidr` | `10.0.96.0/19` | Service CIDR. Must be a **subnet** of `network_cidr` and not overlap the pod/node subnets. |
 | `hcloud_token` | `""` | Optional; **only** for the in-cluster hcloud CCM secret. The providers use `HCLOUD_TOKEN` from the env. May be supplied via `TF_VAR_hcloud_token`. |
 | `buckets` | `[]` | Object Storage buckets (see below). Empty → the minio provider is never exercised. |
 | `hetzner_s3_endpoint` | `fsn1.your-objectstorage.com` | S3 endpoint **host** (no scheme). Only used when `buckets` is non-empty. |

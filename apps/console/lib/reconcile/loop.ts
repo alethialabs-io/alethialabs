@@ -13,6 +13,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
@@ -33,6 +34,9 @@ const INTERVALS = {
 	"env-convergence": 60_000, // 1m  — cheap read + guarded CAS; keep stuck envs short-lived
 	"ephemeral-reaper": 60_000, // 1m — expiry is time-sensitive
 	"drift-schedule": 5 * 60_000, // 5m — the sweep itself self-gates per-env by tier cadence (hours)
+	"probe-schedule": 2 * 60_000, // 2m — liveness is time-sensitive; the sweep self-gates per-env by
+	//                                    tier cadence (prod 10m/staging 1h/dev 6h), so a tighter host
+	//                                    tick keeps prod-outage detection near its 10m cadence floor.
 	"gc-job-logs": 15 * 60_000, // 15m — bounded-batch retention GC; a backlog drains over passes
 	"gc-fleet-actions": 15 * 60_000, // 15m
 	"gc-authz-activity": 15 * 60_000, // 15m — bounded-batch retention GC for the governance/audit log
@@ -82,6 +86,11 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// Periodic drift scheduler ("keep proving it"): enqueue DETECT_DRIFT per due ACTIVE env.
 		if (isDue("drift-schedule", INTERVALS["drift-schedule"], now)) {
 			await runTask("drift-schedule", () => sweepDriftSchedule(now));
+		}
+		// Periodic liveness prober (BYOC B2 — "is it still up?"): enqueue PROBE_CLUSTER per due
+		// ACTIVE env. Cloned from the drift scheduler; self-gates per-env by its tighter tier cadence.
+		if (isDue("probe-schedule", INTERVALS["probe-schedule"], now)) {
+			await runTask("probe-schedule", () => sweepProbeSchedule(now));
 		}
 		// Retention GC (best-effort, bounded batch): job_logs + fleet_actions ledger + authz activity log.
 		if (isDue("gc-job-logs", INTERVALS["gc-job-logs"], now)) {

@@ -12,3 +12,13 @@ runner_ecs_service    = "alethia-runner-dev-eu-west-1-service"
 
 # Optional: allow an admin principal to assume the roles for local apply.
 # admin_principal_arns = ["arn:aws:iam::270587882865:role/YourAdminRole"]
+
+# ── E2E nightly provisioning role (BYOC A1.1) ──
+# The region the e2e nightly is hard-locked to (must NOT be a prod region). Default us-east-1.
+# e2e_region = "us-east-1"
+# The branch the nightly runs on (schedule ⇒ default branch). The OIDC sub binds exactly to it.
+# e2e_github_branch = "main"
+# Monthly cost ceiling (USD) — alerts at 50/80/100% actual + 100% forecast.
+# e2e_monthly_budget_usd = 100
+# Emails subscribed to the budget SNS topic + notified directly by the Budget.
+e2e_budget_alert_emails = ["ops@alethialabs.io"]

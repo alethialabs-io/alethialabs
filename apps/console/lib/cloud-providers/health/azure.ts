@@ -25,15 +25,17 @@ export async function probeAzureHealth(
 ): Promise<HealthResult> {
 	const subscriptionId = identity.credentials.subscription_id;
 	if (!subscriptionId) return disconnected("This Azure connection has no subscription id.");
-	// Authenticate against the CUSTOMER tenant (stored on the identity) as the platform app, via a
-	// minted OIDC assertion — keyless. `assumeAzureIdentity` throws a clear reason if the platform app
-	// or issuer isn't configured on this instance.
+	// Authenticate against the CUSTOMER tenant (stored on the identity) as the customer's managed
+	// identity, via a minted OIDC assertion — keyless. `assumeAzureIdentity` throws a clear reason if
+	// the client id is missing or the issuer isn't configured on this instance.
 	const tenantId = identity.credentials.tenant_id;
 	if (!tenantId) return disconnected("This Azure connection has no tenant id.");
+	const clientId = identity.credentials.client_id;
+	if (!clientId) return disconnected("This Azure connection has no client id.");
 
 	let token: string;
 	try {
-		const cred = assumeAzureIdentity(tenantId);
+		const cred = assumeAzureIdentity(tenantId, clientId);
 		const t = await cred.getToken("https://management.azure.com/.default");
 		if (!t?.token) return disconnected("Azure token acquisition returned no token.");
 		token = t.token;

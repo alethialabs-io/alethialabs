@@ -40,11 +40,17 @@ locals {
     "qatarcentral"       = "qtc"
   }
 
-  azure_default_tags = {
+  # Platform base tags. Classification + sweep-handle tags (var.classification_tags) are merged in
+  # UNDER these — base tags sit on the merge RHS so they always WIN a key collision, keeping the
+  # sweep handles and platform bookkeeping authoritative. This local is applied to every taggable
+  # Azure resource (AKS, the DB, Key Vault, Service Bus, Redis, ACR, Storage, Cosmos, ...).
+  azure_base_tags = {
     "Environment" = title(var.environment)
     "Service"     = var.project_name
     "ManagedBy"   = "opentofu"
   }
+
+  azure_default_tags = merge(var.classification_tags, local.azure_base_tags)
 
   # Naming conventions
   location_short = local.azure_locations_short[var.location]

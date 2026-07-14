@@ -172,6 +172,11 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
 	// are consumed above under a different tfvar name.
+	// B1.2: classification → resource labels (+ the always-on project-id/environment-id sweep
+	// handles), GCP-styled (lowercase `alethia_...`, ≤63). Set before mergeProviderConfig so a
+	// user's provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
+	tfvars["classification_tags"] = classificationTags(config, gcpTagStyle)
+
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_autopilot")
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloud_armor", "managed_certificate")
 

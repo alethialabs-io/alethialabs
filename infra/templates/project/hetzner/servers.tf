@@ -35,10 +35,7 @@ resource "hcloud_server" "control_planes" {
 
   firewall_ids = [hcloud_firewall.this.id]
 
-  labels = {
-    cluster = local.cluster_name
-    role    = "control-plane"
-  }
+  labels = merge(local.default_labels, { role = "control-plane" })
 
   public_net {
     ipv4_enabled = true
@@ -70,10 +67,7 @@ resource "hcloud_server" "workers" {
 
   firewall_ids = [hcloud_firewall.this.id]
 
-  labels = {
-    cluster = local.cluster_name
-    role    = "worker"
-  }
+  labels = merge(local.default_labels, { role = "worker" })
 
   public_net {
     ipv4_enabled = true

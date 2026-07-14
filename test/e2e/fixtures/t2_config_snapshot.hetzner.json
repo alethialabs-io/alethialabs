@@ -1,0 +1,76 @@
+{
+	"id": "p1",
+	"user_id": "user-1",
+	"org_id": "org-1",
+	"cloud_identity_id": "ci-1",
+	"project_name": "alethia-fixture",
+	"slug": "alethia-fixture",
+	"region": "nbg1",
+	"iac_version": "1.0.0",
+	"environment_stage": "fixture",
+	"environment_id": "env-1",
+	"provider": "hetzner",
+	"classification": {},
+	"network": {
+		"cloud_provider": "hetzner",
+		"cloud_identity_id": "ci-1",
+		"region": "nbg1",
+		"provision_network": true,
+		"cidr_block": "10.0.0.0/16",
+		"single_nat_gateway": true
+	},
+	"cluster": {
+		"cloud_provider": "hetzner",
+		"cloud_identity_id": "ci-1",
+		"region": "nbg1",
+		"cluster_version": "",
+		"cluster_name": null,
+		"cluster_endpoint": null,
+		"instance_types": [],
+		"node_min_size": 1,
+		"node_max_size": 1,
+		"node_desired_size": 1,
+		"node_disk_size_gb": null,
+		"cluster_admins": [],
+		"provider_config": {}
+	},
+	"dns": {
+		"cloud_provider": "hetzner",
+		"cloud_identity_id": "ci-1",
+		"region": "nbg1",
+		"enabled": false,
+		"provider": "",
+		"provider_config": {}
+	},
+	"observability": {
+		"cloud_provider": "hetzner",
+		"cloud_identity_id": "ci-1",
+		"region": "nbg1",
+		"enabled": false,
+		"provider": "",
+		"provider_config": {}
+	},
+	"repositories": {},
+	"source_repos": [],
+	"databases": [],
+	"caches": [],
+	"queues": [],
+	"topics": [],
+	"nosql_tables": [],
+	"secrets": [],
+	"container_registries": [],
+	"storage_buckets": [],
+	"addons": [
+		{
+			"id": "reloader",
+			"mode": "managed",
+			"chartRepo": "https://stakater.github.io/stakater-charts",
+			"chart": "reloader",
+			"version": "1.1.0",
+			"namespace": "reloader",
+			"values": {},
+			"syncWave": 1
+		}
+	],
+	"git_access_token": ""
+}

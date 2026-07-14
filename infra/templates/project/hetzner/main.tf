@@ -57,6 +57,14 @@ provider "helm" {}
 locals {
   cluster_name = "${var.project_name}-${var.environment}"
 
+  # Platform base labels stamped on every hcloud resource. `cluster` is the load-bearing base label:
+  # the teardown sweep (scripts/e2e/hcloud-cleanup.sh) is scoped to `cluster=<name>`, and the hcloud
+  # account is SHARED WITH PROD, so this label must stay authoritative. Classification + sweep-handle
+  # labels (var.classification_tags) are merged in UNDER these (base on the merge RHS) so they always
+  # WIN a key collision — a renamed classification dimension can never shadow `cluster`.
+  base_labels    = { cluster = local.cluster_name }
+  default_labels = merge(var.classification_tags, local.base_labels)
+
   # Kubernetes API + Talos KubePrism ports.
   api_port_k8s        = 6443
   api_port_kube_prism = 7445

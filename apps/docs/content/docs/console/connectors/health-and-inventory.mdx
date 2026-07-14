@@ -52,7 +52,8 @@ The inventory is maintained server-side:
   the reliable backstop and is **on by default**.
 - **Event-driven updates (opt-in, near-real-time)** — a per-cloud forwarder can stream change events so
   the inventory reflects a new/deleted resource within seconds (**AWS** EventBridge → Lambda; **GCP**
-  Cloud Asset Inventory → Pub/Sub → Cloud Function; **Azure** Event Grid → Function App). Each normalizes
+  Cloud Asset Inventory → Pub/Sub → Cloud Function; **Azure** Event Grid → Function App; **Alibaba**
+  ActionTrail → EventBridge → Function Compute). Each normalizes
   the change and `POST`s `{ kind, native_id, region, deleted }` to `/api/cloud-events/{provider}` — never
   credentials. The forwarders are **deployed separately** into your cloud; until then, the sweep provides
   minutes-level freshness.

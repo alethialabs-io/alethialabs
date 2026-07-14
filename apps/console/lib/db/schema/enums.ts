@@ -132,6 +132,11 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	// The runner-side executor ships INERT (fail-closed): it refuses unless the runner opts in via
 	// ALETHIA_BREAKGLASS_STATE_SURGERY_ENABLED, so no state is ever mutated through an unproven path.
 	"STATE_SURGERY",
+	// Live cluster-alive signal (BYOC B2): reads the env's tofu state outputs in-process (kubeconfig
+	// via the state-proxy path; outputs are NEVER persisted), dials the cluster API server, and writes
+	// one honest environment_probes row. Unreachable is a SUCCESSFUL probe with reachable=false — the
+	// job only FAILS when the probe itself couldn't run, not when the cluster is down.
+	"PROBE_CLUSTER",
 ]);
 
 // Break-glass (privileged incident recovery) action catalog + per-action blast-radius label.

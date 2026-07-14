@@ -25,6 +25,40 @@ func EnsureAz() error {
 	return nil
 }
 
+// EnsureAliyun verifies the aliyun CLI is installed.
+func EnsureAliyun() error {
+	if !have("aliyun") {
+		return ErrAliyunNotFound
+	}
+	return nil
+}
+
+// RunAlibabaSetup writes the embedded installer to a temp file, runs it with the user's local
+// aliyun login (federating to the given Alethia issuer), and returns the created RAM role ARN
+// parsed from the CONFIG block. Keyless + account-free — Alethia never receives Alibaba creds.
+func RunAlibabaSetup(script, issuerURL string) (string, error) {
+	path, cleanup, err := writeTemp("alethia-alibaba-setup-*.sh", script)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	output, err := runStreaming("bash", path, issuerURL)
+	if err != nil {
+		return "", fmt.Errorf("alibaba setup failed: %w", err)
+	}
+
+	block, ok := extractBetweenMarkers(output)
+	if !ok {
+		return "", fmt.Errorf("could not find config in setup output")
+	}
+	roleArn := parseKeyValues(block)["role_arn"]
+	if roleArn == "" {
+		return "", fmt.Errorf("alibaba setup did not return a role ARN")
+	}
+	return roleArn, nil
+}
+
 // RunAwsBootstrap writes the CloudFormation template to a temp file, deploys it so the customer's role
 // trusts the given Alethia issuer (keyless, no external id), and returns the created role ARN from the
 // stack outputs. Uses the user's locally configured aws credentials.
@@ -70,6 +104,32 @@ func RunAwsBootstrap(template, issuerURL, region, roleName, stackName string) (s
 	return roleArn, nil
 }
 
+// RunAwsSetupScript writes the embedded installer to a temp file, runs it with the user's local
+// aws login (federating to the given Alethia issuer), and returns the created IAM role ARN parsed
+// from the CONFIG block. Keyless — direct OIDC, no external id.
+func RunAwsSetupScript(script, issuerURL string) (string, error) {
+	path, cleanup, err := writeTemp("alethia-aws-setup-*.sh", script)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	output, err := runStreaming("bash", path, issuerURL)
+	if err != nil {
+		return "", fmt.Errorf("aws setup failed: %w", err)
+	}
+
+	block, ok := extractBetweenMarkers(output)
+	if !ok {
+		return "", fmt.Errorf("could not find config in setup output")
+	}
+	roleArn := parseKeyValues(block)["role_arn"]
+	if roleArn == "" {
+		return "", fmt.Errorf("aws setup did not return a role ARN")
+	}
+	return roleArn, nil
+}
+
 // AzureIDs holds the federated identity values captured from the Azure setup.
 type AzureIDs struct {
 	TenantID       string
@@ -79,19 +139,16 @@ type AzureIDs struct {
 
 // RunAzureSetup writes the embedded installer to a temp file, runs it against
 // the given subscription using the user's local az login, and returns the
-// captured tenant/client/subscription IDs. clientID is Alethia's platform Entra
-// app id — the script requires it as ALETHIA_AZURE_CLIENT_ID and errors without it.
-func RunAzureSetup(script, subscriptionID, clientID string) (*AzureIDs, error) {
+// captured tenant/client/subscription IDs. The script creates a managed identity
+// in the subscription and prints its client id — no platform app id is injected.
+func RunAzureSetup(script, subscriptionID string) (*AzureIDs, error) {
 	path, cleanup, err := writeTemp("alethia-azure-setup-*.sh", script)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
 
-	output, err := runStreamingEnv(
-		[]string{"ALETHIA_AZURE_CLIENT_ID=" + clientID},
-		"bash", path, subscriptionID,
-	)
+	output, err := runStreaming("bash", path, subscriptionID)
 	if err != nil {
 		return nil, fmt.Errorf("azure setup failed: %w", err)
 	}

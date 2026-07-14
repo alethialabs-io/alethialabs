@@ -296,7 +296,7 @@ apps/console/
 
 - **Location**: `packages/core/`
 - **Purpose**: Shared types, cloud provider interfaces, and embedded OpenTofu templates used by both alethia and Node.
-- **OpenTofu templates**: the seed bootstrap lives in `assets/tofu/seed/`; the full per-cloud project templates are in `infra/templates/project/{aws,gcp,azure}` (applied at provision time). Templates are parameterised by tofu variables, not rendered — `provisioner/deploy.go` copies them verbatim and writes a tfvars map (`tofu.OverrideTfvarsFromMap`) from `ProviderTfvars`.
+- **OpenTofu templates**: the seed bootstrap lives in `assets/tofu/seed/`; the full per-cloud project templates are in `infra/templates/project/{aws,gcp,azure,alibaba}` (applied at provision time). Templates are parameterised by tofu variables, not rendered — `provisioner/deploy.go` copies them verbatim and writes a tfvars map (`tofu.OverrideTfvarsFromMap`) from `ProviderTfvars`.
 - **Key packages**: Config types (`ProjectConfig`), cloud provider abstraction (`CloudProvider` interface → `ProviderTfvars`), ArgoCD application rendering via Go `text/template` (`argocd/render.go`), and the **`verify`** package — the deterministic, fail-closed policy gate over the OpenTofu plan JSON (keyless / least-privilege / OIDC-sub controls; honest `not_evaluable` for what the plan can't show; ed25519-signed evidence receipt). Engine-agnostic `Evaluate` seam; pure-Go in Phase 0, OPA/Rego swap-in later. The **`drift`** package turns a `plan -refresh-only -json` into a per-env drift `Posture` (the "keep proving it" half).
 
 ---

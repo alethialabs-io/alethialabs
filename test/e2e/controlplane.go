@@ -37,6 +37,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -61,9 +62,16 @@ type ControlPlane struct {
 	runnerID    string
 	runnerToken string
 
-	// In-memory OpenTofu http state backend, keyed by jobID (state + lock).
-	mu     sync.Mutex
-	states map[string]*stateEntry
+	// In-memory OpenTofu http state backend, keyed by a STORAGE KEY (state + lock).
+	// The key is the requesting job's id by default, but a job may be ALIASED onto
+	// another job's slot (AliasStateToJob) so a follow-on job — a DETECT_DRIFT after a
+	// DEPLOY — reads the SAME state the deploy wrote, mirroring the console's
+	// per-environment (not per-job) state key. stateReadNonEmpty counts, per requesting
+	// job id, GETs that returned a NON-EMPTY state (drift non-vacuity proof).
+	mu                sync.Mutex
+	states            map[string]*stateEntry
+	stateAlias        map[string]string
+	stateReadNonEmpty map[string]int
 }
 
 type stateEntry struct {
@@ -83,7 +91,12 @@ func NewControlPlane(ctx context.Context, dbURL string) (*ControlPlane, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	return &ControlPlane{pool: pool, states: map[string]*stateEntry{}}, nil
+	return &ControlPlane{
+		pool:              pool,
+		states:            map[string]*stateEntry{},
+		stateAlias:        map[string]string{},
+		stateReadNonEmpty: map[string]int{},
+	}, nil
 }
 
 // Start brings up the HTTP server on a random loopback port. Its URL is what the
@@ -458,7 +471,17 @@ func (cp *ControlPlane) handleGitToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// No git source for the local template — return an explicit null token (200).
+	// Production-faithful git-token path (BYOC A0.6): the runner fetches the apps/BYO-chart
+	// credential HERE (POST /jobs/{id}/git-token) exactly as it does against the console —
+	// the token is NEVER carried in the config_snapshot (which is persisted to Postgres), so it
+	// cannot land in a proof/DB dump. It is served straight from the T2 process env
+	// (ALETHIA_E2E_GIT_TOKEN, wired from the CI secret) and crosses to the sandbox child via the
+	// child's allowlisted env, not the workdir payload. Unset ⇒ an explicit null token (200), the
+	// no-git-source default the lean local/kind path relies on.
+	if tok := strings.TrimSpace(os.Getenv(envArgoGitToken)); tok != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"token": tok})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": nil})
 }
 
@@ -502,24 +525,70 @@ func (cp *ControlPlane) handleWake(w http.ResponseWriter, r *http.Request) {
 // handleState + handleStateLock implement OpenTofu's http state backend in memory
 // (GET/POST/DELETE state; POST/DELETE lock), mirroring what the console's state proxy
 // exposes — enough for a single-writer deploy + the test's own RunDestroy teardown.
+// resolveStateKeyLocked maps a request's path job id to its storage slot (an alias
+// when one was set via AliasStateToJob, else the id itself). Caller holds cp.mu.
+func (cp *ControlPlane) resolveStateKeyLocked(jobID string) string {
+	if k, ok := cp.stateAlias[jobID]; ok {
+		return k
+	}
+	return jobID
+}
+
+// AliasStateToJob makes all state I/O for aliasJobID resolve to targetJobID's storage
+// slot. A follow-on job (a DETECT_DRIFT after its DEPLOY) then reads the SAME tofu state
+// the deploy wrote — the harness analogue of the console keying state per project
+// environment rather than per job. Without an alias, each job keys its own slot (the
+// single-job T1/T2 default, unchanged).
+func (cp *ControlPlane) AliasStateToJob(aliasJobID, targetJobID string) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	cp.stateAlias[aliasJobID] = targetJobID
+}
+
+// StateSnapshot returns a copy of the tofu state stored for jobID's slot (following any
+// alias), or nil if none. Lets a test assert the deploy wrote real, non-empty state (and
+// count resources) — the non-vacuity floor a drift/refresh run reconciles against.
+func (cp *ControlPlane) StateSnapshot(jobID string) []byte {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	e := cp.states[cp.resolveStateKeyLocked(jobID)]
+	if e == nil || e.state == nil {
+		return nil
+	}
+	out := make([]byte, len(e.state))
+	copy(out, e.state)
+	return out
+}
+
+// StateReadsNonEmpty is how many times jobID's tofu run GET a NON-EMPTY state object from
+// the backend — proof a drift/refresh run actually read real recorded state rather than
+// sailing over an empty slot (which would yield a vacuous in-sync posture).
+func (cp *ControlPlane) StateReadsNonEmpty(jobID string) int {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	return cp.stateReadNonEmpty[jobID]
+}
+
 func (cp *ControlPlane) handleState(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
-	e := cp.states[jobID]
+	key := cp.resolveStateKeyLocked(jobID)
+	e := cp.states[key]
 	switch r.Method {
 	case http.MethodGet:
 		if e == nil || e.state == nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		cp.stateReadNonEmpty[jobID]++
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(e.state)
 	case http.MethodPost:
 		b, _ := io.ReadAll(r.Body)
 		if e == nil {
 			e = &stateEntry{}
-			cp.states[jobID] = e
+			cp.states[key] = e
 		}
 		e.state = b
 		w.WriteHeader(http.StatusOK)
@@ -537,10 +606,11 @@ func (cp *ControlPlane) handleStateLock(w http.ResponseWriter, r *http.Request) 
 	jobID := r.PathValue("id")
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
-	e := cp.states[jobID]
+	key := cp.resolveStateKeyLocked(jobID)
+	e := cp.states[key]
 	if e == nil {
 		e = &stateEntry{}
-		cp.states[jobID] = e
+		cp.states[key] = e
 	}
 	switch r.Method {
 	case http.MethodPost: // LOCK

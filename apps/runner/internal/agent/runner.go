@@ -470,6 +470,12 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// Break-glass privileged state surgery — ships INERT (fail-closed); performs no state
 		// mutation. See state_surgery.go.
 		execErr = w.executeStateSurgery(ctx, job, stdoutLogger, stderrLogger)
+	case types.JobTypeProbeCluster:
+		// Live cluster-alive probe (BYOC B2). The enum + environment_probes history table land in
+		// B2.1; the actual executor (RunProbe on the state-proxy path) is built in B2.2 and the
+		// console dispatch in B2.3 — so no PROBE_CLUSTER job can reach a runner yet. This case exists
+		// only to keep the exhaustive switch complete; it fails closed until B2.2 wires the executor.
+		execErr = fmt.Errorf("job type %s not yet implemented on this runner (BYOC B2.2)", job.JobType)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}

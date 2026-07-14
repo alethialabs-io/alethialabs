@@ -19,12 +19,20 @@ const PAIRS = [
 		"apps/console/public/alethia-azure-setup.sh",
 	],
 	[
+		"infra/connector/alibaba/alethia-alibaba-setup.sh",
+		"apps/console/public/alethia-alibaba-setup.sh",
+	],
+	[
 		"infra/connector/gcp/alethia-gcp-setup.sh",
 		"apps/console/public/alethia-gcp-setup.sh",
 	],
 	[
 		"infra/connector/aws/alethia-bootstrap.yaml",
 		"apps/console/public/alethia-bootstrap.yaml",
+	],
+	[
+		"infra/connector/aws/alethia-aws-setup.sh",
+		"apps/console/public/alethia-aws-setup.sh",
 	],
 	[
 		"infra/connector/aws/alethia-bootstrap.tf",

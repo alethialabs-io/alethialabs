@@ -22,6 +22,12 @@ vi.mock("@/lib/cloud-providers/inventory", () => ({
 	syncCloudInventory: vi.fn(),
 	purgeCloudInventory: vi.fn(),
 }));
+// Observability boundaries: every verify outcome is logged, and a hard failure is reported to PostHog
+// Error tracking. Both are stubbed so we can assert they fire without a real logger / PostHog client.
+vi.mock("@/lib/observability/log", () => ({
+	log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@/lib/analytics/server", () => ({ captureServerException: vi.fn() }));
 
 import {
 	disconnectIdentity,
@@ -42,6 +48,8 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { probeHealth } from "@/lib/cloud-providers/health";
 import { encryptSecret } from "@/lib/crypto/secrets";
+import { log } from "@/lib/observability/log";
+import { captureServerException } from "@/lib/analytics/server";
 
 const SCOPE = { userId: "user-1", orgId: "org-1" };
 
@@ -389,6 +397,16 @@ describe("saveAwsIdentity", () => {
 		const r = await saveAwsIdentity(SCOPE, "ci-1", "arn:aws:iam::123456789012:role/R");
 		expect(r).toMatchObject({ verified: false, status: "disconnected", error: "AssumeRole denied" });
 		expect(db._values).toHaveLength(0);
+		// The failure is now observable: a structured error log carrying the provider + real cloud error,
+		// and a PostHog Error-tracking exception whose message includes both.
+		expect(log.error).toHaveBeenCalledWith(
+			"cloud connection verify failed",
+			expect.objectContaining({ provider: "aws", status: "disconnected", last_error: "AssumeRole denied" }),
+		);
+		expect(captureServerException).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining("AssumeRole denied") }),
+			expect.objectContaining({ props: expect.objectContaining({ provider: "aws" }) }),
+		);
 	});
 
 	it("throws on a malformed ARN before any db write", async () => {

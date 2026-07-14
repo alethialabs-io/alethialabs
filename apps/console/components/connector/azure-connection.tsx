@@ -39,35 +39,33 @@ const GUID_REGEX =
 const GUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
 /**
- * Extracts the tenant/subscription GUIDs from a pasted setup-script output block
- * (`Tenant ID: … / Subscription ID: …`). The Client ID is no longer collected — the
- * customer authorizes Alethia's own multi-tenant app, so its id is fixed. Falls back
- * to "two bare GUIDs in order" (tenant, then subscription) when the labels aren't present.
+ * Extracts the tenant/client/subscription GUIDs from a pasted setup-script output block. Matches by
+ * label (`Tenant ID: …`, `Client ID: …`, `Subscription ID: …`, and the `tenant_id=/client_id=/
+ * subscription_id=` CONFIG keys, whose words the label regex also catches). Falls back to "three bare
+ * GUIDs in the printed order" (tenant, subscription, client) when no labels are present.
  */
 function parseAzureIds(text: string): Partial<AzureFormValues> {
 	const grab = (label: string) =>
 		text.match(new RegExp(`${label}[^0-9a-fA-F]*(${GUID})`, "i"))?.[1];
 	let tenantId = grab("tenant");
+	let clientId = grab("client");
 	let subscriptionId = grab("subscription");
-	if (!tenantId && !subscriptionId) {
+	if (!tenantId && !clientId && !subscriptionId) {
 		const all = text.match(new RegExp(GUID, "g")) ?? [];
-		if (all.length >= 2) [tenantId, subscriptionId] = all;
+		if (all.length >= 3) [tenantId, subscriptionId, clientId] = all;
 	}
-	return { tenantId, subscriptionId };
+	return { tenantId, clientId, subscriptionId };
 }
 
 const azureSchema = z.object({
 	tenantId: z.string().regex(GUID_REGEX, "Invalid Tenant ID. Expected a UUID."),
+	clientId: z.string().regex(GUID_REGEX, "Invalid Client ID. Expected a UUID."),
 	subscriptionId: z.string().regex(GUID_REGEX, "Invalid Subscription ID. Expected a UUID."),
 });
 
 type AzureFormValues = z.infer<typeof azureSchema>;
 
 interface AzureConnectionProps {
-	/** Alethia's platform Entra app id (server-provided). Baked into the setup command — the
-	 * script requires it as `ALETHIA_AZURE_CLIENT_ID`. Empty only on an instance whose operator
-	 * hasn't configured Azure (the connect flow is gated off there). */
-	clientId: string;
 	onComplete: (
 		tenantId: string,
 		clientId: string,
@@ -75,22 +73,19 @@ interface AzureConnectionProps {
 	) => Promise<VerifyOutcome>;
 }
 
-export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) {
+export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	const [method, setMethod] = useState<"cli" | "terraform">("cli");
 	const { state: verifyState, run, cancel } = useConnectionTest();
 
 	const scriptUrl = connectorAssetUrl("alethia-azure-setup.sh");
-	// The platform app id is baked into the command (the customer authorizes Alethia's app — they
-	// create none). The script REQUIRES it as ALETHIA_AZURE_CLIENT_ID and errors without it, so
-	// always emit the prefix; if the id is somehow empty, show a labelled placeholder to fill in
-	// rather than a command that fails silently.
-	const clientIdArg = clientId || "YOUR_ALETHIA_APP_ID";
-	const cloudShellCmd = `curl -sO ${scriptUrl} && ALETHIA_AZURE_CLIENT_ID=${clientIdArg} bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
+	// No platform app id — the script creates a managed identity in the customer's subscription and
+	// prints its client id, which the form collects. Mirrors the GCP one-liner.
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
 	const cloudShellUrl = "https://shell.azure.com";
 
 	const form = useForm<AzureFormValues>({
 		resolver: zodResolver(azureSchema),
-		defaultValues: { tenantId: "", subscriptionId: "" },
+		defaultValues: { tenantId: "", clientId: "", subscriptionId: "" },
 		mode: "onChange",
 	});
 
@@ -104,8 +99,8 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 	};
 
 	const onSubmit = async (data: AzureFormValues) => {
-		// The client id is fixed — Alethia's own multi-tenant app, not a per-customer one.
-		await run(() => onComplete(data.tenantId, clientId, data.subscriptionId));
+		// Every id is the customer's own — the tenant, their managed-identity client id, and the subscription.
+		await run(() => onComplete(data.tenantId, data.clientId, data.subscriptionId));
 	};
 
 	// True when "Paste all" found nothing on the clipboard — a quiet inline hint (no toast).
@@ -115,7 +110,7 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 	const fillFromText = (text: string): number => {
 		const ids = parseAzureIds(text);
 		let n = 0;
-		for (const key of ["tenantId", "subscriptionId"] as const) {
+		for (const key of ["tenantId", "clientId", "subscriptionId"] as const) {
 			const value = ids[key];
 			if (value) {
 				form.setValue(key, value, { shouldValidate: true, shouldDirty: true });
@@ -134,11 +129,13 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 		}
 	};
 
-	/** Paste into any field: if it's the whole block, split it across both fields. */
+	/** Paste into any field: if it's the whole block, split it across the fields. */
 	const handleFieldPaste = (e: ClipboardEvent<HTMLInputElement>) => {
 		const text = e.clipboardData.getData("text");
 		const ids = parseAzureIds(text);
-		const found = [ids.tenantId, ids.subscriptionId].filter(Boolean).length;
+		const found = [ids.tenantId, ids.clientId, ids.subscriptionId].filter(
+			Boolean,
+		).length;
 		if (found >= 2) {
 			e.preventDefault();
 			fillFromText(text);
@@ -148,20 +145,21 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 
 	return (
 		<ConnectSheetShell
-			intro="You grant Alethia's multi-tenant app a role in your own Azure subscription; it trusts Alethia's issuer via a federated credential. Alethia signs in with a short-lived, minted token — no client secret is ever created, shared, or stored."
+			intro="You create a managed identity in your own Azure subscription that trusts Alethia's issuer via a federated credential — no App Registration, no client secret. Alethia signs in with a short-lived, minted token; nothing is ever stored."
 			howItWorks={
 				<>
 					<p>
-						1. Run the setup script (or apply the Terraform module) — it creates a service
-						principal for Alethia&apos;s app in your tenant and grants it Contributor.
+						1. Run the setup script (or apply the Terraform module) — it creates a
+						user-assigned managed identity in your subscription, adds a federated credential
+						trusting Alethia&apos;s issuer, and grants it a least-privilege role.
 					</p>
 					<p>
-						2. Alethia authenticates as that app with a signed token its issuer mints (≤10
+						2. Alethia authenticates as that identity with a signed token its issuer mints (≤10
 						min); Entra ID verifies it and returns a ~1-hour credential — no secret.
 					</p>
 					<p>
-						3. The only thing stored is your tenant + subscription id (public). Remove the
-						app&apos;s role assignment to revoke access.
+						3. The only thing stored is your tenant, subscription, and managed-identity client
+						id (all public). Delete the managed identity to revoke access.
 					</p>
 				</>
 			}
@@ -239,7 +237,8 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 					</Step>
 					<Step n={3} title="Enter Connection Details">
 						<p className="max-w-sm text-muted-foreground text-xs">
-							Copy the <b className="font-medium text-foreground">Tenant ID</b> and{" "}
+							Copy the <b className="font-medium text-foreground">Tenant ID</b>,{" "}
+							<b className="font-medium text-foreground">Client ID</b>, and{" "}
 							<b className="font-medium text-foreground">Subscription ID</b> from the script
 							output and paste them below.
 						</p>
@@ -249,16 +248,12 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 				<div className="space-y-6">
 					<Step n={1} title="Apply Terraform Module">
 						<p className="max-w-sm text-muted-foreground text-xs">
-							Set your subscription ID and the Alethia app id in the Terraform variables and
-							apply:
+							Set your subscription ID (and, if self-hosting, your issuer URL) in the Terraform
+							variables and apply:
 						</p>
 						<div className="mt-1 space-y-1 overflow-x-auto rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[11px] text-foreground">
 							<div>terraform init && terraform apply \</div>
-							<div className="pl-4">-var &quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot; \</div>
-							<div className="pl-4">
-								-var &quot;alethia_client_id={clientId || "YOUR_ALETHIA_APP_ID"}
-								&quot;
-							</div>
+							<div className="pl-4">-var &quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot;</div>
 						</div>
 						<div className="mt-2 flex flex-wrap items-center gap-3">
 							<Button
@@ -294,7 +289,7 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 							<code className="rounded border border-border/50 bg-muted px-1 py-0.5 text-foreground">
 								terraform output
 							</code>{" "}
-							and paste the tenant_id and subscription_id below.
+							and paste the tenant_id, client_id, and subscription_id below.
 						</p>
 					</Step>
 				</div>
@@ -312,7 +307,7 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 							<p className="text-[11px] text-muted-foreground">
 								{pasteMissed
 									? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
-									: "Paste both at once — we'll split them across the fields."}
+									: "Paste all at once — we'll split them across the fields."}
 							</p>
 							<Button
 								type="button"
@@ -353,6 +348,32 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 						/>
 						<FormField
 							control={form.control}
+							name="clientId"
+							render={({ field }) => (
+								<FormItem>
+									<div className="flex items-center gap-1.5">
+										<FormLabel className="font-medium text-xs">Client ID</FormLabel>
+										<FieldHelp title="Client ID">
+											The{" "}
+											<b className="text-foreground">application (client) ID</b> of the
+											managed identity the setup script created in your subscription —
+											the value labelled <code>client_id</code> in its output.
+										</FieldHelp>
+									</div>
+									<FormControl>
+										<Input
+											placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+											className="h-9 border-border/60 font-mono text-sm"
+											{...field}
+											onPaste={handleFieldPaste}
+										/>
+									</FormControl>
+									<FormMessage className="text-xs" />
+								</FormItem>
+							)}
+						/>
+						<FormField
+							control={form.control}
 							name="subscriptionId"
 							render={({ field }) => (
 								<FormItem>
@@ -360,8 +381,7 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 										<FormLabel className="font-medium text-xs">Subscription ID</FormLabel>
 										<FieldHelp title="Subscription ID">
 											The Azure <b className="text-foreground">subscription</b> Alethia
-											provisions into — the second value the script prints (the ID you
-											passed to it).
+											provisions into — the ID you passed to the script.
 										</FieldHelp>
 									</div>
 									<FormControl>
@@ -386,8 +406,8 @@ export function AzureConnection({ clientId, onComplete }: AzureConnectionProps) 
 					</form>
 				</Form>
 				<StoredNote
-					stored="only your tenant + subscription id (public identifiers) — no client secret."
-					revoke="remove Alethia's app role assignment (or its service principal) to cut access."
+					stored="only your tenant, subscription, and managed-identity client id (public identifiers) — no client secret."
+					revoke="delete the managed identity (or its role assignment) to cut access."
 				/>
 			</VerifySection>
 		</ConnectSheetShell>

@@ -34,9 +34,7 @@ export interface CloudConnectSetup {
 	integrations: ConnectorWithConnection[];
 	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
-	/** Azure additionally carries the platform Entra app id — the connect UI bakes it into the
-	 * customer's setup command (it's a fixed, non-secret operator value, never customer-entered). */
-	azureSetup: { identityId: string; clientId: string } | null;
+	azureSetup: { identityId: string } | null;
 	extraSetup: Record<string, { identityId: string; externalId?: string }>;
 	/**
 	 * Whether THIS instance is configured to support a provider's connect flow (keyed by connector
@@ -56,16 +54,16 @@ export interface CloudConnectSetup {
  * available at the call site.
  */
 export function computePlatformConfigured(): Record<string, boolean> {
-	const has = (...keys: string[]) => keys.every((k) => !!process.env[k]);
 	const gitProviders = getAuthConfig().providers;
 	return {
 		// AWS is keyless via DIRECT OIDC: the customer's IAM role trusts the Alethia issuer (an IAM OIDC
 		// provider), so the console/runner federate straight in via AssumeRoleWithWebIdentity — no platform
 		// AWS account, no ExternalId. Available whenever the issuer is configured.
 		aws: oidcIssuerConfigured(),
-		// Azure is keyless: the platform app (ALETHIA_AZURE_CLIENT_ID) authenticates via a minted OIDC
-		// assertion from the issuer — no client secret. Available when the app id + issuer are configured.
-		azure: has("ALETHIA_AZURE_CLIENT_ID") && oidcIssuerConfigured(),
+		// Azure is keyless + customer-side: the customer's managed identity (its client id stored per
+		// connection) authenticates via a minted OIDC assertion from the issuer — no client secret, no
+		// platform Entra app. Available whenever the issuer is configured (parity with AWS/GCP/Alibaba).
+		azure: oidcIssuerConfigured(),
 		// Alibaba is keyless + account-free: the console assumes the customer RAM role via
 		// AssumeRoleWithOIDC with a minted assertion — no Alibaba account / platform AccessKey.
 		// Available whenever the issuer is configured.
@@ -135,7 +133,7 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 	// Viewers get a read-only board (the setup is null for them).
 	let awsSetup: { identityId: string } | null = null;
 	let gcpSetup: { identityId: string } | null = null;
-	let azureSetup: { identityId: string; clientId: string } | null = null;
+	let azureSetup: { identityId: string } | null = null;
 	const extraSetup: Record<string, { identityId: string; externalId?: string }> = {};
 
 	if (canManage) {
