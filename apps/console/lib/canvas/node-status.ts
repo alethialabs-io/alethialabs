@@ -170,27 +170,33 @@ function issueMap(nodes: CanvasNode[]): Record<string, string> {
 
 /**
  * Client-only design readiness for a node — `needs-setup` (invalid/incomplete config), `gated`
- * (cross-cloud CORE placement, mirrors the Go provisioner gate), or `ready`. Derived live from the
- * store with no server round-trip. `useNodeStatus` resolves the server status on top of this.
+ * (cross-cloud CORE placement, mirrors the Go provisioner gate), or `ready`.
+ *
+ * PURE, so a caller that must resolve MANY nodes at once — a collection card reporting its worst
+ * member — can loop over them. Calling a hook per member would break the rules of hooks the moment
+ * a resource is added or removed and the list length changed.
  */
+export function nodeReadiness(
+	nodes: CanvasNode[],
+	core: string | null,
+	id: string,
+): NodeReadiness {
+	const node = nodes.find((n) => n.id === id);
+	if (!node) return { state: "ready", complete: true, gated: false };
+	const issue = issueMap(nodes)[id];
+	const complete = !issue;
+	const def = NODE_REGISTRY[node.data.kind];
+	const effId = node.data.cloud_identity_id ?? core;
+	const gated = def.classification === "core" && !!core && effId !== core;
+	const state: NodeStatusState = !complete ? "needs-setup" : gated ? "gated" : "ready";
+	return { state, issue, complete, gated };
+}
+
+/** {@link nodeReadiness} for a single node, bound to the store. */
 export function useNodeReadiness(id: string): NodeReadiness {
 	const nodes = useCanvasStore((s) => s.nodes);
 	const core = useCanvasStore((s) => s.getCoreIdentity());
-	return useMemo(() => {
-		const node = nodes.find((n) => n.id === id);
-		if (!node) return { state: "ready", complete: true, gated: false };
-		const issue = issueMap(nodes)[id];
-		const complete = !issue;
-		const def = NODE_REGISTRY[node.data.kind];
-		const effId = node.data.cloud_identity_id ?? core;
-		const gated = def.classification === "core" && !!core && effId !== core;
-		const state: NodeStatusState = !complete
-			? "needs-setup"
-			: gated
-				? "gated"
-				: "ready";
-		return { state, issue, complete, gated };
-	}, [id, nodes, core]);
+	return useMemo(() => nodeReadiness(nodes, core, id), [id, nodes, core]);
 }
 
 /** A node's fully-resolved status: one state, why it's in it, and any overlays riding on top. */
@@ -295,4 +301,23 @@ export function useNodeStatus(id: string): NodeStatus {
 			isCluster: node.data.kind === "cluster",
 		});
 	}, [readiness, env, node]);
+}
+
+/**
+ * The hook-free form of {@link useNodeStatus} — resolves ONE node from an already-held graph +
+ * environment status. This is what lets a collection card resolve all forty of its members in a
+ * plain loop: a hook per member would break the rules of hooks the moment a secret is added.
+ */
+export function resolveNodeStatusFor(
+	nodes: CanvasNode[],
+	core: string | null,
+	env: EnvironmentStatus,
+	id: string,
+): NodeStatus {
+	const node = nodes.find((n) => n.id === id);
+	const readiness = nodeReadiness(nodes, core, id);
+	if (!node) return { state: readiness.state, drift: [], deployed: false };
+	return resolveNodeStatus(readiness, env.components[nodeStatusKey(node)], env, {
+		isCluster: node.data.kind === "cluster",
+	});
 }

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
@@ -19,7 +19,13 @@ import {
 	type NodeStatusState,
 } from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import {
+	collectionNodeId,
+	isCollectionKind,
+	kindFromCollectionId,
+} from "@/lib/canvas/collections";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
+import { CollectionPanel } from "./inspector/collection-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
@@ -74,6 +80,12 @@ export function InspectorPanel({
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	const def = node ? NODE_REGISTRY[node.data.kind] : null;
 	const schema = node ? getKindConfig(node.data.kind) : undefined;
+
+	// A collection card (the Secrets vault) is synthetic — it has no store row, so its id resolves to
+	// no node. It gets the list panel instead, which is where its resources are actually managed.
+	const collectionKind = inspectorNodeId ? kindFromCollectionId(inspectorNodeId) : null;
+	if (collectionKind) return <CollectionPanel kind={collectionKind} />;
+
 	if (!node || !def) return null;
 
 	const gated =
@@ -94,8 +106,22 @@ export function InspectorPanel({
 		? schema.summary(node.data.config, provider)
 		: undefined;
 
+	// A member of a collapsed kind has no card of its own on the board, so without a way back up
+	// you'd be stranded in a secret with no route to the vault it belongs to.
+	const parentCollection = isCollectionKind(node.data.kind) ? node.data.kind : null;
+
 	return (
 		<div className="flex h-full flex-col">
+			{parentCollection && (
+				<button
+					type="button"
+					onClick={() => openInspector(collectionNodeId(parentCollection))}
+					className="flex items-center gap-1.5 border-b border-border px-4 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+				>
+					<ArrowLeft className="h-3.5 w-3.5" />
+					{NODE_REGISTRY[parentCollection].collection?.title}
+				</button>
+			)}
 			<div className="flex items-start gap-3 border-b border-border p-4">
 				{Icon && (
 					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground">

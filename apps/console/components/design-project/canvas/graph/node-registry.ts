@@ -133,6 +133,21 @@ export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	icon: LucideIcon;
 	/** Canvas card presentation — this IS the card. Every kind has one. */
 	card: NodeCardSpec<K>;
+	/**
+	 * High-cardinality kinds COLLAPSE into one card on the board. A real project carries 30–40
+	 * secrets; drawn as 30–40 cards they bury the architecture — the canvas stops being a picture of
+	 * the system and becomes a wall of near-identical boxes. Such a kind renders as a single vault
+	 * card instead, and its resources are managed as a list inside that card's panel.
+	 *
+	 * Only the VIEW collapses. The store still holds one node per resource, so graphToForm, the
+	 * staged-change diff, drift attribution and per-component status are all untouched.
+	 */
+	collection?: {
+		/** The card's title (plural — "Secrets"). */
+		title: string;
+		/** Singular noun, for the panel's actions ("Add a secret"). */
+		singular: string;
+	};
 	/** Add-palette presentation (group + cloud-indifferent subtitle). Present on every
 	 * ADDABLE kind; absent only for the fixed project root and out-of-band chart nodes. */
 	palette?: { group: PaletteGroup; subtitle: string };
@@ -525,6 +540,9 @@ export const NODE_REGISTRY: NodeRegistry = {
 							},
 						],
 		},
+		// Secrets are the canonical high-cardinality kind — a real project has dozens. They collapse
+		// into one vault card; the individual secrets live in its panel.
+		collection: { title: "Secrets", singular: "secret" },
 		palette: { group: "Security", subtitle: "Managed secrets & credentials" },
 		defaultData: () => ({
 			name: "secret",

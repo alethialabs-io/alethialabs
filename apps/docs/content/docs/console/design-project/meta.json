@@ -2,6 +2,7 @@
   "title": "Design a Project",
   "pages": [
     "index",
+    "the-canvas",
     "project-basics",
     "network",
     "cluster",
