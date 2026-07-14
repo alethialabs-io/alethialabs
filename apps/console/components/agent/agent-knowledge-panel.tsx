@@ -13,6 +13,9 @@ import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Textarea } from "@repo/ui/textarea";
 
+/** Server-side cap (upsertAgentContext) — mirrored here so the budget is visible while typing. */
+const NOTES_LIMIT = 50_000;
+
 /**
  * The Knowledge panel — the Claude-Projects idea, applied to an infra project. Edits the pinned
  * **custom instructions** and **knowledge** for the current scope; everything here rides the
@@ -135,9 +138,16 @@ export function AgentKnowledgePanel({
 							</section>
 
 							<section className="space-y-1.5">
-								<h2 className="text-[13px] font-medium text-foreground">
-									Knowledge
-								</h2>
+								<div className="flex items-baseline justify-between gap-2">
+									<h2 className="text-[13px] font-medium text-foreground">
+										Knowledge
+									</h2>
+									{/* Knowledge rides EVERY turn's system prompt, so its size is a real
+									    cost — surface the budget, the way Claude shows project capacity. */}
+									<span className="font-mono text-[10px] text-muted-foreground">
+										{notes.length.toLocaleString()} / {NOTES_LIMIT.toLocaleString()}
+									</span>
+								</div>
 								<p className="text-xs text-muted-foreground">
 									Facts Elench can’t derive on its own — conventions, owners,
 									runbooks, gotchas.
