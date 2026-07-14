@@ -3,13 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	buildMeters,
 	deriveGroups,
 	isStale,
 	lastChecked,
+	matchesAnyStatus,
 	matchesTriage,
 	rowScore,
-	sumSeverities,
 	type EvidenceEnvRow,
 } from "@/components/evidence/evidence-derive";
 import type { OrgEvidence } from "@/lib/queries/evidence";
@@ -131,6 +130,26 @@ describe("matchesTriage", () => {
 	});
 });
 
+describe("matchesAnyStatus", () => {
+	const waived = new Set<string>();
+	it("matches everything when no status is selected", () => {
+		const failing = mkRow({ id: "a", verify: verify("fail") });
+		expect(matchesAnyStatus(failing, [], waived)).toBe(true);
+	});
+
+	it("ORs the selected statuses", () => {
+		const failing = mkRow({ id: "a", verify: verify("fail") });
+		const passing = mkRow({ id: "b", verify: verify("pass") });
+		// failing satisfies "failing"; passing satisfies neither "failing" nor "unverified".
+		expect(matchesAnyStatus(failing, ["failing", "unverified"], waived)).toBe(
+			true,
+		);
+		expect(matchesAnyStatus(passing, ["failing", "unverified"], waived)).toBe(
+			false,
+		);
+	});
+});
+
 describe("deriveGroups", () => {
 	const rows = [
 		mkRow({ id: "a", stage: "production", verify: verify("fail") }),
@@ -143,8 +162,8 @@ describe("deriveGroups", () => {
 	it("buckets by triage: attention → gaps → healthy", () => {
 		const { groups } = deriveGroups(ev(rows), {
 			search: "",
-			stage: "all",
-			triage: "all",
+			stages: [],
+			status: [],
 			group: "triage",
 			sort: "worst",
 		});
@@ -154,8 +173,8 @@ describe("deriveGroups", () => {
 	it("orders stage groups production → staging → development", () => {
 		const { groups } = deriveGroups(ev(rows), {
 			search: "",
-			stage: "all",
-			triage: "all",
+			stages: [],
+			status: [],
 			group: "stage",
 			sort: "name",
 		});
@@ -166,51 +185,59 @@ describe("deriveGroups", () => {
 		]);
 	});
 
-	it("applies the stage filter and reports the result count", () => {
+	it("applies a single stage filter and reports the result count", () => {
 		const { resultCount } = deriveGroups(ev(rows), {
 			search: "",
-			stage: "production",
-			triage: "all",
+			stages: ["production"],
+			status: [],
 			group: "triage",
 			sort: "worst",
 		});
 		expect(resultCount).toBe(1);
 	});
 
-	it("applies the triage filter", () => {
+	it("applies a multi-stage filter (OR across stages)", () => {
 		const { resultCount } = deriveGroups(ev(rows), {
 			search: "",
-			stage: "all",
-			triage: "unverified",
+			stages: ["production", "staging"],
+			status: [],
+			group: "triage",
+			sort: "worst",
+		});
+		expect(resultCount).toBe(2); // a (production) + b (staging), not c (development)
+	});
+
+	it("applies a single status filter", () => {
+		const { resultCount } = deriveGroups(ev(rows), {
+			search: "",
+			stages: [],
+			status: ["unverified"],
 			group: "triage",
 			sort: "worst",
 		});
 		expect(resultCount).toBe(1); // only row "c" has no verify
 	});
 
+	it("applies a multi-status filter (OR across statuses)", () => {
+		const { resultCount } = deriveGroups(ev(rows), {
+			search: "",
+			stages: [],
+			status: ["failing", "unverified"],
+			group: "triage",
+			sort: "worst",
+		});
+		expect(resultCount).toBe(2); // a (failing) + c (unverified), not b (passing/in-sync)
+	});
+
 	it("searches across project / environment / region", () => {
 		const { resultCount } = deriveGroups(ev(rows), {
 			search: "eu-west-1",
-			stage: "all",
-			triage: "all",
+			stages: [],
+			status: [],
 			group: "triage",
 			sort: "worst",
 		});
 		expect(resultCount).toBe(3);
-	});
-});
-
-describe("buildMeters", () => {
-	it("derives the three headline distributions", () => {
-		const rows = [
-			mkRow({ id: "a", verify: verify("pass") }),
-			mkRow({ id: "b", verify: verify("fail") }),
-		];
-		const [verifyMeter, driftMeter, securityMeter] = buildMeters(ev(rows));
-		expect(verifyMeter.key).toBe("verify");
-		expect(verifyMeter.headNum).toBe(1); // one verified
-		expect(driftMeter.key).toBe("drift");
-		expect(securityMeter.key).toBe("security");
 	});
 });
 
@@ -256,8 +283,8 @@ describe("deriveGroups — waived filter + project grouping", () => {
 		};
 		const { resultCount } = deriveGroups(data, {
 			search: "",
-			stage: "all",
-			triage: "waived",
+			stages: [],
+			status: ["waived"],
 			group: "triage",
 			sort: "worst",
 		});
@@ -272,51 +299,13 @@ describe("deriveGroups — waived filter + project grouping", () => {
 		];
 		const { groups } = deriveGroups(ev(rows), {
 			search: "",
-			stage: "all",
-			triage: "all",
+			stages: [],
+			status: [],
 			group: "project",
 			sort: "name",
 		});
 		expect(groups).toHaveLength(2);
 		expect(groups.map((g) => g.label)).toEqual(["ledger", "payments"]);
 		expect(groups.find((g) => g.key === "p1")?.rows).toHaveLength(2);
-	});
-});
-
-describe("sumSeverities", () => {
-	it("sums severities only across scanned environments", () => {
-		const rows = [
-			mkRow({
-				id: "a",
-				security: {
-					critical: 1,
-					high: 2,
-					medium: 3,
-					low: 4,
-					scanned: true,
-					scannedAt: NOW,
-					reportCount: 1,
-				},
-			}),
-			mkRow({
-				id: "b",
-				security: {
-					critical: 9,
-					high: 9,
-					medium: 9,
-					low: 9,
-					scanned: false, // must be ignored
-					scannedAt: NOW,
-					reportCount: 0,
-				},
-			}),
-			mkRow({ id: "c" }), // no security at all
-		];
-		expect(sumSeverities(rows)).toEqual({
-			critical: 1,
-			high: 2,
-			medium: 3,
-			low: 4,
-		});
 	});
 });

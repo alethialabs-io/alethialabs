@@ -12,14 +12,12 @@ import {
 	type FleetEconomics,
 	type FleetPoolView,
 } from "@/app/server/actions/fleet";
-import { getOrgEvidence } from "@/app/server/actions/evidence";
 import {
 	getLatestRunnerRelease,
 	getManagedRunnerUsage,
 	getManagedRunnersWithReleases,
 	getRunnersWithReleases,
 } from "@/app/server/actions/runners";
-import type { OrgEvidence } from "@/lib/queries/evidence";
 import type { FleetPool, Runner } from "@/lib/db/schema";
 
 export interface RunnerReleaseInfo {
@@ -67,11 +65,6 @@ export async function fetchRunnersData(): Promise<RunnersData> {
 		provisioned_hours: r.operator === "managed" ? (usage[r.id] ?? 0) : null,
 	}));
 	return { runners, latestRelease };
-}
-
-/** Loads the active org's evidence roll-up (verify verdicts + drift posture + waivers). */
-export async function fetchEvidenceData(): Promise<OrgEvidence> {
-	return getOrgEvidence();
 }
 
 /** Loads pool views, plus the raw configs + economics when the actor can manage the fleet. */

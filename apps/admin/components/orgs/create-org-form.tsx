@@ -31,12 +31,28 @@ export function CreateOrgForm() {
 	async function submit() {
 		setBusy(true);
 		setError(null);
-		const res = await createEnterpriseOrg({
-			name,
-			slug,
-			ownerEmail,
-			...toContractPayload(state),
-		});
+		let res: Awaited<ReturnType<typeof createEnterpriseOrg>>;
+		try {
+			res = await createEnterpriseOrg({
+				name,
+				slug,
+				ownerEmail,
+				...toContractPayload(state),
+			});
+		} catch (err) {
+			// Deployment skew: a newer build shipped while this page was open, so the action
+			// reference no longer resolves ("Server Action … was not found on the server"). The
+			// action never ran — a hard reload fetches the current bundle so the retry is clean.
+			const msg = err instanceof Error ? err.message : String(err);
+			if (/server action|was not found on the server/i.test(msg)) {
+				setError("The app was updated — reloading…");
+				window.location.reload();
+				return;
+			}
+			setBusy(false);
+			setError(msg || "Failed");
+			return;
+		}
 		setBusy(false);
 		if (!res.ok || !res.orgId) {
 			setError(res.error ?? "Failed");
