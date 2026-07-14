@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env. Defaults already target the
+# current repo + the e2e-nightly Alibaba default region (eu-central-1). Applied ONCE by a
+# maintainer with an admin Alibaba identity (see README).
+
+github_repo       = "alethialabs-io/alethialabs"
+e2e_github_branch = "main"
+
+# The region the e2e nightly provisions + sweeps in. MUST match the e2e-nightly.yml alibaba default
+# (eu-central-1) so scripts/e2e/alibaba-cleanup.sh (region-locked) targets the same region.
+# region = "eu-central-1"
+
+# The audience the nightly's GitHub OIDC token is minted with (Alibaba AssumeRoleWithOIDC convention).
+# oidc_audience = "sts.aliyuncs.com"
+
+# Optional: pin the expected Alibaba account id so a mis-targeted apply fails loudly.
+# account_id = "1234567890123456"
+
+# Optional: Alibaba regions hosting prod Alethia infra that must never be the e2e region.
+# Empty today (no prod Alibaba footprint).
+# prod_regions = []
