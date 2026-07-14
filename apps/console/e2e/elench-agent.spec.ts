@@ -38,7 +38,7 @@ test.describe("Elench agent — modal (org)", () => {
 			page.getByRole("heading", { name: /what should we do today/i }),
 		).toBeVisible();
 		// The composer is rebranded to Elench with the @-mention affordance.
-		await expect(page.getByPlaceholder(/ask elench.*tag a resource/i)).toBeVisible();
+		await expect(page.getByTestId("elench-composer")).toBeVisible();
 		// Suggestion chips wired to the org suggestions.
 		await expect(
 			page.getByRole("button", { name: /are my connectors healthy/i }),
@@ -61,7 +61,7 @@ test.describe("Elench agent — modal (org)", () => {
 	test("the @-mention popover opens against real resources", async ({
 		authedPage: page,
 	}) => {
-		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		const composer = page.getByTestId("elench-composer");
 		await composer.click();
 		await composer.pressSequentially("@");
 		// The picker header appears (results depend on the account's resources).
@@ -73,7 +73,7 @@ test.describe("Elench agent — modal (org)", () => {
 		orgSlug,
 	}) => {
 		// Send a message (optimistic user turn survives even when AI is unconfigured).
-		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		const composer = page.getByTestId("elench-composer");
 		await composer.fill("elench e2e ping");
 		await composer.press("Enter");
 		await expect(page.getByText("elench e2e ping")).toBeVisible();
@@ -145,7 +145,7 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 	test("a sent thread persists across a reload", async ({
 		authedPage: page,
 	}) => {
-		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		const composer = page.getByTestId("elench-composer");
 		await composer.fill("persisted elench thread");
 		await composer.press("Enter");
 		await expect(page.getByText("persisted elench thread")).toBeVisible();
@@ -172,7 +172,7 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 	}) => {
 		// The stack runs AI-off by default → /api/agent returns 503; ChatError classifies it
 		// as missing-key ("AI is not configured") and always offers a Retry.
-		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		const composer = page.getByTestId("elench-composer");
 		await composer.fill("anything at all");
 		await composer.press("Enter");
 		await expect(page.getByText(/ai is not configured/i)).toBeVisible();

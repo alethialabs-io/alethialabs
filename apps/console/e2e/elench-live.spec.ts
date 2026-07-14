@@ -32,7 +32,7 @@ async function openElenchModal(page: Page): Promise<void> {
 
 /** Send a message through the composer. */
 async function ask(page: Page, text: string): Promise<void> {
-	const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+	const composer = page.getByTestId("elench-composer");
 	await composer.fill(text);
 	await composer.press("Enter");
 }
