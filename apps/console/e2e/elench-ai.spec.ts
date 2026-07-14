@@ -25,15 +25,20 @@ test.skip(
 const ROW_H = 88;
 const GRID_GAP = 8;
 
+/**
+ * The composer is a Lexical **contenteditable** (role=textbox), not an `<input>` — it carries
+ * `aria-placeholder`, never a `placeholder` attribute, so `getByPlaceholder` matches nothing.
+ * Address it by testid. (Locating it the old way is exactly how the whole suite silently broke.)
+ */
+const composer = (page: Page) => page.getByTestId("elench-composer");
+
 /** Open the Elench modal and wait for the thread list to resolve (the body swaps its
  * loading skeleton for the composer only once it's ready). */
 async function openModal(page: Page): Promise<void> {
 	await page.getByRole("button", { name: "Ask AI" }).click();
 	await page.getByRole("button", { name: /expand to full screen/i }).click();
 	await expect(page.getByTestId("elench-modal")).toBeVisible();
-	await expect(page.getByPlaceholder(/ask elench.*tag a resource/i)).toBeVisible({
-		timeout: 30_000,
-	});
+	await expect(composer(page)).toBeVisible({ timeout: 30_000 });
 }
 
 /** Open Elench on a FRESH conversation (persona is shared, so start a new thread). */
@@ -42,9 +47,7 @@ async function openFreshChat(page: Page): Promise<void> {
 	await openModal(page);
 	// The persona carries earlier tests' threads; start clean so this test owns its grid.
 	await page.getByRole("button", { name: /new chat/i }).first().click();
-	await expect(page.getByPlaceholder(/ask elench.*tag a resource/i)).toBeVisible({
-		timeout: 30_000,
-	});
+	await expect(composer(page)).toBeVisible({ timeout: 30_000 });
 }
 
 /** Reopen the modal after a reload and select the most recent thread. */
@@ -53,11 +56,12 @@ async function reopenLatestThread(page: Page): Promise<void> {
 	await page.getByTestId("thread-rail-row").first().click();
 }
 
-/** Send a message through the composer. */
+/** Send a message through the composer (type into the contenteditable, then Enter). */
 async function ask(page: Page, text: string): Promise<void> {
-	const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
-	await composer.fill(text);
-	await composer.press("Enter");
+	const editor = composer(page);
+	await editor.click();
+	await editor.pressSequentially(text);
+	await editor.press("Enter");
 	await expect(page.getByText(text, { exact: true }).first()).toBeVisible();
 }
 
@@ -85,14 +89,19 @@ test.describe("Elench with AI responses (scripted model, real pipeline)", () => 
 			timeout: 60_000,
 		});
 
-		// The orchestration marker names the model doing the work (the composer sends an
-		// explicit model pick, so the turn runs as a single EXECUTE phase).
+		// The orchestration marker names ONLY Elench + the phase. The underlying model is an
+		// internal detail and must never surface in the transcript (#497).
 		await expect(
 			page
 				.locator('[data-variant="separator"]')
-				.filter({ hasText: /claude/i })
+				.filter({ hasText: /elench · (planning|working)/i })
 				.first(),
 		).toBeVisible();
+		await expect(
+			page
+				.locator('[data-variant="separator"]')
+				.filter({ hasText: /claude|haiku|sonnet|opus/i }),
+		).toHaveCount(0);
 
 		// The tool ran FOR REAL (a PDP-gated read against this org's connectors) and
 		// rendered inside exactly one labeled frame — the unification invariant.
@@ -180,13 +189,16 @@ test.describe("Elench with AI responses (scripted model, real pipeline)", () => 
 		await seedDashboard(page);
 
 		// Move a widget with the keyboard (deterministic; shares the pointer path's commit).
-		// Three rows down clears the seeded widgets — a collision would (correctly) revert.
+		// Since #502 the pointer drag is dnd-kit and keyboard mode is armed from the GRIP
+		// (Enter/Space) rather than a separate button. Three rows down clears the seeded
+		// widgets — a collision would (correctly) revert.
 		const card = page.getByRole("group", { name: "Active clusters" });
-		await page.getByLabel("Move Active clusters with arrow keys").click();
-		await card.press("ArrowDown");
-		await card.press("ArrowDown");
-		await card.press("ArrowDown");
-		await card.press("Enter");
+		const grip = page.getByRole("button", { name: /^Move Active clusters/ });
+		await grip.press("Enter"); // arm keyboard-move
+		await grip.press("ArrowDown");
+		await grip.press("ArrowDown");
+		await grip.press("ArrowDown");
+		await grip.press("Enter"); // commit
 		await expect(card).toHaveCSS("grid-row-start", "4");
 
 		// The move was persisted to `thread_widgets`, not just to local state.
@@ -211,11 +223,13 @@ test.describe("Elench with AI responses (scripted model, real pipeline)", () => 
 		await page.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(page.getByText("Saved.")).toBeVisible();
 
-		// A brand-new conversation can see it in the artifact browser.
+		// A brand-new conversation can see it in the Artifacts library. (An empty chat has no
+		// top bar and — since #504 — no open grid, so the rail's Artifacts pane is the surface
+		// for this, not the grid-header browser.)
 		await page.getByRole("button", { name: /new chat/i }).first().click();
-		await page.getByRole("button", { name: /browse artifacts/i }).click();
+		await page.getByRole("button", { name: "Artifacts", exact: true }).click();
 		await expect(page.getByText(name)).toBeVisible();
-		await page.keyboard.press("Escape");
+		await page.getByRole("button", { name: /close artifacts/i }).click();
 
 		// Reference it and ask for an edit → get_artifact THEN update_artifact, both real
 		// server calls against the saved row.

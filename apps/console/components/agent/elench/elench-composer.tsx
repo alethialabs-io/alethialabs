@@ -143,6 +143,7 @@ function ComposerBody({
 					<PlainTextPlugin
 						contentEditable={
 							<ContentEditable
+								data-testid="elench-composer"
 								aria-label="Message Elench"
 								aria-placeholder={placeholder}
 								placeholder={

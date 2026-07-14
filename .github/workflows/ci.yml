@@ -28,6 +28,32 @@ permissions:
   contents: read
 
 jobs:
+  # Does this PR touch the Elench/agent surface? If so the browser E2E below becomes a PR gate.
+  # A whole Lexical composer rewrite once shipped green because that suite only ran post-merge —
+  # the one test that would have caught it never ran on the PR. Cheap (~15s) and dependency-free.
+  agent-changes:
+    name: Detect agent-surface changes
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.filter.outputs.agent }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "agent=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          changed=$(git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}")
+          if echo "$changed" | grep -qE '^apps/console/(components/(agent|ui/message-scroller)|lib/(ai|stores/use-(elench|artifact|widget-grid))|app/api/agent|app/server/actions/(agent|artifacts|mentions)|e2e/elench)'; then
+            echo "agent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent=false" >> "$GITHUB_OUTPUT"
+          fi
+
   typescript:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
@@ -222,9 +248,15 @@ jobs:
   e2e-elench-ai:
     name: E2E (browser · Elench AI journeys · scripted model)
     runs-on: ubuntu-latest
-    # Heavy (console build + Playwright) and NOT a required merge check — run on the merge queue,
-    # pushes to main, and manual dispatch, but NOT on every PR push, to cut per-PR Actions minutes.
-    if: github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [agent-changes]
+    # Heavy (console build + Playwright), so it stays OFF most PRs to cut Actions minutes — but it
+    # now RUNS on any PR that touches the agent surface. It is the only test that drives the real
+    # composer/rail/grid in a browser, and skipping it on PRs is how a broken Lexical composer
+    # shipped green. Still runs on the merge queue, pushes, and manual dispatch as before.
+    if: >-
+      github.event_name == 'merge_group' || github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || needs.agent-changes.outputs.agent == 'true'
     # The Elench AI journeys end-to-end with a SCRIPTED model (ALETHIA_AI_MOCK=1 → the
     # MockLanguageModelV3 in lib/config/ai-mock). Only the model is deterministic: the agent
     # route, extended thinking, orchestration markers, TOOL EXECUTION (PDP-gated reads against
