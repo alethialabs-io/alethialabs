@@ -34,7 +34,8 @@
 		"test:e2e": "playwright test",
 		"test:e2e:ui": "playwright test --ui",
 		"email:dev": "email dev --dir emails --port 3001",
-		"email:export": "email export --dir emails --outDir .react-email-out"
+		"email:export": "email export --dir emails --outDir .react-email-out",
+		"export:addon-catalog": "tsx scripts/export-addon-catalog.mts"
 	},
 	"dependencies": {
 		"@ai-sdk/anthropic": "3.0.95",
