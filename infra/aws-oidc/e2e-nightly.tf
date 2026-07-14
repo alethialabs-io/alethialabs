@@ -266,6 +266,12 @@ data "aws_iam_policy_document" "e2e_nightly" {
       "kinesis:*",
       "logs:*",
       "cloudwatch:*",
+      # EventBridge (a DISTINCT service from cloudwatch: metrics/alarms). Karpenter's v20 module
+      # creates spot-interruption EventBridge rules + targets (aws_cloudwatch_event_rule/_target)
+      # via the `events:` prefix; without this both the apply AND the teardown of those rules fail
+      # once enable_karpenter is on (BYOC A1.4 runs karpenter). Regional — correctly stays inside
+      # e2e_region (NOT a global carve-out).
+      "events:*",
       "autoscaling:*",
       "application-autoscaling:*",
       "elasticloadbalancing:*",

@@ -408,8 +408,9 @@ jobs:
       #    already ran on the normal path; this scope-locked cloud sweep is the belt-and-
       #    suspenders for a hard-killed test process. Every sweeper filters on THIS run's unique
       #    handle — hetzner: label `cluster=$E2E_CLUSTER`; the managed clouds: the
-      #    `alethia:environment-id=$E2E_ENV` tag (+ per-cloud belt filters) — NEVER account-wide
-      #    (the shared-account near-wipe; see scope-destructive-cloud-ops).
+      #    `alethia:project-id=e2e-$E2E_ENV` tag (the always-emitted, unique-per-run sweep handle;
+      #    + per-cloud belt filters for out-of-band resources) — NEVER account-wide (the
+      #    shared-account near-wipe; see scope-destructive-cloud-ops).
       #
       #    FAIL-CLOSED: a provider that provisioned but has no sweeper script is a HARD ERROR,
       #    never a silent skip — so a cloud can never be enabled (its gate set) without its
@@ -420,6 +421,11 @@ jobs:
         if: steps.gate.outputs.run == 'true' && always()
         env:
           PROVIDER: ${{ matrix.provider }}
+          # The managed sweepers read their scope from these ALETHIA_E2E_* names (the compute
+          # step wrote E2E_* to $GITHUB_ENV; map them here). ALETHIA_E2E_REGION is already in
+          # $GITHUB_ENV; ENV/PROJECT are mapped explicitly.
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+          ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
         run: |
           if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
             echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped cleanup."
@@ -438,6 +444,6 @@ jobs:
             exit 1
           fi
           # hetzner takes the cluster label as arg1; the managed sweepers read the scope
-          # (E2E_ENV / E2E_PROJECT / E2E_REGION) from the environment. Passing $E2E_CLUSTER is
+          # (ALETHIA_E2E_ENV / _PROJECT / _REGION) from the environment. Passing $E2E_CLUSTER is
           # harmless for the managed scripts (they ignore positional args).
           "$SCRIPT" "$E2E_CLUSTER"
