@@ -121,7 +121,9 @@ export function ThreadRail({
 				</div>
 			</div>
 
-			<ScrollArea className="flex-1">
+			{/* Force Radix's `display:table` viewport wrapper to block — otherwise it grows to
+			    max-content for a long unbroken title and the row's `w-full` never truncates. */}
+			<ScrollArea className="flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
 				<div className="px-2 pb-3.5">
 					{groups.length === 0 && (
 						<p className="px-2 py-6 text-center text-xs text-muted-foreground">

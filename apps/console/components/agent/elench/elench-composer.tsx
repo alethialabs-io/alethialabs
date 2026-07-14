@@ -19,7 +19,9 @@ import {
 } from "lucide-react";
 import {
 	type KeyboardEvent,
+	type ReactNode,
 	useCallback,
+	useEffect,
 	useRef,
 	useState,
 } from "react";
@@ -49,6 +51,54 @@ const TYPE_ICON: Record<MentionType, LucideIcon> = {
 	identity: KeyRound,
 	artifact: LayoutDashboard,
 };
+
+/**
+ * Box metrics shared verbatim by the textarea and its highlight mirror, so the mirror's
+ * styled glyphs sit exactly under the (transparent) textarea glyphs.
+ */
+const FIELD_METRICS =
+	"px-3.5 py-3 text-sm leading-5 whitespace-pre-wrap break-words";
+
+/**
+ * Split the composer value into text + tagged-mention nodes for the highlight mirror: every
+ * `@<label>` for a currently-tagged mention becomes a bold badge; the rest is plain text.
+ * Earliest match wins; overlapping ranges are skipped. A trailing zero-width space keeps the
+ * mirror's height in step with the textarea when the value ends on a newline.
+ */
+export function segmentMentions(value: string, mentions: Mention[]): ReactNode[] {
+	const ranges: Array<{ start: number; end: number }> = [];
+	for (const m of mentions) {
+		const token = `@${m.label}`;
+		let from = 0;
+		for (;;) {
+			const i = value.indexOf(token, from);
+			if (i === -1) break;
+			ranges.push({ start: i, end: i + token.length });
+			from = i + token.length;
+		}
+	}
+	ranges.sort((a, b) => a.start - b.start || b.end - a.end);
+
+	const nodes: ReactNode[] = [];
+	let cursor = 0;
+	let key = 0;
+	for (const r of ranges) {
+		if (r.start < cursor) continue; // overlaps an earlier badge — skip
+		if (r.start > cursor) nodes.push(value.slice(cursor, r.start));
+		nodes.push(
+			<span
+				key={`m${key++}`}
+				className="rounded-[3px] bg-muted px-0.5 font-semibold text-foreground"
+			>
+				{value.slice(r.start, r.end)}
+			</span>,
+		);
+		cursor = r.end;
+	}
+	if (cursor < value.length) nodes.push(value.slice(cursor));
+	nodes.push("\u200b"); // keep trailing-newline height
+	return nodes;
+}
 
 /**
  * The Elench composer — a fully-controlled input so the `@mention` autocomplete has
@@ -81,10 +131,19 @@ export function ElenchComposer({
 	const [anchor, setAnchor] = useState<MentionAnchor | null>(null);
 	const [index, setIndex] = useState(0);
 	const ref = useRef<HTMLTextAreaElement>(null);
+	// The highlight mirror behind the textarea (kept scroll-aligned with it).
+	const mirrorRef = useRef<HTMLDivElement>(null);
 	const { results, loading } = useMentionSearch(anchor);
 	const pending = status === "submitted" || status === "streaming";
 	const popoverOpen = anchor !== null && (results.length > 0 || loading);
 	const safeIndex = Math.min(index, Math.max(0, results.length - 1));
+
+	// Keep the mirror scroll-aligned with the textarea after value changes (typing at the
+	// bottom auto-scrolls the field; onScroll covers manual scrolls).
+	useEffect(() => {
+		if (mirrorRef.current && ref.current)
+			mirrorRef.current.scrollTop = ref.current.scrollTop;
+	}, [value]);
 
 	/** Re-evaluate whether the caret sits inside an `@mention` token. */
 	const recompute = useCallback((v: string, caret: number) => {
@@ -176,9 +235,7 @@ export function ElenchComposer({
 			{popoverOpen && (
 				<div className="absolute bottom-full left-0 z-50 mb-2 w-full border border-border bg-popover shadow-md">
 					<div className="vx-eyebrow flex items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-[9px]">
-						{anchor && anchor.query.length === 0
-							? "Your resources · type to search"
-							: "Tag a resource"}
+						Tag a resource
 						{loading && <Loader2 className="h-3 w-3 animate-spin" />}
 					</div>
 					<div className="max-h-64 overflow-y-auto py-1">
@@ -217,29 +274,52 @@ export function ElenchComposer({
 			)}
 
 			<div className="border border-border bg-background shadow-sm focus-within:ring-3 focus-within:ring-ring/25">
-				{/* biome-ignore lint/a11y/noAutofocus: opt-in via the modal hero only. */}
-				<textarea
-					ref={ref}
-					value={value}
-					// oxlint-disable-next-line eslint-plugin-jsx-a11y(no-autofocus)
-					autoFocus={autoFocus}
-					rows={1}
-					placeholder={placeholder}
-					onChange={(e) => {
-						setValue(e.target.value);
-						recompute(e.target.value, e.target.selectionStart ?? 0);
-					}}
-					onKeyDown={onKeyDown}
-					onKeyUp={(e) =>
-						recompute(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
-					}
-					onClick={(e) =>
-						recompute(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
-					}
-					className="field-sizing-content max-h-56 min-h-[72px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-				/>
-				{/* Tagged-resource chips — a plain <textarea> can't bold the @tokens inline, so
-				    the committed references show here as removable chips (clear "you tagged X"). */}
+				{/* Highlight overlay: a mirror renders the styled text (tagged @tokens as bold
+				    badges) UNDER a text-transparent textarea, so tags are visually distinct from
+				    normal prose without a contenteditable rewrite. The two share FIELD_METRICS so
+				    glyphs align; the textarea keeps the caret + all interaction. */}
+				<div className="relative">
+					<div
+						ref={mirrorRef}
+						aria-hidden
+						className={cn(
+							FIELD_METRICS,
+							"pointer-events-none absolute inset-0 z-0 max-h-56 min-h-[72px] overflow-hidden text-foreground",
+						)}
+					>
+						{segmentMentions(value, mentions)}
+					</div>
+					{/* biome-ignore lint/a11y/noAutofocus: opt-in via the modal hero only. */}
+					<textarea
+						ref={ref}
+						value={value}
+						// oxlint-disable-next-line eslint-plugin-jsx-a11y(no-autofocus)
+						autoFocus={autoFocus}
+						rows={1}
+						placeholder={placeholder}
+						onChange={(e) => {
+							setValue(e.target.value);
+							recompute(e.target.value, e.target.selectionStart ?? 0);
+						}}
+						onKeyDown={onKeyDown}
+						onKeyUp={(e) =>
+							recompute(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+						}
+						onClick={(e) =>
+							recompute(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+						}
+						onScroll={(e) => {
+							if (mirrorRef.current)
+								mirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+						}}
+						className={cn(
+							FIELD_METRICS,
+							"field-sizing-content relative z-10 max-h-56 min-h-[72px] w-full resize-none bg-transparent text-transparent caret-foreground outline-none placeholder:text-muted-foreground",
+						)}
+					/>
+				</div>
+				{/* Tagged-resource chips — an at-a-glance list with per-tag removal (× ), pairing
+				    with the inline bold badges so it's clear what you've tagged and where. */}
 				{mentions.length > 0 && (
 					<div className="flex flex-wrap gap-1.5 px-2.5 pb-2">
 						{mentions.map((m) => {

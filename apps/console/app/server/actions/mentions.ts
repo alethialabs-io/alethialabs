@@ -11,7 +11,9 @@ import { getProjects } from "@/app/server/actions/projects";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import type { MentionResult, MentionType } from "@/lib/ai/mentions";
 
-const MAX_RESULTS = 10;
+// Generous cap: the popover is scrollable, so surface the owner's full set of taggable
+// resources (all types) rather than clipping to a handful.
+const MAX_RESULTS = 40;
 /** Type ordering when results are otherwise equal (most-actionable first). */
 const TYPE_RANK: Record<MentionType, number> = {
 	project: 0,
@@ -71,18 +73,15 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 					sublabel: [j.status, j.cloud_provider].filter(Boolean).join(" · "),
 				})),
 			),
-			// Only CONNECTED connectors are mention-able — tagging a not-connected
-			// catalog entry is meaningless to Elench, and dumping the whole catalog on
-			// an empty `@` is the noise we're removing.
 			safe(async () =>
-				(await getConnectorsWithStatus())
-					.filter((c) => c.connected)
-					.map((c) => ({
-						id: c.name,
-						type: "connector" as const,
-						label: c.name,
-						sublabel: [c.group, "connected"].filter(Boolean).join(" · "),
-					})),
+				(await getConnectorsWithStatus()).map((c) => ({
+					id: c.name,
+					type: "connector" as const,
+					label: c.name,
+					sublabel: [c.group, c.connected ? "connected" : "not connected"]
+						.filter(Boolean)
+						.join(" · "),
+				})),
 			),
 			safe(async () =>
 				(await getRunnersWithReleases()).map((r) => ({
