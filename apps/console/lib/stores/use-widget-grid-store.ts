@@ -31,14 +31,16 @@ interface WidgetGridState {
 	threadId: string | null;
 	widgets: ThreadWidget[];
 	loading: boolean;
-	/** The empty cell showing an inline "describe what goes here…" composer. */
-	cellPrompt: { x: number; y: number } | null;
+	/** The empty cell showing an inline "describe what goes here…" composer. `span` is the
+	 * number of contiguous free columns to the right (1–2) so the composer never overlaps a
+	 * neighbouring widget. */
+	cellPrompt: { x: number; y: number; span: number } | null;
 	/** A submitted cell request awaiting dispatch into the chat (the conversation
 	 * consumes it: stages `pendingCellTarget`, sends the text, clears this). */
 	pendingCellRequest: { x: number; y: number; text: string } | null;
 	/** The grid cell the NEXT chat request should fill (read fresh by prepareBody). */
 	pendingCellTarget: { x: number; y: number } | null;
-	setCellPrompt: (cell: { x: number; y: number } | null) => void;
+	setCellPrompt: (cell: { x: number; y: number; span: number } | null) => void;
 	submitCellPrompt: (text: string) => void;
 	setPendingCellTarget: (cell: { x: number; y: number } | null) => void;
 	clearPendingCellRequest: () => void;
@@ -79,7 +81,10 @@ export const useWidgetGridStore = create<WidgetGridState>((set, get) => ({
 		const cell = get().cellPrompt;
 		const trimmed = text.trim();
 		if (!cell || !trimmed) return;
-		set({ cellPrompt: null, pendingCellRequest: { ...cell, text: trimmed } });
+		set({
+			cellPrompt: null,
+			pendingCellRequest: { x: cell.x, y: cell.y, text: trimmed },
+		});
 	},
 	setPendingCellTarget: (cell) => set({ pendingCellTarget: cell }),
 	clearPendingCellRequest: () => set({ pendingCellRequest: null }),

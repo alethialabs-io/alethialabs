@@ -4,8 +4,10 @@
 
 import type { UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentChat } from "@/components/agent/agent-chat";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
+import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
@@ -225,6 +227,35 @@ export function ElenchConversation({
 		useArtifactStore.getState().openGrid();
 		track("elench_grid_opened", { context: isOrg ? "org" : "project" });
 	}, [isOrg]);
+
+	// Open a saved artifact from the gallery: materialize its widgets onto a chat's grid,
+	// creating a thread first if the current conversation is still ephemeral (artifacts
+	// need a persisted thread to attach to). Then leave the gallery with the grid showing.
+	const onOpenArtifactFromGallery = useCallback(
+		async (artifactId: string, name: string) => {
+			let tid = activeId;
+			if (!tid) tid = (await startThread(name)).id;
+			await openArtifactOnGrid(artifactId, tid);
+			// Force a re-pull so the materialized rows appear on the grid.
+			useWidgetGridStore.setState({ threadId: null });
+			await hydrateGrid(tid);
+			useElenchStore.getState().setGalleryOpen(false);
+			openGrid();
+			track("elench_artifact_opened", { context: isOrg ? "org" : "project" });
+		},
+		[activeId, startThread, hydrateGrid, openGrid, isOrg],
+	);
+
+	// The Artifacts gallery node (org only) — ElenchModal shows it in the main region while
+	// `galleryOpen`. "New artifact" is just a fresh chat (the empty landing's starter cards
+	// steer it); closing returns to the conversation.
+	const galleryNode = isOrg ? (
+		<AgentArtifactGallery
+			onOpenArtifact={(id, n) => void onOpenArtifactFromGallery(id, n)}
+			onNewArtifact={newChat}
+			onClose={() => useElenchStore.getState().setGalleryOpen(false)}
+		/>
+	) : undefined;
 	const [accepted, setAccepted] = useState<Record<string, boolean>>({});
 	const renderToolPart = useMemo(
 		() =>
@@ -322,6 +353,7 @@ export function ElenchConversation({
 				onSelectThread={selectThread}
 				onNewChat={newChat}
 				onDeleteThread={deleteThread}
+				gallery={galleryNode}
 			>
 				{body}
 			</ElenchModal>

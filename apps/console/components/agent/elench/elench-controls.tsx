@@ -3,18 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
+	Brain,
 	Check,
 	ChevronsRight,
+	type LucideIcon,
 	Pencil,
 	SlidersHorizontal,
 	Sparkles,
+	Zap,
 } from "lucide-react";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@repo/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { AI_MODELS } from "@/lib/config/ai";
@@ -101,10 +98,10 @@ export function ElenchAskMode() {
 }
 
 /**
- * The per-message "Deep reasoning (Opus)" toggle. Renders ONLY on the `ai_max` tier — Max
- * runs the Sonnet advisor by default (like Plus) and opts into the pricier Opus advisor per
- * message via this pill, whose state rides the request as `deepReasoning`. Hidden on every
- * other tier (and while the tier is still resolving), so it's a Max-only affordance.
+ * The per-message "Deep reasoning" toggle. Renders ONLY on the `ai_max` tier, whose state
+ * rides the request as `deepReasoning` (the route swaps in a deeper planning model for that
+ * turn). Hidden on every other tier (and while the tier is still resolving), so it's a
+ * Max-only affordance. Deliberately names no model — only the intent.
  */
 export function ElenchDeepReasoning() {
 	const tier = useAiTier();
@@ -137,46 +134,71 @@ export function ElenchDeepReasoning() {
 				</button>
 			</TooltipTrigger>
 			<TooltipContent side="top" className="max-w-[240px] text-xs">
-				Run this message on the Opus model — slower, deeper planning. A Max feature; off by
-				default (Max uses the Sonnet advisor).
+				Think harder on this message — slower, deeper planning. A Max feature; off by
+				default.
 			</TooltipContent>
 		</Tooltip>
 	);
 }
 
+/** Intent icon for a picker entry — keyed off its `label` (never the model name). */
+const MODEL_ICON: Record<string, LucideIcon> = {
+	Fast: Zap,
+	Thinking: Brain,
+};
+
 /**
- * The composer settings control — the sliders button that opens the model picker.
- * Org context only (the project route has no user-selectable model).
+ * The composer model picker — the sliders button that opens a two-choice intent popover
+ * ("Fast" / "Thinking"). It deliberately shows only the INTENT, never the underlying model
+ * name/provider; the store still holds (and the request still sends) the real
+ * `provider/native-id` key. Org context only (the project route has no user-selectable model).
  */
 export function ElenchModelButton() {
 	const model = useElenchStore((s) => s.model);
 	const setModel = useElenchStore((s) => s.setModel);
 
 	return (
-		<DropdownMenu>
-			<DropdownMenuTrigger
-				aria-label="Model settings"
+		<Popover>
+			<PopoverTrigger
+				aria-label="Response style"
 				className="inline-flex size-7 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 			>
 				<SlidersHorizontal className="h-4 w-4" />
-			</DropdownMenuTrigger>
-			<DropdownMenuContent align="end" side="top" className="rounded-none">
-				{AI_MODELS.map((m) => (
-					<DropdownMenuItem
-						key={m.id}
-						onSelect={() => setModel(m.id)}
-						className="gap-6 rounded-none text-xs"
-					>
-						<div className="flex flex-col">
-							<span>{m.name}</span>
-							<span className="font-mono text-[9px] text-muted-foreground">
-								{m.provider}
+			</PopoverTrigger>
+			<PopoverContent
+				align="end"
+				side="top"
+				className="w-[270px] rounded-none p-1.5"
+			>
+				{AI_MODELS.map((m) => {
+					const Icon = MODEL_ICON[m.label] ?? Zap;
+					const active = m.id === model;
+					return (
+						<button
+							key={m.id}
+							type="button"
+							onClick={() => setModel(m.id)}
+							className={cn(
+								"flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
+								active && "bg-muted",
+							)}
+						>
+							<Icon className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
+							<span className="flex-1">
+								<span className="block text-[13px] font-medium text-foreground">
+									{m.label}
+								</span>
+								<span className="block text-xs text-muted-foreground">
+									{m.blurb}
+								</span>
 							</span>
-						</div>
-						{m.id === model && <Check className="ml-auto h-3.5 w-3.5" />}
-					</DropdownMenuItem>
-				))}
-			</DropdownMenuContent>
-		</DropdownMenu>
+							{active && (
+								<Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
+							)}
+						</button>
+					);
+				})}
+			</PopoverContent>
+		</Popover>
 	);
 }

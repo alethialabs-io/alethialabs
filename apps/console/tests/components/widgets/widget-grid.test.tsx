@@ -178,13 +178,30 @@ describe("WidgetGrid", () => {
 			widgets: [widget({ id: "a", pos_x: 0, pos_y: 0, title: "Movable" })],
 		});
 		render(<WidgetGrid />);
-		await user.click(screen.getByLabelText("Move Movable with arrow keys"));
-		const card = screen.getByRole("group", { name: "Movable" });
-		card.focus();
-		await user.keyboard("{ArrowRight}{ArrowDown}{Enter}");
+		// Enter keyboard-move mode from the focused grip (replaces the removed Move button).
+		const grip = screen.getByRole("button", { name: /Move Movable/ });
+		grip.focus();
+		await user.keyboard("{Enter}{ArrowRight}{ArrowDown}{Enter}");
 		expect(vi.mocked(updateWidget)).toHaveBeenCalledWith(
 			expect.objectContaining({ id: "a", posX: 1, posY: 1 }),
 		);
+	});
+
+	it("opens the cell composer at a free guide cell, sized to the free span", async () => {
+		const user = userEvent.setup();
+		useWidgetGridStore.setState({
+			widgets: [
+				widget({ id: "a", pos_x: 0, pos_y: 0, colspan: 2, rowspan: 1, title: "Wide" }),
+			],
+		});
+		render(<WidgetGrid />);
+		// (x=2, y=0) is free with two contiguous free columns to its right → span 2.
+		await user.click(screen.getByLabelText("Add a widget at row 1, column 3"));
+		expect(useWidgetGridStore.getState().cellPrompt).toEqual({ x: 2, y: 0, span: 2 });
+		// Occupied cells never become click targets.
+		expect(
+			screen.queryByLabelText("Add a widget at row 1, column 1"),
+		).not.toBeInTheDocument();
 	});
 
 	it("keyboard move: Escape reverts without persisting", async () => {
@@ -193,11 +210,11 @@ describe("WidgetGrid", () => {
 			widgets: [widget({ id: "a", pos_x: 0, pos_y: 0, title: "Movable" })],
 		});
 		render(<WidgetGrid />);
-		await user.click(screen.getByLabelText("Move Movable with arrow keys"));
-		const card = screen.getByRole("group", { name: "Movable" });
-		card.focus();
-		await user.keyboard("{ArrowRight}{Escape}");
+		const grip = screen.getByRole("button", { name: /Move Movable/ });
+		grip.focus();
+		await user.keyboard("{Enter}{ArrowRight}{Escape}");
 		expect(vi.mocked(updateWidget)).not.toHaveBeenCalled();
+		const card = screen.getByRole("group", { name: "Movable" });
 		expect(card.style.gridColumn).toBe("1 / span 1");
 	});
 });
