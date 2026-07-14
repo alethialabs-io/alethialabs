@@ -471,11 +471,11 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// mutation. See state_surgery.go.
 		execErr = w.executeStateSurgery(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeProbeCluster:
-		// Live cluster-alive probe (BYOC B2). The enum + environment_probes history table land in
-		// B2.1; the actual executor (RunProbe on the state-proxy path) is built in B2.2 and the
-		// console dispatch in B2.3 — so no PROBE_CLUSTER job can reach a runner yet. This case exists
-		// only to keep the exhaustive switch complete; it fails closed until B2.2 wires the executor.
-		execErr = fmt.Errorf("job type %s not yet implemented on this runner (BYOC B2.2)", job.JobType)
+		// Live cluster-alive probe (BYOC B2) — see probe.go. This case used to fail closed with
+		// "not yet implemented (B2.2)" while the console dispatched probes on a schedule AND from
+		// the canvas Run menu, so every probe job failed and environment_probes was never written:
+		// a cluster whose API server had died still read "Live" on the board.
+		execErr = w.executeProbeCluster(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
