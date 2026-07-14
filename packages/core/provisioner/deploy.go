@@ -694,6 +694,17 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
 			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
+		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
+		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
+		// EC2NodeClass spec.tags (from the karpenter_node_tags output) is the ONLY lever that
+		// stamps the classification + sweep-handle tags onto launched instances/volumes (gap G2).
+		// Non-fatal like the add-on path: a node-class hiccup must not fail an otherwise-healthy
+		// cluster — the operator sees the warning and Karpenter still runs (it just can't scale
+		// until the CR lands). The apply retries because the CRDs sync in asynchronously.
+		setStage("karpenter")
+		if kErr := applyKarpenterNodeClass(ctx, result.Outputs, facts, stdout, stderr); kErr != nil {
+			fmt.Fprintf(stderr, "Warning: Karpenter EC2NodeClass/NodePool setup skipped: %v\n", kErr)
+		}
 		// Remove infra-service objects earlier deploys applied but this render skipped
 		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
 		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
