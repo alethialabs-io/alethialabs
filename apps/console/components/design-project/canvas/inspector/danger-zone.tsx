@@ -12,7 +12,7 @@ import {
 	CollapsibleTrigger,
 } from "@repo/ui/collapsible";
 import { cn } from "@repo/ui/utils";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { OUT_OF_BAND, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import type { CanvasNode } from "../graph/types";
 import { configName } from "../graph/node-config";
@@ -26,6 +26,11 @@ export function DangerZone({ node }: { node: CanvasNode }) {
 	const [open, setOpen] = useState(false);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
+
+	// Out-of-band resources (marketplace add-ons, BYO charts) are NOT canvas objects: removing one
+	// from the board wouldn't disable its ArgoCD Application, and duplicating one is meaningless.
+	// They're managed where they're installed — the add-on sheet, or the chart card's own detach.
+	if (OUT_OF_BAND.has(node.data.kind)) return null;
 
 	const isArray = NODE_REGISTRY[node.data.kind].cardinality === "array";
 	const deletable = node.deletable !== false;

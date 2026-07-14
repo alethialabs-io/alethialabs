@@ -150,6 +150,13 @@ function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
 	return placed;
 }
 
+/**
+ * Kinds persisted OUT-OF-BAND (project_addons) rather than through the form graph: BYO Helm charts
+ * and marketplace add-ons. They're loaded straight from the server, never written by `graphToForm`,
+ * and must never appear in the Deploy diff — they aren't staged changes.
+ */
+export const OUT_OF_BAND = new Set<NodeKind>(["chart", "addon"]);
+
 /** A staged difference between the canvas (desired) and the saved baseline. */
 export interface PendingChange {
 	id: string;
@@ -230,7 +237,7 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 	for (const n of nodes) {
 		// The project root isn't a provisionable add; chart nodes are persisted out-of-band
 		// (project_addons) so they never belong in the Deploy diff.
-		if (n.id === PROJECT_NODE_ID || n.data.kind === "chart") continue;
+		if (n.id === PROJECT_NODE_ID || OUT_OF_BAND.has(n.data.kind)) continue;
 		const prev = base.get(n.id);
 		if (!prev) {
 			changes.push({ id: n.id, op: "new", kind: n.data.kind, name: nodeName(n) });
@@ -242,7 +249,7 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 		}
 	}
 	for (const n of baseline) {
-		if (n.id === PROJECT_NODE_ID || n.data.kind === "chart") continue;
+		if (n.id === PROJECT_NODE_ID || OUT_OF_BAND.has(n.data.kind)) continue;
 		if (!cur.has(n.id)) {
 			changes.push({ id: n.id, op: "removed", kind: n.data.kind, name: nodeName(n) });
 		}
@@ -282,6 +289,18 @@ interface CanvasStore {
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
 	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
 	setChartNodes: (charts: ByoChartState[]) => void;
+	/** Replace all marketplace add-on nodes (out-of-band; not a staged change). */
+	setAddonNodes: (
+		addons: {
+			id: string;
+			name: string;
+			version: string;
+			namespace: string;
+			status?: string;
+			health?: string | null;
+			sync?: string | null;
+		}[],
+	) => void;
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
 	/** Add a node with an explicit config + placement (used by Ask AI proposals). */
 	addNodeWithConfig: (
@@ -381,7 +400,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				// Preserve any already-loaded BYO chart nodes across a form reseed — they're
 				// out-of-band (loaded from getProjectByoCharts), not part of the form graph, so the
 				// incoming form-derived `nodes` never contain them and would otherwise wipe them.
-				const charts = get().nodes.filter((n) => n.data.kind === "chart");
+				const charts = get().nodes.filter((n) => OUT_OF_BAND.has(n.data.kind));
 				const base = nodes.some((n) => n.id === PROJECT_NODE_ID)
 					? nodes
 					: [makeProjectNode(), ...nodes];
@@ -437,6 +456,34 @@ export const useCanvasStore = create<CanvasStore>()(
 					},
 				}));
 				const next = [...nonChart, ...chartNodes];
+				set({ nodes: next, edges: deriveEdges(next) });
+			},
+
+			setAddonNodes: (addons) => {
+				const others = get().nodes.filter((n) => n.data.kind !== "addon");
+				const addonNodes: CanvasNode[] = addons.map((a, i) => ({
+					id: `addon-${a.id}`,
+					type: "addon",
+					// Not keyboard-deletable: an add-on is removed by disabling it (which tears down its
+					// ArgoCD Application), never by a stray Backspace on the board.
+					deletable: false,
+					position: { x: 120 + (i % 2) * 270, y: 520 + Math.floor(i / 2) * 150 },
+					data: {
+						kind: "addon",
+						config: {
+							id: a.id,
+							name: a.name,
+							version: a.version,
+							namespace: a.namespace,
+							status: a.status,
+							health: a.health,
+							sync: a.sync,
+						},
+						cloud_identity_id: null,
+						provider: null,
+					},
+				}));
+				const next = [...others, ...addonNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
 			},
 

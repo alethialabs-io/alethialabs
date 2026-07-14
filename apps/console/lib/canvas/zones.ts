@@ -45,8 +45,9 @@ const ZONE_OF_KIND: Partial<Record<NodeKind, ZoneId>> = {
 	queue: "network",
 	topic: "network",
 	nosql: "network",
-	// BYO Helm charts are Kubernetes workloads — they run inside the cluster.
+	// BYO Helm charts and marketplace add-ons are Kubernetes workloads — they run in the cluster.
 	chart: "cluster",
+	addon: "cluster",
 };
 
 /**

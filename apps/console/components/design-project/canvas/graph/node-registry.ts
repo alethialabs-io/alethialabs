@@ -3,6 +3,7 @@
 
 import {
 	Archive,
+	Blocks,
 	Box,
 	Database,
 	GitBranch,
@@ -632,6 +633,34 @@ export const NODE_REGISTRY: NodeRegistry = {
 		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },
 		defaultData: () => ({
 			apps_destination_repo: "",
+		}),
+	},
+	// A marketplace add-on the cluster comes up with (Grafana, Loki, Vault, …). Browsed from the Add
+	// palette's Add-ons group and configured in a sheet — but until now it was explicitly NOT a graph
+	// node, so an installed Grafana was INVISIBLE on the architecture, even though it is an ArgoCD
+	// Application whose health and sync are already in the database. Persisted out-of-band in
+	// project_addons; defaultData is a placeholder (the real config always comes from the DB).
+	addon: {
+		kind: "addon",
+		schemaKey: "charts",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Add-on",
+		label: "Add-on",
+		icon: Blocks,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Chart", value: config.version },
+				{ label: "Health", value: config.health ?? "—" },
+				{ label: "Sync", value: config.sync ?? "—" },
+			],
+		},
+		defaultData: () => ({
+			id: "addon",
+			name: "addon",
+			version: "",
+			namespace: "default",
 		}),
 	},
 	// Bring-your-own Helm chart — added via the ⌘K "Sources" flow (not the palette), persisted
