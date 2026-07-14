@@ -197,7 +197,24 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// over HTTP from this same server.
 	t.Cleanup(cp.Close)
 
-	jobID, err := seedT2DeployJob(ctx, cp, project, env, provider, region, repos, reposEnabled)
+	// BYOC A0.5 — seed the console object graph (project + QUEUED env + reloader add-on row) and
+	// load the snapshot-fidelity fixture BEFORE seeding the DEPLOY job, so the job links to the env
+	// the replayed finalizeDeployment will drive to ACTIVE. Warn-only unless ALETHIA_E2E_A05_ENFORCE;
+	// a seed/fixture failure disables A0.5 and falls back to the unlinked lean seed (provisioning is
+	// never affected).
+	a05 := setupA05(t, ctx, cp, root, project, env, region)
+
+	// Build the runner-facing DEPLOY snapshot. `base` is the pre-repos/pre-cluster-json snapshot the
+	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
+	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
+	// override the runner actually consumes.
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, a05)
+	if err != nil {
+		t.Fatalf("build deploy snapshot: %v", err)
+	}
+	a05CheckFidelity(t, a05, base)
+
+	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph())
 	if err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
@@ -374,6 +391,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
 
+	// (7.5) CONSOLE → ACTIVE (BYOC A0.5). The runner reported SUCCESS via the SQL SSOT, but the Go
+	//       control plane stops there — it never runs the console's terminal orchestration. Replay
+	//       the REAL finalizeDeployment (the actual exported console action, via the tsx shim,
+	//       against this same Postgres) and assert the env is ACTIVE with the persisted add-on health
+	//       row it wrote from the runner's real execution_metadata. Warn-only unless
+	//       ALETHIA_E2E_A05_ENFORCE; a no-op when A0.5 setup was disabled.
+	runA05ConsoleActive(t, ctx, cp, a05, root, jobID)
+
 	// (8) SOAK / day-2 window (BYOC A0.3). Opt-in via ALETHIA_E2E_SOAK — unset ⇒ a clean
 	//     skip (everything above is the unchanged base T2 proof). Runs AFTER the readiness +
 	//     ArgoCD asserts and BEFORE this function returns, so the GUARANTEED t.Cleanup
@@ -449,31 +474,32 @@ func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 	}
 }
 
-func seedT2DeployJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool) (string, error) {
+// seedT2DeployJob enqueues a QUEUED DEPLOY job carrying the prebuilt runner-facing config_snapshot.
+// When `g` is non-nil (BYOC A0.5), the job is LINKED to the seeded console graph (project_id /
+// environment_id / org_id / user_id) so the replayed finalizeDeployment can drive that env to ACTIVE
+// and write its health rows; when nil (A0.5 disabled), it falls back to the unlinked legacy seed
+// (a random self-owned org, provisioning-only — the historical behavior). The `provider` column is
+// left NULL so the atomic claim's provider filter passes for the seeded runner; the runner reads the
+// provider from the snapshot.
+func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any, g *a05Graph) (string, error) {
 	jobID := newUUID()
-	snap := t2BaseSnapshot(project, env, provider, region)
-	// A0.6: wire the apps-destination repo + append the BYO chart add-on when the
-	// ArgoCD-with-repos proof is enabled. The git token is NOT written into the snapshot — it
-	// crosses via the control plane's git-token handler (see t2_argo_repos.go), so it never
-	// lands in the persisted config_snapshot.
-	if reposEnabled {
-		repos.applyToSnapshot(snap)
-	}
-	// Merge the per-cloud cluster shape override (instance types, node counts,
-	// enable_karpenter, …) into the snapshot's `cluster` block. Malformed JSON is a loud
-	// failure — a workflow typo must not silently provision the wrong shape.
-	if err := t2MergeClusterJSON(snap); err != nil {
-		return "", err
-	}
 	snapshot, err := json.Marshal(snap)
 	if err != nil {
 		return "", err
 	}
-	_, err = cp.pool.Exec(ctx, `
-		INSERT INTO public.jobs
-		  (id, user_id, org_id, job_type, config_snapshot, status, provider)
-		VALUES ($1, $2, $2, 'DEPLOY', $3::jsonb, 'QUEUED', NULL)`,
-		jobID, newUUID(), string(snapshot))
+	if g != nil {
+		_, err = cp.pool.Exec(ctx, `
+			INSERT INTO public.jobs
+			  (id, user_id, org_id, project_id, environment_id, job_type, config_snapshot, status, provider)
+			VALUES ($1, $2, $3, $4, $5, 'DEPLOY', $6::jsonb, 'QUEUED', NULL)`,
+			jobID, g.userID, g.orgID, g.projectID, g.envID, string(snapshot))
+	} else {
+		_, err = cp.pool.Exec(ctx, `
+			INSERT INTO public.jobs
+			  (id, user_id, org_id, job_type, config_snapshot, status, provider)
+			VALUES ($1, $2, $2, 'DEPLOY', $3::jsonb, 'QUEUED', NULL)`,
+			jobID, newUUID(), string(snapshot))
+	}
 	if err != nil {
 		return "", fmt.Errorf("seed job: %w", err)
 	}
