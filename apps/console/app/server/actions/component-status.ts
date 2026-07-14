@@ -34,7 +34,8 @@ import {
 	type ComponentServerStatus,
 	type EnvironmentStatus,
 } from "@/lib/canvas/component-status";
-import { attributeDrift, type DriftTarget } from "@/lib/canvas/drift-map";
+import { attributeDrift, kindForResourceType, type DriftTarget } from "@/lib/canvas/drift-map";
+import { getLatestEnvironmentCost } from "@/app/server/actions/cost";
 import { structuralHash } from "@/lib/promotions/diff";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
@@ -276,6 +277,29 @@ export async function getEnvironmentComponentStatus(
 		if (component) component.drift = details;
 	}
 
+	// Cost, from the environment's last PLAN. Infracost prices by Terraform ADDRESS — the same key
+	// drift uses — so a cost line lands on the card that designed it via the same map. Lines we can't
+	// place still count toward the environment total; they're just not shown on a card, which is the
+	// same honesty rule as drift: never attribute a number to a resource it might not belong to.
+	const cost = await getLatestEnvironmentCost(projectId, envId).catch(() => null);
+	if (cost) {
+		for (const line of cost.resources) {
+			const kind = kindForResourceType(line.resourceType);
+			if (!kind) continue;
+			const candidates = targets.filter((t) => t.kind === kind);
+			// Only attribute when it's unambiguous — one node of that kind, or one whose name the
+			// address actually contains.
+			const match =
+				candidates.length === 1
+					? candidates[0]
+					: candidates.find((t) => t.name && line.address.includes(t.name));
+			if (!match) continue;
+			const component = components[match.key];
+			if (!component) continue;
+			component.monthlyCost = (component.monthlyCost ?? 0) + line.monthlyCost;
+		}
+	}
+
 	return {
 		components,
 		activeJob: activeJobRow
@@ -291,6 +315,8 @@ export async function getEnvironmentComponentStatus(
 			: null,
 		unattributedDrift: unattributed,
 		driftScannedAt: driftRow?.scanned_at.toISOString() ?? null,
+		monthlyCost: cost?.totalMonthly ?? null,
+		costCapturedAt: cost?.capturedAt ?? null,
 	};
 }
 

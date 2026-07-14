@@ -208,6 +208,8 @@ export interface NodeStatus {
 	drift: DriftDetail[];
 	/** What the deploy produced (endpoints, ArgoCD URL, repository URL). Empty until deployed. */
 	outputs: { label: string; value: string }[];
+	/** Monthly cost from the last PLAN. Null = not priced (never planned, or not a priced resource). */
+	monthlyCost: number | null;
 	/** True once this node exists in the environment's provisioned state. */
 	deployed: boolean;
 }
@@ -247,12 +249,18 @@ export function resolveNodeStatus(
 			message: readiness.issue,
 			drift: [],
 			outputs: [],
+			monthlyCost: null,
 			deployed: false,
 		};
 	}
 
 	const drift = server.drift;
-	const base = { drift, outputs: server.outputs ?? [], deployed: true };
+	const base = {
+		drift,
+		outputs: server.outputs ?? [],
+		monthlyCost: server.monthlyCost ?? null,
+		deployed: true,
+	};
 
 	// 1 — a real break.
 	if (server.lifecycle === "FAILED") {
@@ -304,7 +312,13 @@ export function useNodeStatus(id: string): NodeStatus {
 
 	return useMemo(() => {
 		if (!node)
-			return { state: readiness.state, drift: [], outputs: [], deployed: false };
+			return {
+				state: readiness.state,
+				drift: [],
+				outputs: [],
+				monthlyCost: null,
+				deployed: false,
+			};
 		const key = nodeStatusKey(node);
 		return resolveNodeStatus(readiness, env.components[key], env, {
 			isCluster: node.data.kind === "cluster",
@@ -326,7 +340,13 @@ export function resolveNodeStatusFor(
 	const node = nodes.find((n) => n.id === id);
 	const readiness = nodeReadiness(nodes, core, id);
 	if (!node)
-		return { state: readiness.state, drift: [], outputs: [], deployed: false };
+		return {
+			state: readiness.state,
+			drift: [],
+			outputs: [],
+			monthlyCost: null,
+			deployed: false,
+		};
 	return resolveNodeStatus(readiness, env.components[nodeStatusKey(node)], env, {
 		isCluster: node.data.kind === "cluster",
 	});

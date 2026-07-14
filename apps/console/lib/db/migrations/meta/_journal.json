@@ -673,6 +673,13 @@
       "when": 1784037803958,
       "tag": "0095_thankful_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1784041999055,
+      "tag": "0096_aspiring_bloodscream",
+      "breakpoints": true
     }
   ]
 }

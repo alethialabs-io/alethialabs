@@ -46,6 +46,7 @@ import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
 import { ActivityRail } from "./activity-rail";
+import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
@@ -365,6 +366,11 @@ function CanvasInner({
 
 			{/* Top-right: run a job · project settings · add a service. (Ask AI lives in the app shell.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+				{/* What this environment costs, from its last PLAN. The runner has always priced every
+				    plan with Infracost; nobody ever wrote the number down, so the product could not
+				    answer "what does production cost?". */}
+				{projectId && environmentId && <CostChip />}
+
 				{/* Every job type the platform can run — PLAN / AUDIT / DETECT_DRIFT / PROBE_CLUSTER —
 				    all of which existed server-side and none of which the board could ask for. */}
 				{projectId && environmentId && (
