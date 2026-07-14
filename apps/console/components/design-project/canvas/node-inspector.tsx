@@ -15,7 +15,8 @@ import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	NODE_STATUS_META,
-	useNodeReadiness,
+	useNodeStatus,
+	type NodeStatusState,
 } from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
@@ -281,17 +282,32 @@ function IdentityField({
 	);
 }
 
-/** A compact status strip under the inspector header: the node's resolved status pill + the most
- * actionable line (the first config issue when incomplete, else a state hint). Phase 2 extends this
- * with server-status actions (Deploy / Retry / Reconcile / View logs). */
+/** The default line for a state when the server gave us no message of its own. */
+const STATUS_HINT: Partial<Record<NodeStatusState, string>> = {
+	gated: "Cross-cloud core placement — won't provision until colocated.",
+	ready: "Configured and ready to deploy.",
+	live: "Provisioned and matching the design.",
+	"not-deployed": "Designed, but never applied.",
+	queued: "Waiting for a runner to claim the job.",
+	applying: "The runner is applying this resource now.",
+	updating: "An apply is changing this resource in place.",
+	"update-pending": "The design has moved ahead of what's deployed.",
+	destroying: "Teardown in flight.",
+	destroyed: "Torn down. Remove it from the design to clear it.",
+	failed: "The last apply failed.",
+	unreachable: "The cluster's API server did not answer the last probe.",
+};
+
+/**
+ * A compact status strip under the inspector header: the node's RESOLVED status (design readiness
+ * merged with the environment's server truth) and the most actionable line — the server's own
+ * failure message when there is one, else a hint for the state. Drift rides alongside as an
+ * overlay chip rather than replacing the state, because a drifted resource is still live.
+ */
 function StatusHeader({ nodeId }: { nodeId: string }) {
-	const readiness = useNodeReadiness(nodeId);
-	const meta = NODE_STATUS_META[readiness.state];
-	const message =
-		readiness.issue ??
-		(readiness.state === "gated"
-			? "Cross-cloud core placement — won't provision until colocated."
-			: "Configured and ready to deploy.");
+	const status = useNodeStatus(nodeId);
+	const meta = NODE_STATUS_META[status.state];
+	const drifted = status.drift.length;
 	return (
 		<div className="flex items-center gap-2.5 border-b border-border bg-surface-sunken/60 px-4 py-2.5">
 			<span className={cn("vx-status shrink-0", `vx-status--${meta.vx}`)}>
@@ -299,14 +315,21 @@ function StatusHeader({ nodeId }: { nodeId: string }) {
 				{meta.label}
 			</span>
 			<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-				{message}
+				{status.message ?? STATUS_HINT[status.state] ?? ""}
 			</span>
+			{drifted > 0 && (
+				<span
+					className="shrink-0 border border-border-strong px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+					title={status.drift.map((d) => d.address).join("\n")}
+				>
+					{drifted} drifted
+				</span>
+			)}
 		</div>
 	);
 }
 
-/** Read-only summary of a node: placement + its primitive config values. Provisioned
- * outputs (endpoints/ARNs) will surface here once the node carries live status. */
+/** Read-only summary of a node: placement, its resolved status, any drift, and its config values. */
 function Overview({
 	node,
 	provider,
@@ -314,8 +337,8 @@ function Overview({
 	node: CanvasNode;
 	provider: CloudProviderSlug | null;
 }) {
-	const readiness = useNodeReadiness(node.id);
-	const status = NODE_STATUS_META[readiness.state];
+	const status = useNodeStatus(node.id);
+	const meta = NODE_STATUS_META[status.state];
 	const def = NODE_REGISTRY[node.data.kind];
 	// Only show scalar config (skip nested objects/arrays — those have their own UIs).
 	const rows = Object.entries(node.data.config).filter(
@@ -330,10 +353,33 @@ function Overview({
 				<dd>{provider ? provider.toUpperCase() : "Inherits project"}</dd>
 				<dt className="text-muted-foreground">Status</dt>
 				<dd className="text-muted-foreground">
-					{status.label}
-					{readiness.issue ? ` — ${readiness.issue}` : ""}
+					{meta.label}
+					{status.message ? ` — ${status.message}` : ""}
 				</dd>
 			</dl>
+
+			{/* Drift is an overlay, not a state — it's listed on its own, per drifted resource, with
+			    the Terraform address that actually diverged. */}
+			{status.drift.length > 0 && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">
+						Drift · {status.drift.length} resource
+						{status.drift.length > 1 ? "s" : ""}
+					</span>
+					<ul className="space-y-1">
+						{status.drift.map((d) => (
+							<li
+								key={d.address}
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1 font-mono text-[10px]"
+							>
+								<span className="min-w-0 flex-1 truncate">{d.address}</span>
+								<span className="vx-eyebrow shrink-0 text-[9px]">{d.kind}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+
 			{rows.length > 0 && (
 				<div className="space-y-2 border-t border-border/60 pt-3">
 					<span className="vx-eyebrow">Configuration</span>

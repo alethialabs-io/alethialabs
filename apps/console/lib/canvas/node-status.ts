@@ -3,9 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Per-node status for the Architecture canvas. Status is a DERIVED value — never stored on the
-// node (that would corrupt graphToForm / structuralHash / the staged-change diff). Phase 1 resolves
-// the client-only *design readiness* layer (needs-setup / gated / ready) from the same validation
-// the deploy uses; Phase 2 layers the resolved server/provisioning status on top via a resolver.
+// node (that would corrupt graphToForm / structuralHash / the staged-change diff).
+//
+// Two layers, merged by `resolveNodeStatus`'s precedence ladder:
+//   • DESIGN readiness (client) — needs-setup / gated / ready, from the exact validation the deploy
+//     uses, so "ready" always means "deployable".
+//   • SERVER truth (component_status, the env's in-flight job, drift, the cluster probe) — every one
+//     of which already existed in the database and, until now, reached nothing.
 
 import { useMemo } from "react";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
@@ -17,18 +21,39 @@ import type {
 } from "@/components/design-project/canvas/graph/types";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
+import type { DriftDetail } from "@/types/jsonb.types";
+import type {
+	ComponentServerStatus,
+	EnvironmentStatus,
+} from "./component-status";
+import { useEnvironmentStatus } from "./environment-status-context";
 
 /**
- * The user-facing status states a node can be in. Phase 1 resolves the client-only readiness subset;
- * the commented states land in Phase 2 (server/provisioning) — the visual map below is pre-seeded so
- * adding them is data-only.
+ * Every state a node can be in — the DESIGN states (resolved client-side, from the same validation
+ * the deploy uses) and the SERVER states (resolved from the component row, the environment's
+ * in-flight job, and the cluster probe).
+ *
+ * Drift is deliberately NOT a state here. It's an OVERLAY that rides on top of whatever the node
+ * already is — a drifted node is still `live` — which is what stops this from degenerating into one
+ * state per combination.
  */
 export type NodeStatusState =
+	// design (client)
 	| "needs-setup"
 	| "ready"
-	| "gated";
-// Phase 2: | "new" | "queued" | "applying" | "live" | "update-pending"
-//          | "drifted" | "failed" | "destroying" | "destroy-failed" | "orphaned" | "stale"
+	| "gated"
+	// provisioning lifecycle (server)
+	| "not-deployed"
+	| "queued"
+	| "applying"
+	| "updating"
+	| "update-pending"
+	| "live"
+	| "destroying"
+	| "destroyed"
+	| "failed"
+	// keep-proving-it (server)
+	| "unreachable";
 
 /** A grayscale `vx-status` modifier (dot fill/shape, never hue) + a terse mono label. */
 export interface NodeStatusMeta {
@@ -36,12 +61,25 @@ export interface NodeStatusMeta {
 	label: string;
 }
 
-/** Central state → visual mapping. Keeps base-node and the inspector in lockstep and gives Phase 2
- * one place to extend. */
+/**
+ * Central state → visual mapping. Every modifier used below ALREADY ships in the design system's
+ * token layer (packages/brand/src/tokens.css) — no new tokens were needed to express all of this,
+ * because status was always meant to read through dot fill and shape rather than hue.
+ */
 export const NODE_STATUS_META: Record<NodeStatusState, NodeStatusMeta> = {
 	"needs-setup": { vx: "idle", label: "Needs setup" },
 	ready: { vx: "active", label: "Ready" },
 	gated: { vx: "disabled", label: "Gated" },
+	"not-deployed": { vx: "idle", label: "Not deployed" },
+	queued: { vx: "pending", label: "Queued" },
+	applying: { vx: "live", label: "Applying" },
+	updating: { vx: "pending", label: "Updating" },
+	"update-pending": { vx: "pending", label: "Update pending" },
+	live: { vx: "active", label: "Live" },
+	destroying: { vx: "pending", label: "Destroying" },
+	destroyed: { vx: "disabled", label: "Destroyed" },
+	failed: { vx: "failed", label: "Failed" },
+	unreachable: { vx: "failed", label: "Unreachable" },
 };
 
 export interface NodeReadiness {
@@ -133,7 +171,7 @@ function issueMap(nodes: CanvasNode[]): Record<string, string> {
 /**
  * Client-only design readiness for a node — `needs-setup` (invalid/incomplete config), `gated`
  * (cross-cloud CORE placement, mirrors the Go provisioner gate), or `ready`. Derived live from the
- * store with no server round-trip; Phase 2 resolves the server/provisioning status on top.
+ * store with no server round-trip. `useNodeStatus` resolves the server status on top of this.
  */
 export function useNodeReadiness(id: string): NodeReadiness {
 	const nodes = useCanvasStore((s) => s.nodes);
@@ -153,4 +191,108 @@ export function useNodeReadiness(id: string): NodeReadiness {
 				: "ready";
 		return { state, issue, complete, gated };
 	}, [id, nodes, core]);
+}
+
+/** A node's fully-resolved status: one state, why it's in it, and any overlays riding on top. */
+export interface NodeStatus {
+	state: NodeStatusState;
+	/** The most actionable line for this state (a config issue, a failure message, a probe reason). */
+	message?: string;
+	/** Drifted resources attributed to this node. An OVERLAY — the node keeps its base state. */
+	drift: DriftDetail[];
+	/** True once this node exists in the environment's provisioned state. */
+	deployed: boolean;
+}
+
+/**
+ * THE PRECEDENCE LADDER — first match wins.
+ *
+ * A node has several truths at once (its design is invalid AND it's live AND it drifted), so the
+ * order they resolve in is the whole contract. It is written out here, once, because this is exactly
+ * where a status system rots: someone adds a state, slots it in "somewhere reasonable", and the
+ * canvas starts lying.
+ *
+ *   1  failed          — a real, actionable break outranks everything
+ *   2  in flight       — queued · applying · updating · destroying (the truth is "we're mid-change")
+ *   3  needs-setup     — the design itself is invalid; nothing downstream matters
+ *   4  gated           — the design is valid but will not provision
+ *   5  destroyed       — it's gone
+ *   6  not deployed    — designed, never applied
+ *   7  unreachable     — live-but-imperfect: it exists, but the cluster didn't answer
+ *   8  update pending  — live, but the design has moved ahead of what's deployed
+ *   9  live / ready    — the calm nominal state
+ *
+ * Drift and cost are NEVER base states. They're overlays that ride on whatever the node already is.
+ *
+ * Pure, so the ladder is unit-testable without React or a database.
+ */
+export function resolveNodeStatus(
+	readiness: NodeReadiness,
+	server: ComponentServerStatus | undefined,
+	env: Pick<EnvironmentStatus, "activeJob" | "updatePending" | "probe">,
+	opts: { isCluster?: boolean } = {},
+): NodeStatus {
+	// No component row: this node has never been provisioned, so the design layer is the whole truth.
+	if (!server) {
+		return { state: readiness.state, message: readiness.issue, drift: [], deployed: false };
+	}
+
+	const drift = server.drift;
+	const base = { drift, deployed: true };
+
+	// 1 — a real break.
+	if (server.lifecycle === "FAILED") {
+		return { ...base, state: "failed", message: server.message ?? undefined };
+	}
+
+	// 2 — mid-change. What's happening outranks what the design says about it.
+	if (server.lifecycle === "CREATING") return { ...base, state: "applying" };
+	if (server.lifecycle === "UPDATING") return { ...base, state: "updating" };
+	if (server.lifecycle === "DESTROYING") return { ...base, state: "destroying" };
+
+	// 3/4 — the design is broken or won't provision. Surfaced even over a live resource, because the
+	// NEXT deploy is what the user is about to do, and it will not work.
+	if (readiness.state === "needs-setup") {
+		return { ...base, state: "needs-setup", message: readiness.issue };
+	}
+	if (readiness.state === "gated") return { ...base, state: "gated" };
+
+	// 5/6 — not (or no longer) there.
+	if (server.lifecycle === "DESTROYED") return { ...base, state: "destroyed", deployed: false };
+	if (server.lifecycle === "PENDING") {
+		return env.activeJob
+			? { ...base, state: "queued", deployed: false }
+			: { ...base, state: "not-deployed", deployed: false };
+	}
+
+	// ACTIVE from here on.
+	// 7 — it exists, but the cluster's API server didn't answer. Only the cluster can be unreachable.
+	if (opts.isCluster && env.probe?.reachable === false) {
+		return { ...base, state: "unreachable", message: env.probe.message ?? undefined };
+	}
+
+	// 8 — live, but the saved design has moved ahead of what was deployed.
+	if (env.updatePending) return { ...base, state: "update-pending" };
+
+	// 9 — nominal.
+	return { ...base, state: "live" };
+}
+
+/**
+ * A node's resolved status: design readiness merged with the environment's server truth through the
+ * precedence ladder above. Falls back to pure readiness when there's no environment status yet (the
+ * create flow, or while the first fetch is in flight), so the canvas never blocks on the network.
+ */
+export function useNodeStatus(id: string): NodeStatus {
+	const readiness = useNodeReadiness(id);
+	const env = useEnvironmentStatus();
+	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+
+	return useMemo(() => {
+		if (!node) return { state: readiness.state, drift: [], deployed: false };
+		const key = nodeStatusKey(node);
+		return resolveNodeStatus(readiness, env.components[key], env, {
+			isCluster: node.data.kind === "cluster",
+		});
+	}, [readiness, env, node]);
 }
