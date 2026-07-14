@@ -124,6 +124,7 @@ function CanvasInner({
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
+	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
 	// The project's effective cloud provider — drives the add-on sheet's requirement hints.
 	const effectiveProvider = useCanvasStore((s) =>
 		s.getEffectiveProvider(PROJECT_NODE_ID),
@@ -146,6 +147,25 @@ function CanvasInner({
 	useEffect(() => {
 		refreshCharts();
 	}, [refreshCharts]);
+
+	// Installed marketplace add-ons become NODES. They were configured in a sheet and explicitly not
+	// graph nodes, so an installed Grafana was invisible on the architecture — even though it's an
+	// ArgoCD Application whose health and sync are already in the database. Out-of-band like charts:
+	// never written by graphToForm, never part of the Deploy diff.
+	useEffect(() => {
+		const installed = (addonsQuery.data?.items ?? []).filter((a) => a.install?.enabled);
+		setAddonNodes(
+			installed.map((a) => ({
+				id: a.id,
+				name: a.name,
+				version: a.version,
+				namespace: a.namespace,
+				status: a.install?.status,
+				health: a.install?.health ?? null,
+				sync: a.install?.sync ?? null,
+			})),
+		);
+	}, [addonsQuery.data, setAddonNodes]);
 
 	// BYO IaC source is single-per-env, loaded out-of-band from getIacSource (and re-loaded after
 	// attach/detach/rescan). Only in edit mode with the feature on.
