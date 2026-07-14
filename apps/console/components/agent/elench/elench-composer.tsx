@@ -18,7 +18,7 @@ import {
 	KEY_ENTER_COMMAND,
 } from "lexical";
 import { ArrowUp, Square } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Mention } from "@/lib/ai/mentions";
 import { cn } from "@repo/ui/utils";
 import {
@@ -83,6 +83,10 @@ function ComposerBody({
 	const [editor] = useLexicalComposerContext();
 	const [empty, setEmpty] = useState(true);
 	const pending = status === "submitted" || status === "streaming";
+	/** The composer box — the mention menu portals into it and opens above it. */
+	const boxRef = useRef<HTMLDivElement>(null);
+	/** True while the `@` menu is open — Enter then belongs to the menu, never to send. */
+	const mentionMenuOpen = useRef(false);
 
 	useEffect(() => {
 		if (autoFocus) editor.focus();
@@ -116,12 +120,16 @@ function ComposerBody({
 		});
 	}, [editor, onSend, pending]);
 
-	// Enter sends (Shift+Enter = newline). Registered LOW so an open typeahead (NORMAL) wins.
+	// Enter sends (Shift+Enter = newline). Registered LOW so an open typeahead (NORMAL) wins —
+	// but priority alone isn't enough: if the menu is open and declines Enter (e.g. nothing
+	// highlighted), it falls through to here and SENDS the half-typed "@" as a message. So the
+	// menu's open state is an explicit guard.
 	useEffect(
 		() =>
 			editor.registerCommand(
 				KEY_ENTER_COMMAND,
 				(event) => {
+					if (mentionMenuOpen.current) return false;
 					if (event?.shiftKey) return false;
 					event?.preventDefault();
 					submit();
@@ -137,7 +145,9 @@ function ComposerBody({
 	}, []);
 
 	return (
-		<div className="relative">
+		// The mention menu is portaled in here and opens UPWARD from the top of this box, so it
+		// never covers the text you're typing (it used to be anchored at the caret).
+		<div ref={boxRef} className="relative">
 			<div className="border border-border bg-background shadow-sm focus-within:ring-3 focus-within:ring-ring/25">
 				<div className="relative">
 					<PlainTextPlugin
@@ -158,7 +168,12 @@ function ComposerBody({
 					/>
 					<OnChangePlugin onChange={onChange} />
 					<HistoryPlugin />
-					<MentionTypeaheadPlugin />
+					<MentionTypeaheadPlugin
+						boxRef={boxRef}
+						onOpenChange={(open) => {
+							mentionMenuOpen.current = open;
+						}}
+					/>
 				</div>
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
 					<div className="flex items-center gap-1.5">

@@ -229,32 +229,50 @@ export function ElenchConversation({
 		track("elench_grid_opened", { context: isOrg ? "org" : "project" });
 	}, [isOrg]);
 
-	// Open a saved artifact from the gallery: materialize its widgets onto a chat's grid,
-	// creating a thread first if the current conversation is still ephemeral (artifacts
-	// need a persisted thread to attach to). Then leave the gallery with the grid showing.
-	const onOpenArtifactFromGallery = useCallback(
-		async (artifactId: string, name: string) => {
-			let tid = activeId;
-			if (!tid) tid = (await startThread(name)).id;
-			await openArtifactOnGrid(artifactId, tid);
+	/** Drop an artifact's widgets onto a (persisted) thread's grid and show it. */
+	const materializeOnto = useCallback(
+		async (artifactId: string, threadId: string) => {
+			await openArtifactOnGrid(artifactId, threadId);
 			// Force a re-pull so the materialized rows appear on the grid.
 			useWidgetGridStore.setState({ threadId: null });
-			await hydrateGrid(tid);
+			await hydrateGrid(threadId);
 			useElenchStore.getState().setMainView("chat");
 			openGrid();
 			track("elench_artifact_opened", { context: isOrg ? "org" : "project" });
 		},
-		[activeId, startThread, hydrateGrid, openGrid, isOrg],
+		[hydrateGrid, openGrid, isOrg],
+	);
+
+	// EXPLICIT action: add the artifact to the conversation that's already open. Never implicit —
+	// the old code called startThread(name) on a click, silently creating a chat named after the
+	// artifact (or hijacking your last one).
+	const addArtifactToChat = useCallback(
+		async (artifactId: string) => {
+			if (!activeId) return;
+			await materializeOnto(artifactId, activeId);
+		},
+		[activeId, materializeOnto],
+	);
+
+	// EXPLICIT action: start a fresh conversation for this artifact and materialize it there.
+	const openArtifactInNewChat = useCallback(
+		async (artifactId: string, name: string) => {
+			newChat();
+			const thread = await startThread(name);
+			await materializeOnto(artifactId, thread.id);
+		},
+		[newChat, startThread, materializeOnto],
 	);
 
 	// The Artifacts library — available in EVERY chat (org and project alike): artifacts are an
 	// org-scoped library (`agent_artifacts` is unique on org_id+name), and — as in Claude, where
 	// the artifact library is workspace-level — a project conversation must be able to browse and
-	// open them too. `startThread` already carries the projectId, so opening one lands on a
-	// project-scoped grid.
+	// open them too. `startThread` carries the projectId, so a project chat lands on its own grid.
 	const galleryNode = (
 		<AgentArtifactGallery
-			onOpenArtifact={(id, n) => void onOpenArtifactFromGallery(id, n)}
+			hasActiveChat={activeId !== null}
+			onAddToChat={addArtifactToChat}
+			onOpenInNewChat={openArtifactInNewChat}
 			onNewArtifact={newChat}
 			onClose={() => useElenchStore.getState().setMainView("chat")}
 		/>

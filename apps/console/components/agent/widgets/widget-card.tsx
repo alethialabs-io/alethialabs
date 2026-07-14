@@ -23,14 +23,19 @@ import { WIDGET_REGISTRY } from "./registry";
 /** Drag intent a card hands to the grid (which owns the pointer math). */
 export type DragMode = "move" | "resize";
 
+/** The payload every widget renderer needs — shared by a live `thread_widgets` row and a
+ * saved `ArtifactWidget`, so one body renders both. */
+export type WidgetPayload = Pick<ThreadWidget, "source" | "data">;
+
 /** Whether a widget's stored block payload is present (exploded dashboard widget). */
-function blockOf(w: ThreadWidget): DashboardBlock | undefined {
+function blockOf(w: WidgetPayload): DashboardBlock | undefined {
 	return w.data.block;
 }
 
-/** The widget's body: a dashboard block, or its source tool's registry body. Exported so the
- * grid's drag overlay can render a live clone of the card being dragged. */
-export function WidgetBody({ widget }: { widget: ThreadWidget }) {
+/** The widget's body: a dashboard block, or its source tool's registry body. Structural on
+ * purpose, so it renders a live grid row, the drag overlay's clone, AND a widget inside a
+ * SAVED artifact — all three carry the same `{source, data}` payload. */
+export function WidgetBody({ widget }: { widget: WidgetPayload }) {
 	const block = blockOf(widget);
 	if (block) return <DashboardBlockBody block={block} />;
 	const def = widget.source ? WIDGET_REGISTRY[widget.source.tool] : undefined;
