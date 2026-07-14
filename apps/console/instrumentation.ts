@@ -39,6 +39,11 @@ export async function register() {
 	// never-synced connections (self-hostable; no external cron — the /api route stays for hosted).
 	const { startConnectionSweeper } = await import("@/lib/cloud-providers/sweep");
 	startConnectionSweeper();
+	// Orphan reclaim: deletes cloud resources an interrupted job created but never recorded in tofu
+	// state (so no `destroy` can ever find them, and they bill forever). Report-only unless
+	// ALETHIA_ORPHAN_RECLAIM is explicitly on — see lib/reclaim/guards.ts for why that is opt-in.
+	const { startOrphanReclaim } = await import("@/lib/reclaim/sweep");
+	startOrphanReclaim();
 	// Supervised reconcile loop (B2c "keep proving it + self-heal + don't leak"): env-status
 	// convergence backstop, periodic drift scheduler, ephemeral-env reaper, and retention GC —
 	// each heartbeat-stamped. Sibling to the loops above; idempotent + safe across instances.
