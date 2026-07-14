@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Azure-native remote state for OpenTofu. Copy to backend.hcl (gitignored) and:
+#
+#   tofu init -backend-config=backend.hcl
+#
+# Applied ONCE with an admin identity (it creates an Entra app + role assignments). The admin's
+# Azure creds (az login / ARM_* env) authenticate the backend — no static state keys. The storage
+# account + container below must already exist in a state-holding resource group.
+#
+# For a first local apply you may instead run `tofu init -backend=false` and keep state local.
+
+resource_group_name  = "alethia-tfstate"
+storage_account_name = "alethiatfstate"
+container_name       = "tfstate"
+key                  = "azure-e2e.tfstate"
