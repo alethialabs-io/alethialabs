@@ -258,4 +258,33 @@ describe("external cards are out-of-band", () => {
 		expect(nodes).toHaveLength(4);
 		expect(nodes.every((n) => n.deletable === false)).toBe(true);
 	});
+
+	it("keep their position across a status poll — a dragged card must not snap back", () => {
+		// setIacNodes is driven by the environment-status query, which POLLS (every 30s; every 4s
+		// mid-deploy). Rebuilding the nodes from scratch each time yanked every card back to the
+		// default grid — repeatedly, while the user was trying to arrange the board.
+		const id = `external-${groups[0].key}`;
+		const moved = { x: 1234, y: 567 };
+		useCanvasStore.setState({
+			nodes: useCanvasStore
+				.getState()
+				.nodes.map((n) => (n.id === id ? { ...n, position: moved } : n)),
+		});
+
+		// The next poll delivers the same groups (nothing changed server-side).
+		useCanvasStore.getState().setIacNodes(groups);
+
+		expect(useCanvasStore.getState().nodes.find((n) => n.id === id)?.position).toEqual(moved);
+	});
+
+	it("still refresh their CONTENT on a poll — the position is remembered, the data is not", () => {
+		// The other half of the contract: remembering positions must not freeze the card's facts, or a
+		// new plan's resources would never reach the board.
+		const id = `external-${groups[0].key}`;
+		useCanvasStore
+			.getState()
+			.setIacNodes(groups.map((g) => (g.key === groups[0].key ? { ...g, members: [] } : g)));
+		const after = useCanvasStore.getState().nodes.find((n) => n.id === id);
+		expect((after?.data.config as { members: unknown[] }).members).toHaveLength(0);
+	});
 });
