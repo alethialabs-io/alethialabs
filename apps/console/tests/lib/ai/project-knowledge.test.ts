@@ -12,6 +12,7 @@ import {
 	type ProjectFacts,
 } from "@/lib/ai/project-knowledge";
 import type { AgentContext } from "@/lib/db/schema";
+import type { KnowledgeDoc } from "@/types/jsonb.types";
 
 const facts: ProjectFacts = {
 	name: "checkout",
@@ -29,15 +30,27 @@ const facts: ProjectFacts = {
 	],
 };
 
+/** One pinned knowledge document. */
+function doc(title: string, content: string): KnowledgeDoc {
+	return {
+		id: `${title}-id`,
+		title,
+		content,
+		updated_at: "2026-07-14T00:00:00Z",
+	};
+}
+
 /** A saved context row for a scope. */
-function ctx(instructions: string, notes: string): AgentContext {
+function ctx(instructions: string, documents: KnowledgeDoc[]): AgentContext {
 	return {
 		id: "c1",
 		user_id: "u1",
 		org_id: "u1",
 		project_id: null,
 		instructions,
-		notes,
+		documents,
+		// Deprecated column, superseded by `documents` — nothing reads it.
+		notes: "",
 		created_at: new Date(),
 		updated_at: new Date(),
 	};
@@ -86,21 +99,36 @@ describe("formatProjectKnowledge", () => {
 });
 
 describe("formatContextBlock", () => {
-	it("labels the scope and includes instructions + notes", () => {
-		const out = formatContextBlock("Project", ctx("Never destroy.", "Owned by payments."));
+	it("labels the scope, the instructions, and each knowledge document BY TITLE", () => {
+		const out = formatContextBlock(
+			"Project",
+			ctx("Never destroy.", [
+				doc("Ownership", "Owned by payments."),
+				doc("Runbook", "Drain nodes first."),
+			]),
+		);
 		expect(out).toContain("Project custom instructions");
 		expect(out).toContain("Never destroy.");
 		expect(out).toContain("Project knowledge");
+		// Titles survive into the prompt — that's why knowledge is a list of named docs and
+		// not one blob: the model can say WHICH document it drew on.
+		expect(out).toContain("### Ownership");
 		expect(out).toContain("Owned by payments.");
+		expect(out).toContain("### Runbook");
+		expect(out).toContain("Drain nodes first.");
 	});
 
 	it("drops out of the prompt entirely when the row is missing or blank", () => {
 		expect(formatContextBlock("Organization", null)).toBe("");
-		expect(formatContextBlock("Organization", ctx("  ", "\n"))).toBe("");
+		expect(formatContextBlock("Organization", ctx("  ", []))).toBe("");
+		// A document with no body is not worth a section header.
+		expect(formatContextBlock("Organization", ctx("", [doc("Empty", "  ")]))).toBe(
+			"",
+		);
 	});
 
 	it("emits only the half that is filled in", () => {
-		const out = formatContextBlock("Organization", ctx("Be terse.", ""));
+		const out = formatContextBlock("Organization", ctx("Be terse.", []));
 		expect(out).toContain("Organization custom instructions");
 		expect(out).not.toContain("Organization knowledge");
 	});

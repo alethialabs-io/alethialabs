@@ -956,6 +956,19 @@ export interface ArtifactSpec {
 }
 
 /**
+ * One pinned knowledge document on `agent_context.documents` — the analogue of a file in a
+ * Claude Project's knowledge base. Every document rides the system prompt of every chat in
+ * that scope, so each one is a named, individually removable unit rather than one opaque blob.
+ */
+export interface KnowledgeDoc {
+	id: string;
+	title: string;
+	content: string;
+	/** ISO-8601. Stored as a string so the JSONB round-trips without a Date revival step. */
+	updated_at: string;
+}
+
+/**
  * One priced resource from an Infracost breakdown, persisted on `environment_cost.resources`.
  * `address` is the Terraform address — the same key the drift map uses — so a cost line can be
  * attributed back to the canvas card that designed it.
