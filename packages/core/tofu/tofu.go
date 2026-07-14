@@ -57,6 +57,11 @@ func cancelGracePeriod() time.Duration {
 type TofuCLI struct {
 	tf      *tfexec.Terraform
 	version string
+	// stdout is the configured lifecycle log writer (plan/apply/destroy stream here).
+	// Output() temporarily redirects the tofu process off this writer to io.Discard so
+	// un-redacted `output -json` values (kubeconfig, talosconfig, DB passwords, tokens)
+	// never reach the job log, then restores it. See Output() for the leak details.
+	stdout io.Writer
 }
 
 func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr io.Writer) (*TofuCLI, error) {
@@ -75,11 +80,11 @@ func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr i
 		return nil, fmt.Errorf("failed to initialize OpenTofu: %w", err)
 	}
 
-	if stdout != nil {
-		tf.SetStdout(stdout)
-	} else {
-		tf.SetStdout(os.Stdout)
+	resolvedStdout := stdout
+	if resolvedStdout == nil {
+		resolvedStdout = os.Stdout
 	}
+	tf.SetStdout(resolvedStdout)
 	if stderr != nil {
 		tf.SetStderr(stderr)
 	} else {
@@ -94,7 +99,7 @@ func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr i
 	// runner is Linux/macOS, so the error is intentionally ignored.)
 	_ = tf.SetWaitDelay(cancelGracePeriod())
 
-	return &TofuCLI{tf: tf, version: tfVersion}, nil
+	return &TofuCLI{tf: tf, version: tfVersion, stdout: resolvedStdout}, nil
 }
 
 func (t *TofuCLI) Init(ctx context.Context, backendConfig map[string]string, upgrade bool) error {
@@ -180,8 +185,22 @@ func (t *TofuCLI) Destroy(ctx context.Context, varFile string) error {
 	return t.tf.Destroy(ctx, opts...)
 }
 
+// Output runs `tofu output -json` and returns the parsed output map.
+//
+// SECURITY (follow-up to B2.2 #457): `tofu output -json` emits every output value —
+// including SENSITIVE ones (kubeconfig, talosconfig, RDS/DB passwords, cloud tokens) —
+// UN-redacted. terraform-exec's runTerraformCmdJSON tees the child process's stdout into
+// BOTH an internal parse buffer AND the configured cmd.Stdout (mergeWriters), so whatever
+// lifecycle writer this CLI was built with (in deploy/drift that is the job-log stream)
+// would receive the raw secrets. Redirect ONLY this subcommand to io.Discard and restore
+// the lifecycle writer afterwards: the values still reach the caller via the returned map
+// (decoded from the internal buffer), but they NEVER hit the log / execution_metadata.
+// A single TofuCLI is used serially within one job, so swapping the writer here is safe.
 func (t *TofuCLI) Output(ctx context.Context) (map[string]interface{}, error) {
 	fmt.Println("Getting OpenTofu outputs...")
+	t.tf.SetStdout(io.Discard)
+	defer t.tf.SetStdout(t.stdout)
+
 	outputMap, err := t.tf.Output(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get OpenTofu output: %w", err)
