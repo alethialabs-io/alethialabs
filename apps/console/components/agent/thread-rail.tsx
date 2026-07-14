@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Plus, Search, Trash2 } from "lucide-react";
+import { LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -16,6 +16,10 @@ interface ThreadRailProps {
 	onSelect: (id: string) => void;
 	onNew: () => void;
 	onDelete: (id: string) => void;
+	/** Open the Artifacts gallery (modal only). When set, an "Artifacts" nav item shows. */
+	onOpenArtifacts?: () => void;
+	/** True while the Artifacts gallery is the active view (highlights the nav item). */
+	artifactsActive?: boolean;
 }
 
 const DAY = 86_400_000;
@@ -56,6 +60,8 @@ export function ThreadRail({
 	onSelect,
 	onNew,
 	onDelete,
+	onOpenArtifacts,
+	artifactsActive = false,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 
@@ -79,7 +85,7 @@ export function ThreadRail({
 
 	return (
 		<aside className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
-			<div className="p-3.5 pb-2.5">
+			<div className="flex flex-col gap-1.5 p-3.5 pb-2.5">
 				<Button
 					variant="outline"
 					className="w-full justify-start gap-2 rounded-none"
@@ -88,6 +94,19 @@ export function ThreadRail({
 					<Plus className="h-3.5 w-3.5" />
 					New chat
 				</Button>
+				{onOpenArtifacts && (
+					<button
+						type="button"
+						onClick={onOpenArtifacts}
+						className={cn(
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							artifactsActive && "border-border bg-muted",
+						)}
+					>
+						<LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
+						Artifacts
+					</button>
+				)}
 			</div>
 
 			<div className="px-3.5 pb-2">
@@ -102,7 +121,9 @@ export function ThreadRail({
 				</div>
 			</div>
 
-			<ScrollArea className="flex-1">
+			{/* Force Radix's `display:table` viewport wrapper to block — otherwise it grows to
+			    max-content for a long unbroken title and the row's `w-full` never truncates. */}
+			<ScrollArea className="flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
 				<div className="px-2 pb-3.5">
 					{groups.length === 0 && (
 						<p className="px-2 py-6 text-center text-xs text-muted-foreground">

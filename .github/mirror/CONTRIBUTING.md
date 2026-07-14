@@ -1,13 +1,13 @@
 # Contributing
 
-`alethialabs-io/alethia` is a **read-only mirror** of `apps/cli` from the
+`alethialabs-io/alethia-cli` is a **read-only mirror** of `apps/cli` from the
 [alethialabs-io/alethialabs](https://github.com/alethialabs-io/alethialabs) monorepo. It is
 regenerated automatically on every change to the CLI, so **any pull request opened here would be
 overwritten on the next sync** and cannot be merged.
 
 ## How to contribute
 
-- **Found a bug or have a feature request?** Open an [issue](https://github.com/alethialabs-io/alethia/issues)
+- **Found a bug or have a feature request?** Open an [issue](https://github.com/alethialabs-io/alethia-cli/issues)
   here (or on the monorepo) — issues are welcome.
 - **Want to change the code?** Open a pull request against the monorepo:
   [alethialabs-io/alethialabs](https://github.com/alethialabs-io/alethialabs). The CLI lives in

@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { GripVertical, Move, RefreshCw, Scaling, Trash2 } from "lucide-react";
+import { GripVertical, RefreshCw, Snowflake, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import type { ThreadWidget } from "@/lib/db/schema";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -42,10 +43,12 @@ function WidgetBody({ widget }: { widget: ThreadWidget }) {
 }
 
 /**
- * One bento-grid widget: hairline card with a mono caption row (drag grip, title,
- * keyboard move/resize, delete) over its registry/block body. Pointer drags are
- * delegated to the grid (`onDragStart`); keyboard mode steps one cell per arrow
- * (Shift = resize), Enter commits, Esc reverts — announced via the grid's live region.
+ * One bento-grid widget: hairline card with a lean caption row (drag grip, live/frozen,
+ * refresh, save, delete) over its registry/block body. Pointer users drag from the grip
+ * and resize from the corner handle (both delegated to the grid via `onDragStart`).
+ * Keyboard users press Enter/Space on the focused grip to enter move mode, then step one
+ * cell per arrow (Shift = resize), Enter commits, Esc reverts — announced via the grid's
+ * live region. (The separate keyboard move/resize buttons were removed as redundant.)
  */
 export function WidgetCard({
 	widget,
@@ -144,11 +147,23 @@ export function WidgetCard({
 			}}
 		>
 			<div className="flex h-7 flex-none items-center gap-1.5 border-b border-border px-2">
+				{/* Drag to move (pointer); Enter/Space enters keyboard-move mode (arrows move,
+				    Shift+arrows resize) — replacing the two removed keyboard buttons. */}
 				<button
 					type="button"
-					aria-label={`Drag ${widget.title}`}
-					className="flex h-full cursor-grab items-center text-muted-foreground hover:text-foreground"
+					aria-label={`Move ${widget.title} — drag, or press Enter for keyboard mode`}
+					aria-pressed={!!kb}
+					className={cn(
+						"flex h-full cursor-grab items-center text-muted-foreground hover:text-foreground",
+						kb && "text-foreground",
+					)}
 					onPointerDown={(e) => onDragStart(e, widget.id, "move")}
+					onKeyDown={(e) => {
+						if (!kb && (e.key === "Enter" || e.key === " ")) {
+							e.preventDefault();
+							setKb({ mode: "move", rect });
+						}
+					}}
 				>
 					<GripVertical className="h-3 w-3" />
 				</button>
@@ -159,32 +174,47 @@ export function WidgetCard({
 					{widget.title}
 				</span>
 				{widget.source ? (
-					<button
-						type="button"
-						aria-label={
-							widget.mode === "live"
-								? `Freeze ${widget.title}`
-								: `Make ${widget.title} live`
-						}
-						title={
-							widget.refreshed_at
-								? `refreshed ${new Date(widget.refreshed_at).toLocaleTimeString()}`
-								: undefined
-						}
-						onClick={() =>
-							setMode(widget.id, widget.mode === "live" ? "frozen" : "live")
-						}
-						className={cn(
-							"flex-none font-mono text-[9px] uppercase transition-colors hover:text-foreground",
-							widget.mode === "live" ? "text-foreground" : "text-muted-foreground/70",
-						)}
-					>
-						{widget.mode}
-					</button>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								aria-label={
+									widget.mode === "live"
+										? `Freeze ${widget.title}`
+										: `Make ${widget.title} live`
+								}
+								onClick={() =>
+									setMode(widget.id, widget.mode === "live" ? "frozen" : "live")
+								}
+								className={cn(
+									"flex flex-none items-center gap-1 font-mono text-[9px] uppercase transition-colors hover:text-foreground",
+									widget.mode === "live"
+										? "text-foreground"
+										: "text-muted-foreground/70",
+								)}
+							>
+								{widget.mode === "live" ? (
+									<Zap className="h-2.5 w-2.5" />
+								) : (
+									<Snowflake className="h-2.5 w-2.5" />
+								)}
+								{widget.mode === "live" ? "Live" : "Frozen"}
+							</button>
+						</TooltipTrigger>
+						<TooltipContent side="top" className="max-w-[220px] text-xs">
+							{widget.mode === "live"
+								? "Live: refreshes on its own. Click to freeze as a fixed snapshot."
+								: "Frozen: a fixed snapshot that won't update. Click to make it live."}
+							{widget.refreshed_at
+								? ` · updated ${new Date(widget.refreshed_at).toLocaleTimeString()}`
+								: ""}
+						</TooltipContent>
+					</Tooltip>
 				) : (
 					widget.mode === "frozen" && (
-						<span className="flex-none font-mono text-[9px] text-muted-foreground/70">
-							frozen
+						<span className="flex flex-none items-center gap-1 font-mono text-[9px] uppercase text-muted-foreground/70">
+							<Snowflake className="h-2.5 w-2.5" />
+							Frozen
 						</span>
 					)
 				)}
@@ -205,34 +235,6 @@ export function WidgetCard({
 						iconOnly
 						defaultName={widget.title}
 					/>
-					<button
-						type="button"
-						aria-label={`Move ${widget.title} with arrow keys`}
-						aria-pressed={kb?.mode === "move"}
-						className={cn(
-							"flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground",
-							kb?.mode === "move" && "text-foreground",
-						)}
-						onClick={() =>
-							setKb(kb?.mode === "move" ? null : { mode: "move", rect })
-						}
-					>
-						<Move className="h-3 w-3" />
-					</button>
-					<button
-						type="button"
-						aria-label={`Resize ${widget.title} with arrow keys`}
-						aria-pressed={kb?.mode === "resize"}
-						className={cn(
-							"flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground",
-							kb?.mode === "resize" && "text-foreground",
-						)}
-						onClick={() =>
-							setKb(kb?.mode === "resize" ? null : { mode: "resize", rect })
-						}
-					>
-						<Scaling className="h-3 w-3" />
-					</button>
 					<button
 						type="button"
 						aria-label={`Remove ${widget.title}`}

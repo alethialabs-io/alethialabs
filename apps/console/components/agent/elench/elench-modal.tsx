@@ -42,6 +42,7 @@ export function ElenchModal({
 	onSelectThread,
 	onNewChat,
 	onDeleteThread,
+	gallery,
 	children,
 }: {
 	isOrg: boolean;
@@ -54,6 +55,8 @@ export function ElenchModal({
 	onSelectThread: (id: string) => void;
 	onNewChat: () => void;
 	onDeleteThread: (id: string) => void;
+	/** The Artifacts gallery (org only) — shown in the main region when `galleryOpen`. */
+	gallery?: ReactNode;
 	children: ReactNode;
 }) {
 	const minimize = useElenchStore((s) => s.minimize);
@@ -61,6 +64,9 @@ export function ElenchModal({
 	// Rail state lives in the store so it survives a minimize→maximize round-trip.
 	const sidebarOpen = useElenchStore((s) => s.railOpen);
 	const setSidebarOpen = useElenchStore((s) => s.setRailOpen);
+	// The Artifacts gallery replaces the chat in the main region (org only).
+	const galleryOpen = useElenchStore((s) => s.galleryOpen);
+	const setGalleryOpen = useElenchStore((s) => s.setGalleryOpen);
 	// Both contexts persist threads now, so the rail shows for project as well as org.
 	const showSidebar = sidebarOpen;
 
@@ -118,14 +124,22 @@ export function ElenchModal({
 							onSelect={onSelectThread}
 							onNew={onNewChat}
 							onDelete={onDeleteThread}
+							onOpenArtifacts={
+								gallery ? () => setGalleryOpen(true) : undefined
+							}
+							artifactsActive={galleryOpen}
 						/>
 					</div>
 				)}
 
 				<main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-					{isEmpty ? (
+					{gallery && galleryOpen ? (
+						gallery
+					) : (
 						<>
-							{!sidebarOpen && (
+							{isEmpty ? (
+								<>
+									{!sidebarOpen && (
 								<button
 									type="button"
 									aria-label="Open sidebar"
@@ -133,6 +147,22 @@ export function ElenchModal({
 									className="absolute left-4 top-4 z-10 flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
 								>
 									<PanelLeft className="h-4 w-4" />
+								</button>
+							)}
+							{/* The empty state hides the top-bar grid toggle — so if the split
+							    pane is somehow open here, surface a close control so it can never
+							    get stranded with no way out. */}
+							{splitOpen && (
+								<button
+									type="button"
+									aria-label="Close split view"
+									onClick={() => {
+										closeArtifact();
+										closeGrid();
+									}}
+									className="absolute right-14 top-4 z-10 flex size-8 items-center justify-center rounded-none border border-border bg-background text-foreground shadow-sm transition-colors hover:bg-muted"
+								>
+									<LayoutGrid className="h-4 w-4" />
 								</button>
 							)}
 							<button
@@ -213,7 +243,9 @@ export function ElenchModal({
 								</div>
 							</>
 						)}
-					</div>
+							</div>
+						</>
+					)}
 				</main>
 			</DialogContent>
 		</Dialog>

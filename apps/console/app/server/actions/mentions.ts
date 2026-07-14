@@ -11,7 +11,9 @@ import { getProjects } from "@/app/server/actions/projects";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import type { MentionResult, MentionType } from "@/lib/ai/mentions";
 
-const MAX_RESULTS = 10;
+// Generous cap: the popover is scrollable, so surface the owner's full set of taggable
+// resources (all types) rather than clipping to a handful.
+const MAX_RESULTS = 40;
 /** Type ordering when results are otherwise equal (most-actionable first). */
 const TYPE_RANK: Record<MentionType, number> = {
 	project: 0,
