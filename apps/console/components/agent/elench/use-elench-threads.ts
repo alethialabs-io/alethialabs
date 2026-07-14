@@ -12,6 +12,7 @@ import {
 } from "@/app/server/actions/agent";
 import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
+import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 
 /**
@@ -106,9 +107,13 @@ export function useElenchThreads() {
 
 	/** Reset to a fresh EPHEMERAL conversation — clears the transcript and bumps the chat
 	 * lineage (via the store's `newChat`). Persists nothing; the thread is created lazily on
-	 * the first send. */
+	 * the first send. Also collapses the split pane: the fresh chat has no widgets, and the
+	 * empty state hides the grid toggle — leaving it open would strand the grid with no way
+	 * to close it. */
 	const newChat = useCallback(() => {
 		setInitialMessages([]);
+		useArtifactStore.getState().closeGrid();
+		useArtifactStore.getState().close();
 		newChatStore();
 	}, [newChatStore]);
 

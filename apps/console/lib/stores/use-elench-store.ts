@@ -62,6 +62,8 @@ interface ElenchState {
 	 * flip, which would otherwise reset the rail to open.
 	 */
 	railOpen: boolean;
+	/** Whether the modal's main region shows the Artifacts gallery instead of the chat. */
+	galleryOpen: boolean;
 
 	/** Open as a docked panel in the given context. */
 	openPanel: (ctx: ElenchCtx) => void;
@@ -82,6 +84,8 @@ interface ElenchState {
 	setDeepReasoning: (deepReasoning: boolean) => void;
 	/** Expand/collapse the modal thread rail. */
 	setRailOpen: (open: boolean) => void;
+	/** Show/hide the Artifacts gallery in the modal's main region. */
+	setGalleryOpen: (open: boolean) => void;
 	/**
 	 * Resume a persisted thread: point at it AND bump `epoch` so the chat lineage token
 	 * changes, recreating the underlying chat with the resumed transcript (no chrome remount).
@@ -120,6 +124,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	seedPrompt: null,
 	pendingMentions: [],
 	railOpen: true,
+	galleryOpen: false,
 
 	openPanel: (ctx) => {
 		const cur = get();
@@ -149,7 +154,8 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		});
 	},
 
-	minimize: () => set({ view: "panel" }),
+	// The gallery is a modal-only surface — collapsing to the panel always leaves it.
+	minimize: () => set({ view: "panel", galleryOpen: false }),
 	maximize: () => set({ view: "modal" }),
 	close: () => set({ open: false }),
 
@@ -163,9 +169,12 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	setModel: (model) => set({ model }),
 	setDeepReasoning: (deepReasoning) => set({ deepReasoning }),
 	setRailOpen: (railOpen) => set({ railOpen }),
-	selectThread: (id) => set((s) => ({ threadId: id, epoch: s.epoch + 1 })),
+	setGalleryOpen: (galleryOpen) => set({ galleryOpen }),
+	// Selecting a thread / starting a new chat returns to the conversation view.
+	selectThread: (id) =>
+		set((s) => ({ threadId: id, epoch: s.epoch + 1, galleryOpen: false })),
 	attachThread: (id) => set({ threadId: id }),
-	newChat: () => set((s) => ({ threadId: null, epoch: s.epoch + 1 })),
+	newChat: () => set((s) => ({ threadId: null, epoch: s.epoch + 1, galleryOpen: false })),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
 	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
 }));

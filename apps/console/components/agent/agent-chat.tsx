@@ -213,16 +213,23 @@ export function AgentChat({
 										);
 									}
 
-									// Orchestration step marker — a hairline separator naming the
-									// phase + model (`PLAN · Claude Sonnet 4.6`), streamed by the
-									// route at each model boundary of the turn.
+									// Orchestration step marker — a hairline separator naming only
+									// Elench and the phase (`Elench · Planning` / `Elench · Working`),
+									// streamed by the route at each model boundary of the turn. The
+									// underlying model is intentionally NOT shown (the route still
+									// emits `model`/`label` in the part for metering/analytics — the
+									// UI just ignores it).
 									if (part.type === AGENT_STEP_PART_TYPE) {
 										const parsed = agentStepDataSchema.safeParse(part.data);
 										if (!parsed.success) return null;
+										const phaseLabel =
+											parsed.data.phase === "plan"
+												? "Elench · Planning"
+												: "Elench · Working";
 										return (
 											<Marker key={key} variant="separator" className="my-1">
 												<MarkerContent className="font-mono text-[10px] uppercase tracking-wide">
-													{parsed.data.phase} · {parsed.data.label}
+													{phaseLabel}
 												</MarkerContent>
 											</Marker>
 										);
