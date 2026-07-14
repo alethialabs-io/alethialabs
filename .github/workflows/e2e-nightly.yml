@@ -217,6 +217,30 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME ($PROVIDER, region $REGION)"
 
+      # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
+      #    (AWS m5a.4xlarge×2 SPOT ≈ $0.30/run); the harness cost guard HARD-FAILS a managed run
+      #    that inherits that default, so we pin a small node shape per provider here. Merged
+      #    into the snapshot `cluster` block (t2MergeClusterJSON): small instance ×1, min disk.
+      #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
+      #    are validated in each cloud's wave. ──
+      - name: Compute cheapest cluster shape
+        if: steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          case "$PROVIDER" in
+            hetzner) SHAPE="" ;;
+            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            azure)   SHAPE='{"instance_types":["Standard_B2s"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
+            alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          if [ -n "$SHAPE" ]; then
+            echo "ALETHIA_E2E_CLUSTER_JSON=$SHAPE" >> "$GITHUB_ENV"
+            echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
+          fi
+
       - uses: pnpm/action-setup@v4
         if: steps.gate.outputs.run == 'true'
         with:

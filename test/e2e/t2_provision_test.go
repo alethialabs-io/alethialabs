@@ -115,6 +115,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	credsOK, credsMsg := p.credsPresent()
 	t2RequireOrSkip(t, credsOK, credsMsg)
 
+	// Cost guard (BYOC F4): the managed clouds have expensive default node shapes (AWS
+	// m5a.4xlarge×2 ≈ $0.30/run), so a real run MUST pin a cheapest-shape override via
+	// ALETHIA_E2E_CLUSTER_JSON. Missing it is a HARD FAIL under REQUIRE (the nightly always
+	// injects one — this catches a workflow typo), a warning locally. Hetzner is exempt
+	// (proven cents/run default).
+	if fatal, msg := t2RequireCostShape(provider); msg != "" {
+		if fatal {
+			t.Fatalf("T2 cost guard: %s", msg)
+		}
+		t.Logf("T2 cost guard (warning): %s", msg)
+	}
+
 	// ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6) — the customer-repo half. Opt-in:
 	// a fully-absent config is a clean skip (base T2 A0.1–A0.5 still proves), but a REQUIRED
 	// run (the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is set)

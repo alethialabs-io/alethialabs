@@ -405,3 +405,42 @@ func TestT2ValidateClusterName(t *testing.T) {
 		})
 	}
 }
+
+// TestT2RequireCostShape covers the cost guard (BYOC F4): managed clouds must pin a cheapest
+// shape via ALETHIA_E2E_CLUSTER_JSON; missing it is fatal ONLY under REQUIRE. Hetzner is
+// exempt (proven cents/run default).
+func TestT2RequireCostShape(t *testing.T) {
+	cases := []struct {
+		name               string
+		provider           string
+		clusterJSON        string
+		require            bool
+		wantFatal, wantMsg bool
+	}{
+		{"aws no shape, require ⇒ fatal", "aws", "", true, true, true},
+		{"aws no shape, local ⇒ warn only", "aws", "", false, false, true},
+		{"aws with shape ⇒ ok", "aws", `{"instance_types":["t3.large"]}`, true, false, false},
+		{"gcp no shape, require ⇒ fatal", "gcp", "", true, true, true},
+		{"azure no shape, require ⇒ fatal", "azure", "", true, true, true},
+		{"alibaba no shape, require ⇒ fatal", "alibaba", "", true, true, true},
+		{"hetzner exempt (no shape, require)", "hetzner", "", true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearT2Env(t)
+			if tc.clusterJSON != "" {
+				t.Setenv("ALETHIA_E2E_CLUSTER_JSON", tc.clusterJSON)
+			}
+			if tc.require {
+				t.Setenv("ALETHIA_E2E_T2_REQUIRE", "1")
+			}
+			fatal, msg := t2RequireCostShape(tc.provider)
+			if fatal != tc.wantFatal {
+				t.Errorf("fatal = %v, want %v", fatal, tc.wantFatal)
+			}
+			if (msg != "") != tc.wantMsg {
+				t.Errorf("msg present = %v, want %v (msg=%q)", msg != "", tc.wantMsg, msg)
+			}
+		})
+	}
+}
