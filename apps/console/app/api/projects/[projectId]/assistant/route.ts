@@ -20,6 +20,11 @@ import {
 	mentionsSchema,
 } from "@/lib/ai/mentions";
 import {
+	buildProjectKnowledge,
+	formatContextBlock,
+	readAgentContext,
+} from "@/lib/ai/project-knowledge";
+import {
 	cachedSystemMessage,
 	thinkingOptions,
 } from "@/lib/ai/provider-options";
@@ -179,9 +184,27 @@ export async function POST(
 		const mentionBlock = parsedMentions.success
 			? formatMentionsForPrompt(parsedMentions.data)
 			: "";
-		const system = mentionBlock
-			? `${systemPrompt(projectId, canvas)}\n\n${mentionBlock}`
-			: systemPrompt(projectId, canvas);
+
+		// The Claude-Projects model: this chat lives inside an infra project, so it inherits that
+		// project's pinned instructions + knowledge — layered UNDER the org-level ones (org policy
+		// first, project specifics second) — plus a derived block of the project's live state, so
+		// the very first answer is grounded without a tool round-trip. A project's context never
+		// leaks out to org chats.
+		const [orgCtx, projectCtx, derived] = await Promise.all([
+			readAgentContext(owner, null).catch(() => null),
+			readAgentContext(owner, projectId).catch(() => null),
+			buildProjectKnowledge(owner, projectId).catch(() => ""),
+		]);
+
+		const system = [
+			systemPrompt(projectId, canvas),
+			formatContextBlock("Organization", orgCtx),
+			formatContextBlock("Project", projectCtx),
+			derived,
+			mentionBlock,
+		]
+			.filter(Boolean)
+			.join("\n\n");
 
 		const modelMessages = await convertToModelMessages(messages);
 

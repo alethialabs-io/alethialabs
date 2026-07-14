@@ -18,6 +18,9 @@ export type ElenchCtx = { kind: "org" } | { kind: "project"; projectId: string }
 /** Pure presentation: fullscreen dialog vs docked drawer. Orthogonal to `ctx`. */
 export type ElenchView = "modal" | "panel";
 
+/** Which surface the modal's main region is showing (mutually exclusive). */
+export type ElenchMainView = "chat" | "artifacts" | "knowledge";
+
 /** True when two contexts address the same conversation lineage. */
 function sameCtx(a: ElenchCtx, b: ElenchCtx): boolean {
 	if (a.kind !== b.kind) return false;
@@ -62,8 +65,12 @@ interface ElenchState {
 	 * flip, which would otherwise reset the rail to open.
 	 */
 	railOpen: boolean;
-	/** Whether the modal's main region shows the Artifacts gallery instead of the chat. */
-	galleryOpen: boolean;
+	/**
+	 * What the modal's main region shows: the conversation, the Artifacts library, or the
+	 * Knowledge panel (custom instructions + pinned knowledge for the current scope). One
+	 * enum rather than a bag of booleans, so two panels can never be "open" at once.
+	 */
+	mainView: ElenchMainView;
 
 	/** Open as a docked panel in the given context. */
 	openPanel: (ctx: ElenchCtx) => void;
@@ -85,7 +92,8 @@ interface ElenchState {
 	/** Expand/collapse the modal thread rail. */
 	setRailOpen: (open: boolean) => void;
 	/** Show/hide the Artifacts gallery in the modal's main region. */
-	setGalleryOpen: (open: boolean) => void;
+	/** Switch the modal's main region (chat / artifacts / knowledge). */
+	setMainView: (view: ElenchMainView) => void;
 	/**
 	 * Resume a persisted thread: point at it AND bump `epoch` so the chat lineage token
 	 * changes, recreating the underlying chat with the resumed transcript (no chrome remount).
@@ -124,7 +132,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	seedPrompt: null,
 	pendingMentions: [],
 	railOpen: true,
-	galleryOpen: false,
+	mainView: "chat",
 
 	openPanel: (ctx) => {
 		const cur = get();
@@ -155,7 +163,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	},
 
 	// The gallery is a modal-only surface — collapsing to the panel always leaves it.
-	minimize: () => set({ view: "panel", galleryOpen: false }),
+	minimize: () => set({ view: "panel", mainView: "chat" }),
 	maximize: () => set({ view: "modal" }),
 	close: () => set({ open: false }),
 
@@ -169,12 +177,17 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	setModel: (model) => set({ model }),
 	setDeepReasoning: (deepReasoning) => set({ deepReasoning }),
 	setRailOpen: (railOpen) => set({ railOpen }),
-	setGalleryOpen: (galleryOpen) => set({ galleryOpen }),
+	setMainView: (mainView) => set({ mainView }),
 	// Selecting a thread / starting a new chat returns to the conversation view.
 	selectThread: (id) =>
-		set((s) => ({ threadId: id, epoch: s.epoch + 1, galleryOpen: false })),
+		set((s) => ({ threadId: id, epoch: s.epoch + 1, mainView: "chat" as const })),
 	attachThread: (id) => set({ threadId: id }),
-	newChat: () => set((s) => ({ threadId: null, epoch: s.epoch + 1, galleryOpen: false })),
+	newChat: () =>
+		set((s) => ({
+			threadId: null,
+			epoch: s.epoch + 1,
+			mainView: "chat" as const,
+		})),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
 	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
 }));

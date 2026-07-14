@@ -659,6 +659,13 @@
       "when": 1783962683183,
       "tag": "0093_supreme_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1784033537481,
+      "tag": "0094_futuristic_franklin_richards",
+      "breakpoints": true
     }
   ]
 }

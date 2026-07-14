@@ -49,6 +49,7 @@ export function ElenchModal({
 	onNewChat,
 	onDeleteThread,
 	gallery,
+	knowledge,
 	children,
 }: {
 	isOrg: boolean;
@@ -61,8 +62,10 @@ export function ElenchModal({
 	onSelectThread: (id: string) => void;
 	onNewChat: () => void;
 	onDeleteThread: (id: string) => void;
-	/** The Artifacts gallery (org only) — shown in the main region when `galleryOpen`. */
+	/** The Artifacts library — replaces the chat in the main region when mainView=artifacts. */
 	gallery?: ReactNode;
+	/** The Knowledge panel — replaces the chat when mainView=knowledge. */
+	knowledge?: ReactNode;
 	children: ReactNode;
 }) {
 	const minimize = useElenchStore((s) => s.minimize);
@@ -70,9 +73,9 @@ export function ElenchModal({
 	// Rail state lives in the store so it survives a minimize→maximize round-trip.
 	const sidebarOpen = useElenchStore((s) => s.railOpen);
 	const setSidebarOpen = useElenchStore((s) => s.setRailOpen);
-	// The Artifacts gallery replaces the chat in the main region (org only).
-	const galleryOpen = useElenchStore((s) => s.galleryOpen);
-	const setGalleryOpen = useElenchStore((s) => s.setGalleryOpen);
+	// Which surface the main region shows (chat / artifacts / knowledge) — mutually exclusive.
+	const mainView = useElenchStore((s) => s.mainView);
+	const setMainView = useElenchStore((s) => s.setMainView);
 	// Both contexts persist threads now, so the rail shows for project as well as org.
 	const showSidebar = sidebarOpen;
 
@@ -155,16 +158,22 @@ export function ElenchModal({
 							onNew={onNewChat}
 							onDelete={onDeleteThread}
 							onOpenArtifacts={
-								gallery ? () => setGalleryOpen(true) : undefined
+								gallery ? () => setMainView("artifacts") : undefined
 							}
-							artifactsActive={galleryOpen}
+							artifactsActive={mainView === "artifacts"}
+							onOpenKnowledge={
+								knowledge ? () => setMainView("knowledge") : undefined
+							}
+							knowledgeActive={mainView === "knowledge"}
 						/>
 					</div>
 				)}
 
 				<main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-					{gallery && galleryOpen ? (
+					{gallery && mainView === "artifacts" ? (
 						gallery
+					) : knowledge && mainView === "knowledge" ? (
+						knowledge
 					) : (
 						<>
 							{isEmpty ? (
