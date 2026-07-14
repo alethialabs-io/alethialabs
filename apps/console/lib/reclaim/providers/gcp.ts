@@ -457,6 +457,22 @@ async function listSqlInstances(
 
 // --- list ------------------------------------------------------------------------------------------
 
+// A note on the 403 you will eventually see here, because it is DELIBERATE and must not be "fixed".
+//
+// The connector grants the Alethia SA no roles/compute.instanceAdmin (infra/connector/gcp/main.tf), so
+// deleting a Compute Instance or Disk would 403. That is correct, and the grant must NOT be added:
+//
+//   - The GCP template creates NO raw compute instances or disks. Every node is GKE-managed, and GKE's
+//     node VMs carry GKE's own labels — not the resource labels our sweep handle lives in. So a LABELLED
+//     orphaned VM/disk cannot arise from our own provisioning at all.
+//   - Deleting the GKE cluster reclaims its nodes anyway (roles/container.admin, which we DO hold).
+//
+// Granting instanceAdmin would therefore expand privilege on a customer-facing connector to handle a case
+// that cannot occur — precisely the creep the least-privilege connector work exists to prevent. The kinds
+// stay LISTED (a BYO-IaC user could label their own VMs, and the audit trail should show them), and a
+// delete that 403s is recorded in the sweep's `failed` list for an operator. Under-deleting is the safe
+// direction; over-privileging is not.
+
 /**
  * Runs one kind's listing. A kind we may not READ (403) or whose API is disabled (403/404) is SKIPPED with
  * a warning rather than failing the sweep: a resource we cannot see is a resource we can never report, so
