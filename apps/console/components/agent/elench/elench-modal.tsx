@@ -14,11 +14,16 @@ import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";
 
-/** Split-pane width bounds (px). Below SNAP_THRESHOLD the right pane snaps closed. */
-const MIN_WIDTH = 250;
-const MAX_WIDTH = 680;
+/**
+ * Split-pane bounds as RATIOS of the split width (the panes sit ~50/50, so a fixed pixel
+ * threshold was far too small on a wide modal). Drag the right pane below a quarter of the
+ * split and it snaps closed; otherwise it's clamped to [25%, 75%] — so the pane is either
+ * collapsed or at least a quarter wide, with no dead band in between.
+ */
+const SNAP_RATIO = 0.25;
+const MAX_RATIO = 0.75;
+/** Initial width on first open (px), clamped into the ratio range. */
 const DEFAULT_WIDTH = 440;
-const SNAP_THRESHOLD = 150;
 
 function clamp(n: number, lo: number, hi: number): number {
 	return Math.min(hi, Math.max(lo, n));
@@ -80,9 +85,11 @@ export function ElenchModal({
 	const closeGrid = useArtifactStore((s) => s.closeGrid);
 	const splitOpen = !!artifact || gridOpen;
 
-	// Drag-resize the right pane from its left edge (distance from the modal's right gutter).
-	// Dragging below SNAP_THRESHOLD snaps it closed (width 0, collapsed); the edge chevron —
-	// or dragging the handle back left — reopens it. Width persists across a collapse.
+	// Drag-resize the right pane from its left edge. Thresholds are RATIOS of the split row's
+	// own width (measured off `splitRef`), so they scale with the modal: below 25% it snaps
+	// closed (width 0, collapsed); the edge chevron — or dragging the handle back left —
+	// reopens it. Width persists across a collapse.
+	const splitRef = useRef<HTMLDivElement>(null);
 	const [splitW, setSplitW] = useState(DEFAULT_WIDTH);
 	const [collapsed, setCollapsed] = useState(false);
 	// Suppresses the width transition mid-drag so the pane tracks the cursor 1:1.
@@ -99,12 +106,17 @@ export function ElenchModal({
 	}, []);
 	const onHandleMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
 		if (!dragging.current) return;
-		const w = window.innerWidth - e.clientX;
-		if (w < SNAP_THRESHOLD) {
+		const el = splitRef.current;
+		if (!el) return;
+		const r = el.getBoundingClientRect();
+		const w = r.right - e.clientX;
+		const snap = r.width * SNAP_RATIO;
+		if (w < snap) {
 			setCollapsed(true);
 		} else {
 			setCollapsed(false);
-			setSplitW(clamp(w, MIN_WIDTH, MAX_WIDTH));
+			// Min width IS the snap threshold — the pane never rests below a quarter.
+			setSplitW(clamp(w, snap, r.width * MAX_RATIO));
 		}
 	}, []);
 	const onHandleUp = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -241,12 +253,12 @@ export function ElenchModal({
 						</div>
 					)}
 
-					<div className="flex min-h-0 flex-1">
+					<div ref={splitRef} className="flex min-h-0 flex-1">
 						<div className="flex min-w-0 flex-1 flex-col">{children}</div>
 						{splitOpen && (
 							<>
 								{/* Cloudflare-style divider: a hairline 1px seam with a centered rounded
-								    grab-pill. Dragging resizes; below SNAP_THRESHOLD it snaps closed. */}
+								    grab-pill. Dragging resizes; below 25% of the split it snaps closed. */}
 								<button
 									type="button"
 									aria-label="Resize or collapse panel"
