@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { exportCatalogSpecs } from "@/scripts/export-addon-catalog.mts";
+import { exportCatalogSpecs } from "@/lib/addons/catalog-export";
 
 const FIXTURE = resolve(
 	__dirname,
