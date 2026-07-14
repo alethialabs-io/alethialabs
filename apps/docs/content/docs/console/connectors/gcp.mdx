@@ -79,6 +79,35 @@ Alethia verifies the cloud identity **instantly, server-side** (no runner):
 Existing resources (VPC networks, subnets, DNS zones) are discovered separately by the server-side
 [asset inventory](/console/connectors/health-and-inventory).
 
+## Service Account Permissions
+
+What the service account may *do* is independent of *who may impersonate it* (the WIF trust above).
+
+**Exactly what Alethia provisions in your project** (feature-gated — a given Project uses a subset):
+Compute/VPC (networks, subnets, Cloud Router + NAT, firewall rules, Cloud Armor), GKE (cluster + node
+pools), Cloud SQL, Memorystore (Redis), Cloud DNS, Artifact Registry, Secret Manager, Cloud Storage,
+Firestore, Pub/Sub, and the workload-identity service accounts + bindings for in-cluster controllers.
+
+<Callout type="info">
+**Least-privilege by default — no `roles/editor`.** The provisioner service account gets **10 predefined
+roles + 5 custom roles**:
+
+- **10 predefined roles** for services whose Google-maintained admin set is already tightly scoped and
+  churns with new features (`container.admin`, `compute.networkAdmin`, `compute.securityAdmin`,
+  `servicenetworking.networksAdmin`, `cloudsql.admin`, `redis.admin`, `dns.admin`, `artifactregistry.admin`,
+  `secretmanager.admin`, `iam.serviceAccountUser`) — hand-enumerating those buys nothing.
+- **5 custom roles** replacing the predefined admin roles that bundled **data-plane access** a provisioner
+  must never hold, granting management verbs only: GCS bucket mgmt *without object data*, Firestore
+  database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without publish/consume*, add-on SA
+  mgmt (dropping undelete/enable/disable), and a project-metadata reader (replacing `roles/browser`, no
+  folder/org hierarchy reads).
+
+The templates also use **resource-scoped IAM** (zone-scoped external-dns, per-secret accessor, per-GSA
+`workloadIdentityUser`), so the provisioner needs **no project `setIamPolicy`** — closing the
+owner-equivalent escalation path. (`secretmanager.admin` is kept predefined on purpose: dropping
+`secretmanager.versions.access` breaks the provider's secret-version refresh.)
+</Callout>
+
 ## What's Stored
 
 - **GCP Project ID** and **Project Number**
