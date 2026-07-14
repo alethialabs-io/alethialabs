@@ -19,6 +19,7 @@ import type {
 	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
+import type { CollectionPositions } from "@/lib/canvas/collections";
 
 const PROJECT_NODE_ID = "project-root";
 const HISTORY_CAP = 50;
@@ -301,6 +302,11 @@ interface CanvasStore {
 	redo: () => void;
 	reset: () => void;
 
+	/** Where each collection card (the Secrets vault) sits. A collection has no store row of its own,
+	 * and its members' positions are never drawn, so the collapsed card needs a position here. */
+	collectionPositions: CollectionPositions;
+	setCollectionPosition: (kind: NodeKind, position: { x: number; y: number }) => void;
+
 	/** Canvas view prefs (ephemeral UI state, not persisted). */
 	showConnections: boolean;
 	toggleConnections: () => void;
@@ -346,6 +352,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			// for cross-cloud gating) but hidden until the user toggles connections on.
 			showConnections: false,
 			hiddenKinds: [],
+			collectionPositions: {},
 
 			setIdentities: (identities) => set({ identities }),
 
@@ -634,6 +641,12 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			commitBaseline: () => set((s) => ({ baseline: structuredClone(s.nodes), dirty: false })),
 
+			setCollectionPosition: (kind, position) =>
+				set((s) => ({
+					collectionPositions: { ...s.collectionPositions, [kind]: position },
+					dirty: true,
+				})),
+
 			toggleConnections: () => set((s) => ({ showConnections: !s.showConnections })),
 
 			toggleKindVisibility: (kind) =>
@@ -652,7 +665,9 @@ export const useCanvasStore = create<CanvasStore>()(
 			relayout: () => {
 				get().commit();
 				const next = layoutByKind(get().nodes);
-				set({ nodes: next, dirty: true });
+				// Drop the collection cards' pinned positions too, so a "tidy" re-anchors the vaults on
+				// their freshly-laid-out members instead of stranding them where they were dragged.
+				set({ nodes: next, collectionPositions: {}, dirty: true });
 			},
 
 			getNode: (id) => get().nodes.find((n) => n.id === id),
@@ -676,12 +691,13 @@ export const useCanvasStore = create<CanvasStore>()(
 			name: "design-project-canvas-draft",
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
-			// Persist the graph + baseline (so the pending-changes diff survives reload);
-			// identities are server data and history is ephemeral.
+			// Persist the graph + baseline (so the pending-changes diff survives reload) and where the
+			// collection cards were dragged to; identities are server data and history is ephemeral.
 			partialize: (state) => ({
 				nodes: state.nodes,
 				edges: state.edges,
 				baseline: state.baseline,
+				collectionPositions: state.collectionPositions,
 			}),
 		},
 	),
