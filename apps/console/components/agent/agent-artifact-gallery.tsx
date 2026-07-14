@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
+import { ScrollArea } from "@repo/ui/scroll-area";
 
 /**
  * The Artifacts gallery — the modal's main region when the rail's "Artifacts" nav is
@@ -74,7 +75,8 @@ export function AgentArtifactGallery({
 				</div>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-y-auto p-5">
+			<ScrollArea className="min-h-0 flex-1">
+				<div className="p-5">
 				{items === null ? (
 					<div className="py-16 text-center text-sm text-muted-foreground">
 						Loading artifacts…
@@ -142,7 +144,8 @@ export function AgentArtifactGallery({
 						))}
 					</div>
 				)}
-			</div>
+				</div>
+			</ScrollArea>
 		</div>
 	);
 }
