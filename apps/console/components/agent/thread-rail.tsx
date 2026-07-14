@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
+import { BookOpen, LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -20,6 +20,10 @@ interface ThreadRailProps {
 	onOpenArtifacts?: () => void;
 	/** True while the Artifacts gallery is the active view (highlights the nav item). */
 	artifactsActive?: boolean;
+	/** Open the Knowledge panel (modal only). When set, a "Knowledge" nav item shows. */
+	onOpenKnowledge?: () => void;
+	/** True while the Knowledge panel is the active view. */
+	knowledgeActive?: boolean;
 }
 
 const DAY = 86_400_000;
@@ -62,6 +66,8 @@ export function ThreadRail({
 	onDelete,
 	onOpenArtifacts,
 	artifactsActive = false,
+	onOpenKnowledge,
+	knowledgeActive = false,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 
@@ -105,6 +111,19 @@ export function ThreadRail({
 					>
 						<LayoutDashboard className="h-3.5 w-3.5 text-muted-foreground" />
 						Artifacts
+					</button>
+				)}
+				{onOpenKnowledge && (
+					<button
+						type="button"
+						onClick={onOpenKnowledge}
+						className={cn(
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							knowledgeActive && "border-border bg-muted",
+						)}
+					>
+						<BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
+						Knowledge
 					</button>
 				)}
 			</div>

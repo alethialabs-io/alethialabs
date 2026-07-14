@@ -18,6 +18,10 @@ import {
 	mentionsSchema,
 } from "@/lib/ai/mentions";
 import {
+	formatContextBlock,
+	readAgentContext,
+} from "@/lib/ai/project-knowledge";
+import {
 	cachedSystemMessage,
 	thinkingOptions,
 } from "@/lib/ai/provider-options";
@@ -216,7 +220,13 @@ export async function POST(req: Request) {
 					`with position {x: ${cellTarget.x}, y: ${cellTarget.y}}, sized to fit the content.`,
 				].join(" ")
 			: "";
-		const system = [systemPrompt(mode), mentionBlock, cellBlock]
+		// The org-level pinned context (custom instructions + knowledge) rides EVERY org chat —
+		// the Claude-Projects model, where a workspace's instructions are inherited by its chats.
+		// Project-scoped context deliberately does NOT leak in here.
+		const orgCtx = await readAgentContext(actor.orgId, null).catch(() => null);
+		const orgBlock = formatContextBlock("Organization", orgCtx);
+
+		const system = [systemPrompt(mode), orgBlock, mentionBlock, cellBlock]
 			.filter(Boolean)
 			.join("\n\n");
 
