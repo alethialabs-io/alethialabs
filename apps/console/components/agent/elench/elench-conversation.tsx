@@ -246,16 +246,18 @@ export function ElenchConversation({
 		[activeId, startThread, hydrateGrid, openGrid, isOrg],
 	);
 
-	// The Artifacts gallery node (org only) — ElenchModal shows it in the main region while
-	// `galleryOpen`. "New artifact" is just a fresh chat (the empty landing's starter cards
-	// steer it); closing returns to the conversation.
-	const galleryNode = isOrg ? (
+	// The Artifacts gallery node — ElenchModal shows it in the main region while `galleryOpen`.
+	// Available in EVERY chat (org and project alike): artifacts are an org-scoped library
+	// (`agent_artifacts` is unique on org_id+name), so — as in Claude, where the artifact library
+	// is workspace-level — a project conversation must be able to browse and open them too.
+	// `startThread` already carries the projectId, so opening one lands on a project-scoped grid.
+	const galleryNode = (
 		<AgentArtifactGallery
 			onOpenArtifact={(id, n) => void onOpenArtifactFromGallery(id, n)}
 			onNewArtifact={newChat}
 			onClose={() => useElenchStore.getState().setGalleryOpen(false)}
 		/>
-	) : undefined;
+	);
 	const [accepted, setAccepted] = useState<Record<string, boolean>>({});
 	const renderToolPart = useMemo(
 		() =>
