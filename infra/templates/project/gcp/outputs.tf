@@ -110,7 +110,7 @@ output "private_subnet_self_link" {
 
 output "region_short" {
   description = "Short form of the deployment region"
-  value       = local.gcp_regions_short[var.region]
+  value       = local.gcp_regions_short[local.gcp_region_key]
 }
 
 output "project_id" {
