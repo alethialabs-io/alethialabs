@@ -99,7 +99,7 @@ func (m *mockAPI) GetJob(jobID string) (*Job, error) {
 	return nil, fmt.Errorf("job not found: %s", jobID)
 }
 
-func (m *mockAPI) FetchGitToken(jobID string) (string, error) {
+func (m *mockAPI) FetchGitToken(jobID, repoURL string) (string, error) {
 	return "", nil
 }
 

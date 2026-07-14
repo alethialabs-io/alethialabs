@@ -347,6 +347,11 @@ func buildChildEnv(parentEnv []string, workDir string) []string {
 	if v, ok := get("ALETHIA_STAGE_GIT_TOKEN"); ok {
 		out = append(out, "ALETHIA_STAGE_GIT_TOKEN="+v)
 	}
+	// Per-repo BYO chart tokens (JSON map repo→token) when a chart lives on a different provider
+	// than the apps-destination repo. Same ALETHIA_STAGE_* allowlist as the single git token.
+	if v, ok := get("ALETHIA_STAGE_GIT_TOKENS"); ok {
+		out = append(out, "ALETHIA_STAGE_GIT_TOKENS="+v)
+	}
 	sort.Strings(out)
 	return out
 }

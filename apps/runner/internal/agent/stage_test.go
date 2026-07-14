@@ -10,6 +10,29 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+// TestStageSecretsFromEnv_GitTokens verifies the per-repo BYO chart tokens survive the container
+// boundary: the parent JSON-encodes them into ALETHIA_STAGE_GIT_TOKENS and the child decodes the
+// map back. A missing/blank env yields a usable (non-nil-deref) empty map.
+func TestStageSecretsFromEnv_GitTokens(t *testing.T) {
+	t.Setenv("ALETHIA_STAGE_GIT_TOKEN", "ghp_apps")
+	t.Setenv("TF_HTTP_PASSWORD", "state-token")
+	t.Setenv("ALETHIA_STAGE_GIT_TOKENS", `{"https://gitlab.com/acme/chart":"glpat_y"}`)
+
+	sec := stageSecretsFromEnv()
+	if sec.GitToken != "ghp_apps" || sec.StateToken != "state-token" {
+		t.Fatalf("single-token fields lost: %+v", sec)
+	}
+	if got := sec.GitTokens["https://gitlab.com/acme/chart"]; got != "glpat_y" {
+		t.Fatalf("per-repo token lost: got %q", got)
+	}
+
+	// No map env → empty (not nil-deref) map so a lookup is a safe miss.
+	t.Setenv("ALETHIA_STAGE_GIT_TOKENS", "")
+	if sec := stageSecretsFromEnv(); sec.GitTokens == nil || sec.GitTokens["anything"] != "" {
+		t.Fatalf("expected an empty non-nil map, got %#v", sec.GitTokens)
+	}
+}
+
 // TestDeployPayloadRoundTrip is the anti-divergence guard: the container path serializes
 // the payload to JSON, and ProjectConfig's json:"-" fields (CloudAccountID,
 // ConnectorCredentials) would silently vanish unless carried explicitly. The git token

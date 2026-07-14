@@ -99,12 +99,21 @@ type stageDriftPayload struct {
 type stageSecrets struct {
 	GitToken   string
 	StateToken string
+	// GitTokens maps a BYO chart repo URL → its git token, when the repo lives on a different
+	// provider than the apps-destination repo (see runner.go's per-repo resolution). Crosses the
+	// container boundary as a JSON-encoded ALETHIA_STAGE_GIT_TOKENS env var.
+	GitTokens map[string]string
 }
 
 func stageSecretsFromEnv() stageSecrets {
+	gitTokens := map[string]string{}
+	if raw := os.Getenv("ALETHIA_STAGE_GIT_TOKENS"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &gitTokens)
+	}
 	return stageSecrets{
 		GitToken:   os.Getenv("ALETHIA_STAGE_GIT_TOKEN"),
 		StateToken: os.Getenv("TF_HTTP_PASSWORD"),
+		GitTokens:  gitTokens,
 	}
 }
 
@@ -183,6 +192,7 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		CategoriesDir:  p.CategoriesDir,
 		InfracostToken: p.InfracostToken,
 		GitAccessToken: sec.GitToken,
+		GitRepoTokens:  sec.GitTokens,
 		StateBackend:   &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
 		// Record the provisioning phase under the workdir so the runner can tell an
 		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
