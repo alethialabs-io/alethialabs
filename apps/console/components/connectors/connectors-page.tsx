@@ -26,6 +26,7 @@ import {
 	useCloudConnect,
 } from "@/components/cloud-connect/use-cloud-connect";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
+import { connectRoute } from "@/lib/connectors/helpers";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -208,39 +209,42 @@ export function ConnectorsPage({
 		const slug = integration.slug;
 		track("connector_connect_started", { provider: slug, category: integration.category });
 
-		if (integration.category === "git") {
-			setConnectingSlug(slug);
-			try {
-				const provider = slug as PublicGitProvider;
-				const callbackURL = `/${orgSlug}/~/connectors`;
-				const { error } =
-					provider === "github"
-						? await authClient.linkSocial({
-								provider,
-								scopes: ["repo"],
-								callbackURL,
-							})
-						: await authClient.oauth2.link({
-								providerId: provider,
-								callbackURL,
-							});
-				if (error) throw new Error(error.message);
-			} catch (err) {
-				console.error(`Error linking ${slug}:`, err);
-				toast.error(`Failed to connect ${integration.name}`);
-			} finally {
-				setConnectingSlug(null);
+		// Route by connect flow, category-first. A chain of `if`s here previously let the token clouds
+		// (category `cloud`, auth_method `api_key`) fall into the api_key branch and open a blank sheet.
+		switch (connectRoute(integration)) {
+			case "git": {
+				setConnectingSlug(slug);
+				try {
+					const provider = slug as PublicGitProvider;
+					const callbackURL = `/${orgSlug}/~/connectors`;
+					const { error } =
+						provider === "github"
+							? await authClient.linkSocial({
+									provider,
+									scopes: ["repo"],
+									callbackURL,
+								})
+							: await authClient.oauth2.link({
+									providerId: provider,
+									callbackURL,
+								});
+					if (error) throw new Error(error.message);
+				} catch (err) {
+					console.error(`Error linking ${slug}:`, err);
+					toast.error(`Failed to connect ${integration.name}`);
+				} finally {
+					setConnectingSlug(null);
+				}
+				return;
 			}
-			return;
+			case "cloud":
+				// aws/gcp/azure AND the token clouds (hetzner/civo/digitalocean) → the shared sheet.
+				await cloudConnect.openConnect(integration);
+				return;
+			case "api_key":
+				setApiKeySlug(slug);
+				return;
 		}
-
-		if (integration.auth_method === "api_key") {
-			setApiKeySlug(slug);
-			return;
-		}
-
-		// Cloud providers (aws/gcp/azure/extra) → the shared connect-sheet flow.
-		await cloudConnect.openConnect(integration);
 	};
 
 	// Deep-link: `?connect=<slug>` (e.g. from elench's connect action) auto-opens the connect sheet once,
@@ -253,7 +257,11 @@ export function ConnectorsPage({
 		connectHandledRef.current = true;
 		const integration = integrations.find((i) => i.slug === slug);
 		router.replace(`/${orgSlug}/~/connectors`, { scroll: false });
-		if (integration) void handleConnect(integration);
+		// Don't auto-open a connect sheet for a connector that can't be connected yet — a `coming_soon`
+		// cloud (DO/Civo) has no provisioning templates, so connecting it would be a dead end.
+		if (integration && integration.status !== "coming_soon") {
+			void handleConnect(integration);
+		}
 		// handleConnect is intentionally excluded — the ref makes this run once.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [searchParams, integrations, canManage, orgSlug, router]);
@@ -277,6 +285,18 @@ export function ConnectorsPage({
 			);
 		} finally {
 			setConnectingSlug(null);
+		}
+	};
+
+	/** Re-verifies one specific cloud account from the manage sheet (a provider can hold several, and
+	 *  only some of them may be broken). */
+	const handleReverifyAccount = async (identityId: string) => {
+		try {
+			await reverifyCloudIdentity(identityId);
+			toast.success("Re-verifying…");
+			router.refresh();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to re-verify");
 		}
 	};
 
@@ -321,13 +341,25 @@ export function ConnectorsPage({
 			} else if (integration.auth_method === "api_key") {
 				const result = await deleteConnectorCredential(integration.slug);
 				if (!result.ok) throw new Error(result.error);
+			} else {
+				// No branch matched — a new connector slug that nothing above handles. Fail loudly rather
+				// than falling through to the success toast below having done nothing.
+				throw new Error(
+					`No disconnect path for ${integration.slug}. This is a bug — please report it.`,
+				);
 			}
 			toast.success(`Disconnected ${integration.name}.`);
 			setDisconnectTarget(null);
 			router.refresh();
 		} catch (err) {
 			console.error("Disconnect error:", err);
-			toast.error(`Failed to disconnect ${integration.name}`);
+			// Surface the real reason. A ForbiddenError and a provider mismatch used to render as the
+			// same opaque string, which made a failed disconnect impossible to act on.
+			toast.error(
+				err instanceof Error
+					? err.message
+					: `Failed to disconnect ${integration.name}`,
+			);
 		} finally {
 			setIsDisconnecting(false);
 		}
@@ -512,6 +544,7 @@ export function ConnectorsPage({
 					selectedIntegration &&
 					setDisconnectTarget({ integration: selectedIntegration, identityId })
 				}
+				onReverifyAccount={handleReverifyAccount}
 				onRenameAccount={handleRename}
 			/>
 

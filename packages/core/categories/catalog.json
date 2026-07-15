@@ -58,7 +58,7 @@
       "auth_method": "api_key",
       "icon_url": "/digitalocean/favicon_64x64.png",
       "docs_url": "https://docs.digitalocean.com/reference/api/",
-      "status": "active",
+      "status": "coming_soon",
       "sort_order": 14
     },
     {
@@ -82,7 +82,7 @@
       "auth_method": "api_key",
       "icon_url": "/civo/favicon_64x64.png",
       "docs_url": "https://www.civo.com/docs",
-      "status": "active",
+      "status": "coming_soon",
       "sort_order": 16
     },
     {

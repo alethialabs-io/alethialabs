@@ -10,7 +10,7 @@
 
 import { inspect } from "node:util";
 import { NextResponse } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const verifyRunnerToken = vi.fn();
 vi.mock("@/lib/runners/auth", () => ({
@@ -50,6 +50,15 @@ function mockDb(applied: boolean, job: Record<string, unknown> | undefined) {
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
 	return { executeCalls };
 }
+
+// The route pulls in a large module graph (every finalize* action), and importing it cold takes
+// seconds. `put()` imports it lazily, so that cost landed inside whichever test called it first and
+// was charged against the default 5s test timeout — which the file exceeded under full-suite parallel
+// load, failing "propagates the 401" for reasons that had nothing to do with the assertion. Warm the
+// module once here, outside any test's budget.
+beforeAll(async () => {
+	await import("@/app/api/jobs/[id]/status/route");
+}, 60_000);
 
 /** Invokes the PUT route with a JSON body. */
 async function put(jobId: string, body: unknown) {

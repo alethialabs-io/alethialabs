@@ -29,6 +29,7 @@ import {
 	setConnectorCredentialScope,
 } from "@/app/server/actions/connectors";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import type { Connector } from "@/lib/db/schema";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { getServiceDb, withScope } from "@/lib/db";
@@ -323,14 +324,20 @@ describe("setCloudIdentityScope", () => {
 });
 
 describe("getConnectorsWithStatus", () => {
-	/** Minimal catalog connector row; spread verbatim into the result. */
-	function connector(over: Record<string, unknown>) {
+	/**
+	 * Minimal catalog connector row; spread verbatim into the result. Typed against the real
+	 * `Connector` row so a fictional `category` / `auth_method` / `status` is a COMPILE error — the
+	 * blank-token-cloud-sheet bug slipped through because these fixtures used made-up auth methods
+	 * ("token", "role", "wif") that no real catalog row can hold, so the real api_key routing was
+	 * never exercised. (CLAUDE.md bans `Record<string, unknown>` for known shapes for exactly this.)
+	 */
+	function connector(over: Partial<Connector>): Partial<Connector> {
 		return {
 			id: "x",
 			slug: "x",
 			name: "X",
 			category: "git",
-			auth_method: "oauth2",
+			auth_method: "oauth",
 			status: "active",
 			sort_order: 0,
 			...over,
@@ -338,11 +345,10 @@ describe("getConnectorsWithStatus", () => {
 	}
 
 	it("marks a git connector connected with a healthy token", async () => {
-		// queue order: catalog, account tokens, verified cloud, cloud health, api_key creds
+		// queue order: catalog, account tokens, cloud identities (all), api_key creds
 		dbh.setQueue([
 			[connector({ slug: "github", category: "git" })],
 			[{ provider: "github", expires_at: null, refresh_token: null }],
-			[],
 			[],
 			[],
 		]);
@@ -365,7 +371,6 @@ describe("getConnectorsWithStatus", () => {
 			],
 			[],
 			[],
-			[],
 		]);
 		const [row] = await getConnectorsWithStatus();
 		expect(row.token_health).toBe("expired");
@@ -373,7 +378,7 @@ describe("getConnectorsWithStatus", () => {
 
 	it("surfaces a connected cloud account with its details and scope", async () => {
 		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "role" })],
+			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
 			[],
 			[
 				{
@@ -382,20 +387,24 @@ describe("getConnectorsWithStatus", () => {
 					provider: "aws",
 					credentials: { account_id: "123456789012", role_arn: "arn:x" },
 					scope: "org",
+					status: "connected",
+					last_error: null,
+					missing_permissions: [],
 				},
 			],
-			[],
 			[],
 		]);
 		const [row] = await getConnectorsWithStatus();
 		expect(row.connected).toBe(true);
 		expect(row.group).toBe("clouds");
 		expect(row.scope).toBe("org");
+		expect(row.cloud_health).toBeUndefined();
 		expect(row.accounts).toHaveLength(1);
 		expect(row.accounts?.[0]).toMatchObject({
 			identityId: "ci-1",
 			name: "prod",
 			label: "123456789012",
+			status: "connected",
 		});
 		expect(row.connection_details).toMatchObject({
 			account_id: "123456789012",
@@ -406,17 +415,19 @@ describe("getConnectorsWithStatus", () => {
 
 	it("drives the re-verify treatment for a failed cloud verification", async () => {
 		dbh.setQueue([
-			[connector({ slug: "gcp", category: "cloud", auth_method: "wif" })],
+			[connector({ slug: "gcp", category: "cloud", auth_method: "service_account" })],
 			[],
-			[], // no verified identities
 			[
 				{
 					id: "h-1",
+					name: "GCP",
 					provider: "gcp",
 					status: "failed",
 					last_error: "boom",
 					// A genuinely-configured identity (has creds) whose verification failed.
 					credentials: { project_id: "p-1" },
+					scope: "org",
+					missing_permissions: [],
 				},
 			],
 			[],
@@ -426,23 +437,121 @@ describe("getConnectorsWithStatus", () => {
 		expect(row.cloud_health).toBe("failed");
 		expect(row.last_error).toBe("boom");
 		expect(row.reverify_identity_id).toBe("h-1");
-		expect(row.accounts).toEqual([]);
+	});
+
+	// The reported bug: a cloud whose verification failed was filtered out of `accounts` entirely,
+	// which left it with NO disconnect affordance anywhere in the UI — the connection was unremovable.
+	// It must be listed, carrying its failure, so it can be re-verified or removed.
+	it("lists a FAILED cloud account so it can still be removed", async () => {
+		dbh.setQueue([
+			[connector({ slug: "azure", category: "cloud", auth_method: "service_principal" })],
+			[],
+			[
+				{
+					id: "az-1",
+					name: "Azure",
+					provider: "azure",
+					status: "disconnected",
+					last_error: "AADSTS700016: Application with identifier '…' was not found",
+					credentials: { subscription_id: "s-1", tenant_id: "t-1" },
+					scope: "org",
+					missing_permissions: [],
+				},
+			],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(false);
+		expect(row.accounts).toHaveLength(1);
+		expect(row.accounts?.[0]).toMatchObject({
+			identityId: "az-1",
+			status: "failed",
+		});
+		expect(row.accounts?.[0].lastError).toMatch(/AADSTS700016/);
+	});
+
+	// `degraded` is authenticated-but-under-permissioned. It is NOT disconnected, so the connector
+	// still reads as connected — but it must say so rather than reporting an unqualified green.
+	it("surfaces a DEGRADED account as connected, with its missing permissions", async () => {
+		dbh.setQueue([
+			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
+			[],
+			[
+				{
+					id: "ci-d",
+					name: "prod",
+					provider: "aws",
+					status: "degraded",
+					last_error: null,
+					credentials: { account_id: "1", role_arn: "arn:x" },
+					scope: "org",
+					missing_permissions: ["ec2:DescribeVpcs"],
+				},
+			],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(true);
+		expect(row.cloud_health).toBe("degraded");
+		expect(row.missing_permissions).toEqual(["ec2:DescribeVpcs"]);
+		expect(row.reverify_identity_id).toBe("ci-d");
+		expect(row.accounts?.[0]).toMatchObject({ status: "degraded" });
+	});
+
+	// One healthy + one broken account used to render as a flat "Connected", hiding the broken one
+	// entirely — it was invisible and un-removable from the board.
+	it("keeps a connector connected when one of two accounts is broken, but still lists the broken one", async () => {
+		dbh.setQueue([
+			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
+			[],
+			[
+				{
+					id: "ok-1",
+					name: "prod",
+					provider: "aws",
+					status: "connected",
+					last_error: null,
+					credentials: { account_id: "1", role_arn: "arn:a" },
+					scope: "org",
+					missing_permissions: [],
+				},
+				{
+					id: "bad-1",
+					name: "staging",
+					provider: "aws",
+					status: "disconnected",
+					last_error: "role gone",
+					credentials: { account_id: "2", role_arn: "arn:b" },
+					scope: "org",
+					missing_permissions: [],
+				},
+			],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(true);
+		expect(row.accounts).toHaveLength(2);
+		expect(row.accounts?.map((a) => a.status)).toEqual(["connected", "failed"]);
+		// The healthy account is the primary — connection_details must not describe the broken one.
+		expect(row.connection_details?.cloud_identity_id).toBe("ok-1");
 	});
 
 	it("ignores never-configured placeholder identities (no phantom 'Verification failed')", async () => {
 		// A `disconnected` unverified row with EMPTY credentials — the sweeper poisoning an eager
 		// connect-sheet placeholder. It must NOT surface as a failed verification.
 		dbh.setQueue([
-			[connector({ slug: "digitalocean", category: "cloud", auth_method: "token" })],
+			[connector({ slug: "digitalocean", category: "cloud", auth_method: "api_key" })],
 			[],
-			[], // no verified identities
 			[
 				{
 					id: "ph-1",
+					name: "DO",
 					provider: "digitalocean",
 					status: "disconnected",
 					last_error: "No API token is stored for this connection.",
 					credentials: {},
+					scope: "org",
+					missing_permissions: [],
 				},
 			],
 			[],
@@ -452,20 +561,23 @@ describe("getConnectorsWithStatus", () => {
 		expect(row.cloud_health).toBeUndefined();
 		expect(row.last_error).toBeUndefined();
 		expect(row.reverify_identity_id).toBeUndefined();
+		expect(row.accounts).toEqual([]);
 	});
 
 	it("still surfaces a genuine lost-access (disconnected) token cloud that has credentials", async () => {
 		dbh.setQueue([
-			[connector({ slug: "hetzner", category: "cloud", auth_method: "token" })],
+			[connector({ slug: "hetzner", category: "cloud", auth_method: "api_key" })],
 			[],
-			[], // no verified identities
 			[
 				{
 					id: "d-1",
+					name: "Hetzner",
 					provider: "hetzner",
 					status: "disconnected",
 					last_error: "Token rejected by hetzner (HTTP 401).",
 					credentials: { token: "enc:…" },
+					scope: "org",
+					missing_permissions: [],
 				},
 			],
 			[],
@@ -478,7 +590,6 @@ describe("getConnectorsWithStatus", () => {
 	it("marks an api_key connector connected from a verified stored credential", async () => {
 		dbh.setQueue([
 			[connector({ slug: "vault", category: "secrets", auth_method: "api_key" })],
-			[],
 			[],
 			[],
 			[{ slug: "vault", is_verified: true, scope: "org" }],
