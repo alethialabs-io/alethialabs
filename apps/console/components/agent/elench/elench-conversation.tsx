@@ -10,6 +10,10 @@ import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
+import {
+	getThreadFeedback,
+	setMessageFeedback,
+} from "@/app/server/actions/agent-feedback";
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
@@ -96,6 +100,42 @@ export function ElenchConversation({
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
 	const supportHref = orgSlug ? globalHref(orgSlug, "support") : undefined;
+
+	// Per-message thumbs, hydrated per thread so a rating stays filled across a reload.
+	const [feedbackMap, setFeedbackMap] = useState<
+		Record<string, "up" | "down">
+	>({});
+	useEffect(() => {
+		if (!activeId) {
+			setFeedbackMap({});
+			return;
+		}
+		let cancelled = false;
+		void getThreadFeedback(activeId)
+			.then((m) => {
+				if (!cancelled) setFeedbackMap(m);
+			})
+			.catch(() => {
+				if (!cancelled) setFeedbackMap({});
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeId]);
+
+	/** Persist a thumbs rating and record it for product analytics (spend stays server-side). */
+	const handleFeedback = useCallback(
+		(messageId: string, value: "up" | "down") => {
+			if (!activeId) return;
+			setFeedbackMap((m) => ({ ...m, [messageId]: value }));
+			void setMessageFeedback(activeId, messageId, value);
+			track("elench_message_feedback", {
+				value,
+				context: isOrg ? "org" : "project",
+			});
+		},
+		[activeId, isOrg],
+	);
 
 	// Transport by context. `api` + `prepareBody` are referentially stable within a
 	// mount (the conversation is keyed by ctx/thread upstream, so it remounts cleanly
@@ -363,7 +403,8 @@ export function ElenchConversation({
 							status={status}
 						/>
 					}
-					onFeedback={() => {}}
+					onFeedback={handleFeedback}
+					initialFeedback={feedbackMap}
 					supportHref={supportHref}
 					onSupport={supportHref ? () => router.push(supportHref) : undefined}
 					emptyState={
