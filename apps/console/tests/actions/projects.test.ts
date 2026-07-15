@@ -12,7 +12,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), getServiceDb: vi.fn() }));
+vi.mock("@/lib/db", () => ({
+	withOwnerScope: vi.fn(),
+	withScope: vi.fn(),
+	getServiceDb: vi.fn(),
+}));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
@@ -37,7 +41,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -174,6 +178,10 @@ function setupDb(cfg: {
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
+	// createProject scopes to the ACTIVE ORG via withScope({ownerId, orgId}); wire it the same way.
+	vi.mocked(withScope).mockImplementation(
+		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
+	);
 	return { tx, valuesSpy, setSpy, insertSpy, updateSpy, deleteSpy, executeSpy };
 }
 
@@ -241,6 +249,10 @@ describe("createProject", () => {
 		expect(projVals).toMatchObject({
 			slug: "my-app-2",
 			user_id: "user-1",
+			// Stamped to the ACTIVE ORG (actor.orgId), not the creating user — the whole point of the
+			// fix. Here orgId ("org-1") ≠ userId ("user-1"), the EE case where the old code mis-scoped
+			// the project (org_id = user_id) and hid it from its own creator.
+			org_id: "org-1",
 			region: "us-east-1",
 			cloud_identity_id: "ci-1",
 			iac_version: "1.9.5",
@@ -259,14 +271,16 @@ describe("createProject", () => {
 			region: "us-east-1",
 		});
 
-		// authz hierarchy edge project → org (both the DB row and the FGA mirror)
+		// authz hierarchy edge project → org (both the DB row and the FGA mirror). Parent is the ORG
+		// (actor.orgId), so the org's grants flow down to the project — pointing it at the creating
+		// user would strand the project under a phantom org.
 		expect(valuesFor(valuesSpy, resourceHierarchy)).toEqual({
 			child_type: "project",
 			child_id: "p1",
 			parent_type: "org",
-			parent_id: "user-1",
+			parent_id: "org-1",
 		});
-		expect(mirrorHierarchyEdge).toHaveBeenCalledWith("project", "p1", "org", "user-1");
+		expect(mirrorHierarchyEdge).toHaveBeenCalledWith("project", "p1", "org", "org-1");
 
 		// singleton + collection components are scoped to the new project id
 		expect(valuesFor(valuesSpy, projectNetwork)).toMatchObject({
