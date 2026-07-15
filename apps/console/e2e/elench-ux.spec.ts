@@ -73,6 +73,25 @@ test.describe("Elench composer · @-mention menu", () => {
 		expect(scrolled).toBeGreaterThan(0);
 	});
 
+	test("Enter SENDS a message that contains an @token typed past a mention", async ({
+		page,
+	}) => {
+		// Regression: typing PAST a mention ("edit the @connectors thing") closes the menu, but
+		// Lexical's onClose didn't fire, so the composer's menu-open guard stayed stuck and Enter
+		// inserted a newline instead of sending. Any @-mention mid-message could not be sent.
+		await openElench(page);
+		const editor = composer(page);
+		await editor.click();
+		await editor.pressSequentially("edit the @connectors thing");
+		await page.waitForTimeout(300);
+		await editor.press("Enter");
+		// If it sent, the composer clears; if Enter made a newline, the text is still there.
+		await expect(editor).toHaveText(/^\s*$/, { timeout: 5000 });
+		await expect(
+			page.getByText("edit the @connectors thing", { exact: true }).first(),
+		).toBeVisible();
+	});
+
 	test("↓ then Enter inserts an atomic pill; Backspace deletes it whole", async ({
 		page,
 	}) => {

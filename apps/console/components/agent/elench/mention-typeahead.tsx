@@ -65,12 +65,9 @@ class MentionMenuOption extends MenuOption {
  */
 export function MentionTypeaheadPlugin({
 	boxRef,
-	onOpenChange,
 }: {
 	/** The composer's `relative` wrapper — the menu is portaled into it and opens above it. */
 	boxRef: React.RefObject<HTMLDivElement | null>;
-	/** Reports menu open/closed so the composer's Enter handler never submits over the menu. */
-	onOpenChange?: (open: boolean) => void;
 }) {
 	const [editor] = useLexicalComposerContext();
 	// `null` query = menu closed. Empty string = `@` with no text yet (show everything).
@@ -132,8 +129,6 @@ export function MentionTypeaheadPlugin({
 			// Highlight the first match, so Enter picks it (Discord/Slack). Without this the
 			// typeahead declines Enter and the composer's own handler SENDS the message instead.
 			preselectFirstItem
-			onOpen={() => onOpenChange?.(true)}
-			onClose={() => onOpenChange?.(false)}
 			menuRenderFn={(
 				_anchorElementRef,
 				{ selectedIndex, selectOptionAndCleanUp, setHighlightedIndex },
