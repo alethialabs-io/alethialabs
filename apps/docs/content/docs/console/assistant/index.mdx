@@ -1,0 +1,92 @@
+---
+title: Assistant (Elench)
+description: Elench is the in-console AI — it reads your real infrastructure, answers in grounded dashboards, and proposes changes that the deterministic engine still has to approve.
+---
+
+# Assistant
+
+**Elench** is the AI built into the Console. Ask it about your infrastructure and it answers from your
+*real* state — clusters, jobs, cost, drift — not a generic guess. Ask it to change something and it
+proposes a plan; it never applies on its own.
+
+<Callout type="info">
+  Elench needs an AI provider configured (`ANTHROPIC_API_KEY`). It's on by default on hosted Alethia;
+  self-hosters opt in by setting the key. Without it, the **Ask AI** button is inert and the routes
+  return a "not configured" state.
+</Callout>
+
+## The one rule
+
+> The **deterministic engine is the verdict. The model only proposes.**
+
+Every change Elench suggests is re-run through the [verification engine](/elench) between `tofu plan`
+and `tofu apply`, and a real apply is human-gated. The model has no write path of its own — it drafts,
+you and the gate decide. Everything below is built on that line.
+
+## Opening it
+
+Click **Ask AI** (top-right of any Console page). Elench opens as a **docked panel** beside your work;
+the **expand** control turns it into a full-screen **modal** with a thread rail, a knowledge panel, and
+a side-by-side dashboard grid. **Minimize** docks it back to a panel — the conversation is preserved
+across both.
+
+## How you talk to it
+
+<Cards>
+  <Card title="Workspaces" href="/console/assistant/workspaces">
+    An **Organization** chat for the whole account, or a **Project** workspace scoped to one
+    infrastructure project — its own chats, knowledge, and memory.
+  </Card>
+  <Card title="Knowledge base" href="/console/assistant/knowledge">
+    Pin custom instructions and named knowledge documents so every chat in a scope inherits them —
+    plus the live facts Elench already derives on its own.
+  </Card>
+  <Card title="Dashboards" href="/console/assistant/dashboards">
+    Answers land as widgets on a per-chat grid. Ask for a full dashboard and it composes stat cards
+    and charts from your live data.
+  </Card>
+  <Card title="Artifacts" href="/console/assistant/artifacts">
+    Save a dashboard as a named, reusable artifact your whole org can open, view, and drop into any
+    chat.
+  </Card>
+</Cards>
+
+### Ask vs Auto
+
+A pill on the composer sets what Elench may do with a proposed change:
+
+- **Ask** (default) — it drafts changes and waits; you review and approve each one.
+- **Auto** — it may apply edits for that conversation without stopping to ask each time.
+
+Auto still can't bypass the apply gate — it only removes the per-change confirmation click inside the
+chat.
+
+### Model: Fast vs Thinking
+
+The composer's settings control picks the response style:
+
+- **Fast** — quick answers for everyday questions.
+- **Thinking** — deeper reasoning for complex work.
+
+On the **Max** tier a per-message **Deep reasoning** toggle spends more on a single hard question. The
+underlying model names are an internal detail — the transcript only ever shows *Elench*.
+
+### Tagging resources with `@`
+
+Type `@` to tag a specific resource — a **project**, **cluster**, **job**, **connector**, **runner**,
+**cloud identity**, or **artifact**. A scrollable menu opens above the composer; pick one and it drops
+in as a pill. Tagging tells Elench exactly what you mean, so `@my-cluster` resolves to that cluster's id
+and Elench reaches for the right read tool without guessing.
+
+## What it can see, and can't do
+
+Elench reads through the same **PDP-gated, org-scoped** actions the rest of the Console uses, so it can
+never read across tenants. Its write-capable tools queue **proposals** (plan / deploy) that a human
+accepts; the actual apply runs on a runner behind the [verification gate](/elench/engine-internals).
+Usage is metered against your organization's AI plan, which sets the included monthly allowance.
+
+<Callout type="warn">
+  Elench is grounded, not omniscient. It answers from what your account exposes and from what you pin in
+  its [knowledge base](/console/assistant/knowledge); it does not invent state it can't read, and a
+  wrong suggestion is caught by the gate, not by the model second-guessing itself.
+</Callout>

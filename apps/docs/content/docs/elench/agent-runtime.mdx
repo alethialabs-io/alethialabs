@@ -64,9 +64,17 @@ standing daemons (a long-lived in-context process accrues context rot). An agent
 executor reconstructs context per turn.
 
 Memory lives in `agent_memory`, keyed by `(namespace, path)`. The namespace is the per-tenant prefix
-(`org/{orgId}/project/{projectId}`); the path is validated by the tenant-isolation guard
-`lib/agent/memory-path.ts`, which **rejects every traversal escape** (`..`, absolute paths outside the
-`/memories` mount, backslashes, null bytes) so one tenant can never read another's memory.
+(`org/{orgId}` for the organization, `org/{orgId}/project/{projectId}` for a project); the path is
+validated by the tenant-isolation guard `lib/agent/memory-path.ts`, which **rejects every traversal
+escape** (`..`, absolute paths outside the `/memories` mount, backslashes, null bytes) so one tenant can
+never read another's memory.
+
+Alongside memory, a scope carries **pinned context** — custom instructions and named knowledge documents
+— in `agent_context`, one row per `(org_id, project_id)` (the org row keyed with a null project). Its
+`(organization, project)` shape mirrors the memory namespace 1:1. On each turn the executor layers the
+org context under the project's and appends live, auto-derived project facts, all into the cached system
+prompt — so a conversation is grounded before the first tool call. This is the same pinned knowledge that
+users edit in the [Assistant's knowledge panel](/console/assistant/knowledge).
 
 ## The stateless executor
 
