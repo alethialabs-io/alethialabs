@@ -1,0 +1,70 @@
+---
+title: An AI that reads your infrastructure — and still has to ask permission
+description: Elench is the assistant inside Alethia. It answers from your real clusters, jobs, and cost, learns your conventions per project, and proposes changes — but the deterministic engine is still the one that decides.
+date: 2026-07-15
+author: Alethia Labs
+tags: [elench, ai, product, infrastructure]
+excerpt: Elench answers from your real infrastructure, learns your conventions per project, and proposes changes — but a deterministic engine, not the model, is still the one that decides.
+---
+
+Most "AI for infrastructure" is a chat box bolted onto a docs search. You ask a question, it
+hallucinates a plausible answer about *some* cluster, and if you're unlucky it offers to run a command.
+We wanted the opposite: an assistant that only ever speaks from **your** state, that learns **your**
+conventions, and that is structurally incapable of applying a change on its own.
+
+That assistant is **Elench**, and it's built into the Console. Here's what it is.
+
+## It answers from your real state
+
+Open Elench with **Ask AI** and ask *"Are my connectors healthy?"* or *"Build a dashboard of my
+infrastructure."* It doesn't guess — it calls the same org-scoped, permission-checked reads the rest of
+the Console uses, and it renders the result as **widgets**: stat cards, tables, charts, pinned onto a
+grid next to the chat. Ask for a whole dashboard and it composes one from live data. Click an empty tile
+and describe what goes there, and it fills exactly that tile.
+
+Nothing it shows you is invented. If it can't read something, it says so.
+
+## It learns your project — the way a good teammate would
+
+This is the part borrowed, unashamedly, from how modern AI "projects" work. Elench has two kinds of
+**workspace**:
+
+- an **Organization** chat — the general assistant for your whole account, and
+- a **Project** workspace — scoped to one infrastructure project.
+
+Step into a project and Elench changes with you: it sees only that project's chats, and it picks up that
+project's **knowledge base** — the custom instructions and named documents you've pinned. *"This is
+production — always require approval before an apply. We drain nodes first. On-call is @platform."* That
+context rides every message in the project, layered under your organization-wide policy. A project's
+knowledge never leaks into another project, or into the general chat.
+
+You don't have to write down what Elench can already see. Inside a project it also grounds itself on the
+live facts it derives on its own — the project's environments and their status, its recent jobs and their
+outcomes — so the first answer is already informed, before it calls a single tool. The knowledge panel
+shows you exactly that split: *here's what I already know; here's the space for what only you can tell
+me.*
+
+## Save what's useful
+
+A dashboard lives in one conversation. Save it as an **artifact** and it becomes a named, org-shared board
+your whole team can reopen, view, and drop into any chat — and because each widget stays tied to its
+source, a saved board refreshes against live data when you open it. It's a living view, not a screenshot.
+
+## The line that makes it safe
+
+Here's the part we won't compromise on:
+
+> **The deterministic engine is the verdict. The model only proposes.**
+
+Elench can draft a change, but it has **no write path of its own**. A proposed change is re-run through
+[Alethia's verification gate](/docs/elench) between `tofu plan` and `tofu apply`, and a real apply is
+human-gated. The model is never the thing that decides your infrastructure is safe to
+change — a pure, reproducible engine is, and a person clicks the button. Turning on "Auto" mode removes
+the per-change confirmation *inside the chat*; it does not, and cannot, bypass that gate.
+
+That's the whole design in a sentence: **an assistant grounded enough to be useful, and constrained
+enough to trust.** It reads everything it's allowed to, learns what you teach it, and proposes freely —
+because something that isn't a language model is holding the line on what actually ships.
+
+Elench is on now for every Alethia account with AI configured. Open the Console, click **Ask AI**, and
+ask it about your infrastructure.

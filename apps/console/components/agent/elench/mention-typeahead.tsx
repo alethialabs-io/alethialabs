@@ -29,7 +29,7 @@ import {
 	ScrollText,
 	Server,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { MentionResult, MentionType } from "@/lib/ai/mentions";
 import { cn } from "@repo/ui/utils";
@@ -54,10 +54,21 @@ class MentionMenuOption extends MenuOption {
 }
 
 /**
- * Registers the `@` typeahead on the enclosing Lexical editor. Renders nothing itself except the
- * floating menu (via the plugin's `menuRenderFn`).
+ * Registers the `@` typeahead on the enclosing Lexical editor.
+ *
+ * The menu is deliberately NOT rendered into Lexical's own anchor element: that anchor is
+ * positioned **at the caret**, so a menu placed relative to it sits directly on top of the text
+ * you are typing (it covered the `@` itself), and its scroll container was trapped inside that
+ * zero-size anchor so the list could not scroll at all. Instead we portal into the composer's
+ * own wrapper (`boxRef`) and open **upward from the top edge of the composer box** — which is
+ * what the pre-Lexical popover did, and what Discord does.
  */
-export function MentionTypeaheadPlugin() {
+export function MentionTypeaheadPlugin({
+	boxRef,
+}: {
+	/** The composer's `relative` wrapper — the menu is portaled into it and opens above it. */
+	boxRef: React.RefObject<HTMLDivElement | null>;
+}) {
 	const [editor] = useLexicalComposerContext();
 	// `null` query = menu closed. Empty string = `@` with no text yet (show everything).
 	const [query, setQuery] = useState<string | null>(null);
@@ -72,6 +83,21 @@ export function MentionTypeaheadPlugin() {
 
 	// `@` preceded by whitespace/start; allow an empty query so the menu opens on `@` alone.
 	const triggerFn = useBasicTypeaheadTriggerMatch("@", { minLength: 0 });
+
+	// The menu opens upward, so it can only be as tall as the gap above the composer — on the
+	// empty landing the composer sits mid-screen and a fixed max-height ran off the top of the
+	// viewport (the header was clipped). Measure the real space and cap to it.
+	const [maxHeight, setMaxHeight] = useState(320);
+	useEffect(() => {
+		if (query === null) return;
+		const el = boxRef.current;
+		if (!el) return;
+		const measure = () =>
+			setMaxHeight(Math.max(160, el.getBoundingClientRect().top - 16));
+		measure();
+		window.addEventListener("resize", measure);
+		return () => window.removeEventListener("resize", measure);
+	}, [query, boxRef]);
 
 	const onSelect = useCallback(
 		(
@@ -100,15 +126,29 @@ export function MentionTypeaheadPlugin() {
 			onSelectOption={onSelect}
 			triggerFn={triggerFn}
 			commandPriority={COMMAND_PRIORITY_NORMAL}
-			menuRenderFn={(anchorElementRef, { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }) => {
-				if (!anchorElementRef.current) return null;
+			// Highlight the first match, so Enter picks it (Discord/Slack). Without this the
+			// typeahead declines Enter and the composer's own handler SENDS the message instead.
+			preselectFirstItem
+			menuRenderFn={(
+				_anchorElementRef,
+				{ selectedIndex, selectOptionAndCleanUp, setHighlightedIndex },
+			) => {
+				// Portal into the COMPOSER BOX, not Lexical's caret anchor (see the note above).
+				if (!boxRef.current) return null;
 				return createPortal(
-					<div className="absolute bottom-2 left-0 z-50 w-[320px] max-w-[80vw] border border-border bg-popover shadow-md">
-						<div className="vx-eyebrow flex items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-[9px]">
+					<div
+						data-testid="mention-menu"
+						style={{ maxHeight }}
+						className="absolute bottom-full left-0 z-50 mb-2 flex w-full flex-col border border-border bg-popover shadow-md"
+					>
+						<div className="vx-eyebrow flex flex-none items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-[9px]">
 							Tag a resource
 							{loading && <Loader2 className="h-3 w-3 animate-spin" />}
 						</div>
-						<ul className="max-h-64 overflow-y-auto py-1">
+						<ul
+							data-testid="mention-menu-list"
+							className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
+						>
 							{options.length === 0 && !loading && (
 								<li className="px-3 py-2 text-xs text-muted-foreground">
 									No matching resources.
@@ -116,16 +156,24 @@ export function MentionTypeaheadPlugin() {
 							)}
 							{options.map((option, i) => {
 								const Icon = TYPE_ICON[option.result.type];
+								const active = i === selectedIndex;
 								return (
 									<li key={option.key}>
 										<button
 											type="button"
-											ref={(el) => option.setRefElement(el)}
+											data-active={active}
+											ref={(el) => {
+												option.setRefElement(el);
+												// A custom menuRenderFn owns keyboard scrolling: keep the
+												// highlighted row in view as ↑/↓ walk past the fold.
+												if (el && active)
+													el.scrollIntoView({ block: "nearest" });
+											}}
 											onMouseEnter={() => setHighlightedIndex(i)}
 											onClick={() => selectOptionAndCleanUp(option)}
 											className={cn(
 												"flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
-												i === selectedIndex ? "bg-muted" : "hover:bg-muted",
+												active ? "bg-muted" : "hover:bg-muted",
 											)}
 										>
 											<Icon className="h-4 w-4 flex-none text-muted-foreground" />
@@ -143,7 +191,7 @@ export function MentionTypeaheadPlugin() {
 							})}
 						</ul>
 					</div>,
-					anchorElementRef.current,
+					boxRef.current,
 				);
 			}}
 		/>

@@ -53,6 +53,15 @@ export default defineConfig({
 			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
 		},
 
+		// Elench SURFACE regressions — menu geometry, rail structure, artifact side-effects: the
+		// class of defect a type-check can never see, and the reason this suite exists at all.
+		{
+			name: "elench-ux",
+			testMatch: /elench-ux\.spec\.ts/,
+			dependencies: ["setup"],
+			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+		},
+
 		// The Elench AI journeys against a REAL model (needs ANTHROPIC_API_KEY). Loose,
 		// behavior-level assertions — never merge-gating; run by the nightly workflow.
 		{
@@ -81,6 +90,7 @@ export default defineConfig({
 				/fixtures\/auth\.setup\.ts/,
 				/hero-happy-path\.spec\.ts/,
 				/elench-ai\.spec\.ts/,
+				/elench-ux\.spec\.ts/,
 				/elench-live\.spec\.ts/,
 				/architecture-canvas\.spec\.ts/,
 			],

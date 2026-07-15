@@ -22,9 +22,11 @@ import type {
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { DriftDetail } from "@/types/jsonb.types";
-import type {
-	ComponentServerStatus,
-	EnvironmentStatus,
+import {
+	externalStatusKey,
+	type ComponentServerStatus,
+	type EnvironmentStatus,
+	type IacEnvironment,
 } from "./component-status";
 import { useEnvironmentStatus } from "./environment-status-context";
 
@@ -112,8 +114,12 @@ const ARRAY_SCHEMA_KIND: Record<string, NodeKind> = {
 /**
  * Stable per-node key: singletons by kind, array items by `kind:name` (matches the component
  * tables' `(project, env, name)` uniqueness). Phase 2 uses this to join resolved server status.
+ *
+ * An EXTERNAL card (one kind's worth of a BYO IaC module) has no component row and no `name`, so it
+ * is keyed by its group key — matching `externalStatusKey()` on the server.
  */
 export function nodeStatusKey(node: CanvasNode): string {
+	if (node.data.kind === "external") return externalStatusKey(node.data.config.key);
 	const def = NODE_REGISTRY[node.data.kind];
 	if (def.cardinality === "singleton") return node.data.kind;
 	const name = configName(node.data) ?? "";
@@ -301,6 +307,87 @@ export function resolveNodeStatus(
 }
 
 /**
+ * THE EXTERNAL LADDER — the same shape as the one above, for a card the design does not own.
+ *
+ * A BYO IaC module has NO per-resource status anywhere: no component rows are written for it, and
+ * until W8 `project_iac_sources.status` was a column nothing ever wrote. So this state is DERIVED,
+ * from the three things the server actually knows:
+ *
+ *   • the safety gate's verdict — a rejected module will not provision, whatever else is true;
+ *   • whether a deploy ever applied this module (`deployed_commit_sha`);
+ *   • what the LAST PLAN would still do to these particular resources (their plan actions).
+ *
+ * The order mirrors the component ladder, and for the same reason: a card has several truths at
+ * once, and picking one is the whole contract.
+ *
+ *   1  failed          — the module's own apply broke
+ *   2  in flight       — a job is changing it right now
+ *   3  needs-setup     — the safety gate rejected it; the next deploy will not run
+ *   4  not deployed    — never applied
+ *   5  update pending  — applied, but the last plan would still change these resources
+ *   6  live            — applied, and the last plan says no-op
+ *
+ * Drift and cost stay OVERLAYS — they ride on whatever state this returns, exactly as they do for a
+ * component node. Pure, so it is unit-testable without React or a database.
+ */
+export function resolveExternalStatus(
+	config: { members: { action?: string }[]; source: "plan" | "scan" },
+	source: IacEnvironment["source"],
+	server: ComponentServerStatus | undefined,
+	env: Pick<EnvironmentStatus, "activeJob">,
+): NodeStatus {
+	const base = {
+		drift: server?.drift ?? [],
+		outputs: [],
+		monthlyCost: server?.monthlyCost ?? null,
+		deployed: !!source.deployedCommitSha,
+	};
+
+	// 1 — the module's apply broke.
+	if (server?.lifecycle === "FAILED") {
+		return { ...base, state: "failed", message: server.message ?? undefined };
+	}
+
+	// 2 — mid-change.
+	if (server?.lifecycle === "CREATING") return { ...base, state: "applying" };
+	if (server?.lifecycle === "UPDATING") return { ...base, state: "updating" };
+	if (server?.lifecycle === "DESTROYING") return { ...base, state: "destroying" };
+	if (env.activeJob && !source.deployedCommitSha) {
+		return { ...base, state: "queued", deployed: false };
+	}
+
+	// 3 — the safety gate rejected the module (or it has never been scanned, which is NOT a pass).
+	// Fail-closed: this is the same verdict that blocks provisioning server-side.
+	if (source.scanOk !== true) {
+		return {
+			...base,
+			state: "needs-setup",
+			message:
+				source.scanOk === false
+					? "The IaC safety scan rejected this module — it will not provision."
+					: "This module has not been scanned yet.",
+		};
+	}
+
+	// 4 — never applied.
+	if (!source.deployedCommitSha) {
+		return { ...base, state: "not-deployed", deployed: false };
+	}
+
+	// 5 — applied, but the last plan would still change these resources. Only a PLAN can tell us:
+	// the static scan carries no actions, and inventing "no-op" would read as a confident "live".
+	if (
+		config.source === "plan" &&
+		config.members.some((m) => m.action && m.action !== "no-op")
+	) {
+		return { ...base, state: "update-pending" };
+	}
+
+	// 6 — nominal.
+	return { ...base, state: "live" };
+}
+
+/**
  * A node's resolved status: design readiness merged with the environment's server truth through the
  * precedence ladder above. Falls back to pure readiness when there's no environment status yet (the
  * create flow, or while the first fetch is in flight), so the canvas never blocks on the network.
@@ -320,6 +407,16 @@ export function useNodeStatus(id: string): NodeStatus {
 				deployed: false,
 			};
 		const key = nodeStatusKey(node);
+		// External cards belong to a module the design doesn't own, so the design-readiness half of
+		// the ladder is meaningless for them — they resolve through their own.
+		if (node.data.kind === "external" && env.iac) {
+			return resolveExternalStatus(
+				node.data.config,
+				env.iac.source,
+				env.components[key],
+				env,
+			);
+		}
 		return resolveNodeStatus(readiness, env.components[key], env, {
 			isCluster: node.data.kind === "cluster",
 		});

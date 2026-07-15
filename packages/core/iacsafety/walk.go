@@ -39,6 +39,11 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 			if len(blk.Labels) > 0 {
 				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
+			// Only a `resource` provisions anything, so only a resource enters the
+			// architecture inventory — an `ephemeral` block is gated, not drawn.
+			if blk.Type == "resource" && len(blk.Labels) > 1 {
+				s.recordResource(blk.Labels[0], blk.Labels[1], moduleDir)
+			}
 		case "module":
 			s.walkModuleBlock(blk, rel, moduleDir)
 		case "provider":
@@ -172,7 +177,11 @@ func (s *scanner) walkModuleBlock(blk *hclsyntax.Block, rel, moduleDir string) {
 			"module source is not a static string literal and cannot be verified")
 		return
 	}
-	s.recordModuleSource(v.AsString(), rel, attr.SrcRange.Start.Line, moduleDir)
+	callName := ""
+	if len(blk.Labels) > 0 {
+		callName = blk.Labels[0]
+	}
+	s.recordModuleSource(v.AsString(), rel, attr.SrcRange.Start.Line, moduleDir, callName)
 }
 
 // sweepBody recursively sweeps a syntax body, at any nesting depth, for:

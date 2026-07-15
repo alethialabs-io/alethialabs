@@ -31,10 +31,32 @@ export function hasServerSideHealth(provider: string): boolean {
 	return SERVER_SIDE.has(provider);
 }
 
-/** Probes a connection's health server-side, or null for an unknown provider. */
+/** Token clouds whose probe needs a token Alethia actually holds. */
+const TOKEN_CLOUDS = new Set(["digitalocean", "hetzner", "civo"]);
+
+/**
+ * Whether THIS identity can be probed — provider-level support plus the credentials to do it.
+ *
+ * A *self-managed* token cloud stores no token in Alethia (the customer holds it), so there is
+ * nothing to probe. The provider-level check alone said yes, so the sweep probed it anyway, got
+ * "No API token is stored for this connection." back, and flipped a perfectly good connection to
+ * `disconnected` on every 10-minute tick.
+ */
+export function canProbeHealth(
+	identity: Pick<CloudIdentity, "provider" | "credentials">,
+): boolean {
+	if (!hasServerSideHealth(identity.provider)) return false;
+	if (TOKEN_CLOUDS.has(identity.provider) && !identity.credentials.token) {
+		return false;
+	}
+	return true;
+}
+
+/** Probes a connection's health server-side, or null when there is nothing we can probe. */
 export async function probeHealth(
 	identity: Pick<CloudIdentity, "provider" | "credentials">,
 ): Promise<HealthResult | null> {
+	if (!canProbeHealth(identity)) return null;
 	switch (identity.provider) {
 		case "aws":
 			return probeAwsHealth(identity);

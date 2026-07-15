@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Edge, Node } from "@xyflow/react";
+import type { IacMember } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { VerifyReport } from "@/types/jsonb.types";
@@ -26,7 +27,8 @@ export type NodeKind =
 	| "registry"
 	| "repositories"
 	| "chart"
-	| "addon";
+	| "addon"
+	| "external";
 
 /**
  * A bring-your-own Helm chart node's config. Unlike every other kind, this is NOT a
@@ -51,6 +53,29 @@ export type ByoChartNodeConfig = {
 	scanStatus?: string;
 	/** The elench verify.Report over the chart's rendered manifests (null until scanned). */
 	scanReport?: VerifyReport | null;
+};
+
+/**
+ * One card of a bring-your-own IaC module: every resource of one kind, in one Terraform
+ * module. Out-of-band like `chart`/`addon` — derived server-side from the module's IAC_SCAN
+ * inventory (or, once planned, its plan's `resource_changes`), never written by `graphToForm`
+ * and never in the Deploy diff. Read-only: Alethia plans, prices, drifts and audits these,
+ * but does not own their definition, which is exactly what the dashed EXTERNAL rule says.
+ *
+ * The shape mirrors `IacGroup` (lib/canvas/iac-inventory.ts) — that module is the source of
+ * truth for how resources become groups.
+ */
+export type ExternalNodeConfig = {
+	/** `${kind ?? "other"}|${module}` — stable across refetches. */
+	key: string;
+	/** The canvas kind this group reads as; null → the honest `Other` bucket. */
+	mappedKind: NodeKind | null;
+	/** Module path prefix — "" for the root module, else "module.vpc". */
+	module: string;
+	/** Whether the addresses are a plan's (exact) or the static scan's (declared). */
+	source: "plan" | "scan";
+	/** The group's resources, sorted by address. */
+	members: IacMember[];
 };
 
 /**
@@ -81,6 +106,8 @@ export type NodeConfigMap = {
 	chart: ByoChartNodeConfig;
 	// Out-of-band (project_addons) — a marketplace add-on the cluster comes up with.
 	addon: AddonNodeConfig;
+	// Out-of-band (project_iac_sources + the last plan) — see ExternalNodeConfig.
+	external: ExternalNodeConfig;
 };
 
 /**

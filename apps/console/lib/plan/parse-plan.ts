@@ -233,7 +233,10 @@ const planJsonSchema = z
 	})
 	.catch({ resource_changes: [] });
 
-function resolveAction(
+/** The plan action a resource_changes entry resolves to. Exported so the BYO-IaC inventory
+ * (lib/canvas/iac-inventory.ts) resolves actions through the SAME ladder rather than
+ * growing a second, drifting copy of it. */
+export function resolveAction(
 	actions: string[],
 ): PlanResource["action"] {
 	if (!actions || actions.length === 0) return "no-op";

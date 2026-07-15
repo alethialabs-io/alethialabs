@@ -14,7 +14,7 @@ import {
 	registerLoop,
 	superviseLoop,
 } from "@/lib/observability/heartbeats";
-import { hasServerSideHealth, probeHealth } from "./health";
+import { canProbeHealth, probeHealth } from "./health";
 import {
 	gcRemovedInventory,
 	hasServerSideInventory,
@@ -125,9 +125,12 @@ export async function runConnectionSweep(): Promise<{
 		const slice = due.slice(i, i + CONCURRENCY);
 		await Promise.all(
 			slice.map(async (identity) => {
-				// No server-side path → nothing to probe (don't claim, so we never stamp last_tested_at
-				// on a self-managed connection we can't actually test).
-				if (!hasServerSideHealth(identity.provider)) return;
+				// Nothing we can probe → skip (don't claim, so we never stamp last_tested_at on a
+				// connection we can't actually test). Credential-aware: a SELF-MANAGED token cloud holds
+				// its token customer-side, and the old provider-only check probed it anyway — the probe
+				// answered "No API token is stored" and flipped a healthy connection to `disconnected`
+				// on every tick.
+				if (!canProbeHealth(identity)) return;
 				// Claim before probing: only the replica that flips last_tested_at proceeds; others skip
 				// this connection this tick (no duplicate cloud API calls across replicas).
 				if (!(await claimDueConnection(identity.id))) return;

@@ -444,6 +444,73 @@ sweep_network() {
 #    forwarding-rules, reserved addresses). Non-billable residue (networks/subnets/routers/firewall/
 #    backend-services/target-pools) is a NOTICE — it ages out or points at an upstream billable
 #    already caught above. ──
+# ── Managed services (the non-compute kinds a max-config project provisions). The original sweep
+#    covered only GKE/instances/disks/LBs/network — so a killed destroy on a full project left
+#    Cloud SQL and Memorystore RUNNING AND BILLING while verify_swept still reported "no billable
+#    resources remain". Observed for real: a Firestore database survived a "successful" destroy
+#    (provider deletion_policy defaults to ABANDON) and the sweeper never noticed.
+#    Every list below is label-filtered, with the `e2e-<ENV>-` name prefix as the fallback for the
+#    services that carry no labels (Firestore). Never project-wide. ──
+
+# BILLABLE managed services
+list_sql_instances() {
+	assert_scope
+	gc sql instances list --filter="name~^e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+list_redis_instances() {
+	assert_scope
+	gc redis instances list --region "${REGION}" \
+		--filter="labels.alethia_project-id=${PID_LABEL} OR name~^e2e-${ENV}-" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+list_buckets() {
+	assert_scope
+	gc storage buckets list --filter="name~^e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+list_artifact_repos() {
+	assert_scope
+	gc artifacts repositories list --location "${REGION}" \
+		--filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+# NON-BILLABLE residue (still reclaimed — a stale one blocks re-creating the same name)
+list_firestore_dbs() {
+	assert_scope
+	gc firestore databases list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+list_pubsub_topics() {
+	assert_scope
+	gc pubsub topics list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+list_secrets() {
+	assert_scope
+	gc secrets list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+list_dns_zones() {
+	assert_scope
+	gc dns managed-zones list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+}
+
+sweep_managed_services() {
+	assert_scope
+	local n
+	echo "  · Cloud SQL:"
+	for n in $(list_sql_instances); do retry_delete "sql instance ${n}" gc sql instances delete "${n}" --quiet; done
+	echo "  · Memorystore:"
+	for n in $(list_redis_instances); do retry_delete "redis ${n}" gc redis instances delete "${n}" --region "${REGION}" --quiet; done
+	echo "  · buckets:"
+	for n in $(list_buckets); do retry_delete "bucket ${n}" gc storage rm -r "gs://${n}" --quiet; done
+	echo "  · artifact repos:"
+	for n in $(list_artifact_repos); do retry_delete "artifact repo ${n}" gc artifacts repositories delete "${n}" --location "${REGION}" --quiet; done
+	echo "  · Firestore:"
+	for n in $(list_firestore_dbs); do retry_delete "firestore ${n}" gc firestore databases delete --database="${n##*/}" --quiet; done
+	echo "  · Pub/Sub:"
+	for n in $(list_pubsub_topics); do retry_delete "topic ${n}" gc pubsub topics delete "${n##*/}" --quiet; done
+	echo "  · secrets:"
+	for n in $(list_secrets); do retry_delete "secret ${n}" gc secrets delete "${n##*/}" --quiet; done
+	echo "  · DNS zones:"
+	for n in $(list_dns_zones); do retry_delete "dns zone ${n}" gc dns managed-zones delete "${n}" --quiet; done
+}
+
 verify_swept() {
 	assert_scope
 	local leaks="" residue="" x
@@ -454,6 +521,11 @@ verify_swept() {
 	x="$(list_pvc_disks | awk '{print $1}')"; [ -n "$x" ] && leaks="${leaks}pvc-disk: $(join "$x")\n"
 	x="$(list_forwarding_rules | awk '{print $1}')"; [ -n "$x" ] && leaks="${leaks}forwarding-rule: $(join "$x")\n"
 	x="$(list_addresses | awk '{print $1}')"; [ -n "$x" ] && leaks="${leaks}address: $(join "$x")\n"
+	# managed services — Cloud SQL and Memorystore in particular BILL, and were previously invisible
+	x="$(list_sql_instances)"; [ -n "$x" ] && leaks="${leaks}cloud-sql: $(join "$x")\n"
+	x="$(list_redis_instances)"; [ -n "$x" ] && leaks="${leaks}memorystore: $(join "$x")\n"
+	x="$(list_buckets)"; [ -n "$x" ] && leaks="${leaks}bucket: $(join "$x")\n"
+	x="$(list_artifact_repos)"; [ -n "$x" ] && leaks="${leaks}artifact-repo: $(join "$x")\n"
 
 	if [ -n "$leaks" ]; then
 		echo "  ✗ billable resources still alive:" >&2
@@ -462,6 +534,10 @@ verify_swept() {
 		return 1
 	fi
 
+	x="$(list_firestore_dbs)"; [ -n "$x" ] && residue="${residue}firestore: $(join "$x")\n"
+	x="$(list_pubsub_topics)"; [ -n "$x" ] && residue="${residue}pubsub-topic: $(join "$x")\n"
+	x="$(list_secrets)"; [ -n "$x" ] && residue="${residue}secret: $(join "$x")\n"
+	x="$(list_dns_zones)"; [ -n "$x" ] && residue="${residue}dns-zone: $(join "$x")\n"
 	x="$(list_backend_services | awk '{print $1}')"; [ -n "$x" ] && residue="${residue}backend-service: $(join "$x")\n"
 	x="$(list_target_pools | awk '{print $1}')"; [ -n "$x" ] && residue="${residue}target-pool: $(join "$x")\n"
 	x="$(list_firewalls)"; [ -n "$x" ] && residue="${residue}firewall: $(join "$x")\n"
@@ -491,6 +567,7 @@ sweep_env() {
 	sweep_gke
 	sweep_instances
 	sweep_pvc_disks
+	sweep_managed_services
 	sweep_network
 	[ "$DRY_RUN" = "1" ] && return 0
 	verify_swept
@@ -558,6 +635,7 @@ sweep_load_balancers
 sweep_gke
 sweep_instances
 sweep_pvc_disks
+sweep_managed_services
 sweep_network
 
 if [ "$DRY_RUN" = "1" ]; then

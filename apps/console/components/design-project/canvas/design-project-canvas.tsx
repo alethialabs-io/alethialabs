@@ -28,8 +28,9 @@ import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-char
 import { getProjectByoCharts } from "@/app/server/actions/byo-charts";
 import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
 import { IacSourceCanvasProvider } from "@/components/design-project/byo/iac-source-canvas-context";
-import { IacSourceOverlay } from "@/components/design-project/byo/iac-source-overlay";
+import { IacNode } from "@/components/design-project/byo/iac-node";
 import { getIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
+import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { qk } from "@/lib/query/keys";
 import { Button } from "@repo/ui/button";
@@ -71,7 +72,7 @@ interface DesignProjectCanvasProps {
 	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
 	byoHelmEnabled?: boolean;
 	/** Whether bring-your-own IaC is enabled on this instance (server flag). Gates the ⌘K "Bring
-	 * your own IaC" entry + the external-IaC overlay. Server actions enforce the real gate. */
+	 * your own IaC" entry + the module's source card. Server actions enforce the real gate. */
 	byoIacEnabled?: boolean;
 }
 
@@ -108,8 +109,10 @@ function CanvasInner({
 	const [addonSheetOpen, setAddonSheetOpen] = useState(false);
 	const [byoDialogOpen, setByoDialogOpen] = useState(false);
 	const [iacDialogOpen, setIacDialogOpen] = useState(false);
-	// The environment's attached BYO IaC source (edit mode + flag on). When present + enabled it
-	// takes over the canvas (replace mode) — see IacSourceOverlay.
+	// The environment's attached BYO IaC source (edit mode + flag on) — the module's provenance:
+	// repo · ref · pinned commit · scan verdict, with detach/rescan. Its RESOURCES are separate: they
+	// are external nodes on the board (see the setIacNodes effect below), because a customer who
+	// brought an entire infrastructure should see an architecture, not one card over a dimmed graph.
 	const [iacSource, setIacSource] = useState<IacSourceState | null>(null);
 	const openConfigureAddon = useCallback((item: AddonMarketItem) => {
 		setConfiguringAddon(item);
@@ -125,6 +128,10 @@ function CanvasInner({
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
 	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
+	const setIacNodes = useCanvasStore((s) => s.setIacNodes);
+	// The environment's server truth (provided by the project shell) — it now also carries the BYO
+	// IaC module and the architecture derived from it.
+	const envStatus = useEnvironmentStatus();
 	// The project's effective cloud provider — drives the add-on sheet's requirement hints.
 	const effectiveProvider = useCanvasStore((s) =>
 		s.getEffectiveProvider(PROJECT_NODE_ID),
@@ -167,6 +174,15 @@ function CanvasInner({
 		);
 	}, [addonsQuery.data, setAddonNodes]);
 
+	// The BYO IaC module's RESOURCES, as read-only external cards. They ride on the environment
+	// status — the one round-trip the board already makes — so a card and its status, cost and drift
+	// can never disagree about which plan they came from. Empty for a template env, which clears
+	// them. (getEnvironmentComponentStatus derives the groups: the last successful PLAN's exact,
+	// expanded addresses when there is one, else the IAC_SCAN's declared skeleton.)
+	useEffect(() => {
+		setIacNodes(envStatus.iac?.groups ?? []);
+	}, [envStatus.iac, setIacNodes]);
+
 	// BYO IaC source is single-per-env, loaded out-of-band from getIacSource (and re-loaded after
 	// attach/detach/rescan). Only in edit mode with the feature on.
 	const refreshIacSource = useCallback(() => {
@@ -174,7 +190,7 @@ function CanvasInner({
 		void getIacSource(projectId, environmentId ?? null)
 			.then(setIacSource)
 			.catch(() => {
-				/* best-effort — a fetch failure just leaves the canvas without the IaC overlay */
+				/* best-effort — a fetch failure just leaves the canvas without the source card */
 			});
 	}, [projectId, environmentId, byoIacEnabled]);
 
@@ -183,8 +199,14 @@ function CanvasInner({
 	}, [refreshIacSource]);
 
 	// While an ENABLED IaC source governs this env, the component graph isn't the source of truth —
-	// disable the Add palette + ⌘K component-add entirely (the overlay states why).
-	const iacGoverned = Boolean(iacSource?.enabled);
+	// so there is nothing to add to it: the Add palette and ⌘K component-add are disabled.
+	//
+	// This reads the SERVER's answer (the environment status), not the flag-gated `iacSource` fetch.
+	// Deriving it from `iacSource` meant an instance with the BYO-IaC flag off never learned the env
+	// was governed — so it happily offered to add components to an environment whose design is inert
+	// and will never be applied, while the module's own cards sat right there on the board. Whether
+	// the env IS governed is a fact about the environment; the flag only gates ATTACHING a new one.
+	const iacGoverned = envStatus.iac !== null;
 
 	// Repo-first on-ramp: the new-project "Bring your own Helm chart" path lands here with
 	// ?attachChart=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
@@ -372,9 +394,16 @@ function CanvasInner({
 				<CanvasFlow />
 			</motion.div>
 
-			{/* External-IaC takeover — dims the (inert) component graph + centers the source card when a
-			    BYO IaC source governs this environment. Renders null otherwise. */}
-			<IacSourceOverlay />
+			{/* Bottom-right: the BYO IaC module's PROVENANCE — repo · ref · the commit the scan pinned ·
+			    the scan verdict, with detach/rescan. It is not part of the architecture; it's where the
+			    architecture came from. The module's resources are real cards on the board above.
+			    (This used to be a full-canvas takeover that dimmed the graph and showed this one card.
+			    A customer who brought an entire infrastructure was shown a single box.) */}
+			{iacGoverned && iacSource && (
+				<div className="absolute bottom-3 right-3 z-10">
+					<IacNode source={iacSource} />
+				</div>
+			)}
 
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />

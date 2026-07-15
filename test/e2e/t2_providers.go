@@ -382,6 +382,74 @@ func t2RequireCostShape(provider string) (fatal bool, msg string) {
 	return t2RequireIsHard(), msg
 }
 
+// Heavy-surface node floor: the FULL surface (all 19 add-ons — 7 of them heavy: kube-prometheus-stack,
+// loki, tempo, vault, harbor, minio, velero — plus the 11 kinds' controllers/CSI) will not schedule on
+// the cheapest single small node. These are the minimums below which pods sit Pending and the run
+// wastes ~20 min of apply before failing. Deliberately conservative — enough to fit the heavy set, not
+// a production sizing. Sized against fixtures/cluster_json.heavy.aws.json.
+const (
+	heavyMinNodes = 3
+	heavyMinVCPU  = 12.0 // total across the pool (desired_size × per-node vCPU)
+	heavyMinMemGB = 48.0 // total across the pool
+)
+
+// t2RequireMaxConfigNodeShape fails fast, BEFORE any provisioning, when the full heavy surface
+// (ALETHIA_E2E_MAX_CONFIG=1 AND ALETHIA_E2E_ALL_ADDONS=1) is requested but the resolved cluster shape
+// is too small to schedule it. Reads the `cluster` block AFTER the ALETHIA_E2E_CLUSTER_JSON merge, so
+// it validates exactly what will provision. When the shape declares a cloud-indifferent node_size
+// (vcpu/memory_gb) it enforces a total-capacity floor; otherwise it enforces the node-count floor and
+// requires concrete instance_types (a heavy run on a small single node is the mistake this catches —
+// e.g. forgetting to swap the cheapest cost-shape for the heavy profile). A no-op unless BOTH heavy
+// dimensions are on. Off CI it warns; under ALETHIA_E2E_T2_REQUIRE it is a HARD FAIL. Returns
+// (fatal, msg) mirroring t2RequireCostShape.
+func t2RequireMaxConfigNodeShape(snapshot map[string]any) (fatal bool, msg string) {
+	if !(AllAddOnsEnabled() && MaxConfigEnabled()) {
+		return false, ""
+	}
+	cluster, _ := snapshot["cluster"].(map[string]any)
+	if cluster == nil {
+		return t2RequireIsHard(), "max-config + all-add-ons requested but the snapshot has no cluster block — set a heavy ALETHIA_E2E_CLUSTER_JSON (see fixtures/cluster_json.heavy.aws.json)"
+	}
+	desired, _ := t2Num(cluster["node_desired_size"])
+	if int(desired) < heavyMinNodes {
+		return t2RequireIsHard(), fmt.Sprintf(
+			"max-config + all-add-ons need >= %d nodes for the 7 heavy charts + 11 kinds' controllers, but cluster.node_desired_size=%v — pin the heavy profile (fixtures/cluster_json.heavy.aws.json) via ALETHIA_E2E_CLUSTER_JSON",
+			heavyMinNodes, cluster["node_desired_size"])
+	}
+	if ns, ok := cluster["node_size"].(map[string]any); ok {
+		vcpu, _ := t2Num(ns["vcpu"])
+		mem, _ := t2Num(ns["memory_gb"])
+		totalVCPU := vcpu * desired
+		totalMem := mem * desired
+		if totalVCPU < heavyMinVCPU || totalMem < heavyMinMemGB {
+			return t2RequireIsHard(), fmt.Sprintf(
+				"heavy surface needs >= %.0f total vCPU and >= %.0f GB across the pool; node_size %.0fvCPU/%.0fGB × %d = %.0fvCPU/%.0fGB — size up the heavy profile",
+				heavyMinVCPU, heavyMinMemGB, vcpu, mem, int(desired), totalVCPU, totalMem)
+		}
+		return false, ""
+	}
+	if types, ok := cluster["instance_types"].([]any); !ok || len(types) == 0 {
+		return t2RequireIsHard(), "heavy surface needs an explicit instance_types (or node_size) big enough for the heavy charts — the template's cheapest default won't schedule them"
+	}
+	return false, ""
+}
+
+// t2Num coerces a snapshot/JSON numeric (JSON numbers decode as float64; ints appear when set in Go)
+// to float64. Returns false for absent/non-numeric.
+func t2Num(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
 // t2Truthy reports whether an env value reads as an affirmative flag.
 func t2Truthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {

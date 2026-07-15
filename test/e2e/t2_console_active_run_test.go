@@ -97,6 +97,16 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	if err != nil {
 		return nil, nil, err
 	}
+	// FT-5: layer the full 11-kind max-config surface onto `full` (never `base`, the A0.5 fidelity
+	// target). Placed BEFORE the cluster-json merge so the workflow's heavy/cheap node-shape override
+	// still wins over max-config's default cluster block. Fail-closed: a partial surface is a hard
+	// error, so a max-config run can never silently provision fewer kinds and report green.
+	if MaxConfigEnabled() {
+		if err := MaxConfigSnapshot(full, provider); err != nil {
+			return nil, nil, err
+		}
+		t.Log("FT-5: seeding the DEPLOY job with the full 11-kind max-config surface (ALETHIA_E2E_MAX_CONFIG)")
+	}
 	// A0.6: wire the apps-destination repo + append the BYO chart add-on when enabled. The git token
 	// is NOT written into the snapshot — it crosses via the control plane's git-token handler.
 	if reposEnabled {

@@ -15,6 +15,7 @@ import {
 	syncCloudInventory,
 } from "@/lib/cloud-providers/inventory";
 import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
+import { azureIdConflict } from "./azure-ids";
 import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "./gcp-wif";
 
 /**
@@ -568,6 +569,12 @@ export async function saveAzureIdentity(
 	if (!GUID_REGEX.test(subscriptionId)) {
 		throw new Error("Invalid Subscription ID format. Expected a UUID.");
 	}
+	// The tenant, the managed identity's application id and the subscription name three different
+	// things, so a repeat is always a mis-paste — most often the Subscription ID landing in Client ID,
+	// which only fails later with an opaque AADSTS700016. The connect form checks this too, but the
+	// CLI reaches this action directly, so the form is not the boundary.
+	const conflict = azureIdConflict({ tenantId, clientId, subscriptionId });
+	if (conflict) throw new Error(conflict.message);
 
 	await loadIdentity(scope, identityId);
 
