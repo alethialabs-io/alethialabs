@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Handle, Position } from "@xyflow/react";
-import { ProviderIcon } from "@repo/ui/provider-icon";
 import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
@@ -51,7 +50,9 @@ const DEFAULT_HANDLES: { source?: boolean; target?: boolean } = { target: true }
  */
 export function BaseNode({ id, selected }: BaseNodeProps) {
 	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
-	const identity = useCanvasStore((s) => s.getEffectiveIdentity(id));
+	// `provider` (the effective cloud) still drives the fact grid + zones; the visible cloud-account
+	// chip is gone — the cloud is chosen once, at project creation, so repeating it on every card is
+	// noise. (getEffectiveIdentity, which fed that chip, is no longer read here.)
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
 	const resolved = useNodeStatus(id);
 	const lod = useCanvasLod();
@@ -112,8 +113,10 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				)}
 				<span
 					className={cn(
-						"grid h-11 w-11 place-items-center border bg-card",
-						selected ? "border-foreground" : "border-border-strong",
+						"grid h-11 w-11 cursor-pointer place-items-center border bg-card transition-colors",
+						selected
+							? "border-foreground"
+							: "border-border-strong hover:border-foreground",
 						def.classification === "external" && "border-dashed",
 					)}
 				>
@@ -135,7 +138,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	return (
 		<div
 			className={cn(
-				"relative rounded-none border bg-card text-card-foreground transition-colors",
+				"relative cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				// the classification rule — a 2px band across the card's top edge
 				"before:absolute before:-inset-x-px before:-top-px before:h-0.5 before:content-['']",
 				RULE_CLASS[def.classification],
@@ -169,34 +172,6 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				>
 					{title}
 				</div>
-
-				{/* Provider chip — the brand mark is the only colour on the canvas. Dropped at the
-				    compact tier: at that zoom the cloud is carried by the containing zone. */}
-				{def.cloudScoped && !compact && (
-					<span
-						className={cn(
-							"inline-flex max-w-full items-center gap-1.5 border px-1.5 py-0.5 font-mono text-[10px]",
-							identity
-								? "border-border text-muted-foreground"
-								: "border-dashed border-border text-muted-foreground/70",
-						)}
-					>
-						{identity ? (
-							<>
-								<ProviderIcon
-									provider={identity.provider}
-									size={12}
-									className="shrink-0"
-								/>
-								<span className="truncate">{identity.displayId}</span>
-							</>
-						) : (
-							<span className="truncate">
-								{node.data.kind === "project" ? "no cloud account" : "inherits core"}
-							</span>
-						)}
-					</span>
-				)}
 
 				<FactGrid facts={facts} compact={compact} />
 			</div>

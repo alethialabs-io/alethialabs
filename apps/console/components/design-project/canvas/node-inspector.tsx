@@ -4,16 +4,13 @@
 
 import { ArrowLeft, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
-import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
 import { Input } from "@repo/ui/input";
-import { Label } from "@repo/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { cn } from "@repo/ui/utils";
-import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	NODE_STATUS_META,
 	useNodeStatus,
@@ -25,7 +22,6 @@ import {
 	isCollectionKind,
 	kindFromCollectionId,
 } from "@/lib/canvas/collections";
-import { CloudIdentitySelector } from "../cloud-identity-selector";
 import { CollectionPanel } from "./inspector/collection-panel";
 import { ExternalPanel } from "./inspector/external-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
@@ -35,24 +31,7 @@ import { getKindConfig } from "./inspector/config-schema";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
 
-/** A labelled field row (used by the cloud-account selector). */
-function Field({
-	label,
-	children,
-}: {
-	label: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<div className="space-y-1.5">
-			<Label className="text-xs">{label}</Label>
-			{children}
-		</div>
-	);
-}
-
 interface InspectorPanelProps {
-	identities: CloudIdentityOption[];
 	/** Edit mode only: tear down the active environment (queues a DESTROY job). Surfaced as a
 	 * danger action on the project settings panel. */
 	onDestroyEnvironment?: () => void;
@@ -64,18 +43,18 @@ interface InspectorPanelProps {
  * Overview + Settings tabs, where Settings is built data-drivenly from the node's config schema
  * (collapsible sections, radio-cards, typed fields) plus a Danger zone. Rendered only when a node
  * is selected (`inspectorNodeId`).
+ *
+ * The cloud account is NOT set here — it's chosen once, at project creation, so there is no per-node
+ * cloud selector. The effective provider is still resolved (it drives facts, zones, and the schema
+ * summary), just never edited on the board.
  */
-export function InspectorPanel({
-	identities,
-	onDestroyEnvironment,
-}: InspectorPanelProps) {
+export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
 	const node = useCanvasStore((s) =>
 		inspectorNodeId ? s.nodes.find((n) => n.id === inspectorNodeId) : undefined,
 	);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
-	const setNodeIdentity = useCanvasStore((s) => s.setNodeIdentity);
 	const getEffectiveProvider = useCanvasStore((s) => s.getEffectiveProvider);
 
 	const core = useCanvasStore((s) => s.getCoreIdentity());
@@ -132,7 +111,7 @@ export function InspectorPanel({
 			)}
 			<div className="flex items-start gap-3 border-b border-border p-4">
 				{Icon && (
-					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground">
+					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border text-muted-foreground">
 						<Icon className="h-4 w-4" />
 					</span>
 				)}
@@ -159,7 +138,7 @@ export function InspectorPanel({
 						) : (
 							<span className="text-base font-semibold">{def.label}</span>
 						)}
-						<span className="vx-eyebrow rounded border border-border px-1.5 py-0.5">
+						<span className="vx-eyebrow rounded-none border border-border px-1.5 py-0.5">
 							{def.eyebrow}
 						</span>
 					</div>
@@ -199,7 +178,7 @@ export function InspectorPanel({
 					value="overview"
 					className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-4"
 				>
-					<Overview node={node} provider={provider} />
+					<Overview node={node} />
 				</TabsContent>
 
 				<TabsContent
@@ -214,15 +193,6 @@ export function InspectorPanel({
 								drawn, but the project will not provision until colocated.
 							</AlertDescription>
 						</Alert>
-					)}
-
-					{def.cloudScoped && (
-						<IdentityField
-							node={node}
-							identities={identities}
-							onPick={(id, prov) => setNodeIdentity(node.id, id, prov)}
-							onInherit={() => setNodeIdentity(node.id, null, null)}
-						/>
 					)}
 
 					{schema && (
@@ -249,7 +219,7 @@ export function InspectorPanel({
 function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
 	const [confirm, setConfirm] = useState(false);
 	return (
-		<div className="rounded-lg border border-destructive/30">
+		<div className="rounded-none border border-destructive/30">
 			<div className="flex items-center gap-2 border-b border-destructive/20 px-4 py-3">
 				<TriangleAlert className="h-4 w-4 text-destructive" />
 				<p className="text-sm font-medium text-destructive">Danger zone</p>
@@ -279,40 +249,6 @@ function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
 				onConfirm={onDestroy}
 			/>
 		</div>
-	);
-}
-
-/** Per-node cloud account selector (root sets the CORE; others may diverge). */
-function IdentityField({
-	node,
-	identities,
-	onPick,
-	onInherit,
-}: {
-	node: CanvasNode;
-	identities: CloudIdentityOption[];
-	onPick: (id: string, provider: CloudProviderSlug) => void;
-	onInherit: () => void;
-}) {
-	const isRoot = node.data.kind === "project";
-	return (
-		<Field label={isRoot ? "Cloud account (core)" : "Cloud account"}>
-			<CloudIdentitySelector
-				identities={identities}
-				value={node.data.cloud_identity_id}
-				onChange={onPick}
-				manageGlobalStore={false}
-			/>
-			{!isRoot && node.data.cloud_identity_id && (
-				<button
-					type="button"
-					onClick={onInherit}
-					className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-				>
-					Inherit project cloud
-				</button>
-			)}
-		</Field>
 	);
 }
 
@@ -363,14 +299,8 @@ function StatusHeader({ nodeId }: { nodeId: string }) {
 	);
 }
 
-/** Read-only summary of a node: placement, its resolved status, any drift, and its config values. */
-function Overview({
-	node,
-	provider,
-}: {
-	node: CanvasNode;
-	provider: CloudProviderSlug | null;
-}) {
+/** Read-only summary of a node: its resolved status, any drift, and its config values. */
+function Overview({ node }: { node: CanvasNode }) {
 	const status = useNodeStatus(node.id);
 	const meta = NODE_STATUS_META[status.state];
 	const def = NODE_REGISTRY[node.data.kind];
@@ -383,8 +313,6 @@ function Overview({
 			<dl className="grid grid-cols-[8rem_1fr] gap-y-2">
 				<dt className="text-muted-foreground">Type</dt>
 				<dd>{def.label}</dd>
-				<dt className="text-muted-foreground">Cloud</dt>
-				<dd>{provider ? provider.toUpperCase() : "Inherits project"}</dd>
 				<dt className="text-muted-foreground">Status</dt>
 				<dd className="text-muted-foreground">
 					{meta.label}

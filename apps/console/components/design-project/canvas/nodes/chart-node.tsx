@@ -105,7 +105,7 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	return (
 		<div
 			className={cn(
-				"min-w-[220px] rounded-none border bg-card text-card-foreground transition-shadow",
+				"min-w-[220px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				selected
 					? "border-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
 					: "border-border hover:border-border-strong",
