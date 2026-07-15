@@ -61,14 +61,15 @@ test.describe("Hero happy-path", () => {
 		await page.locator("#project_name").fill("hero-e2e");
 		await page.getByRole("button", { name: /create empty project/i }).click();
 
-		// 5. The project canvas is ready once its chrome (the "Project settings" control) is painted.
-		await expect(
-			page.getByRole("button", { name: /project settings/i }),
-		).toBeVisible({ timeout: 45_000 });
+		// 5. The project canvas is ready once its chrome (the "Add" control) is painted. (This used to
+		//    anchor on the "Project settings" cog, which was removed — the project root is edited via
+		//    its board card now — so it anchors on the Add button, which the next step drives anyway.)
+		const addButton = page.getByRole("button", { name: "Add", exact: true });
+		await expect(addButton).toBeVisible({ timeout: 45_000 });
 
 		// 6. Design something — open the Add palette and drop a Bucket (object storage) onto the
 		//    canvas. Bucket has no variant step, so selecting it adds the node and closes the palette.
-		await page.getByRole("button", { name: "Add", exact: true }).click();
+		await addButton.click();
 		const search = page.getByPlaceholder(/search services/i);
 		await expect(search).toBeVisible();
 		await search.fill("bucket");
