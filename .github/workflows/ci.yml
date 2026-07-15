@@ -50,9 +50,12 @@ jobs:
             echo "agent=false" >> "$GITHUB_OUTPUT"
             echo "console=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
+          # THREE-dot (merge-base): the PR's OWN changes only. Two-dot (`git diff base head`)
+          # false-positives every filter the moment this branch falls behind base — it then lists
+          # every file the base advanced past, so an unrelated PR would run the E2Es. (That is a
+          # pre-existing bug this job carried; it over-ran, never under-ran, so it hid.)
           changed=$(git diff --name-only \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}")
+            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}")
           # `agent` — the narrow Elench/agent surface the Elench AI E2E drives.
           if echo "$changed" | grep -qE '^apps/console/(components/(agent|ui/message-scroller)|lib/(ai|stores/use-(elench|artifact|widget-grid))|app/api/agent|app/server/actions/(agent|artifacts|mentions)|e2e/elench)'; then
             echo "agent=true" >> "$GITHUB_OUTPUT"
