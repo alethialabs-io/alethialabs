@@ -2,44 +2,105 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { BookOpen, Loader2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+	BookOpen,
+	ChevronDown,
+	FileText,
+	Loader2,
+	Pencil,
+	Plus,
+	Trash2,
+	X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	getAgentContext,
 	getProjectKnowledgePreview,
 	upsertAgentContext,
 } from "@/app/server/actions/agent-context";
+import { KNOWLEDGE_LIMIT } from "@/lib/ai/knowledge-limits";
+import type { KnowledgeDoc } from "@/types/jsonb.types";
 import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Textarea } from "@repo/ui/textarea";
+import { cn } from "@repo/ui/utils";
 
-/** Server-side cap (upsertAgentContext) — mirrored here so the budget is visible while typing. */
-const NOTES_LIMIT = 50_000;
+/** "2.1k" / "840" — knowledge size reads as a budget, so it's always a bare figure. */
+function size(n: number): string {
+	return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/** "2d ago" — "when did I last touch this" is the only useful reading of a doc's timestamp. */
+function relTime(iso: string): string {
+	const t = Date.parse(iso);
+	if (Number.isNaN(t)) return "";
+	const m = Math.floor((Date.now() - t) / 60_000);
+	if (m < 1) return "just now";
+	if (m < 60) return `${m}m ago`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return `${h}h ago`;
+	return `${Math.floor(h / 24)}d ago`;
+}
+
+/** Turn the derived markdown block into `label · value` rows — never a raw <pre> dump. */
+function parseDerived(block: string): Array<{ label: string; value: string }> {
+	const rows: Array<{ label: string; value: string }> = [];
+	for (const raw of block.split("\n")) {
+		const line = raw.trim();
+		if (!line.startsWith("-")) continue;
+		const body = line.replace(/^-+\s*/, "");
+		const i = body.indexOf(":");
+		if (i === -1) rows.push({ label: "", value: body });
+		else
+			rows.push({
+				label: body.slice(0, i).trim(),
+				value: body.slice(i + 1).trim(),
+			});
+	}
+	return rows;
+}
+
+/** A blank document, ready to edit. */
+function emptyDoc(): KnowledgeDoc {
+	return {
+		id: crypto.randomUUID(),
+		title: "",
+		content: "",
+		updated_at: new Date().toISOString(),
+	};
+}
 
 /**
- * The Knowledge panel — the Claude-Projects idea, applied to an infra project. Edits the pinned
- * **custom instructions** and **knowledge** for the current scope; everything here rides the
- * system prompt of every chat in that scope. In a PROJECT chat it also shows a read-only preview
- * of the block Elench already derives from live state (identity, environments, recent jobs), so
- * it's obvious what you do *not* need to write down. In an ORG chat it edits the org-level row,
- * which is layered under every project's.
+ * The Knowledge panel — a real knowledge base, not a pair of textareas.
+ *
+ * Modeled on a Claude Project: **custom instructions** (how Elench should behave here) plus a
+ * knowledge base of **named documents** (what it should always know). Both ride the system prompt
+ * of every chat in this scope, so their size is a real per-turn cost — hence the capacity meter.
+ * The third section shows what Elench *already derives* from live state, so it's obvious what you
+ * do NOT need to write down.
+ *
+ * Scope: `projectId` set → that infra project's row; null → the org-level row, which is layered
+ * under every project's.
  */
 export function AgentKnowledgePanel({
 	projectId,
 	onClose,
 }: {
-	/** null = the org-level row (the general assistant); set = that infra project's row. */
 	projectId: string | null;
 	onClose: () => void;
 }) {
 	const scope = projectId ? "Project" : "Organization";
 	const [instructions, setInstructions] = useState("");
-	const [notes, setNotes] = useState("");
-	const [derived, setDerived] = useState<string | null>(null);
+	const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
+	const [derived, setDerived] = useState("");
+	const [derivedOpen, setDerivedOpen] = useState(false);
 	const [loading, setLoading] = useState(true);
+	const [editing, setEditing] = useState<KnowledgeDoc | null>(null);
 	const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
 		"idle",
 	);
+	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -53,7 +114,7 @@ export function AgentKnowledgePanel({
 			]);
 			if (cancelled) return;
 			setInstructions(ctx?.instructions ?? "");
-			setNotes(ctx?.notes ?? "");
+			setDocs(ctx?.documents ?? []);
 			setDerived(preview);
 			setLoading(false);
 		})();
@@ -62,44 +123,77 @@ export function AgentKnowledgePanel({
 		};
 	}, [projectId]);
 
-	const save = useCallback(async () => {
-		setState("saving");
-		try {
-			await upsertAgentContext({ projectId, instructions, notes });
-			setState("saved");
-			setTimeout(() => setState("idle"), 1200);
-		} catch {
-			setState("error");
-		}
-	}, [projectId, instructions, notes]);
+	const used = useMemo(
+		() => docs.reduce((n, d) => n + d.content.length, 0),
+		[docs],
+	);
+	const over = used > KNOWLEDGE_LIMIT;
+
+	/** Persist instructions + the whole document set (one row, one write). */
+	const save = useCallback(
+		async (nextDocs: KnowledgeDoc[], nextInstructions: string) => {
+			setState("saving");
+			setError(null);
+			try {
+				await upsertAgentContext({
+					projectId,
+					instructions: nextInstructions,
+					documents: nextDocs,
+				});
+				setState("saved");
+				setTimeout(() => setState("idle"), 1200);
+			} catch (e) {
+				setState("error");
+				setError(e instanceof Error ? e.message : "Save failed.");
+			}
+		},
+		[projectId],
+	);
+
+	/** Commit the open editor into the document set, then persist. */
+	const commitDoc = useCallback(() => {
+		if (!editing) return;
+		const title = editing.title.trim();
+		if (!title) return;
+		const doc: KnowledgeDoc = {
+			...editing,
+			title,
+			updated_at: new Date().toISOString(),
+		};
+		const next = docs.some((d) => d.id === doc.id)
+			? docs.map((d) => (d.id === doc.id ? doc : d))
+			: [...docs, doc];
+		setDocs(next);
+		setEditing(null);
+		void save(next, instructions);
+	}, [editing, docs, instructions, save]);
+
+	const removeDoc = useCallback(
+		(id: string) => {
+			const next = docs.filter((d) => d.id !== id);
+			setDocs(next);
+			void save(next, instructions);
+		},
+		[docs, instructions, save],
+	);
+
+	const derivedRows = useMemo(() => parseDerived(derived), [derived]);
 
 	return (
-		<div className="flex h-full min-h-0 flex-col">
+		<div data-testid="knowledge-panel" className="flex h-full min-h-0 flex-col">
 			<div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
 				<BookOpen className="h-4 w-4 text-muted-foreground" />
 				<div className="text-sm font-medium text-foreground">
 					{scope} knowledge
 				</div>
-				<div className="ml-auto flex items-center gap-1.5">
+				<div className="ml-auto flex items-center gap-2">
 					<span className="text-[11px] text-muted-foreground">
-						{state === "saved"
-							? "Saved."
-							: state === "error"
-								? "Save failed."
-								: ""}
+						{state === "saving"
+							? "Saving…"
+							: state === "saved"
+								? "Saved."
+								: (error ?? "")}
 					</span>
-					<Button
-						size="sm"
-						className="rounded-none"
-						onClick={() => void save()}
-						disabled={loading || state === "saving"}
-					>
-						{state === "saving" ? (
-							<Loader2 className="h-3.5 w-3.5 animate-spin" />
-						) : (
-							"Save"
-						)}
-					</Button>
 					<button
 						type="button"
 						aria-label="Close knowledge"
@@ -112,67 +206,222 @@ export function AgentKnowledgePanel({
 			</div>
 
 			<ScrollArea className="min-h-0 flex-1">
-				<div className="mx-auto max-w-[760px] space-y-6 p-5">
+				<div className="mx-auto max-w-[760px] space-y-7 p-5">
 					{loading ? (
 						<div className="py-16 text-center text-sm text-muted-foreground">
 							Loading…
 						</div>
 					) : (
 						<>
-							<section className="space-y-1.5">
-								<h2 className="text-[13px] font-medium text-foreground">
-									Custom instructions
-								</h2>
+							{/* ── Instructions ──────────────────────────────────────── */}
+							<section className="space-y-2">
+								<div className="vx-eyebrow text-[9px]">Instructions</div>
 								<p className="text-xs text-muted-foreground">
-									Rides every {projectId ? "chat in this project" : "org chat"}.
-									e.g. “This is production — always require approval before an
-									apply, and never suggest destroy.”
+									How Elench should behave in{" "}
+									{projectId ? "this project" : "org chats"}. Rides every turn.
 								</p>
 								<Textarea
+									data-testid="knowledge-instructions"
 									value={instructions}
 									onChange={(e) => setInstructions(e.target.value)}
-									rows={5}
-									placeholder="How should Elench behave here?"
+									onBlur={() => void save(docs, instructions)}
+									rows={4}
+									placeholder="e.g. This is production — always require approval before an apply, and never propose destroy."
 									className="rounded-none text-sm"
 								/>
 							</section>
 
-							<section className="space-y-1.5">
+							{/* ── Knowledge documents ───────────────────────────────── */}
+							<section className="space-y-2">
 								<div className="flex items-baseline justify-between gap-2">
-									<h2 className="text-[13px] font-medium text-foreground">
-										Knowledge
-									</h2>
-									{/* Knowledge rides EVERY turn's system prompt, so its size is a real
-									    cost — surface the budget, the way Claude shows project capacity. */}
-									<span className="font-mono text-[10px] text-muted-foreground">
-										{notes.length.toLocaleString()} / {NOTES_LIMIT.toLocaleString()}
+									<div className="vx-eyebrow text-[9px]">Knowledge</div>
+									<span
+										className={cn(
+											"font-mono text-[10px]",
+											over ? "text-foreground" : "text-muted-foreground",
+										)}
+									>
+										{size(used)} / {size(KNOWLEDGE_LIMIT)}
 									</span>
 								</div>
 								<p className="text-xs text-muted-foreground">
-									Facts Elench can’t derive on its own — conventions, owners,
-									runbooks, gotchas.
+									What Elench can’t work out on its own — conventions, owners,
+									runbooks, gotchas. Each document is named, so it can tell you
+									which one it drew on.
 								</p>
-								<Textarea
-									value={notes}
-									onChange={(e) => setNotes(e.target.value)}
-									rows={8}
-									placeholder="What should Elench always know?"
-									className="rounded-none text-sm"
-								/>
+
+								{/* Capacity meter — knowledge is paid for on every single turn. */}
+								<div className="h-0.5 w-full bg-border">
+									<div
+										className={cn(
+											"h-full",
+											over ? "bg-foreground" : "bg-muted-foreground/50",
+										)}
+										style={{
+											width: `${Math.min(100, (used / KNOWLEDGE_LIMIT) * 100)}%`,
+										}}
+									/>
+								</div>
+
+								{docs.length === 0 && !editing && (
+									<div className="flex flex-col items-center gap-2 border border-dashed border-border py-10 text-center">
+										<FileText className="h-4 w-4 text-muted-foreground" />
+										<div className="text-[13px] text-foreground">
+											No knowledge yet.
+										</div>
+										<p className="max-w-[320px] text-xs text-muted-foreground">
+											Add what Elench should always know. It can already read
+											your live infrastructure on its own.
+										</p>
+									</div>
+								)}
+
+								{docs.length > 0 && (
+									<div className="divide-y divide-border border border-border">
+										{docs.map((d) => (
+											<div
+												key={d.id}
+												data-testid="knowledge-doc"
+												className="group/doc flex items-center gap-3 bg-background px-3 py-2.5"
+											>
+												<FileText className="h-4 w-4 flex-none text-muted-foreground" />
+												<span className="min-w-0 flex-1">
+													<span
+														title={d.title}
+														className="block truncate text-[13px] font-medium text-foreground"
+													>
+														{d.title}
+													</span>
+													<span className="block font-mono text-[10px] text-muted-foreground">
+														{size(d.content.length)} · {relTime(d.updated_at)}
+													</span>
+												</span>
+												<span className="flex flex-none items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/doc:opacity-100">
+													<button
+														type="button"
+														aria-label={`Edit ${d.title}`}
+														onClick={() => setEditing(d)}
+														className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
+													>
+														<Pencil className="h-3.5 w-3.5" />
+													</button>
+													<button
+														type="button"
+														aria-label={`Delete ${d.title}`}
+														onClick={() => removeDoc(d.id)}
+														className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
+													>
+														<Trash2 className="h-3.5 w-3.5" />
+													</button>
+												</span>
+											</div>
+										))}
+									</div>
+								)}
+
+								{editing ? (
+									<div className="space-y-2 border border-border bg-muted/30 p-3">
+										<Input
+											data-testid="knowledge-doc-title"
+											value={editing.title}
+											onChange={(e) =>
+												setEditing({ ...editing, title: e.target.value })
+											}
+											placeholder="Title — e.g. Runbook: production deploys"
+											className="h-8 rounded-none text-sm"
+										/>
+										<Textarea
+											data-testid="knowledge-doc-content"
+											value={editing.content}
+											onChange={(e) =>
+												setEditing({ ...editing, content: e.target.value })
+											}
+											rows={8}
+											placeholder="What should Elench know?"
+											className="rounded-none text-sm"
+										/>
+										<div className="flex items-center justify-between">
+											<span className="font-mono text-[10px] text-muted-foreground">
+												{size(editing.content.length)}
+											</span>
+											<span className="flex items-center gap-1.5">
+												<Button
+													size="sm"
+													variant="ghost"
+													className="rounded-none"
+													onClick={() => setEditing(null)}
+												>
+													Cancel
+												</Button>
+												<Button
+													size="sm"
+													data-testid="knowledge-doc-save"
+													className="rounded-none"
+													disabled={!editing.title.trim()}
+													onClick={commitDoc}
+												>
+													{state === "saving" ? (
+														<Loader2 className="h-3.5 w-3.5 animate-spin" />
+													) : (
+														"Save document"
+													)}
+												</Button>
+											</span>
+										</div>
+									</div>
+								) : (
+									<Button
+										size="sm"
+										variant="outline"
+										data-testid="knowledge-add"
+										className="gap-1.5 rounded-none"
+										onClick={() => setEditing(emptyDoc())}
+									>
+										<Plus className="h-3.5 w-3.5" />
+										Add knowledge
+									</Button>
+								)}
 							</section>
 
-							{projectId && (
-								<section className="space-y-1.5">
-									<h2 className="text-[13px] font-medium text-foreground">
-										Already known (auto-derived)
-									</h2>
+							{/* ── Already known (auto-derived) ──────────────────────── */}
+							{projectId && derivedRows.length > 0 && (
+								<section className="space-y-2">
+									<button
+										type="button"
+										onClick={() => setDerivedOpen((o) => !o)}
+										className="flex w-full items-center gap-1.5 text-left"
+									>
+										<span className="vx-eyebrow text-[9px]">
+											Already known · auto-derived
+										</span>
+										<ChevronDown
+											className={cn(
+												"h-3.5 w-3.5 text-muted-foreground transition-transform",
+												derivedOpen && "rotate-180",
+											)}
+										/>
+									</button>
 									<p className="text-xs text-muted-foreground">
-										Elench reads this from live state on every turn — you don’t
+										Elench reads this from live state on every turn. You don’t
 										need to write any of it down.
 									</p>
-									<pre className="overflow-x-auto whitespace-pre-wrap border border-border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-										{derived?.trim() || "Nothing derived yet."}
-									</pre>
+									{derivedOpen && (
+										<dl className="divide-y divide-border border border-border">
+											{derivedRows.map((r, i) => (
+												<div
+													key={`${r.label}-${i}`}
+													className="flex gap-4 px-3 py-2"
+												>
+													<dt className="w-40 flex-none text-[12px] text-muted-foreground">
+														{r.label || "—"}
+													</dt>
+													<dd className="min-w-0 flex-1 break-words font-mono text-[11px] text-foreground">
+														{r.value}
+													</dd>
+												</div>
+											))}
+										</dl>
+									)}
 								</section>
 							)}
 						</>

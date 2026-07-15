@@ -5,27 +5,37 @@
 import { LayoutDashboard, Plus, Square, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
+import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
 
 /**
- * The Artifacts gallery — the modal's main region when the rail's "Artifacts" nav is
- * active. Lists the org's saved artifacts (dashboards + widgets) as cards; opening one
- * materializes it onto a chat's grid (`onOpenArtifact`, which ensures a thread). "New
- * artifact" is just a fresh chat with the grid open — an artifact is a chat you decide to
- * save, so there's no separate authoring UI. `onClose` returns to the conversation.
+ * The Artifacts library — the modal's main region when the rail's "Artifacts" nav is active.
+ *
+ * Clicking a card OPENS THE ARTIFACT in a read-only viewer. It used to call `startThread(name)`,
+ * which silently created a chat named after the artifact (or dumped it onto your last one) —
+ * looking at a thing should never mutate a conversation. Every side-effect now lives behind a
+ * named button in the viewer.
  */
 export function AgentArtifactGallery({
-	onOpenArtifact,
+	hasActiveChat,
+	onAddToChat,
+	onOpenInNewChat,
 	onNewArtifact,
 	onClose,
 }: {
-	onOpenArtifact: (id: string, name: string) => void;
+	/** Whether a conversation is open (gates the viewer's "Add to this chat"). */
+	hasActiveChat: boolean;
+	/** Materialize the artifact onto the OPEN conversation's grid. Explicit only. */
+	onAddToChat: (id: string) => Promise<void>;
+	/** Start a new conversation and materialize the artifact onto it. Explicit only. */
+	onOpenInNewChat: (id: string, name: string) => Promise<void>;
 	onNewArtifact: () => void;
 	onClose: () => void;
 }) {
 	const [items, setItems] = useState<AgentArtifact[] | null>(null);
+	const [selected, setSelected] = useState<AgentArtifact | null>(null);
 
 	const load = useCallback(() => {
 		setItems(null);
@@ -41,10 +51,25 @@ export function AgentArtifactGallery({
 		try {
 			await deleteArtifact(id);
 			setItems((prev) => prev?.filter((a) => a.id !== id) ?? prev);
+			setSelected((s) => (s?.id === id ? null : s));
 		} catch {
 			// Non-fatal — the next load reconciles.
 		}
 	}, []);
+
+	// A selected artifact takes over the region — read-only, with explicit actions.
+	if (selected) {
+		return (
+			<AgentArtifactViewer
+				artifact={selected}
+				hasActiveChat={hasActiveChat}
+				onBack={() => setSelected(null)}
+				onAddToChat={() => onAddToChat(selected.id)}
+				onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
+				onDelete={() => remove(selected.id)}
+			/>
+		);
+	}
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -105,11 +130,13 @@ export function AgentArtifactGallery({
 						{items.map((a) => (
 							<div
 								key={a.id}
+								data-testid="artifact-card"
 								className="group/card relative flex flex-col justify-between border border-border bg-background p-4 transition-colors hover:bg-muted"
 							>
 								<button
 									type="button"
-									onClick={() => onOpenArtifact(a.id, a.name)}
+									// Opens the VIEWER. It does not touch any conversation.
+									onClick={() => setSelected(a)}
 									className="flex flex-1 flex-col items-start gap-3 text-left"
 								>
 									<span className="flex size-9 flex-none items-center justify-center border border-border text-muted-foreground">

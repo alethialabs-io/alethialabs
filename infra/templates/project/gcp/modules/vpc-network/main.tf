@@ -17,6 +17,7 @@ locals {
   nat_name           = "${var.project_name}-${var.environment}-nat"
   pod_range_name     = "${var.gke_cluster_name}-pods"
   service_range_name = "${var.gke_cluster_name}-services"
+  psa_range_name     = "${var.project_name}-${var.environment}-psa"
 
   # Derive a public subnet CIDR that doesn't overlap with the private subnet.
   # Uses the first /24 from 10.3.0.0/16 by default (assumes network_cidr is 10.0.0.0/16).
@@ -108,6 +109,42 @@ resource "google_compute_router_nat" "nat" {
     enable = true
     filter = "ERRORS_ONLY"
   }
+}
+
+################################################################################
+# Private Service Access (VPC peering to Google-managed services)
+#
+# PSA is a VPC-LEVEL construct: Cloud SQL (private IP) AND Memorystore
+# (connect_mode = PRIVATE_SERVICE_ACCESS) both require it. It used to live inside the
+# cloud-sql module, which meant a project with `cache` but no `database` could NEVER
+# provision — Memorystore failed with "Google private service access is not enabled" —
+# and even with both enabled there was no dependency edge, so it raced. Owning it here
+# gives every consumer a single, ordered dependency (they already depend on this module).
+# Verified against a real max-config apply on GCP.
+################################################################################
+
+resource "google_compute_global_address" "private_service_access" {
+  name          = local.psa_range_name
+  project       = var.project_id
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.vpc.self_link
+}
+
+resource "google_service_networking_connection" "private_vpc" {
+  network                 = google_compute_network.vpc.self_link
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_service_access.name]
+
+  # ABANDON on destroy. GCP releases a PSA connection only AFTER every producer service using it
+  # (Cloud SQL, Memorystore) is fully torn down — but those deletes are async and return before the
+  # connection is released, so deleting it inline reliably fails the whole destroy with:
+  #   "Failed to delete connection; Producer services (e.g. CloudSQL, Cloud Memstore, etc.) are
+  #    still using this connection."  (Observed on a real max-config destroy.)
+  # The connection is free and is reclaimed with the VPC, so abandoning it is safe and is the
+  # standard practice for this resource.
+  deletion_policy = "ABANDON"
 }
 
 ################################################################################

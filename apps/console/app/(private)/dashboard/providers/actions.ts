@@ -50,7 +50,10 @@ export async function reverifyCloudIdentity(identityId: string) {
 		id: identityId,
 	});
 	const result = await conn.reverifyConnection(actor, identityId);
-	revalidatePath("/dashboard/connectors");
+	// The connectors page is the dynamic `/[org]/~/connectors` route — revalidating the literal
+	// "/dashboard/connectors" matched nothing and was a silent no-op, leaving the client's
+	// router.refresh() to do all the work. Revalidating a dynamic route needs its pattern + "page".
+	revalidatePath("/[org]/~/connectors", "page");
 	return result;
 }
 
@@ -79,6 +82,9 @@ export async function renameCloudIdentity(identityId: string, name: string) {
 		id: identityId,
 	});
 	const result = await conn.renameIdentity(actor, identityId, name);
-	revalidatePath("/dashboard/connectors");
+	// The connectors page is the dynamic `/[org]/~/connectors` route — revalidating the literal
+	// "/dashboard/connectors" matched nothing and was a silent no-op, leaving the client's
+	// router.refresh() to do all the work. Revalidating a dynamic route needs its pattern + "page".
+	revalidatePath("/[org]/~/connectors", "page");
 	return result;
 }

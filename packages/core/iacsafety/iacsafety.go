@@ -97,12 +97,44 @@ type Finding struct {
 	Detail   string // human-readable
 }
 
+// Resource is one `resource` block discovered by the walk — the DECLARED
+// inventory of the root module and every local child module.
+//
+// "Declared" is the operative word, and the honest limit of a static scan:
+// addresses here are NOT expanded, because expanding `count`/`for_each` would
+// mean evaluating expressions, which this package never does. A block with
+// `count = 3` appears ONCE (as `aws_instance.web`), where a plan would report
+// three (`aws_instance.web[0..2]`). The console therefore treats this as a
+// pre-plan SKELETON and lets a real plan's `resource_changes` supersede it —
+// see lib/canvas/iac-inventory.ts.
+//
+// `data` and `ephemeral` blocks are deliberately absent: they instantiate a
+// provider (and so are gated for safety), but they provision nothing, so they
+// are not part of the architecture.
+type Resource struct {
+	Type   string // resource type, e.g. "aws_s3_bucket"
+	Name   string // local name, e.g. "assets"
+	Module string // module path prefix: "" (root), "module.vpc", "module.a.module.b"
+}
+
+// Address is the resource's Terraform address — the join key the console uses
+// against a plan's resource_changes, environment_cost.resources and
+// environment_drift.details, all of which speak addresses.
+func (r Resource) Address() string {
+	addr := r.Type + "." + r.Name
+	if r.Module == "" {
+		return addr
+	}
+	return r.Module + "." + addr
+}
+
 // Report is the full result of a static scan.
 type Report struct {
 	Findings  []Finding
-	Providers []string // normalized required_providers source addresses (e.g. "hashicorp/aws")
-	Modules   []string // every module source discovered (registry, git, local)
-	OK        bool     // true iff no error-severity findings
+	Providers []string   // normalized required_providers source addresses (e.g. "hashicorp/aws")
+	Modules   []string   // every module source discovered (registry, git, local)
+	Resources []Resource // the declared resource inventory, sorted by address
+	OK        bool       // true iff no error-severity findings
 }
 
 // impliedUse records a resource/data/provider reference whose provider is
@@ -131,6 +163,10 @@ type scanner struct {
 	implied  []impliedUse
 	visited  map[string]bool // module dirs already scanned (cycle guard)
 	queue    []string        // module dirs pending scan
+	// resources is the declared inventory (see Resource); modulePath maps a
+	// scanned module DIRECTORY to the Terraform module path that reaches it.
+	resources  []Resource
+	modulePath map[string]string
 }
 
 // Scan walks dir (the customer root module and any LOCAL child modules it
@@ -172,6 +208,8 @@ func Scan(dir string, allowlist []string) (*Report, error) {
 		modules:   map[string]bool{},
 		declared:  map[string]bool{},
 		visited:   map[string]bool{},
+		// The scan root IS the root module — no module path prefix.
+		modulePath: map[string]string{root: ""},
 	}
 
 	s.enqueue(root)
@@ -184,10 +222,16 @@ func Scan(dir string, allowlist []string) (*Report, error) {
 	}
 	s.checkImpliedProviders()
 
+	// Deterministic inventory order (the report is persisted and diffed).
+	sort.Slice(s.resources, func(i, j int) bool {
+		return s.resources[i].Address() < s.resources[j].Address()
+	})
+
 	report := &Report{
 		Findings:  s.findings,
 		Providers: sortedKeys(s.providers),
 		Modules:   sortedKeys(s.modules),
+		Resources: s.resources,
 		OK:        true,
 	}
 	for _, f := range report.Findings {
@@ -308,6 +352,31 @@ func isOverrideFile(name string) bool {
 	return false
 }
 
+// recordResource adds one declared `resource` block to the inventory, tagged
+// with the Terraform module path of the directory it was found in.
+func (s *scanner) recordResource(typeName, name, moduleDir string) {
+	if typeName == "" || name == "" {
+		return
+	}
+	s.resources = append(s.resources, Resource{
+		Type:   typeName,
+		Name:   name,
+		Module: s.modulePath[moduleDir],
+	})
+}
+
+// joinModulePath extends a parent module path with one module call name.
+func joinModulePath(parent, callName string) string {
+	if callName == "" {
+		return parent
+	}
+	seg := "module." + callName
+	if parent == "" {
+		return seg
+	}
+	return parent + "." + seg
+}
+
 // recordModuleSource records a module source and, when it is a local "./" or
 // "../" path, resolves it inside the scan root and enqueues it for scanning.
 // ANY other source — registry, git, http, mercurial, s3/gcs, absolute paths,
@@ -315,7 +384,13 @@ func isOverrideFile(name string) bool {
 // (or, for absolute paths, directly load) and execute code this gate never
 // scanned, including provider binaries the unfetched module declares in its
 // own required_providers. See the package comment.
-func (s *scanner) recordModuleSource(source, file string, line int, moduleDir string) {
+//
+// callName is the module block's label, used to build the module path the
+// child's resources are inventoried under. Because the walk visits each
+// DIRECTORY once (the `visited` cycle guard), a directory called from two
+// module blocks is inventoried under the FIRST call's path — a known limit of
+// the pre-plan skeleton, which a real plan's addresses supersede.
+func (s *scanner) recordModuleSource(source, file string, line int, moduleDir, callName string) {
 	s.modules[source] = true
 	if !strings.HasPrefix(source, "./") && !strings.HasPrefix(source, "../") {
 		s.addFinding(SeverityError, RuleRemoteModuleSource, file, line,
@@ -347,6 +422,9 @@ func (s *scanner) recordModuleSource(source, file string, line int, moduleDir st
 		s.addFinding(SeverityWarning, RuleModuleNotFound, file, line,
 			fmt.Sprintf("local module source %q is not a directory", source))
 		return
+	}
+	if _, seen := s.modulePath[real]; !seen {
+		s.modulePath[real] = joinModulePath(s.modulePath[moduleDir], callName)
 	}
 	s.enqueue(real)
 }

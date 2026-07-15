@@ -726,3 +726,87 @@ func TestConfigSuffixesCoverOpenTofu(t *testing.T) {
 		}
 	}
 }
+
+// addressesOf reduces a report's declared inventory to its Terraform addresses.
+func addressesOf(r *Report) []string {
+	out := make([]string, 0, len(r.Resources))
+	for _, res := range r.Resources {
+		out = append(out, res.Address())
+	}
+	return out
+}
+
+// TestScanResourceInventory pins the DECLARED resource inventory — what the console draws
+// as read-only `external` cards so a BYO-IaC environment reads as an architecture before it
+// has ever been planned.
+//
+// The contract this locks down:
+//   - `resource` blocks are inventoried; `data`, `provider`, `output` and `variable` are NOT
+//     (they provision nothing).
+//   - child modules are inventoried under their Terraform module path (`module.<call>.…`),
+//     including a module CALLED from JSON config, so the address matches what a plan emits.
+//   - the inventory is sorted by address (the report is persisted and diffed).
+func TestScanResourceInventory(t *testing.T) {
+	cases := []struct {
+		name string
+		want []string
+	}{
+		{
+			// Two resource blocks; the `data "aws_ami"`, the provider, the variable and the
+			// output must all be absent — only resources are architecture.
+			name: "clean",
+			want: []string{"aws_instance.web", "terraform_data.marker"},
+		},
+		{
+			// The root declares no resources; the local child module's resource is inventoried
+			// under the module path of the block that CALLS it.
+			name: "childviolation",
+			want: []string{"module.child.null_resource.hook"},
+		},
+		{
+			// The module call lives in .tf.json — the JSON walker must thread the call name
+			// through too, or the child's resources would land in the root module path.
+			name: "json2",
+			want: []string{"module.child.null_resource.marker"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep, err := Scan(filepath.Join("testdata", tc.name), nil)
+			if err != nil {
+				t.Fatalf("Scan: %v", err)
+			}
+			if got := addressesOf(rep); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("resources = %v, want %v", got, tc.want)
+			}
+			// Sorted by address — a persisted, diffed report must be deterministic.
+			if !sort.SliceIsSorted(rep.Resources, func(i, j int) bool {
+				return rep.Resources[i].Address() < rep.Resources[j].Address()
+			}) {
+				t.Errorf("inventory is not sorted by address: %v", addressesOf(rep))
+			}
+		})
+	}
+}
+
+// TestResourceAddress pins the address format against Terraform's own — this string is the
+// join key for cost (environment_cost.resources), drift (environment_drift.details) and
+// verify findings. Get it wrong and every overlay silently misses.
+func TestResourceAddress(t *testing.T) {
+	cases := []struct {
+		res  Resource
+		want string
+	}{
+		{Resource{Type: "aws_s3_bucket", Name: "assets"}, "aws_s3_bucket.assets"},
+		{Resource{Type: "aws_subnet", Name: "this", Module: "module.vpc"}, "module.vpc.aws_subnet.this"},
+		{
+			Resource{Type: "aws_eks_cluster", Name: "main", Module: "module.a.module.b"},
+			"module.a.module.b.aws_eks_cluster.main",
+		},
+	}
+	for _, tc := range cases {
+		if got := tc.res.Address(); got != tc.want {
+			t.Errorf("Address() = %q, want %q", got, tc.want)
+		}
+	}
+}

@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -471,11 +472,11 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// mutation. See state_surgery.go.
 		execErr = w.executeStateSurgery(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeProbeCluster:
-		// Live cluster-alive probe (BYOC B2). The enum + environment_probes history table land in
-		// B2.1; the actual executor (RunProbe on the state-proxy path) is built in B2.2 and the
-		// console dispatch in B2.3 — so no PROBE_CLUSTER job can reach a runner yet. This case exists
-		// only to keep the exhaustive switch complete; it fails closed until B2.2 wires the executor.
-		execErr = fmt.Errorf("job type %s not yet implemented on this runner (BYOC B2.2)", job.JobType)
+		// Live cluster-alive probe (BYOC B2) — see probe.go. This case used to fail closed with
+		// "not yet implemented (B2.2)" while the console dispatched probes on a schedule AND from
+		// the canvas Run menu, so every probe job failed and environment_probes was never written:
+		// a cluster whose API server had died still read "Live" on the board.
+		execErr = w.executeProbeCluster(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -527,6 +528,26 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				"orphan_risk_reason": "apply was interrupted (timeout or runner shutdown) before tofu state was persisted; cloud resources may exist outside tofu state and need reconciliation",
 			}
 			fmt.Fprintln(stderrLogger, "Apply interrupted — cloud resources may have been left outside tofu state (orphan risk). An operator should reconcile.")
+		} else if f, ok := applyOrphanFinding(execErr); ok {
+			// A FAILED (not interrupted) apply that carried POSITIVE evidence of a resource left
+			// outside tofu state — issue #526. Previously this reported orphan_risk=false on exactly
+			// the failure that PERMANENTLY WEDGES the environment: every later apply dies with
+			// `already exists ... needs to be imported`, and nothing told the customer why.
+			//
+			// The metadata names the resource, its cloud id and its tofu address, so the operator
+			// gets an importable pair (STATE_SURGERY `tofu import <address> <id>`) rather than an
+			// inscrutable failure. Ordinary failures carry no evidence and still land here unflagged.
+			failMeta = map[string]any{
+				"orphan_risk":        true,
+				"orphan_risk_reason": f.Reason,
+			}
+			if f.Address != "" {
+				failMeta["orphan_resource_address"] = f.Address
+			}
+			if f.CloudID != "" {
+				failMeta["orphan_resource_cloud_id"] = f.CloudID
+			}
+			fmt.Fprintf(stderrLogger, "ORPHAN RISK (%s) — %s\n", f.Evidence, f.Reason)
 		}
 		stderrLogger.Close()
 		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), failMeta)
@@ -1033,14 +1054,41 @@ func deployPhaseFile(workDir string) string {
 // It is fail-safe: it flags orphan risk on ANY interruption at/after the apply phase, whether
 // the interruption was an explicit user cancel (wasCancelled) or a non-cancel context
 // cancellation (ctxErr != nil — the 2h jobCtx deadline or a shutdown-drain SIGTERM cancelling
-// the root ctx). A plain apply failure leaves the context live (ctxErr == nil) and is NOT a
-// cancel, so it stays unflagged — normal failures do not over-alert. A pre-apply interruption
-// (phase != "apply") never mutated cloud state, so it is not flagged either.
+// the root ctx). A pre-apply interruption (phase != "apply") never mutated cloud state, so it is
+// not flagged.
+//
+// CORRECTION (issue #526). This comment used to end: "A plain apply failure leaves the context live
+// (ctxErr == nil) and is NOT a cancel, so it stays unflagged — normal failures do not over-alert."
+// The instinct was right but the conclusion was WRONG: a plain apply FAILURE can orphan a resource
+// too. Clouds accept a create and then fail it asynchronously (capacity/quota/policy), so the
+// resource exists while tofu never records it — and the environment is then PERMANENTLY WEDGED,
+// every later apply dying with `already exists ... needs to be imported`. Reproduced on real Azure.
+//
+// The fix is NOT to flag every failure (that really would over-alert). It is to flag on POSITIVE
+// EVIDENCE, which provisioner.ClassifyApplyError extracts from the provider's own error text and
+// carries in a *provisioner.ApplyOrphanError. So a failed apply is now flagged iff it arrived with
+// that evidence — see applyOrphanFinding below. An ordinary failure (validation, a quota rejection
+// BEFORE create) still carries none, and is still not flagged.
 func shouldMarkOrphanRisk(phase string, wasCancelled bool, ctxErr error) bool {
 	if phase != "apply" {
 		return false
 	}
 	return wasCancelled || ctxErr != nil
+}
+
+// applyOrphanFinding returns the orphan evidence a failed DEPLOY carried, if any.
+//
+// The deploy path wraps an apply failure in *provisioner.ApplyOrphanError ONLY when it has positive
+// evidence that a cloud resource was left outside tofu state (issue #526). Lifting it here via
+// errors.As — rather than re-parsing the error text at this layer — keeps the classification in one
+// place and lets the terminal metadata name the exact resource, its cloud id and its tofu address,
+// so the operator gets a diagnosis and an importable pair instead of an inscrutable failure.
+func applyOrphanFinding(err error) (provisioner.OrphanFinding, bool) {
+	var oe *provisioner.ApplyOrphanError
+	if errors.As(err, &oe) {
+		return oe.Finding, true
+	}
+	return provisioner.OrphanFinding{}, false
 }
 
 // readDeployPhase returns the provisioning phase RunDeployV2 recorded ("apply" once the

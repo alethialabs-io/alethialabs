@@ -34,7 +34,7 @@ output "resource_group_name" {
 
 output "azure_db_fqdn" {
   description = "Fully qualified domain name of the Azure Database flexible server"
-  value       = var.create_azure_db ? module.azure_db[0].fqdn : null
+  value       = var.create_azure_db ? module.azure_db[0].server_fqdn : null
 }
 
 #########################################################################

@@ -5,7 +5,7 @@ module "memorystore" {
   depends_on = [module.vpc_network]
 
   project_id   = var.project_id
-  region       = var.region
+  region       = local.gcp_region_key
   environment  = var.environment
   project_name = var.project_name
 

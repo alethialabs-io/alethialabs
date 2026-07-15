@@ -33,6 +33,12 @@ resource "google_firestore_database" "this" {
   app_engine_integration_mode = "DISABLED"
 
   delete_protection_state = var.environment == "production" ? "DELETE_PROTECTION_ENABLED" : "DELETE_PROTECTION_DISABLED"
+
+  # The provider DEFAULTS deletion_policy to ABANDON: `tofu destroy` then drops the database from
+  # state and reports success while the real Firestore database is left behind in the project —
+  # a silent orphan (observed on a real destroy: 29 resources "destroyed", database still live).
+  # Non-production must actually delete; production keeps ABANDON so a destroy can't nuke real data.
+  deletion_policy = var.environment == "production" ? "ABANDON" : "DELETE"
 }
 
 ################################################################################

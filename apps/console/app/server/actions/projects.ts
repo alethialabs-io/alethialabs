@@ -6,7 +6,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { getServiceDb, type Tx, withOwnerScope } from "@/lib/db";
+import { getServiceDb, type Tx, withOwnerScope, withScope } from "@/lib/db";
 import {
 	type EnvTransitionContext,
 	transitionEnv,
@@ -294,13 +294,20 @@ async function clearComponents(
 export async function createProject(data: CreateProjectInput) {
 	const actor = await authorize("create", { type: "project" });
 	const owner = actor.userId;
+	// A project belongs to the ACTIVE ORG, not the creating user. In the community build these are the
+	// same value (`actor.orgId === userId`), so everything below is byte-identical there. They diverge
+	// only under EE, where the active org is a real multi-member organization — and that divergence is
+	// the whole bug: `withOwnerScope`/the `set_org_id` trigger stamped `org_id = user_id`, so every read
+	// (which filters `projects.org_id = actor.orgId`) missed the project and its own creator couldn't
+	// see it. Scope the whole transaction to the org and stamp the org id explicitly.
+	const orgId = actor.orgId;
 
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId }, async (tx) => {
 		// M1: environment_stage is no longer a project column — it seeds the default env.
 		const { environment_stage, ...projectFields } = data.project;
 
 		// Projects are top-level under the org: derive a unique-per-org URL slug from the name
-		// (RLS scopes this select to the active org).
+		// (RLS scopes this select to the active org — now genuinely the org, not just the owner).
 		const existing = await tx.select({ slug: projects.slug }).from(projects);
 		const slug = pickFreeSlug(
 			slugify(projectFields.project_name) || "project",
@@ -311,7 +318,9 @@ export async function createProject(data: CreateProjectInput) {
 
 		const [project] = await tx
 			.insert(projects)
-			.values({ ...projectFields, slug, user_id: owner })
+			// Stamp org_id explicitly: the set_org_id trigger only defaults it to user_id (it does not
+			// read app.current_org), so relying on it re-introduces the exact mis-scoping.
+			.values({ ...projectFields, slug, user_id: owner, org_id: orgId })
 			.returning();
 
 		if (!project) throw new Error("Failed to create project");
@@ -334,17 +343,20 @@ export async function createProject(data: CreateProjectInput) {
 			.returning({ id: projectEnvironments.id });
 		if (!defaultEnv) throw new Error("Failed to create default environment");
 
-		// Authz hierarchy edge: project → org, so an org-wide grant flows down to this project.
+		// Authz hierarchy edge: project → org, so an org-wide grant flows down to this project. The
+		// parent is the ACTIVE ORG (= userId in community; a real org under EE) — pointing it at the
+		// creating user instead would strand the project under a phantom org, and the org's real grants
+		// would never reach it.
 		await tx
 			.insert(resourceHierarchy)
 			.values({
 				child_type: "project",
 				child_id: project.id,
 				parent_type: "org",
-				parent_id: owner,
+				parent_id: orgId,
 			})
 			.onConflictDoNothing();
-		mirrorHierarchyEdge("project", project.id, "org", owner);
+		mirrorHierarchyEdge("project", project.id, "org", orgId);
 
 		// Components belong to the default environment (tx rolls back on any failure).
 		await writeComponents(tx, project.id, defaultEnv.id, data);

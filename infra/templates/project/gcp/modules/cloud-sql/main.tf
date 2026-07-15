@@ -44,38 +44,30 @@ locals {
 }
 
 ################################################################################
-# Private IP allocation
-################################################################################
-
-resource "google_compute_global_address" "private_ip" {
-  name          = "${local.name_prefix}-sql-private-ip"
-  project       = var.project_id
-  purpose       = "VPC_PEERING"
-  address_type  = "INTERNAL"
-  prefix_length = 16
-  network       = var.network_self_link
-}
-
-resource "google_service_networking_connection" "private_vpc" {
-  network                 = var.network_self_link
-  service                 = "servicenetworking.googleapis.com"
-  reserved_peering_ranges = [google_compute_global_address.private_ip.name]
-}
-
-################################################################################
 # Cloud SQL instance
+#
+# NOTE: Private Service Access (the VPC_PEERING global address +
+# google_service_networking_connection) is NOT created here any more — it is a VPC-level
+# construct shared with Memorystore, so it lives in the vpc-network module. Ordering comes
+# from the root module's depends_on = [module.vpc_network].
 ################################################################################
 
 resource "google_sql_database_instance" "this" {
-  name                = local.instance_name
-  project             = var.project_id
-  region              = var.region
+  name    = local.instance_name
+  project = var.project_id
+  region  = var.region
+  # engine_map[engine] already yields "POSTGRES"/"MYSQL", so engine_version must be the BARE
+  # version ("16"), not "POSTGRES_16" — otherwise this composes "POSTGRES_POSTGRES_16" and the
+  # API rejects it: Invalid value at 'body.database_version'. (Cloud SQL had never provisioned.)
   database_version    = "${local.engine_map[var.engine]}_${var.engine_version}"
   deletion_protection = var.environment == "production" ? true : false
 
-  depends_on = [google_service_networking_connection.private_vpc]
-
   settings {
+    # Pin the edition explicitly. Left unset, the Cloud SQL API now defaults new instances to
+    # ENTERPRISE_PLUS, which REJECTS shared-core/standard tiers: "Invalid Tier (db-f1-micro) for
+    # (ENTERPRISE_PLUS) Edition." That made the module's own default tier unusable — Cloud SQL could
+    # not be created at all. ENTERPRISE is the edition that supports the standard tier family.
+    edition           = var.edition
     tier              = var.tier
     disk_size         = var.disk_size
     disk_autoresize   = true

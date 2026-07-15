@@ -25,6 +25,11 @@ import {
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
 import { connectorAssetUrl } from "@/components/connector/connector-assets";
+import {
+	AZURE_GUID_REGEX,
+	azureIdConflict,
+	parseAzureIds,
+} from "@/lib/cloud-providers/azure-ids";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { ClipboardPaste, Download, ExternalLink, Terminal } from "lucide-react";
@@ -32,36 +37,29 @@ import { type ClipboardEvent, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 
-const GUID_REGEX =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Bare GUID (no anchors) — for scraping the setup-script output. */
-const GUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
-
-/**
- * Extracts the tenant/client/subscription GUIDs from a pasted setup-script output block. Matches by
- * label (`Tenant ID: …`, `Client ID: …`, `Subscription ID: …`, and the `tenant_id=/client_id=/
- * subscription_id=` CONFIG keys, whose words the label regex also catches). Falls back to "three bare
- * GUIDs in the printed order" (tenant, subscription, client) when no labels are present.
- */
-function parseAzureIds(text: string): Partial<AzureFormValues> {
-	const grab = (label: string) =>
-		text.match(new RegExp(`${label}[^0-9a-fA-F]*(${GUID})`, "i"))?.[1];
-	let tenantId = grab("tenant");
-	let clientId = grab("client");
-	let subscriptionId = grab("subscription");
-	if (!tenantId && !clientId && !subscriptionId) {
-		const all = text.match(new RegExp(GUID, "g")) ?? [];
-		if (all.length >= 3) [tenantId, subscriptionId, clientId] = all;
-	}
-	return { tenantId, clientId, subscriptionId };
-}
-
-const azureSchema = z.object({
-	tenantId: z.string().regex(GUID_REGEX, "Invalid Tenant ID. Expected a UUID."),
-	clientId: z.string().regex(GUID_REGEX, "Invalid Client ID. Expected a UUID."),
-	subscriptionId: z.string().regex(GUID_REGEX, "Invalid Subscription ID. Expected a UUID."),
-});
+const azureSchema = z
+	.object({
+		tenantId: z
+			.string()
+			.regex(AZURE_GUID_REGEX, "Invalid Tenant ID. Expected a UUID."),
+		clientId: z
+			.string()
+			.regex(AZURE_GUID_REGEX, "Invalid Client ID. Expected a UUID."),
+		subscriptionId: z
+			.string()
+			.regex(AZURE_GUID_REGEX, "Invalid Subscription ID. Expected a UUID."),
+	})
+	// Catch a mis-paste inline, rather than letting it round-trip into Entra's opaque AADSTS700016.
+	.superRefine((v, ctx) => {
+		const conflict = azureIdConflict(v);
+		if (conflict) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: [conflict.field],
+				message: conflict.message,
+			});
+		}
+	});
 
 type AzureFormValues = z.infer<typeof azureSchema>;
 

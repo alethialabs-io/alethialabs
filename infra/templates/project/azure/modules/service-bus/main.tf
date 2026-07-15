@@ -1,5 +1,9 @@
 resource "azurerm_servicebus_namespace" "this" {
-  name                = "${var.project_name}-${var.environment}-sb"
+  # Azure REJECTS a Service Bus namespace whose name ends with "-sb" (also "-mgmt", or a hyphen):
+  #   Error: "name" cannot end with a hyphen, -sb, or -mgmt
+  # The old "${project}-${environment}-sb" therefore made Service Bus — i.e. the queue AND topic
+  # kinds — impossible to create. Lead with the discriminator instead of trailing it.
+  name                = "sb-${var.project_name}-${var.environment}"
   resource_group_name = var.resource_group_name
   location            = var.location
   sku                 = var.sku

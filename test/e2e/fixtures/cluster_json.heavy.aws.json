@@ -1,0 +1,8 @@
+{
+  "instance_types": ["m5.xlarge"],
+  "node_size": { "vcpu": 4, "memory_gb": 16 },
+  "node_min_size": 3,
+  "node_max_size": 4,
+  "node_desired_size": 3,
+  "node_disk_size_gb": 60
+}

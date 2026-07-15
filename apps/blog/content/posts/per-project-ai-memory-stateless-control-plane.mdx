@@ -1,0 +1,100 @@
+---
+title: Per-project AI memory on a stateless control plane
+description: How Elench gives each infrastructure project its own knowledge and memory without a single standing process — one table keyed the same way as the memory namespace, injected into a cached system prompt, and a scoping bug that only Postgres RLS could have hidden.
+date: 2026-07-15
+author: Alethia Labs Engineering
+tags: [architecture, ai, elench, database]
+excerpt: Each project gets its own knowledge and memory with no standing process — one table keyed like the memory namespace, injected into a cached prompt. Plus a scoping bug only RLS could hide.
+---
+
+We wanted Elench, [our in-console assistant](/blog/elench-grounded-ai-for-infrastructure), to feel like
+it *knows* each of your infrastructure projects — its conventions, its owners, its history — the way a
+"project" in a modern AI product does. The constraint: our control plane is **stateless**. There is no
+long-lived agent process per project to hold that context. So where does a project's memory live?
+
+The answer turned out to be pleasingly boring: **it's data, keyed exactly like the thing next to it.**
+
+## Two scopes, one shape
+
+Elench already had per-tenant *memory*, addressed by a namespace:
+
+```
+org/{orgId}                    → the organization (the general assistant)
+org/{orgId}/project/{projectId} → one project
+```
+
+That's the whole model: a chat scoped to the organization reads and writes under `org/{o}`; a chat scoped
+to a project reads under `org/{o}/project/{p}`. A stateless executor reconstructs everything per turn from
+that namespace — no daemon, no context rot.
+
+The missing half was *pinned* context — the custom instructions and knowledge documents a user wants on
+**every** message in a scope (not episodic memory the model manages, but standing policy the human sets).
+We gave it the same shape:
+
+```sql
+create table agent_context (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null,
+  org_id       uuid,
+  project_id   uuid,               -- null = the organization row
+  instructions text not null default '',
+  documents    jsonb not null default '[]',   -- [{ id, title, content, updated_at }]
+  constraint uq_agent_context_scope
+    unique nulls not distinct (org_id, project_id)
+);
+```
+
+The `unique nulls not distinct (org_id, project_id)` is the load-bearing line. Postgres normally treats
+every `NULL` as distinct, so a naive unique index would happily allow *two* organization rows (both with
+`project_id IS NULL`). `NULLS NOT DISTINCT` makes the org-level row genuinely unique — one row per
+organization, one row per project, mirroring the memory namespace 1:1. Memory and pinned knowledge now
+key the same way; that symmetry is not an accident, it's the point.
+
+## Injecting it, cheaply
+
+On every turn the executor assembles the system prompt in a fixed order:
+
+1. the base agent prompt,
+2. **organization** instructions + knowledge,
+3. **project** instructions + knowledge (project sits *on top of* org — specifics override policy),
+4. **live, auto-derived** project facts — identity, environments, recent jobs — so the first answer is
+   grounded with no tool round-trip,
+5. the user's turn.
+
+Each knowledge document keeps its **title** in the prompt (`### Runbook: production deploys`), so the model
+can cite which document it drew on — the reason knowledge is a list of named documents rather than one
+opaque blob. Everything above the user's turn is stable across a conversation, so it rides the provider's
+**prompt cache**: you pay to assemble a project's grounding once, then read it from cache on every
+subsequent turn. Knowledge has a hard character budget for exactly this reason — it's a per-message cost,
+not just storage, and the panel shows it as a capacity meter.
+
+## The bug that only RLS could hide
+
+Here's the one we're not proud of, because it's instructive.
+
+Every table above is protected by the same org-scoped Row-Level Security the rest of the platform uses.
+Our helper, `withOwnerScope(id)`, sets *both* the current-owner and current-org RLS variables to whatever
+id you hand it. The Knowledge panel **writes** rows through the user's id (`requireOwner()`). But the org
+chat route originally **read** them through `actor.orgId`.
+
+In our community edition, an org *is* a user — `orgId === userId` — so read and write landed in the same
+scope and everything worked. In an enterprise organization, where `orgId` is a real shared tenant, they
+diverge: the read looked under a different scope than the write, RLS returned zero rows, and org-level
+instructions **silently never loaded.** No error. No crash. Just an assistant quietly ignoring your policy
+in exactly the deployment where policy matters most.
+
+The fix was one word — read with `actor.userId`, the convention our authorization guard already documented
+— but the lesson is bigger: **RLS turns a scoping mismatch into silence, not a failure.** Community masked
+it perfectly. We now name the parameter `ownerUserId` at every call site so the next person can't reach for
+the org id, and we caught it only by driving the real UI in a browser, not by trusting a green test suite.
+
+## The division of labor stays intact
+
+None of this gives the model more authority. The knowledge base makes Elench *better grounded* — it
+proposes changes that fit your conventions — but a proposal is still just a proposal. It's re-validated by
+the deterministic verification engine before it's trusted, and a real apply is human-gated. Grounding and
+authority are different axes: we pushed hard on the first and touched none of the second.
+
+Per-project memory, then, is not a new runtime. It's two tables keyed the way the domain already thinks,
+injected into a cached prompt, and guarded by the same RLS as everything else — with one honest scar to
+show for it.

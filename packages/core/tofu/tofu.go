@@ -372,3 +372,72 @@ func sha256For(sums, asset string) (string, error) {
 	}
 	return "", fmt.Errorf("no checksum for %s in SHA256SUMS", asset)
 }
+
+// ── Orphan reconciliation primitives (issue #526) ────────────────────────────────────────────
+//
+// A FAILED apply can leave a real cloud resource OUTSIDE tofu state: the cloud accepts the create,
+// then fails it asynchronously (capacity/quota/policy), so tofu's create errors and never records
+// it. The environment is then PERMANENTLY WEDGED — every later apply dies with
+//
+//	a resource with the ID "…" already exists - to be managed via Terraform this resource needs to
+//	be imported into the State
+//
+// The provider names the remedy itself: IMPORT. Import is also the only remedy that is SAFE on a
+// live environment — a delete/force-destroy could take out a resource a customer depends on, and
+// the existing break-glass `orphan_clean` action (a cross-cloud force-destroy, shipped inert) is
+// the wrong shape for this entirely: it targets leftovers of an env that is already GONE.
+//
+// These are the primitives the STATE_SURGERY repair needs; the wrapper had neither.
+
+// Import brings an existing cloud resource under tofu management: `tofu import <address> <id>`.
+//
+// Both halves of the pair come straight out of the failed apply — provisioner.ClassifyApplyError
+// parses the address and the cloud ID from the provider's own error. After a successful import the
+// environment is UNWEDGED: the next plan/apply sees the resource in state and can update, replace
+// or destroy it normally.
+//
+// Callers must hold the tofu state lock (STATE_SURGERY jobs flow through claim_next_job → the
+// state lock/backend, so fencing is intact).
+func (t *TofuCLI) Import(ctx context.Context, address, id string) error {
+	if strings.TrimSpace(address) == "" || strings.TrimSpace(id) == "" {
+		return fmt.Errorf("import requires both a resource address and a cloud id (got address=%q id=%q)", address, id)
+	}
+	fmt.Printf("Importing %s (cloud id %s) into tofu state...\n", address, id)
+	return t.tf.Import(ctx, address, id)
+}
+
+// StateResources returns every resource ADDRESS currently tracked in tofu state.
+//
+// This is the "what do we manage?" half of an orphan diff: anything the cloud reports under the
+// run's sweep handle (alethia:project-id / alethia_project-id, stamped on every resource by
+// classification_tags) that does NOT appear here is unmanaged — i.e. an orphan. It is also how a
+// STATE_SURGERY import is verified: the imported address must appear afterwards.
+//
+// packages/core/drift cannot answer this question — a refresh-only plan is blind to resources that
+// are not in state (Unmanaged=0, UnmanagedKnown=false), which is precisely why the wedge went
+// undetected.
+func (t *TofuCLI) StateResources(ctx context.Context) ([]string, error) {
+	state, err := t.tf.Show(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading tofu state: %w", err)
+	}
+	if state == nil || state.Values == nil || state.Values.RootModule == nil {
+		return nil, nil // no state yet — nothing is managed.
+	}
+
+	var addrs []string
+	var walk func(m *tfjson.StateModule)
+	walk = func(m *tfjson.StateModule) {
+		if m == nil {
+			return
+		}
+		for _, r := range m.Resources {
+			addrs = append(addrs, r.Address)
+		}
+		for _, child := range m.ChildModules {
+			walk(child)
+		}
+	}
+	walk(state.Values.RootModule)
+	return addrs, nil
+}
