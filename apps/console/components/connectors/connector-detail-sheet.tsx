@@ -109,8 +109,10 @@ export function ConnectorDetailSheet({
 
 	if (!integration) return null;
 
-	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
+	// "Coming soon" only when NOT already connected, so a connected account still shows its accounts +
+	// disconnect UI rather than a dead "Coming Soon" badge. See connector-card.tsx.
+	const isComingSoon = integration.status === "coming_soon" && !isConnected;
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	const accounts = integration.accounts ?? [];

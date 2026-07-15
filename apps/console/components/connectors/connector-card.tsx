@@ -42,8 +42,11 @@ export function ConnectorCard({
 	platformConfigured = true,
 	isConnecting,
 }: ConnectorCardProps) {
-	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
+	// "Coming soon" only when NOT already connected. A connector can be marked coming_soon (e.g. DO/Civo
+	// lack provisioning templates) yet still have a live account from before — that account must keep
+	// its Manage → disconnect path, so a connected one is treated as a normal connection everywhere.
+	const isComingSoon = integration.status === "coming_soon" && !isConnected;
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a

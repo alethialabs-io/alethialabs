@@ -29,6 +29,7 @@ import {
 	setConnectorCredentialScope,
 } from "@/app/server/actions/connectors";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import type { Connector } from "@/lib/db/schema";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { getServiceDb, withScope } from "@/lib/db";
@@ -323,14 +324,20 @@ describe("setCloudIdentityScope", () => {
 });
 
 describe("getConnectorsWithStatus", () => {
-	/** Minimal catalog connector row; spread verbatim into the result. */
-	function connector(over: Record<string, unknown>) {
+	/**
+	 * Minimal catalog connector row; spread verbatim into the result. Typed against the real
+	 * `Connector` row so a fictional `category` / `auth_method` / `status` is a COMPILE error — the
+	 * blank-token-cloud-sheet bug slipped through because these fixtures used made-up auth methods
+	 * ("token", "role", "wif") that no real catalog row can hold, so the real api_key routing was
+	 * never exercised. (CLAUDE.md bans `Record<string, unknown>` for known shapes for exactly this.)
+	 */
+	function connector(over: Partial<Connector>): Partial<Connector> {
 		return {
 			id: "x",
 			slug: "x",
 			name: "X",
 			category: "git",
-			auth_method: "oauth2",
+			auth_method: "oauth",
 			status: "active",
 			sort_order: 0,
 			...over,
@@ -371,7 +378,7 @@ describe("getConnectorsWithStatus", () => {
 
 	it("surfaces a connected cloud account with its details and scope", async () => {
 		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "role" })],
+			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
 			[],
 			[
 				{
@@ -408,7 +415,7 @@ describe("getConnectorsWithStatus", () => {
 
 	it("drives the re-verify treatment for a failed cloud verification", async () => {
 		dbh.setQueue([
-			[connector({ slug: "gcp", category: "cloud", auth_method: "wif" })],
+			[connector({ slug: "gcp", category: "cloud", auth_method: "service_account" })],
 			[],
 			[
 				{
@@ -437,7 +444,7 @@ describe("getConnectorsWithStatus", () => {
 	// It must be listed, carrying its failure, so it can be re-verified or removed.
 	it("lists a FAILED cloud account so it can still be removed", async () => {
 		dbh.setQueue([
-			[connector({ slug: "azure", category: "cloud", auth_method: "oidc" })],
+			[connector({ slug: "azure", category: "cloud", auth_method: "service_principal" })],
 			[],
 			[
 				{
@@ -467,7 +474,7 @@ describe("getConnectorsWithStatus", () => {
 	// still reads as connected — but it must say so rather than reporting an unqualified green.
 	it("surfaces a DEGRADED account as connected, with its missing permissions", async () => {
 		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "role" })],
+			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
 			[],
 			[
 				{
@@ -495,7 +502,7 @@ describe("getConnectorsWithStatus", () => {
 	// entirely — it was invisible and un-removable from the board.
 	it("keeps a connector connected when one of two accounts is broken, but still lists the broken one", async () => {
 		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "role" })],
+			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
 			[],
 			[
 				{
@@ -533,7 +540,7 @@ describe("getConnectorsWithStatus", () => {
 		// A `disconnected` unverified row with EMPTY credentials — the sweeper poisoning an eager
 		// connect-sheet placeholder. It must NOT surface as a failed verification.
 		dbh.setQueue([
-			[connector({ slug: "digitalocean", category: "cloud", auth_method: "token" })],
+			[connector({ slug: "digitalocean", category: "cloud", auth_method: "api_key" })],
 			[],
 			[
 				{
@@ -559,7 +566,7 @@ describe("getConnectorsWithStatus", () => {
 
 	it("still surfaces a genuine lost-access (disconnected) token cloud that has credentials", async () => {
 		dbh.setQueue([
-			[connector({ slug: "hetzner", category: "cloud", auth_method: "token" })],
+			[connector({ slug: "hetzner", category: "cloud", auth_method: "api_key" })],
 			[],
 			[
 				{
