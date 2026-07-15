@@ -42,8 +42,10 @@ export function ConnectorRow({
 	platformConfigured = true,
 	isConnecting,
 }: ConnectorRowProps) {
-	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
+	// "Coming soon" only when NOT already connected — a connected account keeps its Manage → disconnect
+	// path even if the connector is later marked coming_soon. See connector-card.tsx.
+	const isComingSoon = integration.status === "coming_soon" && !isConnected;
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a

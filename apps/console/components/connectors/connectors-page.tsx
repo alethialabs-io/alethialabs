@@ -26,6 +26,7 @@ import {
 	useCloudConnect,
 } from "@/components/cloud-connect/use-cloud-connect";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
+import { connectRoute } from "@/lib/connectors/helpers";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -208,39 +209,42 @@ export function ConnectorsPage({
 		const slug = integration.slug;
 		track("connector_connect_started", { provider: slug, category: integration.category });
 
-		if (integration.category === "git") {
-			setConnectingSlug(slug);
-			try {
-				const provider = slug as PublicGitProvider;
-				const callbackURL = `/${orgSlug}/~/connectors`;
-				const { error } =
-					provider === "github"
-						? await authClient.linkSocial({
-								provider,
-								scopes: ["repo"],
-								callbackURL,
-							})
-						: await authClient.oauth2.link({
-								providerId: provider,
-								callbackURL,
-							});
-				if (error) throw new Error(error.message);
-			} catch (err) {
-				console.error(`Error linking ${slug}:`, err);
-				toast.error(`Failed to connect ${integration.name}`);
-			} finally {
-				setConnectingSlug(null);
+		// Route by connect flow, category-first. A chain of `if`s here previously let the token clouds
+		// (category `cloud`, auth_method `api_key`) fall into the api_key branch and open a blank sheet.
+		switch (connectRoute(integration)) {
+			case "git": {
+				setConnectingSlug(slug);
+				try {
+					const provider = slug as PublicGitProvider;
+					const callbackURL = `/${orgSlug}/~/connectors`;
+					const { error } =
+						provider === "github"
+							? await authClient.linkSocial({
+									provider,
+									scopes: ["repo"],
+									callbackURL,
+								})
+							: await authClient.oauth2.link({
+									providerId: provider,
+									callbackURL,
+								});
+					if (error) throw new Error(error.message);
+				} catch (err) {
+					console.error(`Error linking ${slug}:`, err);
+					toast.error(`Failed to connect ${integration.name}`);
+				} finally {
+					setConnectingSlug(null);
+				}
+				return;
 			}
-			return;
+			case "cloud":
+				// aws/gcp/azure AND the token clouds (hetzner/civo/digitalocean) → the shared sheet.
+				await cloudConnect.openConnect(integration);
+				return;
+			case "api_key":
+				setApiKeySlug(slug);
+				return;
 		}
-
-		if (integration.auth_method === "api_key") {
-			setApiKeySlug(slug);
-			return;
-		}
-
-		// Cloud providers (aws/gcp/azure/extra) → the shared connect-sheet flow.
-		await cloudConnect.openConnect(integration);
 	};
 
 	// Deep-link: `?connect=<slug>` (e.g. from elench's connect action) auto-opens the connect sheet once,
@@ -253,7 +257,11 @@ export function ConnectorsPage({
 		connectHandledRef.current = true;
 		const integration = integrations.find((i) => i.slug === slug);
 		router.replace(`/${orgSlug}/~/connectors`, { scroll: false });
-		if (integration) void handleConnect(integration);
+		// Don't auto-open a connect sheet for a connector that can't be connected yet — a `coming_soon`
+		// cloud (DO/Civo) has no provisioning templates, so connecting it would be a dead end.
+		if (integration && integration.status !== "coming_soon") {
+			void handleConnect(integration);
+		}
 		// handleConnect is intentionally excluded — the ref makes this run once.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [searchParams, integrations, canManage, orgSlug, router]);

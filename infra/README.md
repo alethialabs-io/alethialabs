@@ -54,7 +54,8 @@ Each bootstrap is admin-applied once and owns **all IAM** so the CI deploy roles
 
 `email-ses` + `connector-assets` use **GitHub OIDC** (no stored keys). The five `cp-*` stacks
 and `status` still use **static cloud keys** in CI secrets. Full OIDC parity is deferred: it
-needs per-cloud federation (GCP Workload Identity Federation, Azure federated credentials, and
-there is no native OIDC for Alibaba/Hetzner), **and** the `cp-*` state lives in an
+needs per-cloud federation (GCP Workload Identity Federation, Azure federated credentials,
+Alibaba `AssumeRoleWithOIDC` — the console already federates into all three keyless; Hetzner has
+no native OIDC and stays token-only), **and** the `cp-*` state lives in an
 S3-*compatible* store (custom endpoint) that OIDC would not authenticate. Target design lives
 here; tracked as follow-up.
