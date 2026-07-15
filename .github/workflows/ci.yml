@@ -28,14 +28,18 @@ permissions:
   contents: read
 
 jobs:
-  # Does this PR touch the Elench/agent surface? If so the browser E2E below becomes a PR gate.
-  # A whole Lexical composer rewrite once shipped green because that suite only ran post-merge —
-  # the one test that would have caught it never ran on the PR. Cheap (~15s) and dependency-free.
-  agent-changes:
-    name: Detect agent-surface changes
+  # Which surfaces does this PR touch? The heavy browser E2Es below stay OFF most PRs (Actions
+  # minutes), but a PR that changes a surface an E2E covers turns that E2E into a PR gate — because
+  # the alternative is what keeps happening: a suite that only runs post-merge lets a break ship
+  # green. A whole Lexical composer rewrite shipped that way (→ `agent`); the "Org evidence" heading
+  # the hero path waited for was deleted in an Evidence redesign and rotted for weeks (→ `console`,
+  # below). Cheap (~15s) and dependency-free.
+  detect-changes:
+    name: Detect PR surface changes
     runs-on: ubuntu-latest
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
+      console: ${{ steps.filter.outputs.console }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,15 +47,27 @@ jobs:
       - id: filter
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "agent=false" >> "$GITHUB_OUTPUT"; exit 0
+            echo "agent=false" >> "$GITHUB_OUTPUT"
+            echo "console=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           changed=$(git diff --name-only \
             "${{ github.event.pull_request.base.sha }}" \
             "${{ github.event.pull_request.head.sha }}")
+          # `agent` — the narrow Elench/agent surface the Elench AI E2E drives.
           if echo "$changed" | grep -qE '^apps/console/(components/(agent|ui/message-scroller)|lib/(ai|stores/use-(elench|artifact|widget-grid))|app/api/agent|app/server/actions/(agent|artifacts|mentions)|e2e/elench)'; then
             echo "agent=true" >> "$GITHUB_OUTPUT"
           else
             echo "agent=false" >> "$GITHUB_OUTPUT"
+          fi
+          # `console` — the hero happy-path threads through nearly the whole console (auth → org →
+          # connectors → canvas → evidence → clusters), so the filter is DELIBERATELY broad: any
+          # console or shared-UI change can break it. The Evidence break proves narrow is a trap —
+          # a page nobody thought of as "hero-related" broke the sellable flow. Better to run the
+          # hero on a console PR that turns out not to touch it than to miss the one that does.
+          if echo "$changed" | grep -qE '^(apps/console/|packages/@repo/)'; then
+            echo "console=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "console=false" >> "$GITHUB_OUTPUT"
           fi
 
   typescript:
@@ -164,10 +180,18 @@ jobs:
   e2e-browser:
     name: E2E (browser · Playwright hero path)
     runs-on: ubuntu-latest
-    # Heavy (console build + Playwright) and NOT a required merge check — run on the merge queue,
-    # pushes to main, and manual dispatch, but NOT on every PR push, to cut per-PR Actions minutes.
-    # (The nightly e2e workflows also cover these flows.)
-    if: github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [detect-changes]
+    # Heavy (console build + Playwright), so it stays OFF most PRs to cut Actions minutes — but it
+    # now RUNS on any PR that touches the console surface (detect-changes.console), because that is
+    # the only pre-merge signal the hero path has. There is NO nightly hero run (e2e-nightly is
+    # maintainer-gated real-cloud provisioning; e2e-ai-nightly drives the Elench journeys), and the
+    # merge queue is off — so before this, a console change could break the sellable flow and only a
+    # post-merge push would notice. That is exactly how the "Org evidence" assertion rotted for weeks.
+    # Still runs on the merge queue, pushes, and manual dispatch as before.
+    if: >-
+      github.event_name == 'merge_group' || github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || needs.detect-changes.outputs.console == 'true'
     # Own parallel job, OFF the fast path: builds + boots the real console against a real Postgres
     # and drives the sellable happy-path in a headless browser (sign-in → org → connect-a-cloud
     # surface → design → Deploy/pending-changes → evidence/clusters). Fully hermetic: email-OTP with
@@ -248,7 +272,7 @@ jobs:
   e2e-elench-ai:
     name: E2E (browser · Elench AI journeys · scripted model)
     runs-on: ubuntu-latest
-    needs: [agent-changes]
+    needs: [detect-changes]
     # Heavy (console build + Playwright), so it stays OFF most PRs to cut Actions minutes — but it
     # now RUNS on any PR that touches the agent surface. It is the only test that drives the real
     # composer/rail/grid in a browser, and skipping it on PRs is how a broken Lexical composer
@@ -256,7 +280,7 @@ jobs:
     if: >-
       github.event_name == 'merge_group' || github.event_name == 'push'
       || github.event_name == 'workflow_dispatch'
-      || needs.agent-changes.outputs.agent == 'true'
+      || needs.detect-changes.outputs.agent == 'true'
     # The Elench AI journeys end-to-end with a SCRIPTED model (ALETHIA_AI_MOCK=1 → the
     # MockLanguageModelV3 in lib/config/ai-mock). Only the model is deterministic: the agent
     # route, extended thinking, orchestration markers, TOOL EXECUTION (PDP-gated reads against
