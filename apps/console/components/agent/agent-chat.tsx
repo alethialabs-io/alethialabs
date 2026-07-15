@@ -98,6 +98,9 @@ export interface AgentChatProps {
 	onFeedback?: (messageId: string, value: "up" | "down") => void;
 	/** When set, a "Support" action links here from each assistant turn. */
 	supportHref?: string;
+	/** In-app support handler — preferred over `supportHref` so we navigate same-tab
+	 * (client router) instead of opening an external tab. */
+	onSupport?: () => void;
 }
 
 /** Concatenate a message's text parts (for the Copy action). */
@@ -136,6 +139,7 @@ export function AgentChat({
 	composerClassName,
 	onFeedback,
 	supportHref,
+	onSupport,
 }: AgentChatProps) {
 	const pending = status === "submitted" || status === "streaming";
 	const lastMessageId = messages.at(-1)?.id;
@@ -355,12 +359,14 @@ export function AgentChat({
 																		<RefreshCcwIcon className="size-3.5" />
 																	</Action>
 																)}
-																{supportHref && (
+																{(onSupport || supportHref) && (
 																	<Action
 																		tooltip="Support"
 																		label="Get support"
 																		onClick={() => {
-																			window.open(supportHref, "_blank", "noopener");
+																			if (onSupport) onSupport();
+																			else if (supportHref)
+																				window.open(supportHref, "_blank", "noopener");
 																		}}
 																	>
 																		<HelpCircle className="size-3.5" />

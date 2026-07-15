@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
@@ -24,6 +25,8 @@ import {
 import { useWidgetAutoPin } from "@/components/agent/widgets/use-widget-auto-pin";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import { elenchChatId, useElenchStore } from "@/lib/stores/use-elench-store";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { globalHref } from "@/lib/routing";
 import { ElenchComposer } from "./elench-composer";
 import {
 	ElenchModalLanding,
@@ -36,9 +39,6 @@ import {
 	ORG_SUGGESTIONS,
 	PROJECT_SUGGESTIONS,
 } from "./elench-suggestions";
-
-/** External help destination for the Support affordances. */
-export const ELENCH_SUPPORT_HREF = "https://alethialabs.io/contact";
 
 /** Read the staged empty-cell target and clear it — a cell request must ride exactly the
  * one request it was typed for, and never leak into the next message. */
@@ -89,6 +89,13 @@ export function ElenchConversation({
 	const seedPrompt = useElenchStore((s) => s.seedPrompt);
 	const setSeedPrompt = useElenchStore((s) => s.setSeedPrompt);
 	const isOrg = ctx.kind === "org";
+
+	// In-app support hub (`/{org}/~/support`), not the marketing contact page. Undefined until
+	// the active org slug resolves, which hides the Support affordance rather than linking to
+	// a malformed `//~/support`.
+	const router = useRouter();
+	const orgSlug = useActiveOrgSlug();
+	const supportHref = orgSlug ? globalHref(orgSlug, "support") : undefined;
 
 	// Transport by context. `api` + `prepareBody` are referentially stable within a
 	// mount (the conversation is keyed by ctx/thread upstream, so it remounts cleanly
@@ -357,13 +364,14 @@ export function ElenchConversation({
 						/>
 					}
 					onFeedback={() => {}}
-					supportHref={ELENCH_SUPPORT_HREF}
+					supportHref={supportHref}
+					onSupport={supportHref ? () => router.push(supportHref) : undefined}
 					emptyState={
 						view === "panel" && isEmpty ? (
 							<ElenchPanelEmpty
 								onSend={onSend}
 								suggestions={suggestions}
-								supportHref={ELENCH_SUPPORT_HREF}
+								supportHref={supportHref}
 							/>
 						) : undefined
 					}
