@@ -7,6 +7,12 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 Production AWS SES for **alethialabs.io** transactional email — codified.
 
+> **Status: not used by hosted prod.** AWS denied SES production access for this
+> account (both `eu-central-1` and `us-east-1`, "final decision"), so hosted
+> alethialabs.io sends via **Resend** (`EMAIL_PROVIDER=resend`, `RESEND_API_KEY`).
+> This stack is retained for self-hosters who *do* have SES production access — the
+> email transport is pluggable (Resend / SMTP / SES); see docs → Self-Hosting → Email.
+
 - **Account:** `270587882865` · **Region:** `eu-central-1`
 - Two reputation-isolated sending subdomains: `auth.alethialabs.io` (auth/security,
   `AUTH_EMAIL_FROM`) and `mail.alethialabs.io` (product/general, `EMAIL_FROM`).
