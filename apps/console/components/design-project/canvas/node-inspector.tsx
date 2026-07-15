@@ -14,8 +14,15 @@ import { cn } from "@repo/ui/utils";
 import {
 	NODE_STATUS_META,
 	useNodeStatus,
+	type NodeStatusMeta,
 	type NodeStatusState,
 } from "@/lib/canvas/node-status";
+import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
+import { ago, JOB_LABEL, JOB_STATUS } from "@/lib/canvas/job-display";
+import type {
+	EnvironmentInfo,
+	EnvironmentJob,
+} from "@/lib/canvas/component-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
 	collectionNodeId,
@@ -27,7 +34,7 @@ import { ExternalPanel } from "./inspector/external-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
-import { getKindConfig } from "./inspector/config-schema";
+import { getKindConfig, type KindConfig } from "./inspector/config-schema";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
 
@@ -40,9 +47,10 @@ interface InspectorPanelProps {
 /**
  * The service-config body of the canvas's inline docked side panel. Configures the selected node:
  * a header (resource icon, editable name, type badge, live one-line summary, close) over
- * Overview + Settings tabs, where Settings is built data-drivenly from the node's config schema
- * (collapsible sections, radio-cards, typed fields) plus a Danger zone. Rendered only when a node
- * is selected (`inspectorNodeId`).
+ * Overview · Cost · Activity · Settings tabs. Settings is built data-drivenly from the node's config
+ * schema (collapsible sections, radio-cards, typed fields) plus a Danger zone; Cost breaks the
+ * node's monthly spend down by Terraform address; Activity is the environment's recent job history.
+ * Rendered only when a node is selected (`inspectorNodeId`).
  *
  * The cloud account is NOT set here — it's chosen once, at project creation, so there is no per-node
  * cloud selector. The effective provider is still resolved (it drives facts, zones, and the schema
@@ -57,10 +65,19 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
 	const getEffectiveProvider = useCanvasStore((s) => s.getEffectiveProvider);
 
+	const env = useEnvironmentStatus();
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	const def = node ? NODE_REGISTRY[node.data.kind] : null;
 	const schema = node ? getKindConfig(node.data.kind) : undefined;
+
+	// The project panel binds to the REAL environment being viewed. Its stage is a fact of that
+	// environment, not a free choice — so when we're on a provisioned env the static `environment_stage`
+	// radio is dropped (surfaced read-only above instead). In the create flow there's no env row yet
+	// (`environment` is null), so the radio stays: it's what seeds the first environment's stage.
+	const realEnv = node?.data.kind === "project" ? env.environment : null;
+	const settingsSchema =
+		realEnv && schema ? withoutField(schema, "environment_stage") : schema;
 
 	// A collection card (the Secrets vault) is synthetic — it has no store row, so its id resolves to
 	// no node. It gets the list panel instead, which is where its resources are actually managed.
@@ -166,11 +183,13 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 			<StatusHeader nodeId={node.id} />
 
 			<Tabs
-				defaultValue="settings"
+				defaultValue="overview"
 				className="flex min-h-0 flex-1 flex-col gap-0"
 			>
-				<TabsList className="mx-4 mt-3 shrink-0">
+				<TabsList className="mx-4 mt-3 grid shrink-0 grid-cols-4">
 					<TabsTrigger value="overview">Overview</TabsTrigger>
+					<TabsTrigger value="cost">Cost</TabsTrigger>
+					<TabsTrigger value="activity">Activity</TabsTrigger>
 					<TabsTrigger value="settings">Settings</TabsTrigger>
 				</TabsList>
 
@@ -179,6 +198,20 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 					className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-4"
 				>
 					<Overview node={node} />
+				</TabsContent>
+
+				<TabsContent
+					value="cost"
+					className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-4"
+				>
+					<CostTab node={node} />
+				</TabsContent>
+
+				<TabsContent
+					value="activity"
+					className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-4"
+				>
+					<ActivityTab />
 				</TabsContent>
 
 				<TabsContent
@@ -195,9 +228,11 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 						</Alert>
 					)}
 
-					{schema && (
+					{realEnv && <EnvironmentBlock env={realEnv} />}
+
+					{settingsSchema && (
 						<ConfigFields
-							schema={schema}
+							schema={settingsSchema}
 							config={node.data.config}
 							provider={provider}
 							onChange={(patch) => updateNodeConfig(node.id, patch)}
@@ -211,6 +246,54 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 					<DangerZone node={node} />
 				</TabsContent>
 			</Tabs>
+		</div>
+	);
+}
+
+/** Returns a copy of a config schema with one field removed from every section. */
+function withoutField(schema: KindConfig, key: string): KindConfig {
+	return {
+		...schema,
+		sections: schema.sections.map((s) => ({
+			...s,
+			fields: s.fields.filter((f) => f.key !== key),
+		})),
+	};
+}
+
+/** A provisioning status → the board's grayscale dot vocabulary. Status never reads as hue. */
+const ENV_STATUS_VX: Record<string, NodeStatusMeta["vx"]> = {
+	DRAFT: "idle",
+	QUEUED: "pending",
+	PROVISIONING: "live",
+	ACTIVE: "active",
+	FAILED: "failed",
+	DESTROYING: "pending",
+	DESTROYED: "disabled",
+};
+
+/**
+ * The real environment the project panel is bound to — its name, stage, and provisioning status,
+ * read straight from `project_environments`. This is what replaces the old free-choice stage radio:
+ * the stage is a fact of the environment you're viewing, not something you pick on the board.
+ */
+function EnvironmentBlock({ env }: { env: EnvironmentInfo }) {
+	const vx = ENV_STATUS_VX[env.status] ?? "idle";
+	return (
+		<div className="border border-border bg-surface-sunken">
+			<div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+				<span className="vx-eyebrow">Environment</span>
+				<span className={cn("vx-status shrink-0", `vx-status--${vx}`)}>
+					<span className="vx-status__dot" />
+					{env.status.charAt(0) + env.status.slice(1).toLowerCase()}
+				</span>
+			</div>
+			<dl className="grid grid-cols-[5rem_1fr] gap-y-1.5 px-3 py-2.5 text-xs">
+				<dt className="text-muted-foreground">Name</dt>
+				<dd className="truncate font-mono">{env.name}</dd>
+				<dt className="text-muted-foreground">Stage</dt>
+				<dd className="capitalize">{env.stage}</dd>
+			</dl>
 		</div>
 	);
 }
@@ -299,9 +382,10 @@ function StatusHeader({ nodeId }: { nodeId: string }) {
 	);
 }
 
-/** Read-only summary of a node: its resolved status, any drift, and its config values. */
+/** Read-only summary of a node: its resolved status, cost, recent activity, drift, and config. */
 function Overview({ node }: { node: CanvasNode }) {
 	const status = useNodeStatus(node.id);
+	const env = useEnvironmentStatus();
 	const meta = NODE_STATUS_META[status.state];
 	const def = NODE_REGISTRY[node.data.kind];
 	// Only show scalar config (skip nested objects/arrays — those have their own UIs).
@@ -310,6 +394,10 @@ function Overview({ node }: { node: CanvasNode }) {
 	);
 	return (
 		<div className="space-y-4 text-sm">
+			{node.data.kind === "project" && env.environment && (
+				<EnvironmentBlock env={env.environment} />
+			)}
+
 			<dl className="grid grid-cols-[8rem_1fr] gap-y-2">
 				<dt className="text-muted-foreground">Type</dt>
 				<dd>{def.label}</dd>
@@ -343,6 +431,29 @@ function Overview({ node }: { node: CanvasNode }) {
 							</div>
 						))}
 					</dl>
+				</div>
+			)}
+
+			{/* What this resource costs, from the last plan's Infracost breakdown. Null = never priced;
+			    we say nothing rather than a misleading $0. The Cost tab holds the per-address detail. */}
+			{status.monthlyCost != null && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">Cost</span>
+					<div className="flex items-baseline justify-between">
+						<span className="text-xs text-muted-foreground">Monthly</span>
+						<span className="font-mono text-sm font-semibold">
+							{formatMonthly(status.monthlyCost)}
+						</span>
+					</div>
+				</div>
+			)}
+
+			{/* The environment's recent jobs — the same history the Activity tab and floating rail show,
+			    condensed to the latest few so the Overview answers "what just happened here". */}
+			{env.recentJobs.length > 0 && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">Recent activity</span>
+					<JobList jobs={env.recentJobs.slice(0, 3)} />
 				</div>
 			)}
 
@@ -384,5 +495,119 @@ function Overview({ node }: { node: CanvasNode }) {
 				</div>
 			)}
 		</div>
+	);
+}
+
+/** A resource's monthly cost, formatted the one way the panel spells it. */
+function formatMonthly(n: number): string {
+	return `$${n.toLocaleString("en-US", {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	})}/mo`;
+}
+
+/**
+ * The Cost tab — the node's monthly spend broken down by Terraform address. The rollup and the
+ * per-line detail both come from the last plan's Infracost breakdown (resolved on the node's status).
+ * A resource that was never priced (never planned, or unpriceable) says so rather than showing $0 —
+ * a confident zero would be a lie.
+ */
+function CostTab({ node }: { node: CanvasNode }) {
+	const status = useNodeStatus(node.id);
+	const env = useEnvironmentStatus();
+	const lines = [...status.costLines].sort(
+		(a, b) => b.monthlyCost - a.monthlyCost,
+	);
+
+	if (status.monthlyCost == null && lines.length === 0) {
+		return (
+			<p className="text-xs text-muted-foreground">
+				Not priced yet. Run a plan and this resource&apos;s estimated monthly cost
+				will appear here.
+			</p>
+		);
+	}
+
+	return (
+		<div className="space-y-4 text-sm">
+			<div className="flex items-baseline justify-between border border-border bg-surface-sunken px-3 py-2.5">
+				<span className="vx-eyebrow">Monthly</span>
+				<span className="font-mono text-lg font-semibold">
+					{status.monthlyCost != null ? formatMonthly(status.monthlyCost) : "—"}
+				</span>
+			</div>
+			{env.costCapturedAt && (
+				<p className="text-[11px] text-muted-foreground">
+					As of the last plan · {ago(env.costCapturedAt)} ago
+				</p>
+			)}
+			{lines.length > 0 ? (
+				<div className="space-y-2">
+					<span className="vx-eyebrow">Breakdown</span>
+					<ul className="space-y-1">
+						{lines.map((l) => (
+							<li
+								key={l.address}
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5 font-mono text-[10px]"
+							>
+								<span className="min-w-0 flex-1 truncate">{l.address}</span>
+								<span className="shrink-0">{formatMonthly(l.monthlyCost)}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			) : (
+				<p className="text-xs text-muted-foreground">
+					This resource carries a total price with no per-line breakdown.
+				</p>
+			)}
+		</div>
+	);
+}
+
+/**
+ * The Activity tab — the environment's recent job history. It's env-scoped, not per-node (a node has
+ * no jobs of its own — a DEPLOY provisions the whole board), which is why it reads from the single
+ * environment-status round-trip rather than threading the project/environment id into the panel.
+ */
+function ActivityTab() {
+	const env = useEnvironmentStatus();
+	if (env.recentJobs.length === 0) {
+		return (
+			<p className="text-xs text-muted-foreground">
+				No activity yet for this environment.
+			</p>
+		);
+	}
+	return <JobList jobs={env.recentJobs} />;
+}
+
+/** A list of jobs in the board's grayscale job vocabulary — shared by Activity and the Overview. */
+function JobList({ jobs }: { jobs: EnvironmentJob[] }) {
+	return (
+		<ul className="space-y-1">
+			{jobs.map((job) => {
+				const vx = JOB_STATUS[job.status] ?? "idle";
+				return (
+					<li
+						key={job.id}
+						className="flex items-center gap-2 border border-border bg-surface-sunken px-2.5 py-1.5"
+					>
+						<span
+							className={cn("vx-status shrink-0", `vx-status--${vx}`)}
+							suppressHydrationWarning
+						>
+							<span className="vx-status__dot" />
+						</span>
+						<span className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide">
+							{JOB_LABEL[job.type] ?? job.type}
+						</span>
+						<span className="shrink-0 font-mono text-[9px] text-muted-foreground">
+							{ago(job.createdAt)}
+						</span>
+					</li>
+				);
+			})}
+		</ul>
 	);
 }
