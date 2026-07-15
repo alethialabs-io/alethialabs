@@ -601,6 +601,22 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	setStage("apply")
 	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {
+		// A FAILED apply can leave a real cloud resource OUTSIDE tofu state (issue #526): the cloud
+		// accepts the create, then fails it asynchronously (capacity/quota/policy), so tofu's create
+		// errors and NEVER records it. The environment is then PERMANENTLY WEDGED — every later apply
+		// dies with `already exists ... needs to be imported`. Until now that was silent: orphan_risk
+		// fired only on an INTERRUPTED apply, so we reported orphan_risk=false on precisely the
+		// failure that bricked the customer.
+		//
+		// Classify on POSITIVE EVIDENCE only (ClassifyApplyError, orphan.go). An ordinary failure —
+		// a validation error, a quota rejection BEFORE create — yields OrphanNone and is NOT flagged,
+		// which preserves the "normal failures do not over-alert" property the original design was
+		// right to protect. Diagnosing this here (rather than leaving the customer to hit an
+		// inscrutable "already exists" on their next deploy) is the whole point.
+		if f := ClassifyApplyError(err, ""); f.Orphaned() {
+			fmt.Fprintf(stderr, "\nORPHAN RISK (%s): %s\n", f.Evidence, f.Reason)
+			return nil, &ApplyOrphanError{Err: err, Finding: f}
+		}
 		return nil, fmt.Errorf("tofu apply failed: %w", err)
 	}
 	// Apply returned cleanly ⇒ tofu state is fully persisted, so nothing is orphaned OUTSIDE
