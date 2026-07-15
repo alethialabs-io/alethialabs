@@ -85,8 +85,6 @@ function ComposerBody({
 	const pending = status === "submitted" || status === "streaming";
 	/** The composer box — the mention menu portals into it and opens above it. */
 	const boxRef = useRef<HTMLDivElement>(null);
-	/** True while the `@` menu is open — Enter then belongs to the menu, never to send. */
-	const mentionMenuOpen = useRef(false);
 
 	useEffect(() => {
 		if (autoFocus) editor.focus();
@@ -120,16 +118,17 @@ function ComposerBody({
 		});
 	}, [editor, onSend, pending]);
 
-	// Enter sends (Shift+Enter = newline). Registered LOW so an open typeahead (NORMAL) wins —
-	// but priority alone isn't enough: if the menu is open and declines Enter (e.g. nothing
-	// highlighted), it falls through to here and SENDS the half-typed "@" as a message. So the
-	// menu's open state is an explicit guard.
+	// Enter sends (Shift+Enter = newline). Registered LOW so the mention typeahead (NORMAL) wins
+	// when it has a selectable option — its handler consumes Enter to pick, so this never runs.
+	// When the menu has no option (or is closed) the plugin DECLINES Enter and it reaches here to
+	// send. We deliberately do NOT gate on a "menu open" flag: the plugin already does the right
+	// thing by priority, and a stale flag once trapped `@mention`-in-the-middle messages so Enter
+	// only inserted a newline and the message never sent.
 	useEffect(
 		() =>
 			editor.registerCommand(
 				KEY_ENTER_COMMAND,
 				(event) => {
-					if (mentionMenuOpen.current) return false;
 					if (event?.shiftKey) return false;
 					event?.preventDefault();
 					submit();
@@ -168,12 +167,7 @@ function ComposerBody({
 					/>
 					<OnChangePlugin onChange={onChange} />
 					<HistoryPlugin />
-					<MentionTypeaheadPlugin
-						boxRef={boxRef}
-						onOpenChange={(open) => {
-							mentionMenuOpen.current = open;
-						}}
-					/>
+					<MentionTypeaheadPlugin boxRef={boxRef} />
 				</div>
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
 					<div className="flex items-center gap-1.5">
