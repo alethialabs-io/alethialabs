@@ -200,10 +200,6 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("control plane: %v", err)
 	}
-	runnerID, runnerToken, err := cp.SeedRunner(ctx)
-	if err != nil {
-		t.Fatalf("seed runner: %v", err)
-	}
 	cp.Start()
 	// LIFO: Close registered FIRST so it runs LAST — after teardown, which reads state
 	// over HTTP from this same server.
@@ -215,6 +211,23 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// a seed/fixture failure disables A0.5 and falls back to the unlinked lean seed (provisioning is
 	// never affected).
 	a05 := setupA05(t, ctx, cp, root, project, env, region)
+
+	// The self runner MUST be seeded in the SAME org as the DEPLOY job it will claim —
+	// claim_next_job's self-runner branch scopes to `j.org_id = v_runner_org_id` (audit P0, #392),
+	// so a runner in a different org silently never claims and the job sits QUEUED until timeout
+	// (the failure mode that made AWS T2's first run look like a template bug). On the A0.5 path the
+	// job takes the graph's user/org; on the lean fallback both take `owner`. Seed the runner into
+	// that same owner — the realistic "one owner owns project + runner + job" shape.
+	// org == user in both paths (A0.5 sets g.orgID = g.userID; community tenancy for the lean seed),
+	// so a single owner id fills both columns for the runner and the job.
+	owner := newUUID()
+	if g := a05.jobGraph(); g != nil {
+		owner = g.userID
+	}
+	runnerID, runnerToken, err := cp.SeedRunner(ctx, owner, owner)
+	if err != nil {
+		t.Fatalf("seed runner: %v", err)
+	}
 
 	// Build the runner-facing DEPLOY snapshot. `base` is the pre-repos/pre-cluster-json snapshot the
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
@@ -235,7 +248,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 	a05CheckFidelity(t, a05, base)
 
-	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph())
+	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
 	if err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
@@ -525,7 +538,10 @@ func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 // (a random self-owned org, provisioning-only — the historical behavior). The `provider` column is
 // left NULL so the atomic claim's provider filter passes for the seeded runner; the runner reads the
 // provider from the snapshot.
-func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any, g *a05Graph) (string, error) {
+// leanOwnerID is the user/org the job belongs to on the lean (g == nil) path; on the A0.5 path the
+// job takes the graph's user/org. Either way it MUST equal the SeedRunner owner, or the self-runner
+// claim (j.org_id = v_runner_org_id, #392) never matches and the job sits QUEUED until timeout.
+func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any, g *a05Graph, leanOwnerID string) (string, error) {
 	jobID := newUUID()
 	snapshot, err := json.Marshal(snap)
 	if err != nil {
@@ -542,7 +558,7 @@ func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any,
 			INSERT INTO public.jobs
 			  (id, user_id, org_id, job_type, config_snapshot, status, provider)
 			VALUES ($1, $2, $2, 'DEPLOY', $3::jsonb, 'QUEUED', NULL)`,
-			jobID, newUUID(), string(snapshot))
+			jobID, leanOwnerID, string(snapshot))
 	}
 	if err != nil {
 		return "", fmt.Errorf("seed job: %w", err)
