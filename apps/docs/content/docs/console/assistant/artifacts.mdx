@@ -1,0 +1,42 @@
+---
+title: Artifacts
+description: Save a dashboard as a named, reusable artifact your whole organization can open, view, and drop into any chat.
+---
+
+# Artifacts
+
+A [dashboard](/console/assistant/dashboards) lives inside one conversation. An **artifact** is a
+dashboard you've saved by name so it outlives that chat — a reusable, org-shared board you can open from
+anywhere.
+
+## Saving one
+
+From the grid, use **Save as artifact** (on the whole grid, or a single widget) and give it a name.
+Artifacts are **organization-scoped** and unique by name, so your teammates see the same library.
+
+## The library
+
+The rail's **Artifacts** item opens the library — a gallery of everything your org has saved, with each
+card's kind and widget count. **New artifact** starts a fresh chat with a few starter prompts to build
+one from scratch.
+
+## Opening one
+
+Clicking an artifact opens a **read-only viewer** — its widgets rendered exactly as saved. Looking at an
+artifact never touches a conversation; every action is explicit:
+
+- **Add to this chat** — drop its widgets onto the open conversation's grid (available when a chat is
+  open).
+- **Open in new chat** — start a fresh conversation with the artifact materialized on its grid.
+- **Delete** — remove it from the library.
+
+<Callout type="info">
+  Because a saved dashboard keeps each widget tied to its source tool, opening it onto a chat's grid can
+  refresh those widgets against live data — so an artifact is a living board, not a stale screenshot.
+</Callout>
+
+## Referencing an artifact in chat
+
+Tag a saved artifact with `@` (see [tagging resources](/console/assistant)) to have Elench act on it —
+for example, ask it to explain or extend the artifact, and it resolves the `@name` to the right saved
+board.

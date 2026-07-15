@@ -1,0 +1,65 @@
+---
+title: Workspaces
+description: An Organization chat for the whole account, or a Project workspace scoped to one infrastructure project — each with its own chats, knowledge, and memory.
+---
+
+# Workspaces
+
+Elench borrows its shape from the idea of a project workspace: a self-contained place with its own
+chats, its own pinned knowledge, and its own memory — and nothing leaks between them.
+
+There are two kinds of workspace:
+
+- **Organization** — the general assistant for your whole account. It has the org-wide tools and reads
+  across all your projects.
+- **Project** — a workspace scoped to a single [infrastructure project](/console/design-project). It
+  inherits the org's settings *and* adds that project's own instructions, knowledge, and live-state
+  grounding.
+
+## Switching workspace
+
+The rail (in the full-screen view) has a **switcher** at the top showing where you are — `Organization`,
+or a project's name. Open it to step into any project, or back to the organization.
+
+Stepping into a workspace does three things at once:
+
+- **Re-scopes the chat list** — you see only that workspace's conversations.
+- **Re-scopes the knowledge panel** — you edit *that* workspace's [instructions and
+  knowledge](/console/assistant/knowledge).
+- **Starts a fresh conversation** — so an organization chat's transcript never follows you into a
+  project, and a project's tools never bleed into an org chat.
+
+<Mermaid chart={`
+flowchart TD
+  ORG["Organization workspace<br/>general assistant · org knowledge · org memory"]
+  P1["Project: checkout<br/>+ project knowledge · project memory"]
+  P2["Project: analytics<br/>+ project knowledge · project memory"]
+  ORG --> P1
+  ORG --> P2
+`} />
+
+## What a project workspace inherits
+
+Inside a project chat, Elench is grounded three ways, layered in order:
+
+1. **Organization instructions and knowledge** — your account-wide policy applies everywhere.
+2. **This project's instructions and knowledge** — the project's specifics sit on top of the org's.
+3. **Live, auto-derived facts** about the project — its identity, environments, and recent jobs — so
+   the very first answer is grounded without a tool round-trip.
+
+A project's pinned context is **inherited by every chat inside it** and **never leaks out** to
+organization chats or to other projects. See [Knowledge base](/console/assistant/knowledge) for what you
+can pin and how it's used.
+
+## Memory
+
+Elench keeps a separate memory per workspace: one for the organization and one for each project. A
+project's memory is addressed under the organization's, never mixed with it, and never shared with
+another project — the same isolation the rest of the platform enforces. The
+[agent runtime](/elench/agent-runtime) covers how that namespacing works underneath.
+
+<Callout type="info">
+  **Chats stay private; knowledge is shared.** The knowledge and instructions you pin to a workspace are
+  org-scoped, so teammates in the same organization see the same grounding. Your individual
+  conversations are yours.
+</Callout>

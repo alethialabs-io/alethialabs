@@ -56,6 +56,19 @@ column is what the product, the schema, and the CLI actually call it.
 | The company | **Alethia Labs** | — |
 | Apply a project's plan from the CLI | **`alethia project apply`** | ~~`alethia apply`~~ (no such top-level command) |
 
+## Assistant (Elench)
+
+"Elench" names two related things — be precise about which. See the [Assistant guide](/console/assistant)
+for the user surface and [Elench internals](/elench) for the engine.
+
+| Concept | Canonical term | Definition | Avoid |
+|---|---|---|---|
+| The verification layer + agent harness | **Elench** | The deterministic plan-JSON gate, signed receipts, drift, and the agent runtime. The headline is the *engine*. | conflating it with the chat UI |
+| The in-console AI assistant | **Elench (assistant)** | The chat surface users open with **Ask AI** — grounded in real state, proposes changes the engine still gates. | ~~copilot~~, ~~bot~~ |
+| An assistant conversation's scope | **workspace** (assistant) | The **organization** or a **project** a chat is scoped to — it selects the chat list, the pinned knowledge, and the memory namespace. This is the *only* place "workspace" is a valid term; it never means an [organization](#core-objects) as a tenancy boundary. | using "workspace" for the org tenant |
+| Pinned instructions + documents for a scope | **knowledge base** | The custom instructions and named knowledge documents (`agent_context`) that ride every chat in a workspace. Distinct from auto-derived live facts, which aren't pinned. | ~~context~~ (ambiguous), ~~notes~~ |
+| A saved dashboard | **artifact** | A named, org-scoped set of widgets (`agent_artifacts`) an org can reopen, view, and drop into a chat. | ~~snapshot~~, ~~saved chat~~ |
+
 ## Job types at a glance
 
 Jobs are the unit of work a runner claims. The full set (see [Job Queue](/concepts/job-queue) and

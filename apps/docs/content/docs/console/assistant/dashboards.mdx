@@ -1,0 +1,46 @@
+---
+title: Dashboards
+description: Elench's answers land as widgets on a per-chat grid — ask for a full dashboard and it composes stat cards and charts from your live infrastructure.
+---
+
+# Dashboards
+
+Elench doesn't just reply in text. When it reads your infrastructure, structured results **pin as
+widgets** onto a grid beside the chat — a live, per-conversation dashboard you can arrange and keep.
+
+## The grid
+
+Open the grid from the conversation's top bar (or it opens on its own when Elench builds something). It's
+a five-column bento canvas that grows downward, shown in a **resizable split pane** next to the
+transcript. Drag the divider to resize; drag it past a quarter of the width and the pane **snaps
+closed** — a chevron at the edge brings it back.
+
+## Widgets
+
+Each answer that returns structured data becomes a **widget** — a stat card, a table, a chart. Every
+widget has a lean header:
+
+- **Live / Frozen** — a live widget refreshes on its own cadence; freeze it to keep a fixed snapshot.
+  Toggle either way.
+- **Refresh** — pull the latest now.
+- **Save** — promote the widget (or the whole grid) to an [artifact](/console/assistant/artifacts).
+- **Move / resize** — drag the grip to move (or press Enter on it for keyboard mode); drag the corner
+  to resize.
+
+## Ask for a whole dashboard
+
+Ask for something like *"Build a dashboard of my infrastructure — clusters, jobs, cost, and drift"* and
+Elench gathers the data and composes it into stat cards and charts, laid out on the grid. The empty grid
+shows the same invitation.
+
+## Fill a specific cell
+
+Click any empty cell and a small **"describe what goes here…"** composer opens right there. Type what you
+want and Elench answers with a single read and pins the result into exactly that cell — a fast way to
+build a dashboard one tile at a time.
+
+<Callout type="info">
+  The grid is per-conversation. To keep a dashboard around — or share it — save it as an
+  [artifact](/console/assistant/artifacts); the widgets stay tied to their source tools, so a saved
+  dashboard can refresh against live data when you reopen it.
+</Callout>
