@@ -129,11 +129,11 @@ test.describe("Elench rail", () => {
 	}) => {
 		await openElench(page);
 
-		// The workspace is a switcher control, not a nav row that does nothing.
+		// Chats are user-scoped: no workspace switcher, and no orphan "Chats" nav row.
 		await expect(
 			page.getByRole("button", { name: "Chats", exact: true }),
 		).toHaveCount(0);
-		await expect(page.getByTestId("workspace-switcher")).toBeVisible();
+		await expect(page.getByTestId("workspace-switcher")).toHaveCount(0);
 
 		const padding = await page
 			.getByPlaceholder(/search chats/i)
