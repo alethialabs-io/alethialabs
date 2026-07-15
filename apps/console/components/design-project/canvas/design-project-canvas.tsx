@@ -5,7 +5,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { motion } from "motion/react";
-import { Plus, Settings } from "lucide-react";
+import { Plus } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { track } from "@/lib/analytics/track";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -413,7 +413,7 @@ function CanvasInner({
 				<ActivityRail projectId={projectId} environmentId={environmentId} />
 			)}
 
-			{/* Top-right: run a job · project settings · add a service. (Ask AI lives in the app shell.) */}
+			{/* Top-right: cost · run a job · add a service. (Ask AI lives in the app shell.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
 				{/* What this environment costs, from its last PLAN. The runner has always priced every
 				    plan with Infracost; nobody ever wrote the number down, so the product could not
@@ -438,17 +438,6 @@ function CanvasInner({
 						}}
 					/>
 				)}
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-8 w-8"
-					onClick={() => openInspectorExclusive(PROJECT_NODE_ID)}
-					aria-label="Project settings"
-					title="Project settings"
-				>
-					<Settings className="h-4 w-4" />
-				</Button>
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
 					<Button
@@ -589,11 +578,7 @@ function CanvasInner({
 			>
 				{boardContent}
 			</div>
-			<CanvasDock
-				dock={dock}
-				projectId={projectId}
-				identities={cloudIdentities}
-			/>
+			<CanvasDock dock={dock} projectId={projectId} />
 		</div>,
 	);
 }
