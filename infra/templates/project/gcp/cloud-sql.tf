@@ -5,7 +5,7 @@ module "cloud_sql" {
   depends_on = [module.vpc_network]
 
   project_id   = var.project_id
-  region       = var.region
+  region       = local.gcp_region_key
   environment  = var.environment
   project_name = var.project_name
 
@@ -13,6 +13,7 @@ module "cloud_sql" {
 
   engine         = var.cloud_sql_engine
   engine_version = var.cloud_sql_engine_version
+  edition        = var.cloud_sql_edition
   tier           = var.cloud_sql_tier
   disk_size      = var.cloud_sql_disk_size
 

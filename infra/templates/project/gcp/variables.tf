@@ -105,9 +105,11 @@ variable "provision_gke" {
 }
 
 variable "gke_cluster_version" {
-  type        = string
-  default     = "1.31"
-  description = "Desired Kubernetes master version"
+  type = string
+  # 1.31 is GONE from GKE — a fresh apply fails with `No valid versions with the prefix "1.31"
+  # found` (verified on real GKE: only 1.33/1.34/1.35/1.36 remain). Pin a currently-served minor.
+  default     = "1.33"
+  description = "Desired Kubernetes master version (must be a minor GKE still serves)"
 }
 
 variable "gke_instance_types" {
@@ -231,9 +233,12 @@ variable "cloud_sql_engine" {
 }
 
 variable "cloud_sql_engine_version" {
-  type        = string
-  default     = "POSTGRES_16"
-  description = "Database engine version"
+  type = string
+  # BARE version only. The cloud-sql module composes "${engine_map[engine]}_${engine_version}",
+  # so "POSTGRES_16" here produced the invalid database_version "POSTGRES_POSTGRES_16" and Cloud
+  # SQL could never be created. (Matches the Azure template, whose default is likewise "16".)
+  default     = "16"
+  description = "Database engine version number, e.g. \"16\" for POSTGRES_16 (engine is set separately)"
 }
 
 variable "cloud_sql_tier" {
@@ -526,4 +531,10 @@ variable "custom_iac_vars" {
   type        = any
   default     = {}
   description = "Object of custom values that can be used for extra terraform files outside of the template"
+}
+
+variable "cloud_sql_edition" {
+  type        = string
+  default     = "ENTERPRISE"
+  description = "Cloud SQL edition. ENTERPRISE supports the standard tiers (db-f1-micro etc.); ENTERPRISE_PLUS requires db-perf-optimized-N-* tiers. Left unset, the API now defaults to ENTERPRISE_PLUS and rejects the default tier."
 }
