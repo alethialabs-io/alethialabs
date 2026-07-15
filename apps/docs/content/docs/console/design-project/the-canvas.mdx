@@ -153,6 +153,41 @@ This is a rendering decision, not a data model. Every secret is still an individ
 own configuration, its own status, and its own line in the deploy diff.
 </Callout>
 
+## Bring your own IaC — still an architecture
+
+An environment can be provisioned from **your own OpenTofu module** instead of the built-in template.
+When it is, the module — not the component design — is the source of truth, so you can't add
+components to it.
+
+That doesn't make it a black box. Alethia inventories the module's resources and draws them, so a
+bring-your-own environment reads as an architecture like any other:
+
+- Resources are grouped into cards **by kind and by Terraform module** — the `aws_vpc` and its
+  subnets become one **Network** card; the `aws_eks_*` resources a **Cluster** card. A real module is
+  fifty to two hundred resources, and drawn one per card they would bury the architecture, so the
+  same collapsing rule that governs the Secrets vault applies here.
+- The cards sit in the **same VPC and cluster regions** as a template environment, because that is
+  genuinely where they run.
+- They are drawn **dashed** — external. Alethia plans, prices, drifts and audits these resources; it
+  does not own their definition. Changing one means editing your Terraform, so the cards are
+  read-only. Open one to see every resource inside it: its address, what the last plan would do to
+  it, what it costs, and whether it has drifted.
+- Resources whose type Alethia doesn't recognise — `random_password`, `null_resource`, a provider it
+  has never seen — are **never dropped**. They collect in an honest **Other** card.
+
+A card in the corner shows where the module came from: the repository, the ref, the exact commit the
+safety scan pinned — that commit, not the moving branch, is what a deploy applies — and the scan's
+verdict. A module the scan **rejected** reads as *Needs setup* even if its resources are live, because
+the next deploy will not run.
+
+<Callout>
+The cards appear as soon as the module is **scanned**, which needs no cloud credentials at all. At
+that point they show what your code *declares*, so a `count = 3` block still reads as one resource
+and the card says `Source · declared`. Once the environment has been **planned**, the cards switch to
+the real, expanded resources and read `Source · planned`. The board always tells you which of the two
+you're looking at, because a declared list is not a promise about what exists.
+</Callout>
+
 ## Detail follows zoom
 
 Cards shed **detail** before they shed **legibility**, so a large architecture stays readable:

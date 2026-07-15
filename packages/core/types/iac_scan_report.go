@@ -26,9 +26,29 @@ type IacScanReport struct {
 	Providers []string `json:"providers"`
 	// Modules are the module sources referenced (registry / git / local paths). Never null.
 	Modules []string `json:"modules"`
+	// Resources is the DECLARED resource inventory of the module (root + every local
+	// child module) — what the console draws as read-only `external` cards so a BYO-IaC
+	// environment reads as an architecture before it has ever been planned.
+	//
+	// Declared, not expanded: a static scan never evaluates HCL, so `count`/`for_each`
+	// blocks appear ONCE here where a plan reports one address per instance. The console
+	// treats this as a pre-plan skeleton and lets a real plan's `resource_changes`
+	// supersede it (lib/canvas/iac-inventory.ts). Never null (serialize as []).
+	Resources []IacResource `json:"resources"`
 	// CommitSHA is the exact commit the scan checked out — the deploy pins to it so it
 	// applies precisely the bytes the gate vetted (TOCTOU protection). Omitted when unknown.
 	CommitSHA string `json:"commit_sha,omitempty"`
+}
+
+// IacResource is one declared resource in a BYO IaC module. JSON keys mirror the console
+// `IacScanResource` interface. Address is the join key: cost (environment_cost.resources),
+// drift (environment_drift.details) and verify findings all speak Terraform addresses.
+type IacResource struct {
+	Address string `json:"address"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	// Module path prefix — "" for the root module, else "module.vpc" / "module.a.module.b".
+	Module string `json:"module,omitempty"`
 }
 
 // IacScanFinding is one issue raised by an IAC_SCAN (static iacsafety check or `tofu

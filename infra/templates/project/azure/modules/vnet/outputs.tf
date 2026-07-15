@@ -17,3 +17,8 @@ output "public_subnet_id" {
   description = "ID of the public subnet"
   value       = azurerm_subnet.public.id
 }
+
+output "database_subnet_id" {
+  description = "ID of the subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (dedicated; a delegated subnet cannot host other resources)."
+  value       = azurerm_subnet.database.id
+}

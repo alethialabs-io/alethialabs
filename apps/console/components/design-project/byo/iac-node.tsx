@@ -2,13 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The external-IaC source card — a READ-ONLY node (visual clone of the BYO Helm chart node) shown
-// on the canvas when the environment has a bring-your-own OpenTofu module attached. It carries the
-// module coords (repo · ref · path), the commit the scan pinned (what a deploy applies), a
-// scan-status chip that opens the findings sheet, and a deployed-commit indicator (live BYO state).
-// Unlike a component node it never round-trips through the form graph — a BYO IaC env is provisioned
-// FROM the module, so the component palette is disabled (see IacSourceOverlay). Reads its source +
-// refresh from IacSourceCanvasContext (single-per-env), detaches / rescans via the server actions.
+// The external-IaC source card — the module's PROVENANCE, anchored on the board when the environment
+// has a bring-your-own OpenTofu module attached. It carries the module coords (repo · ref · path),
+// the commit the scan pinned (what a deploy applies), a scan-status chip that opens the findings
+// sheet, and a deployed-commit indicator (live BYO state).
+//
+// It is NOT the architecture. The module's RESOURCES are their own read-only `external` cards on the
+// board (lib/canvas/iac-inventory.ts); this card only says where they came from. The component
+// palette stays disabled for a BYO env — the module, not the design, is the source of truth — but the
+// board is still a board. (It used to sit alone inside a full-canvas overlay that dimmed everything.)
+//
+// Reads its source + refresh from IacSourceCanvasContext (single-per-env), detaches / rescans via the
+// server actions.
 
 import { useState } from "react";
 import {

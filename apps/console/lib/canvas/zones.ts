@@ -206,15 +206,23 @@ function padBox(box: Box, by: number): Box {
  * The zone of a board node. Collection cards (the Secrets vault) resolve through their KIND, so a
  * vault of in-cluster resources would land in the cluster — today secrets are periphery, so it sits
  * outside both regions, which is correct.
+ *
+ * An EXTERNAL card (one kind's worth of a bring-your-own IaC module) resolves through the kind its
+ * resources MAP to, not the literal `external` kind — which is what puts a customer module's
+ * `aws_vpc` in the VPC region and its `aws_eks_*` inside the cluster, with no new zone logic. A
+ * group whose types map to nothing (the honest `Other` bucket) has no zone, so it sits outside both
+ * regions rather than being placed somewhere it may not belong.
  */
 export function zoneOfBoardNode(
 	node: BoardNode,
 	providerOf: (kind: NodeKind) => CloudProviderSlug | null,
 ): ZoneId | null {
-	const kind =
-		node.type === "collection"
-			? (node.data as { kind: NodeKind }).kind
-			: ((node.data as { kind: NodeKind }).kind as NodeKind);
+	const data = node.data as { kind: NodeKind; config?: { mappedKind?: NodeKind | null } };
+	if (data.kind === "external") {
+		const mapped = data.config?.mappedKind ?? null;
+		return mapped ? zoneForNode(mapped, providerOf(mapped)) : null;
+	}
+	const kind = data.kind;
 	return zoneForNode(kind, providerOf(kind));
 }
 

@@ -146,6 +146,42 @@ UPDATE public.jobs j SET provider = ci.provider
 FROM public.cloud_identities ci
 WHERE j.cloud_identity_id = ci.id AND j.provider IS NULL;
 
+-- TRUE iff another job currently holds the tofu state lock for this (project, environment) — i.e. a
+-- live writer is mid-plan/apply/destroy on the very state file the candidate job would open.
+--
+-- Concurrency in this system was capped PER ORG, never per state object. Nothing stopped two jobs on
+-- the SAME (project, environment) running at once, and the second one to reach tofu simply died on
+-- "state already locked" — noisy but survivable — until the pair was an apply and a destroy. Observed
+-- for real: a DESTROY was claimed while its own env's apply was still building, the destroy failed on
+-- the lock, and the server the apply had already created was left billing outside any state file.
+-- Concurrency limits are a fairness knob; THIS is the correctness one. Serialize on the object.
+--
+-- The holder's identity comes from the lock's job_id — joined back to its project/environment — so the
+-- state-key format lives in exactly one place (lib/storage/tofu-state.ts) and cannot drift from a
+-- string re-derived here.
+--
+-- A held lock now reliably means a LIVE writer: release_tofu_state_locks_for_job frees it the moment
+-- the runner reports terminal (tofu has exited), so a killed apply no longer strands its lock for the
+-- full 3h TTL. Without that release this guard would be a deadlock — a stranded lock would block the
+-- very DESTROY sent to clean it up. The TTL and the break-glass force-release remain the backstops.
+--
+-- Scoped to project/environment jobs. Runner-lifecycle jobs (DEPLOY_RUNNER/DESTROY_RUNNER) key their
+-- state on the target runner and carry NULL project/environment; they are not serialized here, and a
+-- NULL is never treated as "matching" another NULL.
+CREATE OR REPLACE FUNCTION public.state_object_busy(
+    p_project_id UUID, p_environment_id UUID, p_job_id UUID
+) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+    SELECT p_project_id IS NOT NULL AND p_environment_id IS NOT NULL AND EXISTS (
+        SELECT 1
+          FROM public.tofu_state_locks l
+          JOIN public.jobs hj ON hj.id = l.job_id
+         WHERE l.expires_at > now()
+           AND l.job_id <> p_job_id
+           AND hj.project_id = p_project_id
+           AND hj.environment_id = p_environment_id
+    );
+$$;
+
 CREATE OR REPLACE FUNCTION public.claim_next_job(
     p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL
 ) RETURNS SETOF public.jobs
@@ -187,6 +223,8 @@ BEGIN
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
           AND (v_operator = 'managed' OR j.org_id = v_runner_org_id)
+          -- Never open a state file another job is actively writing (see state_object_busy).
+          AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
         ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
     ) RETURNING id INTO v_job_id;
 
@@ -223,6 +261,11 @@ BEGIN
                 AND j.requires_self_runner = false
                 AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
                 AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
+                -- Never open a state file another job is actively writing (see state_object_busy).
+                -- The per-org cap below is a FAIRNESS knob and does not imply this: two jobs on one
+                -- (project, environment) are well within any cap, and that is exactly the pair that
+                -- corrupts — an apply and the destroy racing it.
+                AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                 AND (
                   public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
                   OR public.org_managed_inflight(j.org_id)
@@ -267,6 +310,9 @@ BEGIN
                   AND j.org_id = v_runner_org_id
                   AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
                   AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
+                  -- Never open a state file another job is actively writing (see state_object_busy).
+                  -- Self runners are UNCAPPED, so nothing else here bounds concurrency on one state.
+                  AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
             ) RETURNING id INTO v_job_id;
         END IF;
@@ -416,6 +462,7 @@ CREATE OR REPLACE FUNCTION public.update_job_status(
     p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_status TEXT,
     p_error_message TEXT DEFAULT NULL, p_execution_metadata JSONB DEFAULT NULL
 ) RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_status public.provision_job_status;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
         RAISE EXCEPTION 'Unauthorized runner';
@@ -446,7 +493,37 @@ BEGIN
     -- a status CHANGE) from a genuine ownership/existence error. The former returns false (the caller
     -- skips side-effects; the runner learns the job is terminal on its next heartbeat); only the
     -- latter raises.
-    IF EXISTS (SELECT 1 FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id) THEN
+    SELECT status INTO v_status FROM public.jobs WHERE id = p_job_id AND runner_id = p_runner_id;
+    IF v_status IS NOT NULL THEN
+        -- The status CHANGE is rightly refused (CANCELLED must stick) — but the runner's REPORT must not
+        -- die with it. The guard rejects the whole UPDATE row, execution_metadata INCLUDED: a runner that
+        -- never received the cancel and ran the apply out posts SUCCESS/FAILED (a DIFFERENT status), and
+        -- its entire account of what it built was silently discarded. Observed for real: a cancelled apply
+        -- left execution_metadata NULL, so orphan_risk could never land — and a control-plane server it
+        -- had already created billed on, unseen, outside tofu state. Record it out-of-band instead.
+        --
+        -- CANCELLED + the runner reporting a terminal outcome anyway IS the orphan signature, and the one
+        -- the control plane can always see: the runner's own orphan_risk flag only fires when it RECEIVED
+        -- the cancel, which in the real incident it never did. Flag it here, where the contradiction is
+        -- knowable — cloud resources may exist that no state file and no cluster row records.
+        --
+        -- Side-effects stay skipped (the caller keys those off the FALSE return) and the DB status stays
+        -- authoritative. Only the evidence survives.
+        UPDATE public.jobs
+        SET execution_metadata = COALESCE(execution_metadata, '{}'::jsonb)
+                || COALESCE(p_execution_metadata, '{}'::jsonb)
+                || jsonb_build_object('late_report', jsonb_build_object(
+                       'status', p_status,
+                       'error_message', p_error_message,
+                       'reported_at', now()
+                   ))
+                || CASE
+                     WHEN v_status = 'CANCELLED' AND p_status IN ('SUCCESS', 'FAILED')
+                     THEN jsonb_build_object('orphan_risk', true, 'orphan_reason', 'ran_to_completion_after_cancel')
+                     ELSE '{}'::jsonb
+                   END,
+            updated_at = now()
+        WHERE id = p_job_id AND runner_id = p_runner_id;
         RETURN false;
     END IF;
     RAISE EXCEPTION 'Job not found or not owned by this runner';
@@ -1127,6 +1204,39 @@ $$;
 -- paths) could force-release a live lock and fence a running apply. The superuser service role
 -- (getServiceDb → forceReleaseStateLock) owns the function and is unaffected by the revoke.
 REVOKE EXECUTE ON FUNCTION public.force_release_tofu_state_lock(TEXT) FROM PUBLIC;
+
+-- Releases any state lock still held by a job that has just gone TERMINAL. Called on the runner's
+-- terminal status callback, at which point the tofu process in that runner has already exited — so
+-- there is no live writer, only a lock nobody will ever unlock.
+--
+-- Why this must exist: the ONLY normal release is tofu's own UNLOCK call. A tofu that is killed (a
+-- cancel, an OOM, a runner crash) never sends it, so the lock strands for the full 3h TTL and every
+-- later job on that state — including the DESTROY sent to clean up the mess — fails with "state
+-- already locked". Observed for real, and the manual fix (deleting the lock row) is far worse: it
+-- fences a still-live writer mid-write and strands the resources it had already created.
+--
+-- So: rotate + bump the fencing generation exactly like force_release (NEVER a naive delete) — a
+-- zombie writer's stale ?ID= then fails the fence instead of corrupting state — and scope strictly to
+-- locks this job holds. A lock held by a DIFFERENT job is left alone.
+CREATE OR REPLACE FUNCTION public.release_tofu_state_locks_for_job(p_job_id UUID)
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE released INTEGER;
+BEGIN
+    UPDATE public.tofu_state_locks
+       SET generation = generation + 1,
+           lock_id = 'job-terminal-released-' || gen_random_uuid()::text,
+           info = COALESCE(info, '{}'::jsonb)
+                  || jsonb_build_object('released_at', now(), 'released_by', 'job-terminal'),
+           expires_at = now() - INTERVAL '1 second'
+     WHERE job_id = p_job_id;
+    GET DIAGNOSTICS released = ROW_COUNT;
+    RETURN released;
+END;
+$$;
+
+-- Same reasoning as force_release: a lifecycle short-circuit the least-privilege runtime role must
+-- not be able to invoke (it could otherwise fence a live apply). Service role only.
+REVOKE EXECUTE ON FUNCTION public.release_tofu_state_locks_for_job(UUID) FROM PUBLIC;
 
 -- Per-VM fleet bootstrap token redemption (E0 0b). Atomic + instance-bound + reusable-within-TTL:
 -- the first redeem binds instance_id; the SAME instance may re-redeem (restart / lost-response

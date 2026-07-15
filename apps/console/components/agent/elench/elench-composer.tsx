@@ -18,7 +18,7 @@ import {
 	KEY_ENTER_COMMAND,
 } from "lexical";
 import { ArrowUp, Square } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Mention } from "@/lib/ai/mentions";
 import { cn } from "@repo/ui/utils";
 import {
@@ -83,6 +83,8 @@ function ComposerBody({
 	const [editor] = useLexicalComposerContext();
 	const [empty, setEmpty] = useState(true);
 	const pending = status === "submitted" || status === "streaming";
+	/** The composer box — the mention menu portals into it and opens above it. */
+	const boxRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		if (autoFocus) editor.focus();
@@ -116,7 +118,12 @@ function ComposerBody({
 		});
 	}, [editor, onSend, pending]);
 
-	// Enter sends (Shift+Enter = newline). Registered LOW so an open typeahead (NORMAL) wins.
+	// Enter sends (Shift+Enter = newline). Registered LOW so the mention typeahead (NORMAL) wins
+	// when it has a selectable option — its handler consumes Enter to pick, so this never runs.
+	// When the menu has no option (or is closed) the plugin DECLINES Enter and it reaches here to
+	// send. We deliberately do NOT gate on a "menu open" flag: the plugin already does the right
+	// thing by priority, and a stale flag once trapped `@mention`-in-the-middle messages so Enter
+	// only inserted a newline and the message never sent.
 	useEffect(
 		() =>
 			editor.registerCommand(
@@ -137,12 +144,15 @@ function ComposerBody({
 	}, []);
 
 	return (
-		<div className="relative">
+		// The mention menu is portaled in here and opens UPWARD from the top of this box, so it
+		// never covers the text you're typing (it used to be anchored at the caret).
+		<div ref={boxRef} className="relative">
 			<div className="border border-border bg-background shadow-sm focus-within:ring-3 focus-within:ring-ring/25">
 				<div className="relative">
 					<PlainTextPlugin
 						contentEditable={
 							<ContentEditable
+								data-testid="elench-composer"
 								aria-label="Message Elench"
 								aria-placeholder={placeholder}
 								placeholder={
@@ -157,7 +167,7 @@ function ComposerBody({
 					/>
 					<OnChangePlugin onChange={onChange} />
 					<HistoryPlugin />
-					<MentionTypeaheadPlugin />
+					<MentionTypeaheadPlugin boxRef={boxRef} />
 				</div>
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
 					<div className="flex items-center gap-1.5">

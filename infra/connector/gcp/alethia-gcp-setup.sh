@@ -38,6 +38,13 @@ echo "    Project number: ${PROJECT_NUMBER}"
 
 echo ""
 echo "==> Enabling required APIs..."
+# MUST stay in sync with infra/connector/gcp/main.tf `google_project_service.apis`. The provisioner
+# is least-privileged (no serviceUsageAdmin), so it CANNOT turn an API on mid-apply — every API a
+# project component needs must be enabled here, up front. This list previously stopped at
+# cloudresourcemanager, so a project onboarded via THIS script (the cloud-shell/CLI path) 403'd at
+# apply time on database / cache / queue / topic / nosql / secrets / registry / bucket:
+#   "Error 403: <X> API has not been used in project ... before or it is disabled"
+# Verified against a real max-config apply on GCP.
 gcloud services enable \
   iam.googleapis.com \
   sts.googleapis.com \
@@ -45,7 +52,15 @@ gcloud services enable \
   compute.googleapis.com \
   container.googleapis.com \
   dns.googleapis.com \
-  cloudresourcemanager.googleapis.com
+  cloudresourcemanager.googleapis.com \
+  sqladmin.googleapis.com \
+  redis.googleapis.com \
+  secretmanager.googleapis.com \
+  artifactregistry.googleapis.com \
+  servicenetworking.googleapis.com \
+  pubsub.googleapis.com \
+  firestore.googleapis.com \
+  storage.googleapis.com
 
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 

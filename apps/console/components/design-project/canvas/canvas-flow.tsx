@@ -23,10 +23,11 @@ import {
 import {
 	buildZones,
 	isZoneId,
-	zoneForNode,
+	zoneOfBoardNode,
 	type ZoneNode,
 } from "@/lib/canvas/zones";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
+import { OUT_OF_BAND, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode, NodeKind } from "./graph/types";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import { ChartNode } from "./nodes/chart-node";
@@ -69,12 +70,26 @@ export function CanvasFlow() {
 	const collectionPositions = useCanvasStore((s) => s.collectionPositions);
 	const setCollectionPosition = useCanvasStore((s) => s.setCollectionPosition);
 
+	// When a bring-your-own IaC module governs this environment it REPLACES the template (v1 replace
+	// mode), so the component design is INERT — it will never be applied. Left on the board it reads
+	// "Not deployed" forever beside the module's real resources: two clusters, one of which does not
+	// exist in the customer's cloud. So it isn't drawn. Charts and add-ons stay — those are real
+	// ArgoCD workloads on the cluster, whatever provisioned it.
+	//
+	// The design is HIDDEN, not deleted: the store still holds it, so detaching the source brings it
+	// straight back. (The old surface made the same point by dimming the whole graph behind an
+	// overlay — the point was right; the execution buried the architecture.)
+	const iacGoverned = useEnvironmentStatus().iac !== null;
+
 	// Visibility layers hide whole node groups; connections toggle hides all edges.
 	// Edges to/from a hidden node are dropped so none dangle. The project root is the graph's
 	// data anchor (name/region/core identity) but is never drawn — it's edited via the toolbar's
 	// Project settings button instead.
 	const designNodes = nodes.filter(
-		(n) => n.data.kind !== "project" && !hiddenKinds.includes(n.data.kind),
+		(n) =>
+			n.data.kind !== "project" &&
+			!hiddenKinds.includes(n.data.kind) &&
+			!(iacGoverned && !OUT_OF_BAND.has(n.data.kind)),
 	);
 
 	// High-cardinality kinds (secrets) collapse into ONE card. This is a VIEW transform only — the
@@ -87,13 +102,15 @@ export function CanvasFlow() {
 	// The VPC and cluster regions, derived from where the cards sit — so dragging a resource just
 	// re-bounds the region around it. Painted BEHIND the cards (negative zIndex); a card in front of
 	// its own zone is the whole point. Hiding a kind shrinks its zone; hiding them all removes it.
+	// Resolution goes through `zoneOfBoardNode` — the SSOT that knows an EXTERNAL card (one kind's
+	// worth of a BYO IaC module) belongs to the zone of the kind its resources MAP to, not to the
+	// literal `external` kind, which has no zone. Inlining `zoneForNode(node.data.kind, …)` here is
+	// what left a customer's `aws_vpc` floating outside the VPC region it plainly lives in.
 	const zones = useMemo(
 		() =>
-			buildZones(cards, (node) => {
-				const kind = (node.data as { kind?: NodeKind }).kind;
-				if (!kind) return null;
-				return zoneForNode(kind, providerOfKind(nodes, kind));
-			}),
+			buildZones(cards, (node) =>
+				zoneOfBoardNode(node, (kind) => providerOfKind(nodes, kind)),
+			),
 		[cards, nodes],
 	);
 

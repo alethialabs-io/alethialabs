@@ -20,12 +20,12 @@ terraform {
 
 provider "google" {
   project = var.project_id
-  region  = var.region
+  region  = local.gcp_region_key
 }
 
 provider "google-beta" {
   project = var.project_id
-  region  = var.region
+  region  = local.gcp_region_key
 }
 
 provider "kubernetes" {

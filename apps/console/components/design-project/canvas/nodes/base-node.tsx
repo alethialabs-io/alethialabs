@@ -59,9 +59,21 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 
 	const def = NODE_REGISTRY[node.data.kind];
 	const handles = def.card.handles ?? DEFAULT_HANDLES;
-	const Icon = def.icon;
 	const status = NODE_STATUS_META[resolved.state];
-	const title = configName(node.data) || def.label;
+
+	// An EXTERNAL card is one kind's worth of a bring-your-own IaC module, so it reads through the
+	// kind its resources MAP to — a customer module's `aws_eks_*` group wears the cluster glyph and
+	// says CLUSTER. That is what makes a BYO environment read as an architecture rather than as a
+	// pile of Terraform. It stays unmistakably external: the dashed rule + dashed border are the
+	// design system's own idiom for "not owned by this design", and they still apply.
+	// Its title is the Terraform module the resources live in — the honest "where in your code".
+	const external = node.data.kind === "external" ? node.data.config : null;
+	const mapped = external?.mappedKind ? NODE_REGISTRY[external.mappedKind] : null;
+	const Icon = mapped?.icon ?? def.icon;
+	const eyebrow = mapped?.eyebrow ?? def.eyebrow;
+	const title = external
+		? external.module || "root module"
+		: configName(node.data) || def.label;
 	// The canvas stays calm when everything is fine: the two nominal states show only their dot;
 	// every state that wants attention carries a label.
 	const showLabel = resolved.state !== "ready" && resolved.state !== "live";
@@ -142,7 +154,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				<span className="grid h-[22px] w-[22px] shrink-0 place-items-center border border-border bg-surface-sunken">
 					<Icon className="h-3.5 w-3.5 text-muted-foreground" />
 				</span>
-				<span className="vx-eyebrow truncate">{def.eyebrow}</span>
+				<span className="vx-eyebrow truncate">{eyebrow}</span>
 				<span className="ml-auto min-w-0 shrink-0">{statusEl}</span>
 			</div>
 
