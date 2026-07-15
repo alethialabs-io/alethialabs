@@ -224,6 +224,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
+	// FT-5 node-shape guard: the full heavy surface (max-config + all-add-ons) must not be launched on
+	// a node too small to schedule it — a HARD FAIL under REQUIRE (before any provisioning spend),
+	// a warning locally. A no-op unless both heavy dimensions are on.
+	if fatal, msg := t2RequireMaxConfigNodeShape(full); msg != "" {
+		if fatal {
+			t.Fatalf("FT-5 node-shape guard: %s", msg)
+		}
+		t.Logf("FT-5 node-shape guard (warning): %s", msg)
+	}
 	a05CheckFidelity(t, a05, base)
 
 	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph())
@@ -402,6 +411,29 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
 	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
+
+	// (7.6) MAX-CONFIG SURFACE (FT-5). When ALETHIA_E2E_MAX_CONFIG=1 the deploy seeded all 11 kinds;
+	//       prove each kind's resource GENUINELY landed in the deploy's tofu state — the real-apply
+	//       half of the max-config table. Structural (resource type in state), per-kind, fail-closed:
+	//       a kind whose resource is missing fails the nightly instead of a green "provisioned
+	//       everything" that only stood up cluster+network. A no-op unless max-config is enabled.
+	if MaxConfigEnabled() {
+		stateBytes := cp.StateSnapshot(jobID)
+		missing, unmapped, aerr := AssertMaxConfigKindsInState(stateBytes, provider)
+		if aerr != nil {
+			t.Fatalf("FT-5 max-config state assertion: %v", aerr)
+		}
+		if len(missing) > 0 {
+			t.Fatalf("FT-5 max-config: %d kind(s) did NOT land in tofu state: %v", len(missing), missing)
+		}
+		if len(unmapped) > 0 {
+			// Loud, non-fatal: these kinds have no resource-type column for this provider yet (AWS is
+			// wired first). Surfaced so the run can't read as a full-surface proof when it isn't.
+			t.Logf("FT-5 max-config: %d kind(s) not yet asserted on %s (no resource mapping): %v — assert-gap, add the column",
+				len(unmapped), provider, unmapped)
+		}
+		t.Logf("FT-5 max-config: all mapped kinds present in tofu state on %s", provider)
+	}
 
 	// (7.5) CONSOLE → ACTIVE (BYOC A0.5). The runner reported SUCCESS via the SQL SSOT, but the Go
 	//       control plane stops there — it never runs the console's terminal orchestration. Replay
