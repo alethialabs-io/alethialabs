@@ -441,3 +441,13 @@ variable "custom_iac_vars" {
   default     = {}
   description = "Object of custom values that can be used for extra terraform files outside of the template"
 }
+
+variable "azure_cache_sku_name" {
+  type    = string
+  default = null
+  # Exact Azure Managed Redis sku (Enterprise_E1 / E5 / E10 / EnterpriseFlash_F300). When null, the
+  # legacy azure_cache_sku (Basic/Standard/Premium) is MAPPED onto E1/E5/E10. Managed Redis has no
+  # Basic-equivalent low tier — its floor (Enterprise_E1) is ~5x the retired Azure Cache for Redis
+  # Basic C0. Set this to choose the tier (and therefore the cost) explicitly.
+  description = "Exact Azure Managed Redis sku. Null = map from azure_cache_sku. NOTE: Managed Redis has no low tier; the floor is Enterprise_E1 (~5x the retired Basic C0)."
+}

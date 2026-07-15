@@ -124,3 +124,14 @@ variable "labels" {
   description = "Labels to apply to all resources"
   default     = {}
 }
+
+variable "edition" {
+  type        = string
+  default     = "ENTERPRISE"
+  description = "Cloud SQL edition. Must be ENTERPRISE for the standard/shared-core tier family (db-f1-micro, db-g1-small, db-custom-*); ENTERPRISE_PLUS only accepts db-perf-optimized-N-* tiers."
+
+  validation {
+    condition     = contains(["ENTERPRISE", "ENTERPRISE_PLUS"], var.edition)
+    error_message = "edition must be ENTERPRISE or ENTERPRISE_PLUS."
+  }
+}

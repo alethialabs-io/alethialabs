@@ -12,6 +12,8 @@ locals {
 
   private_subnet_cidr = cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 0)
   public_subnet_cidr  = cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 1)
+  # Third, dedicated subnet for the PostgreSQL Flexible Server delegation (see azurerm_subnet.database).
+  database_subnet_cidr = cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 2)
 
   common_tags = merge(var.labels, {
     Environment = var.environment
@@ -55,6 +57,28 @@ resource "azurerm_subnet" "public" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [local.public_subnet_cidr]
+}
+
+# Azure Database for PostgreSQL Flexible Server with VNet integration REQUIRES its own subnet,
+# DELEGATED to Microsoft.DBforPostgreSQL/flexibleServers. Pointing it at the shared private subnet
+# (which also hosts the AKS nodes) fails the create:
+#   "The subnet name as <x>-private is missing required delegations
+#    Microsoft.DBforPostgreSQL/flexibleServers"
+# and a delegated subnet cannot host anything else — so it must be a THIRD, dedicated subnet.
+# Without this the DATABASE KIND was impossible to create. (Found on a real max-config apply.)
+resource "azurerm_subnet" "database" {
+  name                 = "${local.name_prefix}-db"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [local.database_subnet_cidr]
+
+  delegation {
+    name = "postgres-flexible-server"
+    service_delegation {
+      name    = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
 }
 
 ################################################################################

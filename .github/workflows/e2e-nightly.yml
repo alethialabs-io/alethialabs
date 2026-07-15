@@ -236,7 +236,11 @@ jobs:
             hetzner) SHAPE="" ;;
             aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
             gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
-            azure)   SHAPE='{"instance_types":["Standard_B2s"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
+            # Standard_B2s (v1) is NOT offered by AKS on a modern subscription: a real apply fails with
+            # "The VM size of Standard_B2s is not allowed in your subscription" — only the v2/v3+
+            # generations are served. (`az vm list-skus` disagrees and reports B2s unrestricted; AKS is
+            # authoritative.) D2s_v3 = 2 vCPU/8GiB, DSv3 family, broadly available. Verified on a real AKS apply.
+            azure)   SHAPE='{"instance_types":["Standard_D2s_v3"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
             alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac

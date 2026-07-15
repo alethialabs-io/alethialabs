@@ -28,7 +28,13 @@ resource "google_container_cluster" "cluster" {
   location = var.region
 
   # When Autopilot is enabled, GKE manages node pools automatically.
-  enable_autopilot = var.enable_autopilot
+  #
+  # MUST be null (not false) when Autopilot is off. The provider's ConflictsWith fires on the
+  # attribute being SET AT ALL — not on its value — so `enable_autopilot = false` still collides
+  # with network_policy, remove_default_node_pool and addons_config.network_policy_config, making
+  # EVERY standard (non-Autopilot) plan fail with "Conflicting configuration arguments".
+  # `tofu validate` does not catch this; only a real plan does. Found by the first real GCP apply.
+  enable_autopilot = var.enable_autopilot ? true : null
 
   # For Standard mode: remove the default node pool and manage our own.
   # These fields are ignored when enable_autopilot = true.

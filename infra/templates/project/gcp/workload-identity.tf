@@ -33,6 +33,12 @@ resource "google_service_account_iam_member" "external_dns_wi" {
   service_account_id = google_service_account.external_dns[0].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/external-dns-sa]"
+
+  # The `<project>.svc.id.goog` Workload Identity pool only exists once a WI-enabled cluster does.
+  # `member` names it as a STRING, so OpenTofu infers no dependency edge and schedules this binding
+  # concurrently with the cluster → "Error 400: Identity Pool does not exist". Observed live on a
+  # real apply. The edge must be explicit.
+  depends_on = [module.gke]
 }
 
 # GSA for the external-secrets operator: bound to its KSA via Workload Identity so the
@@ -79,4 +85,8 @@ resource "google_service_account_iam_member" "external_secrets_wi" {
   service_account_id = google_service_account.external_secrets[0].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]"
+
+  # Same race as external_dns_wi: the WI pool only exists once the cluster does, and `member`
+  # references it as a string, so the dependency must be explicit.
+  depends_on = [module.gke]
 }
