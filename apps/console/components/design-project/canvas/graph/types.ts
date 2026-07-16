@@ -25,6 +25,7 @@ export type NodeKind =
 	| "secret"
 	| "bucket"
 	| "registry"
+	| "service"
 	| "repositories"
 	| "chart"
 	| "addon"
@@ -102,6 +103,9 @@ export type NodeConfigMap = {
 	secret: ProjectFormData["secrets"][number];
 	bucket: ProjectFormData["storage_buckets"][number];
 	registry: ProjectFormData["container_registries"][number];
+	// W1 — a first-class application workload (the customer's own code), form-fragment like the
+	// infra kinds so it round-trips the form graph. Infra-binding edges are W3.
+	service: ProjectFormData["services"][number];
 	// Out-of-band (not a ProjectFormData fragment) — see ByoChartNodeConfig.
 	chart: ByoChartNodeConfig;
 	// Out-of-band (project_addons) — a marketplace add-on the cluster comes up with.

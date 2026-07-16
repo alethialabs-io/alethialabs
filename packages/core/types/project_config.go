@@ -40,6 +40,10 @@ type ProjectConfig struct {
 	ContainerRegistries []ProjectContainerRegistryConfig `json:"container_registries"`
 	StorageBuckets      []ProjectStorageBucketConfig     `json:"storage_buckets"`
 
+	// Services are first-class application workloads (the customer's own code) — the W1
+	// north-star model. The runner turns each into k8s manifests (build/push in W2).
+	Services []ProjectServiceConfig `json:"services"`
+
 	// Marketplace add-ons — free OSS Helm charts (Grafana, Loki, …) resolved by the console
 	// into install specs. The runner renders one ArgoCD Application per entry after the
 	// cluster + ArgoCD are up. Empty for projects that enabled no add-ons.
@@ -272,4 +276,67 @@ type ProjectStorageBucketConfig struct {
 	PublicAccess      bool           `json:"public_access"`
 	CorsOrigins       []string       `json:"cors_origins"`
 	ProviderConfig    map[string]any `json:"provider_config"`
+}
+
+// ProjectServiceConfig is a first-class application workload (W1) — the customer's own code,
+// run as a Deployment/Job/CronJob/StatefulSet. The runner renders it to k8s manifests; image
+// build/push (from Source when Kind=="repo") is W2, infra-binding is W3.
+type ProjectServiceConfig struct {
+	Placement
+	Name      string               `json:"name"`
+	Type      string               `json:"type"` // deployment | job | cronjob | statefulset
+	Source    ProjectServiceSource `json:"source"`
+	Build     *ProjectServiceBuild `json:"build,omitempty"`
+	Env       []ServiceEnvVar      `json:"env"`
+	Ports     []ServicePort        `json:"ports"`
+	Replicas  int                  `json:"replicas"`
+	Resources *ServiceResources    `json:"resources,omitempty"`
+	Probe     *ServiceProbe        `json:"probe,omitempty"`
+}
+
+// ProjectServiceSource is the flattened form of the TS discriminated union
+// ({kind:"repo",repo_url,path} | {kind:"image",image}) — Kind selects which fields apply.
+type ProjectServiceSource struct {
+	Kind    string `json:"kind"` // "repo" | "image"
+	RepoURL string `json:"repo_url,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Image   string `json:"image,omitempty"`
+}
+
+// ProjectServiceBuild is the build config when Source.Kind == "repo".
+type ProjectServiceBuild struct {
+	Dockerfile string `json:"dockerfile,omitempty"`
+	Context    string `json:"context,omitempty"`
+}
+
+// ServiceEnvVar is a plain environment variable (secret env-from is W4).
+type ServiceEnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// ServicePort is a container port the workload exposes.
+type ServicePort struct {
+	Name          string `json:"name,omitempty"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol,omitempty"`
+}
+
+// ServiceResourceQuantities are Kubernetes quantity strings (e.g. "100m" / "128Mi").
+type ServiceResourceQuantities struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+}
+
+// ServiceResources holds the workload's compute requests + limits.
+type ServiceResources struct {
+	Requests ServiceResourceQuantities `json:"requests"`
+	Limits   ServiceResourceQuantities `json:"limits"`
+}
+
+// ServiceProbe is a readiness/liveness probe.
+type ServiceProbe struct {
+	Type string `json:"type"` // "http" | "tcp"
+	Path string `json:"path,omitempty"`
+	Port int    `json:"port"`
 }

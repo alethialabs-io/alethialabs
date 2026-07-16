@@ -708,6 +708,13 @@
       "when": 1784193953034,
       "tag": "0100_moaning_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1784201211746,
+      "tag": "0101_demonic_mantis",
+      "breakpoints": true
     }
   ]
 }

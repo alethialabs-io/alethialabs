@@ -102,6 +102,47 @@ export interface DetectedService {
 	port?: number;
 }
 
+// ── Service / workload (W1) ─────────────────────────────────────────
+// The typed JSONB shapes for a `project_services` row — a first-class canvas workload.
+// Infra-binding edges (service→db/cache/secret) are W3; secret env-from is W4.
+
+/** Where a service's container image comes from. */
+export type ServiceSource =
+	| { kind: "repo"; repo_url: string; path: string }
+	| { kind: "image"; image: string };
+
+/** Build config when `source.kind === "repo"` (the Dockerfile drives the W2 build/push). */
+export interface ServiceBuild {
+	dockerfile?: string;
+	context?: string;
+}
+
+/** A plain environment variable on a service (secret env-from is W4). */
+export interface ServiceEnvVar {
+	name: string;
+	value: string;
+}
+
+/** A container port a service exposes. */
+export interface ServicePort {
+	name?: string;
+	container_port: number;
+	protocol?: "TCP" | "UDP";
+}
+
+/** Compute requests/limits — Kubernetes quantity strings (e.g. "100m" / "128Mi"). */
+export interface ServiceResources {
+	requests: { cpu: string; memory: string };
+	limits: { cpu: string; memory: string };
+}
+
+/** Readiness/liveness probe. */
+export interface ServiceProbe {
+	type: "http" | "tcp";
+	path?: string;
+	port: number;
+}
+
 // ── Support cases ───────────────────────────────────────────────────
 // SupportContactPrefs / SupportCaseContext / SupportAbuseDetails moved to @repo/support
 // (shared with the admin app); re-exported so `@/types/jsonb.types` still surfaces them.
