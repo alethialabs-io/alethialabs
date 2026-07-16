@@ -5,13 +5,20 @@
 // overrides that let a fail-closed apply proceed deliberately. Read-only; produced when a
 // DEPLOY carries a jobs.verify_override.
 
+import Link from "next/link";
 import { cn } from "@repo/ui/utils";
 import type { EvidenceWaiver } from "@/lib/queries/evidence";
 import { relTime } from "./evidence-derive";
 import { EvIcon } from "./evidence-status";
 
 /** The recorded-waivers panel below the posture table. */
-export function EvidenceWaivers({ waivers }: { waivers: EvidenceWaiver[] }) {
+export function EvidenceWaivers({
+	org,
+	waivers,
+}: {
+	org: string;
+	waivers: EvidenceWaiver[];
+}) {
 	const active = waivers.filter((w) => w.active).length;
 	return (
 		<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
@@ -64,6 +71,12 @@ export function EvidenceWaivers({ waivers }: { waivers: EvidenceWaiver[] }) {
 						<div className="flex flex-col gap-0.5 font-mono text-[10.5px] text-text-tertiary">
 							<span className="text-text-secondary">{w.by}</span>
 							<span>{relTime(w.createdAt)}</span>
+							<Link
+								href={`/${org}/~/jobs/${w.jobId}`}
+								className="w-fit underline-offset-2 hover:text-text-primary hover:underline"
+							>
+								View job
+							</Link>
 						</div>
 						<div className="flex flex-col items-start gap-1">
 							<span

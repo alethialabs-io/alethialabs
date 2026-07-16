@@ -4,11 +4,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	deriveGroups,
+	hasAnySignal,
 	isStale,
 	lastChecked,
 	matchesAnyStatus,
 	matchesTriage,
 	rowScore,
+	stageShort,
+	waiversForEnv,
 	type EvidenceEnvRow,
 } from "@/components/evidence/evidence-derive";
 import type { OrgEvidence } from "@/lib/queries/evidence";
@@ -164,34 +167,16 @@ describe("deriveGroups", () => {
 			search: "",
 			stages: [],
 			status: [],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(groups.map((g) => g.key)).toEqual(["attention", "gaps", "healthy"]);
 	});
 
-	it("orders stage groups production → staging → development", () => {
-		const { groups } = deriveGroups(ev(rows), {
-			search: "",
-			stages: [],
-			status: [],
-			group: "stage",
-			sort: "name",
-		});
-		expect(groups.map((g) => g.key)).toEqual([
-			"production",
-			"staging",
-			"development",
-		]);
-	});
 
 	it("applies a single stage filter and reports the result count", () => {
 		const { resultCount } = deriveGroups(ev(rows), {
 			search: "",
 			stages: ["production"],
 			status: [],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(resultCount).toBe(1);
 	});
@@ -201,8 +186,6 @@ describe("deriveGroups", () => {
 			search: "",
 			stages: ["production", "staging"],
 			status: [],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(resultCount).toBe(2); // a (production) + b (staging), not c (development)
 	});
@@ -212,8 +195,6 @@ describe("deriveGroups", () => {
 			search: "",
 			stages: [],
 			status: ["unverified"],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(resultCount).toBe(1); // only row "c" has no verify
 	});
@@ -223,8 +204,6 @@ describe("deriveGroups", () => {
 			search: "",
 			stages: [],
 			status: ["failing", "unverified"],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(resultCount).toBe(2); // a (failing) + c (unverified), not b (passing/in-sync)
 	});
@@ -234,8 +213,6 @@ describe("deriveGroups", () => {
 			search: "eu-west-1",
 			stages: [],
 			status: [],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(resultCount).toBe(3);
 	});
@@ -285,29 +262,10 @@ describe("deriveGroups — waived filter + project grouping", () => {
 			search: "",
 			stages: [],
 			status: ["waived"],
-			group: "triage",
-			sort: "worst",
 		});
 		expect(resultCount).toBe(1); // only the payments/prod env is waived
 	});
 
-	it("buckets by project when grouping by project", () => {
-		const rows = [
-			mkRow({ id: "a", projectId: "p1", projectName: "payments" }),
-			mkRow({ id: "b", projectId: "p2", projectName: "ledger" }),
-			mkRow({ id: "c", projectId: "p1", projectName: "payments" }),
-		];
-		const { groups } = deriveGroups(ev(rows), {
-			search: "",
-			stages: [],
-			status: [],
-			group: "project",
-			sort: "name",
-		});
-		expect(groups).toHaveLength(2);
-		expect(groups.map((g) => g.label)).toEqual(["ledger", "payments"]);
-		expect(groups.find((g) => g.key === "p1")?.rows).toHaveLength(2);
-	});
 });
 
 describe("deriveGroups — provider filter", () => {
@@ -322,8 +280,6 @@ describe("deriveGroups — provider filter", () => {
 		search: "",
 		stages: [],
 		status: [] as never[],
-		group: "triage" as const,
-		sort: "worst" as const,
 	};
 
 	it("narrows to the selected clouds", () => {
@@ -353,5 +309,132 @@ describe("deriveGroups — provider filter", () => {
 		expect(
 			deriveGroups(ev(rows), { ...base, providers: [] }).resultCount,
 		).toBe(4);
+	});
+});
+
+describe("deriveGroups — fixed ordering", () => {
+	it("orders rows worst-first with a name tiebreak inside each group", () => {
+		const rows = [
+			mkRow({ id: "b", projectName: "beta", verify: verify("fail") }),
+			mkRow({ id: "a", projectName: "alpha", verify: verify("fail") }),
+			mkRow({
+				id: "c",
+				projectName: "gamma",
+				verify: verify("fail"),
+				drift: { inSync: false, drifted: 2, scannedAt: NOW, details: [] },
+			}),
+		];
+		const { groups } = deriveGroups(ev(rows), {
+			search: "",
+			stages: [],
+			status: [],
+		});
+		const attention = groups.find((g) => g.key === "attention");
+		expect(attention?.rows.map((r) => r.environmentId)).toEqual([
+			"c", // worst (fail + drift)
+			"a", // tie with b → name tiebreak
+			"b",
+		]);
+	});
+});
+
+describe("hasAnySignal / waiversForEnv", () => {
+	it("hasAnySignal is false only when verify, drift, and security are all absent", () => {
+		expect(hasAnySignal(mkRow({ id: "none" }))).toBe(false);
+		expect(hasAnySignal(mkRow({ id: "v", verify: verify("pass") }))).toBe(true);
+		expect(
+			hasAnySignal(
+				mkRow({
+					id: "d",
+					drift: { inSync: true, drifted: 0, scannedAt: NOW, details: [] },
+				}),
+			),
+		).toBe(true);
+		expect(
+			hasAnySignal(
+				mkRow({
+					id: "s",
+					security: {
+						critical: 0,
+						high: 0,
+						medium: 0,
+						low: 0,
+						scanned: true,
+						scannedAt: NOW,
+						reportCount: 1,
+					},
+				}),
+			),
+		).toBe(true);
+		// An unscanned security record is not a signal.
+		expect(
+			hasAnySignal(
+				mkRow({
+					id: "u",
+					security: {
+						critical: 0,
+						high: 0,
+						medium: 0,
+						low: 0,
+						scanned: false,
+						scannedAt: OLD,
+						reportCount: 0,
+					},
+				}),
+			),
+		).toBe(false);
+	});
+
+	it("waiversForEnv matches active waivers by project + environment name", () => {
+		const row = mkRow({
+			id: "e1",
+			projectName: "payments",
+			environmentName: "production",
+		});
+		const waivers = [
+			{
+				jobId: "w1",
+				projectName: "payments",
+				environmentName: "production",
+				controls: ["KLP-003"],
+				reason: "hotfix",
+				by: "borislav",
+				expiry: null,
+				active: true,
+				createdAt: NOW,
+			},
+			{
+				jobId: "w2",
+				projectName: "payments",
+				environmentName: "production",
+				controls: ["NET-011"],
+				reason: "expired one",
+				by: "mira",
+				expiry: OLD,
+				active: false,
+				createdAt: OLD,
+			},
+			{
+				jobId: "w3",
+				projectName: "checkout",
+				environmentName: "production",
+				controls: ["KLP-003"],
+				reason: "other project",
+				by: "mira",
+				expiry: null,
+				active: true,
+				createdAt: NOW,
+			},
+		];
+		expect(waiversForEnv(waivers, row).map((w) => w.jobId)).toEqual(["w1"]);
+	});
+});
+
+describe("stageShort", () => {
+	it("shortens the known stages and passes unknown ones through", () => {
+		expect(stageShort("production")).toBe("prod");
+		expect(stageShort("development")).toBe("dev");
+		expect(stageShort("staging")).toBe("staging");
+		expect(stageShort("qa")).toBe("qa");
 	});
 });
