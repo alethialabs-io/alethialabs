@@ -60,6 +60,7 @@
 	"secrets": [],
 	"container_registries": [],
 	"storage_buckets": [],
+	"services": [],
 	"addons": [
 		{
 			"id": "reloader",

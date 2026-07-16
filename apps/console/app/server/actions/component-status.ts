@@ -25,6 +25,7 @@ import {
 	projectNosqlTables,
 	projectQueues,
 	projectSecrets,
+	projectServices,
 	projectStorageBuckets,
 	projectTopics,
 	projects,
@@ -72,6 +73,7 @@ const ARRAY_TABLES = [
 	["secret", projectSecrets],
 	["bucket", projectStorageBuckets],
 	["registry", projectContainerRegistries],
+	["service", projectServices],
 ] as const;
 
 /** A job the env is still working through. */
