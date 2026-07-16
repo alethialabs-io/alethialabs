@@ -461,6 +461,27 @@ config-file `misconfiguration.exclude` key is a silent no-op), wired via `TRIVY_
 
 ---
 
+## Working discipline (every instance, at kickoff)
+
+Reach for the right thinking tool by default — a skill only fires if you invoke it, so this is the rule that
+makes the habit stick. Skills live in `.claude/skills/`.
+
+- **Big or ambiguous task** (spans more than one session, or the approach/architecture isn't obvious) →
+  **wayfind**: decompose it onto the coordination board (`.claude/COORDINATION.md`), interface-first, before
+  writing code. (Reinforces "never start coding without a plan.") The board **is** our wayfinder.
+- **Any non-trivial plan or spec, before building** → **grill** it first (the `grill`/`grilling` skill): an
+  adversarial one-question-at-a-time pass that sharpens it and writes the resolved decisions into the
+  `management/spec/features/` doc or memory. In plan mode, `AskUserQuestion` is the vehicle.
+- **Unknowns — a new library, an API's real behavior, a fact you're tempted to assume** → **research** it
+  against primary sources (the `research` skill for a quick cited dig; `/deep-research` for a heavy fan-out).
+  Never guess where a primary source exists.
+- **Security-sensitive change** (auth/authz, RLS/tenant data, secrets, keyless/credentials, the BYO-IaC
+  sandbox, the `ee/` boundary, the runner, provisioning) → run **`alethia-security-review`** before shipping.
+- **Handing context to another instance or a fresh session** → **handoff** (compact, redacted, references
+  the claimed issue — don't re-explain what the issue/diff already says).
+- **Designing a module boundary/seam** → the `codebase-design` / `domain-modeling` vocabulary (deep modules
+  behind simple interfaces; the interface-first "seams" the board seeds each wave with).
+
 ## General Rules
 
 - Never use `any`. Use the actual type or `unknown` with proper narrowing.
