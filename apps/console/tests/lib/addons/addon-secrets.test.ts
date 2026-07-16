@@ -254,12 +254,20 @@ describe("secret-bearing add-on knobs (#644)", () => {
 
 	it("no stored secret ⇒ no wiring for any of the four", async () => {
 		const { resolveAddOnInstall } = await load();
-		for (const id of ["kube-prometheus-stack", "minio", "harbor", "velero"]) {
+		const wired = ["kube-prometheus-stack", "minio", "harbor", "velero"].map((id) => {
 			const spec = resolveAddOnInstall({ addon_id: id, mode: "managed" });
-			expect(spec?.secretRef, id).toBeUndefined();
 			const wire = JSON.stringify(spec?.values);
-			expect(wire, id).not.toContain("existingSecret");
-			expect(wire, id).not.toContain("alethia-addon-");
-		}
+			return {
+				id,
+				secretRef: spec?.secretRef,
+				hasExisting: wire.includes("existingSecret") || wire.includes("alethia-addon-"),
+			};
+		});
+		expect(wired).toEqual([
+			{ id: "kube-prometheus-stack", secretRef: undefined, hasExisting: false },
+			{ id: "minio", secretRef: undefined, hasExisting: false },
+			{ id: "harbor", secretRef: undefined, hasExisting: false },
+			{ id: "velero", secretRef: undefined, hasExisting: false },
+		]);
 	});
 });
