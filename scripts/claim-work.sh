@@ -69,13 +69,20 @@ esac
 # Is a migration-mutex unit already held? (never two db:generate at once)
 mig_held="$(gh issue list --state open --label claimed --label "mutex:migration" --json number --jq 'length')"
 
-# Ready = open, in class, not claimed, not blocked; ordered by wave then issue number.
+# Ready = open, in class, not claimed, not blocked, not needs:human; ordered by wave then
+# issue number. needs:human marks a unit awaiting a MAINTAINER decision (e.g. a product
+# A/B/C call) — autonomous instances repeatedly mis-claimed those (#648, twice in one
+# night) because only claimed/blocked were filtered.
 ready="$(gh issue list --state open "${class_filter[@]}" --limit 200 --json number,title,labels --jq '
   def waveord:
     (.labels | map(.name) | map(select(startswith("wave:"))) | (.[0] // "wave:z"))
     | ltrimstr("wave:")
     | (if . == "hygiene" then 50 else (ltrimstr("W") | tonumber? // 99) end);
-  map(select((.labels|map(.name)|index("claimed")|not) and (.labels|map(.name)|index("blocked")|not)))
+  map(select(
+    (.labels|map(.name)|index("claimed")|not)
+    and (.labels|map(.name)|index("blocked")|not)
+    and (.labels|map(.name)|index("needs:human")|not)
+  ))
   | map(. + {ord: waveord})
   | sort_by(.ord, .number)
 ')"
