@@ -61,6 +61,16 @@ function sampleForm(): ProjectFormData {
 		container_registries: [
 			{ name: "apps", provider_config: { immutable_tags: true } },
 		],
+		services: [
+			{
+				name: "api",
+				type: "deployment",
+				source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "apps/api" },
+				env: [{ name: "LOG_LEVEL", value: "info" }],
+				ports: [{ container_port: 8080, protocol: "TCP" }],
+				replicas: 3,
+			},
+		],
 	};
 }
 
@@ -83,6 +93,7 @@ describe("configName", () => {
 		expect(configName(byKind("secret").data)).toBe("api-key");
 		expect(configName(byKind("bucket").data)).toBe("assets");
 		expect(configName(byKind("registry").data)).toBe("apps");
+		expect(configName(byKind("service").data)).toBe("api");
 		// Kinds with no name field.
 		expect(configName(byKind("network").data)).toBeUndefined();
 		expect(configName(byKind("cluster").data)).toBeUndefined();
@@ -113,5 +124,15 @@ describe("formToGraph / graphToForm round-trip", () => {
 			name: "apps",
 			provider_config: { immutable_tags: true },
 		});
+		// W1 — a service workload survives the round-trip with its full config.
+		expect(parsed.data.services).toHaveLength(1);
+		expect(parsed.data.services[0]).toMatchObject({
+			name: "api",
+			type: "deployment",
+			source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "apps/api" },
+			replicas: 3,
+		});
+		expect(parsed.data.services[0].env).toEqual([{ name: "LOG_LEVEL", value: "info" }]);
+		expect(parsed.data.services[0].ports[0].container_port).toBe(8080);
 	});
 });

@@ -62,5 +62,6 @@ export function graphToForm(nodes: CanvasNode[]): Record<string, unknown> {
 		secrets: ofKind("secret"),
 		storage_buckets: ofKind("bucket"),
 		container_registries: ofKind("registry"),
+		services: ofKind("service"),
 	};
 }
