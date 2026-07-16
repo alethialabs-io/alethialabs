@@ -20,6 +20,7 @@ const NODE_KINDS = [
 	"topic",
 	"nosql",
 	"secret",
+	"service",
 	"repositories",
 ] as const;
 
