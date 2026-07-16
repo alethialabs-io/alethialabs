@@ -10,6 +10,26 @@ Host-agnostic — the same compose bundle runs on **Hetzner** (`infra/cp-hetzner
 SSH deploy to `DEPLOY_HOST`) or **AWS EC2** (`infra/cp-aws`, access via **SSM Session Manager** —
 no `DEPLOY_HOST` SSH). Pick one; both front the origin with a Cloudflare Tunnel.
 
+## Validating the self-host install (Tier-0)
+
+`scripts/validate-selfhost.sh` proves the `curl … | sh` installer (`deploy/install.sh`) still
+stands up cleanly and keeps its guarantees. Run it before touching `install.sh`, the compose
+files, or the Caddyfile:
+
+```sh
+scripts/validate-selfhost.sh          # STATIC — hermetic, no daemon: shellcheck install.sh,
+                                      #   assert every generated secret exists in .env.example
+                                      #   (else the sed silently no-ops), the prod compose overlay
+                                      #   renders, and Caddy reads ALETHIA_DOMAIN + ALETHIA_ACME_EMAIL.
+scripts/validate-selfhost.sh --live   # + round-trip: bring the stack up, get /api/health 200 through
+                                      #   Caddy, prove a second `up -d` is a no-op, tear down (needs Docker).
+```
+
+The **real-domain auto-TLS** leg (a public box + DNS + a Let's Encrypt cert) stays a maintainer
+step — set `DOMAIN`/`ACME_EMAIL` on a real host and confirm the cert lands in the `caddy-data`
+volume. `install.sh` itself is fail-loud: a secret missing from `.env.example` aborts the install
+rather than shipping a default.
+
 ## Pieces
 - **`infra/cp-hetzner/`** / **`infra/cp-aws/`** — OpenTofu for the VM + cloud-init (installs
   Docker, clones the repo). Each creates the **Cloudflare Tunnel** (+ proxied CNAMEs) and outputs
