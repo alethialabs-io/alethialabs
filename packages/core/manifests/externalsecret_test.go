@@ -24,11 +24,12 @@ func dbBinding() types.ServiceBinding {
 
 func TestRenderExternalSecret_AWS(t *testing.T) {
 	y, skipped, err := RenderExternalSecret(ExternalSecretParams{
-		Namespace: "demo",
-		Target:    types.ServiceBindingTarget{Kind: "database", Name: "main"},
-		Provider:  "aws",
-		RemoteKey: "rds-euc1-prod-acme",
-		Facets:    CredentialFacetNames(dbBinding()),
+		ServiceName: "API",
+		Namespace:   "demo",
+		Target:      types.ServiceBindingTarget{Kind: "database", Name: "main"},
+		Provider:    "aws",
+		RemoteKey:   "rds-euc1-prod-acme",
+		Facets:      CredentialFacetNames(dbBinding()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +40,7 @@ func TestRenderExternalSecret_AWS(t *testing.T) {
 	for _, want := range []string{
 		"apiVersion: external-secrets.io/v1beta1", // MUST match the deployed ESO 0.9.12
 		"kind: ExternalSecret",
-		"name: alethia-bind-database-main", // BindingSecretName(kind, name) — shared with the render lane
+		"name: api-database-main", // BindingSecretName(service, target), dns1123-lowercased
 		"namespace: demo",
 		"name: secretstore-aws",
 		"kind: ClusterSecretStore",
@@ -57,6 +58,15 @@ func TestRenderExternalSecret_AWS(t *testing.T) {
 	// Non-secret facets (endpoint/port) must NOT appear — those are the render-bindings lane's job.
 	if strings.Contains(y, "endpoint") || strings.Contains(y, "DB_HOST") || strings.Contains(y, "DB_PORT") {
 		t.Errorf("non-secret facets must not be materialized:\n%s", y)
+	}
+}
+
+func TestBindingSecretName(t *testing.T) {
+	// The single source of truth for the Secret name shared by the render lane (secretKeyRef.name)
+	// and the ExternalSecret target — per (service, resource), dns1123-normalized.
+	got := BindingSecretName("Web App", types.ServiceBindingTarget{Kind: "database", Name: "Main-DB"})
+	if got != "web-app-database-main-db" {
+		t.Errorf("BindingSecretName = %q, want web-app-database-main-db", got)
 	}
 }
 

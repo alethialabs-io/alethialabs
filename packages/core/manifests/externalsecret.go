@@ -54,10 +54,15 @@ func CredentialFacetNames(b types.ServiceBinding) []string {
 	return out
 }
 
-// The k8s Secret name is BindingSecretName(kind, targetName) — declared in generate.go and shared
-// with the render-bindings lane's env secretKeyRef, so the ExternalSecret's target and the
-// workload's reference are ONE source of truth. It is per backing resource (kind+name), not per
-// service: several services binding the same resource read the same materialized Secret.
+// BindingSecretName is the k8s Secret a binding's credential facets materialize into — the ONE
+// shared contract: the render-bindings lane's env secretKeyRef.name (generate.go) and this lane's
+// ExternalSecret target both call it, so the workload reads exactly the Secret this creates. Named
+// per (service, resource) so each service's Secret is self-contained in its own namespace. This is
+// the single declaration for the package (generate_test.go relies on it; tested in
+// externalsecret_test.go).
+func BindingSecretName(serviceName string, t types.ServiceBindingTarget) string {
+	return dns1123(serviceName + "-" + t.Kind + "-" + t.Name)
+}
 
 // StoreNameFor maps a cloud provider to its ESO ClusterSecretStore name (defined per-cloud in
 // infra/templates/argocd/external-secrets-operator.yaml). "" → no store for that provider (e.g.
@@ -95,11 +100,12 @@ func facetProperty(provider, facet string) (string, bool) {
 // provisioner) supplies Provider + RemoteKey (the tofu-provisioned secret name/ARN) from the
 // deploy outputs; Facets are the binding's credential facets (see CredentialFacetNames).
 type ExternalSecretParams struct {
-	Namespace string
-	Target    types.ServiceBindingTarget
-	Provider  string
-	RemoteKey string
-	Facets    []string
+	ServiceName string
+	Namespace   string
+	Target      types.ServiceBindingTarget
+	Provider    string
+	RemoteKey   string
+	Facets      []string
 }
 
 type esDatum struct{ SecretKey, RemoteKey, Property string }
@@ -144,7 +150,7 @@ spec:
 // (no store for the provider, no provisioned secret name, or a facet the cloud secret lacks) so the
 // caller reports rather than silently drops — mirroring FromServices' skipped-services report.
 func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
-	secretName := BindingSecretName(p.Target.Kind, p.Target.Name)
+	secretName := BindingSecretName(p.ServiceName, p.Target)
 
 	store := StoreNameFor(p.Provider)
 	if store == "" {
