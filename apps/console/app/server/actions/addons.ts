@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
+import { encryptAddonSecrets } from "@/lib/addons/secrets";
 import type {
 	AddOnCategory,
 	AddOnField,
@@ -181,6 +182,13 @@ export async function enableAddon(input: {
 	if (!parsed.success) {
 		throw new Error(`Invalid add-on configuration: ${parsed.error.message}`);
 	}
+	// Encrypt any secret-typed knob (e.g. a provider API token) before it touches the DB — the
+	// value is stored as an EncryptedSecret envelope, never plaintext (W4). Decrypted server-side
+	// only, in resolveAddOnInstall, when the deploy snapshot is assembled.
+	const storedValues: AddOnValues = encryptAddonSecrets(
+		def,
+		parsed.data as AddOnValues,
+	);
 	// Validate the raw YAML override parses to a mapping (reject a scalar/list/garbage here).
 	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
@@ -203,7 +211,7 @@ export async function enableAddon(input: {
 				addon_id: def.id,
 				enabled: true,
 				mode,
-				values: parsed.data as AddOnValues,
+				values: storedValues,
 				values_yaml: valuesYaml,
 				namespace: def.namespace,
 				status: "PENDING",
@@ -217,7 +225,7 @@ export async function enableAddon(input: {
 				set: {
 					enabled: true,
 					mode,
-					values: parsed.data as AddOnValues,
+					values: storedValues,
 					values_yaml: valuesYaml,
 					status: "PENDING",
 					updated_at: new Date(),

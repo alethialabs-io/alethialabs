@@ -10,6 +10,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { decryptAddonSecrets } from "./secrets";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
 /**
@@ -503,7 +504,16 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		}),
 		fields: [
 			{ key: "storageGb", label: "Storage (GiB)", type: "number", default: 50, min: 5, max: 2000 },
-			{ key: "mode", label: "Mode (standalone / distributed)", type: "string", default: "standalone" },
+			{
+				key: "mode",
+				label: "Mode",
+				type: "enum",
+				default: "standalone",
+				options: [
+					{ value: "standalone", label: "Standalone (single node)" },
+					{ value: "distributed", label: "Distributed (HA, ≥4 drives)" },
+				],
+			},
 		],
 		syncWave: 2,
 		requires: ["storage"],
@@ -550,18 +560,43 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		version: "1.15.0",
 		namespace: "external-dns",
 		configSchema: z.object({
-			/** DNS provider the controller writes records to (e.g. hetzner, cloudflare). */
-			provider: z.string().default("cloudflare"),
+			/** DNS provider the controller writes records to (a fixed choice — enum). */
+			provider: z
+				.enum(["cloudflare", "hetzner", "aws", "google", "azure", "digitalocean"])
+				.default("cloudflare"),
 			/** Restrict record management to this domain (optional). */
 			domainFilter: z.string().default(""),
+			/** Provider API token (secret — encrypted at rest). Cloudflare's CF_API_TOKEN for now;
+			 * other providers wire their own env in a follow-up. */
+			apiToken: z.string().default(""),
 		}),
 		toValues: (c) => ({
 			provider: { name: c.provider },
 			...(c.domainFilter ? { domainFilters: [c.domainFilter] } : {}),
+			// The decrypted token is injected as the provider env var (cloudflare for now). The
+			// value is plaintext in the rendered Helm values — closing that (render-to-Secret +
+			// existingSecret) is the W4.5 follow-up; W4 fixes the at-rest-in-DB leak.
+			...(c.apiToken
+				? { env: [{ name: "CF_API_TOKEN", value: c.apiToken }] }
+				: {}),
 		}),
 		fields: [
-			{ key: "provider", label: "DNS provider", type: "string", default: "cloudflare" },
+			{
+				key: "provider",
+				label: "DNS provider",
+				type: "enum",
+				default: "cloudflare",
+				options: [
+					{ value: "cloudflare", label: "Cloudflare" },
+					{ value: "hetzner", label: "Hetzner" },
+					{ value: "aws", label: "AWS Route 53" },
+					{ value: "google", label: "Google Cloud DNS" },
+					{ value: "azure", label: "Azure DNS" },
+					{ value: "digitalocean", label: "DigitalOcean" },
+				],
+			},
 			{ key: "domainFilter", label: "Domain filter (optional)", type: "string", default: "" },
+			{ key: "apiToken", label: "Provider API token", type: "secret", secret: true },
 		],
 		syncWave: 2,
 	}),
@@ -610,9 +645,13 @@ export function resolveAddOnInstall(row: {
 }): AddOnInstallSpec | null {
 	const def = getAddOn(row.addon_id);
 	if (!def) return null;
+	// Decrypt any secret-typed knob (stored as an EncryptedSecret envelope, W4) back to plaintext
+	// BEFORE validation, so the Zod schema sees a string and toValues gets the real value. A
+	// pre-W4 plaintext or absent value passes through untouched.
+	const decrypted = decryptAddonSecrets(def, row.values ?? {});
 	// Validate the stored knobs; fall back to schema defaults on any mismatch so a stale row
 	// never blocks a deploy.
-	const parsed = def.configSchema.safeParse(row.values ?? {});
+	const parsed = def.configSchema.safeParse(decrypted);
 	const config = parsed.success ? parsed.data : def.configSchema.parse({});
 	const knobValues = def.toValues ? def.toValues(config) : {};
 	// Precedence (low → high): chart defaults → schema knobs → the user's raw Helm-values YAML.
