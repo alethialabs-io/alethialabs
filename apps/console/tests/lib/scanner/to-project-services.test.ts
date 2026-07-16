@@ -48,6 +48,14 @@ describe("scan → first-class services[] (W6 Path-B bridge)", () => {
 		expect(svc.build).toMatchObject({ dockerfile: "Dockerfile" });
 		expect(svc.ports).toEqual([{ container_port: 8080 }]);
 
+		// Skeleton → real: a promoted service arrives production-shaped — a TCP probe on the
+		// detected port + a runtime-tuned resources request/limit (node → the middle default).
+		expect(svc.probe).toEqual({ type: "tcp", port: 8080 });
+		expect(svc.resources).toEqual({
+			requests: { cpu: "100m", memory: "128Mi" },
+			limits: { cpu: "500m", memory: "256Mi" },
+		});
+
 		// The postgresql need suggests a binding to the provisioned database component.
 		expect(svc.bindings).toHaveLength(1);
 		expect(svc.bindings[0].target.kind).toBe("database");
@@ -82,6 +90,34 @@ describe("scan → first-class services[] (W6 Path-B bridge)", () => {
 			OPTS,
 		);
 		expect(form.services.map((s) => s.name).sort()).toEqual(["api", "api-2"]);
+	});
+
+	it("tunes resources by runtime and omits the probe when no port is detected", () => {
+		const form = inferredStackToFormData(
+			{ runtime: "go", summary: "svc", scale: "small", container: { dockerfile: true, port: 3000 }, needs: [] },
+			{ ...OPTS, services: [{ path: "cmd/api", name: "api", hasDockerfile: true }] }, // no port
+		);
+		const svc = form.services[0];
+		// go → the lean tier.
+		expect(svc.resources).toEqual({
+			requests: { cpu: "50m", memory: "64Mi" },
+			limits: { cpu: "250m", memory: "128Mi" },
+		});
+		// No detected port → no probe (never a port-less, invalid probe).
+		expect(svc.probe ?? null).toBeNull();
+		expect(svc.ports).toEqual([]);
+	});
+
+	it("prefers the per-service runtime over the repo stack runtime for resource sizing", () => {
+		const form = inferredStackToFormData(
+			{ runtime: "node", summary: "svc", scale: "small", container: { dockerfile: true, port: 3000 }, needs: [] },
+			{ ...OPTS, services: [{ path: "svc", name: "svc", hasDockerfile: true, port: 8080, runtime: "java" }] },
+		);
+		// The service's own java runtime overrides the node stack → the heavy (JVM) tier.
+		expect(form.services[0].resources).toEqual({
+			requests: { cpu: "250m", memory: "512Mi" },
+			limits: { cpu: "1", memory: "1Gi" },
+		});
 	});
 
 	it("keeps producing a schema-valid project (services included)", () => {

@@ -108,12 +108,44 @@ function collectComponents(
 }
 
 /**
+ * Runtime-appropriate default resource requests/limits, so a promoted service arrives
+ * production-shaped (every workload has a request + limit) rather than unset — a value the user
+ * tunes on the canvas. Exact-match the scanner's runtime tokens (node/go/python/…): Go/Rust run
+ * lean, the JVM runs heavy, everything else takes a modest middle default.
+ */
+function defaultResources(runtime?: string): {
+	requests: { cpu: string; memory: string };
+	limits: { cpu: string; memory: string };
+} {
+	switch ((runtime ?? "").toLowerCase()) {
+		case "go":
+		case "rust":
+			return { requests: { cpu: "50m", memory: "64Mi" }, limits: { cpu: "250m", memory: "128Mi" } };
+		case "java":
+			return { requests: { cpu: "250m", memory: "512Mi" }, limits: { cpu: "1", memory: "1Gi" } };
+		default:
+			return { requests: { cpu: "100m", memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } };
+	}
+}
+
+/**
+ * A safe default TCP readiness/liveness probe on the detected container port — the most reliable
+ * signal a scan has (an HTTP path would be a guess). Null when no port was detected, so we never
+ * emit a port-less (invalid) probe; the user can switch it to an HTTP probe on the canvas.
+ */
+function defaultProbe(port?: number): { type: "tcp"; port: number } | null {
+	return port ? { type: "tcp", port } : null;
+}
+
+/**
  * Turn each DEPLOYABLE DetectedService (one with a Dockerfile) into a FIRST-CLASS W1 service:
  * a repo-sourced, buildable workload (W1 model / W2 build-from-source) with W3 bindings suggested
  * from its detected `needs` against the project's backing components. Names are made unique across
  * repos (project_services is unique per (project, env, name)). Non-Dockerfile detections stay
  * overlay-only on `source_repos`. This is the Path-B convergence (north-star W6): a scan yields
- * configurable, bindable, buildable services — not just a read-only overlay card.
+ * configurable, bindable, buildable services — not just a read-only overlay card. Promoted services
+ * arrive production-shaped — a runtime-tuned resources request/limit + a TCP probe on the detected
+ * port (skeleton → real), both editable on the canvas.
  */
 function firstClassServices(
 	inputs: ScanInput[],
@@ -139,6 +171,9 @@ function firstClassServices(
 				env: [],
 				ports: s.port ? [{ container_port: s.port }] : [],
 				replicas: 2,
+				// Per-service runtime when the scan attributed one, else the repo-level stack runtime.
+				resources: defaultResources(s.runtime ?? i.stack.runtime),
+				probe: defaultProbe(s.port),
 				bindings: suggestBindings(s, components),
 			})),
 	);
