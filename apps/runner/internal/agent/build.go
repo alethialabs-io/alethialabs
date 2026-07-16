@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/build"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
+	"github.com/alethialabs-io/alethialabs/packages/core/imagebuild"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -35,7 +34,7 @@ const buildResultKey = "build_result"
 
 // executeBuild handles a BUILD job (W2 image build & push): for each of the environment's
 // first-class services with source.kind=="repo", it schedules a kaniko Job IN the
-// customer's own provisioned cluster (rendered by packages/core/build, pushed to the
+// customer's own provisioned cluster (rendered by packages/core/imagebuild, pushed to the
 // provisioned ECR via the build ServiceAccount's IRSA — customer compute, zero platform
 // keys), watches it to completion, captures the pushed image digest, and reports the
 // per-service digest map via execution_metadata.build_result.
@@ -155,46 +154,70 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 		return "", fmt.Errorf("resolve HEAD of %s: %w", svc.Source.RepoURL, err)
 	}
 
-	kjob := build.RenderKanikoJob(build.KanikoBuildParams{
-		Service:             svc,
-		Namespace:           namespace,
-		ECRDestURL:          dest,
-		BuildServiceAccount: serviceAccount,
-		GitContext:          gitContextFor(svc.Source.RepoURL, sha),
-		GitSHA:              sha,
+	manifest, err := imagebuild.RenderBuildJob(svc, imagebuild.Options{
+		Destination:    dest,
+		Tag:            sha,
+		GitContext:     gitContextFor(svc.Source.RepoURL, sha),
+		ServiceAccount: serviceAccount,
+		Namespace:      namespace,
 	})
-	raw, err := json.Marshal(kjob)
 	if err != nil {
-		return "", fmt.Errorf("marshal kaniko job: %w", err)
+		return "", fmt.Errorf("render kaniko job: %w", err)
 	}
+	jobName := buildJobName(svc.Name)
 
 	fmt.Fprintf(stdout, "Scheduling in-cluster build of %s @ %s → %s\n", svc.Name, shortSHA12(sha), dest)
-	// Replace any prior build Job for this service+SHA (idempotent re-run), then apply.
-	_ = w.runKubectl(ctx, stderr, "delete", "job", kjob.Name, "-n", namespace, "--ignore-not-found=true", "--wait=true")
-	if err := w.kubectlApplyManifest(ctx, string(raw), stderr); err != nil {
+	// Replace any prior build Job for this service (idempotent re-run), then apply.
+	_ = w.runKubectl(ctx, stderr, "delete", "job", jobName, "-n", namespace, "--ignore-not-found=true", "--wait=true")
+	if err := w.kubectlApplyManifest(ctx, manifest, stderr); err != nil {
 		return "", fmt.Errorf("apply kaniko job: %w", err)
 	}
 
-	if err := w.waitForJob(ctx, kjob.Name, namespace, stdout, stderr); err != nil {
+	if err := w.waitForJob(ctx, jobName, namespace, stdout, stderr); err != nil {
 		// Surface the build log tail so the console shows WHY the Dockerfile failed.
-		if logs, lerr := w.kubectlOutput(ctx, "logs", "job/"+kjob.Name, "-n", namespace, "--tail=50"); lerr == nil && logs != "" {
+		if logs, lerr := w.kubectlOutput(ctx, "logs", "job/"+jobName, "-n", namespace, "--tail=50"); lerr == nil && logs != "" {
 			fmt.Fprintf(stderr, "--- kaniko log tail (%s) ---\n%s\n", svc.Name, logs)
 		}
 		return "", err
 	}
 
-	// 5. Capture the pushed digest from the kaniko logs; fall back to the immutable
-	//    git-SHA tag (still a pinned, verify-passing reference) when the digest line is
-	//    absent — loudly, never silently.
-	logs, err := w.kubectlOutput(ctx, "logs", "job/"+kjob.Name, "-n", namespace, "--tail=-1")
+	// 5. Capture the pushed digest. Primary: the pod's termination message — the renderer
+	//    points kaniko's --image-name-with-digest-file at /dev/termination-log
+	//    (imagebuild.DigestFilePath), so the digest is readable AFTER completion without
+	//    depending on log retention. Fallbacks, loudly: the kaniko log line, then the
+	//    immutable git-SHA tag (still a pinned, verify-passing reference).
+	if msg, terr := w.kubectlOutput(ctx, "get", "pods", "-n", namespace,
+		"-l", "job-name="+jobName, "-o",
+		`jsonpath={.items[0].status.containerStatuses[0].state.terminated.message}`); terr == nil {
+		if digest := parseKanikoDigest(msg); digest != "" {
+			return dest + "@" + digest, nil
+		}
+	}
+	logs, err := w.kubectlOutput(ctx, "logs", "job/"+jobName, "-n", namespace, "--tail=-1")
 	if err != nil {
-		return "", fmt.Errorf("read build logs for digest: %w", err)
+		return "", fmt.Errorf("read build digest (termination message and logs both unavailable): %w", err)
 	}
 	if digest := parseKanikoDigest(logs); digest != "" {
 		return dest + "@" + digest, nil
 	}
-	fmt.Fprintf(stderr, "No digest line in kaniko logs for %s — falling back to the immutable git-SHA tag.\n", svc.Name)
+	fmt.Fprintf(stderr, "No digest in termination message or logs for %s — falling back to the immutable git-SHA tag.\n", svc.Name)
 	return dest + ":" + sha, nil
+}
+
+// buildJobName mirrors the imagebuild renderer's Job naming contract ("build-<dns1123 name>")
+// so the watcher/digest reads address the Job the rendered manifest creates.
+func buildJobName(serviceName string) string {
+	s := strings.ToLower(strings.TrimSpace(serviceName))
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '/' || r == ' ' || r == '.':
+			b.WriteRune('-')
+		}
+	}
+	return "build-" + strings.Trim(b.String(), "-")
 }
 
 // resolveHeadSHA pins the commit a build renders against: a shallow clone (with the job's
