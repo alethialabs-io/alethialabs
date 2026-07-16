@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
 import { notifyScaler } from "@/lib/scaler";
-import { jobs, projectServices } from "@/lib/db/schema";
+import { jobs, projectEnvironments, projectServices } from "@/lib/db/schema";
 
 /**
  * W2 image build & push — the console side of the BUILD job (see
@@ -127,4 +127,93 @@ export async function enqueueDeployAfterBuild(buildJobId: string) {
 
 	notifyScaler();
 	return { deployJobId: deploy.id };
+}
+
+/**
+ * enqueueBuildAfterProvision closes the "repo → running" loop. Once infra is provisioned (a
+ * DEPLOY succeeds → the env is ACTIVE, so the cluster exists), it enqueues a BUILD for any
+ * repo-sourced service not yet built (resolved_image empty). The BUILD runs kaniko in that
+ * cluster; its success chains the app DEPLOY (enqueueDeployAfterBuild), which renders the
+ * services with the real images. The `resolved_image`-empty check is the loop guard — after the
+ * chained DEPLOY, every repo service has a digest, so this re-runs and finds nothing to build.
+ * No-op unless the job is a SUCCESS DEPLOY with unbuilt repo services. Service-role; runs from
+ * the runner status callback. (Without this, buildProject — the user-initiated enqueue — has no
+ * automatic trigger, so a scanned/BYO repo service never actually builds.)
+ */
+export async function enqueueBuildAfterProvision(deployJobId: string) {
+	const db = getServiceDb();
+
+	const [job] = await db
+		.select({
+			status: jobs.status,
+			job_type: jobs.job_type,
+			user_id: jobs.user_id,
+			org_id: jobs.org_id,
+			project_id: jobs.project_id,
+			environment_id: jobs.environment_id,
+			cloud_identity_id: jobs.cloud_identity_id,
+			config_snapshot: jobs.config_snapshot,
+		})
+		.from(jobs)
+		.where(eq(jobs.id, deployJobId))
+		.limit(1);
+
+	if (!job) return;
+	if (job.job_type !== "DEPLOY") return;
+	if (job.status !== "SUCCESS") return;
+	if (!job.project_id || !job.environment_id) return;
+
+	// The BUILD runs kaniko IN the cluster, so the env must be genuinely provisioned. A late
+	// DEPLOY whose finalize CAS was rejected (env not ACTIVE) must NOT trigger a build — the
+	// transitionEnv below would otherwise accept a FAILED/DESTROYED env too.
+	const [env] = await db
+		.select({ status: projectEnvironments.status })
+		.from(projectEnvironments)
+		.where(eq(projectEnvironments.id, job.environment_id))
+		.limit(1);
+	if (env?.status !== "ACTIVE") return;
+
+	// Loop guard: enqueue only when a repo-sourced service still lacks a built image. After the
+	// BUILD → chained app-DEPLOY, every repo service carries a resolved_image, so this no-ops.
+	const services = await db
+		.select({
+			source: projectServices.source,
+			resolvedImage: projectServices.resolved_image,
+		})
+		.from(projectServices)
+		.where(
+			and(
+				eq(projectServices.project_id, job.project_id),
+				eq(projectServices.environment_id, job.environment_id),
+			),
+		);
+	const hasUnbuilt = services.some(
+		(s) => s.source.kind === "repo" && !s.resolvedImage,
+	);
+	if (!hasUnbuilt) return;
+
+	// Move the env to QUEUED via the CAS FIRST — so a lost race (another job already took the env)
+	// doesn't strand an orphan BUILD, and a BUILD already in flight isn't double-enqueued.
+	const moved = await transitionEnv(db, job.environment_id, "enqueueDeploy", null, {
+		orgId: job.org_id ?? undefined,
+		projectId: job.project_id,
+	});
+	if (!moved) return;
+
+	const [build] = await db
+		.insert(jobs)
+		.values({
+			user_id: job.user_id,
+			org_id: job.org_id ?? undefined,
+			project_id: job.project_id,
+			environment_id: job.environment_id,
+			cloud_identity_id: job.cloud_identity_id,
+			job_type: "BUILD",
+			config_snapshot: job.config_snapshot,
+			status: "QUEUED",
+		})
+		.returning({ id: jobs.id });
+
+	notifyScaler();
+	return { buildJobId: build.id };
 }

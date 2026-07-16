@@ -10,6 +10,7 @@ import {
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
 import { finalizeIacScan } from "@/app/server/actions/byo-iac";
 import {
+	enqueueBuildAfterProvision,
 	enqueueDeployAfterBuild,
 	finalizeBuild,
 } from "@/app/server/actions/builds";
@@ -324,6 +325,12 @@ export async function PUT(
 						// Mark a promotion SUCCEEDED if this deploy was one (no-op otherwise).
 						await finalizePromotionOnDeploy(jobId).catch((err) =>
 							jlog.error("finalize promotion error", { err }),
+						);
+						// Infra is up (env ACTIVE) — auto-enqueue a BUILD for any unbuilt repo-sourced
+						// service, closing the repo→running loop. buildProject otherwise has no
+						// automatic trigger; no-op when everything is built or nothing is repo-sourced.
+						await enqueueBuildAfterProvision(jobId).catch((err) =>
+							jlog.error("enqueue build after provision error", { err }),
 						);
 					}
 				} else if (job.job_type === "DESTROY") {
