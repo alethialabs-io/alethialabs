@@ -52,7 +52,7 @@ type DeployParams struct {
 	// EnsureAddOnSecrets, to seed each add-on's in-cluster Secret before its Application
 	// syncs. Nil when no enabled add-on has a stored secret knob.
 	AddOnSecretValues map[string]map[string]string
-	TemplatesDir  string
+	TemplatesDir      string
 	// CategoriesDir is the root of the composable per-category modules
 	// (infra/templates/categories). When set, pluggable providers selected on the
 	// Project resources are composed into the plan; native resources are guarded off via tfvars.
