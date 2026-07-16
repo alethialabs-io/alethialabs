@@ -1,0 +1,3 @@
+CREATE TYPE "public"."service_workload_type" AS ENUM('deployment', 'job', 'cronjob', 'statefulset');--> statement-breakpoint
+ALTER TABLE "project_services" ALTER COLUMN "type" SET DEFAULT 'deployment'::"public"."service_workload_type";--> statement-breakpoint
+ALTER TABLE "project_services" ALTER COLUMN "type" SET DATA TYPE "public"."service_workload_type" USING "type"::"public"."service_workload_type";

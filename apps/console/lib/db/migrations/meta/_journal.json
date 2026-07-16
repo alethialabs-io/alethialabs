@@ -722,6 +722,13 @@
       "when": 1784207450173,
       "tag": "0102_silly_hawkeye",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1784209812971,
+      "tag": "0103_lumpy_master_chief",
+      "breakpoints": true
     }
   ]
 }

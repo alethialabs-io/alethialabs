@@ -399,7 +399,15 @@ describe("getProject", () => {
 			[projectSecrets, [{ name: "s1", generate: true, length: 32, special_chars: true }]],
 			[
 				projectEnvironments,
-				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+				[
+					{
+						id: "env-1",
+						name: "production",
+						stage: "production",
+						status: "DEPLOYED",
+						is_default: true,
+					},
+				],
 			],
 			[cloudIdentities, [{ provider: "gcp" }]],
 		]);
@@ -447,7 +455,16 @@ function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 		[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: "ci-1", region: "us-east-1" }]],
 		[
 			projectEnvironments,
-			[{ id: "env-1", name: "production", status: "DRAFT", is_default: true, region: null }],
+			[
+				{
+					id: "env-1",
+					name: "production",
+					stage: "production",
+					status: "DRAFT",
+					is_default: true,
+					region: null,
+				},
+			],
 		],
 		[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
 	]);
@@ -999,7 +1016,15 @@ describe("getProjectAsFormData", () => {
 			[projectSecrets, [{ name: "s1", generate: true, length: 32, special_chars: true }]],
 			[
 				projectEnvironments,
-				[{ id: "env-1", name: "production", status: "DRAFT", is_default: true }],
+				[
+					{
+						id: "env-1",
+						name: "production",
+						stage: "production",
+						status: "DRAFT",
+						is_default: true,
+					},
+				],
 			],
 			[cloudIdentities, [{ provider: "gcp" }]],
 		]);

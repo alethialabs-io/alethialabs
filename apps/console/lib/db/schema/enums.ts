@@ -63,6 +63,16 @@ export const addonMode = pgEnum("addon_mode", ["managed", "gitops"]);
 
 export const cacheEngine = pgEnum("cache_engine", ["redis", "valkey"]);
 
+// The kind of Kubernetes workload a service compiles to. Matches the service form fragment's
+// `type` union (lib/validations/project-form.schema.ts) so the column can't hold a value the
+// form rejects — replaces the loose `text` the getProjectAsFormData narrowing helper guarded.
+export const serviceWorkloadType = pgEnum("service_workload_type", [
+	"deployment",
+	"job",
+	"cronjob",
+	"statefulset",
+]);
+
 export const nosqlTableType = pgEnum("nosql_table_type", ["standard", "global"]);
 export const nosqlKeyType = pgEnum("nosql_key_type", ["S", "N", "B"]);
 // Cloud-neutral capacity mode; mappers translate to the provider value
