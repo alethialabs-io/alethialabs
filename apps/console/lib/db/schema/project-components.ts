@@ -38,6 +38,7 @@ import type {
 	QueueProviderConfig,
 	RegistryProviderConfig,
 	SecretsProviderConfig,
+	ServiceBinding,
 	ServiceBuild,
 	ServiceEnvVar,
 	ServicePort,
@@ -705,6 +706,10 @@ export const projectServices = pgTable(
 		build: jsonb().$type<ServiceBuild>(),
 		// Plain environment variables (secret env-from is W4).
 		env: jsonb().$type<ServiceEnvVar[]>().default([]).notNull(),
+		// W3 — declared edges to backing resources (service→database/cache/queue/secret) plus the
+		// env each injects. The runner resolves each binding to the provisioned resource's endpoint
+		// (tofu output) / credentials (ExternalSecret → k8s Secret) at deploy time.
+		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
 		// Container ports the workload exposes.
 		ports: jsonb().$type<ServicePort[]>().default([]).notNull(),
 		replicas: integer().default(2).notNull(),

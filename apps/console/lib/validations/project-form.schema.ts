@@ -110,11 +110,35 @@ const serviceProbeSchema = z.object({
 	path: z.string().optional(),
 	port: z.number().int().min(1).max(65535),
 });
+// W3 — a service's edge to a backing resource ({kind, name}) plus the env each connection facet
+// injects. `from` distinguishes non-secret facets (endpoint/port → templated values) from
+// credential facets (→ ExternalSecret secretKeyRef); the runner resolves them at deploy time.
+const serviceBindingSchema = z.object({
+	target: z.object({
+		kind: z.enum(["database", "cache", "queue", "secret"]),
+		name: z.string().min(1, "Binding target is required"),
+	}),
+	inject: z.array(
+		z.object({
+			env: z.string().min(1, "Env var name is required"),
+			from: z.enum([
+				"endpoint",
+				"port",
+				"username",
+				"password",
+				"connection_string",
+			]),
+		}),
+	),
+});
 const servicesInsert = createInsertSchema(projectServices, {
 	source: serviceSourceSchema,
 	build: serviceBuildSchema.nullable().optional(),
 	env: z.array(serviceEnvSchema),
 	ports: z.array(servicePortSchema),
+	// A service with no backing-infra needs carries no bindings — optional, defaults to [] like the
+	// DB column, so services authored before W3 (and every existing fixture) still parse.
+	bindings: z.array(serviceBindingSchema).default([]),
 	resources: serviceResourcesSchema.nullable().optional(),
 	probe: serviceProbeSchema.nullable().optional(),
 });

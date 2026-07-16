@@ -143,6 +143,40 @@ export interface ServiceProbe {
 	port: number;
 }
 
+// ── Service → backing-infra binding (W3) ────────────────────────────
+// A service declares it NEEDS a backing resource and how that resource's connection info is
+// injected into the workload's container env. Resolution is DEPLOY-TIME, not snapshot-time: a
+// database's endpoint is a provisioned output unknown when the config is authored, so a binding
+// models the INTENT and the runner resolves it against the provisioned resource.
+
+/** The kind of backing resource a service can bind to (referenced together with its name — the
+ * config join key every component shares). */
+export type ServiceBindingKind = "database" | "cache" | "queue" | "secret";
+
+/** Which connection facet of the bound resource an env var receives. `endpoint`/`port` are
+ * NON-secret and inject as templated values from the resource's tofu outputs; the credential
+ * facets inject KEYLESSLY via an ExternalSecret (ESO ClusterSecretStore) → k8s Secret →
+ * secretKeyRef — a provisioned credential is never exported as a literal env value. */
+export type ServiceBindingFacet =
+	| "endpoint"
+	| "port"
+	| "username"
+	| "password"
+	| "connection_string";
+
+/** One env var on the workload ← one facet of the bound resource. */
+export interface ServiceBindingInjection {
+	env: string;
+	from: ServiceBindingFacet;
+}
+
+/** A service's edge to a backing resource plus the env it injects. `target` references the
+ * resource by {kind, name}; the runner resolves the connection info at deploy time. */
+export interface ServiceBinding {
+	target: { kind: ServiceBindingKind; name: string };
+	inject: ServiceBindingInjection[];
+}
+
 // ── Support cases ───────────────────────────────────────────────────
 // SupportContactPrefs / SupportCaseContext / SupportAbuseDetails moved to @repo/support
 // (shared with the admin app); re-exported so `@/types/jsonb.types` still surfaces them.

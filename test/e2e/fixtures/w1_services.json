@@ -38,6 +38,7 @@
 				"protocol": "UDP"
 			}
 		],
+		"bindings": [],
 		"replicas": 3,
 		"resources": {
 			"requests": {
@@ -76,6 +77,7 @@
 		"build": null,
 		"env": [],
 		"ports": [],
+		"bindings": [],
 		"replicas": 1,
 		"resources": null,
 		"probe": {

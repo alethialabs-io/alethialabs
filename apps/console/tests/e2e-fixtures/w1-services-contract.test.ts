@@ -76,6 +76,9 @@ const webRow = {
 		{ name: "http", container_port: 8080, protocol: "TCP" },
 		{ name: "metrics", container_port: 9090, protocol: "UDP" },
 	],
+	// W3 — present on the wire (default []); the binding value shape is locked by the Go round-trip
+	// + zod refuter tests. A real target here would need a matching component seeded (the gate).
+	bindings: [],
 	replicas: 3,
 	resources: {
 		requests: { cpu: "100m", memory: "128Mi" },

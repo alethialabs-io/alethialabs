@@ -521,6 +521,37 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 		});
 		expect(svc.replicas).toBe(2);
 	});
+
+	it("round-trips a service's W3 bindings into the design/form view (bindings ARE design input)", async () => {
+		// Unlike resolved_image (a build OUTPUT, stripped), bindings are the user's declared
+		// service→infra edges — they must survive into the form so the canvas can re-render them.
+		const bindings = [
+			{
+				target: { kind: "database", name: "orders-db" },
+				inject: [
+					{ env: "DATABASE_HOST", from: "endpoint" },
+					{ env: "DATABASE_PASSWORD", from: "password" },
+				],
+			},
+		];
+		setupDb({
+			select: selectWithService({
+				name: "api",
+				type: "deployment",
+				source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+				env: [],
+				bindings,
+				ports: [],
+				replicas: 2,
+				resources: null,
+				probe: null,
+				resolved_image: null,
+			}),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.services[0].bindings).toEqual(bindings);
+	});
 });
 
 // ============================================================
@@ -707,6 +738,85 @@ describe("planProject", () => {
 					"111122223333.dkr.ecr.us-east-1.amazonaws.com/acme-api@sha256:deadbeef",
 			}),
 		]);
+	});
+
+	it("carries a service's W3 bindings into the deploy snapshot when the target exists — #615", async () => {
+		const bindings = [
+			{
+				target: { kind: "database", name: "orders-db" },
+				inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
+			},
+		];
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[projectDatabases, [{ name: "orders-db", engine: "postgres" }]],
+					[
+						projectServices,
+						[
+							{
+								name: "api",
+								type: "deployment",
+								source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+								env: [],
+								bindings,
+								ports: [],
+								replicas: 2,
+								cloud_identity_id: null,
+								region: null,
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot.services).toEqual([
+			expect.objectContaining({ name: "api", bindings }),
+		]);
+	});
+
+	it("fails closed when a service binds to a resource that does not exist in the env — #615", async () => {
+		// The fail-closed target gate: a dangling {kind,name} would reach the runner and fail to
+		// resolve at deploy (no endpoint/secret to inject). Catch it at snapshot build, loudly.
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					// No projectDatabases seeded → the binding target "ghost-db" does not exist.
+					[
+						projectServices,
+						[
+							{
+								name: "api",
+								type: "deployment",
+								source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+								env: [],
+								bindings: [
+									{
+										target: { kind: "database", name: "ghost-db" },
+										inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
+									},
+								],
+								ports: [],
+								replicas: 2,
+								cloud_identity_id: null,
+								region: null,
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await expect(planProject("p1")).rejects.toThrow(
+			/binds to database "ghost-db", which does not exist/,
+		);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
 	it("rejects (no job, no scaler) when the project has no linked cloud identity", async () => {
