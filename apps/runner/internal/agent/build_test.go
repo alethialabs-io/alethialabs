@@ -122,3 +122,18 @@ func TestBuildResultSurvivesScrub(t *testing.T) {
 		t.Error("test digest accidentally cred-shaped")
 	}
 }
+
+// buildJobName must mirror the imagebuild renderer's "build-<dns1123>" naming so the
+// watcher addresses the Job the manifest actually creates.
+func TestBuildJobName(t *testing.T) {
+	cases := map[string]string{
+		"web":       "build-web",
+		"My_API":    "build-my-api",
+		" Web App ": "build-web-app",
+	}
+	for in, want := range cases {
+		if got := buildJobName(in); got != want {
+			t.Errorf("buildJobName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
