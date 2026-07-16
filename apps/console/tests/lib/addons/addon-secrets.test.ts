@@ -72,10 +72,14 @@ describe("add-on secret encrypt-at-rest", () => {
 	});
 
 	it("no-ops for an add-on with no secret fields", async () => {
-		const { encryptAddonSecrets, minio } = await load();
-		const vals = { storageGb: 100, mode: "standalone" };
+		// minio gained a secret knob in #644, so the secret-free specimen is now loki.
+		const { encryptAddonSecrets } = await load();
+		const { getAddOn } = await import("@/lib/addons/catalog");
+		const loki = getAddOn("loki");
+		if (!loki) throw new Error("expected catalog add-on missing");
+		const vals = { retentionDays: 7 };
 		// Same reference back — nothing to encrypt.
-		expect(encryptAddonSecrets(minio, vals)).toBe(vals);
+		expect(encryptAddonSecrets(loki, vals)).toBe(vals);
 	});
 
 	it("strips secret fields (envelope AND legacy plaintext) so resolution never sees them", async () => {
@@ -157,10 +161,105 @@ describe("resolveAddOnInstall secret diversion (#640)", () => {
 		expect(spec?.values.env).toBeUndefined();
 	});
 
-	it("emits NO secretRef for an add-on without secret fields", async () => {
+	it("emits NO secretRef for an add-on without a stored secret", async () => {
 		const { resolveAddOnInstall } = await load();
 		const spec = resolveAddOnInstall({ addon_id: "minio", mode: "managed" });
 		expect(spec).not.toBeNull();
 		expect(spec?.secretRef).toBeUndefined();
+	});
+});
+
+// The #644 consumer matrix: each secret-bearing add-on wires its chart's OWN
+// existingSecret knob (shapes verified against the pinned charts via `helm template`),
+// pairs non-secret usernames in via secretRef.staticData, and never lets the plaintext
+// (or the envelope) into the spec. One sentinel-scan per add-on.
+describe("secret-bearing add-on knobs (#644)", () => {
+	const SENTINEL = "SENTINEL-644-secret";
+
+	/** Resolve an add-on with an encrypted secret field and sentinel-scan the spec. */
+	async function resolveWithSecret(
+		addonId: string,
+		values: Record<string, unknown>,
+	) {
+		const { encryptAddonSecrets, resolveAddOnInstall } = await load();
+		const { getAddOn } = await import("@/lib/addons/catalog");
+		const def = getAddOn(addonId);
+		if (!def) throw new Error(`missing ${addonId}`);
+		const spec = resolveAddOnInstall({
+			addon_id: addonId,
+			mode: "managed",
+			values: encryptAddonSecrets(def, values),
+		});
+		expect(spec).not.toBeNull();
+		const wire = JSON.stringify(spec);
+		expect(wire).not.toContain(SENTINEL);
+		expect(wire).not.toContain('"iv"');
+		return spec;
+	}
+
+	it("kube-prometheus-stack: grafana.admin.existingSecret + username via staticData", async () => {
+		const spec = await resolveWithSecret("kube-prometheus-stack", {
+			adminUser: "ops",
+			adminPassword: SENTINEL,
+		});
+		expect(spec?.secretRef).toEqual({
+			secretName: "alethia-addon-kube-prometheus-stack",
+			namespace: "monitoring",
+			keys: ["adminPassword"],
+			staticData: { adminUser: "ops" },
+		});
+		expect(spec?.values.grafana).toMatchObject({
+			admin: {
+				existingSecret: "alethia-addon-kube-prometheus-stack",
+				userKey: "adminUser",
+				passwordKey: "adminPassword",
+			},
+		});
+	});
+
+	it("minio: existingSecret with the chart-fixed rootUser/rootPassword keys", async () => {
+		const spec = await resolveWithSecret("minio", {
+			rootUser: "storage-admin",
+			rootPassword: SENTINEL,
+		});
+		expect(spec?.secretRef).toEqual({
+			secretName: "alethia-addon-minio",
+			namespace: "minio",
+			keys: ["rootPassword"],
+			staticData: { rootUser: "storage-admin" },
+		});
+		expect(spec?.values.existingSecret).toBe("alethia-addon-minio");
+	});
+
+	it("harbor: existingSecretAdminPassword + key", async () => {
+		const spec = await resolveWithSecret("harbor", { adminPassword: SENTINEL });
+		expect(spec?.secretRef?.keys).toEqual(["adminPassword"]);
+		expect(spec?.values.existingSecretAdminPassword).toBe("alethia-addon-harbor");
+		expect(spec?.values.existingSecretAdminPasswordKey).toBe("adminPassword");
+	});
+
+	it("velero: credentials.existingSecret with the chart-fixed `cloud` key", async () => {
+		const spec = await resolveWithSecret("velero", {
+			provider: "aws",
+			bucket: "backups",
+			cloud: `[default]\naws_access_key_id=${SENTINEL}\naws_secret_access_key=${SENTINEL}`,
+		});
+		expect(spec?.secretRef?.keys).toEqual(["cloud"]);
+		expect(spec?.values.credentials).toEqual({
+			existingSecret: "alethia-addon-velero",
+		});
+		// The old plaintext path must never come back.
+		expect(JSON.stringify(spec?.values)).not.toContain("secretContents");
+	});
+
+	it("no stored secret ⇒ no wiring for any of the four", async () => {
+		const { resolveAddOnInstall } = await load();
+		for (const id of ["kube-prometheus-stack", "minio", "harbor", "velero"]) {
+			const spec = resolveAddOnInstall({ addon_id: id, mode: "managed" });
+			expect(spec?.secretRef, id).toBeUndefined();
+			const wire = JSON.stringify(spec?.values);
+			expect(wire, id).not.toContain("existingSecret");
+			expect(wire, id).not.toContain("alethia-addon-");
+		}
 	});
 });

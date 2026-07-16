@@ -66,6 +66,40 @@ func TestAddonSecretManifestDeterministic(t *testing.T) {
 	}
 }
 
+// TestAddonSecretStaticDataMerge (#644): paired NON-secret constants (the grafana/minio
+// admin username) land in the same Secret as the fetched password, and a malformed
+// staticData key is refused like a malformed Keys entry.
+func TestAddonSecretStaticDataMerge(t *testing.T) {
+	ref := types.AddOnSecretRef{
+		SecretName: "alethia-addon-minio",
+		Namespace:  "minio",
+		Keys:       []string{"rootPassword"},
+		StaticData: map[string]string{"rootUser": "admin"},
+	}
+	if !validSecretRef(ref, "minio") {
+		t.Fatal("a ref with well-formed staticData must validate")
+	}
+	// Mirror EnsureAddOnSecrets' merge: static first, fetched wins.
+	data := map[string]string{}
+	for k, v := range ref.StaticData {
+		data[k] = v
+	}
+	data["rootPassword"] = secretSentinel
+	m := addonSecretManifest(ref, "minio", data)
+	if !strings.Contains(m, "rootUser: "+base64.StdEncoding.EncodeToString([]byte("admin"))) {
+		t.Errorf("staticData key missing from the manifest:\n%s", m)
+	}
+	if !strings.Contains(m, "rootPassword: "+base64.StdEncoding.EncodeToString([]byte(secretSentinel))) {
+		t.Errorf("fetched key missing from the manifest:\n%s", m)
+	}
+
+	bad := ref
+	bad.StaticData = map[string]string{"root\nuser: x": "v"}
+	if validSecretRef(bad, "minio") {
+		t.Error("a staticData key with a newline must be refused")
+	}
+}
+
 // TestRenderAddOnApplication_SecretRefNeverRendered locks the wire contract with the
 // console (W4.5): an add-on whose values carry SecretKeyRef WIRING renders an
 // Application that references the Secret — and the SecretRef metadata itself (or any

@@ -67,6 +67,12 @@ type AddOnSecretRef struct {
 	Namespace string `json:"namespace"`
 	// Keys the runner must populate (= the secret-typed field keys with stored values).
 	Keys []string `json:"keys"`
+	// StaticData are NON-secret constants that must live in the SAME Secret because the
+	// chart reads a paired key from it (grafana's userKey, minio's rootUser — the admin
+	// USERNAME is an ordinary knob, but the chart resolves it from the admin Secret
+	// alongside the password). Snapshot-safe by declaration; a fetched value wins on a
+	// key collision. Mirrors the TS `AddOnSecretRef.staticData`.
+	StaticData map[string]string `json:"staticData,omitempty"`
 }
 
 // IsGitSource reports whether this install pulls a chart from a git repo (a BYO chart) rather

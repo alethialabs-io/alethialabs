@@ -154,6 +154,14 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 		refs: Record<string, AddOnSecretKeyRef>,
 		config: z.infer<Schema>,
 	) => Record<string, unknown>;
+	/**
+	 * NON-secret Secret data the chart expects alongside the secret keys (#644: e.g. the
+	 * grafana/minio admin USERNAME — the chart resolves user and password from the SAME
+	 * Secret, but the username is an ordinary knob). Called only when a Secret is being
+	 * seeded (some secret field has a stored value); returns data-key → literal value.
+	 * MUST NOT return credential material — this rides the config snapshot.
+	 */
+	secretStaticData?: (config: z.infer<Schema>) => Record<string, string>;
 	/** Serializable descriptors for the surfaced knobs (mirror `configSchema`) — drive the
 	 * client configure form. Empty for add-ons with no knobs. */
 	fields: AddOnField[];
@@ -184,6 +192,13 @@ export interface AddOnSecretRef {
 	namespace: string;
 	/** Data keys the runner must populate (= the secret-typed field keys with stored values). */
 	keys: string[];
+	/**
+	 * NON-secret constants that must live in the SAME Secret because the chart reads a
+	 * paired key from it (grafana's `userKey`, minio's `rootUser`). Derived from the def's
+	 * `secretStaticData` hook; snapshot-safe by declaration — a def must never route a
+	 * credential through here. A colliding fetched value wins runner-side.
+	 */
+	staticData?: Record<string, string>;
 }
 
 /**
