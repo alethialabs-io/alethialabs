@@ -186,6 +186,13 @@ func RenderBuildJob(service types.ProjectServiceConfig, opts Options) (string, e
 	return strings.TrimSpace(buf.String()) + "\n", nil
 }
 
+// JobName is the metadata.name RenderBuildJob gives a service's build Job ("build-<dns1123>").
+// Exposed so the caller (the runner's executeBuild) can delete/await the Job by name without
+// parsing the rendered YAML — it must stay in lockstep with the template's metadata.name above.
+func JobName(service types.ProjectServiceConfig) string {
+	return "build-" + dns1123(service.Name)
+}
+
 // dockerfileOf returns the service's pinned Dockerfile path, defaulting to kaniko's default.
 func dockerfileOf(s types.ProjectServiceConfig) string {
 	if s.Build != nil && strings.TrimSpace(s.Build.Dockerfile) != "" {
