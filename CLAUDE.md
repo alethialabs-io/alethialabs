@@ -468,6 +468,8 @@ config-file `misconfiguration.exclude` key is a silent no-op), wired via `TRIVY_
 - Use `react-hook-form` for all form handling. Never use raw `useState` for form state.
 - Use `zod` schema validation for all user inputs. No manual string matching.
 - Use Tailwind CSS with the shared shadcn/ui design system in **`@repo/ui`** — import `@repo/ui/button` (not `@/components/ui/button`, which no longer exists). Vercel-like aesthetic: minimalist, monochrome, no excessive gradients.
+- **List-page filters follow the console filter standard** — zustand store + URL sync + debounce +
+  normalized TanStack key + server-side filtering; see `apps/console/lib/query/README.md` → "Server-side filters (the standard)". Never invent per-page filter plumbing; no stat-card strips, no Selects in filter bars.
 - Shared code used by more than one app lives in `packages/@repo/*` — **promote, don't duplicate** across `apps/console` ↔ `apps/marketing` (see *Shared web packages*).
 - Feature planning goes in `dataroom/spec/features/` (the private `alethialabs-io/dataroom` repo) with checkable task lists.
 - Never start coding without a plan and explicit approval.

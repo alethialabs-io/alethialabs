@@ -8,7 +8,7 @@
 // come from the bootstrap (registry); custom-role authoring is gated on the customRoles entitlement.
 
 import { Lock, Pencil, Plus, Shield, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
 	deleteRole,
@@ -20,6 +20,7 @@ import { ClassificationControl } from "@/components/classification/classificatio
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
 	useInvalidateRoles,
 	useRolesQuery,
@@ -39,16 +40,6 @@ import { Spinner } from "@repo/ui/spinner";
 import { cn } from "@repo/ui/utils";
 import { PermissionMatrix } from "./permission-matrix";
 import { RoleSheet } from "./role-sheet";
-
-/** Debounce a rapidly-changing value (search input) before it drives a query. */
-function useDebounced<T>(value: T, delay = 250): T {
-	const [debounced, setDebounced] = useState(value);
-	useEffect(() => {
-		const t = setTimeout(() => setDebounced(value), delay);
-		return () => clearTimeout(t);
-	}, [value, delay]);
-	return debounced;
-}
 
 /** A rail row — selectable role with its permission count. */
 function RailRow({
@@ -92,7 +83,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	const entitled = useEntitlement("customRoles") || bootstrap.customRoles;
 
 	const [searchInput, setSearchInput] = useState("");
-	const search = useDebounced(searchInput.trim());
+	const search = useDebouncedValue(searchInput.trim());
 	const searching = search.length > 0;
 	const { data: custom = [], isFetching } = useRolesQuery(search);
 	const invalidate = useInvalidateRoles();
