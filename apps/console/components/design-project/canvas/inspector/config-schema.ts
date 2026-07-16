@@ -229,6 +229,375 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 		summary: (c) => c.project_name || "Project",
 	},
 
+	// A first-class application workload (W1). Unlike the infra kinds it is cloud-indifferent — it
+	// runs on the cluster, not a cloud account — so no field here is provider-gated. The `source`
+	// discriminated union drives the repo-vs-image split: the Build section is repo-only and simply
+	// renders nothing when the source is a prebuilt image (a section whose every field is hidden is
+	// dropped). Backing-infra Bindings (W3) land in a follow-up — the flat row editor can't yet edit
+	// their nested `inject[]`.
+	service: {
+		sections: [
+			{
+				id: "identity",
+				title: "Identity",
+				defaultOpen: true,
+				fields: [
+					nameField(),
+					{
+						key: "type",
+						type: "radio-card",
+						label: "Type",
+						options: [
+							{
+								value: "deployment",
+								label: "Deployment",
+								description: "Long-running, load-balanced.",
+							},
+							{ value: "job", label: "Job", description: "Runs once to completion." },
+							{ value: "cronjob", label: "CronJob", description: "Runs on a schedule." },
+							{
+								value: "statefulset",
+								label: "StatefulSet",
+								description: "Stable identity and storage.",
+							},
+						],
+					},
+				],
+			},
+			{
+				id: "source",
+				title: "Source",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "source_kind",
+						type: "radio-card",
+						label: "Source",
+						get: (c) => c.source.kind,
+						// Switching branch resets to that branch's shape — the union carries only the
+						// active branch's fields, so there is nothing of the other branch to preserve.
+						set: (v) =>
+							v === "image"
+								? { source: { kind: "image", image: "" } }
+								: { source: { kind: "repo", repo_url: "", path: "" } },
+						options: [
+							{
+								value: "repo",
+								label: "Repository",
+								description: "Build from a Git repo. Keyless build & push.",
+							},
+							{
+								value: "image",
+								label: "Prebuilt image",
+								description: "Deploy an existing image as-is.",
+							},
+						],
+					},
+					{
+						key: "repo_url",
+						type: "text",
+						label: "Repository URL",
+						mono: true,
+						full: true,
+						placeholder: "https://github.com/org/repo",
+						visibleWhen: (c) => c.source.kind === "repo",
+						get: (c) => (c.source.kind === "repo" ? c.source.repo_url : ""),
+						set: (v, c) => ({
+							source: {
+								kind: "repo",
+								repo_url: String(v),
+								path: c.source.kind === "repo" ? c.source.path : "",
+							},
+						}),
+					},
+					{
+						key: "source_path",
+						type: "text",
+						label: "Path",
+						mono: true,
+						placeholder: ".",
+						description: "Subdirectory to build from.",
+						visibleWhen: (c) => c.source.kind === "repo",
+						get: (c) => (c.source.kind === "repo" ? c.source.path : ""),
+						set: (v, c) => ({
+							source: {
+								kind: "repo",
+								repo_url: c.source.kind === "repo" ? c.source.repo_url : "",
+								path: String(v),
+							},
+						}),
+					},
+					{
+						key: "image",
+						type: "text",
+						label: "Image",
+						mono: true,
+						full: true,
+						placeholder: "ghcr.io/org/api:1.4.0",
+						description: "A pushed image reference to deploy as-is.",
+						visibleWhen: (c) => c.source.kind === "image",
+						get: (c) => (c.source.kind === "image" ? c.source.image : ""),
+						set: (v) => ({ source: { kind: "image", image: String(v) } }),
+					},
+				],
+			},
+			{
+				id: "build",
+				title: "Build",
+				// Every field is repo-only, so the whole section drops away for a prebuilt image.
+				fields: [
+					{
+						key: "build_dockerfile",
+						type: "text",
+						label: "Dockerfile",
+						mono: true,
+						placeholder: "Dockerfile",
+						visibleWhen: (c) => c.source.kind === "repo",
+						get: (c) => c.build?.dockerfile ?? "",
+						set: (v, c) => ({
+							build: { dockerfile: String(v) || undefined, context: c.build?.context },
+						}),
+					},
+					{
+						key: "build_context",
+						type: "text",
+						label: "Context",
+						mono: true,
+						placeholder: ".",
+						visibleWhen: (c) => c.source.kind === "repo",
+						get: (c) => c.build?.context ?? "",
+						set: (v, c) => ({
+							build: { dockerfile: c.build?.dockerfile, context: String(v) || undefined },
+						}),
+					},
+				],
+			},
+			{
+				id: "networking",
+				title: "Networking",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "ports",
+						type: "subresource",
+						label: "Ports",
+						description: "Container ports this workload exposes.",
+						sub: {
+							singular: "port",
+							create: () => ({ container_port: null, protocol: "TCP", name: "" }),
+							title: (item) =>
+								typeof item.name === "string" && item.name
+									? item.name
+									: item.container_port != null
+										? String(item.container_port)
+										: "",
+							fields: [
+								{
+									key: "container_port",
+									type: "number",
+									label: "Container port",
+									min: 1,
+									max: 65535,
+								},
+								{
+									key: "protocol",
+									type: "select",
+									label: "Protocol",
+									options: [
+										{ value: "TCP", label: "TCP" },
+										{ value: "UDP", label: "UDP" },
+									],
+								},
+								{
+									key: "name",
+									type: "text",
+									label: "Name",
+									mono: true,
+									placeholder: "optional",
+									full: true,
+								},
+							],
+						},
+					},
+				],
+			},
+			{
+				id: "environment",
+				title: "Environment",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "env",
+						type: "subresource",
+						label: "Variables",
+						description: "Plain environment variables. Vault-backed secrets come in a later release.",
+						sub: {
+							singular: "variable",
+							create: () => ({ name: "", value: "" }),
+							title: (item) =>
+								typeof item.name === "string" && item.name ? item.name : "",
+							fields: [
+								{ key: "name", type: "text", label: "Name", mono: true, full: true },
+								{ key: "value", type: "text", label: "Value", full: true },
+							],
+						},
+					},
+				],
+			},
+			{
+				id: "runtime",
+				title: "Runtime",
+				defaultOpen: true,
+				fields: [
+					{ key: "replicas", type: "number", label: "Replicas", min: 1, max: 5, full: true },
+					{
+						key: "requests_cpu",
+						type: "text",
+						label: "CPU request",
+						mono: true,
+						placeholder: "100m",
+						get: (c) => c.resources?.requests?.cpu ?? "",
+						set: (v, c) => ({
+							resources: {
+								requests: {
+									cpu: String(v),
+									memory: c.resources?.requests?.memory ?? "",
+								},
+								limits: c.resources?.limits ?? { cpu: "", memory: "" },
+							},
+						}),
+					},
+					{
+						key: "requests_memory",
+						type: "text",
+						label: "Memory request",
+						mono: true,
+						placeholder: "128Mi",
+						get: (c) => c.resources?.requests?.memory ?? "",
+						set: (v, c) => ({
+							resources: {
+								requests: {
+									cpu: c.resources?.requests?.cpu ?? "",
+									memory: String(v),
+								},
+								limits: c.resources?.limits ?? { cpu: "", memory: "" },
+							},
+						}),
+					},
+					{
+						key: "limits_cpu",
+						type: "text",
+						label: "CPU limit",
+						mono: true,
+						placeholder: "500m",
+						get: (c) => c.resources?.limits?.cpu ?? "",
+						set: (v, c) => ({
+							resources: {
+								requests: c.resources?.requests ?? { cpu: "", memory: "" },
+								limits: {
+									cpu: String(v),
+									memory: c.resources?.limits?.memory ?? "",
+								},
+							},
+						}),
+					},
+					{
+						key: "limits_memory",
+						type: "text",
+						label: "Memory limit",
+						mono: true,
+						placeholder: "512Mi",
+						get: (c) => c.resources?.limits?.memory ?? "",
+						set: (v, c) => ({
+							resources: {
+								requests: c.resources?.requests ?? { cpu: "", memory: "" },
+								limits: {
+									cpu: c.resources?.limits?.cpu ?? "",
+									memory: String(v),
+								},
+							},
+						}),
+					},
+				],
+			},
+			{
+				id: "health",
+				title: "Health",
+				fields: [
+					{
+						key: "probe_enabled",
+						type: "switch",
+						label: "Health check",
+						description: "Gate rollout on a readiness probe.",
+						get: (c) => c.probe != null,
+						set: (v, c) => ({
+							probe: v ? (c.probe ?? { type: "http", port: 8080 }) : null,
+						}),
+					},
+					{
+						key: "probe_type",
+						type: "radio-card",
+						label: "Probe type",
+						visibleWhen: (c) => c.probe != null,
+						get: (c) => c.probe?.type ?? "http",
+						set: (v, c) => ({
+							probe: {
+								type: v as "http" | "tcp",
+								path: c.probe?.path,
+								port: c.probe?.port ?? 8080,
+							},
+						}),
+						options: [
+							{ value: "http", label: "HTTP", description: "Check an HTTP endpoint." },
+							{ value: "tcp", label: "TCP", description: "Open a TCP connection." },
+						],
+					},
+					{
+						key: "probe_path",
+						type: "text",
+						label: "Path",
+						mono: true,
+						full: true,
+						placeholder: "/healthz",
+						visibleWhen: (c) => c.probe?.type === "http",
+						get: (c) => c.probe?.path ?? "",
+						set: (v, c) => ({
+							probe: {
+								type: c.probe?.type ?? "http",
+								path: String(v),
+								port: c.probe?.port ?? 8080,
+							},
+						}),
+					},
+					{
+						key: "probe_port",
+						type: "number",
+						label: "Port",
+						min: 1,
+						max: 65535,
+						placeholder: "8080",
+						visibleWhen: (c) => c.probe != null,
+						get: (c) => c.probe?.port ?? null,
+						set: (v, c) => ({
+							probe: {
+								type: c.probe?.type ?? "http",
+								path: c.probe?.path,
+								port: v == null ? 8080 : Number(v),
+							},
+						}),
+					},
+				],
+			},
+		],
+		summary: (c) => {
+			const src = c.source.kind === "image" ? c.source.image : c.source.repo_url;
+			const base = src ? src.replace(/\.git$/, "").split("/").filter(Boolean).pop() : "";
+			return `${c.type} · ${c.replicas} replica${c.replicas === 1 ? "" : "s"}${
+				base ? ` · ${base}` : ""
+			}`;
+		},
+	},
+
 	network: {
 		sections: [
 			{
