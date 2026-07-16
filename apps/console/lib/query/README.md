@@ -141,9 +141,21 @@ for the mono "Reset · N". Result counts live in the **count pill next to the se
 heading** — never "N of M" prose in the bar. Radix `Select`s and stat-card strips are
 banned from filter bars.
 
-Legacy pages migrate to this standard as they're touched: jobs + runners filter
-client-side over the full cache today, activity uses a raw effect chain, overview is
-URL→RSC. The evidence page is the reference implementation.
+The evidence page is the reference implementation; jobs (`getJobsPage` + `useJobsFilters`),
+runners (`useRunnerFilters`), and activity (`useActivityQuery`, the cursor-paginated
+infinite variant — the cursor is the `pageParam`, never part of the key) follow it (#578).
+
+**The URL→RSC variant (blessed for RSC-rendered grids).** The org overview keeps its
+`searchParams → RSC → props` model instead of store→key→`useQuery`, and that is the
+CORRECT form of this standard when the grid itself is server-rendered: the URL is the
+store (shareable by construction, non-default-only params — the same codec
+`useFilterUrlSync` emits), the RSC re-resolves `queryProjects` server-side with facets
+over the unfiltered universe, `useTransition`'s `isPending` plays the `keepPreviousData`
+dim, the search box debounces its draft before touching the URL, and the count pill
+rule applies unchanged. What it deliberately trades away is sessionStorage persistence
+(a pristine `/{org}` URL means pristine filters — the right default for the org landing
+page). Use the TanStack form for client-fetched lists; use URL→RSC when the page is an
+RSC that renders the rows itself. Do not convert one into the other without a reason.
 
 ## Realtime (future)
 
