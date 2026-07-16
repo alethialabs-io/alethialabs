@@ -13,18 +13,18 @@ import (
 )
 
 func TestInspectClusterNoClusterName(t *testing.T) {
-	// No provisioned cluster name → nothing to inspect (returns nil, nil, never panics).
+	// No provisioned cluster name → nothing to inspect (returns all nil, never panics).
 	vc := &types.ProjectConfig{}
-	addon, sec := InspectCluster(context.Background(), vc, "aws", nil, io.Discard, io.Discard)
-	if addon != nil || sec != nil {
-		t.Errorf("expected (nil, nil) without a cluster name, got (%v, %v)", addon, sec)
+	addon, sec, gitops := InspectCluster(context.Background(), vc, "aws", nil, io.Discard, io.Discard)
+	if addon != nil || sec != nil || gitops != nil {
+		t.Errorf("expected (nil, nil, nil) without a cluster name, got (%v, %v, %v)", addon, sec, gitops)
 	}
 }
 
 func TestInspectClusterNilConfig(t *testing.T) {
-	addon, sec := InspectCluster(context.Background(), nil, "aws", nil, io.Discard, io.Discard)
-	if addon != nil || sec != nil {
-		t.Errorf("expected (nil, nil) for a nil config, got (%v, %v)", addon, sec)
+	addon, sec, gitops := InspectCluster(context.Background(), nil, "aws", nil, io.Discard, io.Discard)
+	if addon != nil || sec != nil || gitops != nil {
+		t.Errorf("expected (nil, nil, nil) for a nil config, got (%v, %v, %v)", addon, sec, gitops)
 	}
 }
 
@@ -40,9 +40,9 @@ func TestInspectClusterHetznerOutputsFedKubeconfig(t *testing.T) {
 	vc.Cluster.ClusterName = "talos-demo"
 
 	// No outputs → the synthesized cluster-name map has no kubeconfig → clean skip.
-	addon, sec := InspectCluster(context.Background(), vc, "hetzner", nil, io.Discard, io.Discard)
-	if addon != nil || sec != nil {
-		t.Errorf("expected (nil, nil) on hetzner without outputs, got (%v, %v)", addon, sec)
+	addon, sec, gitops := InspectCluster(context.Background(), vc, "hetzner", nil, io.Discard, io.Discard)
+	if addon != nil || sec != nil || gitops != nil {
+		t.Errorf("expected (nil, nil, nil) on hetzner without outputs, got (%v, %v, %v)", addon, sec, gitops)
 	}
 
 	// Drift outputs carry the kubeconfig → inspection reaches the probe stage (the
@@ -50,9 +50,13 @@ func TestInspectClusterHetznerOutputsFedKubeconfig(t *testing.T) {
 	outputs := map[string]interface{}{
 		"kubeconfig": "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n",
 	}
-	_, sec = InspectCluster(context.Background(), vc, "hetzner", outputs, io.Discard, io.Discard)
+	_, sec, gitops = InspectCluster(context.Background(), vc, "hetzner", outputs, io.Discard, io.Discard)
 	if sec == nil {
 		t.Fatalf("expected inspection to proceed with an outputs-fed kubeconfig")
+	}
+	// No apps repo configured → the day-2 snapshot honestly reports direct mode.
+	if gitops == nil || gitops.Mode != "direct" {
+		t.Errorf("expected a direct-mode gitops snapshot, got %+v", gitops)
 	}
 }
 
