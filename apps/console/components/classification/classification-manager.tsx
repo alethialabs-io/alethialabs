@@ -24,7 +24,7 @@ import { Skeleton } from "@repo/ui/skeleton";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import type {
 	DimensionDTO,
@@ -40,6 +40,7 @@ import {
 } from "@/app/server/actions/classification/dimensions";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { qk } from "@/lib/query/keys";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
 	useCanEditClassification,
 	useDimensionsQuery,
@@ -65,16 +66,6 @@ function slugify(input: string): string {
 		.slice(0, 64);
 }
 
-/** A debounced mirror of `value`, updated after `delay` ms of quiet. */
-function useDebounced<T>(value: T, delay = 250): T {
-	const [debounced, setDebounced] = useState(value);
-	useEffect(() => {
-		const t = setTimeout(() => setDebounced(value), delay);
-		return () => clearTimeout(t);
-	}, [value, delay]);
-	return debounced;
-}
-
 type Sheet =
 	| { mode: "create"; templateKey?: string }
 	| { mode: "edit"; dimension: DimensionDTO }
@@ -87,7 +78,7 @@ type DeleteTarget =
 export function ClassificationManager() {
 	const qc = useQueryClient();
 	const [searchInput, setSearchInput] = useState("");
-	const search = useDebounced(searchInput.trim());
+	const search = useDebouncedValue(searchInput.trim());
 	const searching = search.length > 0;
 
 	const { data: dimensions, isPending, isFetching } = useDimensionsQuery(search);

@@ -103,6 +103,48 @@ provider/identity/pricing selections, workspace/org context. Anything that is a
 - Removed (list data → queries): `use-clusters-store`, `use-runners-store`,
   `use-fleet-store`.
 
+## Server-side filters (the standard)
+
+Every list page filters **server-side** through one pipeline. No page invents its own
+filter plumbing again:
+
+```
+zustand store  →  debounce  →  normalize  →  TanStack key  →  server action
+(per page)        (search)      (stable obj)   qk.foo(org, q)    (filters + facets)
+```
+
+1. **Store** — one per page via `createFilterStore` (`lib/stores/create-filter-store.ts`):
+   sessionStorage-persisted `{ filters, set, patch, reset }`. `countActiveFilters`
+   drives the reset affordance / badge counts.
+2. **URL sync** — `useFilterUrlSync(store, defaults)` (`hooks/use-filter-url-sync.ts`)
+   mirrors non-default filters into the search params (arrays comma-joined) so filtered
+   views are shareable. On mount, URL params win over persisted session state; the
+   page's RSC should parse the same params and prefetch the matching key.
+3. **Debounce** — free-text goes through `useDebouncedValue` (`hooks/use-debounced-value.ts`)
+   before it reaches the key.
+4. **Normalize** — build a stable query object (trim strings, sort arrays, drop empty
+   keys) in a pure `normalize*Query()` helper, and put **that object in the query key**
+   (precedent: `qk.roles(org, search)`). Unsorted arrays fragment the cache.
+5. **Fetch** — `useQuery({ queryKey: qk.foo(org, q), queryFn: () => getFoo(q),
+   placeholderData: keepPreviousData })`; dim the results with `opacity-60` off
+   `isPlaceholderData`. No `firstRun` refs, no `cancelled` flags — TanStack owns
+   request lifecycle.
+6. **Facets** — the server action computes facet option counts over the **unfiltered**
+   universe (options must not disappear as you select them) and returns them next to
+   the rows.
+
+**Visual grammar** (primitives in `@repo/ui`): `FilterBar` is the row; `FilterSearch`
+is the input; `FacetFilter` (checkbox popover) for any option list; `FilterChipGroup`
+for ≤ ~7 always-visible options (stages); `MultiCombobox` for long/searchable entity
+lists (clouds via the option `leading` icon slot, authors, projects); `FilterBarReset`
+for the mono "Reset · N". Result counts live in the **count pill next to the section
+heading** — never "N of M" prose in the bar. Radix `Select`s and stat-card strips are
+banned from filter bars.
+
+Legacy pages migrate to this standard as they're touched: jobs + runners filter
+client-side over the full cache today, activity uses a raw effect chain, overview is
+URL→RSC. The evidence page is the reference implementation.
+
 ## Realtime (future)
 
 Job **logs** stream over Postgres `LISTEN`/`NOTIFY` → SSE (`lib/realtime/`) and are
