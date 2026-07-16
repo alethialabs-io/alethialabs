@@ -14,27 +14,29 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
-// generateAppManifests renders Kubernetes manifests for the project's detected services
-// and commits them to the apps (GitOps) repo — but ONLY when that repo has no manifests
-// yet, so a bring-your-own manifests repo is NEVER clobbered. It is safe-by-construction:
-// it writes to an EMPTY manifests repo or does nothing. No-op when there are no
-// deployable (containerised) services.
+// generateAppManifests renders Kubernetes manifests for the project's FIRST-CLASS
+// services (vc.Services — the W1 canvas model; the scanner-DetectedService path is
+// retired) and commits them to the apps (GitOps) repo — but ONLY when that repo has no
+// manifests yet, so a bring-your-own manifests repo is NEVER clobbered. It is
+// safe-by-construction: it writes to an EMPTY manifests repo or does nothing. No-op when
+// there are no renderable services.
 //
-// The image defaults to `<service>:latest` (the customer edits it to their registry
-// image); the point is a working GitOps skeleton ArgoCD can sync, not a finished app.
+// Images are REAL (W2): each service renders with its ResolvedImage (the BUILD job's
+// digest URI) or its prebuilt Source.Image — never a fabricated ":latest" (which the
+// elench verify gate fails). Unrenderable services (unbuilt, or a workload type without a
+// template yet) are reported to stdout, not silently dropped.
 func generateAppManifests(vc *types.ProjectConfig, token string, stdout, stderr io.Writer) error {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil
 	}
-	var services []types.DetectedService
-	for _, r := range vc.SourceRepos {
-		services = append(services, r.Services...)
-	}
-	apps := manifests.FromServices(services, manifests.Options{
+	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
 		Domain: vc.DNS.DomainName,
 	})
+	for _, reason := range skipped {
+		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
+	}
 	if len(apps) == 0 {
-		return nil // no containerised services to scaffold
+		return nil // no renderable services to scaffold
 	}
 
 	dir, err := os.MkdirTemp("", "alethia-apps-*")

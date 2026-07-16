@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package manifests generates minimal, opinionated Kubernetes manifests (Deployment +
-// Service + optional Ingress) for the services a scan detected, so ArgoCD has something
-// to deploy without the customer hand-writing YAML. It is the "generate" half of the
-// apps story; the "bring-your-own" half simply points ArgoCD at the customer's repo.
+// Service + optional Ingress) for the project's first-class services (vc.Services — the
+// W1 canvas model), so ArgoCD has something to deploy without the customer hand-writing
+// YAML. It is the "generate" half of the apps story; the "bring-your-own" half simply
+// points ArgoCD at the customer's repo.
+//
+// The container image is REAL (W2): a service renders with its ResolvedImage — the digest
+// URI the BUILD job pushed — or its prebuilt Source.Image. There is deliberately no
+// ":latest" fallback anymore (verify/k8s.go IMAGE-001 fails mutable/untagged images); a
+// repo-sourced service that has not been built yet is skipped and reported, never
+// rendered with a fabricated tag.
 //
 // Generation is pure + deterministic (a fixed App list → the same YAML) so it is
 // golden-testable. Committing the output to the GitOps repo is the caller's job.
@@ -28,7 +35,9 @@ type App struct {
 	Name string
 	// Target namespace (defaults to "default" when empty).
 	Namespace string
-	// Fully-qualified container image (registry/repo:tag).
+	// Fully-qualified container image — a digest URI (registry/repo@sha256:…) or a
+	// pinned tag. REQUIRED: rendering fails on an empty image rather than fabricating
+	// a mutable ":latest" (which verify/k8s.go IMAGE-001 rejects).
 	Image string
 	// Container/Service port. 0 → 8080.
 	Port int
@@ -38,9 +47,16 @@ type App struct {
 	Host string
 	// Optional ServiceAccount name (e.g. a workload-identity KSA).
 	ServiceAccount string
+	// Plain environment variables (values rendered quoted).
+	Env []types.ServiceEnvVar
+	// Compute requests/limits; nil → the opinionated scaffold defaults.
+	Resources *types.ServiceResources
+	// Readiness/liveness probe; nil → none.
+	Probe *types.ServiceProbe
 }
 
-// normalize fills defaults + sanitizes the name to DNS-1123.
+// normalize fills defaults + sanitizes the name to DNS-1123. The image deliberately has
+// NO default — see App.Image.
 func (a App) normalize() App {
 	a.Name = dns1123(a.Name)
 	if a.Name == "" {
@@ -55,8 +71,16 @@ func (a App) normalize() App {
 	if a.Replicas == 0 {
 		a.Replicas = 2
 	}
-	if a.Image == "" {
-		a.Image = a.Name + ":latest"
+	if a.Resources == nil {
+		a.Resources = &types.ServiceResources{
+			Requests: types.ServiceResourceQuantities{CPU: "100m", Memory: "128Mi"},
+			Limits:   types.ServiceResourceQuantities{CPU: "500m", Memory: "512Mi"},
+		}
+	}
+	if a.Probe != nil && a.Probe.Port == 0 {
+		p := *a.Probe
+		p.Port = a.Port
+		a.Probe = &p
 	}
 	return a
 }
@@ -87,13 +111,40 @@ spec:
           image: {{ .Image }}
           ports:
             - containerPort: {{ .Port }}
+          {{- if .Env }}
+          env:
+            {{- range .Env }}
+            - name: {{ printf "%q" .Name }}
+              value: {{ printf "%q" .Value }}
+            {{- end }}
+          {{- end }}
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: {{ .Resources.Requests.CPU }}
+              memory: {{ .Resources.Requests.Memory }}
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: {{ .Resources.Limits.CPU }}
+              memory: {{ .Resources.Limits.Memory }}
+          {{- if .Probe }}
+          readinessProbe:
+            {{- if eq .Probe.Type "http" }}
+            httpGet:
+              path: {{ if .Probe.Path }}{{ .Probe.Path }}{{ else }}/{{ end }}
+              port: {{ .Probe.Port }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Probe.Port }}
+            {{- end }}
+          livenessProbe:
+            {{- if eq .Probe.Type "http" }}
+            httpGet:
+              path: {{ if .Probe.Path }}{{ .Probe.Path }}{{ else }}/{{ end }}
+              port: {{ .Probe.Port }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Probe.Port }}
+            {{- end }}
+          {{- end }}
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -141,8 +192,13 @@ spec:
 `))
 
 // RenderApp renders the Deployment (+ Service + optional Ingress) YAML for one app.
+// An empty image is an ERROR, not a ":latest" default — a mutable/untagged image fails
+// the elench verify gate (IMAGE-001), so fabricating one here would ship a broken app.
 func RenderApp(app App) (string, error) {
 	a := app.normalize()
+	if a.Image == "" {
+		return "", fmt.Errorf("render %s: no container image (repo-sourced services must be BUILT first — resolved_image is empty)", a.Name)
+	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, a); err != nil {
 		return "", fmt.Errorf("render %s: %w", a.Name, err)
@@ -182,27 +238,41 @@ func GenerateManifests(apps []App) (map[string]string, error) {
 type Options struct {
 	// Namespace all apps deploy into.
 	Namespace string
-	// Registry base (e.g. an ECR/GAR/ACR URL); the image becomes "<base>/<name>:latest"
-	// when a service has no explicit image. Empty → "<name>:latest".
-	RegistryBase string
 	// ServiceAccount to bind (e.g. a workload-identity KSA); optional.
 	ServiceAccount string
 	// Base domain; when set, each app gets an Ingress at "<name>.<domain>".
 	Domain string
 }
 
-// FromServices builds Apps from detected services. Only services that carry a Dockerfile
-// (i.e. are deployable) are included; a monorepo's non-container dirs are skipped.
-func FromServices(services []types.DetectedService, opts Options) []App {
-	apps := make([]App, 0, len(services))
+// FromServices builds Apps from the project's FIRST-CLASS services (vc.Services — the W1
+// model), replacing the retired scanner-DetectedService path. Image precedence per
+// service: ResolvedImage (the digest URI the W2 BUILD pushed) over Source.Image (the
+// user's prebuilt image). There is NO ":latest" fallback — the retired scanner path's
+// `<name>:latest` default is exactly what verify/k8s.go IMAGE-001 fails.
+//
+// Not everything renders: a repo-sourced service that has not been built yet has no image,
+// and only type=="deployment" has a template today (job/cronjob/statefulset rendering is a
+// follow-up lane). Those are returned in `skipped` (name: reason) so the caller REPORTS
+// them — a silent drop would read as "deployed" when it wasn't.
+func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []App, skipped []string) {
+	apps = make([]App, 0, len(services))
 	for _, s := range services {
-		if !s.HasDockerfile {
+		name := dns1123(s.Name)
+		if s.Type != "" && s.Type != "deployment" {
+			skipped = append(skipped, fmt.Sprintf("%s: workload type %q has no manifest template yet", name, s.Type))
 			continue
 		}
-		name := dns1123(s.Name)
-		image := name + ":latest"
-		if opts.RegistryBase != "" {
-			image = strings.TrimRight(opts.RegistryBase, "/") + "/" + name + ":latest"
+		image := s.ResolvedImage
+		if image == "" && s.Source.Kind == "image" {
+			image = s.Source.Image
+		}
+		if image == "" {
+			skipped = append(skipped, fmt.Sprintf("%s: repo-sourced service not built yet (resolved_image empty)", name))
+			continue
+		}
+		port := 0
+		if len(s.Ports) > 0 {
+			port = s.Ports[0].ContainerPort
 		}
 		host := ""
 		if opts.Domain != "" {
@@ -212,12 +282,16 @@ func FromServices(services []types.DetectedService, opts Options) []App {
 			Name:           name,
 			Namespace:      opts.Namespace,
 			Image:          image,
-			Port:           s.Port,
+			Port:           port,
+			Replicas:       s.Replicas,
 			Host:           host,
 			ServiceAccount: opts.ServiceAccount,
+			Env:            s.Env,
+			Resources:      s.Resources,
+			Probe:          s.Probe,
 		})
 	}
-	return apps
+	return apps, skipped
 }
 
 // WriteManifests renders the apps and writes each "<name>.yaml" into dir (created if
