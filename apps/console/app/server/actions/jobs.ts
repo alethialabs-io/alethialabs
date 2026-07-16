@@ -15,7 +15,8 @@ import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
 import { notifyScaler } from "@/lib/scaler";
-import { desc, eq } from "drizzle-orm";
+import { provisionJobStatus, provisionJobType } from "@/lib/db/schema/enums";
+import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 
 export async function getJobStatus(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
@@ -84,6 +85,174 @@ export async function getJobs() {
 
 /** A job row enriched with joined project/runner/provider display fields (from getJobs). */
 export type JobWithMeta = Awaited<ReturnType<typeof getJobs>>[number];
+
+/** The jobs page's server-side filter query (#578 — the console filter standard). All
+ * fields optional; enum-shaped values are narrowed to known members before SQL. */
+export interface JobsQuery {
+	/** ISO bounds on created_at (inclusive). */
+	from?: string;
+	to?: string;
+	authors?: string[];
+	envs?: string[];
+	projects?: string[];
+	statuses?: string[];
+	types?: string[];
+}
+
+/** One facet option: value + display label + count over the UNFILTERED org universe (the
+ * standard: options never disappear as you select them). Label is null when the client
+ * owns the labeling (statuses/types have static labels; authors resolve via members). */
+export interface JobsFacetOption {
+	value: string;
+	label: string | null;
+	count: number;
+}
+
+/** Narrow untrusted strings to known enum members (evidence-action precedent). */
+function narrowTo<T extends string>(
+	values: readonly T[],
+	input?: string[],
+): T[] | undefined {
+	if (!input?.length) return undefined;
+	const known = new Set<string>(values);
+	const kept = input.filter((v): v is T => known.has(v));
+	return kept.length ? kept : undefined;
+}
+
+/** Parse an ISO bound; undefined when absent/invalid (an invalid bound must not 500). */
+function parseBound(iso?: string): Date | undefined {
+	if (!iso) return undefined;
+	const d = new Date(iso);
+	return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+/**
+ * The jobs PAGE query (#578): rows filtered server-side in SQL + facet counts over the
+ * unfiltered universe + the true total. The unfiltered `getJobs()` (and its shared
+ * `qk.jobs(org)` cache: command palette, breadcrumbs, overview, runners, plan flow)
+ * stays untouched — this is the page's own parameterized read.
+ */
+export async function getJobsPage(query: JobsQuery = {}) {
+	const actor = await authorize("view", { type: "job" });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const statuses = narrowTo(provisionJobStatus.enumValues, query.statuses);
+		const types = narrowTo(provisionJobType.enumValues, query.types);
+		const from = parseBound(query.from);
+		const to = parseBound(query.to);
+		const conditions = [
+			from ? gte(jobs.created_at, from) : undefined,
+			to ? lte(jobs.created_at, to) : undefined,
+			query.authors?.length ? inArray(jobs.user_id, query.authors) : undefined,
+			query.envs?.length ? inArray(jobs.environment_id, query.envs) : undefined,
+			query.projects?.length ? inArray(jobs.project_id, query.projects) : undefined,
+			statuses ? inArray(jobs.status, statuses) : undefined,
+			types ? inArray(jobs.job_type, types) : undefined,
+		].filter((c) => c !== undefined);
+
+		const [rows, facetRows] = await Promise.all([
+			tx
+				.select({
+					job: jobs,
+					project_name: projects.project_name,
+					project_slug: projects.slug,
+					runner_name: runners.name,
+					cloud_provider: cloudIdentities.provider,
+					environment_name: projectEnvironments.name,
+					environment_stage: projectEnvironments.stage,
+				})
+				.from(jobs)
+				.leftJoin(projects, eq(jobs.project_id, projects.id))
+				.leftJoin(runners, eq(jobs.runner_id, runners.id))
+				.leftJoin(cloudIdentities, eq(jobs.cloud_identity_id, cloudIdentities.id))
+				.leftJoin(
+					projectEnvironments,
+					eq(jobs.environment_id, projectEnvironments.id),
+				)
+				.where(conditions.length ? and(...conditions) : undefined)
+				.orderBy(desc(jobs.created_at)),
+			// One light pass over the whole (RLS-scoped) universe feeds every facet count —
+			// aggregated here rather than N GROUP BYs (the evidence-action precedent).
+			tx
+				.select({
+					status: jobs.status,
+					job_type: jobs.job_type,
+					user_id: jobs.user_id,
+					project_id: jobs.project_id,
+					project_name: projects.project_name,
+					environment_id: jobs.environment_id,
+					environment_name: projectEnvironments.name,
+					environment_stage: projectEnvironments.stage,
+				})
+				.from(jobs)
+				.leftJoin(projects, eq(jobs.project_id, projects.id))
+				.leftJoin(
+					projectEnvironments,
+					eq(jobs.environment_id, projectEnvironments.id),
+				),
+		]);
+
+		const bump = (
+			m: Map<string, { label: string | null; count: number }>,
+			value: string | null,
+			label: string | null = null,
+		) => {
+			if (!value) return;
+			const cur = m.get(value);
+			if (cur) cur.count += 1;
+			else m.set(value, { label, count: 1 });
+		};
+		const authorF = new Map<string, { label: string | null; count: number }>();
+		const envF = new Map<string, { label: string | null; count: number }>();
+		const projectF = new Map<string, { label: string | null; count: number }>();
+		const statusF = new Map<string, { label: string | null; count: number }>();
+		const typeF = new Map<string, { label: string | null; count: number }>();
+		for (const r of facetRows) {
+			bump(authorF, r.user_id);
+			bump(
+				envF,
+				r.environment_id,
+				r.environment_name
+					? r.environment_stage
+						? `${r.environment_name} (${r.environment_stage})`
+						: r.environment_name
+					: null,
+			);
+			bump(projectF, r.project_id, r.project_name);
+			bump(statusF, r.status);
+			bump(typeF, r.job_type);
+		}
+		const asOptions = (
+			m: Map<string, { label: string | null; count: number }>,
+		): JobsFacetOption[] =>
+			[...m.entries()]
+				.map(([value, { label, count }]) => ({ value, label, count }))
+				.sort((a, b) => (a.label ?? a.value).localeCompare(b.label ?? b.value));
+
+		return {
+			rows: rows.map((r) => ({
+				...r.job,
+				project_name: r.project_name ?? null,
+				project_slug: r.project_slug ?? null,
+				runner_name: r.runner_name ?? null,
+				cloud_provider: r.cloud_provider ?? null,
+				environment_name: r.environment_name ?? null,
+				environment_stage: r.environment_stage ?? null,
+			})),
+			total: facetRows.length,
+			facets: {
+				authors: asOptions(authorF),
+				envs: asOptions(envF),
+				projects: asOptions(projectF),
+				statuses: asOptions(statusF),
+				types: asOptions(typeF),
+			},
+		};
+	});
+}
+
+/** The jobs page payload (rows + unfiltered facet counts + true total). */
+export type JobsPage = Awaited<ReturnType<typeof getJobsPage>>;
 
 export async function getPlanResult(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });

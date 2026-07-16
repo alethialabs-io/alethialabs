@@ -11,6 +11,10 @@ import type { NormalizedEvidenceQuery } from "@/components/evidence/evidence-que
 
 export const qk = {
 	jobs: (org: string) => ["jobs", org] as const,
+	/** The jobs PAGE, parameterized by the normalized filter query (normalizeJobsQuery).
+	 * Distinct from the shared unfiltered `jobs` cache, which palette/breadcrumbs/
+	 * overview/runners/plan all consume. */
+	jobsPage: (org: string, query: unknown) => ["jobs", org, "page", query] as const,
 	/** Evidence roll-up, parameterized by the normalized filter query
 	 * (normalizeEvidenceQuery — stable object, so equal filters hit the cache). */
 	evidence: (org: string, query: NormalizedEvidenceQuery) =>
