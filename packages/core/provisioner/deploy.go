@@ -748,7 +748,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		if genErr := generateAppManifests(vc, params.GitAccessToken, stdout, stderr); genErr != nil {
+		if genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr); genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
 

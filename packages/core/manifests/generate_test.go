@@ -243,3 +243,106 @@ func keys(m map[string]string) []string {
 	}
 	return out
 }
+
+// TestFromServices_ResolvesBindings locks the W3 injection contract (#617): a service's bindings
+// become container env — non-secret facets (endpoint/port) as plain VALUES resolved from the
+// provision's tofu outputs, credential facets as secretKeyRef into the ExternalSecret-materialized
+// Secret. User-authored env is preserved and ordered first.
+func TestFromServices_ResolvesBindings(t *testing.T) {
+	apps, skipped := FromServices([]types.ProjectServiceConfig{
+		{
+			Name:   "api",
+			Type:   "deployment",
+			Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+			Env:    []types.ServiceEnvVar{{Name: "LOG_LEVEL", Value: "info"}},
+			Bindings: []types.ServiceBinding{{
+				Target: types.ServiceBindingTarget{Kind: "database", Name: "orders-db"},
+				Inject: []types.ServiceBindingInjection{
+					{Env: "DATABASE_HOST", From: "endpoint"},
+					{Env: "DATABASE_PORT", From: "port"},
+					{Env: "DATABASE_USER", From: "username"},
+					{Env: "DATABASE_PASSWORD", From: "password"},
+				},
+			}},
+		},
+	}, Options{Outputs: map[string]string{"rds_cluster_endpoint": "orders.abc.rds.amazonaws.com"}})
+	if len(skipped) != 0 {
+		t.Fatalf("nothing should skip, got %v", skipped)
+	}
+	a := apps[0]
+
+	// User env first, then binding VALUE facets (endpoint resolved from outputs, port defaulted).
+	wantEnv := []types.ServiceEnvVar{
+		{Name: "LOG_LEVEL", Value: "info"},
+		{Name: "DATABASE_HOST", Value: "orders.abc.rds.amazonaws.com"},
+		{Name: "DATABASE_PORT", Value: "5432"},
+	}
+	if len(a.Env) != len(wantEnv) {
+		t.Fatalf("env = %+v, want %+v", a.Env, wantEnv)
+	}
+	for i, e := range wantEnv {
+		if a.Env[i] != e {
+			t.Errorf("env[%d] = %+v, want %+v", i, a.Env[i], e)
+		}
+	}
+
+	// Credential facets → secretKeyRef into the shared-contract Secret; VALUES never inlined.
+	wantSecret := []AppSecretEnv{
+		{Env: "DATABASE_USER", SecretName: BindingSecretName("database", "orders-db"), SecretKey: "username"},
+		{Env: "DATABASE_PASSWORD", SecretName: BindingSecretName("database", "orders-db"), SecretKey: "password"},
+	}
+	if len(a.SecretEnv) != len(wantSecret) {
+		t.Fatalf("secretEnv = %+v, want %+v", a.SecretEnv, wantSecret)
+	}
+	for i, s := range wantSecret {
+		if a.SecretEnv[i] != s {
+			t.Errorf("secretEnv[%d] = %+v, want %+v", i, a.SecretEnv[i], s)
+		}
+	}
+}
+
+// TestBindingSecretName pins the render↔ExternalSecret (#618) contract: a deterministic, DNS-1123
+// Secret name both lanes derive from {kind, target}. If this changes, #618 must change in lockstep.
+func TestBindingSecretName(t *testing.T) {
+	if got := BindingSecretName("database", "orders-db"); got != "alethia-bind-database-orders-db" {
+		t.Errorf("BindingSecretName = %q", got)
+	}
+	// Name is sanitized to DNS-1123 (a Secret name must be) and is stable for the same input.
+	a := BindingSecretName("cache", "My Cache")
+	b := BindingSecretName("cache", "My Cache")
+	if a != b {
+		t.Errorf("not deterministic: %q vs %q", a, b)
+	}
+	if strings.ContainsAny(a, " _") || a != strings.ToLower(a) {
+		t.Errorf("not DNS-1123-safe: %q", a)
+	}
+}
+
+// TestRenderApp_SecretEnv renders a workload whose only env is a binding credential — the env block
+// must still emit with a valueFrom.secretKeyRef (not be skipped for want of plain env).
+func TestRenderApp_SecretEnv(t *testing.T) {
+	y, err := RenderApp(App{
+		Name:  "api",
+		Image: "ghcr.io/acme/api:1",
+		SecretEnv: []AppSecretEnv{
+			{Env: "DATABASE_PASSWORD", SecretName: "alethia-bind-database-orders-db", SecretKey: "password"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"valueFrom:",
+		"secretKeyRef:",
+		"name: alethia-bind-database-orders-db",
+		"key: password",
+		`- name: "DATABASE_PASSWORD"`,
+	} {
+		if !strings.Contains(y, want) {
+			t.Errorf("rendered manifest missing %q:\n%s", want, y)
+		}
+	}
+	if strings.Contains(y, ":latest") {
+		t.Errorf("must never render :latest:\n%s", y)
+	}
+}
