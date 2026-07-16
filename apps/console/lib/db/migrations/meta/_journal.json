@@ -694,6 +694,13 @@
       "when": 1784136250046,
       "tag": "0098_gigantic_bloodstorm",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1784192209324,
+      "tag": "0099_stiff_kronos",
+      "breakpoints": true
     }
   ]
 }
