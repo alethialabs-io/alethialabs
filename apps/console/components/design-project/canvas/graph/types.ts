@@ -150,6 +150,12 @@ export type CanvasNodeData<K extends NodeKind = NodeKind> = {
 		config: NodeConfigMap[P];
 		cloud_identity_id: string | null;
 		provider: CloudProviderSlug | null;
+		/**
+		 * VIEW-ONLY: set on the RENDER node (never the store node) when the card is drawn inside a
+		 * container region, so it renders the dense treatment. Never persisted, never set by the store,
+		 * and ignored by `diffNodes` (config + cloud_identity_id) and `graphToForm` (config only).
+		 */
+		insideContainer?: boolean;
 	};
 }[K];
 
