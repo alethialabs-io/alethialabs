@@ -14,12 +14,19 @@ import { RunnerCard, RunnerCardSkeleton } from "@/components/runners/runner-card
 import { type RunnerRow } from "@/components/runners/runner-actions";
 import {
 	RunnersToolbar,
-	EMPTY_RUNNER_FILTERS,
 	matchesRunnerFilters,
-	type RunnerFilters,
+	type RunnerFacetOption,
 } from "@/components/runners/runners-toolbar";
 import { RunnersPager } from "@/components/runners/runners-pager";
 import { VersionsPanel } from "@/components/runners/versions-panel";
+import type { CloudFilterOption } from "@/components/filters/cloud-filter";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import {
+	DEFAULT_RUNNER_FILTERS,
+	useRunnerFilters,
+} from "@/lib/stores/use-runner-filters";
+import { PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { useRunnersQuery, type ActiveJob } from "@/lib/query/use-runners-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
@@ -84,8 +91,10 @@ export function RunnersClient() {
 		[economics],
 	);
 
-	const [filters, setFilters] = useState<RunnerFilters>(EMPTY_RUNNER_FILTERS);
-	const [query, setQuery] = useState("");
+	// The console filter standard (#578): zustand store + URL sync + debounced search.
+	const filters = useRunnerFilters((s) => s.filters);
+	useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
+	const search = useDebouncedValue(filters.search, 300);
 	const [page, setPage] = useState(1);
 
 	// Pool editor dialog: null pool = create, a row = edit.
@@ -95,7 +104,7 @@ export function RunnersClient() {
 	// Reset to the first page whenever the result set changes shape.
 	useEffect(() => {
 		setPage(1);
-	}, [query, filters]);
+	}, [search, filters]);
 
 	const openCreatePool = () => {
 		setEditingPool(null);
@@ -141,32 +150,46 @@ export function RunnersClient() {
 		[runners, jobsByRunner],
 	);
 
-	// Filter facets derived from the loaded runners.
+	// Filter facets with counts over the UNFILTERED runner set (the standard: options never
+	// disappear as you select them — the whole universe is already loaded on this page).
 	const facets = useMemo(() => {
-		const clouds = new Set<string>();
-		const regions = new Set<string>();
-		const versions = new Set<string>();
+		const clouds = new Map<string, number>();
+		const regions = new Map<string, number>();
+		const versions = new Map<string, number>();
+		const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
 		for (const r of runnerRows) {
-			if (!r.supported_providers || r.supported_providers.length === 0) clouds.add("any");
-			else for (const p of r.supported_providers) clouds.add(p);
-			if (r.location) regions.add(r.location);
+			if (!r.supported_providers || r.supported_providers.length === 0) bump(clouds, "any");
+			else for (const p of r.supported_providers) bump(clouds, p);
+			if (r.location) bump(regions, r.location);
 			const v = r.runner_releases?.version ?? r.version;
-			if (v) versions.add(v);
+			if (v) bump(versions, v);
 		}
+		const cloudOptions: CloudFilterOption[] = [...clouds.entries()]
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([value, count]) => ({
+				value,
+				label:
+					value === "any" ? "Any" : (PROVIDER_LABELS[value as Provider] ?? value.toUpperCase()),
+				count,
+			}));
+		const asOptions = (m: Map<string, number>, label: (v: string) => string): RunnerFacetOption[] =>
+			[...m.entries()].map(([value, count]) => ({ value, label: label(value), count }));
 		return {
-			clouds: Array.from(clouds).sort(),
-			regions: Array.from(regions).sort(),
-			versions: Array.from(versions).sort((a, b) => b.localeCompare(a)),
+			clouds: cloudOptions,
+			regions: asOptions(regions, (v) => v).sort((a, b) => a.value.localeCompare(b.value)),
+			versions: asOptions(versions, (v) => `v${v}`).sort((a, b) =>
+				b.value.localeCompare(a.value),
+			),
 		};
 	}, [runnerRows]);
 
 	const filtered = useMemo(() => {
-		const q = query.trim().toLowerCase();
+		const q = search.trim().toLowerCase();
 		return runnerRows.filter((r) => {
 			if (q && !r.name.toLowerCase().includes(q)) return false;
 			return matchesRunnerFilters(r, filters);
 		});
-	}, [runnerRows, query, filters]);
+	}, [runnerRows, search, filters]);
 
 	const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 	const safePage = Math.min(page, pageCount);
@@ -256,21 +279,18 @@ export function RunnersClient() {
 					<div className="flex items-center justify-between gap-3">
 						<div className="flex items-baseline gap-2">
 							<span className="font-display text-[15px] font-semibold tracking-tight">Runners</span>
+							{/* The count pill shows the RESULT count (the standard) — never "N of M" prose. */}
 							<span className="rounded-full border px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-								{runnerRows.length}
+								{filtered.length}
 							</span>
 						</div>
 						<AddRunnerButton />
 					</div>
 
 					<RunnersToolbar
-						query={query}
-						onQueryChange={setQuery}
-						filters={filters}
-						onFiltersChange={setFilters}
-						availableClouds={facets.clouds}
-						availableRegions={facets.regions}
-						availableVersions={facets.versions}
+						cloudOptions={facets.clouds}
+						regionOptions={facets.regions}
+						versionOptions={facets.versions}
 					/>
 
 					{isLoading && runners.length === 0 ? (
