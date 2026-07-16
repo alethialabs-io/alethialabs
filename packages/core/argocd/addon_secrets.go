@@ -48,6 +48,12 @@ func validSecretRef(ref types.AddOnSecretRef, addonID string) bool {
 			return false
 		}
 	}
+	// StaticData keys interpolate into the manifest exactly like Keys do (#644).
+	for k := range ref.StaticData {
+		if !secretKeyRe.MatchString(k) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -101,6 +107,13 @@ func EnsureAddOnSecrets(addons []types.AddOnInstall, fetched map[string]map[stri
 		}
 		values := fetched[addons[i].ID]
 		data := map[string]string{}
+		// Paired NON-secret constants first (#644: the admin username a chart reads from
+		// the same Secret as the password) — a fetched secret value wins on collision.
+		for k, v := range ref.StaticData {
+			if v != "" {
+				data[k] = v
+			}
+		}
 		var missing []string
 		for _, key := range ref.Keys {
 			if v, ok := values[key]; ok && v != "" {

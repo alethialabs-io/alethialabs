@@ -83,6 +83,10 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			scrapeInterval: z.enum(["15s", "30s", "60s"]).default("30s"),
 			/** Bundle Grafana dashboards. */
 			grafana: z.boolean().default(true),
+			/** Grafana admin username (paired with the password in the same admin Secret). */
+			adminUser: z.string().min(1).default("admin"),
+			/** Grafana admin password (secret — encrypted at rest; empty = chart-generated). */
+			adminPassword: z.string().default(""),
 			/** Deploy Alertmanager alongside Prometheus. */
 			alertmanager: z.boolean().default(true),
 		}),
@@ -103,6 +107,24 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				},
 			},
 		}),
+		// Grafana's chart resolves BOTH admin user and password from ONE Secret
+		// (`grafana.admin.existingSecret` + userKey/passwordKey — verified via
+		// `helm template kube-prometheus-stack --version 61.9.0`). The password rides the
+		// #640 runner-seeded Secret; the username is not a secret, so it pairs in via
+		// secretStaticData. No stored password ⇒ no wiring (chart generates its own).
+		secretValues: (refs) =>
+			refs.adminPassword
+				? {
+						grafana: {
+							admin: {
+								existingSecret: refs.adminPassword.name,
+								userKey: "adminUser",
+								passwordKey: "adminPassword",
+							},
+						},
+					}
+				: {},
+		secretStaticData: (c) => ({ adminUser: c.adminUser }),
 		fields: [
 			{
 				key: "retentionDays",
@@ -136,6 +158,19 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Bundle Grafana dashboards",
 				type: "boolean",
 				default: true,
+			},
+			{
+				key: "adminUser",
+				label: "Grafana admin username",
+				type: "string",
+				default: "admin",
+			},
+			{
+				key: "adminPassword",
+				label: "Grafana admin password",
+				type: "secret",
+				secret: true,
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart generates one.",
 			},
 			{
 				key: "alertmanager",
@@ -389,6 +424,9 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			deployNodeAgent: z.boolean().default(false),
 			/** Take cloud volume snapshots alongside object-store backups. */
 			snapshotsEnabled: z.boolean().default(true),
+			/** Provider credentials FILE contents (secret — the velero plugin's cloud file;
+			 * mounted from the runner-seeded Secret's `cloud` key, never inlined). */
+			cloud: z.string().default(""),
 		}),
 		toValues: (c) => ({
 			snapshotsEnabled: c.snapshotsEnabled,
@@ -409,6 +447,13 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					}
 				: {}),
 		}),
+		// Velero mounts `credentials.existingSecret` at /credentials and every provider env
+		// (AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, …) points at the
+		// fixed `cloud` KEY inside it — verified via `helm template velero --version 7.2.1`.
+		// The field key is therefore `cloud`, and the whole credentials file rides the #640
+		// runner-seeded Secret (NEVER `secretContents.cloud`, which would inline it).
+		secretValues: (refs) =>
+			refs.cloud ? { credentials: { existingSecret: refs.cloud.name } } : {},
 		fields: [
 			{
 				key: "provider",
@@ -425,6 +470,13 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			{ key: "region", label: "Region (AWS/S3)", type: "string", default: "" },
 			{ key: "deployNodeAgent", label: "Back up file volumes (node-agent)", type: "boolean", default: false },
 			{ key: "snapshotsEnabled", label: "Volume snapshots", type: "boolean", default: true },
+			{
+				key: "cloud",
+				label: "Provider credentials file",
+				type: "secret",
+				secret: true,
+				help: "The velero plugin's credentials file contents (e.g. an AWS credentials profile). Stored encrypted; delivered as a k8s Secret the chart mounts — never in the manifest.",
+			},
 		],
 		syncWave: 3,
 		requires: ["storage"],
@@ -761,11 +813,21 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			storageGb: z.coerce.number().int().min(5).max(2000).default(50),
 			/** standalone (single node) or distributed (HA, ≥4 drives). */
 			mode: z.enum(["standalone", "distributed"]).default("standalone"),
+			/** Root (admin) username — paired with the password in the same Secret. */
+			rootUser: z.string().min(3).default("admin"),
+			/** Root password (secret — encrypted at rest; empty = chart-generated). */
+			rootPassword: z.string().default(""),
 		}),
 		toValues: (c) => ({
 			mode: c.mode,
 			persistence: { size: `${c.storageGb}Gi` },
 		}),
+		// The minio chart's `existingSecret` reads FIXED keys `rootUser`/`rootPassword`
+		// (verified via `helm template minio --version 5.2.0` — MINIO_ROOT_USER/_PASSWORD
+		// secretKeyRefs). Field keys match; the username pairs in via secretStaticData.
+		secretValues: (refs) =>
+			refs.rootPassword ? { existingSecret: refs.rootPassword.name } : {},
+		secretStaticData: (c) => ({ rootUser: c.rootUser }),
 		fields: [
 			{ key: "storageGb", label: "Storage (GiB)", type: "number", default: 50, min: 5, max: 2000 },
 			{
@@ -777,6 +839,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					{ value: "standalone", label: "Standalone (single node)" },
 					{ value: "distributed", label: "Distributed (HA, ≥4 drives)" },
 				],
+			},
+			{ key: "rootUser", label: "Root username", type: "string", default: "admin" },
+			{
+				key: "rootPassword",
+				label: "Root password",
+				type: "secret",
+				secret: true,
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart generates one.",
 			},
 		],
 		syncWave: 2,
@@ -802,6 +872,8 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			exposeType: z
 				.enum(["ingress", "clusterIP", "nodePort", "loadBalancer"])
 				.default("ingress"),
+			/** Harbor admin password (secret — encrypted at rest; empty = chart default). */
+			adminPassword: z.string().default(""),
 		}),
 		toValues: (c) => ({
 			persistence: {
@@ -809,6 +881,16 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			},
 			expose: { type: c.exposeType },
 		}),
+		// Harbor reads HARBOR_ADMIN_PASSWORD from `existingSecretAdminPassword` at the key
+		// named by `existingSecretAdminPasswordKey` — verified via `helm template harbor
+		// --version 1.15.1`. Rides the #640 runner-seeded Secret.
+		secretValues: (refs) =>
+			refs.adminPassword
+				? {
+						existingSecretAdminPassword: refs.adminPassword.name,
+						existingSecretAdminPasswordKey: "adminPassword",
+					}
+				: {},
 		fields: [
 			{ key: "storageGb", label: "Registry storage (GiB)", type: "number", default: 50, min: 10, max: 2000 },
 			{
@@ -822,6 +904,13 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					{ value: "nodePort", label: "NodePort" },
 					{ value: "loadBalancer", label: "LoadBalancer" },
 				],
+			},
+			{
+				key: "adminPassword",
+				label: "Admin password",
+				type: "secret",
+				secret: true,
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart default (change it on first login).",
 			},
 		],
 		syncWave: 2,
@@ -993,6 +1082,11 @@ export function resolveAddOnInstall(row: {
 						secretName,
 						namespace: def.namespace,
 						keys: secretKeys,
+						// Paired NON-secret Secret data (#644): e.g. the admin USERNAME a chart
+						// reads from the same Secret as the password. Snapshot-safe by contract.
+						...(def.secretStaticData
+							? { staticData: def.secretStaticData(config) }
+							: {}),
 					},
 				}
 			: {}),
