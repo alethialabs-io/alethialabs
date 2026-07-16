@@ -5,8 +5,11 @@
 import { X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { getRegionPrices } from "@/app/server/actions/pricing";
+import { getGitopsDeployStatus } from "@/app/server/actions/gitops-status";
 import { getPlanResult } from "@/app/server/actions/jobs";
 import { getProject } from "@/app/server/actions/projects";
+import { DeployPane } from "@/components/agent/deploy-pane";
+import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { Badge } from "@repo/ui/badge";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
@@ -40,8 +43,8 @@ function toSlug(p: string): CloudProviderSlug {
 }
 
 /**
- * The agent's generative-UI split pane — Config / Plan / Cost / Logs for the
- * active project/job (from `useArtifactStore`). All four tabs read existing server
+ * The agent's generative-UI split pane — Config / Plan / Deploy / Cost / Logs for the
+ * active project/job (from `useArtifactStore`). All tabs read existing server
  * actions + pure parsers; Logs streams over the shared `useJobLogStream` SSE.
  * Grayscale/squared; fills the resizable split column the Elench modal gives it,
  * and self-hides (returns null) when no artifact is open.
@@ -60,6 +63,7 @@ export function ArtifactPanel() {
 		null,
 	);
 	const [plan, setPlan] = useState<PlanState | null>(null);
+	const [deploy, setDeploy] = useState<GitopsDeployStatus | null>(null);
 	const { logs } = useJobLogStream(jobId ?? null);
 
 	// Load the project + compute its cost.
@@ -110,6 +114,23 @@ export function ArtifactPanel() {
 					},
 				),
 			);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId]);
+
+	// Load the environment's GitOps deploy status (#574) — same useEffect+server-action
+	// pattern as the other panes; refetched whenever the artifact's project changes.
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			if (!projectId) {
+				if (!cancelled) setDeploy(null);
+				return;
+			}
+			const status = await getGitopsDeployStatus(projectId).catch(() => null);
+			if (!cancelled) setDeploy(status);
 		})();
 		return () => {
 			cancelled = true;
@@ -171,7 +192,13 @@ export function ArtifactPanel() {
 			<Tabs
 				value={tab}
 				onValueChange={(v) => {
-					if (v === "config" || v === "plan" || v === "cost" || v === "logs")
+					if (
+						v === "config" ||
+						v === "plan" ||
+						v === "deploy" ||
+						v === "cost" ||
+						v === "logs"
+					)
 						setTab(v);
 				}}
 				className="flex min-h-0 flex-1 flex-col gap-0"
@@ -185,6 +212,11 @@ export function ArtifactPanel() {
 					{hasJob && (
 						<TabsTrigger value="plan" className="rounded-none text-xs">
 							Plan
+						</TabsTrigger>
+					)}
+					{hasProject && (
+						<TabsTrigger value="deploy" className="rounded-none text-xs">
+							Deploy
 						</TabsTrigger>
 					)}
 					{hasProject && (
@@ -211,6 +243,17 @@ export function ArtifactPanel() {
 						<ScrollArea className="h-full">
 							<div className="p-4">
 								<PlanPane plan={plan} jobId={jobId} />
+							</div>
+						</ScrollArea>
+					</TabsContent>
+					<TabsContent value="deploy" className="m-0 h-full">
+						<ScrollArea className="h-full">
+							<div className="p-4">
+								{!projectId ? (
+									<Empty text="Open a project to see its GitOps status." />
+								) : (
+									<DeployPane status={deploy} />
+								)}
 							</div>
 						</ScrollArea>
 					</TabsContent>

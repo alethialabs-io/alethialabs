@@ -8,7 +8,7 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import type { NodeConfig } from "../graph/types";
-import { NODE_STATUS_META, useNodeStatus } from "@/lib/canvas/node-status";
+import { NODE_STATUS_META, gitopsBadge, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
@@ -85,6 +85,9 @@ export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 	// every state that wants attention carries a label.
 	const showLabel = resolved.state !== "ready" && resolved.state !== "live";
 	const drifted = resolved.drift.length;
+	// ArgoCD health overlay (#574) — a chip only when NOT plainly healthy, same calm-canvas
+	// rule as drift. Card/dense tiers only (the glyph tier stays an icon and a pulse).
+	const gitops = gitopsBadge(resolved.gitops);
 
 	// A node's `kind` discriminant and its registry entry are correlated at runtime, but TypeScript
 	// can't prove it through the keyed lookup (the same discriminated-union limitation the canvas
@@ -193,8 +196,21 @@ export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 								<span className="shrink-0">·</span>
 							)}
 							{primaryFact && <span className="truncate">{primaryFact}</span>}
+							{gitops && (
+								<span
+									className="ml-auto shrink-0 border border-border-strong px-1 text-[8px] uppercase tracking-wide text-foreground"
+									title={`ArgoCD: ${gitops.label}`}
+								>
+									{gitops.label}
+								</span>
+							)}
 							{drifted > 0 && (
-								<span className="ml-auto shrink-0 border border-border-strong px-1 text-[8px] uppercase tracking-wide text-foreground">
+								<span
+									className={cn(
+										"shrink-0 border border-border-strong px-1 text-[8px] uppercase tracking-wide text-foreground",
+										!gitops && "ml-auto",
+									)}
+								>
 									Drift
 								</span>
 							)}
@@ -232,7 +248,19 @@ export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 					<Icon className="h-3.5 w-3.5 text-muted-foreground" />
 				</span>
 				<span className="vx-eyebrow truncate">{eyebrow}</span>
-				<span className="ml-auto min-w-0 shrink-0">{statusEl}</span>
+				<span className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
+					{gitops && (
+						<span
+							className={cn("vx-status shrink-0", `vx-status--${gitops.vx}`)}
+							title={`ArgoCD: ${gitops.label}`}
+							suppressHydrationWarning
+						>
+							<span className="vx-status__dot" />
+							<span>{gitops.label}</span>
+						</span>
+					)}
+					{statusEl}
+				</span>
 			</div>
 
 			<div className="space-y-2 px-2.5 py-2.5">
