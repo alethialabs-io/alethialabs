@@ -42,6 +42,8 @@ export const ANALYTICS_EVENTS = [
 	"elench_dashboard_built",
 	"elench_grid_opened",
 	"elench_artifact_opened",
+	"elench_artifact_shared",
+	"elench_artifact_unshared",
 	"elench_message_feedback",
 	"elench_error",
 ] as const;

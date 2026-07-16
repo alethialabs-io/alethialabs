@@ -4,11 +4,15 @@
 
 import { LayoutDashboard, Plus, Square, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { listSharedArtifacts } from "@/app/server/actions/artifact-shares";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
+import { cn } from "@repo/ui/utils";
 import { ScrollArea } from "@repo/ui/scroll-area";
+
+type GalleryTab = "yours" | "shared";
 
 /**
  * The Artifacts library — the modal's main region when the rail's "Artifacts" nav is active.
@@ -36,13 +40,15 @@ export function AgentArtifactGallery({
 }) {
 	const [items, setItems] = useState<AgentArtifact[] | null>(null);
 	const [selected, setSelected] = useState<AgentArtifact | null>(null);
+	// "yours" = artifacts you created; "shared" = ones teammates shared into your org.
+	const [tab, setTab] = useState<GalleryTab>("yours");
 
 	const load = useCallback(() => {
 		setItems(null);
-		void listArtifacts()
+		void (tab === "shared" ? listSharedArtifacts() : listArtifacts())
 			.then(setItems)
 			.catch(() => setItems([]));
-	}, []);
+	}, [tab]);
 
 	useEffect(() => load(), [load]);
 
@@ -63,6 +69,7 @@ export function AgentArtifactGallery({
 			<AgentArtifactViewer
 				artifact={selected}
 				hasActiveChat={hasActiveChat}
+				owned={tab === "yours"}
 				onBack={() => setSelected(null)}
 				onAddToChat={() => onAddToChat(selected.id)}
 				onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
@@ -79,6 +86,23 @@ export function AgentArtifactGallery({
 				<span className="font-mono text-[11px] text-muted-foreground">
 					{items ? items.length : ""}
 				</span>
+				<div className="ml-3 flex items-center border border-border">
+					{(["yours", "shared"] as const).map((t) => (
+						<button
+							key={t}
+							type="button"
+							onClick={() => setTab(t)}
+							className={cn(
+								"px-2.5 py-1 text-[12px] transition-colors",
+								tab === t
+									? "bg-muted text-foreground"
+									: "text-muted-foreground hover:text-foreground",
+							)}
+						>
+							{t === "yours" ? "Yours" : "Shared with you"}
+						</button>
+					))}
+				</div>
 				<div className="ml-auto flex items-center gap-1.5">
 					<Button
 						size="sm"
@@ -107,24 +131,37 @@ export function AgentArtifactGallery({
 						Loading artifacts…
 					</div>
 				) : items.length === 0 ? (
-					<div className="mx-auto flex max-w-[420px] flex-col items-center gap-3 border border-dashed border-border py-16 text-center">
-						<LayoutDashboard className="h-5 w-5 text-muted-foreground" />
-						<div className="text-[15px] font-semibold text-foreground">
-							No artifacts yet
+					tab === "shared" ? (
+						<div className="mx-auto flex max-w-[420px] flex-col items-center gap-3 border border-dashed border-border py-16 text-center">
+							<LayoutDashboard className="h-5 w-5 text-muted-foreground" />
+							<div className="text-[15px] font-semibold text-foreground">
+								Nothing shared with you yet
+							</div>
+							<p className="text-[13px] text-muted-foreground">
+								When a teammate shares an artifact with your org, a team you belong
+								to, or a role you hold, it shows up here.
+							</p>
 						</div>
-						<p className="text-[13px] text-muted-foreground">
-							Start a chat, ask Elench to build a dashboard, then save it — it lands
-							here for any conversation to reopen.
-						</p>
-						<Button
-							size="sm"
-							className="mt-1 gap-1.5 rounded-none"
-							onClick={onNewArtifact}
-						>
-							<Plus className="h-3.5 w-3.5" />
-							New artifact
-						</Button>
-					</div>
+					) : (
+						<div className="mx-auto flex max-w-[420px] flex-col items-center gap-3 border border-dashed border-border py-16 text-center">
+							<LayoutDashboard className="h-5 w-5 text-muted-foreground" />
+							<div className="text-[15px] font-semibold text-foreground">
+								No artifacts yet
+							</div>
+							<p className="text-[13px] text-muted-foreground">
+								Start a chat, ask Elench to build a dashboard, then save it — it lands
+								here for any conversation to reopen.
+							</p>
+							<Button
+								size="sm"
+								className="mt-1 gap-1.5 rounded-none"
+								onClick={onNewArtifact}
+							>
+								<Plus className="h-3.5 w-3.5" />
+								New artifact
+							</Button>
+						</div>
+					)
 				) : (
 					<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
 						{items.map((a) => (
@@ -158,14 +195,16 @@ export function AgentArtifactGallery({
 										{a.kind} · {a.spec.widgets.length}{" "}
 										{a.spec.widgets.length === 1 ? "widget" : "widgets"}
 									</span>
-									<button
-										type="button"
-										aria-label={`Delete ${a.name}`}
-										onClick={() => void remove(a.id)}
-										className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/card:opacity-100"
-									>
-										<Trash2 className="h-3.5 w-3.5" />
-									</button>
+									{tab === "yours" && (
+										<button
+											type="button"
+											aria-label={`Delete ${a.name}`}
+											onClick={() => void remove(a.id)}
+											className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/card:opacity-100"
+										>
+											<Trash2 className="h-3.5 w-3.5" />
+										</button>
+									)}
 								</div>
 							</div>
 						))}
