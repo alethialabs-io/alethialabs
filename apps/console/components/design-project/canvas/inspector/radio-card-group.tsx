@@ -64,7 +64,7 @@ export function RadioCardGroup({
 						onClick={() => onChange(opt.value)}
 						onKeyDown={(e) => onKeyDown(e, i)}
 						className={cn(
-							"flex items-start gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+							"flex items-start gap-3 rounded-none border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 							selected
 								? "border-foreground/40 bg-muted/40 ring-1 ring-foreground/20"
 								: "border-border hover:bg-muted/30",

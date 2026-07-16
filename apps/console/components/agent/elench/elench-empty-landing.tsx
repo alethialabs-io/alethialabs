@@ -4,6 +4,7 @@
 
 import type { ChatStatus } from "ai";
 import { Sparkles } from "lucide-react";
+import Link from "next/link";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
@@ -218,9 +219,7 @@ export function ElenchPanelEmpty({
 						size="xs"
 						className="rounded-none"
 					>
-						<a href={supportHref} target="_blank" rel="noopener noreferrer">
-							Support
-						</a>
+						<Link href={supportHref}>Support</Link>
 					</Button>
 				)}
 			</div>

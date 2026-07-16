@@ -26,6 +26,8 @@ vi.mock("@/lib/billing/ai-plan", () => ({
 	resolveAiTier: vi.fn(),
 	resolveAiPlan: vi.fn(),
 	aiTierSpec: vi.fn(),
+	// Identity by default — these tests exercise tier caps, not admin spend limits.
+	effectiveAiTierSpec: vi.fn((s: unknown) => s),
 }));
 vi.mock("@/lib/billing/ai-quota", () => ({
 	sumCredits: vi.fn(),
@@ -69,7 +71,12 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(isStripeConfigured).mockReturnValue(true);
 	vi.mocked(resolveAiTier).mockResolvedValue("ai_free");
-	vi.mocked(resolveAiPlan).mockResolvedValue({ tier: "ai_free", hardCap: false });
+	vi.mocked(resolveAiPlan).mockResolvedValue({
+		tier: "ai_free",
+		hardCap: false,
+		orgWeeklyCapCredits: null,
+		perUserWeeklyCapCredits: null,
+	});
 	vi.mocked(aiTierSpec).mockReturnValue(spec());
 	vi.mocked(creditsFor).mockReturnValue(5);
 	vi.mocked(sumCreditsForUser).mockResolvedValue(0);
@@ -213,7 +220,12 @@ describe("assertAiAllowed", () => {
 
 	describe("hard cap", () => {
 		it("pauses at the included allowance (no purchased fallback) when usageHardCap is on", async () => {
-			vi.mocked(resolveAiPlan).mockResolvedValue({ tier: "ai_free", hardCap: true });
+			vi.mocked(resolveAiPlan).mockResolvedValue({
+				tier: "ai_free",
+				hardCap: true,
+				orgWeeklyCapCredits: null,
+				perUserWeeklyCapCredits: null,
+			});
 			vi.mocked(sumCredits).mockResolvedValueOnce(30).mockResolvedValueOnce(30); // org session full
 			vi.mocked(purchasedBalance).mockResolvedValue(1000); // packs available
 			const err = await assertAiAllowed("org-1", "scan").catch((e) => e);

@@ -13,6 +13,10 @@ import type { OrganizationBilling } from "@/lib/db/schema";
 vi.mock("@/lib/authz/guard", () => ({
 	currentActor: vi.fn(),
 	authorize: vi.fn(),
+	// getAiUsageSummary probes this for the "can manage spend limits" flag; default deny.
+	authorizeQuiet: vi.fn(async () => {
+		throw new Error("forbidden");
+	}),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(() => ({})) }));
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));

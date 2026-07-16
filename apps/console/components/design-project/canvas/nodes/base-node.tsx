@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Handle, Position } from "@xyflow/react";
-import { ProviderIcon } from "@repo/ui/provider-icon";
 import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
@@ -34,6 +33,12 @@ const RULE_CLASS: Record<string, string> = {
 interface BaseNodeProps {
 	id: string;
 	selected?: boolean;
+	/**
+	 * Render the dense treatment — a card inside a container region. Set by canvas-flow via the render
+	 * node's `insideContainer` flag. The compact zoom tier also renders dense. Default (isolated card,
+	 * e.g. a unit test) is the full card.
+	 */
+	dense?: boolean;
 }
 
 /** Leaves are targets only; the registry overrides this for the network / cluster / project. */
@@ -49,9 +54,11 @@ const DEFAULT_HANDLES: { source?: boolean; target?: boolean } = { target: true }
  * status from dot fill/shape. Detail is shed by zoom (`useCanvasLod`) so a large architecture
  * stays legible.
  */
-export function BaseNode({ id, selected }: BaseNodeProps) {
+export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
-	const identity = useCanvasStore((s) => s.getEffectiveIdentity(id));
+	// `provider` (the effective cloud) still drives the fact grid + zones; the visible cloud-account
+	// chip is gone — the cloud is chosen once, at project creation, so repeating it on every card is
+	// noise. (getEffectiveIdentity, which fed that chip, is no longer read here.)
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
 	const resolved = useNodeStatus(id);
 	const lod = useCanvasLod();
@@ -112,8 +119,10 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				)}
 				<span
 					className={cn(
-						"grid h-11 w-11 place-items-center border bg-card",
-						selected ? "border-foreground" : "border-border-strong",
+						"grid h-11 w-11 cursor-pointer place-items-center border bg-card transition-colors",
+						selected
+							? "border-foreground"
+							: "border-border-strong hover:border-foreground",
 						def.classification === "external" && "border-dashed",
 					)}
 				>
@@ -130,17 +139,85 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 		);
 	}
 
-	const compact = lod === "compact";
+	// A card is DENSE when it sits inside a container region (the At-Scale treatment) or when the board
+	// is zoomed to the compact tier: a tight 158px node whose facts collapse to one footer line. The
+	// full fact grid is one click away in the definition panel.
+	const dense = denseProp || lod === "compact";
+	const primaryFact = facts.find((f) => f.value)?.value ?? facts[0]?.value ?? "";
 
+	// ── dense tier — the density the canvas runs at inside its containers ────
+	if (dense) {
+		return (
+			<div
+				className={cn(
+					"relative w-[158px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
+					"before:absolute before:-inset-x-px before:-top-px before:h-0.5 before:content-['']",
+					RULE_CLASS[def.classification],
+					def.classification === "external" && "border-dashed",
+					selected
+						? "border-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+						: "border-border hover:border-border-strong",
+				)}
+			>
+				{handles.target && (
+					<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+				)}
+
+				{/* inline icon (no plate), kind eyebrow, and the status DOT only — the detail rides in the
+				    footer, matching the At-Scale `.n` node. */}
+				<div className="flex items-center gap-1.5 border-b border-border/60 px-2 py-1">
+					<Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+					<span className="vx-eyebrow truncate text-[9px]">{eyebrow}</span>
+					<span
+						className={cn("vx-status ml-auto shrink-0", `vx-status--${status.vx}`)}
+						title={resolved.message ?? status.label}
+						suppressHydrationWarning
+					>
+						<span className="vx-status__dot" />
+					</span>
+				</div>
+
+				<div className="space-y-1 px-2 py-1.5">
+					<div className="truncate font-mono text-[11px] leading-tight text-foreground">
+						{title}
+					</div>
+					{/* cost · primary fact  [Drift] — a fabricated $0 is never shown (honest silence). */}
+					{(resolved.monthlyCost != null || primaryFact || drifted > 0) && (
+						<div className="flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
+							{resolved.monthlyCost != null && (
+								<span className="shrink-0 text-muted-foreground">
+									{formatMonthly(resolved.monthlyCost)}
+								</span>
+							)}
+							{resolved.monthlyCost != null && primaryFact && (
+								<span className="shrink-0">·</span>
+							)}
+							{primaryFact && <span className="truncate">{primaryFact}</span>}
+							{drifted > 0 && (
+								<span className="ml-auto shrink-0 border border-border-strong px-1 text-[8px] uppercase tracking-wide text-foreground">
+									Drift
+								</span>
+							)}
+						</div>
+					)}
+				</div>
+
+				{handles.source && (
+					<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
+				)}
+			</div>
+		);
+	}
+
+	// ── full tier — the anatomy: plate, name, the whole fact grid, cost footer ──
 	return (
 		<div
 			className={cn(
-				"relative rounded-none border bg-card text-card-foreground transition-colors",
+				"relative w-[248px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				// the classification rule — a 2px band across the card's top edge
 				"before:absolute before:-inset-x-px before:-top-px before:h-0.5 before:content-['']",
 				RULE_CLASS[def.classification],
 				def.classification === "external" && "border-dashed",
-				compact ? "w-[176px]" : "w-[248px]",
 				selected
 					? "border-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
 					: "border-border hover:border-border-strong",
@@ -170,35 +247,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 					{title}
 				</div>
 
-				{/* Provider chip — the brand mark is the only colour on the canvas. Dropped at the
-				    compact tier: at that zoom the cloud is carried by the containing zone. */}
-				{def.cloudScoped && !compact && (
-					<span
-						className={cn(
-							"inline-flex max-w-full items-center gap-1.5 border px-1.5 py-0.5 font-mono text-[10px]",
-							identity
-								? "border-border text-muted-foreground"
-								: "border-dashed border-border text-muted-foreground/70",
-						)}
-					>
-						{identity ? (
-							<>
-								<ProviderIcon
-									provider={identity.provider}
-									size={12}
-									className="shrink-0"
-								/>
-								<span className="truncate">{identity.displayId}</span>
-							</>
-						) : (
-							<span className="truncate">
-								{node.data.kind === "project" ? "no cloud account" : "inherits core"}
-							</span>
-						)}
-					</span>
-				)}
-
-				<FactGrid facts={facts} compact={compact} />
+				<FactGrid facts={facts} />
 			</div>
 
 			{/* What this resource costs, from the last PLAN's Infracost breakdown. Absent until the
@@ -229,32 +278,12 @@ function formatMonthly(value: number): string {
 }
 
 /**
- * The per-service fact grid — the card's real differentiator. Hairline cells, mono throughout. An
- * empty value draws a muted dash rather than an empty cell, so an unconfigured resource reads as
- * unconfigured at a glance. The compact tier collapses to the single highest-priority fact.
+ * The per-service fact grid — the card's real differentiator, shown on the full tier. Hairline cells,
+ * mono throughout. An empty value draws a muted dash rather than an empty cell, so an unconfigured
+ * resource reads as unconfigured at a glance. (The dense tier collapses this to one footer line.)
  */
-function FactGrid({
-	facts,
-	compact,
-}: {
-	facts: { label: string; value: string }[];
-	compact: boolean;
-}) {
+function FactGrid({ facts }: { facts: { label: string; value: string }[] }) {
 	if (facts.length === 0) return null;
-
-	if (compact) {
-		const first = facts[0];
-		return (
-			<div
-				className={cn(
-					"truncate font-mono text-[10px]",
-					first.value ? "text-muted-foreground" : "text-muted-foreground/60",
-				)}
-			>
-				{first.value || "—"}
-			</div>
-		);
-	}
 
 	const shown = facts.slice(0, 3);
 	return (

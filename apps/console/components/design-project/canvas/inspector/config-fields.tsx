@@ -256,7 +256,7 @@ function FieldRow({
 
 	if (field.type === "switch") {
 		return (
-			<div className="col-span-full flex items-center justify-between gap-4 rounded-lg border border-border/60 px-3 py-2.5">
+			<div className="col-span-full flex items-center justify-between gap-4 rounded-none border border-border/60 px-3 py-2.5">
 				<div className="min-w-0">
 					<p className="text-sm font-medium">{field.label}</p>
 					{field.description && (
@@ -371,7 +371,7 @@ function Section({
 			open={open}
 			onOpenChange={setOpen}
 			className={cn(
-				"rounded-lg border border-border",
+				"rounded-none border border-border",
 				advanced && "bg-surface-sunken/40",
 			)}
 		>

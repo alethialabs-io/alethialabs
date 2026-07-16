@@ -216,6 +216,8 @@ export interface NodeStatus {
 	outputs: { label: string; value: string }[];
 	/** Monthly cost from the last PLAN. Null = not priced (never planned, or not a priced resource). */
 	monthlyCost: number | null;
+	/** The itemised cost lines behind `monthlyCost` (Terraform address → monthly). Empty when unpriced. */
+	costLines: { address: string; monthlyCost: number }[];
 	/** True once this node exists in the environment's provisioned state. */
 	deployed: boolean;
 }
@@ -256,6 +258,7 @@ export function resolveNodeStatus(
 			drift: [],
 			outputs: [],
 			monthlyCost: null,
+			costLines: [],
 			deployed: false,
 		};
 	}
@@ -265,6 +268,7 @@ export function resolveNodeStatus(
 		drift,
 		outputs: server.outputs ?? [],
 		monthlyCost: server.monthlyCost ?? null,
+		costLines: server.costLines ?? [],
 		deployed: true,
 	};
 
@@ -340,6 +344,7 @@ export function resolveExternalStatus(
 		drift: server?.drift ?? [],
 		outputs: [],
 		monthlyCost: server?.monthlyCost ?? null,
+		costLines: server?.costLines ?? [],
 		deployed: !!source.deployedCommitSha,
 	};
 
@@ -404,6 +409,7 @@ export function useNodeStatus(id: string): NodeStatus {
 				drift: [],
 				outputs: [],
 				monthlyCost: null,
+				costLines: [],
 				deployed: false,
 			};
 		const key = nodeStatusKey(node);
@@ -442,6 +448,7 @@ export function resolveNodeStatusFor(
 			drift: [],
 			outputs: [],
 			monthlyCost: null,
+			costLines: [],
 			deployed: false,
 		};
 	return resolveNodeStatus(readiness, env.components[nodeStatusKey(node)], env, {

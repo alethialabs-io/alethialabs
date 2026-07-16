@@ -108,6 +108,9 @@ export async function getEnvironmentComponentStatus(
 	const [env] = await db
 		.select({
 			id: projectEnvironments.id,
+			name: projectEnvironments.name,
+			stage: projectEnvironments.stage,
+			status: projectEnvironments.status,
 			deployed_config_hash: projectEnvironments.deployed_config_hash,
 		})
 		.from(projectEnvironments)
@@ -237,7 +240,7 @@ export async function getEnvironmentComponentStatus(
 		setOutputs(components, `registry:${row.name}`, [["Repository", row.repository_url]]);
 	}
 
-	const [activeJobRow, driftRow, probeRow] = await Promise.all([
+	const [activeJobRow, recentJobRows, driftRow, probeRow] = await Promise.all([
 		db
 			.select({ id: jobs.id, job_type: jobs.job_type, status: jobs.status })
 			.from(jobs)
@@ -252,6 +255,24 @@ export async function getEnvironmentComponentStatus(
 			.orderBy(desc(jobs.created_at))
 			.limit(1)
 			.then((r) => r[0]),
+		// Recent history (any status) — the Activity tab + Overview recent-activity read this.
+		db
+			.select({
+				id: jobs.id,
+				job_type: jobs.job_type,
+				status: jobs.status,
+				created_at: jobs.created_at,
+			})
+			.from(jobs)
+			.where(
+				and(
+					eq(jobs.project_id, projectId),
+					eq(jobs.environment_id, envId),
+					eq(jobs.org_id, actor.orgId),
+				),
+			)
+			.orderBy(desc(jobs.created_at))
+			.limit(8),
 		db
 			.select({
 				details: environmentDrift.details,
@@ -321,6 +342,12 @@ export async function getEnvironmentComponentStatus(
 				const component = components[match.key];
 				if (!component) continue;
 				component.monthlyCost = (component.monthlyCost ?? 0) + line.monthlyCost;
+				// Keep the line itself, not just the running total — the Cost tab shows the itemised
+				// breakdown (Terraform address → monthly), not only the rollup.
+				(component.costLines ??= []).push({
+					address: line.address,
+					monthlyCost: line.monthlyCost,
+				});
 			}
 		}
 	}
@@ -342,6 +369,13 @@ export async function getEnvironmentComponentStatus(
 		driftScannedAt: driftRow?.scanned_at.toISOString() ?? null,
 		monthlyCost: cost?.totalMonthly ?? null,
 		costCapturedAt: cost?.capturedAt ?? null,
+		recentJobs: recentJobRows.map((j) => ({
+			id: j.id,
+			type: j.job_type,
+			status: j.status,
+			createdAt: j.created_at.toISOString(),
+		})),
+		environment: { id: env.id, name: env.name, stage: env.stage, status: env.status },
 		iac,
 	};
 }

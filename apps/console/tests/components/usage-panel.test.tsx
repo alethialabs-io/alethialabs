@@ -92,6 +92,9 @@ const ai: AiUsageSummary = {
 	weeklyResetAt: "2100-01-01T00:00:00.000Z",
 	purchasedBalance: 500,
 	paidTiersEnabled: true,
+	orgWeeklyCapCredits: null,
+	perUserWeeklyCapCredits: null,
+	canManageCaps: false,
 };
 
 const aiPrices: LiveAiPriceMap = {

@@ -7,8 +7,14 @@
  * invalidation precise. Resource keys are scoped by org slug so switching orgs never
  * serves another org's cached rows.
  */
+import type { NormalizedEvidenceQuery } from "@/components/evidence/evidence-query";
+
 export const qk = {
 	jobs: (org: string) => ["jobs", org] as const,
+	/** Evidence roll-up, parameterized by the normalized filter query
+	 * (normalizeEvidenceQuery — stable object, so equal filters hit the cache). */
+	evidence: (org: string, query: NormalizedEvidenceQuery) =>
+		["evidence", org, query] as const,
 	job: (org: string, id: string) => ["jobs", org, "detail", id] as const,
 	jobStatus: (org: string, id: string) =>
 		["jobs", org, "detail", id, "status"] as const,

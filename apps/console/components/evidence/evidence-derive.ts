@@ -7,6 +7,7 @@
 // maps the returned `tone`/`iconKey` to grayscale Tailwind tokens + lucide icons.
 
 import { formatDistanceToNow } from "date-fns";
+import { providerKey } from "@/components/evidence/evidence-query";
 import type {
 	EvidenceEnvRow,
 	EvidenceWaiver,
@@ -137,24 +138,17 @@ export function matchesAnyStatus(
 }
 
 // ── Filter → group → sort pipeline ───────────────────────────────────────────
+// Grouping is FIXED to the triage buckets (the page's point of view, not a user
+// choice) and ordering is fixed to worst-first with a name tiebreak — the Group and
+// Sort controls were removed deliberately; stage/project slicing happens via filters.
 
-export type GroupMode = "triage" | "project" | "stage";
-export type SortKey = "worst" | "stale" | "name";
-
-/** Narrows an arbitrary string to a GroupMode, defaulting to "triage". */
-export function toGroupMode(v: string | undefined): GroupMode {
-	return v === "project" || v === "stage" ? v : "triage";
-}
-
-/** Narrows an arbitrary string to a SortKey, defaulting to "worst". */
-export function toSortKey(v: string | undefined): SortKey {
-	return v === "stale" || v === "name" ? v : "worst";
-}
+/** The icon a triage group header carries (a subset of the status layer's IconKey). */
+export type GroupIconKey = "triangle-alert" | "shield-question" | "shield-check";
 
 export interface RowGroup {
 	key: string;
 	label: string;
-	iconKey: string;
+	iconKey: GroupIconKey;
 	tone: Tone;
 	rows: EvidenceEnvRow[];
 }
@@ -165,8 +159,8 @@ export interface DeriveOptions {
 	stages: string[];
 	/** Selected statuses (OR); empty = all. */
 	status: TriageKey[];
-	group: GroupMode;
-	sort: SortKey;
+	/** Selected provider facet keys (cloud slugs or "other"); empty/omitted = all. */
+	providers?: string[];
 }
 
 /** Worst-first severity score for a row (higher = more urgent). Deterministic. */
@@ -200,13 +194,9 @@ export function rowScore(row: EvidenceEnvRow): number {
 	return n;
 }
 
-const STAGE_ORDER: Record<string, number> = {
-	production: 0,
-	staging: 1,
-	development: 2,
-};
-
-/** Filters rows by search + stages + status, buckets them into groups, and sorts each group. */
+/** Filters rows by search + stages + status + providers, buckets them into the fixed
+ * triage groups (Needs attention / Coverage gaps / Healthy), and sorts each group
+ * worst-first with a name tiebreak. */
 export function deriveGroups(
 	ev: OrgEvidence,
 	opts: DeriveOptions,
@@ -214,8 +204,10 @@ export function deriveGroups(
 	const waived = waivedEnvSet(ev.waivers);
 	const q = opts.search.trim().toLowerCase();
 	const stageSet = opts.stages.length ? new Set(opts.stages) : null;
+	const providerSet = opts.providers?.length ? new Set(opts.providers) : null;
 	const filtered = ev.rows.filter((r) => {
 		if (stageSet && !stageSet.has(r.stage)) return false;
+		if (providerSet && !providerSet.has(providerKey(r.provider))) return false;
 		if (!matchesAnyStatus(r, opts.status, waived)) return false;
 		if (!q) return true;
 		return [r.projectName, r.environmentName, r.region, r.provider ?? ""]
@@ -228,7 +220,7 @@ export function deriveGroups(
 	const ensure = (
 		key: string,
 		label: string,
-		iconKey: string,
+		iconKey: GroupIconKey,
 		tone: Tone,
 	): RowGroup => {
 		let g = buckets.get(key);
@@ -240,27 +232,23 @@ export function deriveGroups(
 	};
 
 	for (const r of filtered) {
-		if (opts.group === "project") {
-			ensure(r.projectId, r.projectName, "folder", "muted").rows.push(r);
-		} else if (opts.group === "stage") {
-			ensure(r.stage, stageLabel(r.stage), "layers", "muted").rows.push(r);
-		} else {
-			const b = triageBucket(r);
-			ensure(b.key, b.label, b.iconKey, b.tone).rows.push(r);
-		}
+		const b = triageBucket(r);
+		ensure(b.key, b.label, b.iconKey, b.tone).rows.push(r);
 	}
 
 	const groups = [...buckets.values()];
-	// Order the groups themselves.
-	groups.sort((a, b) => {
-		if (opts.group === "stage")
-			return (STAGE_ORDER[a.key] ?? 9) - (STAGE_ORDER[b.key] ?? 9);
-		if (opts.group === "triage")
-			return TRIAGE_BUCKET_ORDER[a.key] - TRIAGE_BUCKET_ORDER[b.key];
-		return a.label.localeCompare(b.label);
-	});
-	// Sort rows within each group.
-	for (const g of groups) sortRows(g.rows, opts.sort);
+	groups.sort(
+		(a, b) => TRIAGE_BUCKET_ORDER[a.key] - TRIAGE_BUCKET_ORDER[b.key],
+	);
+	// Worst-first inside each group; name as the deterministic tiebreak.
+	for (const g of groups) {
+		g.rows.sort(
+			(a, b) =>
+				rowScore(b) - rowScore(a) ||
+				a.projectName.localeCompare(b.projectName) ||
+				a.environmentName.localeCompare(b.environmentName),
+		);
+	}
 
 	return { groups, resultCount: filtered.length };
 }
@@ -275,7 +263,7 @@ const TRIAGE_BUCKET_ORDER: Record<string, number> = {
 function triageBucket(row: EvidenceEnvRow): {
 	key: string;
 	label: string;
-	iconKey: string;
+	iconKey: GroupIconKey;
 	tone: Tone;
 } {
 	const attention =
@@ -311,28 +299,40 @@ function triageBucket(row: EvidenceEnvRow): {
 	};
 }
 
-/** Sorts a group's rows in place by the chosen key. */
-function sortRows(rows: EvidenceEnvRow[], sort: SortKey): void {
-	if (sort === "worst") {
-		rows.sort((a, b) => rowScore(b) - rowScore(a));
-	} else if (sort === "stale") {
-		rows.sort((a, b) => staleRank(a) - staleRank(b));
-	} else {
-		rows.sort(
-			(a, b) =>
-				a.projectName.localeCompare(b.projectName) ||
-				a.environmentName.localeCompare(b.environmentName),
-		);
-	}
-}
-
-/** Ascending rank for "stale" sort — never-checked first, then oldest-checked first. */
-function staleRank(row: EvidenceEnvRow): number {
-	const t = lastChecked(row);
-	return t ? new Date(t).getTime() : 0;
-}
-
 /** Human stage label (capitalized). */
 export function stageLabel(stage: string): string {
 	return stage.charAt(0).toUpperCase() + stage.slice(1);
+}
+
+/** Short mono stage label for the table's Stage column. */
+export function stageShort(stage: string): string {
+	switch (stage) {
+		case "production":
+			return "prod";
+		case "development":
+			return "dev";
+		default:
+			return stage;
+	}
+}
+
+// ── Row signal presence (drives the honest peek/drawer empty states) ─────────
+
+/** True when the row carries at least one evidence signal (verify / drift / security
+ * scan) — the gate for "Open full report"; a zero-signal row links to its project. */
+export function hasAnySignal(row: EvidenceEnvRow): boolean {
+	return Boolean(row.verify || row.drift || row.security?.scanned);
+}
+
+/** Active waivers touching one environment (matched by project + environment name). */
+export function waiversForEnv(
+	waivers: EvidenceWaiver[],
+	row: EvidenceEnvRow,
+): EvidenceWaiver[] {
+	return waivers.filter(
+		(w) =>
+			w.active &&
+			w.projectName === row.projectName &&
+			w.environmentName === row.environmentName,
+	);
 }

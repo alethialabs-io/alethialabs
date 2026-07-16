@@ -40,6 +40,7 @@ function mkDesign(overrides: Partial<ProjectFormData> = {}): ProjectFormData {
 		secrets: [],
 		storage_buckets: [],
 		container_registries: [],
+		services: [],
 	};
 	return { ...base, ...structuredClone(overrides) };
 }

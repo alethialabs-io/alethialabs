@@ -7,6 +7,7 @@
 //
 export * from "./enums";
 export * from "./agent";
+export * from "./artifact-shares";
 export * from "./ai-credit-grant";
 export * from "./ai-usage";
 export * from "./identities";

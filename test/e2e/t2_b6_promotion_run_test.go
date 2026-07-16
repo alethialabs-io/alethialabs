@@ -91,7 +91,10 @@ func TestB6GatedPromotion(t *testing.T) {
 	}
 	t.Cleanup(cp.Close)
 	// A seeded runner so the enqueued DEPLOY can reach SUCCESS through the REAL update_job_status SSOT.
-	if _, _, err := cp.SeedRunner(ctx); err != nil {
+	// B6 drives the job via MarkDeployJobSucceeded (a direct SSOT transition), not by claiming it, so
+	// the runner's org need not match the job's — a fresh owner is fine.
+	runnerOwner := newUUID()
+	if _, _, err := cp.SeedRunner(ctx, runnerOwner, runnerOwner); err != nil {
 		t.Fatalf("seed runner: %v", err)
 	}
 

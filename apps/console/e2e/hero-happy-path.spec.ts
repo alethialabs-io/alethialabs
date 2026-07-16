@@ -61,14 +61,15 @@ test.describe("Hero happy-path", () => {
 		await page.locator("#project_name").fill("hero-e2e");
 		await page.getByRole("button", { name: /create empty project/i }).click();
 
-		// 5. The project canvas is ready once its chrome (the "Project settings" control) is painted.
-		await expect(
-			page.getByRole("button", { name: /project settings/i }),
-		).toBeVisible({ timeout: 45_000 });
+		// 5. The project canvas is ready once its chrome (the "Add" control) is painted. (This used to
+		//    anchor on the "Project settings" cog, which was removed — the project root is edited via
+		//    its board card now — so it anchors on the Add button, which the next step drives anyway.)
+		const addButton = page.getByRole("button", { name: "Add", exact: true });
+		await expect(addButton).toBeVisible({ timeout: 45_000 });
 
 		// 6. Design something — open the Add palette and drop a Bucket (object storage) onto the
 		//    canvas. Bucket has no variant step, so selecting it adds the node and closes the palette.
-		await page.getByRole("button", { name: "Add", exact: true }).click();
+		await addButton.click();
 		const search = page.getByPlaceholder(/search services/i);
 		await expect(search).toBeVisible();
 		await search.fill("bucket");
@@ -80,16 +81,17 @@ test.describe("Hero happy-path", () => {
 		await expect(page.getByText("Pending changes").first()).toBeVisible();
 		await expect(page.getByRole("button", { name: /^deploy$/i })).toBeVisible();
 
-		// 8. Land on the evidence surface — the org's "keep proving it" roll-up. Anchor on the page's
-		//    own chrome so this survives a redesign of the table below it: the posture filter bar (its
-		//    placeholder is unique to Evidence) and the recorded-waivers panel are both always present,
-		//    whatever the data. (This used to assert "Org evidence" — a heading the redesign deleted, so
-		//    the check silently rotted; it only runs on merge_group/push, never on pull_request.)
+		// 8. Land on the evidence surface — the org's "keep proving it" roll-up. The hero run stops
+		//    before a deploy, so the org has NO environments yet — and the page now says so honestly:
+		//    a distinct onboarding state (with a create-project CTA) instead of an empty filter bar +
+		//    table. Assert that state; it is the truthful evidence story for this run. (An org WITH
+		//    environments renders the filter bar + posture table + waivers panel instead — covered by
+		//    the evidence unit/action tests, which seed data.)
 		await page.goto(`/${orgSlug}/~/evidence`);
+		await expect(page.getByText("No environments yet")).toBeVisible();
 		await expect(
-			page.getByPlaceholder(/filter by project or environment/i),
+			page.getByRole("link", { name: /create a project/i }),
 		).toBeVisible();
-		await expect(page.getByText("Recorded waivers")).toBeVisible();
 
 		// 9. …and the clusters surface. Nothing is provisioned (we stopped before a real deploy), so it
 		//    correctly renders the empty state — the truthful end of a hermetic hero run.

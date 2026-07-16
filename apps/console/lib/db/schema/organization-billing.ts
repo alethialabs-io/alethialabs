@@ -58,6 +58,12 @@ export const organizationBilling = pgTable("organization_billing", {
 	// Lifecycle of the AI subscription (mirrors Stripe). Only `trialing`/`active` keep a
 	// paid `ai_tier` effective; anything else falls back to `ai_free` (effectiveAiTier).
 	aiSubscriptionStatus: billingStatus().default("none").notNull(),
+	// Admin AI-spend limits (Claude-Enterprise style), in credits/week. NULL = no admin
+	// limit → use the tier's default caps. When set, they only ever TIGHTEN the effective
+	// budget (min(tier, cap)): an org-wide weekly ceiling and a per-seat weekly ceiling, so
+	// an admin can cap total org spend and/or bound any single member. See lib/billing/ai-plan.ts.
+	aiOrgWeeklyCapCredits: integer(),
+	aiPerUserWeeklyCapCredits: integer(),
 	// Set the first time the org reaches a paid plan (trial or paid) — the
 	// exactly-once claim for the "welcome to your plan" email, so it never re-sends
 	// on renewals/updates (see syncSubscriptionToBilling). Null until first activation.

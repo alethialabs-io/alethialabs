@@ -2,42 +2,27 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Evidence surface — the org-wide "keep proving it" roll-up. A single Activity-style
-// filter bar (search + Status/Stage facets + Group/Sort selects) drives a server-side
-// re-fetch of the grouped environment-posture table (with an inline peek + full detail
-// drawer) and the recorded-waivers panel. Read-only: the data is produced by the
-// PLAN/DEPLOY + DETECT_DRIFT jobs — this page never mutates anything.
+// The Evidence surface — the org-wide "keep proving it" roll-up, and the reference
+// implementation of the console filter standard: a URL-synced zustand filter store
+// feeds a filter-in-key TanStack query (server-side filtering), the table dims while
+// a refetch is in flight, and the count pill next to the Environments heading carries
+// the result count. Read-only: the data is produced by the PLAN/DEPLOY + drift jobs.
 
-import { Layers, ShieldAlert } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@repo/ui/select";
-import {
-	type EvidenceResult,
-	getOrgEvidence,
-} from "@/app/server/actions/evidence";
-import { SettingsSearch } from "@/components/settings/settings-ui";
-import {
-	type EvidenceEnvRow,
-	type GroupMode,
-	type SortKey,
-	toGroupMode,
-	toSortKey,
-} from "./evidence-derive";
-import { EvidenceDrawer } from "./evidence-drawer";
+import { useEffect, useMemo, useState } from "react";
+import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
+import { EvidenceDrawer } from "./drawer/evidence-drawer";
+import { type EvidenceEnvRow, hasAnySignal } from "./evidence-derive";
+import { EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
+import { EvidenceFilterBar } from "./evidence-filter-bar";
 import { EvIcon } from "./evidence-status";
 import { EvidenceTable } from "./evidence-table";
 import { EvidenceWaivers } from "./evidence-waivers";
 import { downloadReceipt } from "./receipt-download";
-
-const SEARCH_DEBOUNCE = 300;
 
 /** The default drawer tab for a row — Report if verified, else Receipt, else Drift. */
 function defaultTab(row: EvidenceEnvRow): string {
@@ -46,24 +31,13 @@ function defaultTab(row: EvidenceEnvRow): string {
 	return "drift";
 }
 
-/**
- * The Evidence page. Seeded with the server-rendered default view, then re-fetches through
- * the same server action whenever a filter changes (all filtering is server-side).
- */
-export function EvidenceClient({ initial }: { initial: EvidenceResult }) {
+/** The Evidence page client (data comes hydrated from the route's prefetch). */
+export function EvidenceClient() {
 	const { org } = useParams<{ org: string }>();
-
-	// Filters.
-	const [search, setSearch] = useState("");
-	const [debouncedSearch, setDebouncedSearch] = useState("");
-	const [stages, setStages] = useState<string[]>([]);
-	const [status, setStatus] = useState<string[]>([]);
-	const [group, setGroup] = useState<GroupMode>("triage");
-	const [sort, setSort] = useState<SortKey>("worst");
-
-	// Server view (seeded from the route's first paint).
-	const [result, setResult] = useState<EvidenceResult>(initial);
-	const [loading, setLoading] = useState(false);
+	const filters = useEvidenceFilters((s) => s.filters);
+	const reset = useEvidenceFilters((s) => s.reset);
+	useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
+	const { data: result, isPlaceholderData } = useEvidenceQuery();
 
 	// Row interaction.
 	const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -77,70 +51,18 @@ export function EvidenceClient({ initial }: { initial: EvidenceResult }) {
 		return () => clearTimeout(t);
 	}, [toast]);
 
-	// Debounce the free-text search so it doesn't refetch on every keystroke.
-	useEffect(() => {
-		const id = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE);
-		return () => clearTimeout(id);
-	}, [search]);
-
-	// Re-fetch the grouped view server-side whenever a filter changes. `initial` already
-	// reflects the default query, so skip the redundant fetch on first mount.
-	const firstRun = useRef(true);
-	useEffect(() => {
-		if (firstRun.current) {
-			firstRun.current = false;
-			return;
-		}
-		let cancelled = false;
-		setLoading(true);
-		getOrgEvidence({
-			search: debouncedSearch.trim() || undefined,
-			stages: stages.length ? stages : undefined,
-			status: status.length ? status : undefined,
-			group,
-			sort,
-		})
-			.then((r) => {
-				if (!cancelled) setResult(r);
-			})
-			.finally(() => {
-				if (!cancelled) setLoading(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [debouncedSearch, stages, status, group, sort]);
-
-	const statusOptions = useMemo(
-		() =>
-			result.statusOptions.map((o) => ({
-				value: o.value,
-				label: o.label,
-				hint: String(o.count),
-			})),
-		[result.statusOptions],
-	);
-	const stageOptions = useMemo(
-		() =>
-			result.stageOptions.map((o) => ({
-				value: o.value,
-				label: o.label,
-				hint: String(o.count),
-			})),
-		[result.stageOptions],
-	);
-
 	// The drawer opens only on a currently-visible row, so it's always in the grouped set.
 	const drawerRow = useMemo(() => {
-		for (const g of result.groups) {
+		for (const g of result?.groups ?? []) {
 			const row = g.rows.find((r) => r.environmentId === drawerId);
 			if (row) return row;
 		}
 		return null;
-	}, [result.groups, drawerId]);
+	}, [result?.groups, drawerId]);
 
-	/** Opens the detail drawer on a valid default tab for the row. */
+	/** Opens the detail drawer on a valid default tab (rows with ≥1 signal only). */
 	const openDrawer = (row: EvidenceEnvRow) => {
+		if (!hasAnySignal(row)) return;
 		setDrawerTab(defaultTab(row));
 		setDrawerId(row.environmentId);
 	};
@@ -151,87 +73,68 @@ export function EvidenceClient({ initial }: { initial: EvidenceResult }) {
 		setToast(downloadReceipt(row.verify.receipt, row.verify.jobId));
 	};
 
+	// Persisted-session filters can miss the prefetched key on a return visit —
+	// nothing to render for exactly one frame while the refetch lands.
+	if (!result) return null;
+
+	const filtersActive =
+		countActiveFilters(filters, DEFAULT_EVIDENCE_FILTERS) > 0;
+	const onboarding = result.summary.environments === 0;
+
 	return (
 		<div className="pb-20">
-			{/* filter bar — the app-wide filter language (see settings/activity) */}
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
-				<SettingsSearch
-					value={search}
-					onChange={setSearch}
-					placeholder="Filter by project or environment…"
-					className="w-[240px] flex-1"
-				/>
-				<FacetFilter
-					label="Status"
-					icon={ShieldAlert}
-					options={statusOptions}
-					value={status}
-					onChange={setStatus}
-					searchPlaceholder="Search statuses…"
-					emptyText="No statuses."
-				/>
-				<FacetFilter
-					label="Stage"
-					icon={Layers}
-					options={stageOptions}
-					value={stages}
-					onChange={setStages}
-					searchPlaceholder="Search stages…"
-					emptyText="No stages."
-				/>
-				<Select value={group} onValueChange={(v) => setGroup(toGroupMode(v))}>
-					<SelectTrigger size="sm" className="w-auto gap-1.5">
-						<span className="text-text-tertiary">Group</span>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="triage">Triage</SelectItem>
-						<SelectItem value="project">Project</SelectItem>
-						<SelectItem value="stage">Stage</SelectItem>
-					</SelectContent>
-				</Select>
-				<Select value={sort} onValueChange={(v) => setSort(toSortKey(v))}>
-					<SelectTrigger size="sm" className="w-auto gap-1.5">
-						<span className="text-text-tertiary">Sort</span>
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="worst">Worst</SelectItem>
-						<SelectItem value="stale">Stale</SelectItem>
-						<SelectItem value="name">Name</SelectItem>
-					</SelectContent>
-				</Select>
-				<span className="ml-auto font-mono text-[11px] text-text-tertiary">
-					<b className="font-semibold text-text-primary">
-						{result.resultCount}
-					</b>{" "}
-					of {result.total} environments
-				</span>
-			</div>
+			{onboarding ? (
+				<EvidenceOnboarding org={org} />
+			) : (
+				<>
+					<EvidenceFilterBar
+						statusOptions={result.statusOptions}
+						stageOptions={result.stageOptions}
+						providerOptions={result.providerOptions}
+					/>
 
-			<div
-				className={
-					loading
-						? "opacity-60 transition-opacity"
-						: "transition-opacity"
-				}
-			>
-				<EvidenceTable
-					groups={result.groups}
-					expandedId={expandedId}
-					onToggle={(id) => setExpandedId((cur) => (cur === id ? null : id))}
-					onOpen={openDrawer}
-					onDownload={download}
-				/>
+					<div
+						className={
+							isPlaceholderData
+								? "opacity-60 transition-opacity"
+								: "transition-opacity"
+						}
+					>
+						<div className="mb-2.5 flex items-center gap-2.5">
+							<h2 className="font-display text-[15px] font-semibold tracking-tight text-text-primary">
+								Environments
+							</h2>
+							<span className="rounded-full border px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-text-secondary">
+								{result.resultCount}
+							</span>
+						</div>
 
-				<div className="mt-6">
-					<EvidenceWaivers waivers={result.waivers} />
-				</div>
-			</div>
+						{result.resultCount === 0 && filtersActive ? (
+							<EvidenceNoMatch onClear={reset} />
+						) : (
+							<EvidenceTable
+								org={org}
+								groups={result.groups}
+								expandedId={expandedId}
+								onToggle={(id) =>
+									setExpandedId((cur) => (cur === id ? null : id))
+								}
+								onOpen={openDrawer}
+								onDownload={download}
+							/>
+						)}
+
+						<div className="mt-6">
+							<EvidenceWaivers org={org} waivers={result.waivers} />
+						</div>
+					</div>
+				</>
+			)}
 
 			<EvidenceDrawer
 				org={org}
 				row={drawerRow}
+				waivers={result.waivers}
 				tab={drawerTab}
 				onTab={setDrawerTab}
 				onClose={() => setDrawerId(null)}

@@ -124,7 +124,14 @@ func (cp *ControlPlane) Close() {
 // SeedRunner inserts a self-operated runner (operator=self ⇒ the simple, uncapped
 // claim path AND a Passthrough sandbox ⇒ the deploy runs in-process, no container).
 // Returns its id + bearer token; stores them for the handlers' auth.
-func (cp *ControlPlane) SeedRunner(ctx context.Context) (id, token string, err error) {
+//
+// The owner (ownerUserID / ownerOrgID) MUST match the org of the DEPLOY job it will claim:
+// claim_next_job's self-runner branch scopes to `j.org_id = v_runner_org_id` (audit P0, #392),
+// so a runner seeded in a different org than the job silently never claims it and the job sits
+// QUEUED until timeout. The caller passes the job's owner (the A0.5 graph's user/org, or a shared
+// owner it also gives the job) so the realistic "one owner owns the project + runner + job" shape
+// is seeded, not three disconnected orgs.
+func (cp *ControlPlane) SeedRunner(ctx context.Context, ownerUserID, ownerOrgID string) (id, token string, err error) {
 	id = newUUID()
 	token, err = newToken()
 	if err != nil {
@@ -138,9 +145,9 @@ func (cp *ControlPlane) SeedRunner(ctx context.Context) (id, token string, err e
 		INSERT INTO public.runners
 		  (id, user_id, org_id, name, operator, provisioning, supported_providers,
 		   token_hash, status, last_heartbeat)
-		VALUES ($1, $2, $2, 't1-e2e-runner', 'self', 'registered', NULL,
-		        $3, 'ONLINE', now())`,
-		id, newUUID(), tokenHash)
+		VALUES ($1, $2, $3, 't1-e2e-runner', 'self', 'registered', NULL,
+		        $4, 'ONLINE', now())`,
+		id, ownerUserID, ownerOrgID, tokenHash)
 	if err != nil {
 		return "", "", fmt.Errorf("seed runner: %w", err)
 	}
@@ -199,9 +206,11 @@ func seedAddOns() []types.AddOnInstall {
 // give the ArgoCD health assertion teeth — see seedAddOns). provider column is left
 // NULL so the claim's provider filter passes for any runner; the runner reads the
 // provider from the snapshot. Returns the job id.
-func (cp *ControlPlane) SeedDeployJob(ctx context.Context, project, env string) (jobID string, err error) {
+// ownerID is the user/org the job belongs to. It MUST equal the SeedRunner owner, or the
+// self-runner claim (j.org_id = v_runner_org_id, #392) never matches and the job sits QUEUED.
+func (cp *ControlPlane) SeedDeployJob(ctx context.Context, project, env, ownerID string) (jobID string, err error) {
 	jobID = newUUID()
-	userID := newUUID()
+	userID := ownerID
 	snapshot, err := json.Marshal(map[string]any{
 		"id":                "e2e-" + env,
 		"project_name":      project,

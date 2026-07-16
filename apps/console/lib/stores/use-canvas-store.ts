@@ -21,6 +21,7 @@ import type {
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 import type { CollectionPositions } from "@/lib/canvas/collections";
+import type { ContainerBox, ContainerGeometry } from "@/lib/canvas/zones";
 import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 
 const PROJECT_NODE_ID = "project-root";
@@ -333,6 +334,21 @@ interface CanvasStore {
 	collectionPositions: CollectionPositions;
 	setCollectionPosition: (kind: NodeKind, position: { x: number; y: number }) => void;
 
+	/** User-overridden geometry (position + size) per CONTAINER (VPC / cluster / BYO module). Containers
+	 * are synthetic — no store row — so their user-set box lives here, session-only, exactly like
+	 * `collectionPositions`. Absent = derive the box from members. NEVER in the DB or the Deploy diff. */
+	containerGeometry: ContainerGeometry;
+	/** Pin a container's box (a drag or resize). */
+	setContainerGeometry: (id: string, box: ContainerBox) => void;
+	/** Drop a container's override so it auto-fits its members again (the "re-fit" affordance). */
+	resetContainerGeometry: (id: string) => void;
+	/** Drag a container: shift its members' absolute positions by `delta`, and shift each pinned box in
+	 * `pins` (the dragged container itself + any pinned nested child) by the same delta so it tracks. */
+	translateContainer: (
+		delta: { x: number; y: number },
+		opts: { memberIds: string[]; pins: { id: string; box: ContainerBox }[] },
+	) => void;
+
 	/** Canvas view prefs (ephemeral UI state, not persisted). */
 	showConnections: boolean;
 	toggleConnections: () => void;
@@ -379,6 +395,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			showConnections: true,
 			hiddenKinds: [],
 			collectionPositions: {},
+			containerGeometry: {},
 
 			setIdentities: (identities) => set({ identities }),
 
@@ -431,6 +448,9 @@ export const useCanvasStore = create<CanvasStore>()(
 					// The loaded graph is the saved state → it becomes the diff baseline. (Chart
 					// nodes ride along but diffNodes skips them, so they never show as changes.)
 					baseline: structuredClone(withRoot),
+					// A freshly laid-out graph derives fresh container boxes; a stale override from a prior
+					// project must not survive and strand a region away from its members.
+					containerGeometry: {},
 				});
 			},
 
@@ -729,6 +749,8 @@ export const useCanvasStore = create<CanvasStore>()(
 					past: [],
 					future: [],
 					baseline: [makeProjectNode()],
+					collectionPositions: {},
+					containerGeometry: {},
 				}),
 
 			discardChanges: () => {
@@ -741,6 +763,8 @@ export const useCanvasStore = create<CanvasStore>()(
 					dirty: false,
 					past: [],
 					future: [],
+					// Discard reverts the VIEW too — container overrides go back to derived with the graph.
+					containerGeometry: {},
 				});
 			},
 
@@ -751,6 +775,42 @@ export const useCanvasStore = create<CanvasStore>()(
 					collectionPositions: { ...s.collectionPositions, [kind]: position },
 					dirty: true,
 				})),
+
+			setContainerGeometry: (id, box) =>
+				set((s) => ({
+					containerGeometry: { ...s.containerGeometry, [id]: box },
+					dirty: true,
+				})),
+
+			resetContainerGeometry: (id) =>
+				set((s) => {
+					if (!(id in s.containerGeometry)) return {};
+					const containerGeometry = { ...s.containerGeometry };
+					delete containerGeometry[id];
+					return { containerGeometry, dirty: true };
+				}),
+
+			translateContainer: (delta, { memberIds, pins }) =>
+				set((s) => {
+					const moving = new Set(memberIds);
+					// A no-op delta happens on click-without-move — don't churn the store.
+					if (delta.x === 0 && delta.y === 0) return {};
+					const nodes = s.nodes.map((n) =>
+						moving.has(n.id)
+							? { ...n, position: { x: n.position.x + delta.x, y: n.position.y + delta.y } }
+							: n,
+					);
+					const containerGeometry = { ...s.containerGeometry };
+					for (const p of pins) {
+						containerGeometry[p.id] = {
+							x: p.box.x + delta.x,
+							y: p.box.y + delta.y,
+							width: p.box.width,
+							height: p.box.height,
+						};
+					}
+					return { nodes, containerGeometry, dirty: true };
+				}),
 
 			toggleConnections: () => set((s) => ({ showConnections: !s.showConnections })),
 
@@ -776,9 +836,10 @@ export const useCanvasStore = create<CanvasStore>()(
 					get().nodes,
 					layoutZoned(get().nodes, (id) => get().getEffectiveProvider(id)),
 				);
-				// Drop the collection cards' pinned positions too, so a "tidy" re-anchors the vaults on
-				// their freshly-laid-out members instead of stranding them where they were dragged.
-				set({ nodes: next, collectionPositions: {}, dirty: true });
+				// Drop the collection cards' pinned positions AND the container overrides too, so a "tidy"
+				// re-anchors the vaults + re-fits every region on their freshly-laid-out members instead of
+				// stranding them where they were dragged.
+				set({ nodes: next, collectionPositions: {}, containerGeometry: {}, dirty: true });
 			},
 
 			getNode: (id) => get().nodes.find((n) => n.id === id),
@@ -802,13 +863,15 @@ export const useCanvasStore = create<CanvasStore>()(
 			name: "design-project-canvas-draft",
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
-			// Persist the graph + baseline (so the pending-changes diff survives reload) and where the
-			// collection cards were dragged to; identities are server data and history is ephemeral.
+			// Persist the graph + baseline (so the pending-changes diff survives reload), where the
+			// collection cards were dragged to, and any container geometry the user set; identities are
+			// server data and history is ephemeral.
 			partialize: (state) => ({
 				nodes: state.nodes,
 				edges: state.edges,
 				baseline: state.baseline,
 				collectionPositions: state.collectionPositions,
+				containerGeometry: state.containerGeometry,
 			}),
 		},
 	),
