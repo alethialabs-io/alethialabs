@@ -29,6 +29,12 @@ type DetectedService struct {
 	// files (per-service attribution of the repo-wide Signals) — the Path-B seed the
 	// console maps to SUGGESTED ServiceBindings (W3) for the user to accept/edit.
 	Needs []string `json:"needs,omitempty"`
+	// Env are the environment-variable KEY names declared in THIS service's own
+	// .env.example-family files (values dropped — an example holds no real secret),
+	// attributed like Needs. The console authors them as empty-valued services[].env
+	// entries (Path-B "skeleton → real": a scanned service arrives with its env surface
+	// pre-populated for the user to fill). Omitted when none were found.
+	Env []string `json:"env,omitempty"`
 }
 
 // RepoDigest is the deterministic, STATIC analysis of a repository produced by an

@@ -339,6 +339,35 @@ func itoa(i int) string {
 	return string(b)
 }
 
+// W6 Path-B (#649): env-var KEY names from a service's .env.example land on THAT service's
+// Env (values dropped), attributed per-service like needs. Comments, `export`, value-less keys,
+// duplicates, and invalid names are handled.
+func TestScan_AttributesEnvKeysPerService(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "package.json", `{"name":"mono"}`)
+	write(t, root, "apps/api/Dockerfile", "FROM node:20\nEXPOSE 3000\n")
+	write(t, root, "apps/api/.env.example", "# database\nDATABASE_URL=postgres://x\nexport PORT=3000\nPORT=3000\n\n1BAD=nope\n=alsobad\n")
+	write(t, root, "apps/worker/Dockerfile", "FROM node:20\n")
+	write(t, root, "apps/worker/.env.sample", "AMQP_URL=\nQUEUE_NAME=jobs\n")
+
+	d, err := Scan(root, "https://github.com/acme/mono.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	envByPath := map[string][]string{}
+	for _, s := range d.Services {
+		envByPath[s.Path] = s.Env
+	}
+	// api: DATABASE_URL + PORT (export stripped, PORT deduped, sorted); comment/blank/1BAD/=alsobad dropped.
+	if got := envByPath["apps/api"]; len(got) != 2 || got[0] != "DATABASE_URL" || got[1] != "PORT" {
+		t.Errorf("apps/api env = %v, want [DATABASE_URL PORT]", got)
+	}
+	// worker: a value-less key (AMQP_URL=) is still a declared key.
+	if got := envByPath["apps/worker"]; len(got) != 2 || got[0] != "AMQP_URL" || got[1] != "QUEUE_NAME" {
+		t.Errorf("apps/worker env = %v, want [AMQP_URL QUEUE_NAME]", got)
+	}
+}
+
 // W3 Path-B seed (#620): backing-service signals must land on the SERVICE whose files
 // carry them (per-service `needs`), not just on the repo-wide Signals list.
 func TestScan_AttributesNeedsPerService(t *testing.T) {

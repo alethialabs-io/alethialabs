@@ -168,7 +168,9 @@ function firstClassServices(
 				type: "deployment" as const,
 				source: { kind: "repo" as const, repo_url: i.repoUrl, path: s.path },
 				build: { dockerfile: "Dockerfile" },
-				env: [],
+				// Env surface pre-populated from the service's .env.example keys (empty values for the
+				// user to fill) — Path-B "skeleton → real".
+				env: (s.env ?? []).map((name) => ({ name, value: "" })),
 				ports: s.port ? [{ container_port: s.port }] : [],
 				replicas: 2,
 				// Per-service runtime when the scan attributed one, else the repo-level stack runtime.
