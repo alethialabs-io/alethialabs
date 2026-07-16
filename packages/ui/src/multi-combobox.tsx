@@ -20,6 +20,8 @@ export interface ComboboxOption {
 	hint?: string;
 	/** Avatar URL — rendered when the combobox has `withAvatar` (falls back to an initials circle). */
 	image?: string | null;
+	/** Optional leading node rendered before the label (e.g. a ProviderIcon). */
+	leading?: React.ReactNode;
 }
 
 interface MultiComboboxProps {
@@ -164,6 +166,11 @@ export function MultiCombobox({
 										on && "bg-accent/40",
 									)}
 								>
+									{o.leading && (
+										<span className="flex size-4 shrink-0 items-center justify-center">
+											{o.leading}
+										</span>
+									)}
 									{withAvatar && <OptionAvatar image={o.image} label={o.label} />}
 									<span className="min-w-0 flex-1 truncate text-foreground">
 										{o.label}
