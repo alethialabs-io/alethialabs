@@ -352,6 +352,11 @@ func buildChildEnv(parentEnv []string, workDir string) []string {
 	if v, ok := get("ALETHIA_STAGE_GIT_TOKENS"); ok {
 		out = append(out, "ALETHIA_STAGE_GIT_TOKENS="+v)
 	}
+	// Add-on secret-knob values (W4.5 #640; JSON map addonID→key→plaintext) the child seeds
+	// as per-add-on k8s Secrets pre-sync. Same ALETHIA_STAGE_* rail — never the payload.
+	if v, ok := get("ALETHIA_STAGE_ADDON_SECRETS"); ok {
+		out = append(out, "ALETHIA_STAGE_ADDON_SECRETS="+v)
+	}
 	sort.Strings(out)
 	return out
 }

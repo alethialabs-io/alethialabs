@@ -137,8 +137,23 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	defaultValues?: Record<string, unknown>;
 	/** Zod schema for the surfaced knobs (with defaults) — drives the configure form. */
 	configSchema: Schema;
-	/** Maps the parsed knobs to a partial Helm-values object (deep-merged onto defaults). */
+	/** Maps the parsed knobs to a partial Helm-values object (deep-merged onto defaults).
+	 * NEVER receives secret-typed knob values (W4.5): they are stripped to their schema
+	 * defaults before the call, so a plaintext credential cannot reach `values`. */
 	toValues?: (config: z.infer<Schema>) => Record<string, unknown>;
+	/**
+	 * Maps k8s SecretKeyRefs onto the chart's own secret-consumption knob (W4.5) — e.g.
+	 * external-dns takes `env[].valueFrom.secretKeyRef`. Called with one ref per SECRET-typed
+	 * field that has a stored value (`refs[fieldKey] = { name, key }`, the Secret the runner
+	 * seeds in the add-on's namespace before sync) plus the parsed NON-secret knobs (the env
+	 * var / values path may depend on them, e.g. the DNS provider); the returned fragment is
+	 * deep-merged onto `toValues`' output. This is how a secret knob reaches the chart WITHOUT
+	 * its value ever appearing in the rendered Application manifest (or the gitops repo).
+	 */
+	secretValues?: (
+		refs: Record<string, AddOnSecretKeyRef>,
+		config: z.infer<Schema>,
+	) => Record<string, unknown>;
 	/** Serializable descriptors for the surfaced knobs (mirror `configSchema`) — drive the
 	 * client configure form. Empty for add-ons with no knobs. */
 	fields: AddOnField[];
@@ -146,6 +161,29 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	syncWave: number;
 	/** Capabilities this add-on expects (surfaced as hints in the UI). */
 	requires?: AddOnRequirement[];
+}
+
+/** A reference into the per-add-on k8s Secret the runner seeds (W4.5): `name` is the
+ * Secret's metadata.name, `key` the data key holding one secret field's value. */
+export interface AddOnSecretKeyRef {
+	name: string;
+	key: string;
+}
+
+/**
+ * The per-add-on Secret the runner must seed before the Application syncs (W4.5). Carries
+ * NO values — only the deterministic name/namespace and which data keys the chart expects.
+ * The values themselves never enter the config snapshot: the runner fetches them at
+ * execution time over the authenticated job channel (like the git token) and applies the
+ * Secret in-cluster, so no plaintext lands in the DB, the manifest, or the gitops repo.
+ */
+export interface AddOnSecretRef {
+	/** metadata.name of the Secret (deterministic: `alethia-addon-<id>`). */
+	secretName: string;
+	/** Namespace the Secret lives in — the add-on's install namespace. */
+	namespace: string;
+	/** Data keys the runner must populate (= the secret-typed field keys with stored values). */
+	keys: string[];
 }
 
 /**
@@ -177,7 +215,11 @@ export interface AddOnInstallSpec {
 	 * BYO charts are pinned to their hardened "byo-<slug>" project by the runner. */
 	project?: string;
 	namespace: string;
-	/** Fully-merged Helm values (defaults + user knobs, or a raw override in gitops mode). */
+	/** Fully-merged Helm values (defaults + user knobs, or a raw override in gitops mode).
+	 * NEVER contains a secret-typed knob's value (W4.5) — only SecretKeyRef wiring. */
 	values: Record<string, unknown>;
 	syncWave: number;
+	/** The k8s Secret the runner seeds pre-sync for this add-on's secret knobs (W4.5).
+	 * Absent when the add-on has no secret-typed field with a stored value. */
+	secretRef?: AddOnSecretRef;
 }

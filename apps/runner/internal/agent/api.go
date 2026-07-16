@@ -389,6 +389,36 @@ func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
 	return *result.Token, nil
 }
 
+// FetchAddonSecrets fetches the decrypted secret-knob values for the job's enabled add-ons
+// (W4.5 #640 — the git-token pattern: values never ride the config snapshot; the runner
+// that owns the job pulls them at execution time and seeds each add-on's in-cluster
+// Secret). Returns addon id → field key → plaintext. Values must never be logged.
+func (c *RunnerAPIClient) FetchAddonSecrets(jobID string) (map[string]map[string]string, error) {
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/addon-secrets", c.baseURL, jobID), nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch addon secrets request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch addon secrets returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Secrets map[string]map[string]string `json:"secrets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode addon secrets response: %w", err)
+	}
+	return result.Secrets, nil
+}
+
 // FetchStateToken mints a per-job tofu-state token from the console. The runner presents it
 // to OpenTofu's http state backend as the HTTP Basic password (TF_HTTP_PASSWORD); the console
 // derives the state object key server-side from the job and authorizes on the signed sub=jobID.

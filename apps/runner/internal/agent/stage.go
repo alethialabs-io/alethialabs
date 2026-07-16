@@ -108,6 +108,11 @@ type stageSecrets struct {
 	// provider than the apps-destination repo (see runner.go's per-repo resolution). Crosses the
 	// container boundary as a JSON-encoded ALETHIA_STAGE_GIT_TOKENS env var.
 	GitTokens map[string]string
+	// AddonSecrets maps add-on id → secret field key → plaintext (W4.5 #640), fetched by the
+	// parent over the authenticated job channel (FetchAddonSecrets). Crosses the container
+	// boundary as a JSON-encoded ALETHIA_STAGE_ADDON_SECRETS env var — never the payload,
+	// which is persisted to stage.json in the workdir.
+	AddonSecrets map[string]map[string]string
 }
 
 func stageSecretsFromEnv() stageSecrets {
@@ -115,10 +120,15 @@ func stageSecretsFromEnv() stageSecrets {
 	if raw := os.Getenv("ALETHIA_STAGE_GIT_TOKENS"); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &gitTokens)
 	}
+	addonSecrets := map[string]map[string]string{}
+	if raw := os.Getenv("ALETHIA_STAGE_ADDON_SECRETS"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &addonSecrets)
+	}
 	return stageSecrets{
-		GitToken:   os.Getenv("ALETHIA_STAGE_GIT_TOKEN"),
-		StateToken: os.Getenv("TF_HTTP_PASSWORD"),
-		GitTokens:  gitTokens,
+		GitToken:     os.Getenv("ALETHIA_STAGE_GIT_TOKEN"),
+		StateToken:   os.Getenv("TF_HTTP_PASSWORD"),
+		GitTokens:    gitTokens,
+		AddonSecrets: addonSecrets,
 	}
 }
 
@@ -223,6 +233,9 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		Stdout:         stdout,
 		Stderr:         stderr,
 		VerifyOverride: p.VerifyOverride,
+		// Add-on secret-knob values (W4.5 #640) — sourced from stageSecrets (parent scope
+		// or the allowlisted child env), never from the persisted payload.
+		AddOnSecretValues: sec.AddonSecrets,
 	})
 	res := stageResult{}
 	if result != nil {
