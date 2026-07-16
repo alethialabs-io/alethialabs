@@ -7,6 +7,7 @@
 // maps the returned `tone`/`iconKey` to grayscale Tailwind tokens + lucide icons.
 
 import { formatDistanceToNow } from "date-fns";
+import { providerKey } from "@/components/evidence/evidence-query";
 import type {
 	EvidenceEnvRow,
 	EvidenceWaiver,
@@ -165,6 +166,8 @@ export interface DeriveOptions {
 	stages: string[];
 	/** Selected statuses (OR); empty = all. */
 	status: TriageKey[];
+	/** Selected provider facet keys (cloud slugs or "other"); empty/omitted = all. */
+	providers?: string[];
 	group: GroupMode;
 	sort: SortKey;
 }
@@ -214,8 +217,10 @@ export function deriveGroups(
 	const waived = waivedEnvSet(ev.waivers);
 	const q = opts.search.trim().toLowerCase();
 	const stageSet = opts.stages.length ? new Set(opts.stages) : null;
+	const providerSet = opts.providers?.length ? new Set(opts.providers) : null;
 	const filtered = ev.rows.filter((r) => {
 		if (stageSet && !stageSet.has(r.stage)) return false;
+		if (providerSet && !providerSet.has(providerKey(r.provider))) return false;
 		if (!matchesAnyStatus(r, opts.status, waived)) return false;
 		if (!q) return true;
 		return [r.projectName, r.environmentName, r.region, r.provider ?? ""]
