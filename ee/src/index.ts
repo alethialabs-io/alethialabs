@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
+import { resolveInstanceLicense } from "./license";
 import { OpenFgaPdp } from "./openfga-pdp";
 
 /** One OpenFGA client when configured (shared by the engine + the dual-write writer). */
@@ -51,17 +52,6 @@ const ALL_ENTITLEMENTS: Entitlements = {
 	// own tier ladder (console lib/billing/ai-plan.ts, resolved per-org via resolveAiTier).
 };
 
-/**
- * Whether a signed license unlocks every feature for the WHOLE instance (self-managed
- * / air-gapped enterprise, and the local dev flag). When false, entitlements are
- * resolved per-org from the billing record instead (the hosted path).
- * STANDUP: replace the env flag with signed-license (JWT) verification against a
- * public key.
- */
-function licensedInstanceWide(): boolean {
-	return process.env.ALETHIA_LICENSE_ACTIVE === "true";
-}
-
 /** Reads a string `organizationId` off an unknown request body, else null. */
 function bodyOrgId(body: unknown): string | null {
 	if (typeof body === "object" && body !== null && "organizationId" in body) {
@@ -74,6 +64,22 @@ function bodyOrgId(body: unknown): string | null {
 export function register(core: CoreContext): EnterpriseModule {
 	const fgaClient = buildFgaClient(core);
 	const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
+
+	// Resolve + log the instance license once at boot (fire-and-forget — never blocks or crashes
+	// register). Active ⇒ every org is enterprise; inactive ⇒ per-org billing decides, and the reason
+	// (no license / expired / bad signature) is surfaced so a misconfigured license is diagnosable.
+	void resolveInstanceLicense().then((instance) => {
+		if (instance.active) {
+			const exp = instance.license?.expiresAt;
+			console.info(
+				`[license] instance licensed (${instance.license?.subject ?? "unknown"}, tier=${
+					instance.license?.tier ?? "enterprise"
+				}${exp ? `, expires ${new Date(exp * 1000).toISOString()}` : ", perpetual"})`,
+			);
+		} else {
+			console.info(`[license] instance not licensed — ${instance.reason}; using per-org billing`);
+		}
+	});
 
 	return {
 		// Better Auth organization plugin: orgs / teams / members / invitations.
@@ -292,12 +298,15 @@ export function register(core: CoreContext): EnterpriseModule {
 			return { userId, orgId: rows[0]?.organization_id ?? userId };
 		},
 
-		// Per-org entitlement resolution (replaces the old global env flag). A licensed
-		// instance unlocks everything; otherwise the org's plan + subscription status
-		// (from its billing record, via core) decides — so an unsubscribed org falls
-		// back to the community baseline and the org-creation gate bites.
+		// Per-org entitlement resolution. A validly-licensed instance unlocks everything
+		// (an explicit entitlements claim in the license narrows it, else the full set);
+		// otherwise the org's plan + subscription status (from its billing record, via
+		// core) decides — so an unsubscribed org falls back to the community baseline and
+		// the org-creation gate bites. The license is a signed JWT verified offline (see
+		// ./license), replacing the old ALETHIA_LICENSE_ACTIVE env placeholder.
 		resolveEntitlements: async (orgId: string): Promise<Entitlements> => {
-			if (licensedInstanceWide()) return ALL_ENTITLEMENTS;
+			const instance = await resolveInstanceLicense();
+			if (instance.active) return instance.license?.entitlements ?? ALL_ENTITLEMENTS;
 			return core.resolveOrgEntitlements(orgId);
 		},
 
