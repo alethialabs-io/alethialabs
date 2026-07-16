@@ -378,6 +378,9 @@ export interface ObservabilityProviderConfig {
 // project_addons.values — the user's tuned knobs for a marketplace add-on. Validated + typed
 // per add-on by its Zod `configSchema` (lib/addons/catalog.ts); stored open here since the
 // shape varies by add-on. In gitops mode this may instead hold a raw Helm-values override.
+// W4: a `secret`-typed AddOnField's value is stored here as an `EncryptedSecret` envelope (below,
+// encrypted-at-rest via lib/crypto/secrets.ts), NOT as plaintext — server code discriminates by
+// shape and decrypts only when assembling the deploy snapshot.
 export type AddOnValues = Record<string, unknown>;
 
 // project_iac_sources.var_values — the customer's NON-SECRET tfvars for a bring-your-own IaC
