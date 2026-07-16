@@ -32,13 +32,15 @@ export function providerKey(provider: string | null): string {
 		: OTHER_PROVIDER;
 }
 
-/** The Evidence page's filter state (the shape its zustand store holds). */
-export interface EvidenceFilters {
+/** The Evidence page's filter state (the shape its zustand store holds).
+ * A type alias (not an interface) so it satisfies the store/url-sync generics'
+ * `Record` constraints via the implicit index signature. */
+export type EvidenceFilters = {
 	search: string;
 	stages: string[];
 	status: string[];
 	providers: string[];
-}
+};
 
 /** Pristine filters — the store's defaults and the Reset target. */
 export const DEFAULT_EVIDENCE_FILTERS: EvidenceFilters = {
@@ -80,4 +82,28 @@ export function normalizeEvidenceQuery(
 	const providers = normalizeList(filters.providers);
 	if (providers) query.providers = providers;
 	return query;
+}
+
+/** One route searchParams value → the comma-codec array shape (useFilterUrlSync's). */
+function listParam(raw: string | string[] | undefined): string[] {
+	if (raw === undefined) return [];
+	const s = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+	return (s ?? "").split(",").filter(Boolean);
+}
+
+/**
+ * Parse a route's searchParams into filter state — the server half of the URL sync:
+ * page.tsx prefetches the query these params describe, so a shared link hydrates
+ * into exactly the view it shows. Mirrors useFilterUrlSync's comma codec.
+ */
+export function filtersFromSearchParams(
+	params: Record<string, string | string[] | undefined>,
+): EvidenceFilters {
+	const search = params.search;
+	return {
+		search: (Array.isArray(search) ? search[search.length - 1] : search) ?? "",
+		stages: listParam(params.stages),
+		status: listParam(params.status),
+		providers: listParam(params.providers),
+	};
 }

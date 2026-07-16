@@ -15,8 +15,6 @@ import {
 	type RowGroup,
 	STATUS_FACETS,
 	stageLabel,
-	toGroupMode,
-	toSortKey,
 	waivedEnvSet,
 } from "@/components/evidence/evidence-derive";
 import {
@@ -32,8 +30,10 @@ import {
 	queryOrgEvidence,
 } from "@/lib/queries/evidence";
 
-// Filter fields are plain strings (whatever the facet/select sends) — the action narrows
-// them to the known GroupMode/SortKey/Status keys, so untrusted client input can't widen them.
+// Filter fields are plain strings (whatever the facet sends) — the action narrows them
+// to the known Status/provider keys, so untrusted client input can't widen them.
+// future: filtering runs in memory over the whole org roll-up; push it into SQL (and
+// fetch the heavy report/receipt JSONB per-row on drawer open) once org size demands it.
 /** Filters describing the current Evidence view; all fields optional (omitted = default). */
 export interface EvidenceQuery {
 	/** Case-insensitive match over project / environment / region / provider. */
@@ -44,10 +44,6 @@ export interface EvidenceQuery {
 	status?: string[];
 	/** Restrict to these provider facet keys (cloud slugs or "other"); empty = all. */
 	providers?: string[];
-	/** Row grouping; defaults to triage buckets. */
-	group?: string;
-	/** Row ordering within each group; defaults to worst-first. */
-	sort?: string;
 }
 
 /** One selectable option in a Status / Stage facet, with its match count over the roll-up. */
@@ -114,8 +110,6 @@ function buildEvidenceResult(
 		stages: query.stages ?? [],
 		status: (query.status ?? []).filter(isStatusKey),
 		providers: (query.providers ?? []).filter((p) => knownProviders.has(p)),
-		group: toGroupMode(query.group),
-		sort: toSortKey(query.sort),
 	});
 
 	// Facet counts are over the whole roll-up (unfiltered), so each option shows how many

@@ -7,7 +7,7 @@ import {
 	kindTone,
 	receiptMark,
 	securityMark,
-	stageChipClass,
+	stageTextClass,
 	verifyMark,
 } from "@/components/evidence/evidence-status";
 import type {
@@ -171,14 +171,15 @@ describe("receiptMark", () => {
 	});
 });
 
-describe("kindTone + stageChipClass", () => {
+describe("kindTone + stageTextClass", () => {
 	it("scores drift kinds by sharpness", () => {
 		expect(kindTone("deleted")).toBe("bad");
 		expect(kindTone("modified")).toBe("warn");
 		expect(kindTone("other")).toBe("unknown");
 	});
-	it("emphasizes the production stage chip", () => {
-		expect(stageChipClass("production")).toContain("border-border-strong");
-		expect(stageChipClass("development")).not.toContain("border-border-strong");
+	it("weights the production stage text heaviest", () => {
+		expect(stageTextClass("production")).toBe("text-text-secondary");
+		expect(stageTextClass("staging")).toBe("text-text-tertiary");
+		expect(stageTextClass("development")).toBe("text-text-disabled");
 	});
 });
