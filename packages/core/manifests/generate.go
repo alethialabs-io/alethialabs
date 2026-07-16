@@ -268,25 +268,6 @@ type Options struct {
 	Outputs map[string]string
 }
 
-// BindingSecretName is the k8s Secret a binding's credential facets read from — materialized
-// keylessly by the ExternalSecret lane (#618). EXPORTED so the renderer (this file's secretKeyRef)
-// and #618 (the Secret it creates) share ONE source of truth for the name and can never drift.
-func BindingSecretName(kind, targetName string) string {
-	return "alethia-bind-" + kind + "-" + dns1123(targetName)
-}
-
-// bindingFacetIsSecret reports whether a facet injects via secretKeyRef (a credential) rather than
-// a plain value (endpoint/port). Credential VALUES are never exported from the cloud (by design),
-// so they can only arrive via the ExternalSecret-materialized Secret.
-func bindingFacetIsSecret(facet string) bool {
-	switch facet {
-	case "username", "password", "connection_string":
-		return true
-	default:
-		return false
-	}
-}
-
 // awsEndpointOutputKey maps a binding kind to the AWS template's endpoint output key. AWS-first —
 // per-cloud key maps are a follow-up. The template provisions a SINGLE db/cache per env today, so
 // the binding's target NAME does not yet disambiguate (a multi-resource infra lane will add that).
@@ -317,14 +298,16 @@ func defaultPort(kind string) string {
 
 // resolveBindings turns a service's W3 bindings into container env: non-secret facets
 // (endpoint/port) as plain values resolved from the provision's tofu outputs, credential facets as
-// secretKeyRef into the Secret BindingSecretName derives. Pure — a map lookup, no I/O.
-func resolveBindings(bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv) {
+// secretKeyRef into the Secret the ExternalSecret lane materializes. It shares IsCredentialFacet +
+// BindingSecretName (externalsecret.go) with #618 so the workload reads exactly the Secret #618
+// creates — one source of truth, no drift. Pure — a map lookup, no I/O.
+func resolveBindings(serviceName string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv) {
 	for _, b := range bindings {
 		for _, inj := range b.Inject {
-			if bindingFacetIsSecret(inj.From) {
+			if IsCredentialFacet(inj.From) {
 				secretEnv = append(secretEnv, AppSecretEnv{
 					Env:        inj.Env,
-					SecretName: BindingSecretName(b.Target.Kind, b.Target.Name),
+					SecretName: BindingSecretName(serviceName, b.Target),
 					SecretKey:  inj.From,
 				})
 				continue
@@ -378,7 +361,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		}
 		// W3 — resolve the service's bindings into env: endpoint/port as values (from tofu
 		// outputs), credentials as secretKeyRef. User-authored env comes first, then binding env.
-		bindEnv, secretEnv := resolveBindings(s.Bindings, opts.Outputs)
+		bindEnv, secretEnv := resolveBindings(s.Name, s.Bindings, opts.Outputs)
 		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(bindEnv)), s.Env...), bindEnv...)
 		apps = append(apps, App{
 			Name:           name,
