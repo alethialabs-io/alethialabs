@@ -53,14 +53,18 @@ ZONES_PATTERN='(\bazs[[:space:]]*=[[:space:]]*data\.|length\(data\.[a-z_]*(avail
 # Reviewed exceptions — files that still carry the pattern, each with a tracking issue. DELETE the
 # entry when the referenced fix lands. (Mirrors infra/.trivyignore: an allowlist, never a silent skip.)
 ZONES_ALLOWLIST=(
-  "infra/templates/project/alibaba/network.tf" # tracked by #621 (needs alibaba real-apply to verify)
+  # (empty) — #621 fixed alibaba/network.tf: zone_ids no longer feeds a count; the vswitch count is
+  # the plan-known var.subnet_count. Re-add a file here only with a tracking issue.
 )
 
 zone_hits="$(grep -rnE "$ZONES_PATTERN" "$ROOT" 2>/dev/null || true)"
-# Drop allowlisted files.
-for f in "${ZONES_ALLOWLIST[@]}"; do
-  zone_hits="$(printf '%s\n' "$zone_hits" | grep -vF "$f" || true)"
-done
+# Drop allowlisted files. Guarded so an EMPTY allowlist is safe under `set -u` (and never runs the
+# loop with f="" — grep -vF "" would drop every hit and mask real violations).
+if [ "${#ZONES_ALLOWLIST[@]}" -gt 0 ]; then
+  for f in "${ZONES_ALLOWLIST[@]}"; do
+    zone_hits="$(printf '%s\n' "$zone_hits" | grep -vF "$f" || true)"
+  done
+fi
 zone_hits="$(printf '%s\n' "$zone_hits" | grep -vE '^[[:space:]]*$' || true)"
 
 if [ -n "$zone_hits" ]; then

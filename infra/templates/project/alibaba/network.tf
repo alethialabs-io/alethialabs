@@ -8,11 +8,13 @@ data "alicloud_zones" "available" {
 }
 
 locals {
-  zone_ids = slice(
-    data.alicloud_zones.available.zones[*].id,
-    0,
-    min(3, length(data.alicloud_zones.available.zones)),
-  )
+  # All zones the region offers for VSwitch creation. Discovered (unknown until apply) — but the
+  # vswitch COUNT is NOT derived from its length: the module uses a plan-known static count
+  # (var.subnet_count) and element()-indexes into this list, so a region with fewer zones wraps
+  # instead of erroring. Counting off this data source's length would be unknown at plan under the
+  # runner's deferred RAM-OIDC provider → "Invalid count argument" on `tofu plan -out` before apply
+  # (the aws class of bug, #551/#608; guarded by check-templates-plan-safe.sh).
+  zone_ids = data.alicloud_zones.available.zones[*].id
 }
 
 module "network" {

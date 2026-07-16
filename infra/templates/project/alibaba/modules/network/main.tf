@@ -12,7 +12,9 @@ terraform {
 }
 
 locals {
-  # Carve one /20 vswitch per availability zone out of the VPC CIDR.
+  # Discovered zone ids to spread vswitches across (may be unknown at plan). NOTE: never take
+  # length(local.zones) for a count — that's unknown at plan under the runner's deferred RAM-OIDC
+  # provider. The vswitch count is the plan-known var.subnet_count; we element()-index this list.
   zones = var.zone_ids
 }
 
@@ -23,14 +25,15 @@ resource "alicloud_vpc" "this" {
   tags       = var.tags
 }
 
-# One vswitch (subnet) per availability zone.
+# One vswitch (subnet) per slot. Count is a plan-known static (var.subnet_count); the zone is
+# element()-selected from the discovered zone list, wrapping when the region has fewer zones.
 resource "alicloud_vswitch" "this" {
-  count = length(local.zones)
+  count = var.subnet_count
 
   vpc_id       = alicloud_vpc.this.id
   vswitch_name = "${var.vswitch_prefix}-${count.index}"
   cidr_block   = cidrsubnet(var.network_cidr, 4, count.index)
-  zone_id      = local.zones[count.index]
+  zone_id      = element(local.zones, count.index)
   tags         = var.tags
 }
 
@@ -62,7 +65,7 @@ resource "alicloud_eip_association" "nat" {
 
 # SNAT entries so vswitch traffic egresses through the NAT gateway.
 resource "alicloud_snat_entry" "this" {
-  count = var.single_cloud_nat ? length(local.zones) : 0
+  count = var.single_cloud_nat ? var.subnet_count : 0
 
   snat_table_id     = alicloud_nat_gateway.this[0].snat_table_ids
   source_vswitch_id = alicloud_vswitch.this[count.index].id

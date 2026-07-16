@@ -18,7 +18,18 @@ variable "vswitch_prefix" {
 
 variable "zone_ids" {
   type        = list(string)
-  description = "Availability zone ids to create vswitches in"
+  description = "Availability zone ids to spread vswitches across (discovered; may be unknown at plan)"
+}
+
+variable "subnet_count" {
+  type        = number
+  default     = 3
+  description = <<-EOT
+    How many vswitches (subnets) to create. A PLAN-KNOWN static so the count resolves on the
+    runner's `tofu plan -out` (unlike length(zone_ids), which is unknown at plan under the deferred
+    RAM-OIDC provider). Each vswitch element()-indexes into zone_ids, wrapping if the region offers
+    fewer zones than this — so it never errors on a short zone list. See #621/#608.
+  EOT
 }
 
 variable "single_cloud_nat" {
