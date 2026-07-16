@@ -8,6 +8,7 @@ import { slugify } from "@/lib/slug";
 import { type ProjectFormData, projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { DetectedService } from "@/types/jsonb.types";
 import type { InferredNeed, InferredStack } from "./schema";
+import { bindableComponents, suggestBindings } from "./suggest-bindings";
 
 const SERVICE_KINDS: InferredNeed["kind"][] = [
 	"database",
@@ -107,11 +108,49 @@ function collectComponents(
 }
 
 /**
+ * Turn each DEPLOYABLE DetectedService (one with a Dockerfile) into a FIRST-CLASS W1 service:
+ * a repo-sourced, buildable workload (W1 model / W2 build-from-source) with W3 bindings suggested
+ * from its detected `needs` against the project's backing components. Names are made unique across
+ * repos (project_services is unique per (project, env, name)). Non-Dockerfile detections stay
+ * overlay-only on `source_repos`. This is the Path-B convergence (north-star W6): a scan yields
+ * configurable, bindable, buildable services — not just a read-only overlay card.
+ */
+function firstClassServices(
+	inputs: ScanInput[],
+	components: ReturnType<typeof bindableComponents>,
+): ProjectFormData["services"] {
+	const used = new Set<string>();
+	const uniqueName = (base: string): string => {
+		let name = base;
+		for (let n = 2; used.has(name); n++) name = `${base}-${n}`;
+		used.add(name);
+		return name;
+	};
+	return inputs.flatMap((i) =>
+		(i.services ?? [])
+			// Only a Dockerfile'd service is a deployable workload; non-container dirs are skipped
+			// (they remain on the source_repos overlay), mirroring manifests.FromServices.
+			.filter((s) => s.hasDockerfile)
+			.map((s) => ({
+				name: uniqueName(shortSlug(s.name)),
+				type: "deployment" as const,
+				source: { kind: "repo" as const, repo_url: i.repoUrl, path: s.path },
+				build: { dockerfile: "Dockerfile" },
+				env: [],
+				ports: s.port ? [{ container_port: s.port }] : [],
+				replicas: 2,
+				bindings: suggestBindings(s, components),
+			})),
+	);
+}
+
+/**
  * Merge one or more scanned repos into a single, guaranteed-valid ProjectFormData:
  * union the backing needs (de-duped), attach every repo as a `source_repos` row (with
- * its detected services), set the project roots, and ASSERT `projectFormSchema` passes.
- * The first repo seeds the project name + the GitOps destination. The model can never
- * produce an invalid project — this code does.
+ * its detected services), promote every Dockerfile'd service to a first-class `services[]`
+ * entry, set the project roots, and ASSERT `projectFormSchema` passes. The first repo seeds
+ * the project name + the GitOps destination. The model can never produce an invalid project —
+ * this code does.
  */
 export function mergeScansToFormData(
 	inputs: ScanInput[],
@@ -127,6 +166,16 @@ export function mergeScansToFormData(
 		inputs.flatMap((i) => i.stack.needs),
 		provider,
 	);
+	// Bind targets for the suggested W3 bindings = the union'd backing components just built.
+	// collectComponents types rows loosely (Record<string, unknown>); project the name out.
+	const names = (rows: Record<string, unknown>[]) =>
+		rows.map((r) => ({ name: String(r.name) }));
+	const bindTargets = bindableComponents({
+		databases: names(byKind.database),
+		caches: names(byKind.cache),
+		queues: names(byKind.queue),
+		secrets: names(byKind.secret),
+	});
 	const primary = inputs[0];
 
 	const candidate = {
@@ -155,6 +204,9 @@ export function mergeScansToFormData(
 		topics: byKind.topic,
 		nosql_tables: byKind.nosql,
 		secrets: byKind.secret,
+		// Path B (W6): promote every Dockerfile'd detected service to a first-class, buildable,
+		// bindable W1 service — not just the read-only source_repos overlay.
+		services: firstClassServices(inputs, bindTargets),
 	};
 
 	const parsed = projectFormSchema.safeParse(candidate);
