@@ -34,6 +34,7 @@ import {
 	projectRepositories,
 	projectSourceRepos,
 	projectSecrets,
+	projectServices,
 	projectStorageBuckets,
 	projectTopics,
 	projects,
@@ -183,6 +184,8 @@ export interface CreateProjectInput {
 		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
 		"repository_url"
 	>[];
+	// W1 — first-class application workloads. No output-only columns beyond ComponentInsert's.
+	services?: ComponentInsert<typeof projectServices.$inferInsert>[];
 }
 
 // ============================================================
@@ -255,6 +258,10 @@ async function writeComponents(
 		await tx
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
+	if (data.services?.length)
+		await tx
+			.insert(projectServices)
+			.values(data.services.map((s) => ({ ...base, ...s })));
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas
@@ -289,6 +296,9 @@ async function clearComponents(
 	await tx
 		.delete(projectContainerRegistries)
 		.where(envScope(projectContainerRegistries, projectId, environmentId));
+	await tx
+		.delete(projectServices)
+		.where(envScope(projectServices, projectId, environmentId));
 }
 
 export async function createProject(data: CreateProjectInput) {
@@ -533,6 +543,10 @@ export async function getProject(
 				.select()
 				.from(projectContainerRegistries)
 				.where(envScope(projectContainerRegistries, projectId, envId));
+			const services = await tx
+				.select()
+				.from(projectServices)
+				.where(envScope(projectServices, projectId, envId));
 			return {
 				network: network ?? null,
 				cluster: cluster ?? null,
@@ -547,6 +561,7 @@ export async function getProject(
 				secrets,
 				storage_buckets: storageBuckets,
 				container_registries: containerRegistries,
+				services,
 			};
 		}
 
@@ -566,6 +581,7 @@ export async function getProject(
 					secrets: [],
 					storage_buckets: [],
 					container_registries: [],
+					services: [],
 				};
 
 		let cloudProvider = "aws";
@@ -712,6 +728,10 @@ async function buildConfigSnapshot(
 			.select()
 			.from(projectStorageBuckets)
 			.where(envScope(projectStorageBuckets, projectId, envId));
+		const services = await tx
+			.select()
+			.from(projectServices)
+			.where(envScope(projectServices, projectId, envId));
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
@@ -1031,6 +1051,9 @@ async function buildConfigSnapshot(
 				...b,
 				...resolvePlacement(b),
 			})),
+			// W1 — first-class application workloads (the customer's own code). The runner renders
+			// each into k8s manifests; image build/push (from source when kind==="repo") is W2.
+			services: services.map((s) => ({ ...s, ...resolvePlacement(s) })),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
@@ -1584,6 +1607,17 @@ export async function getProjectAsFormData(
 			provider: r.provider ?? undefined,
 			provider_config: r.provider_config ?? undefined,
 		})),
+		services: source.components.services.map((s) => ({
+			name: s.name,
+			type: s.type,
+			source: s.source,
+			build: s.build ?? undefined,
+			env: s.env,
+			ports: s.ports,
+			replicas: s.replicas,
+			resources: s.resources ?? undefined,
+			probe: s.probe ?? undefined,
+		})),
 	} as ProjectFormData;
 
 	return { formData, provider };
@@ -1845,13 +1879,13 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 		}),
 	);
 
-	// composite key ("type name") → { present sigs per env }
+	// composite key ("typename") → { present sigs per env }
 	const keys = new Map<string, { component_type: string; key: string }>();
 	const sigByEnv = new Map<string, Map<string, string>>(); // envId → (compositeKey → sig)
 	for (const { env, inventory } of designs) {
 		const m = new Map<string, string>();
 		for (const entry of inventory) {
-			const composite = `${entry.component_type} ${entry.key}`;
+			const composite = `${entry.component_type}${entry.key}`;
 			keys.set(composite, { component_type: entry.component_type, key: entry.key });
 			m.set(composite, entry.sig);
 		}
