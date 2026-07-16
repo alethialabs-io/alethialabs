@@ -47,12 +47,25 @@ type App struct {
 	Host string
 	// Optional ServiceAccount name (e.g. a workload-identity KSA).
 	ServiceAccount string
-	// Plain environment variables (values rendered quoted).
+	// Plain environment variables (values rendered quoted). Includes W3 binding-derived
+	// non-secret facets (a backing resource's endpoint/port, resolved from tofu outputs).
 	Env []types.ServiceEnvVar
+	// SecretEnv are env vars sourced from a k8s Secret via valueFrom.secretKeyRef — W3
+	// binding credential facets, materialized keylessly by an ExternalSecret (#618).
+	SecretEnv []AppSecretEnv
 	// Compute requests/limits; nil → the opinionated scaffold defaults.
 	Resources *types.ServiceResources
 	// Readiness/liveness probe; nil → none.
 	Probe *types.ServiceProbe
+}
+
+// AppSecretEnv is one container env var sourced from a k8s Secret key (valueFrom.secretKeyRef).
+// The Secret is materialized by the ExternalSecret lane (#618) under the name BindingSecretName
+// derives — this struct is the render-time half of that contract.
+type AppSecretEnv struct {
+	Env        string // container env var name
+	SecretName string // k8s Secret name (see BindingSecretName)
+	SecretKey  string // key within the Secret (the binding facet: username|password|connection_string)
 }
 
 // normalize fills defaults + sanitizes the name to DNS-1123. The image deliberately has
@@ -111,11 +124,18 @@ spec:
           image: {{ .Image }}
           ports:
             - containerPort: {{ .Port }}
-          {{- if .Env }}
+          {{- if or .Env .SecretEnv }}
           env:
             {{- range .Env }}
             - name: {{ printf "%q" .Name }}
               value: {{ printf "%q" .Value }}
+            {{- end }}
+            {{- range .SecretEnv }}
+            - name: {{ printf "%q" .Env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .SecretName }}
+                  key: {{ .SecretKey }}
             {{- end }}
           {{- end }}
           resources:
@@ -242,6 +262,84 @@ type Options struct {
 	ServiceAccount string
 	// Base domain; when set, each app gets an Ingress at "<name>.<domain>".
 	Domain string
+	// Outputs are the provision's tofu outputs (endpoint values etc.), used to resolve a W3
+	// binding's non-secret facets into concrete env values. Nil/empty is fine — a service with
+	// no bindings needs none. AWS-first: the endpoint output keys are the AWS template's.
+	Outputs map[string]string
+}
+
+// BindingSecretName is the k8s Secret a binding's credential facets read from — materialized
+// keylessly by the ExternalSecret lane (#618). EXPORTED so the renderer (this file's secretKeyRef)
+// and #618 (the Secret it creates) share ONE source of truth for the name and can never drift.
+func BindingSecretName(kind, targetName string) string {
+	return "alethia-bind-" + kind + "-" + dns1123(targetName)
+}
+
+// bindingFacetIsSecret reports whether a facet injects via secretKeyRef (a credential) rather than
+// a plain value (endpoint/port). Credential VALUES are never exported from the cloud (by design),
+// so they can only arrive via the ExternalSecret-materialized Secret.
+func bindingFacetIsSecret(facet string) bool {
+	switch facet {
+	case "username", "password", "connection_string":
+		return true
+	default:
+		return false
+	}
+}
+
+// awsEndpointOutputKey maps a binding kind to the AWS template's endpoint output key. AWS-first —
+// per-cloud key maps are a follow-up. The template provisions a SINGLE db/cache per env today, so
+// the binding's target NAME does not yet disambiguate (a multi-resource infra lane will add that).
+func awsEndpointOutputKey(kind string) string {
+	switch kind {
+	case "database":
+		return "rds_cluster_endpoint"
+	case "cache":
+		return "redis_primary_endpoint_address"
+	default:
+		return ""
+	}
+}
+
+// defaultPort is the conventional port for a backing kind (no port output is emitted today).
+func defaultPort(kind string) string {
+	switch kind {
+	case "database":
+		return "5432"
+	case "cache":
+		return "6379"
+	case "queue":
+		return "5672"
+	default:
+		return ""
+	}
+}
+
+// resolveBindings turns a service's W3 bindings into container env: non-secret facets
+// (endpoint/port) as plain values resolved from the provision's tofu outputs, credential facets as
+// secretKeyRef into the Secret BindingSecretName derives. Pure — a map lookup, no I/O.
+func resolveBindings(bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv) {
+	for _, b := range bindings {
+		for _, inj := range b.Inject {
+			if bindingFacetIsSecret(inj.From) {
+				secretEnv = append(secretEnv, AppSecretEnv{
+					Env:        inj.Env,
+					SecretName: BindingSecretName(b.Target.Kind, b.Target.Name),
+					SecretKey:  inj.From,
+				})
+				continue
+			}
+			var value string
+			switch inj.From {
+			case "endpoint":
+				value = outputs[awsEndpointOutputKey(b.Target.Kind)]
+			case "port":
+				value = defaultPort(b.Target.Kind)
+			}
+			env = append(env, types.ServiceEnvVar{Name: inj.Env, Value: value})
+		}
+	}
+	return env, secretEnv
 }
 
 // FromServices builds Apps from the project's FIRST-CLASS services (vc.Services — the W1
@@ -278,6 +376,10 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		if opts.Domain != "" {
 			host = name + "." + opts.Domain
 		}
+		// W3 — resolve the service's bindings into env: endpoint/port as values (from tofu
+		// outputs), credentials as secretKeyRef. User-authored env comes first, then binding env.
+		bindEnv, secretEnv := resolveBindings(s.Bindings, opts.Outputs)
+		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(bindEnv)), s.Env...), bindEnv...)
 		apps = append(apps, App{
 			Name:           name,
 			Namespace:      opts.Namespace,
@@ -286,7 +388,8 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 			Replicas:       s.Replicas,
 			Host:           host,
 			ServiceAccount: opts.ServiceAccount,
-			Env:            s.Env,
+			Env:            env,
+			SecretEnv:      secretEnv,
 			Resources:      s.Resources,
 			Probe:          s.Probe,
 		})

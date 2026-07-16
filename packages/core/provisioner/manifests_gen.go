@@ -25,12 +25,21 @@ import (
 // digest URI) or its prebuilt Source.Image — never a fabricated ":latest" (which the
 // elench verify gate fails). Unrenderable services (unbuilt, or a workload type without a
 // template yet) are reported to stdout, not silently dropped.
-func generateAppManifests(vc *types.ProjectConfig, token string, stdout, stderr io.Writer) error {
+func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{}, token string, stdout, stderr io.Writer) error {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil
 	}
+	// Normalize the tofu outputs to string values so the pure renderer can resolve a service's
+	// W3 binding endpoints (a database's endpoint, etc.) into concrete env values.
+	strOutputs := make(map[string]string, len(outputs))
+	for k, v := range outputs {
+		if s, ok := v.(string); ok {
+			strOutputs[k] = s
+		}
+	}
 	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
-		Domain: vc.DNS.DomainName,
+		Domain:  vc.DNS.DomainName,
+		Outputs: strOutputs,
 	})
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
