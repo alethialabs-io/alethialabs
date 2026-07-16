@@ -18,6 +18,7 @@ import {
 } from "@/app/server/actions/billing";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
+import { AiSpendLimits } from "@/components/settings/usage/ai-spend-limits";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import {
 	isNearAiLimit,
@@ -181,6 +182,16 @@ export function AiUsageSection() {
 							{ai.purchasedBalance.toLocaleString()} credits
 						</span>
 					</div>
+				)}
+
+				{/* admin spend limits — org admins (manage_billing) in a real org only */}
+				{ai?.canManageCaps && (
+					<AiSpendLimits
+						key={`${ai.orgWeeklyCapCredits}-${ai.perUserWeeklyCapCredits}`}
+						orgWeeklyCapCredits={ai.orgWeeklyCapCredits}
+						perUserWeeklyCapCredits={ai.perUserWeeklyCapCredits}
+						onSaved={refetch}
+					/>
 				)}
 			</div>
 

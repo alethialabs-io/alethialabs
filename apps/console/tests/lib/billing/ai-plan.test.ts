@@ -13,7 +13,10 @@ vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
 import {
 	AI_SESSION_WINDOW_MS,
 	AI_TIERS,
+	aiTierSpec,
 	effectiveAiTier,
+	effectiveAiTierSpec,
+	resolveAiPlan,
 	resolveAiTier,
 	SESSION_FRACTION_OF_WEEK,
 } from "@/lib/billing/ai-plan";
@@ -96,6 +99,76 @@ describe("effectiveAiTier", () => {
 
 	it("ai_free is inert regardless of status", () => {
 		expect(effectiveAiTier("ai_free", "active")).toBe("ai_free");
+	});
+});
+
+describe("effectiveAiTierSpec (admin spend limits)", () => {
+	const base = aiTierSpec("ai_plus"); // weekly 15000 / session 3750 / perUser 9200 / 2300
+
+	it("is the tier spec unchanged when no admin caps are set", () => {
+		expect(
+			effectiveAiTierSpec(base, {
+				orgWeeklyCapCredits: null,
+				perUserWeeklyCapCredits: null,
+			}),
+		).toEqual(base);
+	});
+
+	it("tightens the org weekly + session caps when the org limit is below the tier", () => {
+		const eff = effectiveAiTierSpec(base, {
+			orgWeeklyCapCredits: 2_000,
+			perUserWeeklyCapCredits: null,
+		});
+		expect(eff.weeklyCredits).toBe(2_000); // lowered to the admin ceiling
+		expect(eff.sessionCredits).toBe(2_000); // session can't exceed the (now smaller) week
+		// Per-seat caps can never exceed the org pool.
+		expect(eff.perUserWeeklyCredits).toBeLessThanOrEqual(2_000);
+		expect(eff.perUserSessionCredits).toBeLessThanOrEqual(2_000);
+	});
+
+	it("never RAISES a cap above the tier (a higher admin limit is a no-op)", () => {
+		const eff = effectiveAiTierSpec(base, {
+			orgWeeklyCapCredits: 999_999,
+			perUserWeeklyCapCredits: 999_999,
+		});
+		expect(eff.weeklyCredits).toBe(base.weeklyCredits);
+		expect(eff.perUserWeeklyCredits).toBe(base.perUserWeeklyCredits);
+	});
+
+	it("bounds a single seat with the per-user weekly limit", () => {
+		const eff = effectiveAiTierSpec(base, {
+			orgWeeklyCapCredits: null,
+			perUserWeeklyCapCredits: 1_000,
+		});
+		expect(eff.perUserWeeklyCredits).toBe(1_000);
+		expect(eff.perUserSessionCredits).toBeLessThanOrEqual(1_000);
+		// The org pool is untouched.
+		expect(eff.weeklyCredits).toBe(base.weeklyCredits);
+	});
+});
+
+describe("resolveAiPlan (admin caps)", () => {
+	it("reads the admin spend limits off the billing row", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue({
+			aiTier: "ai_plus",
+			aiSubscriptionStatus: "active",
+			usageHardCap: false,
+			aiOrgWeeklyCapCredits: 5_000,
+			aiPerUserWeeklyCapCredits: 1_200,
+		} as OrganizationBilling);
+		const plan = await resolveAiPlan("org-1");
+		expect(plan).toMatchObject({
+			tier: "ai_plus",
+			orgWeeklyCapCredits: 5_000,
+			perUserWeeklyCapCredits: 1_200,
+		});
+	});
+
+	it("has no admin caps with no billing row", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue(null);
+		const plan = await resolveAiPlan("org-1");
+		expect(plan.orgWeeklyCapCredits).toBeNull();
+		expect(plan.perUserWeeklyCapCredits).toBeNull();
 	});
 });
 

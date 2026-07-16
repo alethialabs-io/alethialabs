@@ -6,6 +6,7 @@ import { and, eq, gte, sql, sum } from "drizzle-orm";
 import {
 	AI_SESSION_WINDOW_MS,
 	aiTierSpec,
+	effectiveAiTierSpec,
 	resolveAiPlan,
 	resolveAiTier,
 } from "@/lib/billing/ai-plan";
@@ -227,8 +228,11 @@ export async function assertAiAllowed(
 ): Promise<AiCharge> {
 	if (!isStripeConfigured()) return { source: "included", credits: 0 };
 
-	const { tier, hardCap } = await resolveAiPlan(orgId);
-	const spec = aiTierSpec(tier);
+	const plan = await resolveAiPlan(orgId);
+	const { tier, hardCap } = plan;
+	// The effective caps fold in any admin org/per-seat spend limits (min(tier, limit)), so
+	// every downstream org + per-seat check below enforces them automatically.
+	const spec = effectiveAiTierSpec(aiTierSpec(tier), plan);
 	if (!spec.enabled) {
 		throw new AiBudgetError(
 			"AI features are not enabled for this workspace.",

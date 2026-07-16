@@ -151,20 +151,64 @@ export interface AiPlanContext {
 	 * allowance instead of auto-spending purchased top-up packs.
 	 */
 	hardCap: boolean;
+	/** Admin org-wide weekly spend limit in credits (NULL = tier default). Only tightens. */
+	orgWeeklyCapCredits: number | null;
+	/** Admin per-seat weekly spend limit in credits (NULL = tier default). Only tightens. */
+	perUserWeeklyCapCredits: number | null;
 }
 
 /**
- * Resolve BOTH the effective AI tier and the org's AI-spend hard-cap policy in a single
- * billing read — the guard needs both per call. No row → free tier, hard-cap off.
+ * Resolve the effective AI tier, the org's AI-spend hard-cap policy, and any admin spend
+ * limits in a single billing read — the guard needs them per call. No row → free tier,
+ * hard-cap off, no admin caps.
  */
 export async function resolveAiPlan(orgId: string): Promise<AiPlanContext> {
 	const billing = await getOrgBilling(orgId).catch(() => null);
-	if (!billing) return { tier: "ai_free", hardCap: false };
+	if (!billing) {
+		return {
+			tier: "ai_free",
+			hardCap: false,
+			orgWeeklyCapCredits: null,
+			perUserWeeklyCapCredits: null,
+		};
+	}
 	return {
 		tier: effectiveAiTier(
 			billing.aiTier ?? "ai_free",
 			billing.aiSubscriptionStatus ?? "none",
 		),
 		hardCap: billing.usageHardCap ?? false,
+		orgWeeklyCapCredits: billing.aiOrgWeeklyCapCredits ?? null,
+		perUserWeeklyCapCredits: billing.aiPerUserWeeklyCapCredits ?? null,
+	};
+}
+
+/**
+ * Apply an org's admin spend limits to a tier spec, producing the EFFECTIVE caps the guard
+ * enforces. Admin limits only ever TIGHTEN (min): an org weekly ceiling lowers the whole
+ * pool; a per-seat weekly ceiling bounds one member. Session caps track their weekly (you
+ * can't spend more in a 5-hour burst than the whole week allows), and the per-seat caps can
+ * never exceed the org pool.
+ */
+export function effectiveAiTierSpec(
+	spec: AiTierSpec,
+	caps: Pick<AiPlanContext, "orgWeeklyCapCredits" | "perUserWeeklyCapCredits">,
+): AiTierSpec {
+	const orgWeekly =
+		caps.orgWeeklyCapCredits != null
+			? Math.min(spec.weeklyCredits, Math.max(0, caps.orgWeeklyCapCredits))
+			: spec.weeklyCredits;
+	const orgSession = Math.min(spec.sessionCredits, orgWeekly);
+	const perUserWeekly =
+		caps.perUserWeeklyCapCredits != null
+			? Math.min(spec.perUserWeeklyCredits, Math.max(0, caps.perUserWeeklyCapCredits))
+			: spec.perUserWeeklyCredits;
+	const perUserSession = Math.min(spec.perUserSessionCredits, perUserWeekly);
+	return {
+		...spec,
+		weeklyCredits: orgWeekly,
+		sessionCredits: orgSession,
+		perUserWeeklyCredits: Math.min(perUserWeekly, orgWeekly),
+		perUserSessionCredits: Math.min(perUserSession, orgSession),
 	};
 }
