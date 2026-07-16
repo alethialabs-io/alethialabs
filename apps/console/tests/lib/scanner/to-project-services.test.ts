@@ -120,6 +120,19 @@ describe("scan → first-class services[] (W6 Path-B bridge)", () => {
 		});
 	});
 
+	it("authors services[].env from the detected .env.example keys (empty values to fill)", () => {
+		const form = inferredStackToFormData(stack([]), {
+			...OPTS,
+			services: [
+				{ path: "svc", name: "svc", hasDockerfile: true, port: 8080, env: ["DATABASE_URL", "PORT"] },
+			],
+		});
+		expect(form.services[0].env).toEqual([
+			{ name: "DATABASE_URL", value: "" },
+			{ name: "PORT", value: "" },
+		]);
+	});
+
 	it("keeps producing a schema-valid project (services included)", () => {
 		// inferredStackToFormData asserts projectFormSchema internally, so this not throwing is the
 		// proof that the promoted services[] entries satisfy serviceItemSchema.

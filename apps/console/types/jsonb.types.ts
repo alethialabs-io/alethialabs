@@ -104,6 +104,10 @@ export interface DetectedService {
 	 * attribution of the repo-wide signals) — mapped to SUGGESTED ServiceBindings (W3,
 	 * lib/scanner/suggest-bindings.ts) for the user to accept/edit. */
 	needs?: string[];
+	/** Env-variable KEY names declared in THIS service's own .env.example-family files (values
+	 * dropped). The scan authors them as empty-valued `services[].env` entries (Path-B W6
+	 * "skeleton → real": the env surface arrives pre-populated for the user to fill). */
+	env?: string[];
 }
 
 // ── Service / workload (W1) ─────────────────────────────────────────
