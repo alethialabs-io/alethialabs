@@ -309,3 +309,49 @@ describe("deriveGroups — waived filter + project grouping", () => {
 		expect(groups.find((g) => g.key === "p1")?.rows).toHaveLength(2);
 	});
 });
+
+describe("deriveGroups — provider filter", () => {
+	// mkRow's `??` default would coerce a null provider to "aws" — override after.
+	const rows = [
+		mkRow({ id: "a", provider: "aws" }),
+		mkRow({ id: "b", provider: "gcp" }),
+		{ ...mkRow({ id: "c" }), provider: null },
+		mkRow({ id: "d", provider: "mixed" }),
+	];
+	const base = {
+		search: "",
+		stages: [],
+		status: [] as never[],
+		group: "triage" as const,
+		sort: "worst" as const,
+	};
+
+	it("narrows to the selected clouds", () => {
+		const { resultCount } = deriveGroups(ev(rows), {
+			...base,
+			providers: ["aws", "gcp"],
+		});
+		expect(resultCount).toBe(2);
+	});
+
+	it("buckets null and unknown providers under 'other'", () => {
+		const { groups, resultCount } = deriveGroups(ev(rows), {
+			...base,
+			providers: ["other"],
+		});
+		expect(resultCount).toBe(2);
+		expect(
+			groups
+				.flatMap((g) => g.rows)
+				.map((r) => r.environmentId)
+				.sort(),
+		).toEqual(["c", "d"]);
+	});
+
+	it("omitted / empty providers match everything (back-compat)", () => {
+		expect(deriveGroups(ev(rows), base).resultCount).toBe(4);
+		expect(
+			deriveGroups(ev(rows), { ...base, providers: [] }).resultCount,
+		).toBe(4);
+	});
+});
