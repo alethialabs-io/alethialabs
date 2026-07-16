@@ -67,6 +67,15 @@ function sampleForm(): ProjectFormData {
 				type: "deployment",
 				source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "apps/api" },
 				env: [{ name: "LOG_LEVEL", value: "info" }],
+				bindings: [
+					{
+						target: { kind: "database", name: "orders-db" },
+						inject: [
+							{ env: "DATABASE_HOST", from: "endpoint" },
+							{ env: "DATABASE_PASSWORD", from: "password" },
+						],
+					},
+				],
 				ports: [{ container_port: 8080, protocol: "TCP" }],
 				replicas: 3,
 			},

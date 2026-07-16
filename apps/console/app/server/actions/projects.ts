@@ -833,6 +833,33 @@ async function buildConfigSnapshot(
 					}
 				}
 			}
+
+			// W3 fail-closed binding gate: every service binding must reference a backing resource
+			// that exists in THIS environment. A dangling {kind,name} would reach the runner and
+			// fail to resolve at deploy (no endpoint/secret to inject) — fail loudly here instead of
+			// a confusing deploy-time error. Skipped in BYO-IaC replace mode (inside `!iacSource`),
+			// where the backing resource may be provisioned by the customer's module, not the graph.
+			const dbNames = new Set(databases.map((d) => d.name));
+			const cacheNames = new Set(caches.map((c) => c.name));
+			const queueNames = new Set(queues.map((q) => q.name));
+			const secretNames = new Set(secrets.map((s) => s.name));
+			for (const svc of services) {
+				for (const b of svc.bindings ?? []) {
+					const targetExists =
+						b.target.kind === "database"
+							? dbNames.has(b.target.name)
+							: b.target.kind === "cache"
+								? cacheNames.has(b.target.name)
+								: b.target.kind === "queue"
+									? queueNames.has(b.target.name)
+									: secretNames.has(b.target.name);
+					if (!targetExists) {
+						throw new Error(
+							`Service "${svc.name}" binds to ${b.target.kind} "${b.target.name}", which does not exist in this environment. Add the ${b.target.kind} or remove the binding.`,
+						);
+					}
+				}
+			}
 		}
 
 		// Hetzner is compute-only: canvas database/cache/queue nodes have no managed cloud
@@ -1742,12 +1769,14 @@ export async function getProjectAsFormData(
 			provider_config: r.provider_config ?? undefined,
 		})),
 		// Output columns (resolved_image) are provisioned state, not design — stripped here.
+		// Bindings (W3) ARE design — the user's declared service→infra edges — so they round-trip.
 		services: source.components.services.map((s) => ({
 			name: s.name,
 			type: s.type,
 			source: s.source,
 			build: s.build ?? undefined,
 			env: s.env,
+			bindings: s.bindings,
 			ports: s.ports,
 			replicas: s.replicas,
 			resources: s.resources ?? undefined,

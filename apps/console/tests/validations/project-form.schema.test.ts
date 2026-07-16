@@ -316,4 +316,54 @@ describe("projectFormSchema", () => {
 			expect(result.success).toBe(true);
 		});
 	});
+
+	describe("services array — W3 bindings", () => {
+		const serviceWith = (bindings: unknown) => ({
+			...validProject,
+			services: [
+				{
+					name: "api",
+					type: "deployment",
+					source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+					env: [],
+					ports: [],
+					bindings,
+				},
+			],
+		});
+
+		it("accepts a service with a valid binding (target + injected facets)", () => {
+			const data = serviceWith([
+				{
+					target: { kind: "database", name: "orders-db" },
+					inject: [
+						{ env: "DATABASE_HOST", from: "endpoint" },
+						{ env: "DATABASE_PASSWORD", from: "password" },
+					],
+				},
+			]);
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("rejects an unknown injection facet", () => {
+			const data = serviceWith([
+				{ target: { kind: "database", name: "db" }, inject: [{ env: "X", from: "bogus" }] },
+			]);
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
+		});
+
+		it("rejects an unknown binding target kind", () => {
+			const data = serviceWith([
+				{ target: { kind: "bucket", name: "assets" }, inject: [{ env: "X", from: "endpoint" }] },
+			]);
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
+		});
+
+		it("rejects an empty target name", () => {
+			const data = serviceWith([
+				{ target: { kind: "cache", name: "" }, inject: [{ env: "REDIS_URL", from: "endpoint" }] },
+			]);
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
+		});
+	});
 });

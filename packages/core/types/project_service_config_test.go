@@ -58,3 +58,59 @@ func TestProjectServiceConfig_ResolvedImageRoundTrip(t *testing.T) {
 		t.Errorf("empty ResolvedImage must be omitempty, but was emitted:\n%s", b2)
 	}
 }
+
+// TestProjectServiceConfig_BindingsRoundTrip locks the W3 binding contract (#615): a service's
+// declared edges to backing resources survive the JSON round-trip the runner reads off the deploy
+// snapshot to resolve endpoints/credentials into workload env. Every field (target kind/name, and
+// each injection's env/from) must round-trip under its exact key — this is the cross-language
+// contract the TS zod schema, the snapshot, and the (downstream) manifest renderer all speak.
+func TestProjectServiceConfig_BindingsRoundTrip(t *testing.T) {
+	svc := ProjectServiceConfig{
+		Name:   "api",
+		Type:   "deployment",
+		Source: ProjectServiceSource{Kind: "repo", RepoURL: "https://github.com/acme/api", Path: "."},
+		Bindings: []ServiceBinding{
+			{
+				Target: ServiceBindingTarget{Kind: "database", Name: "orders-db"},
+				Inject: []ServiceBindingInjection{
+					{Env: "DATABASE_HOST", From: "endpoint"},
+					{Env: "DATABASE_PORT", From: "port"},
+					{Env: "DATABASE_PASSWORD", From: "password"},
+				},
+			},
+			{
+				Target: ServiceBindingTarget{Kind: "cache", Name: "sessions"},
+				Inject: []ServiceBindingInjection{{Env: "REDIS_URL", From: "connection_string"}},
+			},
+		},
+	}
+
+	b, err := json.Marshal(svc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// The contract keys the TS side + the snapshot depend on.
+	for _, key := range []string{`"bindings":`, `"target":`, `"inject":`, `"kind":`, `"from":`} {
+		if !strings.Contains(string(b), key) {
+			t.Fatalf("binding not serialized under contract key %s:\n%s", key, b)
+		}
+	}
+
+	var got ProjectServiceConfig
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Bindings) != 2 {
+		t.Fatalf("bindings round-trip: got %d, want 2", len(got.Bindings))
+	}
+	db := got.Bindings[0]
+	if db.Target.Kind != "database" || db.Target.Name != "orders-db" {
+		t.Errorf("target round-trip: got %+v", db.Target)
+	}
+	if len(db.Inject) != 3 || db.Inject[2].Env != "DATABASE_PASSWORD" || db.Inject[2].From != "password" {
+		t.Errorf("inject round-trip: got %+v", db.Inject)
+	}
+	if got.Bindings[1].Inject[0].From != "connection_string" {
+		t.Errorf("cache facet round-trip: got %q", got.Bindings[1].Inject[0].From)
+	}
+}

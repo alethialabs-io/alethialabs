@@ -643,6 +643,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 			type: "deployment",
 			source: { kind: "repo", repo_url: "", path: "" },
 			env: [],
+			bindings: [],
 			ports: [],
 			replicas: 2,
 		}),
