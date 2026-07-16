@@ -12,7 +12,7 @@ import {
 	type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
 	buildRenderNodes,
 	collectionNodeId,
@@ -21,10 +21,13 @@ import {
 	type BoardNode,
 } from "@/lib/canvas/collections";
 import {
-	buildZones,
-	isZoneId,
-	zoneOfBoardNode,
-	type ZoneNode,
+	buildContainers,
+	containerOfBoardNode,
+	dragMemberIds,
+	isContainerId,
+	zoneNodeId,
+	type ContainerBox,
+	type ContainerNode,
 } from "@/lib/canvas/zones";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { OUT_OF_BAND, useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -69,6 +72,13 @@ export function CanvasFlow() {
 	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
 	const collectionPositions = useCanvasStore((s) => s.collectionPositions);
 	const setCollectionPosition = useCanvasStore((s) => s.setCollectionPosition);
+	const containerGeometry = useCanvasStore((s) => s.containerGeometry);
+	const setContainerGeometry = useCanvasStore((s) => s.setContainerGeometry);
+	const translateContainer = useCanvasStore((s) => s.translateContainer);
+
+	// Which container's resize handles are showing. Controlled here (containers are synthetic — they
+	// have no store row), set on click and cleared when a card or the pane is clicked.
+	const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
 
 	// When a bring-your-own IaC module governs this environment it REPLACES the template (v1 replace
 	// mode), so the component design is INERT — it will never be applied. Left on the board it reads
@@ -99,24 +109,39 @@ export function CanvasFlow() {
 		[designNodes, collectionPositions],
 	);
 
-	// The VPC and cluster regions, derived from where the cards sit — so dragging a resource just
-	// re-bounds the region around it. Painted BEHIND the cards (negative zIndex); a card in front of
-	// its own zone is the whole point. Hiding a kind shrinks its zone; hiding them all removes it.
-	// Resolution goes through `zoneOfBoardNode` — the SSOT that knows an EXTERNAL card (one kind's
-	// worth of a BYO IaC module) belongs to the zone of the kind its resources MAP to, not to the
-	// literal `external` kind, which has no zone. Inlining `zoneForNode(node.data.kind, …)` here is
-	// what left a customer's `aws_vpc` floating outside the VPC region it plainly lives in.
-	const zones = useMemo(
+	// The container a board node belongs to (its parentId-equivalent — one owner per card): every
+	// external card to the one BYO-module region, everything else to its VPC/cluster zone, periphery to
+	// none. This is the single seam through which membership stays a pure function of kind/provider.
+	const containerOf = useMemo(
 		() =>
-			buildZones(cards, (node) =>
-				zoneOfBoardNode(node, (kind) => providerOfKind(nodes, kind)),
-			),
-		[cards, nodes],
+			(node: BoardNode) =>
+				containerOfBoardNode(node, (kind) => providerOfKind(nodes, kind)),
+		[nodes],
 	);
 
-	const visibleNodes = useMemo<(BoardNode | ZoneNode)[]>(
-		() => [...zones, ...cards],
-		[zones, cards],
+	// The VPC / cluster / BYO-module regions. Geometry derives from where the member cards sit until
+	// the user drags or resizes a region, at which point their box is remembered as an override.
+	// Painted BEHIND the cards (negative zIndex); a card in front of its own region is the whole point.
+	// Hiding a kind shrinks its region; hiding them all removes it (a region with no members isn't drawn
+	// even if a stale override exists).
+	const containers = useMemo(
+		() => buildContainers(cards, containerOf, containerGeometry),
+		[cards, containerOf, containerGeometry],
+	);
+
+	// Controlled selection drives the resize handles. Kept off the memo above so toggling selection
+	// doesn't rebuild every container box.
+	const containersWithSelection = useMemo<ContainerNode[]>(
+		() =>
+			containers.map((c) =>
+				c.id === selectedContainerId ? { ...c, selected: true } : c,
+			),
+		[containers, selectedContainerId],
+	);
+
+	const visibleNodes = useMemo<(BoardNode | ContainerNode)[]>(
+		() => [...containersWithSelection, ...cards],
+		[containersWithSelection, cards],
 	);
 
 	// A collapsed member has no card of its own, so an edge pointing at it would dangle. Re-target
@@ -134,21 +159,81 @@ export function CanvasFlow() {
 			)
 		: [];
 
+	// A container's current rendered box, by id — the reference the drag/resize handlers read.
+	const containerById = useMemo(
+		() => new Map(containers.map((c) => [c.id, c])),
+		[containers],
+	);
+
 	return (
-		<ReactFlow<BoardNode | ZoneNode>
+		<ReactFlow<BoardNode | ContainerNode>
 			nodes={visibleNodes}
 			edges={visibleEdges}
 			onNodesChange={(changes) => {
-				// Collections and zones have NO row in the store, so their changes must never reach
+				// Collections and containers have NO row in the store, so their changes must never reach
 				// applyNodeChanges — it would try to patch a node that doesn't exist. Peel them off: a
-				// collection drag becomes its own persisted position; a zone is inert (it's derived from
-				// its members, so it moves when they do). Everything else about them is ignored rather
-				// than allowed to corrupt the graph. Both are `deletable: false`, so a stray Backspace
-				// can't wipe forty secrets or a whole region either.
+				// collection drag becomes its own persisted position; a container drag translates its
+				// members (absolute), a container resize writes its geometry override, and nothing about a
+				// container ever moves a member on resize. Everything left is a real store node. All the
+				// synthetics are `deletable: false`, so a stray Backspace can't wipe forty secrets or a
+				// whole region either.
 				const passthrough: NodeChange<CanvasNode>[] = [];
+				// A top-left resize sends BOTH a dimensions and a position change for the same container in
+				// one batch. The presence of a dimensions change is the resize discriminator — so a resize
+				// never translates members. Accumulate the resulting geometry and apply it after the loop.
+				const resizing = new Set<string>();
+				for (const c of changes) {
+					if (c.type === "dimensions" && "id" in c && isContainerId(c.id)) {
+						resizing.add(c.id);
+					}
+				}
+				const resizeGeom = new Map<string, Partial<ContainerBox>>();
 				for (const change of changes) {
 					const id = "id" in change ? change.id : null;
-					if (id && isZoneId(id)) continue;
+					if (id && isContainerId(id)) {
+						if (resizing.has(id)) {
+							const cur = resizeGeom.get(id) ?? {};
+							if (change.type === "dimensions" && change.dimensions) {
+								resizeGeom.set(id, {
+									...cur,
+									width: change.dimensions.width,
+									height: change.dimensions.height,
+								});
+							} else if (change.type === "position" && change.position) {
+								resizeGeom.set(id, { ...cur, x: change.position.x, y: change.position.y });
+							}
+						} else if (change.type === "position" && change.position) {
+							// DRAG: shift every member (nested-aware) by the delta, and pin the dragged
+							// container (+ any pinned nested cluster) so it tracks the cursor.
+							const box = containerById.get(id);
+							if (box) {
+								const delta = {
+									x: change.position.x - box.position.x,
+									y: change.position.y - box.position.y,
+								};
+								const memberIds = dragMemberIds(designNodes, id, containerOf);
+								const pins: { id: string; box: ContainerBox }[] = [
+									{
+										id,
+										box: {
+											x: box.position.x,
+											y: box.position.y,
+											width: box.width,
+											height: box.height,
+										},
+									},
+								];
+								// A DERIVED cluster follows its members for free; a PINNED one must be carried.
+								const clusterId = zoneNodeId("cluster");
+								if (id === zoneNodeId("network") && containerGeometry[clusterId]) {
+									pins.push({ id: clusterId, box: containerGeometry[clusterId] });
+								}
+								translateContainer(delta, { memberIds, pins });
+							}
+						}
+						// select / remove / other container changes have no store effect.
+						continue;
+					}
 					const kind = id ? kindFromCollectionId(id) : null;
 					if (kind) {
 						if (change.type === "position" && change.position) {
@@ -158,18 +243,37 @@ export function CanvasFlow() {
 					}
 					// Everything left refers to a real store node. React Flow types the change against
 					// the board's union; narrowing it back is sound precisely because the synthetic ids —
-					// the only source of zone/collection changes — were just filtered out.
+					// the only source of container/collection changes — were just filtered out.
 					passthrough.push(change as NodeChange<CanvasNode>);
+				}
+				for (const [id, partial] of resizeGeom) {
+					const box = containerById.get(id);
+					if (!box) continue;
+					setContainerGeometry(id, {
+						x: partial.x ?? box.position.x,
+						y: partial.y ?? box.position.y,
+						width: partial.width ?? box.width,
+						height: partial.height ?? box.height,
+					});
 				}
 				if (passthrough.length) onNodesChange(passthrough);
 			}}
 			nodeTypes={nodeTypes}
 			edgeTypes={edgeTypes}
 			onNodeClick={(_, node) => {
-				// Clicking a region shouldn't open an inspector for something that isn't a resource.
-				if (!isZoneId(node.id)) openInspector(node.id);
+				// Clicking a region selects it (revealing its resize handles) but never opens an
+				// inspector — it isn't a resource. Clicking a card clears the region selection.
+				if (isContainerId(node.id)) {
+					setSelectedContainerId(node.id);
+				} else {
+					setSelectedContainerId(null);
+					openInspector(node.id);
+				}
 			}}
-			onPaneClick={() => openInspector(null)}
+			onPaneClick={() => {
+				setSelectedContainerId(null);
+				openInspector(null);
+			}}
 			deleteKeyCode={["Backspace", "Delete"]}
 			fitView
 			fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
@@ -193,7 +297,7 @@ export function CanvasFlow() {
 				maskColor="var(--surface-sunken)"
 				nodeColor="var(--border-strong)"
 				nodeStrokeColor="var(--border-strong)"
-				nodeClassName={(n) => (isZoneId(n.id) ? "opacity-30" : "")}
+				nodeClassName={(n) => (isContainerId(n.id) ? "opacity-30" : "")}
 			/>
 		</ReactFlow>
 	);
