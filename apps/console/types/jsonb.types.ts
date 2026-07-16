@@ -100,6 +100,10 @@ export interface DetectedService {
 	runtime?: string;
 	/** Container port, when detected from the Dockerfile/manifest. */
 	port?: number;
+	/** Normalized backing-service signals found in THIS service's own files (per-service
+	 * attribution of the repo-wide signals) — mapped to SUGGESTED ServiceBindings (W3,
+	 * lib/scanner/suggest-bindings.ts) for the user to accept/edit. */
+	needs?: string[];
 }
 
 // ── Service / workload (W1) ─────────────────────────────────────────

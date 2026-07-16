@@ -338,3 +338,64 @@ func itoa(i int) string {
 	}
 	return string(b)
 }
+
+// W3 Path-B seed (#620): backing-service signals must land on the SERVICE whose files
+// carry them (per-service `needs`), not just on the repo-wide Signals list.
+func TestScan_AttributesNeedsPerService(t *testing.T) {
+	root := t.TempDir()
+	// Monorepo: api (postgres + redis in its own compose) and worker (rabbitmq via a
+	// nested env example); a root service exists via the workspace manifest, and the
+	// repo root carries a kafka signal in CI config that no sub-service encloses.
+	write(t, root, "package.json", `{"name":"mono"}`)
+	write(t, root, "apps/api/Dockerfile", "FROM golang:1.25\nEXPOSE 8080\n")
+	write(t, root, "apps/api/docker-compose.yml", "services:\n  db:\n    image: postgres:16\n  cache:\n    image: redis:7\n")
+	write(t, root, "apps/worker/Dockerfile", "FROM node:20\n")
+	write(t, root, "apps/worker/.env.example", "AMQP_URL=amqp://guest@localhost\n")
+	write(t, root, ".github/workflows/ci.yml", "name: ci\n# talks to kafka in integration tests\n")
+
+	d, err := Scan(root, "https://github.com/acme/mono.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	needsByPath := map[string][]string{}
+	for _, s := range d.Services {
+		needsByPath[s.Path] = s.Needs
+	}
+	if got := needsByPath["apps/api"]; len(got) != 2 || got[0] != "postgresql" || got[1] != "redis" {
+		t.Errorf("apps/api needs = %v, want [postgresql redis] (sorted)", got)
+	}
+	if got := needsByPath["apps/worker"]; len(got) != 1 || got[0] != "rabbitmq" {
+		t.Errorf("apps/worker needs = %v, want [rabbitmq]", got)
+	}
+	// The CI file is enclosed by no sub-service → falls back to the root service.
+	if got := needsByPath[""]; len(got) != 1 || got[0] != "kafka" {
+		t.Errorf("root needs = %v, want [kafka] (unattributed fallback)", got)
+	}
+	// The repo-wide Signals union is unchanged by attribution.
+	if len(d.Signals) != 4 {
+		t.Errorf("repo-wide signals = %v, want 4 (kafka postgresql rabbitmq redis)", d.Signals)
+	}
+}
+
+// Without a root service, signals enclosed by no service stay repo-wide only (never
+// dropped silently into a wrong service).
+func TestScan_UnattributedNeedsStayRepoWide(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "apps/api/Dockerfile", "FROM golang:1.25\n")
+	// A root-level compose no service encloses (no root manifest → no root service).
+	write(t, root, "docker-compose.yml", "services:\n  search:\n    image: elasticsearch:8\n")
+
+	d, err := Scan(root, "https://github.com/acme/one.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, s := range d.Services {
+		if s.Path == "apps/api" && len(s.Needs) != 0 {
+			t.Errorf("apps/api must not inherit the root compose signal, got %v", s.Needs)
+		}
+	}
+	if len(d.Signals) != 1 || d.Signals[0] != "elasticsearch" {
+		t.Errorf("repo-wide signals = %v, want [elasticsearch]", d.Signals)
+	}
+}

@@ -78,6 +78,9 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 		Languages: map[string]int{},
 	}
 	signalSet := map[string]bool{}
+	// Per-directory signals (keyed by the captured file's dir) — attributed to the
+	// enclosing detected service after detectServices runs (the W3 Path-B seed).
+	dirSignals := map[string]map[string]bool{}
 	walked := 0
 
 	capture := func(bucket *[]types.RepoFile, path string) {
@@ -94,6 +97,11 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 		for _, s := range serviceSignals {
 			if strings.Contains(lower, s.kw) {
 				signalSet[s.signal] = true
+				dir := dirKey(rel)
+				if dirSignals[dir] == nil {
+					dirSignals[dir] = map[string]bool{}
+				}
+				dirSignals[dir][s.signal] = true
 			}
 		}
 	}
@@ -150,6 +158,7 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 	sort.Strings(d.Signals)
 
 	d.Services = detectServices(d, repoURL)
+	attributeNeeds(d.Services, dirSignals)
 
 	if log != nil {
 		log(fmt.Sprintf("Scanned %d files — %d manifests, %d Dockerfiles, %d compose, %d k8s, %d CI, %d signals, %d services",
@@ -196,6 +205,59 @@ func detectServices(d *types.RepoDigest, repoURL string) []types.DetectedService
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// attributeNeeds assigns each captured file's backing-service signals to the DEEPEST
+// detected service whose path encloses the file (a monorepo's apps/web compose signals
+// land on apps/web, not on the repo-root service). Files enclosed by no service fall
+// back to the root service when one exists; otherwise the signal stays repo-wide only
+// (RepoDigest.Signals). The result is each service's `needs` — the Path-B seed the
+// console maps to SUGGESTED ServiceBindings (W3).
+func attributeNeeds(services []types.DetectedService, dirSignals map[string]map[string]bool) {
+	if len(services) == 0 || len(dirSignals) == 0 {
+		return
+	}
+	needs := make([]map[string]bool, len(services))
+	rootIdx := -1
+	for i, svc := range services {
+		needs[i] = map[string]bool{}
+		if svc.Path == "" {
+			rootIdx = i
+		}
+	}
+	for dir, sigs := range dirSignals {
+		best := -1
+		for i, svc := range services {
+			if svc.Path == "" {
+				continue // the root service is the fallback, not a prefix winner
+			}
+			if dir == svc.Path || strings.HasPrefix(dir+"/", svc.Path+"/") {
+				if best == -1 || len(svc.Path) > len(services[best].Path) {
+					best = i
+				}
+			}
+		}
+		if best == -1 {
+			best = rootIdx
+		}
+		if best == -1 {
+			continue
+		}
+		for sig := range sigs {
+			needs[best][sig] = true
+		}
+	}
+	for i := range services {
+		if len(needs[i]) == 0 {
+			continue
+		}
+		out := make([]string, 0, len(needs[i]))
+		for sig := range needs[i] {
+			out = append(out, sig)
+		}
+		sort.Strings(out)
+		services[i].Needs = out
+	}
 }
 
 // dirKey normalizes a captured file's directory to a service path ("" = repo root).

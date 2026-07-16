@@ -25,6 +25,10 @@ type DetectedService struct {
 	Runtime string `json:"runtime,omitempty"`
 	// Container port parsed from the Dockerfile's EXPOSE, when present.
 	Port int `json:"port,omitempty"`
+	// Needs are the normalized backing-service signals detected in THIS service's own
+	// files (per-service attribution of the repo-wide Signals) — the Path-B seed the
+	// console maps to SUGGESTED ServiceBindings (W3) for the user to accept/edit.
+	Needs []string `json:"needs,omitempty"`
 }
 
 // RepoDigest is the deterministic, STATIC analysis of a repository produced by an
