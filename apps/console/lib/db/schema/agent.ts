@@ -146,3 +146,36 @@ export const agentContext = pgTable(
 
 export type AgentContext = typeof agentContext.$inferSelect;
 export type NewAgentContext = typeof agentContext.$inferInsert;
+
+// Per-message thumbs feedback (up/down) on an assistant turn. Owner-scoped (same owner_all
+// RLS as agent_threads). A SEPARATE table rather than a field on the thread: saveThreadMessages
+// overwrites the whole `messages` JSONB every turn, which would clobber an inline feedback map.
+// One row per (thread, message, owner); toggling the same value off deletes the row.
+export const agentMessageFeedback = pgTable(
+	"agent_message_feedback",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		thread_id: uuid()
+			.notNull()
+			.references(() => agentThreads.id, { onDelete: "cascade" }),
+		user_id: uuid().notNull(),
+		// Owner scope (community org_id = user_id), backfilled by the set_org_id trigger.
+		org_id: uuid(),
+		// The AI SDK UIMessage id of the rated assistant message.
+		message_id: text().notNull(),
+		value: text().$type<"up" | "down">().notNull(),
+		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [
+		uniqueIndex("uq_agent_message_feedback").on(
+			t.thread_id,
+			t.message_id,
+			t.user_id,
+		),
+		index("idx_agent_message_feedback_thread").on(t.thread_id),
+	],
+);
+
+export type AgentMessageFeedback = typeof agentMessageFeedback.$inferSelect;
+export type NewAgentMessageFeedback = typeof agentMessageFeedback.$inferInsert;

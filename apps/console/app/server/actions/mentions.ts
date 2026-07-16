@@ -74,14 +74,16 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 				})),
 			),
 			safe(async () =>
-				(await getConnectorsWithStatus()).map((c) => ({
-					id: c.name,
-					type: "connector" as const,
-					label: c.name,
-					sublabel: [c.group, c.connected ? "connected" : "not connected"]
-						.filter(Boolean)
-						.join(" · "),
-				})),
+				// Only connected connectors are taggable — an unconnected connector has no
+				// account/data behind it, so tagging it tells the agent nothing.
+				(await getConnectorsWithStatus())
+					.filter((c) => c.connected)
+					.map((c) => ({
+						id: c.name,
+						type: "connector" as const,
+						label: c.name,
+						sublabel: [c.group, "connected"].filter(Boolean).join(" · "),
+					})),
 			),
 			safe(async () =>
 				(await getRunnersWithReleases()).map((r) => ({
