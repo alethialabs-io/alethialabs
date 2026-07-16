@@ -54,12 +54,10 @@ func CredentialFacetNames(b types.ServiceBinding) []string {
 	return out
 }
 
-// BindingSecretName is the deterministic name of the k8s Secret an ExternalSecret materializes for
-// one service→resource binding. THE shared contract with the render-bindings lane: its env
-// secretKeyRef.name MUST call this same helper so the workload reads the Secret created here.
-func BindingSecretName(serviceName string, t types.ServiceBindingTarget) string {
-	return dns1123(serviceName + "-" + t.Kind + "-" + t.Name)
-}
+// The k8s Secret name is BindingSecretName(kind, targetName) — declared in generate.go and shared
+// with the render-bindings lane's env secretKeyRef, so the ExternalSecret's target and the
+// workload's reference are ONE source of truth. It is per backing resource (kind+name), not per
+// service: several services binding the same resource read the same materialized Secret.
 
 // StoreNameFor maps a cloud provider to its ESO ClusterSecretStore name (defined per-cloud in
 // infra/templates/argocd/external-secrets-operator.yaml). "" → no store for that provider (e.g.
@@ -97,22 +95,20 @@ func facetProperty(provider, facet string) (string, bool) {
 // provisioner) supplies Provider + RemoteKey (the tofu-provisioned secret name/ARN) from the
 // deploy outputs; Facets are the binding's credential facets (see CredentialFacetNames).
 type ExternalSecretParams struct {
-	ServiceName string
-	Namespace   string
-	Target      types.ServiceBindingTarget
-	Provider    string
-	RemoteKey   string
-	Facets      []string
+	Namespace string
+	Target    types.ServiceBindingTarget
+	Provider  string
+	RemoteKey string
+	Facets    []string
 }
 
 type esDatum struct{ SecretKey, RemoteKey, Property string }
 
 type esTemplateData struct {
-	Name        string
-	Namespace   string
-	ServiceName string
-	StoreName   string
-	Data        []esDatum
+	Name      string
+	Namespace string
+	StoreName string
+	Data      []esDatum
 }
 
 // v1beta1 to match the deployed ESO chart (0.9.12) + the ClusterSecretStore definitions in
@@ -125,7 +121,6 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Name }}
     app.kubernetes.io/managed-by: alethia
-    alethia.io/service: {{ .ServiceName }}
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -149,7 +144,7 @@ spec:
 // (no store for the provider, no provisioned secret name, or a facet the cloud secret lacks) so the
 // caller reports rather than silently drops — mirroring FromServices' skipped-services report.
 func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
-	secretName := BindingSecretName(p.ServiceName, p.Target)
+	secretName := BindingSecretName(p.Target.Kind, p.Target.Name)
 
 	store := StoreNameFor(p.Provider)
 	if store == "" {
@@ -182,11 +177,10 @@ func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
 	}
 	var buf bytes.Buffer
 	if err := externalSecretTmpl.Execute(&buf, esTemplateData{
-		Name:        secretName,
-		Namespace:   ns,
-		ServiceName: dns1123(p.ServiceName),
-		StoreName:   store,
-		Data:        data,
+		Name:      secretName,
+		Namespace: ns,
+		StoreName: store,
+		Data:      data,
 	}); err != nil {
 		return "", skipped, fmt.Errorf("render external secret %s: %w", secretName, err)
 	}
