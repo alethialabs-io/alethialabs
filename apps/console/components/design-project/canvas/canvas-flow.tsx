@@ -139,9 +139,21 @@ export function CanvasFlow() {
 		[containers, selectedContainerId],
 	);
 
+	// A card drawn inside a container renders the dense treatment. Flag it on the RENDER node only —
+	// a shallow clone, never the store node — using the same pure membership function the containers
+	// use. Collections (periphery) resolve to no container, so they're never flagged.
+	const denseCards = useMemo(
+		() =>
+			cards.map((card) => {
+				if (!("config" in card.data) || !containerOf(card)) return card;
+				return { ...card, data: { ...card.data, insideContainer: true } };
+			}),
+		[cards, containerOf],
+	);
+
 	const visibleNodes = useMemo<(BoardNode | ContainerNode)[]>(
-		() => [...containersWithSelection, ...cards],
-		[containersWithSelection, cards],
+		() => [...containersWithSelection, ...denseCards],
+		[containersWithSelection, denseCards],
 	);
 
 	// A collapsed member has no card of its own, so an edge pointing at it would dangle. Re-target
