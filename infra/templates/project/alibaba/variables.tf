@@ -306,3 +306,9 @@ variable "rds_backup_retention_days" {
   default     = 7
   description = "Number of days to retain automated RDS backups"
 }
+
+variable "vswitch_count" {
+  type        = number
+  default     = 3
+  description = "STATIC number of vswitches the network module creates (plan-known under the keyless RAM-OIDC provider — #621); zone assignment wraps over the discovered zones via element()."
+}

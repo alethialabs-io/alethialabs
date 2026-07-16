@@ -70,3 +70,13 @@ check "classification_tags_present" {
     error_message = "A classification_tags entry was dropped from common_tags; classification/sweep-handle tags must reach tagged resources."
   }
 }
+
+# PLAN-OUT SAFETY (#621, the alibaba twin of aws #608): the vswitch count must be the
+# static var.vswitch_count — never derived from the zones DATA SOURCE, which is unknown
+# at plan under the runner's keyless RAM-OIDC provider (credentials resolve at apply).
+check "vswitch_count_static_and_sane" {
+  assert {
+    condition     = var.vswitch_count >= 1 && var.vswitch_count <= 8
+    error_message = "vswitch_count must be a static number between 1 and 8 (a zones-data-source-derived count is unknown at plan and fails the runner's plan-out)."
+  }
+}
