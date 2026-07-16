@@ -292,6 +292,11 @@ type ProjectServiceConfig struct {
 	Replicas  int                  `json:"replicas"`
 	Resources *ServiceResources    `json:"resources,omitempty"`
 	Probe     *ServiceProbe        `json:"probe,omitempty"`
+	// ResolvedImage is the W2 build's write-back slot — the pushed image digest URI
+	// (e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/<repo>@sha256:…") persisted from a BUILD
+	// job's result. Distinct from Source (the user's input); empty until a build has run.
+	// The manifest renderer substitutes it for the workload image (retiring ":latest").
+	ResolvedImage string `json:"resolved_image,omitempty"`
 }
 
 // ProjectServiceSource is the flattened form of the TS discriminated union

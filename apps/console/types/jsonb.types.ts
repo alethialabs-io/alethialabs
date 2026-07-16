@@ -517,6 +517,11 @@ export interface ExecutionMetadata {
 	// SUCCESS with reachable=false — the status route ingests it into environment_probes and
 	// alerts on a true→false liveness transition.
 	probe_result?: ProbeResult;
+	// BUILD jobs (W2): per-service pushed-image digest map { service_name → image_digest_uri }
+	// (e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/<repo>@sha256:…") for every service with
+	// source.kind === "repo". The console persists each entry into project_services.resolved_image.
+	// Digests are non-secret (pass the scrub denylist); registry credentials must NEVER appear here.
+	build_result?: Record<string, string>;
 	// DEPLOY jobs: post-apply ArgoCD health/sync per managed marketplace add-on, keyed by
 	// the ArgoCD Application name ("addon-<id>"). Written back to project_addons by the
 	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.

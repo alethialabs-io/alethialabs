@@ -244,12 +244,18 @@ const registryItemSchema = registriesInsert
 	.extend({ name: z.string().min(1, "Registry name is required") });
 
 // W1 — a first-class service/workload the customer designs on the canvas.
-const serviceItemSchema = servicesInsert.omit(componentAutoFields).extend({
-	name: z.string().min(1, "Service name is required"),
-	type: z
-		.enum(["deployment", "job", "cronjob", "statefulset"])
-		.default("deployment"),
-});
+const serviceItemSchema = servicesInsert
+	.omit({
+		...componentAutoFields,
+		// Output column (the W2 build's write-back digest), never designed by the user.
+		resolved_image: true,
+	})
+	.extend({
+		name: z.string().min(1, "Service name is required"),
+		type: z
+			.enum(["deployment", "job", "cronjob", "statefulset"])
+			.default("deployment"),
+	});
 
 export const projectFormSchema = z.object({
 	project: projectSchema,
