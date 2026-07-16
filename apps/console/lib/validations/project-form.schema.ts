@@ -15,6 +15,7 @@ import {
 	projectQueues,
 	projectRepositories,
 	projectSecrets,
+	projectServices,
 	projectSourceRepos,
 	projectStorageBuckets,
 	projectTopics,
@@ -74,6 +75,48 @@ const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 });
 const registriesInsert = createInsertSchema(projectContainerRegistries, {
 	provider_config: z.custom<RegistryProviderConfig>().optional(),
+});
+
+// W1 — service/workload sub-shapes (validated, not passthrough): a service is the customer's own
+// code, so the form drives real config the runner turns into k8s manifests.
+const serviceSourceSchema = z.discriminatedUnion("kind", [
+	z.object({
+		kind: z.literal("repo"),
+		repo_url: z.string().min(1, "Repo URL is required"),
+		path: z.string().default(""),
+	}),
+	z.object({ kind: z.literal("image"), image: z.string().min(1, "Image is required") }),
+]);
+const serviceBuildSchema = z.object({
+	dockerfile: z.string().optional(),
+	context: z.string().optional(),
+});
+const serviceEnvSchema = z.object({
+	name: z.string().min(1, "Env var name is required"),
+	value: z.string(),
+});
+const servicePortSchema = z.object({
+	name: z.string().optional(),
+	container_port: z.number().int().min(1).max(65535),
+	protocol: z.enum(["TCP", "UDP"]).optional(),
+});
+const serviceQuantitySchema = z.object({ cpu: z.string(), memory: z.string() });
+const serviceResourcesSchema = z.object({
+	requests: serviceQuantitySchema,
+	limits: serviceQuantitySchema,
+});
+const serviceProbeSchema = z.object({
+	type: z.enum(["http", "tcp"]),
+	path: z.string().optional(),
+	port: z.number().int().min(1).max(65535),
+});
+const servicesInsert = createInsertSchema(projectServices, {
+	source: serviceSourceSchema,
+	build: serviceBuildSchema.nullable().optional(),
+	env: z.array(serviceEnvSchema),
+	ports: z.array(servicePortSchema),
+	resources: serviceResourcesSchema.nullable().optional(),
+	probe: serviceProbeSchema.nullable().optional(),
 });
 
 const autoFields = { id: true, created_at: true, updated_at: true } as const;
@@ -200,6 +243,14 @@ const registryItemSchema = registriesInsert
 	})
 	.extend({ name: z.string().min(1, "Registry name is required") });
 
+// W1 — a first-class service/workload the customer designs on the canvas.
+const serviceItemSchema = servicesInsert.omit(componentAutoFields).extend({
+	name: z.string().min(1, "Service name is required"),
+	type: z
+		.enum(["deployment", "job", "cronjob", "statefulset"])
+		.default("deployment"),
+});
+
 export const projectFormSchema = z.object({
 	project: projectSchema,
 	network: networkSchema,
@@ -215,6 +266,7 @@ export const projectFormSchema = z.object({
 	secrets: z.array(secretItemSchema).default([]),
 	storage_buckets: z.array(bucketItemSchema).default([]),
 	container_registries: z.array(registryItemSchema).default([]),
+	services: z.array(serviceItemSchema).default([]),
 });
 
 export type ProjectFormData = z.infer<typeof projectFormSchema>;

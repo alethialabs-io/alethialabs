@@ -52,6 +52,7 @@ export type SchemaKey =
 	| "secrets"
 	| "storage_buckets"
 	| "container_registries"
+	| "services"
 	// Chart / add-on / external nodes are OUT-OF-BAND (project_addons, project_iac_sources) and are
 	// never written into ProjectFormData — this key exists only to satisfy the exhaustive registry;
 	// the graph⇄form mappers never read it. See OUT_OF_BAND_KINDS in use-canvas-store.ts.
@@ -611,6 +612,39 @@ export const NODE_REGISTRY: NodeRegistry = {
 		defaultData: () => ({
 			name: "apps",
 			provider_config: {},
+		}),
+	},
+	// W1 — a first-class application workload. Minimal registry entry (facts + defaultData); the
+	// rich config card + add-palette presentation are the class:ui lane (#571). Not cloud-scoped: a
+	// service runs on the cluster, not a cloud account. No palette yet (manual add is class:ui;
+	// population from scan/BYO/AI is W5/W6).
+	service: {
+		kind: "service",
+		schemaKey: "services",
+		cardinality: "array",
+		classification: "core",
+		cloudScoped: false,
+		eyebrow: "Service",
+		label: "Service",
+		icon: Boxes,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Type", value: config.type ?? "deployment" },
+				{
+					label: "Source",
+					value:
+						config.source.kind === "image" ? config.source.image : config.source.repo_url,
+				},
+				{ label: "Replicas", value: String(config.replicas) },
+			],
+		},
+		defaultData: () => ({
+			name: "service",
+			type: "deployment",
+			source: { kind: "repo", repo_url: "", path: "" },
+			env: [],
+			ports: [],
+			replicas: 2,
 		}),
 	},
 	repositories: {
