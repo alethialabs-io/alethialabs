@@ -54,15 +54,15 @@ output "node_security_group" {
 }
 
 output "az1" {
-  value = data.aws_availability_zones.available.names[0]
+  value = local.azs[0]
 }
 
 output "az2" {
-  value = data.aws_availability_zones.available.names[1]
+  value = local.azs[1]
 }
 
 output "az3" {
-  value = data.aws_availability_zones.available.names[2]
+  value = local.azs[2]
 }
 
 output "subnet1" {

@@ -1,15 +1,16 @@
-data "aws_availability_zones" "available" {
-  state = "available"
-}
-
 module "common_vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.5.1"
   count   = var.provision_vpc ? 1 : 0
 
-  name                   = local.vpc_name
-  cidr                   = var.vpc_cidr
-  azs                    = data.aws_availability_zones.available.names
+  name = local.vpc_name
+  cidr = var.vpc_cidr
+  # Exactly three AZs, derived statically from the region (a/b/c). The subnet lists below are
+  # hardcoded to three, so the AZ count MUST be three — and the module's NAT/subnet `count`s are
+  # `length(azs)`, which must be known at PLAN time. Sourcing azs from
+  # `data.aws_availability_zones` (see local.azs) — that data source is unknown at plan under the
+  # runner's assume-role provider, which broke `tofu plan -out` (the T2 aws nightly, #551).
+  azs                    = local.azs
   enable_dns_hostnames   = true
   enable_dns_support     = true
   enable_ipv6            = false

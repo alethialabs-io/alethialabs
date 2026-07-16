@@ -41,6 +41,13 @@ locals {
   aws_default_tags = merge(var.classification_tags, local.aws_base_tags)
 
 
+  # Exactly three AZs, derived statically from the region (a/b/c) so `length(local.azs)` is known at
+  # PLAN time. The VPC module's NAT/subnet `count`s are `length(azs)`; sourcing azs from
+  # `data.aws_availability_zones` makes them unknown under the runner's assume-role provider (resolved
+  # only at apply) → `tofu plan -out` fails "Invalid count argument" (#551). The subnet lists are
+  # hardcoded to three, so three AZs is also the correct count (not the ~6 the data source returns).
+  azs = ["${var.region}a", "${var.region}b", "${var.region}c"]
+
   vpc_name = "vpc-${local.aws_regions_short[var.region]}-${var.environment}-${var.project_name}-common"
 
   vpc_s3_endpoint_name = "s3-gateway-vpc-${local.aws_regions_short[var.region]}-${var.environment}-${var.project_name}-common"
