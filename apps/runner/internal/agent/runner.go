@@ -477,6 +477,11 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// the canvas Run menu, so every probe job failed and environment_probes was never written:
 		// a cluster whose API server had died still read "Live" on the board.
 		execErr = w.executeProbeCluster(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+	case types.JobTypeBuild:
+		// W2 image build & push — the executeBuild handler is its own lane (#588). Fail closed
+		// (a FAILED job, never a silent no-op) until it lands: the console must not treat an
+		// unbuilt service as built.
+		execErr = fmt.Errorf("BUILD is not implemented yet (W2 executeBuild lane)")
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}

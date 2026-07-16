@@ -710,6 +710,11 @@ export const projectServices = pgTable(
 		resources: jsonb().$type<ServiceResources>(),
 		// Readiness/liveness probe; NULL = none.
 		probe: jsonb().$type<ServiceProbe>(),
+		// W2 — the build's write-back slot (output column, like registries.repository_url):
+		// the pushed image digest URI (e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/<repo>@sha256:…")
+		// persisted from a BUILD job's result. Distinct from `source` (the user's input);
+		// never designed by the user, stripped from the form/design view.
+		resolved_image: text(),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),

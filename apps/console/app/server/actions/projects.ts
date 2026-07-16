@@ -184,8 +184,12 @@ export interface CreateProjectInput {
 		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
 		"repository_url"
 	>[];
-	// W1 — first-class application workloads. No output-only columns beyond ComponentInsert's.
-	services?: ComponentInsert<typeof projectServices.$inferInsert>[];
+	// W1 — first-class application workloads. resolved_image is the W2 build's write-back
+	// slot (output column, like registries.repository_url) — never part of a create/save.
+	services?: Omit<
+		ComponentInsert<typeof projectServices.$inferInsert>,
+		"resolved_image"
+	>[];
 }
 
 // ============================================================
@@ -1622,6 +1626,7 @@ export async function getProjectAsFormData(
 			provider: r.provider ?? undefined,
 			provider_config: r.provider_config ?? undefined,
 		})),
+		// Output columns (resolved_image) are provisioned state, not design — stripped here.
 		services: source.components.services.map((s) => ({
 			name: s.name,
 			type: toServiceWorkloadType(s.type),

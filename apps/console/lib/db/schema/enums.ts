@@ -137,6 +137,13 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	// one honest environment_probes row. Unreachable is a SUCCESSFUL probe with reachable=false — the
 	// job only FAILS when the probe itself couldn't run, not when the cluster is down.
 	"PROBE_CLUSTER",
+	// W2 image build & push: for each service where source.kind=="repo", schedule an in-cluster
+	// kaniko Job (git context + Dockerfile → push to the provisioned registry via build-SA IRSA),
+	// watch it, and report a per-service digest map { service_name → image_digest_uri } in
+	// execution_metadata.build_result. Digests are non-secret; registry credentials must never
+	// enter execution_metadata. Runs AFTER infra-up (the cluster hosts the build), BEFORE the
+	// app-workload manifest commit (which substitutes resolved_image).
+	"BUILD",
 ]);
 
 // Break-glass (privileged incident recovery) action catalog + per-action blast-radius label.
