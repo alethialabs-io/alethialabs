@@ -58,6 +58,7 @@ import {
 	projectQueues,
 	projectRepositories,
 	projectSecrets,
+	projectServices,
 	projectStorageBuckets,
 	projectTopics,
 	projects,
@@ -446,6 +447,83 @@ describe("getProject", () => {
 });
 
 // ============================================================
+// getProjectAsFormData — W2 resolved_image strip (contract-lock #591)
+// ============================================================
+
+describe("getProjectAsFormData — resolved_image strip", () => {
+	// getProjectAsFormData delegates to getProject for the component rows, then re-reads the
+	// identity to resolve the provider — so the select map needs the project, its environment,
+	// the identity, and the seeded service. Everything else defaults to [].
+	const selectWithService = (serviceRow: Record<string, unknown>) =>
+		new Map<unknown, RowsResolver>([
+			[
+				projects,
+				[
+					{
+						id: "p1",
+						org_id: "org-1",
+						cloud_identity_id: "ci-1",
+						region: "us-east-1",
+						iac_version: "1.9.5",
+						project_name: "My App",
+						slug: "my-app",
+					},
+				],
+			],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+			],
+			[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+			[projectServices, [serviceRow]],
+		]);
+
+	it("strips the build-output resolved_image from the design/form view, keeping the design fields", async () => {
+		setupDb({
+			select: selectWithService({
+				name: "api",
+				type: "deployment",
+				source: {
+					kind: "repo",
+					repo_url: "https://github.com/acme/api",
+					path: "apps/api",
+				},
+				build: { dockerfile: "apps/api/Dockerfile", context: "apps/api" },
+				env: [],
+				ports: [],
+				replicas: 2,
+				resources: null,
+				probe: null,
+				// The build write-back — provisioned state, must never surface as design input.
+				resolved_image:
+					"111122223333.dkr.ecr.us-east-1.amazonaws.com/acme-api@sha256:deadbeef",
+			}),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.services).toHaveLength(1);
+		const svc = formData.services[0];
+		// The digest is provisioned output, not user-editable design — it must not round-trip
+		// into the form (otherwise the canvas would show a build artifact as configuration).
+		expect(svc).not.toHaveProperty("resolved_image");
+		// …but every real design field survives.
+		expect(svc.name).toBe("api");
+		expect(svc.type).toBe("deployment");
+		expect(svc.source).toEqual({
+			kind: "repo",
+			repo_url: "https://github.com/acme/api",
+			path: "apps/api",
+		});
+		expect(svc.build).toEqual({
+			dockerfile: "apps/api/Dockerfile",
+			context: "apps/api",
+		});
+		expect(svc.replicas).toBe(2);
+	});
+});
+
+// ============================================================
 // planProject / provisionProject (exercise buildConfigSnapshot)
 // ============================================================
 
@@ -582,6 +660,51 @@ describe("planProject", () => {
 				cloud_provider: "aws",
 				cloud_identity_id: "ci-1",
 				region: "us-east-1",
+			}),
+		]);
+	});
+
+	it("keeps a service's resolved_image in the deploy snapshot (the runner substitutes it) — W2 #591", async () => {
+		// The complement of the getProjectAsFormData strip: resolved_image is stripped from the
+		// DESIGN view but MUST survive into the runner-facing snapshot, otherwise the manifest
+		// renderer has no digest to substitute and falls back to `:latest` — the W2 regression.
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectServices,
+						[
+							{
+								name: "api",
+								type: "deployment",
+								source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+								build: { dockerfile: "Dockerfile", context: "." },
+								env: [],
+								ports: [],
+								replicas: 2,
+								resources: null,
+								probe: null,
+								cloud_identity_id: null,
+								region: null,
+								resolved_image:
+									"111122223333.dkr.ecr.us-east-1.amazonaws.com/acme-api@sha256:deadbeef",
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot.services).toEqual([
+			expect.objectContaining({
+				name: "api",
+				cloud_provider: "aws",
+				resolved_image:
+					"111122223333.dkr.ecr.us-east-1.amazonaws.com/acme-api@sha256:deadbeef",
 			}),
 		]);
 	});
