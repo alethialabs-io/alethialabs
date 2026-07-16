@@ -84,7 +84,9 @@ fi
 if [ "$MODE" = "full" ]; then
   for n in $(echo "$board" | jq -r '.[].number'); do
     body="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.body // ""')"
-    deps="$(printf '%s' "$body" | sed -n 's/.*[Bb]locked-by:\([^\n]*\).*/\1/p' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)"
+    # `|| true`: grep exits 1 when an issue has no blocked-by; under `set -e` + pipefail that
+    # non-zero command substitution would abort the whole pass on the first unblocked issue.
+    deps="$(printf '%s' "$body" | sed -n 's/.*[Bb]locked-by:\([^\n]*\).*/\1/p' | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)"
     [ -z "$deps" ] && { have "$n" blocked && gh issue edit "$n" --remove-label blocked >/dev/null 2>&1 || true; continue; }
     open_dep=0
     for d in $deps; do
