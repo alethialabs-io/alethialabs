@@ -53,7 +53,6 @@ ZONES_PATTERN='(\bazs[[:space:]]*=[[:space:]]*data\.|length\(data\.[a-z_]*(avail
 # Reviewed exceptions — files that still carry the pattern, each with a tracking issue. DELETE the
 # entry when the referenced fix lands. (Mirrors infra/.trivyignore: an allowlist, never a silent skip.)
 ZONES_ALLOWLIST=(
-  "infra/templates/project/alibaba/network.tf" # tracked by #621 (needs alibaba real-apply to verify)
 )
 
 zone_hits="$(grep -rnE "$ZONES_PATTERN" "$ROOT" 2>/dev/null || true)"

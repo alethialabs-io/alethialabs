@@ -2,17 +2,20 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # Availability zones in the target region — the cluster spreads its vswitches
-# across up to three zones for HA.
+# across zones for HA. PLAN-OUT SAFETY (#621, the alibaba twin of the aws #608 flaw):
+# under the runner's keyless RAM-OIDC provider, credentials resolve only at APPLY, so
+# this data source is UNKNOWN at plan. Its ids may feed resource ATTRIBUTES (resolved at
+# apply) but must never feed a count/for_each — the vswitch count below is the static
+# `vswitch_count`, and zone assignment wraps via element() inside modules/network.
 data "alicloud_zones" "available" {
   available_resource_creation = "VSwitch"
 }
 
 locals {
-  zone_ids = slice(
-    data.alicloud_zones.available.zones[*].id,
-    0,
-    min(3, length(data.alicloud_zones.available.zones)),
-  )
+  # Discovered zone ids — VALUES only (apply-resolved). Consumers (kvstore zone pins,
+  # the network module's zone assignment) may reference them as attributes; nothing may
+  # derive a count/for_each from them (#621 — the plan-out-safety guard enforces this).
+  zone_ids = data.alicloud_zones.available.zones[*].id
 }
 
 module "network" {
@@ -22,7 +25,9 @@ module "network" {
   vpc_name       = local.vpc_name
   network_cidr   = var.network_cidr
   vswitch_prefix = local.vswitch_prefix
-  zone_ids       = local.zone_ids
+  # Discovered zone IDS (values, apply-resolved); the COUNT stays plan-known.
+  zone_ids      = local.zone_ids
+  vswitch_count = var.vswitch_count
 
   single_cloud_nat = var.single_cloud_nat
 
