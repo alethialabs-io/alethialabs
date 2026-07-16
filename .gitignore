@@ -81,3 +81,7 @@ apps/runner/argocd-templates/
 apps/console/playwright-report/
 apps/console/test-results/
 apps/console/e2e/.auth/
+
+# packages/core/build is a Go SOURCE package (the W2 image-build renderer), not build output —
+# un-ignore it so the `build` rule above (meant for build artifacts) does not shadow it.
+!packages/core/build/
