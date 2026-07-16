@@ -1227,6 +1227,85 @@ export async function planProject(
 	return result;
 }
 
+/** True when a frozen config snapshot carries at least one repo-sourced service — a W2
+ * build input (the in-cluster kaniko build turns it into a pushed image). */
+function hasRepoSourcedServices(configSnapshot: {
+	services?: { source?: { kind?: string } | null }[];
+}): boolean {
+	return (configSnapshot.services ?? []).some((s) => s?.source?.kind === "repo");
+}
+
+/**
+ * Queue a BUILD job (W2 image build & push): kaniko builds every repo-sourced service's
+ * image IN the environment's own cluster and pushes it to the provisioned registry via
+ * the build-SA's IRSA (keyless). On SUCCESS the job-status route persists each digest to
+ * project_services.resolved_image and chains the app DEPLOY (builds.ts), which renders
+ * the services with real images. The build runs in-cluster, so it only queues off an
+ * ACTIVE (provisioned) environment.
+ */
+export async function buildProject(
+	projectId: string,
+	environmentId?: string | null,
+	runnerId?: string | null,
+) {
+	const actor = await authorize("deploy", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
+	await assertUsageAllowed(actor.orgId);
+	const owner = actor.userId;
+	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		projectId,
+		environmentId,
+		"deploy",
+	);
+
+	if (!hasRepoSourcedServices(configSnapshot))
+		throw new Error(
+			"Nothing to build — this environment has no repo-sourced services.",
+		);
+	if (environment.status !== "ACTIVE")
+		throw new Error(
+			"Builds run in the environment's own cluster — provision the infrastructure first.",
+		);
+
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				project_id: projectId,
+				environment_id: environment.id,
+				cloud_identity_id: identity.id,
+				job_type: "BUILD",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				// New trace root for this build operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
+				...(runnerId ? { assigned_runner_id: runnerId } : {}),
+			})
+			.returning({ id: jobs.id });
+
+		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
+
+		await tx.insert(auditLog).values({
+			project_id: projectId,
+			user_id: owner,
+			action: "PROVISIONED",
+			changes: { job_id: job.id, environment_id: environment.id, job_type: "BUILD" },
+		});
+
+		return { jobId: job.id };
+	});
+
+	notifyScaler();
+	return result;
+}
+
 export async function provisionProject(
 	projectId: string,
 	planJobId?: string,
@@ -1242,6 +1321,52 @@ export async function provisionProject(
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, projectId, environmentId, "deploy");
 	assertIacSourceQueueable(iacSource, "deploy");
+
+	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
+	// services queues the BUILD first — the status route persists the digests and chains
+	// the DEPLOY (builds.ts), so the deploy renders real images instead of skipping
+	// unbuilt services. First-time provisioning (infra not up) deploys infra directly —
+	// the in-cluster build has nowhere to run until the cluster exists. A gated
+	// plan→apply (planJobId) never reroutes: it must apply exactly the reviewed plan.
+	if (
+		!planJobId &&
+		environment.status === "ACTIVE" &&
+		hasRepoSourcedServices(configSnapshot)
+	) {
+		const result = await withOwnerScope(owner, async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values({
+					user_id: owner,
+					project_id: projectId,
+					environment_id: environment.id,
+					cloud_identity_id: identity.id,
+					job_type: "BUILD",
+					config_snapshot: configSnapshot,
+					status: "QUEUED",
+					traceparent: newTraceparent(),
+					...(runnerId ? { assigned_runner_id: runnerId } : {}),
+				})
+				.returning({ id: jobs.id });
+
+			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+				orgId: actor.orgId,
+				projectId,
+			});
+
+			await tx.insert(auditLog).values({
+				project_id: projectId,
+				user_id: owner,
+				action: "PROVISIONED",
+				changes: { job_id: job.id, environment_id: environment.id, job_type: "BUILD" },
+			});
+
+			return { jobId: job.id, jobType: "BUILD" as const };
+		});
+
+		notifyScaler();
+		return result;
+	}
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
