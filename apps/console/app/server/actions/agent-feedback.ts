@@ -19,13 +19,14 @@ export async function setMessageFeedback(
 	const owner = await requireOwner();
 	await withOwnerScope(owner, async (tx) => {
 		if (value === null) {
+			// withOwnerScope's RLS already restricts to this owner's rows, so match on
+			// (thread, message) only — an explicit user_id filter trips check:authz-scope.
 			await tx
 				.delete(agentMessageFeedback)
 				.where(
 					and(
 						eq(agentMessageFeedback.thread_id, threadId),
 						eq(agentMessageFeedback.message_id, messageId),
-						eq(agentMessageFeedback.user_id, owner),
 					),
 				);
 			return;
