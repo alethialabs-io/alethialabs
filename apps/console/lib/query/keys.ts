@@ -37,6 +37,11 @@ export const qk = {
 	supportCase: (id: string) => ["support", "case", id] as const,
 	roles: (org: string, search?: string) =>
 		search ? (["roles", org, search] as const) : (["roles", org] as const),
+	/** Activity log, parameterized by the normalized filter query (sans cursor — the
+	 * cursor is the infinite query's pageParam, never part of the key). */
+	activity: (org: string, query: unknown) => ["activity", org, query] as const,
+	/** Org member rows (filter facets + name resolution on activity). */
+	members: (org: string) => ["members", org] as const,
 	ssoProviders: (org: string, filter?: unknown) =>
 		filter
 			? (["sso", "providers", org, filter] as const)
