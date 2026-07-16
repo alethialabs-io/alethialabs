@@ -286,10 +286,13 @@ func TestFromServices_ResolvesBindings(t *testing.T) {
 		}
 	}
 
-	// Credential facets → secretKeyRef into the shared-contract Secret; VALUES never inlined.
+	// Credential facets → secretKeyRef into the Secret the ExternalSecret lane materializes, named
+	// by the SHARED BindingSecretName (externalsecret.go) so the workload reads exactly that Secret.
+	// (BindingSecretName itself is tested in externalsecret_test.go — the single source of truth.)
+	secretName := BindingSecretName("api", types.ServiceBindingTarget{Kind: "database", Name: "orders-db"})
 	wantSecret := []AppSecretEnv{
-		{Env: "DATABASE_USER", SecretName: BindingSecretName("database", "orders-db"), SecretKey: "username"},
-		{Env: "DATABASE_PASSWORD", SecretName: BindingSecretName("database", "orders-db"), SecretKey: "password"},
+		{Env: "DATABASE_USER", SecretName: secretName, SecretKey: "username"},
+		{Env: "DATABASE_PASSWORD", SecretName: secretName, SecretKey: "password"},
 	}
 	if len(a.SecretEnv) != len(wantSecret) {
 		t.Fatalf("secretEnv = %+v, want %+v", a.SecretEnv, wantSecret)
@@ -298,23 +301,6 @@ func TestFromServices_ResolvesBindings(t *testing.T) {
 		if a.SecretEnv[i] != s {
 			t.Errorf("secretEnv[%d] = %+v, want %+v", i, a.SecretEnv[i], s)
 		}
-	}
-}
-
-// TestBindingSecretName pins the render↔ExternalSecret (#618) contract: a deterministic, DNS-1123
-// Secret name both lanes derive from {kind, target}. If this changes, #618 must change in lockstep.
-func TestBindingSecretName(t *testing.T) {
-	if got := BindingSecretName("database", "orders-db"); got != "alethia-bind-database-orders-db" {
-		t.Errorf("BindingSecretName = %q", got)
-	}
-	// Name is sanitized to DNS-1123 (a Secret name must be) and is stable for the same input.
-	a := BindingSecretName("cache", "My Cache")
-	b := BindingSecretName("cache", "My Cache")
-	if a != b {
-		t.Errorf("not deterministic: %q vs %q", a, b)
-	}
-	if strings.ContainsAny(a, " _") || a != strings.ToLower(a) {
-		t.Errorf("not DNS-1123-safe: %q", a)
 	}
 }
 
