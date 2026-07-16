@@ -1461,6 +1461,21 @@ export async function deleteProject(projectId: string) {
 // Duplicate for another provider
 // ============================================================
 
+// The workload-type union the service form fragment accepts (deployment | job | cronjob | statefulset).
+type ServiceWorkloadType = ProjectFormData["services"][number]["type"];
+
+// The DB stores these as free `text` while the form fragments type them as narrow enums. Narrow with a
+// CHECKED fallback (no cast — TS narrows each branch to the literal union) so a stray DB value can't reach
+// the form as an unvalidated string, which is exactly the looseness the old `as ProjectFormData` cast hid.
+// TODO(#593): make the underlying columns pgEnum (projectServices.type + the project's environment_stage
+// source) so this narrowing becomes unnecessary.
+function toEnvironmentStage(s: string): EnvironmentStage {
+	return s === "staging" || s === "production" ? s : "development";
+}
+function toServiceWorkloadType(s: string): ServiceWorkloadType {
+	return s === "job" || s === "cronjob" || s === "statefulset" ? s : "deployment";
+}
+
 /** Converts a project's DB representation to ProjectFormData for duplication / pre-populating forms. */
 export async function getProjectAsFormData(
 	projectId: string,
@@ -1486,7 +1501,7 @@ export async function getProjectAsFormData(
 	const formData: ProjectFormData = {
 		project: {
 			project_name: source.project.project_name,
-			environment_stage: source.project.environment_stage,
+			environment_stage: toEnvironmentStage(source.project.environment_stage),
 			region: source.project.region,
 			cloud_identity_id: source.project.cloud_identity_id ?? "",
 			iac_version: source.project.iac_version,
@@ -1609,7 +1624,7 @@ export async function getProjectAsFormData(
 		})),
 		services: source.components.services.map((s) => ({
 			name: s.name,
-			type: s.type,
+			type: toServiceWorkloadType(s.type),
 			source: s.source,
 			build: s.build ?? undefined,
 			env: s.env,
@@ -1618,7 +1633,7 @@ export async function getProjectAsFormData(
 			resources: s.resources ?? undefined,
 			probe: s.probe ?? undefined,
 		})),
-	} as ProjectFormData;
+	};
 
 	return { formData, provider };
 }
