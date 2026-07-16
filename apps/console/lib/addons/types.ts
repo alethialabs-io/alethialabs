@@ -7,7 +7,7 @@
 // console resolves an enabled add-on into a fully-resolved install spec (chart coords +
 // merged Helm values + mode) that rides the DEPLOY job's config snapshot to the runner.
 
-import type { z } from "zod";
+import { z } from "zod";
 
 /** Day-2 categories an add-on belongs to (drives grouping in the marketplace UI). */
 export type AddOnCategory =
@@ -42,17 +42,73 @@ export type AddOnIcon =
 /** A capability an add-on expects the environment to provide (informational gating). */
 export type AddOnRequirement = "ingress" | "domain" | "storage";
 
+/** The kind of a configurable add-on knob. `enum` = a fixed choice (carries `options`); `secret`
+ * = a credential persisted encrypted-at-rest (EncryptedSecret), never plaintext; `nested` = a
+ * one-level group of scalar sub-fields (e.g. `resources.requests.{cpu,memory}`). */
+export type AddOnFieldType =
+	| "number"
+	| "boolean"
+	| "string"
+	| "enum"
+	| "secret"
+	| "nested";
+
 /** A serializable descriptor for one configurable knob — drives the configure form on the
- * client (the Zod `configSchema` still validates server-side; this mirrors its fields). */
+ * client (the Zod `configSchema` still validates server-side; this mirrors its fields). Validate a
+ * descriptor with `addOnFieldSchema` (W4 adds the descriptor↔schema consistency guard). */
 export interface AddOnField {
 	key: string;
 	label: string;
-	type: "number" | "boolean" | "string";
-	default: number | boolean | string;
+	type: AddOnFieldType;
+	/** Default for a scalar field. Omitted for `secret` (write-only) and `nested` (its children
+	 * carry their own defaults). */
+	default?: number | boolean | string;
 	help?: string;
 	min?: number;
 	max?: number;
+	/** Fixed choices for `type: "enum"` — the `value` is stored, the `label` is shown. */
+	options?: { value: string; label: string }[];
+	/** Child descriptors for `type: "nested"` — ONE level only (children must be scalar). */
+	fields?: AddOnField[];
+	/** Convenience flag equal to `type === "secret"` — persisted encrypted-at-rest, never plaintext. */
+	secret?: boolean;
 }
+
+const addOnFieldOption = z.object({ value: z.string(), label: z.string() });
+
+/** Fields common to every descriptor kind. */
+const addOnFieldBase = {
+	key: z.string().min(1),
+	label: z.string().min(1),
+	help: z.string().optional(),
+	min: z.number().optional(),
+	max: z.number().optional(),
+};
+
+/** A scalar (non-nested) descriptor. An `enum` must carry non-empty `options`. */
+const addOnScalarFieldSchema = z
+	.object({
+		...addOnFieldBase,
+		type: z.enum(["number", "boolean", "string", "enum", "secret"]),
+		default: z.union([z.number(), z.boolean(), z.string()]).optional(),
+		options: z.array(addOnFieldOption).optional(),
+		secret: z.boolean().optional(),
+	})
+	.refine((f) => f.type !== "enum" || (f.options?.length ?? 0) > 0, {
+		message: "an enum field requires non-empty options",
+		path: ["options"],
+	});
+
+/** Validates one `AddOnField` descriptor: a scalar kind, or a one-level `nested` group whose
+ * children are scalars (no deeper recursion — a deliberate W4 constraint). */
+export const addOnFieldSchema = z.union([
+	addOnScalarFieldSchema,
+	z.object({
+		...addOnFieldBase,
+		type: z.literal("nested"),
+		fields: z.array(addOnScalarFieldSchema).min(1),
+	}),
+]);
 
 /**
  * A catalog entry: a curated OSS Helm chart plus the small set of user-tunable knobs the
