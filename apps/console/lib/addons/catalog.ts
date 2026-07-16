@@ -79,14 +79,20 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			retentionDays: z.coerce.number().int().min(1).max(365).default(15),
 			/** Persistent volume size for Prometheus (GiB). */
 			storageGb: z.coerce.number().int().min(5).max(1000).default(20),
+			/** How often Prometheus scrapes targets. */
+			scrapeInterval: z.enum(["15s", "30s", "60s"]).default("30s"),
 			/** Bundle Grafana dashboards. */
 			grafana: z.boolean().default(true),
+			/** Deploy Alertmanager alongside Prometheus. */
+			alertmanager: z.boolean().default(true),
 		}),
 		toValues: (c) => ({
 			grafana: { enabled: c.grafana },
+			alertmanager: { enabled: c.alertmanager },
 			prometheus: {
 				prometheusSpec: {
 					retention: `${c.retentionDays}d`,
+					scrapeInterval: c.scrapeInterval,
 					storageSpec: {
 						volumeClaimTemplate: {
 							spec: {
@@ -115,8 +121,25 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				max: 1000,
 			},
 			{
+				key: "scrapeInterval",
+				label: "Scrape interval",
+				type: "enum",
+				default: "30s",
+				options: [
+					{ value: "15s", label: "15 seconds" },
+					{ value: "30s", label: "30 seconds" },
+					{ value: "60s", label: "60 seconds" },
+				],
+			},
+			{
 				key: "grafana",
 				label: "Bundle Grafana dashboards",
+				type: "boolean",
+				default: true,
+			},
+			{
+				key: "alertmanager",
+				label: "Enable Alertmanager",
 				type: "boolean",
 				default: true,
 			},
@@ -162,6 +185,8 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		configSchema: z.object({
 			/** Log retention in days (0 = keep forever). */
 			retentionDays: z.coerce.number().int().min(0).max(365).default(14),
+			/** Persistent volume size for the single-binary store (GiB). */
+			storageGb: z.coerce.number().int().min(5).max(1000).default(10),
 		}),
 		toValues: (c) => ({
 			loki: {
@@ -169,6 +194,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					retention_period: c.retentionDays > 0 ? `${c.retentionDays * 24}h` : "0s",
 				},
 			},
+			singleBinary: { persistence: { size: `${c.storageGb}Gi` } },
 		}),
 		fields: [
 			{
@@ -178,6 +204,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				default: 14,
 				min: 0,
 				max: 365,
+			},
+			{
+				key: "storageGb",
+				label: "Log storage (GiB)",
+				type: "number",
+				default: 10,
+				min: 5,
+				max: 1000,
 			},
 		],
 		syncWave: 3,
@@ -263,8 +297,25 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		namespace: "cert-manager",
 		// Install the CRDs with the chart so ClusterIssuers/Certificates work out of the box.
 		defaultValues: { crds: { enabled: true } },
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Controller replicas (raise for HA). */
+			replicas: z.coerce.number().int().min(1).max(5).default(1),
+			/** Expose a Prometheus ServiceMonitor for cert-manager metrics. */
+			serviceMonitor: z.boolean().default(false),
+		}),
+		toValues: (c) => ({
+			replicaCount: c.replicas,
+			prometheus: { enabled: true, servicemonitor: { enabled: c.serviceMonitor } },
+		}),
+		fields: [
+			{ key: "replicas", label: "Controller replicas", type: "number", default: 1, min: 1, max: 5 },
+			{
+				key: "serviceMonitor",
+				label: "Prometheus ServiceMonitor",
+				type: "boolean",
+				default: false,
+			},
+		],
 		syncWave: 1,
 	}),
 	defineAddOn({
@@ -280,8 +331,36 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "ingress-nginx",
 		version: "4.11.2",
 		namespace: "ingress-nginx",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Controller replicas (raise for HA). */
+			replicas: z.coerce.number().int().min(1).max(10).default(1),
+			/** How the controller is exposed. LoadBalancer needs a cloud LB; NodePort/ClusterIP don't. */
+			serviceType: z.enum(["LoadBalancer", "NodePort", "ClusterIP"]).default("LoadBalancer"),
+			/** Expose Prometheus metrics for the controller. */
+			metrics: z.boolean().default(false),
+		}),
+		toValues: (c) => ({
+			controller: {
+				replicaCount: c.replicas,
+				service: { type: c.serviceType },
+				metrics: { enabled: c.metrics },
+			},
+		}),
+		fields: [
+			{ key: "replicas", label: "Controller replicas", type: "number", default: 1, min: 1, max: 10 },
+			{
+				key: "serviceType",
+				label: "Service type",
+				type: "enum",
+				default: "LoadBalancer",
+				options: [
+					{ value: "LoadBalancer", label: "LoadBalancer" },
+					{ value: "NodePort", label: "NodePort" },
+					{ value: "ClusterIP", label: "ClusterIP" },
+				],
+			},
+			{ key: "metrics", label: "Enable metrics", type: "boolean", default: false },
+		],
 		syncWave: 1,
 		requires: ["ingress"],
 	}),
@@ -291,7 +370,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		category: "backup",
 		icon: "Archive",
 		summary:
-			"Cluster backup + restore + migration. Requires a cloud object-store backup location — set it under Advanced (raw values).",
+			"Cluster backup + restore + migration to an object-store backup location — set the provider, bucket, and region below.",
 		docsUrl: "https://velero.io/docs/latest/",
 		license: "Apache-2.0",
 		chartRepo: "https://vmware-tanzu.github.io/helm-charts",
@@ -299,8 +378,54 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		version: "7.2.1",
 		namespace: "velero",
 		defaultValues: { snapshotsEnabled: true },
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Object-store provider for the backup location (the velero plugin's provider name). */
+			provider: z.enum(["aws", "gcp", "azure"]).default("aws"),
+			/** Backup bucket name. Empty = no backup location configured (velero installs unconfigured). */
+			bucket: z.string().default(""),
+			/** Bucket region (AWS/S3-compatible). */
+			region: z.string().default(""),
+			/** Also back up file volumes (deploys the node-agent DaemonSet). */
+			deployNodeAgent: z.boolean().default(false),
+			/** Take cloud volume snapshots alongside object-store backups. */
+			snapshotsEnabled: z.boolean().default(true),
+		}),
+		toValues: (c) => ({
+			snapshotsEnabled: c.snapshotsEnabled,
+			deployNodeAgent: c.deployNodeAgent,
+			...(c.bucket
+				? {
+						configuration: {
+							backupStorageLocation: [
+								{
+									name: "default",
+									provider: c.provider,
+									bucket: c.bucket,
+									default: true,
+									...(c.region ? { config: { region: c.region } } : {}),
+								},
+							],
+						},
+					}
+				: {}),
+		}),
+		fields: [
+			{
+				key: "provider",
+				label: "Backup provider",
+				type: "enum",
+				default: "aws",
+				options: [
+					{ value: "aws", label: "AWS S3 / S3-compatible" },
+					{ value: "gcp", label: "Google Cloud Storage" },
+					{ value: "azure", label: "Azure Blob" },
+				],
+			},
+			{ key: "bucket", label: "Backup bucket", type: "string", default: "" },
+			{ key: "region", label: "Region (AWS/S3)", type: "string", default: "" },
+			{ key: "deployNodeAgent", label: "Back up file volumes (node-agent)", type: "boolean", default: false },
+			{ key: "snapshotsEnabled", label: "Volume snapshots", type: "boolean", default: true },
+		],
 		syncWave: 3,
 		requires: ["storage"],
 	}),
@@ -317,8 +442,25 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "kyverno",
 		version: "3.2.6",
 		namespace: "kyverno",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Admission-controller replicas (≥3 recommended for HA / production). */
+			replicas: z.coerce.number().int().min(1).max(5).default(3),
+			/** Run the background controller (scans + generates on existing resources). */
+			backgroundScan: z.boolean().default(true),
+		}),
+		toValues: (c) => ({
+			admissionController: { replicas: c.replicas },
+			backgroundController: { enabled: c.backgroundScan },
+		}),
+		fields: [
+			{ key: "replicas", label: "Admission replicas", type: "number", default: 3, min: 1, max: 5 },
+			{
+				key: "backgroundScan",
+				label: "Background controller",
+				type: "boolean",
+				default: true,
+			},
+		],
 		syncWave: 1,
 	}),
 	defineAddOn({
@@ -334,8 +476,20 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "tempo",
 		version: "1.10.3",
 		namespace: "monitoring",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** How long traces are retained. */
+			retentionHours: z.coerce.number().int().min(1).max(8760).default(24),
+			/** Persistent volume size for the trace store (GiB). */
+			storageGb: z.coerce.number().int().min(5).max(1000).default(10),
+		}),
+		toValues: (c) => ({
+			tempo: { retention: `${c.retentionHours}h` },
+			persistence: { enabled: true, size: `${c.storageGb}Gi` },
+		}),
+		fields: [
+			{ key: "retentionHours", label: "Trace retention (hours)", type: "number", default: 24, min: 1, max: 8760 },
+			{ key: "storageGb", label: "Trace storage (GiB)", type: "number", default: 10, min: 5, max: 1000 },
+		],
 		syncWave: 3,
 		requires: ["storage"],
 	}),
@@ -370,8 +524,30 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				},
 			},
 		},
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Deployment topology: one Deployment, a per-node DaemonSet, or a StatefulSet. */
+			mode: z.enum(["deployment", "daemonset", "statefulset"]).default("deployment"),
+			/** Replicas (deployment/statefulset modes; ignored for daemonset). */
+			replicas: z.coerce.number().int().min(1).max(10).default(1),
+		}),
+		toValues: (c) => ({
+			mode: c.mode,
+			replicaCount: c.replicas,
+		}),
+		fields: [
+			{
+				key: "mode",
+				label: "Mode",
+				type: "enum",
+				default: "deployment",
+				options: [
+					{ value: "deployment", label: "Deployment" },
+					{ value: "daemonset", label: "DaemonSet (per node)" },
+					{ value: "statefulset", label: "StatefulSet" },
+				],
+			},
+			{ key: "replicas", label: "Replicas", type: "number", default: 1, min: 1, max: 10 },
+		],
 		syncWave: 3,
 	}),
 	defineAddOn({
@@ -387,8 +563,20 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "goldilocks",
 		version: "9.0.0",
 		namespace: "goldilocks",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Install the Vertical Pod Autoscaler dependency Goldilocks needs for recommendations. */
+			vpa: z.boolean().default(false),
+			/** Dashboard replicas. */
+			dashboardReplicas: z.coerce.number().int().min(1).max(5).default(2),
+		}),
+		toValues: (c) => ({
+			vpa: { enabled: c.vpa },
+			dashboard: { replicaCount: c.dashboardReplicas },
+		}),
+		fields: [
+			{ key: "vpa", label: "Install VPA", type: "boolean", default: false },
+			{ key: "dashboardReplicas", label: "Dashboard replicas", type: "number", default: 2, min: 1, max: 5 },
+		],
 		syncWave: 4,
 	}),
 	defineAddOn({
@@ -404,8 +592,35 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "falco",
 		version: "4.9.0",
 		namespace: "falco",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Syscall capture driver. `auto` picks the best available for the kernel. */
+			driver: z.enum(["auto", "modern_ebpf", "ebpf", "kmod"]).default("auto"),
+			/** Emit events as JSON (recommended for log pipelines). */
+			jsonOutput: z.boolean().default(false),
+			/** Deploy Falcosidekick to fan out alerts to external destinations. */
+			falcosidekick: z.boolean().default(false),
+		}),
+		toValues: (c) => ({
+			driver: { kind: c.driver },
+			falco: { json_output: c.jsonOutput },
+			falcosidekick: { enabled: c.falcosidekick },
+		}),
+		fields: [
+			{
+				key: "driver",
+				label: "Driver",
+				type: "enum",
+				default: "auto",
+				options: [
+					{ value: "auto", label: "Auto" },
+					{ value: "modern_ebpf", label: "Modern eBPF" },
+					{ value: "ebpf", label: "eBPF" },
+					{ value: "kmod", label: "Kernel module" },
+				],
+			},
+			{ key: "jsonOutput", label: "JSON output", type: "boolean", default: false },
+			{ key: "falcosidekick", label: "Enable Falcosidekick", type: "boolean", default: false },
+		],
 		syncWave: 2,
 	}),
 	defineAddOn({
@@ -421,8 +636,23 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "sealed-secrets",
 		version: "2.16.1",
 		namespace: "kube-system",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Sealing-key renewal period in days (0 = never renew). */
+			keyRenewalDays: z.coerce.number().int().min(0).max(365).default(30),
+		}),
+		toValues: (c) => ({
+			keyrenewperiod: c.keyRenewalDays > 0 ? `${c.keyRenewalDays * 24}h` : "0",
+		}),
+		fields: [
+			{
+				key: "keyRenewalDays",
+				label: "Key renewal (days, 0 = never)",
+				type: "number",
+				default: 30,
+				min: 0,
+				max: 365,
+			},
+		],
 		syncWave: 1,
 	}),
 	defineAddOn({
@@ -438,8 +668,22 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "reloader",
 		version: "1.1.0",
 		namespace: "reloader",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Watch all namespaces (off = only namespaces/resources with the reloader annotation). */
+			watchGlobally: z.boolean().default(true),
+			/** Reloader replicas. */
+			replicas: z.coerce.number().int().min(1).max(3).default(1),
+		}),
+		toValues: (c) => ({
+			reloader: {
+				watchGlobally: c.watchGlobally,
+				deployment: { replicas: c.replicas },
+			},
+		}),
+		fields: [
+			{ key: "watchGlobally", label: "Watch all namespaces", type: "boolean", default: true },
+			{ key: "replicas", label: "Replicas", type: "number", default: 1, min: 1, max: 3 },
+		],
 		syncWave: 1,
 	}),
 	defineAddOn({
@@ -455,8 +699,16 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "keda",
 		version: "2.15.1",
 		namespace: "keda",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Operator replicas (raise for HA). */
+			replicas: z.coerce.number().int().min(1).max(3).default(1),
+		}),
+		toValues: (c) => ({
+			operator: { replicaCount: c.replicas },
+		}),
+		fields: [
+			{ key: "replicas", label: "Operator replicas", type: "number", default: 1, min: 1, max: 3 },
+		],
 		syncWave: 2,
 	}),
 	defineAddOn({
@@ -472,8 +724,20 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "argo-rollouts",
 		version: "2.37.7",
 		namespace: "argo-rollouts",
-		configSchema: z.object({}),
-		fields: [],
+		configSchema: z.object({
+			/** Controller replicas (raise for HA). */
+			replicas: z.coerce.number().int().min(1).max(5).default(2),
+			/** Deploy the Argo Rollouts dashboard. */
+			dashboard: z.boolean().default(false),
+		}),
+		toValues: (c) => ({
+			controller: { replicas: c.replicas },
+			dashboard: { enabled: c.dashboard },
+		}),
+		fields: [
+			{ key: "replicas", label: "Controller replicas", type: "number", default: 2, min: 1, max: 5 },
+			{ key: "dashboard", label: "Enable dashboard", type: "boolean", default: false },
+		],
 		syncWave: 2,
 	}),
 	// ── OSS parity add-ons: S3/registry/DNS equivalents so a compute-only cloud (Hetzner)
@@ -534,14 +798,31 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		configSchema: z.object({
 			/** Persistent volume size for the registry store (GiB). */
 			storageGb: z.coerce.number().int().min(10).max(2000).default(50),
+			/** How the registry is exposed outside the cluster. */
+			exposeType: z
+				.enum(["ingress", "clusterIP", "nodePort", "loadBalancer"])
+				.default("ingress"),
 		}),
 		toValues: (c) => ({
 			persistence: {
 				persistentVolumeClaim: { registry: { size: `${c.storageGb}Gi` } },
 			},
+			expose: { type: c.exposeType },
 		}),
 		fields: [
 			{ key: "storageGb", label: "Registry storage (GiB)", type: "number", default: 50, min: 10, max: 2000 },
+			{
+				key: "exposeType",
+				label: "Expose type",
+				type: "enum",
+				default: "ingress",
+				options: [
+					{ value: "ingress", label: "Ingress" },
+					{ value: "clusterIP", label: "ClusterIP" },
+					{ value: "nodePort", label: "NodePort" },
+					{ value: "loadBalancer", label: "LoadBalancer" },
+				],
+			},
 		],
 		syncWave: 2,
 		requires: ["storage"],
