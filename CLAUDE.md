@@ -464,7 +464,9 @@ config-file `misconfiguration.exclude` key is a silent no-op), wired via `TRIVY_
 ## Working discipline (every instance, at kickoff)
 
 Reach for the right thinking tool by default — a skill only fires if you invoke it, so this is the rule that
-makes the habit stick. Skills live in `.claude/skills/`.
+makes the habit stick. Skills live in `.claude/skills/` and are **synced from the source-of-truth repo
+`alethialabs-io/skills`** (edit them there; `bash scripts/sync-skills.sh` pulls updates) — see
+`.claude/skills/README.md`.
 
 - **Big or ambiguous task** (spans more than one session, or the approach/architecture isn't obvious) →
   **wayfind**: decompose it onto the coordination board (`.claude/COORDINATION.md`), interface-first, before
