@@ -56,7 +56,10 @@ export type FieldType =
 	| "list"
 	// A typed row editor over a JSONB array of objects. First use: `topic.subscriptions`, a column
 	// that has existed since the baseline migration with no way at all to edit it in the product.
-	| "subresource";
+	| "subresource"
+	// A service's edges to its backing infrastructure (`service.bindings`). Unlike `subresource`,
+	// each row nests a variable-length `inject[]`, so it has its own editor (bindings-field.tsx).
+	| "bindings";
 
 /** A row editor over a JSONB array of objects. */
 export interface SubresourceSpec {
@@ -441,6 +444,22 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 								{ key: "value", type: "text", label: "Value", full: true },
 							],
 						},
+					},
+				],
+			},
+			{
+				id: "bindings",
+				title: "Bindings",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "bindings",
+						type: "bindings",
+						label: "Backing infrastructure",
+						description:
+							"Connect this service to a resource on the canvas. Alethia injects its endpoint and credentials at deploy — keyless.",
+						get: (c) => c.bindings,
+						set: (v) => ({ bindings: v as NodeConfigMap["service"]["bindings"] }),
 					},
 				],
 			},
