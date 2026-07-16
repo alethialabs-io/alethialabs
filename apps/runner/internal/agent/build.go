@@ -5,7 +5,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/build"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
+	"github.com/alethialabs-io/alethialabs/packages/core/imagebuild"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -155,29 +154,28 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 		return "", fmt.Errorf("resolve HEAD of %s: %w", svc.Source.RepoURL, err)
 	}
 
-	kjob := build.RenderKanikoJob(build.KanikoBuildParams{
-		Service:             svc,
-		Namespace:           namespace,
-		ECRDestURL:          dest,
-		BuildServiceAccount: serviceAccount,
-		GitContext:          gitContextFor(svc.Source.RepoURL, sha),
-		GitSHA:              sha,
+	raw, err := imagebuild.RenderBuildJob(svc, imagebuild.Options{
+		Destination:    dest,
+		Tag:            sha,
+		GitContext:     gitContextFor(svc.Source.RepoURL, sha),
+		ServiceAccount: serviceAccount,
+		Namespace:      namespace,
 	})
-	raw, err := json.Marshal(kjob)
 	if err != nil {
-		return "", fmt.Errorf("marshal kaniko job: %w", err)
+		return "", fmt.Errorf("render kaniko job: %w", err)
 	}
+	jobName := imagebuild.JobName(svc)
 
 	fmt.Fprintf(stdout, "Scheduling in-cluster build of %s @ %s → %s\n", svc.Name, shortSHA12(sha), dest)
 	// Replace any prior build Job for this service+SHA (idempotent re-run), then apply.
-	_ = w.runKubectl(ctx, stderr, "delete", "job", kjob.Name, "-n", namespace, "--ignore-not-found=true", "--wait=true")
-	if err := w.kubectlApplyManifest(ctx, string(raw), stderr); err != nil {
+	_ = w.runKubectl(ctx, stderr, "delete", "job", jobName, "-n", namespace, "--ignore-not-found=true", "--wait=true")
+	if err := w.kubectlApplyManifest(ctx, raw, stderr); err != nil {
 		return "", fmt.Errorf("apply kaniko job: %w", err)
 	}
 
-	if err := w.waitForJob(ctx, kjob.Name, namespace, stdout, stderr); err != nil {
+	if err := w.waitForJob(ctx, jobName, namespace, stdout, stderr); err != nil {
 		// Surface the build log tail so the console shows WHY the Dockerfile failed.
-		if logs, lerr := w.kubectlOutput(ctx, "logs", "job/"+kjob.Name, "-n", namespace, "--tail=50"); lerr == nil && logs != "" {
+		if logs, lerr := w.kubectlOutput(ctx, "logs", "job/"+jobName, "-n", namespace, "--tail=50"); lerr == nil && logs != "" {
 			fmt.Fprintf(stderr, "--- kaniko log tail (%s) ---\n%s\n", svc.Name, logs)
 		}
 		return "", err
@@ -186,7 +184,7 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	// 5. Capture the pushed digest from the kaniko logs; fall back to the immutable
 	//    git-SHA tag (still a pinned, verify-passing reference) when the digest line is
 	//    absent — loudly, never silently.
-	logs, err := w.kubectlOutput(ctx, "logs", "job/"+kjob.Name, "-n", namespace, "--tail=-1")
+	logs, err := w.kubectlOutput(ctx, "logs", "job/"+jobName, "-n", namespace, "--tail=-1")
 	if err != nil {
 		return "", fmt.Errorf("read build logs for digest: %w", err)
 	}
