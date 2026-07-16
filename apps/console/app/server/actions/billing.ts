@@ -28,6 +28,8 @@ import {
 	AI_SESSION_WINDOW_MS,
 	type AiTier,
 	aiTierSpec,
+	effectiveAiTierSpec,
+	resolveAiPlan,
 	resolveAiTier,
 } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
@@ -64,7 +66,7 @@ import {
 	queryRunningJobs,
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
 	BillingPlan,
@@ -397,15 +399,40 @@ export interface AiUsageSummary {
 	 * config signal that crosses to the client (a plain boolean, never the price ids).
 	 */
 	paidTiersEnabled: boolean;
+	/** Admin org-wide weekly spend limit in credits (null = tier default). Reflected in weeklyBudget. */
+	orgWeeklyCapCredits: number | null;
+	/** Admin per-seat weekly spend limit in credits (null = tier default). */
+	perUserWeeklyCapCredits: number | null;
+	/** Whether the current actor may edit these spend limits (manage_billing). */
+	canManageCaps: boolean;
 }
 
 const AI_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
-	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as AiTier);
-	const spec = aiTierSpec(tier);
+	const plan = await resolveAiPlan(actor.orgId).catch(() => ({
+		tier: "ai_free" as AiTier,
+		hardCap: false,
+		orgWeeklyCapCredits: null,
+		perUserWeeklyCapCredits: null,
+	}));
+	// Budgets shown reflect any admin spend limits (min(tier, cap)).
+	const spec = effectiveAiTierSpec(aiTierSpec(plan.tier), plan);
 	const paidTiersEnabled = aiPaidTiersEnabled();
+
+	// Spend limits are an org-admin control — never offered in personal scope.
+	let canManageCaps = false;
+	if (actor.orgId !== actor.userId) {
+		canManageCaps = await authorizeQuiet("manage_billing", { type: "billing" })
+			.then(() => true)
+			.catch(() => false);
+	}
+	const capFields = {
+		orgWeeklyCapCredits: plan.orgWeeklyCapCredits,
+		perUserWeeklyCapCredits: plan.perUserWeeklyCapCredits,
+		canManageCaps,
+	};
 
 	const now = Date.now();
 	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
@@ -415,7 +442,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	if (actor.orgId === actor.userId) {
 		return {
 			enabled: spec.enabled,
-			tier,
+			tier: plan.tier,
 			sessionUsed: 0,
 			sessionBudget: spec.sessionCredits,
 			sessionResetAt: null,
@@ -424,6 +451,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 			weeklyResetAt,
 			purchasedBalance: 0,
 			paidTiersEnabled,
+			...capFields,
 		};
 	}
 
@@ -436,7 +464,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 		]);
 	return {
 		enabled: spec.enabled,
-		tier,
+		tier: plan.tier,
 		sessionUsed,
 		sessionBudget: spec.sessionCredits,
 		sessionResetAt: oldestInWindow
@@ -447,6 +475,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 		weeklyResetAt,
 		purchasedBalance: purchased,
 		paidTiersEnabled,
+		...capFields,
 	};
 }
 
@@ -459,6 +488,29 @@ export async function setUsageHardCap(enabled: boolean): Promise<void> {
 	await getServiceDb()
 		.update(organizationBilling)
 		.set({ usageHardCap: enabled, updatedAt: new Date() })
+		.where(eq(organizationBilling.organizationId, actor.orgId));
+}
+
+/**
+ * Set the org's admin AI-spend limits (credits/week) — Claude-Enterprise-style ceilings that
+ * only ever TIGHTEN the tier's caps (min(tier, limit)): an org-wide weekly cap and a per-seat
+ * weekly cap. Pass `null` to clear a limit (back to the tier default). Owner-gated. A no-op
+ * for an org with no billing row (implicitly free — its caps are already the floor).
+ */
+export async function setAiSpendCaps(
+	orgWeeklyCapCredits: number | null,
+	perUserWeeklyCapCredits: number | null,
+): Promise<void> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	const norm = (v: number | null): number | null =>
+		v == null || !Number.isFinite(v) || v < 0 ? null : Math.floor(v);
+	await getServiceDb()
+		.update(organizationBilling)
+		.set({
+			aiOrgWeeklyCapCredits: norm(orgWeeklyCapCredits),
+			aiPerUserWeeklyCapCredits: norm(perUserWeeklyCapCredits),
+			updatedAt: new Date(),
+		})
 		.where(eq(organizationBilling.organizationId, actor.orgId));
 }
 
