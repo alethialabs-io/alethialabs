@@ -9,7 +9,7 @@
 // "talk to us" note instead.
 
 import { CheckCircle2, KeyRound, Pencil, Plus, Trash2, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
 	deleteSsoProvider,
@@ -25,6 +25,7 @@ import { SettingsSearch } from "@/components/settings/settings-ui";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { legalUrl } from "@/lib/legal";
 import { useInvalidateSso, useSsoProvidersQuery } from "@/lib/query/use-sso-query";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -41,15 +42,6 @@ import { FacetFilter } from "@repo/ui/facet-filter";
 import { Spinner } from "@repo/ui/spinner";
 import { cn } from "@repo/ui/utils";
 import { ProviderSheet } from "./provider-sheet";
-
-function useDebounced<T>(value: T, delay = 250): T {
-	const [debounced, setDebounced] = useState(value);
-	useEffect(() => {
-		const t = setTimeout(() => setDebounced(value), delay);
-		return () => clearTimeout(t);
-	}, [value, delay]);
-	return debounced;
-}
 
 const TYPE_OPTIONS = [
 	{ value: "oidc", label: "OIDC" },
@@ -87,7 +79,7 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 	const invalidate = useInvalidateSso();
 
 	const [searchInput, setSearchInput] = useState("");
-	const search = useDebounced(searchInput.trim());
+	const search = useDebouncedValue(searchInput.trim());
 	const [types, setTypes] = useState<string[]>([]);
 	const [statuses, setStatuses] = useState<string[]>([]);
 	const [selectedId, setSelectedId] = useState<string | null>(null);

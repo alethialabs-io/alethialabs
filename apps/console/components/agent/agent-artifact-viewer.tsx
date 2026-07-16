@@ -4,6 +4,7 @@
 
 import { ChevronLeft, Loader2, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { ArtifactSharePopover } from "@/components/agent/artifact-share-popover";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { WidgetBody } from "@/components/agent/widgets/widget-card";
 import { Button } from "@repo/ui/button";
@@ -23,6 +24,7 @@ const ROW_H = 88;
 export function AgentArtifactViewer({
 	artifact,
 	hasActiveChat,
+	owned = true,
 	onBack,
 	onAddToChat,
 	onOpenInNewChat,
@@ -31,6 +33,8 @@ export function AgentArtifactViewer({
 	artifact: AgentArtifact;
 	/** Whether a conversation is open to add this to (otherwise that action is disabled). */
 	hasActiveChat: boolean;
+	/** False for an artifact shared to you by a teammate — view-only (no add/delete/share). */
+	owned?: boolean;
 	onBack: () => void;
 	onAddToChat: () => Promise<void>;
 	onOpenInNewChat: () => Promise<void>;
@@ -78,48 +82,57 @@ export function AgentArtifactViewer({
 				</span>
 
 				<div className="ml-auto flex items-center gap-1.5">
-					<Button
-						size="sm"
-						variant="outline"
-						className="gap-1.5 rounded-none"
-						disabled={!hasActiveChat || busy !== null}
-						title={
-							hasActiveChat
-								? "Add these widgets to the open conversation's grid"
-								: "Open a conversation first"
-						}
-						onClick={() => void run("add", onAddToChat)}
-					>
-						{busy === "add" ? (
-							<Loader2 className="h-3.5 w-3.5 animate-spin" />
-						) : (
-							<Plus className="h-3.5 w-3.5" />
-						)}
-						Add to this chat
-					</Button>
-					<Button
-						size="sm"
-						variant="outline"
-						className="gap-1.5 rounded-none"
-						disabled={busy !== null}
-						onClick={() => void run("new", onOpenInNewChat)}
-					>
-						{busy === "new" ? (
-							<Loader2 className="h-3.5 w-3.5 animate-spin" />
-						) : (
-							<MessageSquarePlus className="h-3.5 w-3.5" />
-						)}
-						Open in new chat
-					</Button>
-					<button
-						type="button"
-						aria-label={`Delete ${artifact.name}`}
-						disabled={busy !== null}
-						onClick={() => void run("delete", onDelete)}
-						className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-					>
-						<Trash2 className="h-4 w-4" />
-					</button>
+					{owned ? (
+						<>
+							<Button
+								size="sm"
+								variant="outline"
+								className="gap-1.5 rounded-none"
+								disabled={!hasActiveChat || busy !== null}
+								title={
+									hasActiveChat
+										? "Add these widgets to the open conversation's grid"
+										: "Open a conversation first"
+								}
+								onClick={() => void run("add", onAddToChat)}
+							>
+								{busy === "add" ? (
+									<Loader2 className="h-3.5 w-3.5 animate-spin" />
+								) : (
+									<Plus className="h-3.5 w-3.5" />
+								)}
+								Add to this chat
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								className="gap-1.5 rounded-none"
+								disabled={busy !== null}
+								onClick={() => void run("new", onOpenInNewChat)}
+							>
+								{busy === "new" ? (
+									<Loader2 className="h-3.5 w-3.5 animate-spin" />
+								) : (
+									<MessageSquarePlus className="h-3.5 w-3.5" />
+								)}
+								Open in new chat
+							</Button>
+							<ArtifactSharePopover artifactId={artifact.id} />
+							<button
+								type="button"
+								aria-label={`Delete ${artifact.name}`}
+								disabled={busy !== null}
+								onClick={() => void run("delete", onDelete)}
+								className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+							>
+								<Trash2 className="h-4 w-4" />
+							</button>
+						</>
+					) : (
+						<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+							Shared with you
+						</span>
+					)}
 				</div>
 			</div>
 

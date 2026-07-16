@@ -4,7 +4,8 @@
 // Render tests for the one data-driven canvas card. These are the proof that the registry's
 // `card.facts` actually reach the screen — a fact grid that typechecks but never paints is worth
 // nothing. Covers: the fact grid, cloud-honesty (a Hetzner database renders as CloudNativePG, not
-// a managed service), the unset-value dash, and LOD (the compact tier drops to a single fact).
+// a managed service), the unset-value dash, and the dense tier (a card inside a container collapses
+// its facts to one `cost · fact` footer line).
 
 import { render, screen } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -65,11 +66,11 @@ function seedCanvas<K extends NodeKind>(
  * `env` seeds the environment's SERVER truth; omitted, the node falls back to design readiness —
  * which is exactly what happens in the create flow and before the first status fetch lands.
  */
-function renderCard(id: string, env?: Partial<EnvironmentStatus>) {
+function renderCard(id: string, env?: Partial<EnvironmentStatus>, dense?: boolean) {
 	return render(
 		<ReactFlowProvider>
 			<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...env }}>
-				<BaseNode id={id} />
+				<BaseNode id={id} dense={dense} />
 			</EnvironmentStatusProvider>
 		</ReactFlowProvider>,
 	);
@@ -126,6 +127,54 @@ describe("the canvas card renders its kind's facts", () => {
 
 		expect(screen.getByText("Partition key")).toBeInTheDocument();
 		expect(screen.getByText("—")).toBeInTheDocument();
+	});
+});
+
+describe("the dense tier — a card inside a container", () => {
+	it("collapses to the name + a `cost · primary fact` footer with a Drift chip", () => {
+		seedCanvas("database", "aws", {
+			name: "orders",
+			engine_family: "postgres",
+			engine_version: "16",
+			min_capacity: 0.5,
+			max_capacity: 4,
+			backup_retention_days: 7,
+		});
+		renderCard(
+			"node-under-test",
+			{
+				components: {
+					"database:orders": serverStatus("ACTIVE", {
+						monthlyCost: 61.32,
+						drift: [
+							{ address: "aws_db_instance.orders", type: "aws_db_instance", kind: "modified" },
+						],
+					}),
+				},
+			},
+			true,
+		);
+
+		expect(screen.getByText("orders")).toBeInTheDocument();
+		expect(screen.getByText("$61.32/mo")).toBeInTheDocument();
+		// The PRIMARY fact rides in the footer; the full grid (with its labels) is not rendered.
+		expect(screen.getByText("PostgreSQL 16")).toBeInTheDocument();
+		expect(screen.getByText("Drift")).toBeInTheDocument();
+		expect(screen.queryByText("Capacity")).not.toBeInTheDocument();
+		expect(screen.queryByText("Backups")).not.toBeInTheDocument();
+	});
+
+	it("shows no cost when the resource was never priced — an honest silence, not a fabricated $0", () => {
+		seedCanvas("database", "aws", {
+			name: "orders",
+			engine_family: "postgres",
+			engine_version: "16",
+		});
+		renderCard("node-under-test", {}, true);
+
+		expect(screen.getByText("PostgreSQL 16")).toBeInTheDocument();
+		expect(screen.queryByText(/\/mo/)).not.toBeInTheDocument();
+		expect(screen.queryByText("Drift")).not.toBeInTheDocument();
 	});
 });
 

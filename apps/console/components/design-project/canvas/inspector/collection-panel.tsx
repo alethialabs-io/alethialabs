@@ -48,13 +48,13 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	return (
 		<div className="flex h-full flex-col">
 			<div className="flex items-start gap-3 border-b border-border p-4">
-				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground">
+				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border text-muted-foreground">
 					<Icon className="h-4 w-4" />
 				</span>
 				<div className="min-w-0 flex-1 space-y-1">
 					<div className="flex flex-wrap items-center gap-2">
 						<span className="text-base font-semibold">{title}</span>
-						<span className="vx-eyebrow rounded border border-border px-1.5 py-0.5">
+						<span className="vx-eyebrow rounded-none border border-border px-1.5 py-0.5">
 							{members.length}
 						</span>
 					</div>

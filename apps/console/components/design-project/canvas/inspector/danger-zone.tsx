@@ -43,7 +43,7 @@ export function DangerZone({ node }: { node: CanvasNode }) {
 		<Collapsible
 			open={open}
 			onOpenChange={setOpen}
-			className="rounded-lg border border-destructive/30"
+			className="rounded-none border border-destructive/30"
 		>
 			<CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
 				<span className="flex items-center gap-2">

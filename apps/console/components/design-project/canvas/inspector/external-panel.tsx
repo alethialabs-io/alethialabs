@@ -52,7 +52,7 @@ export function ExternalPanel({ nodeId }: { nodeId: string }) {
 	return (
 		<div className="flex h-full flex-col">
 			<div className="flex items-start gap-3 border-b border-border p-4">
-				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-dashed text-muted-foreground">
+				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-dashed text-muted-foreground">
 					<Icon className="h-4 w-4" />
 				</span>
 				<div className="min-w-0 flex-1 space-y-1">

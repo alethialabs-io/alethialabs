@@ -16,6 +16,8 @@ import { BaseNode } from "./base-node";
  * The one kind that still has its own component is `chart` (chart-node.tsx): BYO charts are
  * persisted out-of-band and carry their own detach / rescan actions, so they aren't just a card.
  */
-export function ServiceNode({ id, selected }: NodeProps<CanvasNode>) {
-	return <BaseNode id={id} selected={selected} />;
+export function ServiceNode({ id, selected, data }: NodeProps<CanvasNode>) {
+	// `insideContainer` is set on the render node by canvas-flow when the card sits inside a container
+	// region — it drives the dense card treatment. Absent (e.g. an isolated card in a test) → full card.
+	return <BaseNode id={id} selected={selected} dense={data.insideContainer} />;
 }

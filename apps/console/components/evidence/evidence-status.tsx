@@ -32,6 +32,14 @@ import type {
 	EvidenceVerify,
 } from "@/lib/queries/evidence";
 import type { Tone } from "./evidence-derive";
+import { CLOUD_FILTER_VALUES } from "./evidence-query";
+
+const KNOWN_CLOUDS = new Set<string>(CLOUD_FILTER_VALUES);
+
+/** True when the provider string is a cloud we render a real logo for. */
+export function isKnownCloud(provider: string | null): provider is string {
+	return provider !== null && KNOWN_CLOUDS.has(provider);
+}
 
 /** Named icon keys the derive layer emits, mapped to lucide components here. */
 export type IconKey =
@@ -181,15 +189,15 @@ export function receiptMark(verify: EvidenceVerify | null): Mark {
 	return { iconKey: "file-minus", label: "Unsigned", tone: "unknown" };
 }
 
-/** Stage chip styling — production carries the most weight. */
-export function stageChipClass(stage: string): string {
+/** Stage text weight — production carries the most ink (plain mono text, no chip). */
+export function stageTextClass(stage: string): string {
 	switch (stage) {
 		case "production":
-			return "border-border-strong text-text-secondary";
+			return "text-text-secondary";
 		case "staging":
-			return "border-border text-text-tertiary";
+			return "text-text-tertiary";
 		default:
-			return "border-border-faint text-text-disabled";
+			return "text-text-disabled";
 	}
 }
 

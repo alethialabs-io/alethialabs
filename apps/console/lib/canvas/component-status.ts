@@ -79,10 +79,34 @@ export interface ComponentServerStatus {
 	outputs?: { label: string; value: string }[];
 	/** What this component costs per month, from the last PLAN's Infracost breakdown. */
 	monthlyCost?: number | null;
+	/** The per-resource cost lines that make up `monthlyCost` — the itemised breakdown the Cost tab
+	 * shows (Terraform address → monthly). Empty/absent when the node was never priced. */
+	costLines?: { address: string; monthlyCost: number }[];
 	/** ArgoCD health, for components that are Applications (add-ons / charts). */
 	health?: string | null;
 	/** ArgoCD sync state. */
 	sync?: string | null;
+}
+
+/** One job in the environment's recent history — the Activity tab / Overview "recent activity". */
+export interface EnvironmentJob {
+	id: string;
+	type: string;
+	status: string;
+	/** ISO timestamp the job was created. */
+	createdAt: string;
+}
+
+/**
+ * The concrete environment the canvas is viewing — its real name, stage, and provisioning status
+ * from `project_environments`. This is what the project-settings panel binds to: the stage is a FACT
+ * of the environment you're on, not a free-choice radio. Null in the create flow (no env row yet).
+ */
+export interface EnvironmentInfo {
+	id: string;
+	name: string;
+	stage: string;
+	status: string;
 }
 
 /** The environment's in-flight job — env-wide context, not a per-node state. */
@@ -116,6 +140,10 @@ export interface EnvironmentStatus {
 	monthlyCost: number | null;
 	/** The plan the cost came from, so the UI can say WHEN this was true. */
 	costCapturedAt: string | null;
+	/** The environment's most recent jobs (newest first) — the Activity tab + Overview recent-activity. */
+	recentJobs: EnvironmentJob[];
+	/** The concrete environment being viewed (name/stage/status). Null in the create flow. */
+	environment: EnvironmentInfo | null;
 	/**
 	 * The BYO IaC module governing this environment, or null for a template env. When present, the
 	 * component design is inert and `iac.groups` — not `components` — is the architecture.
@@ -133,5 +161,7 @@ export const EMPTY_ENVIRONMENT_STATUS: EnvironmentStatus = {
 	driftScannedAt: null,
 	monthlyCost: null,
 	costCapturedAt: null,
+	recentJobs: [],
+	environment: null,
 	iac: null,
 };

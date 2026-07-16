@@ -42,11 +42,25 @@ export async function createThread(
  * List the owner's threads, most-recently-updated first (RLS scopes the rows).
  * `projectId` set → that project's conversations; omitted → org-level threads only
  * (project_id IS NULL), so the org rail never mixes in project chats.
+ *
+ * A thread is created eagerly on the first send (its id has to exist before the stream
+ * starts), so an aborted/failed first turn leaves a zero-message ghost row. We never
+ * surface empty threads, and reap this owner's stale ones (older than an hour, so an
+ * in-flight first turn is never swept) on the way through.
  */
 export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 	const owner = await requireOwner();
-	return withOwnerScope(owner, async (tx) =>
-		tx
+	return withOwnerScope(owner, async (tx) => {
+		await tx
+			.delete(agentThreads)
+			.where(
+				and(
+					eq(agentThreads.kind, "agent"),
+					sql`jsonb_array_length(${agentThreads.messages}) = 0`,
+					sql`${agentThreads.created_at} < now() - interval '1 hour'`,
+				),
+			);
+		return tx
 			.select()
 			.from(agentThreads)
 			.where(
@@ -55,10 +69,11 @@ export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 					projectId
 						? eq(agentThreads.project_id, projectId)
 						: isNull(agentThreads.project_id),
+					sql`jsonb_array_length(${agentThreads.messages}) > 0`,
 				),
 			)
-			.orderBy(desc(agentThreads.updated_at)),
-	);
+			.orderBy(desc(agentThreads.updated_at));
+	});
 }
 
 /** Load one thread (with its full message transcript). */

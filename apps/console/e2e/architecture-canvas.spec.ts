@@ -39,9 +39,11 @@ test.describe("Architecture canvas", () => {
 			.fill(`canvas-e2e-${testInfo.workerIndex}-${Date.now()}`);
 		await page.getByRole("button", { name: /create empty project/i }).click();
 
-		// The canvas is ready once its chrome is painted.
+		// The canvas is ready once its toolbar is painted. (The Add button is always present on an
+		// editable, non-IaC-governed board; the old "Project settings" cog this used to key on was
+		// removed in #554.)
 		await expect(
-			page.getByRole("button", { name: /project settings/i }),
+			page.getByRole("button", { name: "Add", exact: true }).first(),
 		).toBeVisible({ timeout: 60_000 });
 	});
 
@@ -137,6 +139,52 @@ test.describe("Architecture canvas", () => {
 		await expect(
 			board(page).getByText("Cluster", { exact: true }).first(),
 		).toBeVisible();
+	});
+
+	test("a region is a real container — drag it and its members follow; resize it and they don't", async ({
+		page,
+	}) => {
+		const boardEl = board(page);
+		// The VPC region carries the "VPC" label in its header.
+		const vpc = boardEl.locator(".react-flow__node-zone", { hasText: "VPC" });
+		await expect(vpc).toBeVisible();
+		// The cluster card is a member that sits inside the VPC — track it through the interactions.
+		const clusterCard = boardEl.locator(".react-flow__node-cluster");
+		await expect(clusterCard).toBeVisible();
+
+		// ── Drag the VPC by its HEADER (the only drag handle) → its members move with it. ──
+		const header = vpc.locator(".zone-drag-handle");
+		const hb = (await header.boundingBox())!;
+		const before = (await clusterCard.boundingBox())!;
+		await page.mouse.move(hb.x + 24, hb.y + hb.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(hb.x + 24 + 130, hb.y + hb.height / 2 + 70, { steps: 10 });
+		await page.mouse.up();
+
+		const afterDrag = (await clusterCard.boundingBox())!;
+		// The member tracked the drag (screen-space delta ≈ the drag, independent of zoom).
+		expect(Math.abs(afterDrag.x - before.x - 130)).toBeLessThan(45);
+		expect(Math.abs(afterDrag.y - before.y - 70)).toBeLessThan(45);
+
+		// ── Selecting the region reveals its resize handles. ──
+		await header.click();
+		const handle = page.locator(".react-flow__resize-control.handle").first();
+		await expect(handle).toBeVisible();
+
+		// ── Resizing must NOT move the members. ──
+		const beforeResize = (await clusterCard.boundingBox())!;
+		const grip = (await handle.boundingBox())!;
+		await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(grip.x + 90, grip.y + 90, { steps: 8 });
+		await page.mouse.up();
+
+		const afterResize = (await clusterCard.boundingBox())!;
+		expect(Math.abs(afterResize.x - beforeResize.x)).toBeLessThan(6);
+		expect(Math.abs(afterResize.y - beforeResize.y)).toBeLessThan(6);
+
+		// ── A dragged/resized region offers a re-fit control that returns it to auto-fit. ──
+		await expect(vpc.getByRole("button", { name: /re-fit/i })).toBeVisible();
 	});
 
 	test("a topic's subscriptions are definable at all (the column had no editor)", async ({

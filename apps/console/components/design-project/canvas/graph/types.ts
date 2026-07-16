@@ -25,6 +25,7 @@ export type NodeKind =
 	| "secret"
 	| "bucket"
 	| "registry"
+	| "service"
 	| "repositories"
 	| "chart"
 	| "addon"
@@ -102,6 +103,9 @@ export type NodeConfigMap = {
 	secret: ProjectFormData["secrets"][number];
 	bucket: ProjectFormData["storage_buckets"][number];
 	registry: ProjectFormData["container_registries"][number];
+	// W1 — a first-class application workload (the customer's own code), form-fragment like the
+	// infra kinds so it round-trips the form graph. Infra-binding edges are W3.
+	service: ProjectFormData["services"][number];
 	// Out-of-band (not a ProjectFormData fragment) — see ByoChartNodeConfig.
 	chart: ByoChartNodeConfig;
 	// Out-of-band (project_addons) — a marketplace add-on the cluster comes up with.
@@ -150,6 +154,12 @@ export type CanvasNodeData<K extends NodeKind = NodeKind> = {
 		config: NodeConfigMap[P];
 		cloud_identity_id: string | null;
 		provider: CloudProviderSlug | null;
+		/**
+		 * VIEW-ONLY: set on the RENDER node (never the store node) when the card is drawn inside a
+		 * container region, so it renders the dense treatment. Never persisted, never set by the store,
+		 * and ignored by `diffNodes` (config + cloud_identity_id) and `graphToForm` (config only).
+		 */
+		insideContainer?: boolean;
 	};
 }[K];
 

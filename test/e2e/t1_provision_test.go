@@ -142,7 +142,10 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("control plane: %v", err)
 	}
-	runnerID, runnerToken, err := cp.SeedRunner(ctx)
+	// One owner owns both the runner and the job: claim_next_job's self-runner branch scopes to
+	// `j.org_id = v_runner_org_id` (#392), so a runner in a different org never claims the job.
+	owner := newUUID()
+	runnerID, runnerToken, err := cp.SeedRunner(ctx, owner, owner)
 	if err != nil {
 		t.Fatalf("seed runner: %v", err)
 	}
@@ -155,7 +158,7 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 	env := "e2t1" + shortHex(t)
 	clusterName := project + "-" + env
 
-	jobID, err := cp.SeedDeployJob(ctx, project, env)
+	jobID, err := cp.SeedDeployJob(ctx, project, env, owner)
 	if err != nil {
 		t.Fatalf("seed job: %v", err)
 	}

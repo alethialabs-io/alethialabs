@@ -91,7 +91,6 @@ export function ProjectShell({
 				<CanvasDock
 					dock={dock}
 					projectId={projectId}
-					identities={identities}
 					onDestroyEnvironment={handleDestroy}
 				/>
 			</div>

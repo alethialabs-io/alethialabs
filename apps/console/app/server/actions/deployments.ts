@@ -506,6 +506,7 @@ async function deployedStructuralHash(
 		// Not structural inputs to the hash — inert, present only to satisfy the shape.
 		storage_buckets: [],
 		container_registries: [],
+		services: [],
 	};
 	return structuralHash(design);
 }

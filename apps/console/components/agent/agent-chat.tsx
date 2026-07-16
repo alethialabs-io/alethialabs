@@ -13,7 +13,7 @@ import {
 	ThumbsUp,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { Action, Actions } from "@/components/ai-elements/actions";
 import { ChatError } from "@/components/agent/chat-error";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -96,8 +96,13 @@ export interface AgentChatProps {
 	composerClassName?: string;
 	/** Per-message thumbs feedback (up/down). Shown on completed assistant turns. */
 	onFeedback?: (messageId: string, value: "up" | "down") => void;
+	/** Prior persisted thumbs, keyed by message id — seeds the filled state on load. */
+	initialFeedback?: Record<string, "up" | "down">;
 	/** When set, a "Support" action links here from each assistant turn. */
 	supportHref?: string;
+	/** In-app support handler — preferred over `supportHref` so we navigate same-tab
+	 * (client router) instead of opening an external tab. */
+	onSupport?: () => void;
 }
 
 /** Concatenate a message's text parts (for the Copy action). */
@@ -136,11 +141,19 @@ export function AgentChat({
 	composerClassName,
 	onFeedback,
 	supportHref,
+	onSupport,
+	initialFeedback,
 }: AgentChatProps) {
 	const pending = status === "submitted" || status === "streaming";
 	const lastMessageId = messages.at(-1)?.id;
 	const [copiedId, setCopiedId] = useState<string | null>(null);
-	const [feedback, setFeedback] = useState<Record<string, "up" | "down">>({});
+	const [feedback, setFeedback] =
+		useState<Record<string, "up" | "down">>(initialFeedback ?? {});
+	// Re-seed when the hydrated map arrives / the active thread changes (the consumer passes a
+	// stable object per thread, so this doesn't clobber optimistic clicks mid-conversation).
+	useEffect(() => {
+		setFeedback(initialFeedback ?? {});
+	}, [initialFeedback]);
 
 	const copyMessage = (message: UIMessage) => {
 		void navigator.clipboard.writeText(messageText(message)).then(() => {
@@ -355,12 +368,14 @@ export function AgentChat({
 																		<RefreshCcwIcon className="size-3.5" />
 																	</Action>
 																)}
-																{supportHref && (
+																{(onSupport || supportHref) && (
 																	<Action
 																		tooltip="Support"
 																		label="Get support"
 																		onClick={() => {
-																			window.open(supportHref, "_blank", "noopener");
+																			if (onSupport) onSupport();
+																			else if (supportHref)
+																				window.open(supportHref, "_blank", "noopener");
 																		}}
 																	>
 																		<HelpCircle className="size-3.5" />

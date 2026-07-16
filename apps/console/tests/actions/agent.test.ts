@@ -163,15 +163,17 @@ describe("createThread", () => {
 });
 
 describe("listThreads", () => {
-	it("returns the owner's threads and scopes org-level listing to project_id IS NULL", async () => {
+	it("reaps stale empties, then returns the owner's threads scoped to project_id IS NULL", async () => {
 		const rows = [{ id: "t-1" }, { id: "t-2" }];
 		const { calls } = useChain(rows);
 		const result = await listThreads();
 		expect(result).toBe(rows);
-		// Org-level listing filters (kind='agent' AND project_id IS NULL) then orders.
-		expect(calls.where).toHaveBeenCalledTimes(1);
+		// A reap delete runs first, then the guarded org-level select (kind='agent' AND
+		// project_id IS NULL AND non-empty) and an order — two .where()s and one delete.
+		expect(calls.delete).toHaveBeenCalledTimes(1);
+		expect(calls.where).toHaveBeenCalledTimes(2);
 		expect(calls.orderBy).toHaveBeenCalledTimes(1);
-		// The actual predicate: kind='agent' + project_id IS NULL (no eq on project_id).
+		// The listing predicate: kind='agent' + project_id IS NULL (no eq on project_id).
 		expect(vi.mocked(eq)).toHaveBeenCalledWith(agentThreads.kind, "agent");
 		expect(vi.mocked(isNull)).toHaveBeenCalledWith(agentThreads.project_id);
 		expect(vi.mocked(eq)).not.toHaveBeenCalledWith(
@@ -185,7 +187,9 @@ describe("listThreads", () => {
 		const { calls } = useChain(rows);
 		const result = await listThreads("proj-9");
 		expect(result).toBe(rows);
-		expect(calls.where).toHaveBeenCalledTimes(1);
+		// Reap delete + guarded select.
+		expect(calls.delete).toHaveBeenCalledTimes(1);
+		expect(calls.where).toHaveBeenCalledTimes(2);
 		expect(calls.orderBy).toHaveBeenCalledTimes(1);
 		// The actual predicate: kind='agent' + project_id = 'proj-9'; never IS NULL.
 		expect(vi.mocked(eq)).toHaveBeenCalledWith(agentThreads.project_id, "proj-9");

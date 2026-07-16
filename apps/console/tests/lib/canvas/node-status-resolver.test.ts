@@ -130,6 +130,50 @@ describe("PENDING splits on whether a job is in flight", () => {
 	});
 });
 
+describe("cost is an OVERLAY that rides on whatever state the node is in", () => {
+	it("passes the monthly total and its per-address breakdown through", () => {
+		const s = resolveNodeStatus(
+			READY,
+			server("ACTIVE", {
+				monthlyCost: 42.5,
+				costLines: [
+					{ address: "aws_db_instance.orders", monthlyCost: 30 },
+					{ address: "aws_db_instance.orders_replica", monthlyCost: 12.5 },
+				],
+			}),
+			CALM,
+		);
+		expect(s.state).toBe("live");
+		expect(s.monthlyCost).toBe(42.5);
+		expect(s.costLines).toHaveLength(2);
+	});
+
+	it("defaults to no cost when the server priced nothing", () => {
+		const s = resolveNodeStatus(READY, server("ACTIVE"), CALM);
+		expect(s.monthlyCost).toBeNull();
+		expect(s.costLines).toEqual([]);
+	});
+
+	it("a node with no component row reports no cost", () => {
+		const s = resolveNodeStatus(READY, undefined, CALM);
+		expect(s.monthlyCost).toBeNull();
+		expect(s.costLines).toEqual([]);
+	});
+
+	it("cost survives alongside a failure — it isn't lost when the apply broke", () => {
+		const s = resolveNodeStatus(
+			READY,
+			server("FAILED", {
+				monthlyCost: 10,
+				costLines: [{ address: "aws_db_instance.orders", monthlyCost: 10 }],
+			}),
+			CALM,
+		);
+		expect(s.state).toBe("failed");
+		expect(s.costLines).toHaveLength(1);
+	});
+});
+
 describe("drift is an OVERLAY, never a base state", () => {
 	it("a drifted resource is still live", () => {
 		const s = resolveNodeStatus(READY, server("ACTIVE", { drift: DRIFT }), CALM);

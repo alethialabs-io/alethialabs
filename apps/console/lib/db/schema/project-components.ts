@@ -38,6 +38,12 @@ import type {
 	QueueProviderConfig,
 	RegistryProviderConfig,
 	SecretsProviderConfig,
+	ServiceBuild,
+	ServiceEnvVar,
+	ServicePort,
+	ServiceProbe,
+	ServiceResources,
+	ServiceSource,
 	StagedChangePayload,
 	StorageProviderConfig,
 	TopicSubscription,
@@ -668,6 +674,50 @@ export const projectStorageBuckets = pgTable(
 	},
 	(t) => [
 		unique("project_storage_buckets_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+// A first-class application workload on the cluster (W1 — the north-star service model). Unlike the
+// infra kinds above, a service is the customer's own code: built from a repo (Dockerfile → image in
+// W2) or a prebuilt image, run as a Deployment/Job/CronJob/StatefulSet. Infra-binding edges
+// (service→db/cache/secret) are W3; secret env-from is W4. The runner turns these into k8s manifests.
+export const projectServices = pgTable(
+	"project_services",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		// Workload type: deployment (default) | job | cronjob | statefulset. Validated in zod.
+		type: text().default("deployment").notNull(),
+		// Where the image comes from — {kind:"repo",repo_url,path} | {kind:"image",image}.
+		source: jsonb().$type<ServiceSource>().notNull(),
+		// Build config when source.kind === "repo" (Dockerfile/context); NULL for a prebuilt image.
+		build: jsonb().$type<ServiceBuild>(),
+		// Plain environment variables (secret env-from is W4).
+		env: jsonb().$type<ServiceEnvVar[]>().default([]).notNull(),
+		// Container ports the workload exposes.
+		ports: jsonb().$type<ServicePort[]>().default([]).notNull(),
+		replicas: integer().default(2).notNull(),
+		// Compute requests/limits (k8s quantity strings, e.g. "100m"/"128Mi"); NULL → template defaults.
+		resources: jsonb().$type<ServiceResources>(),
+		// Readiness/liveness probe; NULL = none.
+		probe: jsonb().$type<ServiceProbe>(),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_services_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
 			t.name,
