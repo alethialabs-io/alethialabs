@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -54,6 +55,8 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	if !provisionVPC && config.Network.NetworkID == "" {
 		provisionVPC = true
 	}
+
+	ecrNames := buildECRNamesMap(config)
 
 	tfvars := map[string]interface{}{
 		"project_name":   config.ProjectName,
@@ -114,8 +117,12 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"s3_create":            len(config.StorageBuckets) > 0,
 		"bucket_configuration": buildS3Buckets(config.StorageBuckets),
 
-		// ECR (container registry)
-		"provision_ecr": len(config.ContainerRegistries) > 0,
+		// ECR (container registry). ecr_names_map drives the module's for_each — one repo per
+		// native registry component + one per repo-sourced service (the W2 build destination).
+		// It used to stay {} (only the boolean was emitted), so `local.ecr_input` resolved
+		// empty and NOTHING was ever created even with provision_ecr=true.
+		"provision_ecr": len(ecrNames) > 0,
+		"ecr_names_map": ecrNames,
 
 		// RDS
 		"create_rds": len(config.Databases) > 0,
@@ -357,6 +364,56 @@ func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 		[]string{"kube-token", "--provider", "aws", "--cluster", clusterName, "--region", config.Region},
 		stdout,
 	)
+}
+
+// buildECRNamesMap collects the ECR repositories the template must create, keyed by the
+// component's logical name — the SAME key the `ecr_repository_urls_map` output uses, so
+// BUILD (#588) and the manifest renderer (#589) can look up a service's push destination
+// by its service name. One entry per native container-registry component + one per
+// repo-sourced service (the W2 build destination). Values are repo base names; the ecr
+// module prefixes them with "<project_name>-".
+func buildECRNamesMap(config *types.ProjectConfig) map[string]string {
+	out := map[string]string{}
+	for _, r := range config.ContainerRegistries {
+		// Pluggable non-native registries (connectors.slug) are not ECR's to create.
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		if base := ecrRepoBaseName(r.Name); base != "" {
+			out[r.Name] = base
+		}
+	}
+	for _, s := range config.Services {
+		if s.Source.Kind != "repo" {
+			continue
+		}
+		if base := ecrRepoBaseName(s.Name); base != "" {
+			out[s.Name] = base
+		}
+	}
+	return out
+}
+
+// ecrRepoBaseName normalizes a component name into a valid ECR repository base name
+// (lowercase alphanumerics with single "-" separators) — deterministic, so re-planning a
+// project always addresses the same repository.
+func ecrRepoBaseName(name string) string {
+	var b strings.Builder
+	pendingSep := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			if pendingSep && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			pendingSep = false
+		default:
+			// Any separator/invalid run collapses to one "-" (never leading/trailing).
+			pendingSep = true
+		}
+	}
+	return b.String()
 }
 
 func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
