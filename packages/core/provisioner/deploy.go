@@ -46,7 +46,13 @@ type DeployParams struct {
 	// different provider than the apps-destination repo (GitAccessToken). Empty/missing entries
 	// fall back to GitAccessToken. Only the BYO-chart credential path consults this.
 	GitRepoTokens map[string]string
-	TemplatesDir  string
+	// AddOnSecretValues maps add-on id → secret field key → plaintext, fetched by the RUNNER
+	// at execution time over the authenticated job channel (W4.5 #640 — the git-token
+	// pattern; never present in the config snapshot or the stage payload). Consumed once, by
+	// EnsureAddOnSecrets, to seed each add-on's in-cluster Secret before its Application
+	// syncs. Nil when no enabled add-on has a stored secret knob.
+	AddOnSecretValues map[string]map[string]string
+	TemplatesDir      string
 	// CategoriesDir is the root of the composable per-category modules
 	// (infra/templates/categories). When set, pluggable providers selected on the
 	// Project resources are composed into the plan; native resources are guarded off via tfvars.
@@ -119,6 +125,16 @@ type PlanResult struct {
 	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
 	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
 	InfraServices []argocd.InfraServiceDecision
+}
+
+// enabledAddonIDs lists the ids of every add-on in the desired set — the keep-set for
+// pruning runner-seeded add-on secrets (W4.5).
+func enabledAddonIDs(addons []types.AddOnInstall) []string {
+	ids := make([]string, 0, len(addons))
+	for i := range addons {
+		ids = append(ids, addons[i].ID)
+	}
+	return ids
 }
 
 // writePhase records the current provisioning phase to the job's phase file (best-effort;
@@ -774,6 +790,13 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
 			prepareByoCharts(vc, params.GitAccessToken, params.GitRepoTokens, facts.Labels, stdout, stderr)
 
+			// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs —
+			// managed or gitops mode. The values were fetched by the runner over the
+			// authenticated job channel and exist nowhere else: not in the snapshot, not in the
+			// rendered manifest, not in the customer's repo. The chart consumes them via the
+			// SecretKeyRef wiring the console resolved into helm.values.
+			argocd.EnsureAddOnSecrets(vc.AddOns, params.AddOnSecretValues, stdout, stderr)
+
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
@@ -798,6 +821,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if pruneErr := argocd.PruneManagedAddOns(argocd.ManagedAddOnNames(vc.AddOns), stdout, stderr); pruneErr != nil {
 			fmt.Fprintf(stderr, "Warning: add-on prune failed: %v\n", pruneErr)
 		}
+		// And the runner-seeded secret of any disabled add-on (W4.5) — no Application owns
+		// those Secrets (deliberately: no ArgoCD tracking metadata), so ArgoCD will never
+		// prune them; this is their only GC.
+		argocd.PruneAddOnSecrets(enabledAddonIDs(vc.AddOns), stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//

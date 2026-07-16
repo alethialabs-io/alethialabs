@@ -683,6 +683,26 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
+	// Add-on secret-knob values (W4.5 #640): the config snapshot carries only a SecretRef
+	// per add-on (name/namespace/keys — never values); the plaintext is fetched HERE, over
+	// the same authenticated job channel as the git token, and crosses the sandbox as a
+	// stage secret so it never touches the persisted payload. Fetched only when some
+	// add-on actually declares a ref (most deploys skip the round-trip).
+	var addonSecrets map[string]map[string]string
+	for i := range vc.AddOns {
+		if vc.AddOns[i].SecretRef == nil {
+			continue
+		}
+		if fetched, fetchErr := w.api.FetchAddonSecrets(job.ID); fetchErr != nil {
+			// Fail-safe direction: the deploy proceeds; the affected chart surfaces the
+			// missing Secret on ITS Application rather than the whole deploy dying here.
+			fmt.Fprintf(stderr, "Warning: failed to fetch add-on secrets: %v\n", fetchErr)
+		} else {
+			addonSecrets = fetched
+		}
+		break
+	}
+
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {
 		return err
@@ -722,7 +742,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if err != nil {
 		return err
 	}
-	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token}
+	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets}
 
 	// Run the untrusted provisioning work through the isolation seam. Passthrough runs
 	// runDeployStage in-process; the container backend re-execs it in a per-job container.

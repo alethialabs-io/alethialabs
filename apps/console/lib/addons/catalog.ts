@@ -10,7 +10,7 @@
 
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { decryptAddonSecrets } from "./secrets";
+import { hasStoredSecret, secretFieldKeys, stripAddonSecrets } from "./secrets";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
 /**
@@ -854,13 +854,26 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		toValues: (c) => ({
 			provider: { name: c.provider },
 			...(c.domainFilter ? { domainFilters: [c.domainFilter] } : {}),
-			// The decrypted token is injected as the provider env var (cloudflare for now). The
-			// value is plaintext in the rendered Helm values — closing that (render-to-Secret +
-			// existingSecret) is the W4.5 follow-up; W4 fixes the at-rest-in-DB leak.
-			...(c.apiToken
-				? { env: [{ name: "CF_API_TOKEN", value: c.apiToken }] }
-				: {}),
+			// The API token deliberately does NOT appear here (W4.5): toValues never sees
+			// secret knobs. The token reaches the chart via `secretValues` below — an env
+			// valueFrom.secretKeyRef into the runner-seeded Secret, the same shape the
+			// platform's own infra external-dns uses (infra/templates/argocd/external-dns.yaml).
 		}),
+		secretValues: (refs, c) => {
+			const ref = refs.apiToken;
+			if (!ref) return {};
+			// Provider token env var (cloudflare's CF_API_TOKEN for now — matching the
+			// pre-W4.5 wiring; other providers add their own env names in a follow-up).
+			const envName = c.provider === "digitalocean" ? "DO_TOKEN" : "CF_API_TOKEN";
+			return {
+				env: [
+					{
+						name: envName,
+						valueFrom: { secretKeyRef: { name: ref.name, key: ref.key } },
+					},
+				],
+			};
+		},
 		fields: [
 			{
 				key: "provider",
@@ -911,11 +924,25 @@ export function parseValuesYaml(
 	return null;
 }
 
+/** The deterministic name of the k8s Secret the runner seeds for an add-on's secret knobs
+ * (W4.5). Per-add-on, in the add-on's install namespace — distinct from the platform's own
+ * infra secrets (e.g. `external-dns-cloudflare` in the infra external-dns). */
+export function addonSecretName(addonId: string): string {
+	return `alethia-addon-${addonId}`;
+}
+
 /**
  * Resolves an enabled `project_addons` row into the runner-facing install spec: pins the
  * chart coords, validates + defaults the stored knobs, and deep-merges them onto the add-on's
  * base values. Returns null when the add-on id is no longer in the catalog (so a retired
  * add-on is skipped, not mis-provisioned).
+ *
+ * SECRET knobs (W4.5, #640): their values are NEVER resolved here — they are stripped before
+ * validation (the schema default applies), so neither `toValues` nor the returned `values`
+ * can carry a credential, and nothing plaintext enters the DEPLOY job's config snapshot.
+ * Instead the spec carries a `secretRef` (deterministic Secret name + the data keys); the
+ * runner fetches the plaintext at execution time over the authenticated job channel and
+ * seeds the Secret in-cluster, and the def's `secretValues` wires the chart at it.
  */
 export function resolveAddOnInstall(row: {
 	addon_id: string;
@@ -926,19 +953,29 @@ export function resolveAddOnInstall(row: {
 }): AddOnInstallSpec | null {
 	const def = getAddOn(row.addon_id);
 	if (!def) return null;
-	// Decrypt any secret-typed knob (stored as an EncryptedSecret envelope, W4) back to plaintext
-	// BEFORE validation, so the Zod schema sees a string and toValues gets the real value. A
-	// pre-W4 plaintext or absent value passes through untouched.
-	const decrypted = decryptAddonSecrets(def, row.values ?? {});
+	const stored = row.values ?? {};
+	// Strip secret-typed knobs BEFORE validation — the schema sees its default, never a
+	// credential (neither an EncryptedSecret envelope nor a legacy pre-W4 plaintext).
+	const sansSecrets = stripAddonSecrets(def, stored);
 	// Validate the stored knobs; fall back to schema defaults on any mismatch so a stale row
 	// never blocks a deploy.
-	const parsed = def.configSchema.safeParse(decrypted);
+	const parsed = def.configSchema.safeParse(sansSecrets);
 	const config = parsed.success ? parsed.data : def.configSchema.parse({});
 	const knobValues = def.toValues ? def.toValues(config) : {};
-	// Precedence (low → high): chart defaults → schema knobs → the user's raw Helm-values YAML.
-	// Unparseable raw YAML is ignored (the save-time action validates it) so it never blocks a
-	// deploy.
+	// Which secret fields actually HAVE a stored value → the Secret's data keys + the refs
+	// handed to the def's chart wiring.
+	const secretKeys = secretFieldKeys(def).filter((k) => hasStoredSecret(stored[k]));
+	const secretName = addonSecretName(def.id);
+	const refs = Object.fromEntries(
+		secretKeys.map((k) => [k, { name: secretName, key: k }]),
+	);
+	const secretWiring =
+		secretKeys.length > 0 && def.secretValues ? def.secretValues(refs, config) : {};
+	// Precedence (low → high): chart defaults → schema knobs → secret wiring → the user's raw
+	// Helm-values YAML. Unparseable raw YAML is ignored (the save-time action validates it) so
+	// it never blocks a deploy.
 	let values = deepMerge(def.defaultValues ?? {}, knobValues);
+	values = deepMerge(values, secretWiring);
 	const rawOverride = parseValuesYaml(row.values_yaml);
 	if (rawOverride) values = deepMerge(values, rawOverride);
 	return {
@@ -950,6 +987,15 @@ export function resolveAddOnInstall(row: {
 		namespace: def.namespace,
 		values,
 		syncWave: def.syncWave,
+		...(secretKeys.length > 0
+			? {
+					secretRef: {
+						secretName,
+						namespace: def.namespace,
+						keys: secretKeys,
+					},
+				}
+			: {}),
 	};
 }
 
