@@ -60,6 +60,7 @@ import {
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
+	serviceWorkloadType,
 } from "./enums";
 import { cloudIdentities } from "./identities";
 import { projectEnvironments } from "./project-environments";
@@ -695,8 +696,9 @@ export const projectServices = pgTable(
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
-		// Workload type: deployment (default) | job | cronjob | statefulset. Validated in zod.
-		type: text().default("deployment").notNull(),
+		// Workload type: deployment (default) | job | cronjob | statefulset. pgEnum-backed so the
+		// column can't drift from the service form fragment's `type` union.
+		type: serviceWorkloadType().default("deployment").notNull(),
 		// Where the image comes from — {kind:"repo",repo_url,path} | {kind:"image",image}.
 		source: jsonb().$type<ServiceSource>().notNull(),
 		// Build config when source.kind === "repo" (Dockerfile/context); NULL for a prebuilt image.
