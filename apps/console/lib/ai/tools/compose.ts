@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord, toRecordArray } from "@/lib/records";
+import { boolOr, numOr, toArray, toStr, toStrArray } from "@/lib/coerce";
 import { tool } from "ai";
 import { z } from "zod";
 import { getRegionPrices } from "@/app/server/actions/pricing";
@@ -76,8 +78,6 @@ function deploymentKind(
 	if (kind === "cluster" || kind === "network") return "native";
 	return "in-cluster-helm";
 }
-
-type Loose = Record<string, unknown>;
 
 /**
  * Catalog tools — pure, provider-neutral lookups with NO canvas context. Shared by
@@ -176,25 +176,25 @@ export function composeTools(ctx: CanvasContext | undefined) {
 			inputSchema: z.object({}),
 			execute: async () => {
 				if (!ctx) return { error: "No canvas context available." };
-				const f = ctx.form as Loose;
-				const cluster = (f.cluster as Loose) ?? {};
-				const network = (f.network as Loose) ?? {};
-				const dns = (f.dns as { provider_config?: Loose }) ?? {};
-				const project = (f.project as Loose) ?? {};
-				const region = (project.region as string) || "";
+				const f = ctx.form;
+				const cluster = asRecord(f.cluster);
+				const network = asRecord(f.network);
+				const dnsCfg = asRecord(asRecord(f.dns).provider_config);
+				const project = asRecord(f.project);
+				const region = toStr(project.region);
 				const prices = region ? await getRegionPrices(region) : null;
 				const meta = getProvider(ctx.provider);
 				const { items, total } = computeCostItems(
 					{
-						instanceTypes: (cluster.instance_types as string[]) ?? [],
-						nodeDesiredSize: (cluster.node_desired_size as number) ?? 2,
-						singleNatGateway: (network.single_nat_gateway as boolean) ?? true,
-						databases: (f.databases as Loose[]) ?? [],
-						caches: (f.caches as Loose[]) ?? [],
-						cloudfrontWaf: Boolean(dns.provider_config?.cloudfront_waf),
-						applicationWaf: Boolean(dns.provider_config?.application_waf),
-						nosqlCount: ((f.nosql_tables as unknown[]) ?? []).length,
-						secretsCount: ((f.secrets as unknown[]) ?? []).length,
+						instanceTypes: toStrArray(cluster.instance_types),
+						nodeDesiredSize: numOr(cluster.node_desired_size, 2),
+						singleNatGateway: boolOr(network.single_nat_gateway, true),
+						databases: toRecordArray(f.databases),
+						caches: toRecordArray(f.caches),
+						cloudfrontWaf: Boolean(dnsCfg.cloudfront_waf),
+						applicationWaf: Boolean(dnsCfg.application_waf),
+						nosqlCount: toArray(f.nosql_tables).length,
+						secretsCount: toArray(f.secrets).length,
 					},
 					prices,
 					{
