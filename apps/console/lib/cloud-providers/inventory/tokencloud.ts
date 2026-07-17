@@ -5,6 +5,7 @@
 // way the hyperscalers do; the useful inventory is their REGIONS (for placement). Decrypt the token,
 // list regions, upsert into cloud_regions. Works locally (HTTP + stored token).
 
+import { asRecord, toRecordArray } from "@/lib/records";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import { getServiceDb } from "@/lib/db";
 import { type CloudIdentity, cloudRegions } from "@/lib/db/schema";
@@ -20,14 +21,14 @@ const REGIONS: Record<
 	digitalocean: {
 		url: "https://api.digitalocean.com/v2/regions",
 		pick: (j) =>
-			((j as { regions?: { slug?: string }[] }).regions ?? [])
+			toRecordArray(asRecord(j).regions)
 				.map((r) => r.slug)
 				.filter((s): s is string => Boolean(s)),
 	},
 	civo: {
 		url: "https://api.civo.com/v2/regions",
 		pick: (j) =>
-			((j as { code?: string }[] | undefined) ?? [])
+			toRecordArray(j)
 				.map((r) => r.code)
 				.filter((s): s is string => Boolean(s)),
 	},
