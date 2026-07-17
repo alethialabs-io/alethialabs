@@ -10,9 +10,10 @@
 // it is shown read-only: editing it would be editing the chart, not this overlay. What the user CAN
 // edit is the overlay the chart's own `values` don't already pin: the W3 bindings (reusing the exact
 // service binding editor), the v1 `replicas`/`env`, and the value-path override that says where each
-// knob writes into the chart's values. The overlay is staged on `project_chart_workloads` here
-// (`setChartWorkloadOverlay`); making it REACH the running chart — composed into the chart's Helm
-// values at the declared paths, keyless secret-refs for credential facets — is Lane 2 (#664).
+// knob writes into the chart's values. The overlay is persisted through Lane 2's (#664) server
+// actions (`setChartWorkloadBindings` / `setChartWorkloadConfig` / `setChartWorkloadValuePaths`);
+// Lane 2 also infers value-paths for new bindings and composes the overlay into the chart's Helm
+// values at deploy (keyless secret-refs for credential facets).
 
 import { useEffect, useState } from "react";
 import { Package, Plus, X } from "lucide-react";
@@ -20,7 +21,11 @@ import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { setChartWorkloadOverlay } from "@/app/server/actions/byo-charts";
+import {
+	setChartWorkloadBindings,
+	setChartWorkloadConfig,
+	setChartWorkloadValuePaths,
+} from "@/app/server/actions/byo-charts";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
 import type {
 	ChartValuePathMap,
@@ -84,16 +89,23 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 
 	const save = async () => {
 		if (!ctx) return;
+		const base = overlayOf(config);
+		const pid = ctx.projectId;
+		const wid = config.id;
 		setSaving(true);
 		try {
-			await setChartWorkloadOverlay({
-				projectId: ctx.projectId,
-				environmentId: ctx.environmentId,
-				workloadId: config.id,
-				bindings: draft.bindings,
-				config: draft.config,
-				valuePaths: draft.valuePaths,
-			});
+			// Persist only the parts that changed, via Lane 2's (#664) granular setters. Bindings first:
+			// setChartWorkloadBindings infers + merges value-paths for new bindings, so the explicit
+			// value-path override must run after it to win.
+			if (JSON.stringify(draft.bindings) !== JSON.stringify(base.bindings)) {
+				await setChartWorkloadBindings({ projectId: pid, workloadId: wid, bindings: draft.bindings });
+			}
+			if (JSON.stringify(draft.config) !== JSON.stringify(base.config)) {
+				await setChartWorkloadConfig({ projectId: pid, workloadId: wid, config: draft.config });
+			}
+			if (JSON.stringify(draft.valuePaths) !== JSON.stringify(base.valuePaths)) {
+				await setChartWorkloadValuePaths({ projectId: pid, workloadId: wid, valuePaths: draft.valuePaths });
+			}
 			toast.success("Workload overlay saved.");
 			ctx.refresh();
 		} catch (err) {

@@ -9,9 +9,11 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The persist action pulls in the server DB/authz chain — mock it so the panel mounts in jsdom.
+// The persist actions pull in the server DB/authz chain — mock them so the panel mounts in jsdom.
 vi.mock("@/app/server/actions/byo-charts", () => ({
-	setChartWorkloadOverlay: vi.fn(),
+	setChartWorkloadBindings: vi.fn(),
+	setChartWorkloadConfig: vi.fn(),
+	setChartWorkloadValuePaths: vi.fn(),
 }));
 
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
