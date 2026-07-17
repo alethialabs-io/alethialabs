@@ -68,10 +68,19 @@ export function bindingKnob(
 	return `bind:${kind}:${name}:${facet}`;
 }
 
+/** Segment names that would pollute Object.prototype if used as a path key. A user can set an
+ * arbitrary value-path (setChartWorkloadValuePaths), so a path like `__proto__.x` must never write. */
+const UNSAFE_PATH_SEGMENTS: ReadonlySet<string> = new Set([
+	"__proto__",
+	"prototype",
+	"constructor",
+]);
+
 /**
  * Sets `value` at a dot-path (`"a.b.c"`) inside a values object, creating intermediate objects.
  * Returns a new object (the input is not mutated); an existing non-object at an intermediate segment
- * is overwritten with an object so the leaf can be placed. An empty path is a no-op (returns a copy).
+ * is overwritten with an object so the leaf can be placed. An empty path — or any path containing a
+ * prototype-polluting segment — is a no-op (returns a copy), so a hostile value-path can't write.
  */
 export function setByPath(
 	obj: Record<string, unknown>,
@@ -80,6 +89,7 @@ export function setByPath(
 ): Record<string, unknown> {
 	const segments = dotPath.split(".").filter((s) => s.length > 0);
 	if (segments.length === 0) return { ...obj };
+	if (segments.some((s) => UNSAFE_PATH_SEGMENTS.has(s))) return { ...obj };
 	const root: Record<string, unknown> = { ...obj };
 	let cursor = root;
 	for (let i = 0; i < segments.length - 1; i++) {
