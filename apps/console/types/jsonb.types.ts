@@ -634,12 +634,39 @@ export interface ExecutionMetadata {
 	gitops_status?: GitopsStatusReport;
 }
 
+/** ArgoCD Application/resource health (packages/core/argocd). ArgoCD's fixed health set. */
+export type ArgocdHealthStatus =
+	| "Healthy"
+	| "Progressing"
+	| "Degraded"
+	| "Suspended"
+	| "Missing"
+	| "Unknown";
+
+/** ArgoCD sync state (status.sync.status). ArgoCD's fixed sync set. */
+export type ArgocdSyncStatus = "Synced" | "OutOfSync" | "Unknown";
+
+/**
+ * The scan lifecycle shared by the chart-describe (CHART_SCAN) and IaC-safety (projectAddons)
+ * flows: `unscanned` → `scanning` → `done` | `failed`.
+ */
+export type ScanStatus = "unscanned" | "scanning" | "done" | "failed";
+
+/** Which GitOps wiring step died (packages/core/argocd `GitopsStatus.FailedStep`). */
+export type GitopsFailedStep =
+	| "argocd_install"
+	| "git_token"
+	| "repo_credentials"
+	| "templates_missing"
+	| "render"
+	| "apply";
+
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
 // {Healthy, Progressing, Degraded, Suspended, Missing, Unknown}; sync ∈ {Synced, OutOfSync,
 // Unknown}.
 export interface AddOnStatusEntry {
-	health: string;
-	sync: string;
+	health: ArgocdHealthStatus;
+	sync: ArgocdSyncStatus;
 }
 
 /**
@@ -659,7 +686,7 @@ export interface GitopsStatusReport {
 	revision?: string;
 	/** Which wiring step died: argocd_install | git_token | repo_credentials |
 	 *  templates_missing | render | apply. Absent ⇒ the wiring did not fail. */
-	failed_step?: string;
+	failed_step?: GitopsFailedStep;
 	/** The wiring failure message, token-sanitized at the source (Go). */
 	error?: string;
 	/** The whole apps Application's aggregate health/sync — the honest fallback row. */
@@ -676,8 +703,8 @@ export interface GitopsStatusReport {
  *  health/sync plus ArgoCD's per-resource health message ("Deployment exceeded its progress
  *  deadline…"); empty when healthy. */
 export interface GitopsServiceHealth {
-	health: string;
-	sync: string;
+	health: ArgocdHealthStatus;
+	sync: ArgocdSyncStatus;
 	message?: string;
 }
 

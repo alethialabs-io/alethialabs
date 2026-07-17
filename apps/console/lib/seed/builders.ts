@@ -281,13 +281,13 @@ async function seedComponents(ctx: SeedCtx, p: ProjectSpec, projectId: string, e
 	for (const a of c.addons) {
 		await db
 			.insert(projectAddons)
-			.values({ project_id: projectId, environment_id: environmentId, addon_id: a.addon_id, source: "catalog", enabled: true, mode: "managed", version: a.version, namespace: a.namespace, health: "Healthy", sync_status: "Synced", scan_status: "passed", last_synced_at: ctx.now, status: "ACTIVE" })
+			.values({ project_id: projectId, environment_id: environmentId, addon_id: a.addon_id, source: "catalog", enabled: true, mode: "managed", version: a.version, namespace: a.namespace, health: "Healthy", sync_status: "Synced", scan_status: "done", last_synced_at: ctx.now, status: "ACTIVE" })
 			.onConflictDoNothing();
 	}
 	if (c.iac) {
 		await db
 			.insert(projectIacSources)
-			.values({ project_id: projectId, environment_id: environmentId, name: c.iac.name, repo_url: c.iac.repo_url, path: c.iac.path, commit_sha: c.iac.commit_sha, deployed_commit_sha: c.iac.commit_sha, enabled: true, scan_status: "passed", scanned_at: ctx.now, status: "ACTIVE" })
+			.values({ project_id: projectId, environment_id: environmentId, name: c.iac.name, repo_url: c.iac.repo_url, path: c.iac.path, commit_sha: c.iac.commit_sha, deployed_commit_sha: c.iac.commit_sha, enabled: true, scan_status: "done", scanned_at: ctx.now, status: "ACTIVE" })
 			.onConflictDoNothing();
 	}
 }
