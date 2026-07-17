@@ -139,7 +139,11 @@ type stageResult struct {
 	VerifyReport json.RawMessage `json:"verify_report,omitempty"`
 	IacReport    json.RawMessage `json:"iac_report,omitempty"`
 	DriftPosture json.RawMessage `json:"drift_posture,omitempty"`
-	Error        string          `json:"error,omitempty"`
+	// ChartWorkloads is the W5 Path A DESCRIBE output of a chart scan — the []types.ChartWorkload
+	// extracted from the same rendered manifests the verify report runs over. Carried beside the
+	// verify report and posted to execution_metadata.chart_workloads.
+	ChartWorkloads json.RawMessage `json:"chart_workloads,omitempty"`
+	Error          string          `json:"error,omitempty"`
 }
 
 // newStage marshals a payload into a sandbox.Stage for the container backend.
@@ -482,6 +486,27 @@ func readVerifyReport(workDir string) (*verify.Report, error) {
 		return nil, err
 	}
 	return &rep, nil
+}
+
+// readChartWorkloads decodes result.json's ChartWorkloads (chart_scan describe output). Returns a
+// nil slice when the stage emitted none (an older runner, or a chart with no described workloads).
+func readChartWorkloads(workDir string) ([]types.ChartWorkload, error) {
+	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	if err != nil {
+		return nil, err
+	}
+	var r stageResult
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, err
+	}
+	if len(r.ChartWorkloads) == 0 {
+		return nil, nil
+	}
+	var wl []types.ChartWorkload
+	if err := json.Unmarshal(r.ChartWorkloads, &wl); err != nil {
+		return nil, err
+	}
+	return wl, nil
 }
 
 // readIacScanReport decodes result.json's IacReport (BYO IaC scan).

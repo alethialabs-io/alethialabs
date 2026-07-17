@@ -1,0 +1,44 @@
+[
+	{
+		"name": "web",
+		"workload_kind": "deployment",
+		"rendered": {
+			"image": "ghcr.io/acme/web:1.2.3",
+			"ports": [
+				{
+					"name": "http",
+					"container_port": 8080,
+					"protocol": "TCP"
+				},
+				{
+					"name": "metrics",
+					"container_port": 9090
+				}
+			],
+			"env_keys": [
+				"LOG_LEVEL",
+				"DB_URL"
+			],
+			"resources": {
+				"requests": {
+					"cpu": "100m",
+					"memory": "128Mi"
+				},
+				"limits": {
+					"cpu": "1",
+					"memory": "512Mi"
+				}
+			},
+			"replicas": 3
+		}
+	},
+	{
+		"name": "worker",
+		"workload_kind": "job",
+		"rendered": {
+			"image": "ghcr.io/acme/worker:4.5.6",
+			"ports": [],
+			"env_keys": []
+		}
+	}
+]

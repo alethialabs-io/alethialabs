@@ -185,6 +185,52 @@ export interface ServiceBinding {
 	inject: ServiceBindingInjection[];
 }
 
+// ── BYO chart described workload (W5 Path A — Option B) ─────────────
+// A workload extracted from a bring-your-own Helm chart's rendered manifests (`helm template`) and
+// surfaced as a read-mostly canvas node. The chart addon (project_addons source='byo') stays the
+// single DEPLOY UNIT — its ArgoCD Application deploys everything; these rows only DESCRIBE what it
+// runs and carry the user's binding/config overlay. Stored on `project_chart_workloads`. They are
+// deliberately NOT `project_services` rows, so a described workload can never enter the deploy path
+// (no double-deploy). See management/spec/features/w5-path-a-byo-services.md.
+
+/**
+ * The immutable description of a chart workload extracted from `helm template` output — image,
+ * ports, env keys, resources, rendered replicas. Refreshed VERBATIM on every CHART_SCAN (it mirrors
+ * the chart, not the user), so it never carries user edits. Env is reduced to KEY NAMES only
+ * (values/valueFrom refs dropped, like the repo scanner) so a description never persists a rendered
+ * secret value.
+ */
+export interface ChartWorkloadRendered {
+	/** The workload's primary container image (first container). */
+	image: string;
+	/** Container ports declared across the workload's containers. */
+	ports: ServicePort[];
+	/** Env-variable KEY names on the containers (values + valueFrom dropped — names only). */
+	env_keys: string[];
+	/** Compute requests/limits from the first container that declares them; omitted otherwise. */
+	resources?: ServiceResources;
+	/** Replica count as rendered (Deployment/StatefulSet); omitted for DaemonSet/Job/CronJob. */
+	replicas?: number;
+}
+
+/**
+ * The user's editable overlay on a described chart workload (v1: replicas + env). Written back into
+ * the owning chart's Helm `values` at the declared value-paths on deploy (Lane 2) — Alethia never
+ * re-renders the workload itself. Preserved across re-scans.
+ */
+export interface ChartWorkloadConfig {
+	replicas?: number;
+	env?: ServiceEnvVar[];
+}
+
+/**
+ * Where each logical binding/config knob writes into the owning chart's Helm `values`: a map from a
+ * logical knob key (e.g. "replicas", or a binding target `"database:orders-db"`) to the dot-path
+ * within the chart values (e.g. "postgresql.auth.existingSecret"). Auto-inferred at scan +
+ * user-overridable (Lane 2). Preserved across re-scans.
+ */
+export type ChartValuePathMap = Record<string, string>;
+
 // ── Support cases ───────────────────────────────────────────────────
 // SupportContactPrefs / SupportCaseContext / SupportAbuseDetails moved to @repo/support
 // (shared with the admin app); re-exported so `@/types/jsonb.types` still surfaces them.

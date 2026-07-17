@@ -1,0 +1,51 @@
+# Golden `helm template` output for the BYO chart-workload extraction CONTRACT-LOCK
+# (chart_workloads_contract_pure_test.go). Two workloads — `web` maximal (every rendered field
+# populated), `worker` minimal (image only) — plus a Service that must be skipped. Regenerate the
+# fixture from this with: UPDATE_FIXTURES=1 go test ./ -run ChartWorkloadsContract  (in test/e2e).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/acme/web:1.2.3
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db
+                  key: url
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  ports:
+    - port: 80
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/acme/worker:4.5.6
