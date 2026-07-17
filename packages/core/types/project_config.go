@@ -4,14 +4,14 @@
 package types
 
 type ProjectConfig struct {
-	ID               string        `json:"id"`
-	UserID           string        `json:"user_id"`
-	ProjectName      string        `json:"project_name"`
-	EnvironmentStage string        `json:"environment_stage"`
-	Region           string        `json:"region"`
-	IacVersion       string        `json:"iac_version"`
-	CloudIdentityID  string        `json:"cloud_identity_id"`
-	Provider         CloudProvider `json:"provider"`
+	ID               string           `json:"id"`
+	UserID           string           `json:"user_id"`
+	ProjectName      string           `json:"project_name"`
+	EnvironmentStage EnvironmentStage `json:"environment_stage"`
+	Region           string           `json:"region"`
+	IacVersion       string           `json:"iac_version"`
+	CloudIdentityID  string           `json:"cloud_identity_id"`
+	Provider         CloudProvider    `json:"provider"`
 
 	// EnvironmentID is the target environment's stable UUID (distinct from the human
 	// EnvironmentStage name). Emitted as the `alethia:environment-id` tag/label so a

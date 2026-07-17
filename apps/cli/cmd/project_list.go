@@ -72,7 +72,7 @@ var listProjectsCmd = &cobra.Command{
 func projectRows(configs []types.ConfigurationSummary) [][]string {
 	rows := make([][]string, len(configs))
 	for i, v := range configs {
-		provider := strings.ToUpper(v.CloudProvider)
+		provider := strings.ToUpper(string(v.CloudProvider))
 		if provider == "" {
 			provider = ui.SymbolDash
 		}
@@ -80,7 +80,7 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 		if region == "" {
 			region = ui.SymbolDash
 		}
-		status := v.Status
+		status := string(v.Status)
 		if status == "" {
 			status = "DRAFT"
 		}
@@ -90,7 +90,7 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 		}
 		rows[i] = []string{
 			v.ProjectName,
-			v.EnvironmentStage,
+			string(v.EnvironmentStage),
 			fmt.Sprintf("%s %s", ui.PlainStatusDot(status), strings.ToLower(status)),
 			provider,
 			region,

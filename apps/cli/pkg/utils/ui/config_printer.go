@@ -52,7 +52,7 @@ func PrintConfiguration(config types.Configuration) {
 	doc.WriteString("\n\n")
 	doc.WriteString(kv("Project:", config.ProjectName))
 	doc.WriteString("\n")
-	doc.WriteString(kv("Environment:", config.EnvironmentStage))
+	doc.WriteString(kv("Environment:", string(config.EnvironmentStage)))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Container Platform:", config.ContainerPlatform))
 	doc.WriteString("\n")
