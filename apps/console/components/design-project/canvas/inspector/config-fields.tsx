@@ -26,6 +26,7 @@ import { ProviderIcon } from "@repo/ui/provider-icon";
 import { RepositorySelector } from "@/components/repository-selector";
 import { ListField } from "./list-field";
 import { SubresourceField } from "./subresource-field";
+import { BindingsField, type ServiceBinding } from "./bindings-field";
 import {
 	REGION_LABELS,
 	groupRegions,
@@ -236,6 +237,14 @@ function FieldControl({
 					onChange={patch}
 				/>
 			) : null;
+
+		case "bindings":
+			return (
+				<BindingsField
+					value={Array.isArray(raw) ? (raw as ServiceBinding[]) : []}
+					onChange={patch}
+				/>
+			);
 	}
 }
 
@@ -279,13 +288,15 @@ function FieldRow({
 		field.type === "region" ||
 		field.type === "repository" ||
 		field.type === "list" ||
-		field.type === "subresource";
+		field.type === "subresource" ||
+		field.type === "bindings";
 
-	// Composite controls (list / subresource / radio-card) label their own inner rows, so the
-	// section label stays decorative for those; everything else gets a real label→control binding.
+	// Composite controls (list / subresource / bindings / radio-card) label their own inner rows, so
+	// the section label stays decorative for those; everything else gets a real label→control binding.
 	const composite =
 		field.type === "list" ||
 		field.type === "subresource" ||
+		field.type === "bindings" ||
 		field.type === "radio-card";
 
 	return (
@@ -313,7 +324,11 @@ function sectionSummary(section: SectionDef, ctx: FieldCtx): string {
 		if (chips.length >= 2) break;
 		if (field.type === "switch") continue;
 		// A list of twelve CIDRs is not a one-line summary; count them instead.
-		if (field.type === "list" || field.type === "subresource") {
+		if (
+			field.type === "list" ||
+			field.type === "subresource" ||
+			field.type === "bindings"
+		) {
 			const items = field.get ? field.get(ctx.config) : ctx.config[field.key];
 			if (Array.isArray(items) && items.length > 0) chips.push(`${items.length}`);
 			continue;
