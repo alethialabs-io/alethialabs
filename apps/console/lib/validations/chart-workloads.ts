@@ -59,11 +59,10 @@ export const chartWorkloadConfigSchema = z.object({
 	env: z.array(serviceEnvSchema).optional(),
 });
 
-/**
- * Where each logical knob (a binding target key or "replicas") writes into the chart's Helm `values`
- * — a map from a knob key to a dot-path (mirror of `ChartValuePathMap`). Auto-inferred at scan and
- * user-overridable from the canvas (the value-path override affordance, Lane 3).
- */
+/** W3 bindings on a chart workload — the same ServiceBinding[] a first-class service declares. */
+export const chartWorkloadBindingsSchema = z.array(serviceBindingSchema);
+
+/** The overlay's logical-knob → chart-values dot-path map (user override of the inferred paths). */
 export const chartWorkloadValuePathsSchema = z.record(z.string(), z.string());
 
 /**

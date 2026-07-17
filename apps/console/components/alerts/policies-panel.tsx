@@ -34,7 +34,7 @@ import {
 	PolicyConditions,
 } from "@/components/alerts/policy-conditions";
 import { PolicySheet } from "@/components/alerts/policy-sheet";
-import { isSeverity } from "@/components/alerts/policy-shared";
+import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
 import { isSecurityKey } from "@/lib/alerts/catalog";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
@@ -422,7 +422,7 @@ function PolicyDetail({
 			}));
 	const conditions: ConditionsValue = ed
 		? {
-				min_severity: draft.minSeverity,
+				min_severity: toMinSeverity(draft.minSeverity),
 				project_ids: draft.project_ids,
 				job_types: draft.job_types,
 				resource_types: draft.resource_types,

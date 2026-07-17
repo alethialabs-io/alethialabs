@@ -47,7 +47,9 @@ const changing = { source: "plan" as const, members: [{ action: "no-op" }, { act
 const declared = { source: "scan" as const, members: [{}] };
 
 const NO_JOB = { activeJob: null };
-const RUNNING_JOB = { activeJob: { id: "j1", type: "DEPLOY", status: "PROCESSING" } };
+const RUNNING_JOB = {
+	activeJob: { id: "j1", type: "DEPLOY", status: "PROCESSING" },
+} satisfies Parameters<typeof resolveExternalStatus>[3];
 
 describe("resolveExternalStatus — the precedence ladder", () => {
 	it("1. FAILED outranks everything, including a clean scan and a live deploy", () => {

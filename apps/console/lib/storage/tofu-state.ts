@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { ProvisionJobType } from "@/lib/db/schema/enums";
+
 /**
  * Object location for a project environment's tofu state, served by the console http-backend
  * proxy (E0). The key is derived from immutable UUIDs — NOT the human project name — because
@@ -50,7 +52,7 @@ const UUID_RE =
  *   state object.
  */
 export function stateKeyForJob(job: {
-	job_type: string;
+	job_type: ProvisionJobType;
 	project_id: string | null;
 	environment_id: string | null;
 	config_snapshot: Record<string, unknown>;

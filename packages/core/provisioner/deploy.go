@@ -478,9 +478,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	defer restoreStateAuth()
 	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
 
-	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
-		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
-
 	// Compose pluggable per-category connector modules (Cloudflare DNS, Vault,
 	// Docker Hub, observability). This merges their tfvars (including decrypted
 	// secrets resolved at claim time), copies the modules into the work dir, and

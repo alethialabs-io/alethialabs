@@ -5,7 +5,11 @@
 // Source of truth: packages/core/catalog/catalog.json (also embedded by the Go resolver).
 // Run `pnpm -F console gen:catalog` to regenerate.
 
-export type ProviderSlug = "aws" | "gcp" | "azure";
+import type { CloudProvider } from "@/lib/db/schema/enums";
+
+// The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
+// `cloud_provider` enum (derived so it can't drift).
+export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure">;
 export type InstanceFamily = "general" | "compute" | "memory" | "gpu";
 export type EngineFamily = "postgres" | "mysql";
 
@@ -138,6 +142,36 @@ export const CATALOG: Catalog = {
 				"storage_service": "Storage Account",
 				"registry_service": "ACR",
 				"secrets_service": "Key Vault"
+			},
+			{
+				"slug": "hetzner",
+				"name": "Hetzner Cloud",
+				"cluster_service": "Talos Kubernetes",
+				"network_name": "Hetzner Network",
+				"dns_service": "ExternalDNS",
+				"database_service": "CloudNativePG",
+				"cache_service": "Valkey",
+				"nosql_service": "—",
+				"queue_service": "RabbitMQ",
+				"topic_service": "—",
+				"storage_service": "MinIO",
+				"registry_service": "Harbor",
+				"secrets_service": "Vault"
+			},
+			{
+				"slug": "alibaba",
+				"name": "Alibaba Cloud",
+				"cluster_service": "ACK",
+				"network_name": "VPC",
+				"dns_service": "Alibaba Cloud DNS",
+				"database_service": "ApsaraDB RDS",
+				"cache_service": "ApsaraDB for Redis",
+				"nosql_service": "Tablestore",
+				"queue_service": "MNS",
+				"topic_service": "MNS",
+				"storage_service": "OSS",
+				"registry_service": "Container Registry",
+				"secrets_service": "KMS"
 			}
 		],
 		"regions": [
@@ -148,7 +182,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "us-east-1",
 					"gcp": "us-east4",
-					"azure": "eastus"
+					"azure": "eastus",
+					"hetzner": "ash",
+					"alibaba": "us-east-1"
 				}
 			},
 			{
@@ -158,7 +194,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "us-east-2",
 					"gcp": "us-central1",
-					"azure": "eastus2"
+					"azure": "eastus2",
+					"hetzner": "ash",
+					"alibaba": "us-east-1"
 				}
 			},
 			{
@@ -168,7 +206,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "us-west-1",
 					"gcp": "us-west1",
-					"azure": "westus"
+					"azure": "westus",
+					"hetzner": "hil",
+					"alibaba": "us-west-1"
 				}
 			},
 			{
@@ -178,7 +218,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "us-west-2",
 					"gcp": "us-west1",
-					"azure": "westus2"
+					"azure": "westus2",
+					"hetzner": "hil",
+					"alibaba": "us-west-1"
 				}
 			},
 			{
@@ -188,7 +230,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "eu-west-1",
 					"gcp": "europe-west1",
-					"azure": "westeurope"
+					"azure": "westeurope",
+					"hetzner": "fsn1",
+					"alibaba": "eu-west-1"
 				}
 			},
 			{
@@ -198,7 +242,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "eu-west-2",
 					"gcp": "europe-west2",
-					"azure": "uksouth"
+					"azure": "uksouth",
+					"hetzner": "fsn1",
+					"alibaba": "eu-west-1"
 				}
 			},
 			{
@@ -208,7 +254,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "eu-central-1",
 					"gcp": "europe-west3",
-					"azure": "germanywestcentral"
+					"azure": "germanywestcentral",
+					"hetzner": "fsn1",
+					"alibaba": "eu-central-1"
 				}
 			},
 			{
@@ -218,7 +266,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "eu-north-1",
 					"gcp": "europe-north1",
-					"azure": "swedencentral"
+					"azure": "swedencentral",
+					"hetzner": "hel1",
+					"alibaba": "eu-central-1"
 				}
 			},
 			{
@@ -228,7 +278,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "ap-southeast-1",
 					"gcp": "asia-southeast1",
-					"azure": "southeastasia"
+					"azure": "southeastasia",
+					"hetzner": "sin",
+					"alibaba": "ap-southeast-1"
 				}
 			},
 			{
@@ -238,7 +290,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "ap-northeast-1",
 					"gcp": "asia-northeast1",
-					"azure": "japaneast"
+					"azure": "japaneast",
+					"hetzner": "sin",
+					"alibaba": "ap-northeast-1"
 				}
 			},
 			{
@@ -248,7 +302,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "ap-south-1",
 					"gcp": "asia-south1",
-					"azure": "centralindia"
+					"azure": "centralindia",
+					"hetzner": "sin",
+					"alibaba": "ap-south-1"
 				}
 			},
 			{
@@ -258,7 +314,9 @@ export const CATALOG: Catalog = {
 				"codes": {
 					"aws": "sa-east-1",
 					"gcp": "southamerica-east1",
-					"azure": "brazilsouth"
+					"azure": "brazilsouth",
+					"hetzner": "ash",
+					"alibaba": "us-east-1"
 				}
 			}
 		],
@@ -509,6 +567,118 @@ export const CATALOG: Catalog = {
 						"cost": "~$384/mo"
 					}
 				]
+			},
+			"hetzner": {
+				"default_instance": "cax11",
+				"default_k8s_version": "1.32",
+				"k8s_versions": [
+					"1.32",
+					"1.31",
+					"1.30"
+				],
+				"autoscaler_key": "enable_cluster_autoscaler",
+				"instances": [
+					{
+						"value": "cax11",
+						"label": "CAX11 (Arm)",
+						"vcpu": 2,
+						"memory_gb": 4,
+						"family": "general",
+						"cost": "~€4/mo"
+					},
+					{
+						"value": "cax21",
+						"label": "CAX21 (Arm)",
+						"vcpu": 4,
+						"memory_gb": 8,
+						"family": "general",
+						"cost": "~€8/mo"
+					},
+					{
+						"value": "cax31",
+						"label": "CAX31 (Arm)",
+						"vcpu": 8,
+						"memory_gb": 16,
+						"family": "general",
+						"cost": "~€21/mo"
+					},
+					{
+						"value": "cx23",
+						"label": "CX23 (x86)",
+						"vcpu": 2,
+						"memory_gb": 4,
+						"family": "general",
+						"cost": "~€5/mo"
+					},
+					{
+						"value": "cx33",
+						"label": "CX33 (x86)",
+						"vcpu": 4,
+						"memory_gb": 8,
+						"family": "general",
+						"cost": "~€8/mo"
+					}
+				]
+			},
+			"alibaba": {
+				"default_instance": "ecs.g6.large",
+				"default_k8s_version": "1.30",
+				"k8s_versions": [
+					"1.31",
+					"1.30",
+					"1.28"
+				],
+				"autoscaler_key": "enable_cluster_autoscaler",
+				"instances": [
+					{
+						"value": "ecs.c6.large",
+						"label": "c6.large",
+						"vcpu": 2,
+						"memory_gb": 4,
+						"family": "compute",
+						"cost": "~$35/mo"
+					},
+					{
+						"value": "ecs.g6.large",
+						"label": "g6.large",
+						"vcpu": 2,
+						"memory_gb": 8,
+						"family": "general",
+						"cost": "~$50/mo"
+					},
+					{
+						"value": "ecs.g6.xlarge",
+						"label": "g6.xlarge",
+						"vcpu": 4,
+						"memory_gb": 16,
+						"family": "general",
+						"cost": "~$100/mo"
+					},
+					{
+						"value": "ecs.c6.xlarge",
+						"label": "c6.xlarge",
+						"vcpu": 4,
+						"memory_gb": 8,
+						"family": "compute",
+						"cost": "~$70/mo"
+					},
+					{
+						"value": "ecs.r6.large",
+						"label": "r6.large",
+						"vcpu": 2,
+						"memory_gb": 16,
+						"family": "memory",
+						"cost": "~$75/mo"
+					},
+					{
+						"value": "ecs.g6.2xlarge",
+						"label": "g6.2xlarge",
+						"vcpu": 8,
+						"memory_gb": 32,
+						"family": "general",
+						"cost": "~$200/mo"
+					}
+				]
 			}
 		},
 		"database": {
@@ -580,6 +750,48 @@ export const CATALOG: Catalog = {
 						"family": "mysql",
 						"value": "azure-mysql",
 						"label": "Azure Database for MySQL",
+						"default_version": "8.0"
+					}
+				]
+			},
+			"hetzner": {
+				"capacity": {
+					"unit": "GiB",
+					"min": 5,
+					"max": 500,
+					"step": 5,
+					"default_min": 10,
+					"default_max": 10
+				},
+				"engines": [
+					{
+						"family": "postgres",
+						"value": "postgres",
+						"label": "PostgreSQL (CloudNativePG)",
+						"default_version": "16"
+					}
+				]
+			},
+			"alibaba": {
+				"capacity": {
+					"unit": "vCPU",
+					"min": 1,
+					"max": 64,
+					"step": 1,
+					"default_min": 2,
+					"default_max": 4
+				},
+				"engines": [
+					{
+						"family": "postgres",
+						"value": "PostgreSQL",
+						"label": "ApsaraDB RDS PostgreSQL",
+						"default_version": "16.0"
+					},
+					{
+						"family": "mysql",
+						"value": "MySQL",
+						"label": "ApsaraDB RDS MySQL",
 						"default_version": "8.0"
 					}
 				]
@@ -682,6 +894,58 @@ export const CATALOG: Catalog = {
 						"label": "Premium P1",
 						"memory_gb": 6,
 						"cost": "~$210/mo"
+					}
+				]
+			},
+			"hetzner": {
+				"default_tier": "1",
+				"tiers": [
+					{
+						"value": "1",
+						"label": "1 GiB",
+						"memory_gb": 1,
+						"cost": "~€2/mo"
+					},
+					{
+						"value": "2",
+						"label": "2 GiB",
+						"memory_gb": 2,
+						"cost": "~€4/mo"
+					},
+					{
+						"value": "4",
+						"label": "4 GiB",
+						"memory_gb": 4,
+						"cost": "~€8/mo"
+					}
+				]
+			},
+			"alibaba": {
+				"default_tier": "redis.master.small.default",
+				"tiers": [
+					{
+						"value": "redis.master.small.default",
+						"label": "1 GB",
+						"memory_gb": 1,
+						"cost": "~$25/mo"
+					},
+					{
+						"value": "redis.master.mid.default",
+						"label": "2 GB",
+						"memory_gb": 2,
+						"cost": "~$45/mo"
+					},
+					{
+						"value": "redis.master.large.default",
+						"label": "4 GB",
+						"memory_gb": 4,
+						"cost": "~$85/mo"
+					},
+					{
+						"value": "redis.master.2xlarge.default",
+						"label": "16 GB",
+						"memory_gb": 16,
+						"cost": "~$300/mo"
 					}
 				]
 			}

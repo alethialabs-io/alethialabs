@@ -22,6 +22,7 @@ import {
 	projectCaches,
 	projectCluster,
 	projectContainerRegistries,
+	projectChartWorkloads,
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
@@ -40,6 +41,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
+import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
@@ -756,21 +758,60 @@ async function buildConfigSnapshot(
 					eq(projectAddons.enabled, true),
 				),
 			);
+		// W5 Lane 2: a BYO chart's described workloads carry a user overlay (config/bindings/
+		// value_paths). Load them per BYO addon so `resolveByoChartInstall` can compose the static
+		// config onto the chart's pristine values. Keyed by projectAddons.id (the workloads' FK).
+		const byoAddonIds = addonRows
+			.filter((r) => r.source === "byo")
+			.map((r) => r.id);
+		const workloadsByAddon = new Map<string, ChartWorkloadOverlay[]>();
+		if (byoAddonIds.length > 0) {
+			const workloadRows = await tx
+				.select({
+					addon_id: projectChartWorkloads.addon_id,
+					name: projectChartWorkloads.name,
+					rendered: projectChartWorkloads.rendered,
+					config: projectChartWorkloads.config,
+					bindings: projectChartWorkloads.bindings,
+					value_paths: projectChartWorkloads.value_paths,
+				})
+				.from(projectChartWorkloads)
+				.where(
+					and(
+						envScope(projectChartWorkloads, projectId, envId),
+						inArray(projectChartWorkloads.addon_id, byoAddonIds),
+					),
+				);
+			for (const w of workloadRows) {
+				const list = workloadsByAddon.get(w.addon_id) ?? [];
+				list.push({
+					name: w.name,
+					rendered: w.rendered,
+					config: w.config,
+					bindings: w.bindings,
+					value_paths: w.value_paths,
+				});
+				workloadsByAddon.set(w.addon_id, list);
+			}
+		}
 		const addons: AddOnInstallSpec[] = addonRows
 			.map((r) =>
 				// A bring-your-own chart (source='byo') resolves to a git-source spec (chart from the
 				// customer's repo); a catalog add-on resolves against the code catalog.
 				r.source === "byo"
-					? resolveByoChartInstall({
-							addon_id: r.addon_id,
-							mode: r.mode,
-							version: r.version,
-							chart_repo: r.chart_repo,
-							chart_path: r.chart_path,
-							namespace: r.namespace,
-							values: r.values,
-							values_yaml: r.values_yaml,
-						})
+					? resolveByoChartInstall(
+							{
+								addon_id: r.addon_id,
+								mode: r.mode,
+								version: r.version,
+								chart_repo: r.chart_repo,
+								chart_path: r.chart_path,
+								namespace: r.namespace,
+								values: r.values,
+								values_yaml: r.values_yaml,
+							},
+							workloadsByAddon.get(r.id) ?? [],
+						)
 					: resolveAddOnInstall({
 							addon_id: r.addon_id,
 							mode: r.mode,
