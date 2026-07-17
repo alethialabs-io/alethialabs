@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import type { GenerateText } from "@/lib/ai/explain-findings";
 import type { Ledger, SubAgentRunner, Task } from "@/lib/agent/supervisor";
 
@@ -42,7 +43,7 @@ export function parseSubAgentResult(raw: string): {
 		const match = raw.match(/\{[\s\S]*\}/);
 		const parsed: unknown = JSON.parse(match ? match[0] : raw);
 		if (parsed && typeof parsed === "object") {
-			const o = parsed as Record<string, unknown>;
+			const o = asRecord(parsed);
 			const facts = Array.isArray(o.facts)
 				? o.facts.filter((f): f is string => typeof f === "string")
 				: undefined;

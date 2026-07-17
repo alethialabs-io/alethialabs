@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import { AlertTriangle, KeyRound, RefreshCcw, WifiOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -46,7 +47,7 @@ function parseBudget(error: Error): ParsedBudget | null {
 	try {
 		const body: unknown = JSON.parse(raw);
 		if (typeof body !== "object" || body === null) return null;
-		const b = body as Record<string, unknown>;
+		const b = asRecord(body);
 		if (typeof b.reason !== "string") return null;
 		if (!BUDGET_REASONS.includes(b.reason as BudgetReason)) return null;
 		return {
