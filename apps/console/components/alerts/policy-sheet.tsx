@@ -18,7 +18,7 @@ import { ChannelRouting } from "@/components/alerts/channel-routing";
 import { EventMatrix } from "@/components/alerts/event-matrix";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { PolicyConditions } from "@/components/alerts/policy-conditions";
-import { isSeverity } from "@/components/alerts/policy-shared";
+import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
 import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
@@ -272,7 +272,7 @@ export function PolicySheet({
 							options={conditionOptions}
 							editable
 							value={{
-								min_severity: v.min_severity,
+								min_severity: toMinSeverity(v.min_severity),
 								project_ids: v.project_ids,
 								job_types: v.job_types,
 								resource_types: v.resource_types,
