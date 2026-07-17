@@ -116,7 +116,7 @@ function RowField({
 	const options =
 		typeof field.options === "function"
 			? field.options({ provider, config: row })
-			: (field.options as FieldOption[] | undefined);
+			: field.options;
 
 	const full = field.full || field.type === "text";
 

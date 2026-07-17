@@ -135,13 +135,13 @@ export function RepositorySelector({
 				if (detected) initialProvider = detected;
 
 				if (providers.includes(initialProvider)) {
-					setSelectedProvider(initialProvider as PublicGitProvider);
+					setSelectedProvider(initialProvider);
 					await fetchRepositories(
-						initialProvider as PublicGitProvider,
+						initialProvider,
 					);
 				} else {
-					setSelectedProvider(providers[0] as PublicGitProvider);
-					await fetchRepositories(providers[0] as PublicGitProvider);
+					setSelectedProvider(providers[0]);
+					await fetchRepositories(providers[0]);
 				}
 			}
 		} catch (err) {

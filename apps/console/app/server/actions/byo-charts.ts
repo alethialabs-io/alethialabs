@@ -125,7 +125,7 @@ export async function attachByoChart(input: {
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 	const ref = input.ref?.trim() || "HEAD";
 	const namespace = input.namespace?.trim() || "default";
-	const values = (input.values ?? {}) as AddOnValues;
+	const values = input.values ?? {};
 
 	await withOwnerScope(actor.userId, async (tx) => {
 		await tx
@@ -489,7 +489,7 @@ export async function finalizeChartScan(jobId: string): Promise<void> {
 	const db = getServiceDb();
 	const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
 	if (!job || job.job_type !== "CHART_SCAN") return;
-	const snap = (job.config_snapshot ?? {}) as Record<string, unknown>;
+	const snap = job.config_snapshot ?? {};
 	const projectId = typeof snap.project_id === "string" ? snap.project_id : null;
 	const environmentId = typeof snap.environment_id === "string" ? snap.environment_id : null;
 	const addonId = typeof snap.addon_id === "string" ? snap.addon_id : null;

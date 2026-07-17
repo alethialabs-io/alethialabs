@@ -75,7 +75,7 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 				const result = await getPlanResult(latestPlan.id);
 				if (cancelled) return;
 
-				const meta = result.execution_metadata as ExecutionMetadata | null;
+				const meta = result.execution_metadata;
 
 				if (meta?.plan_result) {
 					setPlanResult(parsePlanJSON(meta.plan_result));

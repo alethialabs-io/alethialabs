@@ -87,8 +87,8 @@ export function HeaderBreadcrumbs() {
 						const jt = job?.job_type;
 						out.push({
 							label:
-								jt && JOB_TYPES[jt as keyof typeof JOB_TYPES]
-									? JOB_TYPES[jt as keyof typeof JOB_TYPES].label
+								jt && JOB_TYPES[jt]
+									? JOB_TYPES[jt].label
 									: `${s.slice(0, 8)}…`,
 						});
 					} else {
@@ -148,8 +148,8 @@ export function HeaderBreadcrumbs() {
 				if (prev === "jobs") {
 					const job = jobs.find((j) => j.id === seg);
 					const jobType = job?.job_type;
-					const label = jobType && JOB_TYPES[jobType as keyof typeof JOB_TYPES]
-						? JOB_TYPES[jobType as keyof typeof JOB_TYPES].label
+					const label = jobType && JOB_TYPES[jobType]
+						? JOB_TYPES[jobType].label
 						: seg.slice(0, 8) + "…";
 					result.push({ label });
 					i++;
