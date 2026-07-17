@@ -150,6 +150,30 @@ func classifyReachability(err error, out string) reachClass {
 	}
 }
 
+// podProbeVerdict turns the in-cluster probe pod's last phase + container waiting reason into the
+// RIGHT failure message. A pod that never reached Running/Succeeded (Pending: unschedulable /
+// ImagePullBackOff / no capacity / a taint) never executed the connect, so the pod-network verdict
+// would be a misdiagnosis — say scheduling/image instead. Pure/unit-tested.
+func podProbeVerdict(phase, waitingReason string) string {
+	phase = strings.TrimSpace(phase)
+	if phase == "Running" || phase == "Succeeded" {
+		return "the cluster pod network is broken (the pod ran but could not reach the API server across the cluster network — cross-node pod->apiserver)"
+	}
+	detail := phase
+	if wr := strings.TrimSpace(waitingReason); wr != "" {
+		if detail != "" {
+			detail += "/" + wr
+		} else {
+			detail = wr
+		}
+	}
+	if detail == "" {
+		detail = "no pod observed"
+	}
+	return "the probe pod never started (" + detail +
+		") — this is NOT a pod-network verdict; check scheduling / image pull / node capacity / taints"
+}
+
 // containsAny reports whether s contains any of the substrings.
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
@@ -209,7 +233,7 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 	fmt.Fprintf(stdout, "Verifying a pod can reach the API server (ClusterIP %s:443) across the cluster network...\n", clusterIP)
 
 	deadline := time.Now().Add(timeout)
-	var lastState string
+	var lastState, lastWaiting string
 	err = pollUntil(ctx, deadline, 8*time.Second, func() bool {
 		succeeded, _ := utils.ExecuteCommandWithOutput(
 			"kubectl get job "+jobName+" -n default -o jsonpath={.status.succeeded}", ".", nil)
@@ -218,12 +242,17 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 		}
 		lastState, _ = utils.ExecuteCommandWithOutput(
 			"kubectl get pods -n default -l job-name="+jobName+" -o jsonpath={.items[*].status.phase}", ".", nil)
+		// Why a not-Running pod is stuck (ImagePullBackOff, unschedulable, …) — so a scheduling/
+		// image failure isn't misreported as a pod-network verdict below.
+		lastWaiting, _ = utils.ExecuteCommandWithOutput(
+			"kubectl get pods -n default -l job-name="+jobName+
+				" -o jsonpath={.items[*].status.containerStatuses[*].state.waiting.reason}", ".", nil)
 		return false
 	})
 	if err != nil {
-		return fmt.Errorf("a pod could not reach the API server (ClusterIP %s:443) within %s (pod phase: %q) — "+
-			"the cluster pod network is broken (cross-node pod->apiserver). This is fatal: pods that cannot reach "+
-			"the API server cannot run any real workload: %w", clusterIP, timeout, strings.TrimSpace(lastState), err)
+		return fmt.Errorf("in-cluster API-server probe failed within %s (ClusterIP %s:443) — %s. "+
+			"This is fatal: a cluster whose pods cannot run + reach the API server runs no real workload: %w",
+			timeout, clusterIP, podProbeVerdict(lastState, lastWaiting), err)
 	}
 	fmt.Fprintln(stdout, "A pod reached the API server across the cluster network — pod datapath is healthy.")
 	return nil
