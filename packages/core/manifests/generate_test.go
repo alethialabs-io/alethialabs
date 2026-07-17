@@ -304,6 +304,61 @@ func TestFromServices_ResolvesBindings(t *testing.T) {
 	}
 }
 
+// TestFromServices_UnresolvableBindingFailsClosed locks the fail-closed rule (#687): a non-secret
+// facet whose value can't be resolved — here a `cache` endpoint on a provision that emitted no such
+// tofu output (e.g. a non-AWS cloud, or a bound BYO-IaC resource the AWS-first key map can't reach)
+// — is REPORTED and its env var OMITTED, never injected empty. An empty endpoint would boot the app
+// pointed at nothing; an absent required env fails loudly instead. The port facet (a kind default,
+// not an output lookup) still resolves, and the app still renders.
+func TestFromServices_UnresolvableBindingFailsClosed(t *testing.T) {
+	apps, skipped := FromServices([]types.ProjectServiceConfig{
+		{
+			Name:   "api",
+			Type:   "deployment",
+			Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+			Env:    []types.ServiceEnvVar{{Name: "LOG_LEVEL", Value: "info"}},
+			Bindings: []types.ServiceBinding{{
+				Target: types.ServiceBindingTarget{Kind: "cache", Name: "sessions"},
+				Inject: []types.ServiceBindingInjection{
+					{Env: "REDIS_HOST", From: "endpoint"}, // no output emitted → unresolved, omitted
+					{Env: "REDIS_PORT", From: "port"},     // kind default → resolves
+				},
+			}},
+		},
+	}, Options{Outputs: map[string]string{}}) // deliberately no cache endpoint output
+
+	if len(apps) != 1 {
+		t.Fatalf("app must still render, got %d apps", len(apps))
+	}
+	// The unresolvable endpoint must be reported, naming the facet + service.
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 unresolved-binding report, got %v", skipped)
+	}
+	for _, want := range []string{"endpoint", "REDIS_HOST", "api", "cache/sessions"} {
+		if !strings.Contains(skipped[0], want) {
+			t.Errorf("report %q missing %q", skipped[0], want)
+		}
+	}
+	// The empty endpoint env must NOT be injected; the resolvable port must be.
+	for _, e := range apps[0].Env {
+		if e.Name == "REDIS_HOST" {
+			t.Errorf("unresolvable endpoint must be omitted, not injected: %+v", e)
+		}
+	}
+	wantEnv := []types.ServiceEnvVar{
+		{Name: "LOG_LEVEL", Value: "info"},
+		{Name: "REDIS_PORT", Value: "6379"},
+	}
+	if len(apps[0].Env) != len(wantEnv) {
+		t.Fatalf("env = %+v, want %+v", apps[0].Env, wantEnv)
+	}
+	for i, e := range wantEnv {
+		if apps[0].Env[i] != e {
+			t.Errorf("env[%d] = %+v, want %+v", i, apps[0].Env[i], e)
+		}
+	}
+}
+
 // TestRenderApp_SecretEnv renders a workload whose only env is a binding credential — the env block
 // must still emit with a valueFrom.secretKeyRef (not be skipped for want of plain env).
 func TestRenderApp_SecretEnv(t *testing.T) {
