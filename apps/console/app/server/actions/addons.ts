@@ -217,7 +217,7 @@ export async function enableAddon(input: {
 			def,
 			asRecord(parsed.data),
 			existing?.values ?? null,
-		) as AddOnValues;
+		);
 		await tx
 			.insert(projectAddons)
 			.values({

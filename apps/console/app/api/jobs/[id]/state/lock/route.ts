@@ -7,6 +7,7 @@
 // current holder's lock-info JSON so tofu can report who holds the lock.
 
 import { NextResponse } from "next/server";
+import { asRecord } from "@/lib/records";
 import { resolveStateRequest } from "@/lib/runners/state-auth";
 import { acquireStateLock, releaseStateLock } from "@/lib/runners/state-lock";
 
@@ -21,12 +22,9 @@ export async function POST(
 	const ctx = await resolveStateRequest(req, id);
 	if ("error" in ctx) return ctx.error;
 
-	const info = (await req.json().catch(() => null)) as Record<
-		string,
-		unknown
-	> | null;
-	const lockId = typeof info?.ID === "string" ? info.ID : null;
-	if (!info || !lockId) {
+	const info = asRecord(await req.json().catch(() => null));
+	const lockId = typeof info.ID === "string" ? info.ID : null;
+	if (!lockId) {
 		return NextResponse.json({ error: "Invalid lock info" }, { status: 400 });
 	}
 
@@ -50,11 +48,8 @@ export async function DELETE(
 	const ctx = await resolveStateRequest(req, id);
 	if ("error" in ctx) return ctx.error;
 
-	const info = (await req.json().catch(() => null)) as Record<
-		string,
-		unknown
-	> | null;
-	const lockId = typeof info?.ID === "string" ? info.ID : null;
+	const info = asRecord(await req.json().catch(() => null));
+	const lockId = typeof info.ID === "string" ? info.ID : null;
 	if (lockId) await releaseStateLock(ctx.stateKey, lockId);
 	return NextResponse.json({ success: true });
 }

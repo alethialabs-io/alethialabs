@@ -639,6 +639,10 @@ export interface ExecutionMetadata {
 	// snapshot. On a wiring hard-fail the runner posts a PARTIAL result carrying which step
 	// died; absent on pre-#574 jobs. Mirrors the Go `argocd.GitopsStatus`.
 	gitops_status?: GitopsStatusReport;
+	// CHART_SCAN jobs (W5 Path A — DESCRIBE): the chart's rendered workloads extracted from the
+	// helm-template render. An opaque wire payload — validated by lib/validations/chart-workloads.ts
+	// before reconcileChartWorkloads persists it into project_chart_workloads.
+	chart_workloads?: unknown;
 }
 
 /** ArgoCD Application/resource health (packages/core/argocd). ArgoCD's fixed health set. */

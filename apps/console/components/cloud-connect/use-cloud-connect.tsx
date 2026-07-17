@@ -224,9 +224,7 @@ export function useCloudConnect({
 			} else if (isEnumMember(slug, EXTRA_CLOUDS)) {
 				if (!extraSetup?.[slug] || addingAnother) {
 					setConnectingSlug(slug);
-					const init = await initExtraCloudIdentity(
-						slug as (typeof EXTRA_CLOUDS)[number],
-					);
+					const init = await initExtraCloudIdentity(slug);
 					setExtraSetup((prev) => ({
 						...prev,
 						[slug]: { identityId: init.identityId, externalId: init.externalId },
@@ -389,9 +387,9 @@ export function useCloudConnect({
 								)}
 							</div>
 						</>
-					) : extraCloudSlug ? (
+					) : extraCloudSlug && isEnumMember(extraCloudSlug, TOKEN_CLOUDS) ? (
 						(() => {
-							const slug = extraCloudSlug as TokenCloud;
+							const slug = extraCloudSlug;
 							const m = TOKEN_CLOUD_META[slug];
 							return (
 								<>

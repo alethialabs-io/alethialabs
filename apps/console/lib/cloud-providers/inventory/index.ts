@@ -7,6 +7,8 @@
 // never fails the connect — the sweep retries.
 
 import { eq, lt, sql } from "drizzle-orm";
+import { numOr } from "@/lib/coerce";
+import { asRecord } from "@/lib/records";
 import { getServiceDb } from "@/lib/db";
 import {
 	type CloudIdentity,
@@ -113,7 +115,7 @@ export async function gcRemovedInventory(retentionDays: number): Promise<number>
 		const res = await db
 			.delete(table)
 			.where(lt(table.removed_at, cutoff as never));
-		purged += (res as { rowCount?: number }).rowCount ?? 0;
+		purged += numOr(asRecord(res).rowCount, 0);
 	}
 	return purged;
 }

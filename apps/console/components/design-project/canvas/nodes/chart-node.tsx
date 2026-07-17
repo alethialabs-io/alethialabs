@@ -16,7 +16,7 @@ import { cn } from "@repo/ui/utils";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { detachByoChart, scanByoChart } from "@/app/server/actions/byo-charts";
 import { ChartScanSheet } from "@/components/design-project/byo/chart-scan-sheet";
-import type { CanvasNode } from "../graph/types";
+import { type CanvasNode, nodeOfKind } from "../graph/types";
 import type { VerifyReport } from "@/types/jsonb.types";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
 
@@ -63,11 +63,12 @@ const STATUS_META: Record<ChartStatus, { label: string; dot: string }> = {
 
 /** React Flow node renderer for a `chart` kind. */
 export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const node = nodeOfKind(raw, "chart");
 	const ctx = useByoChartCanvas();
 	const [detaching, setDetaching] = useState(false);
 	const [sheetOpen, setSheetOpen] = useState(false);
-	if (!node || node.data.kind !== "chart") return null;
+	if (!node) return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
 	const chip = scanChip(c.scanStatus, c.scanReport);

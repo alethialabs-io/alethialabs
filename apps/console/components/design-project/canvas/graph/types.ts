@@ -210,3 +210,20 @@ export type CanvasNodeData<K extends NodeKind = NodeKind> = {
 
 export type CanvasNode<K extends NodeKind = NodeKind> = Node<CanvasNodeData<K>>;
 export type CanvasEdge = Edge;
+
+/**
+ * The node with the given `id`/lookup narrowed to `kind`, or undefined when it is absent or of
+ * another kind. The one sanctioned seam for going from `CanvasNode | undefined` (what
+ * `store.nodes.find` yields) to `CanvasNode<K>`: `CanvasNodeData<K>` is a distributed mapped type,
+ * so TS can't prove a generic `data.kind === kind` compare narrows the `Node<…>` wrapper (nor that
+ * `CanvasNode<K>` is assignable back to `CanvasNode`, TS2677) — the same discriminated-union limit
+ * `buildNodeData` documents. Asserted once here so every caller stays cast-free.
+ */
+export function nodeOfKind<K extends NodeKind>(
+	node: CanvasNode | undefined,
+	kind: K,
+): CanvasNode<K> | undefined {
+	return node && node.data.kind === kind
+		? (node as CanvasNode<K>)
+		: undefined;
+}
