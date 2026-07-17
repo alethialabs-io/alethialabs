@@ -336,10 +336,7 @@ export function ConnectorsPage({
 				await disconnectAzureIdentity(cloudId);
 			} else if (isEnumMember(integration.slug, EXTRA_CLOUDS)) {
 				if (!cloudId) throw new Error("Missing identity ID");
-				await disconnectExtraCloud(
-					cloudId,
-					integration.slug as (typeof EXTRA_CLOUDS)[number],
-				);
+				await disconnectExtraCloud(cloudId, integration.slug);
 			} else if (integration.auth_method === "api_key") {
 				const result = await deleteConnectorCredential(integration.slug);
 				if (!result.ok) throw new Error(result.error);

@@ -12,7 +12,6 @@ import { catalogSpec } from "@/lib/breakglass/catalog";
 import { guardBreakglass, json } from "@/lib/breakglass/guard";
 import { resourceTypeFor } from "@/lib/breakglass/actions";
 import { mintApprovalSchema } from "@/lib/validations/breakglass";
-import type { BreakglassAction } from "@/lib/db/schema/enums";
 
 export async function POST(req: Request): Promise<Response> {
 	const guard = await guardBreakglass(req);

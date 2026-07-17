@@ -9,6 +9,7 @@
 // See lib/promotions/{diff,gates}.ts for the pure engines.
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { arrayIncludes } from "@/lib/type-guards";
 import { authorize } from "@/lib/authz/guard";
 import { getPreviousEnvironmentCost } from "@/app/server/actions/cost";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
@@ -364,7 +365,7 @@ export async function rejectPromotion(
 /** Cancels an in-flight promotion (leaves the written candidate design in place). */
 export async function cancelPromotion(promotionId: string): Promise<void> {
 	const { promotion } = await loadForDecision(promotionId, "deploy");
-	if (!IN_FLIGHT.includes(promotion.status as (typeof IN_FLIGHT)[number]))
+	if (!arrayIncludes(IN_FLIGHT, promotion.status))
 		throw new Error("Only an in-flight promotion can be cancelled");
 	await getServiceDb()
 		.update(environmentPromotions)
