@@ -301,7 +301,14 @@ func defaultPort(kind string) string {
 // secretKeyRef into the Secret the ExternalSecret lane materializes. It shares IsCredentialFacet +
 // BindingSecretName (externalsecret.go) with #618 so the workload reads exactly the Secret #618
 // creates — one source of truth, no drift. Pure — a map lookup, no I/O.
-func resolveBindings(serviceName string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv) {
+//
+// Non-secret facets resolve FAIL-CLOSED (mirroring the credential lane's unsatisfiable-facet
+// reporting in manifests_gen.go): a facet whose value can't be resolved — an unknown backing kind,
+// or a tofu output the provision didn't emit (e.g. a non-AWS cloud, or a bound BYO-IaC resource
+// whose customer-named outputs the AWS-first key map can't reach yet) — is REPORTED in `unresolved`
+// and its env var OMITTED, never injected empty. An empty endpoint would boot the workload pointed
+// at nothing (a silent misconfig); an absent required env fails loudly instead.
+func resolveBindings(serviceName string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv, unresolved []string) {
 	for _, b := range bindings {
 		for _, inj := range b.Inject {
 			if IsCredentialFacet(inj.From) {
@@ -319,10 +326,16 @@ func resolveBindings(serviceName string, bindings []types.ServiceBinding, output
 			case "port":
 				value = defaultPort(b.Target.Kind)
 			}
+			if value == "" {
+				unresolved = append(unresolved, fmt.Sprintf(
+					"binding facet %q (env %s) for %s→%s/%s could not be resolved — env omitted",
+					inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name))
+				continue
+			}
 			env = append(env, types.ServiceEnvVar{Name: inj.Env, Value: value})
 		}
 	}
-	return env, secretEnv
+	return env, secretEnv, unresolved
 }
 
 // FromServices builds Apps from the project's FIRST-CLASS services (vc.Services — the W1
@@ -361,7 +374,11 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		}
 		// W3 — resolve the service's bindings into env: endpoint/port as values (from tofu
 		// outputs), credentials as secretKeyRef. User-authored env comes first, then binding env.
-		bindEnv, secretEnv := resolveBindings(s.Name, s.Bindings, opts.Outputs)
+		// A non-secret facet that can't be resolved is REPORTED (not injected empty) so the caller
+		// surfaces it alongside the skipped-service reasons — the app still renders (a missing
+		// required env fails loudly at boot; an empty one would silently connect to nothing).
+		bindEnv, secretEnv, unresolved := resolveBindings(s.Name, s.Bindings, opts.Outputs)
+		skipped = append(skipped, unresolved...)
 		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(bindEnv)), s.Env...), bindEnv...)
 		apps = append(apps, App{
 			Name:           name,
