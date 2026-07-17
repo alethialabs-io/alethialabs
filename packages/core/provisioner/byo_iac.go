@@ -263,7 +263,7 @@ func writeByoBackendOverride(moduleDir string) error {
 func setByoAlethiaTFVars(vc *types.ProjectConfig) func() {
 	vars := map[string]string{
 		"TF_VAR_alethia_project":        vc.ProjectName,
-		"TF_VAR_alethia_environment":    vc.EnvironmentStage,
+		"TF_VAR_alethia_environment":    string(vc.EnvironmentStage),
 		"TF_VAR_alethia_region":         vc.Region,
 		"TF_VAR_alethia_project_id":     vc.ID,
 		"TF_VAR_alethia_environment_id": vc.ID,

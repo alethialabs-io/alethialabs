@@ -132,7 +132,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 
 	f := &InfraFacts{
 		ProjectName:          vc.ProjectName,
-		Environment:          vc.EnvironmentStage,
+		Environment:          string(vc.EnvironmentStage),
 		Region:               vc.Region,
 		Provider:             string(vc.Provider),
 		DomainName:           vc.DNS.DomainName,

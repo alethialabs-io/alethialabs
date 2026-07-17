@@ -94,6 +94,46 @@ var AllCloudProviders = []CloudProvider{
 	CloudProviderCivo,
 }
 
+// EnvironmentStage mirrors the environment_stage enum (lib/db/schema/enums.ts).
+type EnvironmentStage string
+
+const (
+	EnvironmentStageDevelopment EnvironmentStage = "development"
+	EnvironmentStageStaging     EnvironmentStage = "staging"
+	EnvironmentStageProduction  EnvironmentStage = "production"
+)
+
+// AllEnvironmentStages is every environment_stage value, in schema order.
+var AllEnvironmentStages = []EnvironmentStage{
+	EnvironmentStageDevelopment,
+	EnvironmentStageStaging,
+	EnvironmentStageProduction,
+}
+
+// ProjectStatus mirrors the project_status enum (lib/db/schema/enums.ts).
+type ProjectStatus string
+
+const (
+	ProjectStatusDraft        ProjectStatus = "DRAFT"
+	ProjectStatusQueued       ProjectStatus = "QUEUED"
+	ProjectStatusProvisioning ProjectStatus = "PROVISIONING"
+	ProjectStatusActive       ProjectStatus = "ACTIVE"
+	ProjectStatusFailed       ProjectStatus = "FAILED"
+	ProjectStatusDestroying   ProjectStatus = "DESTROYING"
+	ProjectStatusDestroyed    ProjectStatus = "DESTROYED"
+)
+
+// AllProjectStatuses is every project_status value, in schema order.
+var AllProjectStatuses = []ProjectStatus{
+	ProjectStatusDraft,
+	ProjectStatusQueued,
+	ProjectStatusProvisioning,
+	ProjectStatusActive,
+	ProjectStatusFailed,
+	ProjectStatusDestroying,
+	ProjectStatusDestroyed,
+}
+
 // ServiceWorkloadType mirrors the service_workload_type enum (lib/db/schema/enums.ts).
 type ServiceWorkloadType string
 
