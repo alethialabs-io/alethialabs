@@ -515,7 +515,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 							{loadingProvider === provider ? (
 								<Loader2 className="size-[17px] animate-spin" />
 							) : (
-								<ProviderIcon provider={provider as Provider} size={17} />
+								<ProviderIcon provider={provider} size={17} />
 							)}
 							{lookup(PROVIDER_LABELS, provider)}
 						</button>
