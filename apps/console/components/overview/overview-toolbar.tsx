@@ -40,7 +40,7 @@ function providerLabel(p: string): string {
 }
 
 /** The filter dims Reset clears (view + sort are not filters, so they don't count). */
-const FILTER_DEFAULTS = { q: "", clouds: [] as string[], repos: [] as string[] };
+const FILTER_DEFAULTS = { q: "", clouds: Array<string>(), repos: Array<string>() };
 
 export function OverviewToolbar({
 	orgSlug,

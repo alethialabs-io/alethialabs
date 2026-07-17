@@ -181,9 +181,13 @@ export function WidgetGrid({ className }: { className?: string }) {
 		(e: DragStartEvent) => {
 			const w = widgets.find((x) => x.id === String(e.active.id));
 			if (!w) return;
-			const ae = e.activatorEvent as PointerEvent;
-			dragStartClient.current = { x: ae.clientX, y: ae.clientY };
-			const cell = cellAt({ clientX: ae.clientX, clientY: ae.clientY });
+			const ae = e.activatorEvent;
+			const clientX =
+				ae && "clientX" in ae ? Number(ae.clientX) : 0;
+			const clientY =
+				ae && "clientY" in ae ? Number(ae.clientY) : 0;
+			dragStartClient.current = { x: clientX, y: clientY };
+			const cell = cellAt({ clientX, clientY });
 			dragGrab.current = { dx: cell.x - w.pos_x, dy: cell.y - w.pos_y };
 			dragOcc.current = occupancyExcluding(rectsOf(), w.id);
 			const rect: GridRect = {
