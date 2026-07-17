@@ -140,28 +140,45 @@ let cacheIssues: Record<string, string> = {};
 function computeIssues(nodes: CanvasNode[]): Record<string, string> {
 	// Readiness is a non-critical overlay — a malformed draft must never crash the canvas. Any
 	// unexpected throw (schema edge case, bad persisted config) degrades to "no issues" (all ready).
+	const issues: Record<string, string> = {};
 	let result: ReturnType<typeof projectFormSchema.safeParse>;
 	try {
 		result = projectFormSchema.safeParse(graphToForm(nodes));
 	} catch {
 		return {};
 	}
-	if (result.success) return {};
-	const issues: Record<string, string> = {};
-	for (const issue of result.error.issues) {
-		const head = issue.path[0];
-		const idx = issue.path[1];
-		if (typeof head !== "string") continue;
-		let nodeId: string | undefined;
-		if (head === "source_repos" || head === "project") {
-			// Source repos + project fields both live on the project root node.
-			nodeId = nodes.find((n) => n.data.kind === "project")?.id;
-		} else if (SINGLETON_SCHEMA_KIND[head]) {
-			nodeId = nodes.find((n) => n.data.kind === SINGLETON_SCHEMA_KIND[head])?.id;
-		} else if (ARRAY_SCHEMA_KIND[head] && typeof idx === "number") {
-			nodeId = nodes.filter((n) => n.data.kind === ARRAY_SCHEMA_KIND[head])[idx]?.id;
+	if (!result.success) {
+		for (const issue of result.error.issues) {
+			const head = issue.path[0];
+			const idx = issue.path[1];
+			if (typeof head !== "string") continue;
+			let nodeId: string | undefined;
+			if (head === "source_repos" || head === "project") {
+				// Source repos + project fields both live on the project root node.
+				nodeId = nodes.find((n) => n.data.kind === "project")?.id;
+			} else if (SINGLETON_SCHEMA_KIND[head]) {
+				nodeId = nodes.find((n) => n.data.kind === SINGLETON_SCHEMA_KIND[head])?.id;
+			} else if (ARRAY_SCHEMA_KIND[head] && typeof idx === "number") {
+				nodeId = nodes.filter((n) => n.data.kind === ARRAY_SCHEMA_KIND[head])[idx]?.id;
+			}
+			if (nodeId && !issues[nodeId]) issues[nodeId] = issue.message;
 		}
-		if (nodeId && !issues[nodeId]) issues[nodeId] = issue.message;
+	}
+	// W3 fail-closed binding gate, client mirror of buildConfigSnapshot's: a service binding to a
+	// resource not on the canvas is un-deployable. It's a CROSS-node check the per-config zod schema
+	// can't see, so surface it as the service node's issue (keep any more-specific config issue first).
+	for (const svc of nodes) {
+		if (svc.data.kind !== "service" || issues[svc.id]) continue;
+		for (const b of svc.data.config.bindings ?? []) {
+			const exists = nodes.some(
+				(n) => n.data.kind === b.target.kind && configName(n.data) === b.target.name,
+			);
+			if (!exists) {
+				issues[svc.id] =
+					`Binds to ${b.target.kind} "${b.target.name}", which isn't on the canvas. Add it or remove the binding.`;
+				break;
+			}
+		}
 	}
 	return issues;
 }
