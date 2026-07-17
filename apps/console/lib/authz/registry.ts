@@ -7,6 +7,7 @@
 // it's handled, and the DB `permission`/`role` tables are seeded FROM this file
 // (4.2) so code and data never drift.
 
+import { arrayIncludes } from "@/lib/type-guards";
 import { isEnumMember } from "@/lib/coerce";
 
 /** Resource types the PDP reasons about. */
@@ -130,7 +131,8 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Also read alert config (operators care about ops alerts) but not mutate it.
 	operator: PERMISSIONS.filter(
 		(p) =>
-			((["view", "create", "edit", "plan", "deploy", "destroy"] as Action[]).includes(
+			(arrayIncludes(
+				["view", "create", "edit", "plan", "deploy", "destroy"],
 				p.action,
 			) &&
 				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||
