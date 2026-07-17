@@ -57,7 +57,7 @@ export function VersionsPanel() {
 	// Runners not on the latest release, and the subset we can roll in place (deployed with a
 	// stored token). The rest need a manual re-deploy.
 	const { outdated, updatable } = useMemo(() => {
-		if (!latestRelease) return { outdated: 0, updatable: [] as string[] };
+		if (!latestRelease) return { outdated: 0, updatable: Array<string>() };
 		const out = runners.filter((r) => r.version && r.version !== latestRelease.version);
 		const upd = out.filter(
 			(r) => r.cloud_identity_id && r.metadata?.deploy_config?.runner_token,

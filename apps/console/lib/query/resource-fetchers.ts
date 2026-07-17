@@ -74,6 +74,6 @@ export async function fetchFleetData(): Promise<FleetData> {
 	// Raw configs + economics are manager-only (owner/admin), so only fetch when allowed.
 	const [configs, economics] = canManageFleet
 		? await Promise.all([listFleetPoolConfigs(), getFleetEconomics()])
-		: [[] as FleetPool[], null];
+		: [Array<FleetPool>(), null];
 	return { pools, configs, economics, fleetProviderActive, canManageFleet };
 }

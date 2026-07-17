@@ -52,7 +52,7 @@ export function EnvSwitcher() {
 
 	/** Fetches the project's environments (never throws — resolves to [] on failure). */
 	const loadEnvs = useCallback(
-		() => getEnvironmentsForSlug(project).catch(() => [] as SwitcherEnv[]),
+		() => getEnvironmentsForSlug(project).catch(() => Array<SwitcherEnv>()),
 		[project],
 	);
 
@@ -72,7 +72,7 @@ export function EnvSwitcher() {
 	useEffect(() => {
 		if (!isDrilldown || envs.length < 2) return;
 		const onKey = (e: KeyboardEvent) => {
-			const t = e.target as HTMLElement | null;
+			const t = e.target instanceof HTMLElement ? e.target : null;
 			const typing =
 				!!t &&
 				(t.tagName === "INPUT" ||

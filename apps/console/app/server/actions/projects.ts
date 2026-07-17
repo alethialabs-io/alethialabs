@@ -2079,7 +2079,7 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 					),
 				};
 			} catch {
-				return { env: e, inventory: [] as ReturnType<typeof designInventory> };
+				return { env: e, inventory: [] };
 			}
 		}),
 	);
