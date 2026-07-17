@@ -73,6 +73,18 @@ export const serviceWorkloadType = pgEnum("service_workload_type", [
 	"statefulset",
 ]);
 
+// The kind of Kubernetes workload DESCRIBED from a BYO Helm chart's rendered manifests (W5 Path A —
+// project_chart_workloads). Superset of serviceWorkloadType (adds `daemonset`, which a chart can
+// render but Alethia never authors as a first-class service). Normalized to lowercase from the
+// rendered manifest's PascalCase `kind`.
+export const chartWorkloadKind = pgEnum("chart_workload_kind", [
+	"deployment",
+	"statefulset",
+	"daemonset",
+	"cronjob",
+	"job",
+]);
+
 export const nosqlTableType = pgEnum("nosql_table_type", ["standard", "global"]);
 export const nosqlKeyType = pgEnum("nosql_key_type", ["S", "N", "B"]);
 // Cloud-neutral capacity mode; mappers translate to the provider value
@@ -380,6 +392,7 @@ export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
+export type ChartWorkloadKind = (typeof chartWorkloadKind.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
 export type BillingPlan = (typeof billingPlan.enumValues)[number];
 export type BillingStatus = (typeof billingStatus.enumValues)[number];

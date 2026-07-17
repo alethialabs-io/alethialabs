@@ -1,0 +1,100 @@
+---
+title: Bring Your Own Helm Charts
+description: Attach your own Helm chart, scan it for safety, and describe the workloads it deploys as first-class canvas nodes you can bind to provisioned infrastructure.
+---
+
+# Bring Your Own Helm Charts
+
+Not every workload starts as a Dockerfile in a repo. When you already package an application (or a
+third-party one) as a **Helm chart**, you can bring it straight onto the canvas: Alethia deploys the
+chart as-is, scans it for safety, and **describes what it actually deploys** so the chart stops being
+an opaque box and becomes something you can see, configure, and wire into the rest of your
+architecture.
+
+The guiding principle: **Alethia describes and binds your chart — it never rewrites it.** Your chart
+stays the single unit that gets deployed (as one hardened ArgoCD Application). Everything below is
+about *understanding* and *connecting* that chart, not re-authoring it.
+
+## Attaching a chart
+
+A bring-your-own chart is attached from a [connected Git provider](/console/connectors/git-providers):
+
+| Field | Description |
+|-------|-------------|
+| **Repository** | The Git repo that holds the chart |
+| **Chart path** | The chart directory within the repo (e.g. `charts/payments`) |
+| **Ref** | The branch, tag, or commit to deploy |
+| **Namespace** | The Kubernetes namespace to install into |
+| **Values** | Your chart values (schema-validated knobs, or raw `values.yaml`) |
+
+At deploy time the Runner renders the chart into a hardened, per-project ArgoCD `AppProject` locked to
+your repo and namespace. See [GitOps & ArgoCD](/concepts/gitops-argocd) for how the Application is
+synced.
+
+## The safety scan
+
+Before a chart is trusted to run, Alethia renders it (`helm template`) inside a **sandboxed,
+network-isolated** environment and runs the [Elench](/elench/architecture) verification engine over
+the resulting Kubernetes manifests — checking for privileged containers, host access, wildcard RBAC,
+missing resource limits, and mutable image tags. The result is attached to the chart as a verify
+report you can read on the canvas. The render holds **no secrets and has no network egress** — it only
+reads the local chart.
+
+## Described workloads
+
+A Helm chart is rarely one thing — it can render several Deployments, a StatefulSet, a CronJob, and
+more. From the **same render** the safety scan produces, Alethia **describes each workload the chart
+deploys** as its own node:
+
+| What's described | From |
+|------------------|------|
+| **Kind** | Deployment · StatefulSet · DaemonSet · CronJob · Job |
+| **Image** | The workload's primary container image |
+| **Ports** | The container ports it exposes |
+| **Environment** | The environment variable **names** it reads (values are never captured) |
+| **Resources** | The CPU/memory requests and limits it declares |
+| **Replicas** | The rendered replica count (Deployments and StatefulSets) |
+
+These are **read-mostly descriptions** — they mirror what your chart renders, refreshed every time the
+chart is re-scanned. They are deliberately kept separate from Alethia-built services, so a described
+workload is never accidentally deployed twice: your chart's ArgoCD Application remains the one and
+only thing that deploys it.
+
+<Callout type="info">
+Environment is captured as variable **names only** — a described workload never stores a rendered
+value, so a secret baked into a chart's manifests is never read back into Alethia.
+</Callout>
+
+## Binding a chart to your infrastructure
+
+Because each workload is described, you can **bind** it to the databases, caches, queues, and secrets
+you provisioned elsewhere on the canvas — the same [bindings](/console/design-project/databases) model
+Alethia-built services use. A binding injects the provisioned connection details into the running
+chart by writing into the chart's **values** (for example, pointing the chart at an existing secret):
+
+- **Endpoints and ports** are written as plain values.
+- **Credentials** are written as a **reference** to a keyless, cluster-provisioned Kubernetes Secret —
+  never as a plaintext value in your chart's values or Git. This keeps the
+  [keyless](/concepts/security) guarantee intact end to end.
+
+Binding works by writing into a **declared path** in your chart's values (for example
+`postgresql.auth.existingSecret`). Alethia suggests the path from the chart's own conventions, and you
+can override it. A chart that exposes no way to accept an existing secret is flagged honestly rather
+than having a credential forced into it.
+
+<Callout type="warn">
+Bring-your-own Helm charts are an **opt-in** capability, enabled per deployment and — in the current
+trusted-charts phase — scoped to charts you own on your own cluster. Described workloads and binding
+roll out behind the same gate. Ask your operator whether it's enabled on your instance.
+</Callout>
+
+## How it fits together
+
+1. **Attach** the chart from a connected repo (repo · chart path · ref · values).
+2. **Scan** — the Runner renders it in the sandbox and Elench verifies the manifests.
+3. **Describe** — from that render, each workload the chart deploys becomes a canvas node.
+4. **Bind** — connect a described workload to your provisioned infrastructure; the binding is written
+   into the chart's values (credentials as keyless secret references).
+5. **Deploy** — your chart, unchanged, syncs as a single ArgoCD Application with the bound values applied.
+
+See also: [The Canvas](/console/design-project/the-canvas) · [Repositories](/console/design-project/repositories) · [Bring Your Own IaC](/concepts/bring-your-own-iac).

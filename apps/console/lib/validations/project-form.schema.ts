@@ -91,17 +91,19 @@ const serviceBuildSchema = z.object({
 	dockerfile: z.string().optional(),
 	context: z.string().optional(),
 });
-const serviceEnvSchema = z.object({
+// Exported for reuse by the BYO chart-workload validators (lib/validations/chart-workloads.ts),
+// which describe the same env/port/resource/binding shapes read off a rendered chart.
+export const serviceEnvSchema = z.object({
 	name: z.string().min(1, "Env var name is required"),
 	value: z.string(),
 });
-const servicePortSchema = z.object({
+export const servicePortSchema = z.object({
 	name: z.string().optional(),
 	container_port: z.number().int().min(1).max(65535),
 	protocol: z.enum(["TCP", "UDP"]).optional(),
 });
 const serviceQuantitySchema = z.object({ cpu: z.string(), memory: z.string() });
-const serviceResourcesSchema = z.object({
+export const serviceResourcesSchema = z.object({
 	requests: serviceQuantitySchema,
 	limits: serviceQuantitySchema,
 });
@@ -113,7 +115,7 @@ const serviceProbeSchema = z.object({
 // W3 — a service's edge to a backing resource ({kind, name}) plus the env each connection facet
 // injects. `from` distinguishes non-secret facets (endpoint/port → templated values) from
 // credential facets (→ ExternalSecret secretKeyRef); the runner resolves them at deploy time.
-const serviceBindingSchema = z.object({
+export const serviceBindingSchema = z.object({
 	target: z.object({
 		kind: z.enum(["database", "cache", "queue", "secret"]),
 		name: z.string().min(1, "Binding target is required"),
