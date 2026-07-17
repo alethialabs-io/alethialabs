@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { lookup } from "@/lib/typed-object";
 import type { FleetPoolView, PoolEconomics } from "@/app/server/actions/fleet";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import {
@@ -77,7 +78,7 @@ function Tally({ tally, strike }: { tally: { key: string; count: number; flagged
  *  distribution, and (for owner/admin) an edit/pause/delete menu. Grayscale — status
  *  reads through a dot fill + label, never hue. */
 export function PoolCard({ pool, economics, canManage, onEdit, onToggle, onDelete }: { pool: FleetPoolView; economics?: PoolEconomics } & PoolCardActions) {
-	const label = pool.name?.trim() ? pool.name : (PROVIDER_LABELS[pool.provider as Provider] ?? pool.provider);
+	const label = pool.name?.trim() ? pool.name : (lookup(PROVIDER_LABELS, pool.provider) ?? pool.provider);
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const segments: ("on" | "busy" | "miss")[] = Array.from({ length: pool.target }, (_, i) => {
 		if (i >= pool.online) return "miss";

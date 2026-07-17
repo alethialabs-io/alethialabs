@@ -8,6 +8,7 @@
 // All state is owned by the page (URL search params) — the standard's blessed URL→RSC
 // variant — so this component is presentational and only emits `onChange`.
 
+import { lookup } from "@/lib/typed-object";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Activity, ArrowDownAZ, GitBranch, Plus } from "lucide-react";
@@ -36,7 +37,7 @@ import type { OverviewState } from "@/app/(private)/[org]/overview-client";
 
 /** Human label for a cloud provider slug (shared vocabulary, uppercase fallback). */
 function providerLabel(p: string): string {
-	return PROVIDER_LABELS[p as Provider] ?? p.toUpperCase();
+	return lookup(PROVIDER_LABELS, p) ?? p.toUpperCase();
 }
 
 /** The filter dims Reset clears (view + sort are not filters, so they don't count). */

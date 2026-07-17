@@ -6,6 +6,7 @@
 // stacks the warm Pools and the Versions changelog; the right column is the filterable,
 // paginated grid of runner cards. No eyebrow/title/KPI chrome — pools and runners show first.
 
+import { lookup } from "@/lib/typed-object";
 import { Button } from "@repo/ui/button";
 import { AddRunnerButton } from "@/components/runners/add-runner-button";
 import { ErrorState } from "@/components/errors/error-state";
@@ -175,7 +176,7 @@ export function RunnersClient() {
 			.map(([value, count]) => ({
 				value,
 				label:
-					value === "any" ? "Any" : (PROVIDER_LABELS[value as Provider] ?? value.toUpperCase()),
+					value === "any" ? "Any" : (lookup(PROVIDER_LABELS, value) ?? value.toUpperCase()),
 				count,
 			}));
 		const asOptions = (m: Map<string, number>, label: (v: string) => string): RunnerFacetOption[] =>
