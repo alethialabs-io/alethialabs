@@ -10,9 +10,9 @@
 // It is deliberately process-local (not persisted): it answers liveness for THIS instance. Durable
 // convergence itself is in the DB (the CAS, the ledgers) — this is the observability layer over it.
 
-const globalForHeartbeat = globalThis as unknown as {
-	__alethiaReconcileHeartbeats?: Map<string, TaskHeartbeat>;
-};
+declare global {
+	var __alethiaReconcileHeartbeats: Map<string, TaskHeartbeat> | undefined;
+}
 
 /** Liveness + last-outcome record for one reconciler task. */
 export interface TaskHeartbeat {
@@ -38,8 +38,8 @@ export interface TaskHeartbeat {
 
 /** The shared registry (one entry per task id). */
 function registry(): Map<string, TaskHeartbeat> {
-	globalForHeartbeat.__alethiaReconcileHeartbeats ??= new Map();
-	return globalForHeartbeat.__alethiaReconcileHeartbeats;
+	globalThis.__alethiaReconcileHeartbeats ??= new Map();
+	return globalThis.__alethiaReconcileHeartbeats;
 }
 
 /** Get (or create) the heartbeat record for a task. */

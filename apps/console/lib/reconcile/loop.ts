@@ -42,9 +42,9 @@ const INTERVALS = {
 	"gc-authz-activity": 15 * 60_000, // 15m — bounded-batch retention GC for the governance/audit log
 } as const;
 
-const globalForReconcile = globalThis as unknown as {
-	__alethiaReconcileLoop?: ReturnType<typeof setInterval>;
-};
+declare global {
+	var __alethiaReconcileLoop: ReturnType<typeof setInterval> | undefined;
+}
 
 /**
  * Start the supervised reconcile loop (idempotent across HMR/instances; a no-op without a database).
@@ -52,11 +52,11 @@ const globalForReconcile = globalThis as unknown as {
  * safe to run concurrently across instances.
  */
 export function startReconcileLoop(): void {
-	if (globalForReconcile.__alethiaReconcileLoop) return;
+	if (globalThis.__alethiaReconcileLoop) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	registerLoop(RECONCILE_LOOP_ID, { intervalMs: TICK_INTERVAL_MS });
-	globalForReconcile.__alethiaReconcileLoop = setInterval(() => {
+	globalThis.__alethiaReconcileLoop = setInterval(() => {
 		void tick();
 	}, TICK_INTERVAL_MS);
 }
