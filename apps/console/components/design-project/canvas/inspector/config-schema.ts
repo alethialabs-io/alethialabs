@@ -16,6 +16,7 @@ import {
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { toStrArray } from "@/lib/coerce";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
@@ -787,7 +788,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						set: (v, c) => {
 							const existing = c.cluster_admins ?? [];
 							return {
-								cluster_admins: (v as string[]).map((username) => ({
+								cluster_admins: toStrArray(v).map((username) => ({
 									username,
 									groups:
 										existing.find((a) => a.username === username)?.groups ?? [

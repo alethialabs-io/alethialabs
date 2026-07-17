@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { toStr } from "@/lib/coerce";
 import { Plus, X } from "lucide-react";
 import { useId } from "react";
 import { Button } from "@repo/ui/button";
@@ -127,7 +128,7 @@ function RowField({
 			</Label>
 			{field.type === "select" && options ? (
 				<Select
-					value={(raw as string) || options[0]?.value || ""}
+					value={toStr(raw) || options[0]?.value || ""}
 					onValueChange={(v) => onChange({ [field.key]: v })}
 				>
 					<SelectTrigger id={fieldId} className="h-8 text-xs">
@@ -156,7 +157,7 @@ function RowField({
 			) : (
 				<Input
 					id={fieldId}
-					value={(raw as string) ?? ""}
+					value={toStr(raw)}
 					placeholder={
 						typeof field.placeholder === "string" ? field.placeholder : undefined
 					}
