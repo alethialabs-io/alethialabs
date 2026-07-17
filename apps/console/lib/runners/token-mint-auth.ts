@@ -3,12 +3,17 @@
 
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
+import type { CloudProvider } from "@/lib/db/schema/enums";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-/** The provisionable clouds whose token-mint routes are per-job-bound. */
-export type MintProvider = "aws" | "gcp" | "azure" | "alibaba";
+/** The provisionable clouds whose token-mint routes are per-job-bound — a subset of the
+ * generated `cloud_provider` enum (derived so it can't drift). */
+export type MintProvider = Extract<
+	CloudProvider,
+	"aws" | "gcp" | "azure" | "alibaba"
+>;
 
 /**
  * Authorizes a per-job cloud-token mint. A runner token alone is not enough: the caller

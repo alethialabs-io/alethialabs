@@ -28,7 +28,11 @@ const out = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // Source of truth: packages/core/catalog/catalog.json (also embedded by the Go resolver).
 // Run \`pnpm -F console gen:catalog\` to regenerate.
 
-export type ProviderSlug = "aws" | "gcp" | "azure";
+import type { CloudProvider } from "@/lib/db/schema/enums";
+
+// The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
+// \`cloud_provider\` enum (derived so it can't drift).
+export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure">;
 export type InstanceFamily = "general" | "compute" | "memory" | "gpu";
 export type EngineFamily = "postgres" | "mysql";
 
