@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 
 /**
@@ -27,7 +28,7 @@ export interface CanvasContext {
 export function summarizeCanvas(ctx: CanvasContext | undefined): string {
 	if (!ctx) return "The canvas is empty.";
 	const f = ctx.form ?? {};
-	const project = (f.project as Record<string, unknown>) ?? {};
+	const project = asRecord(f.project);
 	const arr = (k: string) => (Array.isArray(f[k]) ? (f[k] as unknown[]) : []);
 	const named = (k: string) =>
 		arr(k)

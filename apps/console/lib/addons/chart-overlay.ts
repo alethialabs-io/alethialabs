@@ -19,6 +19,7 @@
 // so anything here lands in the manifest — see #640) or duplicate the Go DNS-1123 name contract.
 // Bindings are persisted + surfaced by this lane's server actions; their runtime compose is Lane 2b.
 
+import { asRecord } from "@/lib/records";
 import type {
 	ChartValuePathMap,
 	ChartWorkloadConfig,
@@ -97,7 +98,7 @@ export function setByPath(
 		const existing = cursor[key];
 		const next: Record<string, unknown> =
 			existing && typeof existing === "object" && !Array.isArray(existing)
-				? { ...(existing as Record<string, unknown>) }
+				? { ...asRecord(existing) }
 				: {};
 		cursor[key] = next;
 		cursor = next;

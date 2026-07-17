@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import type { VerifyControlResult, VerifyReport } from "@/types/jsonb.types";
 
 /**
@@ -66,7 +67,7 @@ export function parseExplanations(
 		if (Array.isArray(parsed)) {
 			for (const item of parsed) {
 				if (item && typeof item === "object" && "id" in item) {
-					const o = item as Record<string, unknown>;
+					const o = asRecord(item);
 					if (typeof o.id === "string") {
 						byId.set(o.id, {
 							explanation:
