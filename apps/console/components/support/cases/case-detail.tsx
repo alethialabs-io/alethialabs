@@ -68,7 +68,7 @@ export function CaseDetail({
 		source.onmessage = (event: MessageEvent<string>) => {
 			let incoming: StreamMessage;
 			try {
-				incoming = JSON.parse(event.data) as StreamMessage;
+				incoming = JSON.parse(event.data);
 			} catch {
 				return;
 			}

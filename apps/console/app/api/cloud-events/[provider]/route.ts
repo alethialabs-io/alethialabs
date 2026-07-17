@@ -60,7 +60,7 @@ export async function POST(
 
 	let body: IngestBody;
 	try {
-		body = (await req.json()) as IngestBody;
+		body = await req.json();
 	} catch {
 		return NextResponse.json({ error: "invalid body" }, { status: 400 });
 	}
