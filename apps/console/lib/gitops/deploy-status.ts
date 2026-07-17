@@ -29,7 +29,24 @@ import {
 	projectRepositories,
 	projectServices,
 } from "@/lib/db/schema";
-import type { ExecutionMetadata, GitopsStatusReport } from "@/types/jsonb.types";
+import type {
+	AddOnStatusEntry,
+	ExecutionMetadata,
+	GitopsFailedStep,
+	GitopsStatusReport,
+} from "@/types/jsonb.types";
+import { addonStatusSchema, argocdHealth, argocdSync } from "./argocd-status";
+
+// Our own GitOps wiring steps (set by the runner — a controlled domain, so it parses strict),
+// kept in lockstep with the jsonb.types union via `satisfies`.
+const GITOPS_STEPS = [
+	"argocd_install",
+	"git_token",
+	"repo_credentials",
+	"templates_missing",
+	"render",
+	"apply",
+] as const satisfies readonly GitopsFailedStep[];
 
 /** Wire-shape validator for `execution_metadata.gitops_status` (Go `argocd.GitopsStatus`).
  *  Every field beyond `mode` is optional so pre-#574 and partial payloads parse. */
@@ -38,15 +55,15 @@ export const gitopsStatusReportSchema = z.object({
 	apps_repo: z.string().optional(),
 	argocd_app: z.string().optional(),
 	revision: z.string().optional(),
-	failed_step: z.string().optional(),
+	failed_step: z.enum(GITOPS_STEPS).optional(),
 	error: z.string().optional(),
-	app_health: z.object({ health: z.string(), sync: z.string() }).optional(),
+	app_health: z.object({ health: argocdHealth, sync: argocdSync }).optional(),
 	services: z
 		.record(
 			z.string(),
 			z.object({
-				health: z.string(),
-				sync: z.string(),
+				health: argocdHealth,
+				sync: argocdSync,
 				message: z.string().optional(),
 			}),
 		)
@@ -126,7 +143,7 @@ export interface GitopsJobFacts {
 	createdAt: Date;
 	gitops: GitopsStatusReport | null;
 	/** `execution_metadata.addon_status` — carries the in-cluster data-service keys. */
-	addonStatus: Record<string, { health: string; sync: string }> | null;
+	addonStatus: Record<string, AddOnStatusEntry> | null;
 }
 
 /** Everything assembleGitopsDeployStatus needs — pure inputs, so the scenario matrix
@@ -254,9 +271,7 @@ function jobFacts(row: {
 }): GitopsJobFacts {
 	const meta = row.execution_metadata;
 	const gitops = gitopsStatusReportSchema.safeParse(meta?.gitops_status);
-	const addonStatus = z
-		.record(z.string(), z.object({ health: z.string(), sync: z.string() }))
-		.safeParse(meta?.addon_status);
+	const addonStatus = addonStatusSchema.safeParse(meta?.addon_status);
 	return {
 		status: row.status,
 		errorMessage: row.error_message,
