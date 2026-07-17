@@ -58,7 +58,7 @@ func (w *Runner) executeBuild(ctx context.Context, job *Job, provider string, id
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
 	if provider == "" {
-		provider = vc.Provider
+		provider = string(vc.Provider)
 	}
 	if provider == "" {
 		provider = "aws"

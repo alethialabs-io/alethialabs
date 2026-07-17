@@ -134,7 +134,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		ProjectName:          vc.ProjectName,
 		Environment:          vc.EnvironmentStage,
 		Region:               vc.Region,
-		Provider:             vc.Provider,
+		Provider:             string(vc.Provider),
 		DomainName:           vc.DNS.DomainName,
 		DNSZoneID:            vc.DNS.ZoneID,
 		DNSEnabled:           vc.DNS.Enabled,
