@@ -56,37 +56,70 @@ jobs:
       # + every template's provider resolution + the FROM mechanism.
       - name: Build full runner (FROM runner-base)
         run: |
-          docker build -f apps/runner/Dockerfile \
-            --build-arg RUNNER_BASE=runner-base:pr \
-            --build-arg VERSION="${{ github.sha }}" \
-            -t runner:pr .
+          # `tofu init` for all five templates pulls providers over the network, which flakes; retry.
+          ok=""
+          for attempt in 1 2 3; do
+            if docker build -f apps/runner/Dockerfile \
+                --build-arg RUNNER_BASE=runner-base:pr \
+                --build-arg VERSION="${{ github.sha }}" \
+                -t runner:pr .; then
+              ok=1; break
+            fi
+            echo "::warning::full runner build attempt ${attempt} failed (transient network/pull); retrying..."
+            sleep $((attempt * 20))
+          done
+          [ -n "$ok" ] || { echo "::error::full runner build failed after 3 attempts"; exit 1; }
           # Free the 16GB full image before building the lean variant.
           docker image rm runner:pr
 
       # A per-cloud (fleet) variant — validates the lean FROM-base path the fleet actually ships.
       - name: Build runner-aws (FROM runner-base)
         run: |
-          docker build -f apps/runner/Dockerfile.aws \
-            --build-arg RUNNER_BASE=runner-base:pr \
-            --build-arg VERSION="${{ github.sha }}" \
-            -t runner-aws:pr .
+          ok=""
+          for attempt in 1 2 3; do
+            if docker build -f apps/runner/Dockerfile.aws \
+                --build-arg RUNNER_BASE=runner-base:pr \
+                --build-arg VERSION="${{ github.sha }}" \
+                -t runner-aws:pr .; then
+              ok=1; break
+            fi
+            echo "::warning::runner-aws build attempt ${attempt} failed (transient network/pull); retrying..."
+            sleep $((attempt * 20))
+          done
+          [ -n "$ok" ] || { echo "::error::runner-aws build failed after 3 attempts"; exit 1; }
 
       # The two CLI-less lean variants — no cloud CLI to install, but a green build proves their template
       # `tofu init` resolves every provider (incl. the third-party hcloud-talos/imager + alekc/kubectl).
       - name: Build runner-alibaba (FROM runner-base)
         run: |
-          docker build -f apps/runner/Dockerfile.alibaba \
-            --build-arg RUNNER_BASE=runner-base:pr \
-            --build-arg VERSION="${{ github.sha }}" \
-            -t runner-alibaba:pr .
+          ok=""
+          for attempt in 1 2 3; do
+            if docker build -f apps/runner/Dockerfile.alibaba \
+                --build-arg RUNNER_BASE=runner-base:pr \
+                --build-arg VERSION="${{ github.sha }}" \
+                -t runner-alibaba:pr .; then
+              ok=1; break
+            fi
+            echo "::warning::runner-alibaba build attempt ${attempt} failed (transient network/pull); retrying..."
+            sleep $((attempt * 20))
+          done
+          [ -n "$ok" ] || { echo "::error::runner-alibaba build failed after 3 attempts"; exit 1; }
           docker image rm runner-alibaba:pr
 
       - name: Build runner-hetzner (FROM runner-base)
         run: |
-          docker build -f apps/runner/Dockerfile.hetzner \
-            --build-arg RUNNER_BASE=runner-base:pr \
-            --build-arg VERSION="${{ github.sha }}" \
-            -t runner-hetzner:pr .
+          ok=""
+          for attempt in 1 2 3; do
+            if docker build -f apps/runner/Dockerfile.hetzner \
+                --build-arg RUNNER_BASE=runner-base:pr \
+                --build-arg VERSION="${{ github.sha }}" \
+                -t runner-hetzner:pr .; then
+              ok=1; break
+            fi
+            echo "::warning::runner-hetzner build attempt ${attempt} failed (transient network/pull); retrying..."
+            sleep $((attempt * 20))
+          done
+          [ -n "$ok" ] || { echo "::error::runner-hetzner build failed after 3 attempts"; exit 1; }
           docker image rm runner-hetzner:pr
 
       - name: Smoke-check the toolchain in the built image
