@@ -27,12 +27,9 @@ export const openSessionSchema = z.object({
 });
 
 /** The dispatchable actions (everything except the session-open pseudo-action). */
-const dispatchAction = z.enum(
-	breakglassAction.enumValues.filter((a) => a !== "open_session") as [
-		string,
-		...string[],
-	],
-);
+const dispatchAction = z
+	.enum(breakglassAction.enumValues)
+	.exclude(["open_session"]);
 
 /** Body for POST /api/breakglass/approval — a second operator mints a two-person approval. */
 export const mintApprovalSchema = z.object({

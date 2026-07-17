@@ -302,13 +302,13 @@ export function zoneOfBoardNode(
 	node: BoardNode,
 	providerOf: (kind: NodeKind) => CloudProviderSlug | null,
 ): ZoneId | null {
-	const data = node.data as { kind: NodeKind; config?: { mappedKind?: NodeKind | null } };
+	const data = node.data;
 	if (data.kind === "external") {
-		const mapped = data.config?.mappedKind ?? null;
+		const mapped =
+			("config" in data ? data.config?.mappedKind : null) ?? null;
 		return mapped ? zoneForNode(mapped, providerOf(mapped)) : null;
 	}
-	const kind = data.kind;
-	return zoneForNode(kind, providerOf(kind));
+	return zoneForNode(data.kind, providerOf(data.kind));
 }
 
 /**
@@ -323,7 +323,7 @@ export function containerOfBoardNode(
 	node: BoardNode,
 	providerOf: (kind: NodeKind) => CloudProviderSlug | null,
 ): string | null {
-	if ((node.data as { kind: NodeKind }).kind === "external") return EXTERNAL_CONTAINER_ID;
+	if (node.data.kind === "external") return EXTERNAL_CONTAINER_ID;
 	const zone = zoneOfBoardNode(node, providerOf);
 	return zone ? zoneNodeId(zone) : null;
 }
