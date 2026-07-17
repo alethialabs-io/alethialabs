@@ -35,7 +35,7 @@ const REGIONS: Record<
 	hetzner: {
 		url: "https://api.hetzner.cloud/v1/locations",
 		pick: (j) =>
-			((j as { locations?: { name?: string }[] }).locations ?? [])
+			toRecordArray(asRecord(j).locations)
 				.map((r) => r.name)
 				.filter((s): s is string => Boolean(s)),
 	},
