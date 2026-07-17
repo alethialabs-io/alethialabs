@@ -113,7 +113,7 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 
 		if (job.status === "SUCCESS") {
 			getPlanResult(planJobId).then((result) => {
-				const meta = result.execution_metadata as ExecutionMetadata;
+				const meta = result.execution_metadata;
 				if (meta?.plan_result) {
 					setPlanResult(parsePlanJSON(meta.plan_result));
 				}
