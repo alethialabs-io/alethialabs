@@ -31,13 +31,11 @@ const ACTION_LABEL: Record<string, string> = {
 
 /** The read-only member list for one external group. */
 export function ExternalPanel({ nodeId }: { nodeId: string }) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId)) as
-		| CanvasNode<"external">
-		| undefined;
+	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId));
 	const env = useEnvironmentStatus();
 	const status = useNodeStatus(nodeId);
 
-	if (!node) return null;
+	if (!node || node.data.kind !== "external") return null;
 	const config = node.data.config;
 	const def = config.mappedKind ? NODE_REGISTRY[config.mappedKind] : null;
 	const Icon = def?.icon ?? Boxes;
