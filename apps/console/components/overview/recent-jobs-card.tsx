@@ -33,7 +33,7 @@ function jobDuration(job: JobWithMeta): string {
 
 /** Latest provisioning jobs (last few) for the org. */
 export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
-	const { data: jobs = [], isPending } = useJobsQuery();
+	const { data: jobs = [], isPending, isError, refetch } = useJobsQuery();
 
 	const recent = jobs.slice(0, MAX_ROWS);
 	const loading = isPending;
@@ -58,6 +58,20 @@ export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
 					{[0, 1, 2].map((i) => (
 						<Skeleton key={i} className="h-10 w-full rounded-md" />
 					))}
+				</div>
+			) : isError ? (
+				// A fetch failure must not read as "No jobs yet." — compact, card-appropriate.
+				<div className="px-4 py-8 text-center">
+					<p className="font-mono text-xs text-muted-foreground">
+						Couldn&apos;t load recent jobs.
+					</p>
+					<button
+						type="button"
+						onClick={() => refetch()}
+						className="mt-2 font-mono text-[11px] text-foreground underline-offset-2 hover:underline"
+					>
+						Retry
+					</button>
 				</div>
 			) : recent.length === 0 ? (
 				<p className="px-4 py-8 text-center font-mono text-xs text-muted-foreground">
