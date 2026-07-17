@@ -329,8 +329,7 @@ export async function finalizeIacScan(jobId: string): Promise<void> {
 	const iacSourceId = typeof snap.iac_source_id === "string" ? snap.iac_source_id : null;
 	if (!projectId || !environmentId || !iacSourceId) return;
 
-	const meta = (job.execution_metadata ?? {}) as { iac_scan_result?: IacScanReport };
-	const report = meta.iac_scan_result ?? null;
+	const report = job.execution_metadata?.iac_scan_result ?? null;
 	const done = job.status === "SUCCESS" && report !== null && report.ok;
 
 	await db

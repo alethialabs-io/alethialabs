@@ -8,6 +8,7 @@
 // client (it owns the org row + hooks).
 
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { organization } from "@/lib/db/schema";
@@ -25,30 +26,35 @@ export interface OrgSettings {
 }
 
 /** The org's primary (billing-derived) address, stored in the org metadata JSON. */
-export interface OrgPrimaryAddress {
-	name: string;
-	line1: string;
-	line2?: string;
-	city?: string;
-	state?: string;
-	postalCode?: string;
-	country: string;
-}
+const orgPrimaryAddressSchema = z.object({
+	name: z.string(),
+	line1: z.string(),
+	line2: z.string().optional(),
+	city: z.string().optional(),
+	state: z.string().optional(),
+	postalCode: z.string().optional(),
+	country: z.string(),
+});
+export type OrgPrimaryAddress = z.infer<typeof orgPrimaryAddressSchema>;
 
-interface OrgMeta {
-	region?: string;
-	description?: string;
-	defaultEnv?: string;
-	terraformVersion?: string;
-	primaryAddress?: OrgPrimaryAddress;
-}
+/** The org metadata JSON blob. Every field is tolerant: a malformed value degrades to `undefined`
+ *  (never throws, never lies), and a non-object blob to `{}` — parseMeta trusts nothing. */
+const orgMetaSchema = z
+	.object({
+		region: z.string().optional().catch(undefined),
+		description: z.string().optional().catch(undefined),
+		defaultEnv: z.string().optional().catch(undefined),
+		terraformVersion: z.string().optional().catch(undefined),
+		primaryAddress: orgPrimaryAddressSchema.optional().catch(undefined),
+	})
+	.catch({});
+type OrgMeta = z.infer<typeof orgMetaSchema>;
 
 /** Tolerant parse of the org metadata JSON blob. */
 function parseMeta(metadata: string | null): OrgMeta {
 	if (!metadata) return {};
 	try {
-		const m: unknown = JSON.parse(metadata);
-		return m && typeof m === "object" ? (m as OrgMeta) : {};
+		return orgMetaSchema.parse(JSON.parse(metadata));
 	} catch {
 		return {};
 	}

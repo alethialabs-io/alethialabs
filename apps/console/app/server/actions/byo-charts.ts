@@ -495,11 +495,8 @@ export async function finalizeChartScan(jobId: string): Promise<void> {
 	const addonId = typeof snap.addon_id === "string" ? snap.addon_id : null;
 	if (!projectId || !environmentId || !addonId) return;
 
-	const meta = (job.execution_metadata ?? {}) as {
-		verify_result?: VerifyReport;
-		chart_workloads?: unknown;
-	};
-	const report = meta.verify_result ?? null;
+	const meta = job.execution_metadata;
+	const report = meta?.verify_result ?? null;
 	const done = job.status === "SUCCESS" && report !== null;
 
 	await db
@@ -528,7 +525,7 @@ export async function finalizeChartScan(jobId: string): Promise<void> {
 			projectId,
 			environmentId,
 			addonSlug: addonId,
-			workloads: meta.chart_workloads,
+			workloads: meta?.chart_workloads,
 		});
 	}
 }

@@ -4,6 +4,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
+import { asRecord } from "@/lib/records";
 import { withOwnerScope } from "@/lib/db";
 import { projectChanges } from "@/lib/db/schema";
 import type { StagedChangePayload } from "@/types/jsonb.types";
@@ -77,7 +78,7 @@ function diffConfig(
 				component_type: type,
 				component_id: null,
 				op: l ? "UPDATE" : "CREATE",
-				payload: (d ?? {}) as StagedChangePayload,
+				payload: asRecord(d),
 			});
 	}
 	// Array components keyed by name.
