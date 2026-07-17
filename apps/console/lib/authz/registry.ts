@@ -89,7 +89,7 @@ export const PERMISSIONS: PermissionDef[] = RESOURCES.flatMap((resource) =>
 	(MATRIX[resource] ?? []).map((action) => ({
 		// `${Resource}:${Action}` is a valid PermissionKey by construction; TS widens
 		// template literals with union holes to `string`, so narrow it here once.
-		key: `${resource}:${action}` as PermissionKey,
+		key: `${resource}:${action}`,
 		resource,
 		action,
 		description: `${action} a ${resource}`,

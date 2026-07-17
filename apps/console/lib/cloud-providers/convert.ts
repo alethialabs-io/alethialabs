@@ -85,7 +85,7 @@ export function convertProjectConfig(
 	const sourceAutoscaler = AUTOSCALER[sourceProvider];
 	const targetAutoscaler = AUTOSCALER[targetProvider];
 	const sourceAutoscalerEnabled =
-		data.cluster.provider_config?.[sourceAutoscaler.providerConfigKey as keyof typeof data.cluster.provider_config];
+		data.cluster.provider_config?.[sourceAutoscaler.providerConfigKey];
 	data.cluster.provider_config = {
 		[targetAutoscaler.providerConfigKey]: !!sourceAutoscalerEnabled,
 	};

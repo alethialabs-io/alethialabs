@@ -323,7 +323,7 @@ export async function finalizeIacScan(jobId: string): Promise<void> {
 	const db = getServiceDb();
 	const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
 	if (!job || job.job_type !== "IAC_SCAN") return;
-	const snap = (job.config_snapshot ?? {}) as Record<string, unknown>;
+	const snap = job.config_snapshot ?? {};
 	const projectId = typeof snap.project_id === "string" ? snap.project_id : null;
 	const environmentId = typeof snap.environment_id === "string" ? snap.environment_id : null;
 	const iacSourceId = typeof snap.iac_source_id === "string" ? snap.iac_source_id : null;

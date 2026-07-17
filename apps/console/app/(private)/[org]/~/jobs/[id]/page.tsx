@@ -100,7 +100,7 @@ export default function JobDetailPage() {
 	const isActive = jobState === "QUEUED" || jobState === "CLAIMED" || jobState === "PROCESSING";
 	const isTerminal = jobState === "SUCCESS" || jobState === "FAILED" || jobState === "CANCELLED";
 	const isPlanSuccess = job?.job_type === "PLAN" && jobState === "SUCCESS";
-	const info = job ? JOB_TYPES[job.job_type as keyof typeof JOB_TYPES] : null;
+	const info = job ? JOB_TYPES[job.job_type] : null;
 	const Icon = info?.icon;
 
 	const duration = () => {
