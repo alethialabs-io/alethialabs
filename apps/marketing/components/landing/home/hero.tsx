@@ -4,9 +4,12 @@
 import Link from "next/link";
 import { Button } from "@repo/ui/button";
 import { disp, HeroRail, Icon, mono, Wrap } from "./primitives";
-import { MediaShot } from "./media-shot";
 
-/** Landing hero — receipt-first promise + the real console (the architecture canvas). */
+/**
+ * Landing hero — receipt-first promise + the product video. The looping ambient
+ * (`hero-loop.mp4`, a real capture) is the placeholder; the full narrated master
+ * slots in here (swap the src / wire `NEXT_PUBLIC_HERO_VIDEO_URL`).
+ */
 export function Hero() {
 	return (
 		<section style={{ position: "relative", paddingTop: 78, paddingBottom: 64, overflow: "hidden" }}>
@@ -20,16 +23,21 @@ export function Hero() {
 				<p style={{ fontSize: 18.5, color: "var(--text-secondary)", maxWidth: 660, margin: "24px 0 32px", lineHeight: 1.55 }}>
 					Alethia takes your repo to a running, configured Kubernetes cluster — in <b style={{ color: "var(--text-primary)", fontWeight: 600 }}>your own cloud</b>, with zero stored credentials. Every plan is verified and carries a signed receipt. Ship it, prove it, and keep proving it.
 				</p>
-				<div style={{ display: "flex", alignItems: "center", gap: 13, marginBottom: 54, flexWrap: "wrap", justifyContent: "center" }}>
+				<div style={{ display: "flex", alignItems: "center", gap: 13, marginBottom: 52, flexWrap: "wrap", justifyContent: "center" }}>
 					<Link href="/signup"><Button size="lg" variant="cta">Create an account <Icon k="arrow" size={15} /></Button></Link>
 					<Link href="/contact/enterprise"><Button size="lg" variant="outline">Book a demo</Button></Link>
 				</div>
-				<div style={{ width: "100%", maxWidth: 1060 }}>
-					<MediaShot src="/mkt-assets/home/dark/canvas.jpg" alt="The Alethia console — a production project on the architecture canvas: VPC, cluster, database, cache, DNS, GitOps, storage — with live cost and activity." priority />
+				<div style={{ width: "100%", maxWidth: 1040, border: "1px solid var(--border)", background: "var(--surface)", boxShadow: "var(--shadow-lg)", overflow: "hidden" }}>
+					<video
+						src="/mkt-assets/home/hero-loop.mp4"
+						poster="/mkt-assets/home/dark/canvas.jpg"
+						autoPlay
+						muted
+						loop
+						playsInline
+						style={{ display: "block", width: "100%", height: "auto" }}
+					/>
 				</div>
-				<p style={{ ...mono, fontSize: 10.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--text-disabled)", marginTop: 16 }}>
-					A real screenshot of the console — not a mockup
-				</p>
 			</Wrap>
 		</section>
 	);
