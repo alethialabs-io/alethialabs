@@ -5,6 +5,7 @@ import {
 	getConnectorsWithStatus,
 	type ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
+import { asGitProvider } from "@/lib/connectors/git-providers";
 import { getValidProviderToken } from "@/app/server/actions/identities";
 import {
 	getAwsConnectionStatus,
@@ -124,7 +125,7 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 	if (expiredGitIntegrations.length > 0) {
 		await Promise.all(
 			expiredGitIntegrations.map((i) =>
-				getValidProviderToken(i.slug as PublicGitProvider).catch(() => null),
+				getValidProviderToken(asGitProvider(i.slug)).catch(() => null),
 			),
 		);
 		integrations = await getConnectorsWithStatus();

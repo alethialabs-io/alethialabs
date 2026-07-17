@@ -7,6 +7,7 @@ import {
 	renameCloudIdentity,
 	reverifyCloudIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
+import { asGitProvider } from "@/lib/connectors/git-providers";
 import { disconnectAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";
 import { disconnectGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
 import { disconnectExtraCloud } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
@@ -215,7 +216,7 @@ export function ConnectorsPage({
 			case "git": {
 				setConnectingSlug(slug);
 				try {
-					const provider = slug as PublicGitProvider;
+					const provider = asGitProvider(slug);
 					const callbackURL = `/${orgSlug}/~/connectors`;
 					const { error } =
 						provider === "github"
@@ -320,7 +321,7 @@ export function ConnectorsPage({
 				identityId ?? integration.connection_details?.cloud_identity_id;
 			if (integration.category === "git") {
 				const result = await deleteProviderToken(
-					integration.slug as PublicGitProvider,
+					asGitProvider(integration.slug),
 				);
 				if (result.error) throw new Error(result.error);
 			} else if (integration.slug === "aws") {

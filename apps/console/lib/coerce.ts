@@ -53,3 +53,14 @@ export function coerceEnum<T extends string>(
 	}
 	return fallback;
 }
+
+/** True when a string is one of `values` — a cast-free membership guard that narrows to the union. */
+export function isEnumMember<T extends string>(
+	v: string,
+	values: readonly T[],
+): v is T {
+	for (const candidate of values) {
+		if (candidate === v) return true;
+	}
+	return false;
+}

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isEnumMember } from "@/lib/coerce";
 import { asRecord } from "@/lib/records";
 import { AlertTriangle, KeyRound, RefreshCcw, WifiOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -49,10 +50,10 @@ function parseBudget(error: Error): ParsedBudget | null {
 		if (typeof body !== "object" || body === null) return null;
 		const b = asRecord(body);
 		if (typeof b.reason !== "string") return null;
-		if (!BUDGET_REASONS.includes(b.reason as BudgetReason)) return null;
+		if (!isEnumMember(b.reason, BUDGET_REASONS)) return null;
 		return {
 			message: typeof b.error === "string" ? b.error : "AI limit reached.",
-			reason: b.reason as BudgetReason,
+			reason: b.reason,
 			resetAt: typeof b.resetAt === "string" ? b.resetAt : null,
 			upgradable: b.upgradable === true,
 		};

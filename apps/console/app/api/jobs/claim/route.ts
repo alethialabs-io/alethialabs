@@ -30,16 +30,16 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 	};
 	if (snapshot && typeof snapshot === "object") {
 		const s = asRecord(snapshot);
-		const dns = s.dns as Record<string, unknown> | undefined;
+		const dns = asRecord(s.dns);
 		add(dns?.provider);
-		const obs = s.observability as Record<string, unknown> | undefined;
+		const obs = asRecord(s.observability);
 		add(obs?.provider);
 		for (const key of ["secrets", "container_registries"]) {
 			const arr = s[key];
 			if (Array.isArray(arr)) {
 				for (const item of arr) {
 					if (item && typeof item === "object") {
-						add((item as Record<string, unknown>).provider);
+						add(asRecord(item).provider);
 					}
 				}
 			}
