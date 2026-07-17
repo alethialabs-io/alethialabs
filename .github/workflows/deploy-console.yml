@@ -201,7 +201,11 @@ jobs:
 
   # arm64 fleet-only per-cloud runner images (single-arch, tagged) — native arm. Never
   # pulled by the x86 box; lean per-cloud CLI + cache. Skipped when no runner source changed.
-  build-arm64:
+  # Per-cloud runner images — MULTI-ARCH (arm64 + amd64). The fleet prefers cheap ARM (`cax`) but
+  # fails over to x86 (`cpx`) when ARM has no capacity (lib/fleet/hcloud.ts), so a single-arch image
+  # would strand the whole fleet whenever Hetzner ARM is out. Native arm64 on the arm runner; amd64
+  # via QEMU (the per-cloud layer is a thin template COPY + `tofu init`, so emulation is cheap).
+  build-runner-images:
     needs: [changes, merge-runner-base]
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
@@ -220,6 +224,7 @@ jobs:
             file: apps/runner/Dockerfile.hetzner
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3 # amd64 emulation for the x86 (cpx) fleet fallback
       - uses: docker/setup-buildx-action@v3
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -227,12 +232,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push ${{ matrix.image }} (arm64)
+      - name: Build and push ${{ matrix.image }} (multi-arch)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
-          platforms: linux/arm64
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             VERSION=${{ github.sha }}
@@ -356,7 +361,7 @@ jobs:
           fi
 
   deploy:
-    needs: [changes, build-amd64, build-arm64, merge-runner, retag-unchanged]
+    needs: [changes, build-amd64, build-runner-images, merge-runner, retag-unchanged]
     # Run when the build/retag jobs succeeded OR were skipped (a skipped group is retagged instead of built);
     # only a real FAILURE (or cancel) blocks the deploy. Without this, a skipped `needs` job would auto-skip
     # deploy.
