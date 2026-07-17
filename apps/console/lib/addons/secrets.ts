@@ -82,6 +82,58 @@ export function encryptAddonSecrets(
 	return out;
 }
 
+/** A redacted secret marker for the CLIENT read: envelope-SHAPED (so `hasStoredSecret` still reads
+ * it as "set") but carrying no ciphertext. The real envelope never leaves the server. */
+const REDACTED_SECRET: EncryptedSecret = { v: 0, iv: "", tag: "", data: "" };
+
+/**
+ * Replace every stored secret with a redacted marker for the client read (getProjectAddons), so the
+ * ciphertext never reaches the browser while the field keeps its set/unset signal (the marker is
+ * still envelope-shaped). An unset secret is left absent. Returns a new object.
+ */
+export function redactAddonSecrets(
+	def: AddOnDef,
+	values: Record<string, unknown>,
+): Record<string, unknown> {
+	const keys = secretFieldKeys(def);
+	if (keys.length === 0) return values;
+	const out = { ...values };
+	for (const key of keys) {
+		if (hasStoredSecret(out[key])) out[key] = { ...REDACTED_SECRET };
+		else delete out[key];
+	}
+	return out;
+}
+
+/**
+ * Build the values to persist on a reconfigure, PRESERVING any secret the user left untouched. For
+ * each secret key: a new non-empty plaintext is encrypted; an empty/absent value carries forward the
+ * existing stored envelope (so re-saving other knobs never wipes a set secret — the enable action
+ * replaces the whole values object, and `configSchema` types a secret as a string, so the client
+ * cannot round-trip the envelope itself); a key with neither stays unset. Non-secret knobs come
+ * straight from `incoming`. Replaces the plain `encryptAddonSecrets` at the reconfigure call-site.
+ */
+export function mergeAddonSecrets(
+	def: AddOnDef,
+	incoming: Record<string, unknown>,
+	existing: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+	const keys = secretFieldKeys(def);
+	if (keys.length === 0) return { ...incoming };
+	const out = { ...incoming };
+	for (const key of keys) {
+		const v = out[key];
+		if (typeof v === "string" && v.length > 0) {
+			out[key] = encryptSecret({ [key]: v });
+		} else {
+			const prior = existing?.[key];
+			if (isEncryptedSecret(prior)) out[key] = prior;
+			else delete out[key];
+		}
+	}
+	return out;
+}
+
 /**
  * Decrypt each secret-typed field's envelope back to plaintext. W4.5: this NEVER runs at
  * snapshot-assembly time anymore — its only caller is the runner-facing
