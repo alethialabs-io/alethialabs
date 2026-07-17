@@ -51,14 +51,14 @@ export async function stateNativeIds(
 	}
 
 	const ids = new Set<string>();
-	const resources = (parsed as { resources?: unknown })?.resources;
+	const resources = asRecord(parsed).resources;
 	if (!Array.isArray(resources)) return ids;
 
 	for (const resource of resources) {
-		const instances = (resource as { instances?: unknown })?.instances;
+		const instances = asRecord(resource).instances;
 		if (!Array.isArray(instances)) continue;
 		for (const instance of instances) {
-			const attrs = (instance as { attributes?: unknown })?.attributes;
+			const attrs = asRecord(instance).attributes;
 			if (!attrs || typeof attrs !== "object") continue;
 			for (const attr of ID_ATTRS) {
 				const value = asRecord(attrs)[attr];

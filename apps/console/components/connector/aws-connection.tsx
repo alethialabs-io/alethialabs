@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { coerceEnum } from "@/lib/coerce";
 import { Button } from "@repo/ui/button";
 import {
 	Form,
@@ -120,7 +121,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 		>
 			<MethodTabs
 				value={method}
-				onChange={(id) => setMethod(id as "terraform" | "cli")}
+				onChange={(id) => setMethod(coerceEnum(id, ["terraform", "cli"] as const, "terraform"))}
 				help={
 					<>
 						<b className="text-foreground">AWS CLI / CloudShell</b> runs a script from the

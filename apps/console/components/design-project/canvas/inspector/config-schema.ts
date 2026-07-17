@@ -16,6 +16,7 @@ import {
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { coerceEnum } from "@/lib/coerce";
 import { toStrArray } from "@/lib/coerce";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
@@ -562,7 +563,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						get: (c) => c.probe?.type ?? "http",
 						set: (v, c) => ({
 							probe: {
-								type: v as "http" | "tcp",
+								type: coerceEnum(String(v), ["http", "tcp"] as const, "http"),
 								path: c.probe?.path,
 								port: c.probe?.port ?? 8080,
 							},

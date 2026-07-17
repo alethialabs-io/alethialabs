@@ -104,7 +104,7 @@ function collectComponents(
 		}
 		byKind[need.kind].push(cfg);
 	}
-	return byKind as Record<InferredNeed["kind"], Record<string, unknown>[]>;
+	return byKind;
 }
 
 /**

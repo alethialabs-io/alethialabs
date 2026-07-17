@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { coerceEnum } from "@/lib/coerce";
 import { Button } from "@repo/ui/button";
 import {
 	Form,
@@ -164,7 +165,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 		>
 			<MethodTabs
 				value={method}
-				onChange={(id) => setMethod(id as "cli" | "terraform")}
+				onChange={(id) => setMethod(coerceEnum(id, ["cli", "terraform"] as const, "terraform"))}
 				help={
 					<>
 						<b className="text-foreground">Azure CLI</b> runs a script in Azure Cloud Shell —
