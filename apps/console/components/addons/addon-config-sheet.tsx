@@ -131,10 +131,9 @@ export function AddonConfigSheet({
 }) {
 	const enable = useEnableAddon(projectId, environmentId);
 	const disable = useDisableAddon(projectId, environmentId);
+	const emptyForm: FormShape = { _mode: "managed", _valuesYaml: "" };
 	const form = useForm<FormShape>({
-		values: item
-			? initialValues(item)
-			: ({ _mode: "managed", _valuesYaml: "" } as FormShape),
+		values: item ? initialValues(item) : emptyForm,
 	});
 	const mode = form.watch("_mode");
 

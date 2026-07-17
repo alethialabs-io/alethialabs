@@ -33,7 +33,7 @@ import type {
 	ServiceBinding,
 	ServiceEnvVar,
 } from "@/types/jsonb.types";
-import type { CanvasNode } from "../graph/types";
+import { type CanvasNode, nodeOfKind } from "../graph/types";
 import { BindingsField } from "./bindings-field";
 
 /** The user-editable overlay this panel stages. */
@@ -57,9 +57,8 @@ function overlayOf(config: CanvasNode<"chart_workload">["data"]["config"]): Over
 
 /** The read-mostly config + bind panel for one described chart workload. */
 export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId)) as
-		| CanvasNode<"chart_workload">
-		| undefined;
+	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId));
+	const node = nodeOfKind(raw, "chart_workload");
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const ctx = useByoChartCanvas();
 	const [draft, setDraft] = useState<Overlay | null>(null);

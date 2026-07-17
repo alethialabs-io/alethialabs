@@ -35,7 +35,11 @@ export default async function DashboardLegacyRedirect({
 	// legacy `/dashboard/X?q=…` links don't lose their params on canonicalization.
 	const qs = new URLSearchParams(
 		Object.entries(sp).flatMap(([k, v]) =>
-			v == null ? [] : Array.isArray(v) ? v.map((x) => [k, x] as [string, string]) : [[k, v]],
+			v == null
+				? []
+				: Array.isArray(v)
+					? v.map((x): [string, string] => [k, x])
+					: [[k, v]],
 		),
 	).toString();
 	const suffix = qs ? `?${qs}` : "";
