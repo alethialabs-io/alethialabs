@@ -12,11 +12,12 @@ import {
 	runners,
 } from "@/lib/db/schema";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { likeTerm } from "@/lib/db/like";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
 import { notifyScaler } from "@/lib/scaler";
 import { provisionJobStatus, provisionJobType } from "@/lib/db/schema/enums";
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lte, or } from "drizzle-orm";
 
 export async function getJobStatus(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
@@ -97,6 +98,9 @@ export interface JobsQuery {
 	projects?: string[];
 	statuses?: string[];
 	types?: string[];
+	/** Free-text contains-match over project name/slug, environment + runner names, and
+	 * the error message (jobs carry no commit/branch column to search). */
+	search?: string;
 }
 
 /** One facet option: value + display label + count over the UNFILTERED org universe (the
@@ -140,6 +144,11 @@ export async function getJobsPage(query: JobsQuery = {}) {
 		const types = narrowTo(provisionJobType.enumValues, query.types);
 		const from = parseBound(query.from);
 		const to = parseBound(query.to);
+		// Free-text search spans the joined display fields (project/env/runner) + the error
+		// message — the columns a user actually recognises a job by. It narrows the ROWS
+		// query only; the facet pass stays unfiltered (counts over the whole universe).
+		const search = query.search?.trim();
+		const like = search ? likeTerm(search) : undefined;
 		const conditions = [
 			from ? gte(jobs.created_at, from) : undefined,
 			to ? lte(jobs.created_at, to) : undefined,
@@ -148,6 +157,15 @@ export async function getJobsPage(query: JobsQuery = {}) {
 			query.projects?.length ? inArray(jobs.project_id, query.projects) : undefined,
 			statuses ? inArray(jobs.status, statuses) : undefined,
 			types ? inArray(jobs.job_type, types) : undefined,
+			like
+				? or(
+						ilike(projects.project_name, like),
+						ilike(projects.slug, like),
+						ilike(projectEnvironments.name, like),
+						ilike(runners.name, like),
+						ilike(jobs.error_message, like),
+					)
+				: undefined,
 		].filter((c) => c !== undefined);
 
 		const [rows, facetRows] = await Promise.all([

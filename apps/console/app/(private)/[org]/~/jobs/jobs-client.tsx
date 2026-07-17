@@ -15,6 +15,7 @@ import {
 } from "@/components/jobs/jobs-query";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { displayName } from "@/lib/user-display";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useMembersQuery } from "@/lib/query/use-activity-query";
 import { useJobsPageQuery } from "@/lib/query/use-jobs-page-query";
@@ -32,6 +33,7 @@ import {
 	EmptyTitle,
 } from "@repo/ui/empty";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
@@ -96,16 +98,21 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	);
 	const [pageIndex, setPageIndex] = useState(0);
 
+	// Search stays responsive (bound to filters.search) but only re-keys the query after a
+	// 300ms pause — the input recomputes the memo on every keystroke, yet the normalized
+	// object (and so the structural TanStack key) is stable until the debounced value moves.
+	const debouncedSearch = useDebouncedValue(filters.search, 300);
+
 	// The normalized query IS the key: equal filters hit the cache, and the range's
 	// concrete ISO bounds only change when the user picks a range.
 	const query = useMemo(
 		() =>
 			normalizeJobsQuery(
-				filters,
+				{ ...filters, search: debouncedSearch },
 				{ from: range.from.toISOString(), to: range.to.toISOString() },
 				projectId,
 			),
-		[filters, range, projectId],
+		[filters, debouncedSearch, range, projectId],
 	);
 	const page = useJobsPageQuery(query);
 	const rows = useMemo(() => page.data?.rows ?? [], [page.data]);
@@ -187,6 +194,13 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 							/>
 						}
 					>
+						<FilterSearch
+							value={filters.search}
+							onChange={(v) => set("search", v)}
+							placeholder="Filter by project, environment, or error…"
+							ariaLabel="Search jobs"
+							className="w-[220px] max-w-[340px] flex-1"
+						/>
 						<QuickRangeFilter
 							label={rangeLabel}
 							value={range}
