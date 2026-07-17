@@ -21,9 +21,16 @@ export const SERVER_HOURLY_EUR: Record<string, number> = {
 /** Used when a configured server type isn't in the table (keeps estimates non-zero). */
 export const FALLBACK_HOURLY_EUR = SERVER_HOURLY_EUR.cax21;
 
-/** The fleet's configured Hetzner server type (global today — no per-pool override). */
+/** The fleet's PRIMARY (preferred) Hetzner server type for the cost view — the first of the
+ *  failover preference list (`HCLOUD_SERVER_TYPES`), i.e. the type a pool runs when capacity is
+ *  healthy. Honours the legacy single `HCLOUD_SERVER_TYPE`; the actual placement may fall back to a
+ *  pricier x86 type when ARM is out, but the estimate tracks the intended steady state. */
 export function fleetServerType(): string {
-	return process.env.HCLOUD_SERVER_TYPE ?? "cax21";
+	const first = (process.env.HCLOUD_SERVER_TYPES ?? "")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean)[0];
+	return first ?? process.env.HCLOUD_SERVER_TYPE ?? "cax21";
 }
 
 /** Hourly rate for a server type, falling back to the default when unknown. */
