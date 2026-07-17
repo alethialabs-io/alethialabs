@@ -2241,10 +2241,23 @@ export interface ProjectListQuery {
 	sort?: "activity" | "name";
 }
 
-/** The filtered/sorted grid rows plus the full (unfiltered) facet universe for the popover. */
+/** A cloud facet option with its count over the unfiltered org universe. */
+export interface CloudFacet {
+	value: string;
+	count: number;
+}
+
+/** A repository facet option (url + display label) with its unfiltered count. */
+export interface RepoFacet extends ProjectRepoRef {
+	count: number;
+}
+
+/** The filtered/sorted grid rows plus the full (unfiltered) facet universe — with counts
+ * so the filter bar's options show how many projects each matches (the console filter
+ * standard: counts over the universe, options never disappear as you select them). */
 export interface ProjectListResult {
 	projects: ProjectListItem[];
-	facets: { clouds: string[]; repos: ProjectRepoRef[] };
+	facets: { clouds: CloudFacet[]; repos: RepoFacet[] };
 }
 
 /**
@@ -2296,15 +2309,27 @@ export async function queryProjects(
 			repositories: repoMap.get(p.id) ?? [],
 		}));
 
-		// Facets: the full universe of clouds + repos across the org (never narrowed by filters).
-		const cloudSet = new Set<string>();
-		const repoFacet = new Map<string, ProjectRepoRef>();
+		// Facets: the full universe of clouds + repos across the org (never narrowed by
+		// filters), each with the count of projects it matches. A project's repositories are
+		// already distinct by URL, so one increment per (project, repo) = projects-per-repo.
+		const cloudCount = new Map<string, number>();
+		const repoFacet = new Map<string, RepoFacet>();
 		for (const p of items) {
-			if (p.cloud_provider) cloudSet.add(p.cloud_provider);
-			for (const r of p.repositories) repoFacet.set(r.url, r);
+			if (p.cloud_provider)
+				cloudCount.set(
+					p.cloud_provider,
+					(cloudCount.get(p.cloud_provider) ?? 0) + 1,
+				);
+			for (const r of p.repositories) {
+				const cur = repoFacet.get(r.url);
+				if (cur) cur.count += 1;
+				else repoFacet.set(r.url, { ...r, count: 1 });
+			}
 		}
 		const facets = {
-			clouds: [...cloudSet].sort(),
+			clouds: [...cloudCount.entries()]
+				.map(([value, count]) => ({ value, count }))
+				.sort((a, b) => a.value.localeCompare(b.value)),
 			repos: [...repoFacet.values()].sort((a, b) =>
 				a.label.localeCompare(b.label),
 			),
