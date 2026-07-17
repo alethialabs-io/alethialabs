@@ -147,7 +147,9 @@ export function DuplicateProjectDialog({
 					allIdentities.filter(
 						(i) =>
 							i.provider !== summary.provider &&
-							TARGET_PROVIDERS.includes(i.provider as CloudProviderSlug),
+							// `.some(===)` compares the identity's CloudProvider against the
+							// CloudProviderSlug targets without a cast (the slugs derive from the enum).
+							TARGET_PROVIDERS.some((t) => t === i.provider),
 					),
 				);
 			} catch {

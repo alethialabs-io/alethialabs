@@ -20,6 +20,7 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
+	type CloudProvider,
 	jobs,
 	projectEnvironments,
 	projects,
@@ -36,7 +37,7 @@ import type { LabelSelector, ReclaimDecision } from "./types";
 /** A job flagged orphan_risk whose environment may hold untracked cloud resources. */
 interface OrphanJob {
 	id: string;
-	provider: string | null;
+	provider: CloudProvider | null;
 	cloud_identity_id: string | null;
 	project_id: string | null;
 	environment_id: string | null;
