@@ -3,7 +3,7 @@
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
 
-import type { AlertSeverity } from "@/lib/db/schema/enums";
+import type { AlertSeverity, CloudProvider } from "@/lib/db/schema/enums";
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
@@ -241,13 +241,16 @@ export * from "@repo/support/types";
  * `drift.ResourceDrift` (packages/core/drift). Stored on `environment_drift.details`;
  * produced by a DETECT_DRIFT job's `tofu plan -refresh-only` → `drift.Analyze`.
  */
+/** How a resource diverged from state (mirrors the Go `drift.Kind`). */
+export type DriftResourceKind = "modified" | "deleted" | "other";
+
 export interface DriftDetail {
 	/** Terraform address of the drifted resource. */
 	address: string;
 	/** Resource type (e.g. aws_db_instance). */
 	type: string;
 	/** "modified" | "deleted" | "other" — how it diverged. */
-	kind: string;
+	kind: DriftResourceKind;
 }
 
 /**
@@ -543,7 +546,7 @@ export interface AuditChanges {
 
 export interface RunnerDeployConfig {
 	region: string;
-	cloud_provider: string;
+	cloud_provider: CloudProvider;
 	image_tag: string;
 	alethia_url: string;
 	cpu: number;
@@ -725,7 +728,7 @@ export interface SecurityReport {
 export interface DriftResource {
 	address: string;
 	type: string;
-	kind: "modified" | "deleted" | "other";
+	kind: DriftResourceKind;
 }
 
 export interface DriftPosture {
