@@ -84,19 +84,27 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 
 	// 2. At least one node Ready.
 	var lastReady, lastTotal int
+	var lastNodesRaw []byte
 	if err := pollUntil(ctx, deadline, 15*time.Second, func() bool {
 		raw, err := utils.ExecuteCommandWithOutput("kubectl get nodes -o json", ".", nil)
 		if err != nil {
 			return false
 		}
-		ready, total, perr := CountReadyNodes([]byte(raw))
+		lastNodesRaw = []byte(raw)
+		ready, total, perr := CountReadyNodes(lastNodesRaw)
 		if perr != nil {
 			return false
 		}
 		lastReady, lastTotal = ready, total
 		return ready > 0
 	}); err != nil {
-		return fmt.Errorf("no cluster node reached Ready within %s (%d/%d ready): %w", timeout, lastReady, lastTotal, err)
+		// Surface WHY the nodes are NotReady (KubeletNotReady, "container runtime network not
+		// ready" = CNI missing, taints) so a node-datapath failure is diagnosable without kubectl.
+		detail := ""
+		if reasons := NotReadyReasons(lastNodesRaw); len(reasons) > 0 {
+			detail = " — NotReady: " + strings.Join(reasons, "; ")
+		}
+		return fmt.Errorf("no cluster node reached Ready within %s (%d/%d ready)%s: %w", timeout, lastReady, lastTotal, detail, err)
 	}
 	fmt.Fprintf(stdout, "%d/%d nodes Ready.\n", lastReady, lastTotal)
 	return nil
@@ -314,4 +322,53 @@ func CountReadyNodes(raw []byte) (ready, total int, err error) {
 		}
 	}
 	return ready, total, nil
+}
+
+// NotReadyReasons extracts the distinct Ready-condition "reason: message" of every node whose Ready
+// condition is not "True" — the common ones being KubeletNotReady and "container runtime network not
+// ready" (a missing/failed CNI). Surfaced on the WaitClusterReady node timeout so a node-datapath
+// failure is diagnosable at a glance. Pure/unit-testable; empty when all nodes are Ready or the JSON
+// is empty/unparseable.
+func NotReadyReasons(raw []byte) []string {
+	var list struct {
+		Items []struct {
+			Status struct {
+				Conditions []struct {
+					Type    string `json:"type"`
+					Status  string `json:"status"`
+					Reason  string `json:"reason"`
+					Message string `json:"message"`
+				} `json:"conditions"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range list.Items {
+		for _, c := range item.Status.Conditions {
+			if c.Type != "Ready" || c.Status == "True" {
+				continue
+			}
+			reason := strings.TrimSpace(c.Reason)
+			if msg := strings.TrimSpace(c.Message); msg != "" {
+				if reason != "" {
+					reason += ": " + msg
+				} else {
+					reason = msg
+				}
+			}
+			if reason == "" {
+				reason = "Ready=" + c.Status
+			}
+			if !seen[reason] {
+				seen[reason] = true
+				out = append(out, reason)
+			}
+			break // one Ready condition per node
+		}
+	}
+	return out
 }
