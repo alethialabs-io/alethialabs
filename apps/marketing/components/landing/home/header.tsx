@@ -17,6 +17,7 @@ import {
 	mono,
 	Wrap,
 } from "./primitives";
+import { ThemeToggle } from "./theme-toggle";
 
 const GITHUB_URL = "https://github.com/alethialabs-io/alethialabs";
 
@@ -44,7 +45,7 @@ const PRODUCT_MENU: MenuGroup[] = [
 		{ ic: "bell", name: "Alerts", desc: "Policies match events; channels deliver them" },
 	] },
 	{ group: "Intelligence", items: [
-		{ ic: "sparkles", name: "AI agent", desc: "An assistant that knows your infrastructure — ask or act" },
+		{ ic: "route", name: "AI agent", desc: "An assistant that knows your infrastructure — ask or act" },
 		{ ic: "scan", name: "Repo scanner", desc: "Point it at a repo; get a proposed Project and cost" },
 		{ ic: "plug", name: "MCP server", desc: "The same tools, exposed to Claude over MCP" },
 	] },
@@ -235,6 +236,7 @@ export function Header({ stars }: { stars?: number | null }) {
 				</nav>
 
 				<div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+					<ThemeToggle />
 					<GitHubLink stars={stars} />
 					{nav.status === "authed" ? (
 						<>

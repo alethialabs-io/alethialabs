@@ -25,7 +25,7 @@ export function Cli() {
 	return (
 		<section style={{ padding: "84px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SecMark n="09" label="alethia CLI" />
+				<SecMark n="08" label="alethia CLI" />
 				<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 48, alignItems: "center", marginBottom: 48 }} className="ah-surface">
 					<div>
 						<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)" }}>The terminal is the deploy button.</h2>

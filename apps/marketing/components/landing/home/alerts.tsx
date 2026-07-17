@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { StatusBadge } from "@repo/ui/status-badge";
-import { disp, Icon, type IconKey, mono, SecMark, Wrap } from "./primitives";
+import { disp, Icon, mono, SecMark, Wrap } from "./primitives";
 
 const POLICIES: [string, string, number][] = [
 	["Job failed", "Any apply or destroy fails", 2],
@@ -10,11 +10,11 @@ const POLICIES: [string, string, number][] = [
 	["Cost threshold", "A Project exceeds its monthly budget", 1],
 ];
 
-const CHANNELS: [IconKey, string, string, string][] = [
-	["route", "PagerDuty", "on-call · critical", "active"],
-	["bell", "Slack #ops", "all events", "active"],
-	["jobs", "Email digest", "daily summary", "active"],
-	["git", "Webhook", "https://hooks.acme…", "idle"],
+const CHANNELS: [string, string, string][] = [
+	["PagerDuty", "on-call · critical", "active"],
+	["Slack #ops", "all events", "active"],
+	["Email digest", "daily summary", "active"],
+	["Webhook", "https://hooks.acme…", "idle"],
 ];
 
 /** 06 · Alerts & channels — policies match events, channels deliver them. */
@@ -51,11 +51,10 @@ export function Alerts() {
 							<Icon k="route" size={15} /><span style={{ ...disp, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>Channels</span>
 							<span style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", marginLeft: "auto" }}>4 configured</span>
 						</div>
-						{CHANNELS.map(([ic, name, meta, st], i) => (
-							<div key={name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", borderBottom: i < CHANNELS.length - 1 ? "1px solid var(--border-faint)" : "none" }}>
-								<span style={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface-sunken)", color: "var(--text-secondary)", flexShrink: 0 }}><Icon k={ic} size={14} /></span>
+						{CHANNELS.map(([name, meta, st], i) => (
+							<div key={name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderBottom: i < CHANNELS.length - 1 ? "1px solid var(--border-faint)" : "none" }}>
 								<div style={{ minWidth: 0 }}>
-									<div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{name}</div>
+									<div style={{ ...disp, fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{name}</div>
 									<div style={{ ...mono, fontSize: 10.5, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{meta}</div>
 								</div>
 								<span style={{ marginLeft: "auto" }}><StatusBadge status={st} /></span>

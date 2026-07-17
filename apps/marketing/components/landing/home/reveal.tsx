@@ -7,7 +7,13 @@ import { type ReactNode, useEffect, useRef } from "react";
 /**
  * Wraps the page and reveals each section on scroll. All direct `<section>`
  * children except the first (hero) fade/slide in as they enter the viewport.
- * Honors `prefers-reduced-motion`.
+ *
+ * On browsers with scroll-driven timelines it attaches `.ah-reveal-v` and lets
+ * CSS `animation-timeline: view()` drive the reveal on the compositor — no
+ * observer, no layout thrash. Where that's unsupported it falls back to an
+ * IntersectionObserver toggling `.ah-reveal`/`.in`. Reduced motion adds
+ * nothing, so every section is simply visible. Because the classes are only
+ * attached by JS, content is never hidden when JS is off.
  */
 export function Reveal({ children }: { children: ReactNode }) {
 	const ref = useRef<HTMLDivElement>(null);
@@ -16,13 +22,15 @@ export function Reveal({ children }: { children: ReactNode }) {
 		const root = ref.current;
 		if (!root) return;
 		const sections = Array.from(root.querySelectorAll(":scope > section")).slice(1);
-		sections.forEach((s) => s.classList.add("ah-reveal"));
 
-		if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-			sections.forEach((s) => s.classList.add("in"));
+		if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+		if (typeof CSS !== "undefined" && CSS.supports("animation-timeline: view()")) {
+			sections.forEach((s) => s.classList.add("ah-reveal-v"));
 			return;
 		}
 
+		sections.forEach((s) => s.classList.add("ah-reveal"));
 		const io = new IntersectionObserver(
 			(entries) =>
 				entries.forEach((e) => {

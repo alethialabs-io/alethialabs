@@ -70,7 +70,16 @@
   mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000 30%, transparent 72%);
 }
 
-/* scroll reveal */
+/* hero legibility mask — reused by the WebGL shader canvas so the field
+   dissolves away from the headline (mirrors .ah-grid-bg's radial mask). */
+.ah-hero-mask {
+  -webkit-mask-image: radial-gradient(ellipse 78% 68% at 50% 8%, #000 34%, transparent 82%);
+  mask-image: radial-gradient(ellipse 78% 68% at 50% 8%, #000 34%, transparent 82%);
+}
+
+/* scroll reveal — IntersectionObserver fallback (reveal.tsx) for browsers
+   without scroll-driven timelines. On capable browsers reveal.tsx attaches
+   .ah-reveal-v instead and this path is unused. */
 .ah-reveal {
   opacity: 0;
   transform: translateY(16px);
@@ -83,27 +92,104 @@
   transform: none;
 }
 
+/* ============================================================
+   Latest-CSS layer — registered custom properties, scroll-driven reveals +
+   rails, and cross-document view transitions. Every rule is a progressive
+   enhancement: the reveal/rail classes are only attached by JS when the
+   browser supports scroll timelines, and each @property initial value is the
+   *completed* state, so non-supporting engines render the final look.
+   ============================================================ */
+
+/* Registered props interpolate smoothly along a scroll timeline (plain custom
+   properties can't animate). Initial value = the finished state. */
+@property --ah-scan {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --ah-progress {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+/* Scroll-driven section reveal — the capable-browser path. */
+@keyframes ah-reveal-in {
+  to { opacity: 1; transform: none; }
+}
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .ah-reveal-v {
+      opacity: 0;
+      transform: translateY(18px);
+      animation: ah-reveal-in linear both;
+      animation-timeline: view();
+      animation-range: entry 2% cover 34%;
+    }
+  }
+}
+
+/* Scroll-linked rails: the Verify scan-line sweep and the Run/Fleet progress
+   fills read var(--ah-scan)/var(--ah-progress); these keyframes drive those
+   registered props along the element's own view() timeline. */
+@keyframes ah-scan-kf { from { --ah-scan: 0%; } to { --ah-scan: 100%; } }
+@keyframes ah-progress-kf { from { --ah-progress: 0; } to { --ah-progress: 1; } }
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .ah-scan {
+      animation: ah-scan-kf linear both;
+      animation-timeline: view();
+      animation-range: entry 12% cover 58%;
+    }
+    .ah-rail {
+      animation: ah-progress-kf linear both;
+      animation-timeline: view();
+      animation-range: entry 6% cover 52%;
+    }
+  }
+}
+
+/* Cross-document view transitions between marketing pages (additive; ignored
+   where unsupported). Same-document hero tab swaps use startViewTransition. */
+@view-transition { navigation: auto; }
+
+/* Names the hero preview panel so its console↔agent↔CLI swap cross-fades as a
+   single group under a same-document view transition. */
+.ah-hero-panel { view-transition-name: ah-hero-panel; }
+
 @media (prefers-reduced-motion: reduce) {
   .ah-caret, .ah-pulse { animation: none; }
   .ah-reveal { opacity: 1; transform: none; transition: none; }
+  .ah-reveal-v { opacity: 1; transform: none; animation: none; }
+  .ah-scan, .ah-rail { animation: none; }
 }
 
-/* responsive collapse — mirrors the design's media queries */
+/* Page-level responsive rules stay viewport-based (headline scale, nav
+   collapse, small-screen hides). */
 @media (max-width: 900px) {
-  .ah-h1 { font-size: 46px !important; }
+  .ah-h1 { font-size: 46px; }
+  .ah-navmenu { display: none; }
+}
+@media (max-width: 620px) {
+  .ah-h1 { font-size: 36px; }
+  .ah-hide-sm { display: none; }
+}
+
+/* Section grids collapse against their OWN width via container queries — each
+   mock responds to the space it sits in, not the viewport (the shared Wrap is
+   the query container; see the Wrap component). !important overrides the base
+   grid-template-columns set inline on each grid. */
+@container ah (max-width: 840px) {
   .ah-life { grid-template-columns: 1fr 1fr !important; }
   .ah-cmds { grid-template-columns: 1fr 1fr !important; }
   .ah-surface, .ah-foot-grid, .ah-3col, .ah-2col { grid-template-columns: 1fr !important; }
   .ah-3col, .ah-2col { gap: 16px !important; }
   .ah-4col { grid-template-columns: 1fr 1fr !important; gap: 16px !important; }
   .ah-foot-grid { grid-template-columns: 1fr 1fr !important; gap: 28px !important; }
-  .ah-navmenu { display: none !important; }
 }
-@media (max-width: 620px) {
-  .ah-h1 { font-size: 36px !important; }
+@container ah (max-width: 560px) {
   .ah-life { grid-template-columns: 1fr !important; }
   .ah-4col { grid-template-columns: 1fr !important; }
-  .ah-hide-sm { display: none !important; }
 }
 
 /* enterprise page — page-specific collapses (mirror the design's .en-* rules) */

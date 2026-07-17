@@ -5,13 +5,13 @@ import { getGitHubStars } from "@/lib/github-stars";
 import { Header } from "@/components/landing/home/header";
 import { Hero } from "@/components/landing/home/hero";
 import { RunsOn } from "@/components/landing/home/runs-on";
-import { ZeroTrust } from "@/components/landing/home/zero-trust";
+import { Connect } from "@/components/landing/home/zero-trust";
+import { Agent } from "@/components/landing/home/ai";
 import { ProjectDesigner } from "@/components/landing/home/project-designer";
-import { ProjectsJobs } from "@/components/landing/home/projects-jobs";
-import { IsolatedExecution } from "@/components/landing/home/isolated-execution";
+import { Verify } from "@/components/landing/home/verify";
+import { Run } from "@/components/landing/home/run";
 import { FleetTeaser } from "@/components/landing/home/fleet-teaser";
 import { OpenSource } from "@/components/landing/home/open-source";
-import { AI } from "@/components/landing/home/ai";
 import { Alerts } from "@/components/landing/home/alerts";
 import { Enterprise } from "@/components/landing/home/enterprise";
 import { Cli } from "@/components/landing/home/cli";
@@ -33,16 +33,16 @@ export default async function HomePage() {
 			<Reveal>
 				<Hero />
 				<RunsOn />
-				<ZeroTrust />
+				<Connect />
+				<Agent />
 				<ProjectDesigner />
-				<ProjectsJobs />
-				<IsolatedExecution />
+				<Verify />
+				<Run />
 				<FleetTeaser />
-				<AI />
 				<Alerts />
-				<Enterprise />
 				<Cli />
 				<OpenSource />
+				<Enterprise />
 				<CTA />
 			</Reveal>
 			<Footer />

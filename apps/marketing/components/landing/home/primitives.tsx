@@ -27,7 +27,6 @@ import {
 	Server,
 	Shield,
 	SlidersHorizontal,
-	Sparkles,
 	Terminal,
 	Users,
 	Workflow,
@@ -48,7 +47,9 @@ export const eyebrow: CSSProperties = {
 	margin: 0,
 };
 
-/** Centered max-width content wrapper used by every section. */
+/** Centered max-width content wrapper used by every section. Also the named
+ * query container (`ah`) that the section-grid container queries measure — so
+ * each mock collapses against its own width, not the viewport. */
 export function Wrap({
 	children,
 	style,
@@ -57,9 +58,41 @@ export function Wrap({
 	style?: CSSProperties;
 }) {
 	return (
-		<div style={{ maxWidth: 1160, margin: "0 auto", padding: "0 32px", ...style }}>
+		<div
+			style={{
+				maxWidth: 1160,
+				margin: "0 auto",
+				padding: "0 32px",
+				containerType: "inline-size",
+				containerName: "ah",
+				...style,
+			}}
+		>
 			{children}
 		</div>
+	);
+}
+
+/** Small mono chip that marks a surface as an illustrative mock, never live
+ * telemetry — the honest-mock discipline for the landing's console previews. */
+export function ExampleTag({ label = "example" }: { label?: string }) {
+	return (
+		<span
+			style={{
+				...mono,
+				fontSize: 9,
+				letterSpacing: "0.14em",
+				textTransform: "uppercase",
+				color: "var(--text-tertiary)",
+				border: "1px solid var(--border)",
+				borderRadius: "var(--radius-xs)",
+				padding: "2px 6px",
+				background: "var(--surface-sunken)",
+				whiteSpace: "nowrap",
+			}}
+		>
+			{label}
+		</span>
 	);
 }
 
@@ -141,7 +174,6 @@ const ICONS = {
 	pen: PenLine,
 	gauge: Gauge,
 	zap: Zap,
-	sparkles: Sparkles,
 	scan: ScanLine,
 	plug: Plug,
 	building: Building2,
@@ -339,12 +371,10 @@ export function ProposeCard({
 	op = "plan_project",
 	project = "orders-api",
 	add = 23,
-	cost = "$312/mo",
 }: {
 	op?: string;
 	project?: string;
 	add?: number;
-	cost?: string;
 }) {
 	return (
 		<div style={{ border: "1px solid var(--border-strong)", borderRadius: "var(--radius-md)", background: "var(--surface)", overflow: "hidden", width: "100%" }}>
@@ -356,8 +386,8 @@ export function ProposeCard({
 			<div style={{ padding: "11px 12px" }}>
 				<code style={{ ...mono, fontSize: 12, color: "var(--text-primary)" }}>{op} · {project}</code>
 				<div style={{ display: "flex", gap: 13, margin: "9px 0 12px", ...mono, fontSize: 10.5, color: "var(--text-tertiary)" }}>
-					<span>{add} to add</span><span>0 change</span><span>0 destroy</span>
-					<span style={{ color: "var(--text-secondary)", marginLeft: "auto" }}>~{cost}</span>
+					<span style={{ color: "var(--text-secondary)" }}>{add} to add</span><span>0 change</span><span>0 destroy</span>
+					<span style={{ marginLeft: "auto" }}>verified</span>
 				</div>
 				<div style={{ display: "flex", gap: 8 }}>
 					<span style={{ display: "inline-flex", alignItems: "center", height: 28, padding: "0 12px", fontSize: 12, fontWeight: 500, background: "var(--ink)", color: "var(--ink-foreground)" }}>Approve</span>

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Fragment, type ReactNode } from "react";
-import { disp, eyebrow, Icon, type IconKey, mono, Prov, SecMark, Wrap } from "./primitives";
+import { disp, eyebrow, ExampleTag, Icon, type IconKey, mono, Prov, SecMark, Wrap } from "./primitives";
 
 const SECTIONS: [string, string][] = [
 	["Project basics", "done"],
@@ -23,13 +23,6 @@ const FIELDS: [string, string, "select" | "chips"][] = [
 	["Instance types", "m6i.large · m6i.xlarge", "chips"],
 	["Nodes", "min 2 · desired 3 · max 6", "select"],
 	["Autoscaler", "Karpenter", "select"],
-];
-
-const COST: [string, string][] = [
-	["EKS control plane", "$73.00"],
-	["Nodes · 3× m6i.large", "$311.00"],
-	["Aurora Postgres", "$180.00"],
-	["ElastiCache Redis", "$48.00"],
 ];
 
 const NODES: [IconKey, string][] = [
@@ -66,12 +59,12 @@ function DesignerChrome({ children }: { children: ReactNode }) {
 	);
 }
 
-/** 02 · Project designer — eleven guided sections compile to OpenTofu with live cost. */
+/** 03 · Project designer — eleven guided sections compile to OpenTofu with live cost. */
 export function ProjectDesigner() {
 	return (
 		<section style={{ padding: "84px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SecMark n="02" label="Project designer" />
+				<SecMark n="03" label="Project designer" />
 				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 36 }}>
 					<h2 style={{ ...disp, fontSize: 38, fontWeight: 600, letterSpacing: "-0.035em", margin: 0, maxWidth: 560, color: "var(--text-primary)" }}>Design production infrastructure. No YAML.</h2>
 					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>A Project is one configuration across eleven guided sections. Fill a form or wire a canvas — either way it compiles to OpenTofu for AWS, GCP, or Azure, with a live cost as you go.</p>
@@ -129,17 +122,12 @@ export function ProjectDesigner() {
 						</div>
 						{/* cost sidebar */}
 						<div style={{ borderLeft: "1px solid var(--border)", background: "var(--surface-sunken)", padding: "18px 16px", display: "flex", flexDirection: "column" }}>
-							<div style={{ ...eyebrow, fontSize: 8.5, marginBottom: 8 }}>Estimated monthly</div>
-							<div style={{ ...disp, fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--text-primary)", lineHeight: 1 }}>~$612<span style={{ fontSize: 16, color: "var(--text-tertiary)" }}>.00</span></div>
-							<div style={{ height: 1, background: "var(--border)", margin: "16px 0" }} />
-							<div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-								{COST.map(([l, v]) => (
-									<div key={l} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-										<span style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.3 }}>{l}</span>
-										<span style={{ ...mono, fontSize: 11.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{v}</span>
-									</div>
-								))}
+							<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+								<div style={{ ...eyebrow, fontSize: 8.5 }}>Estimated monthly</div>
+								<ExampleTag />
 							</div>
+							<div style={{ ...disp, fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--text-primary)", lineHeight: 1 }}>≈ $600<span style={{ fontSize: 15, color: "var(--text-tertiary)", fontWeight: 500 }}> /mo</span></div>
+							<p style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.5, margin: "12px 0 0" }}>A live estimate as you design — every section you add updates it.</p>
 							<div style={{ marginTop: "auto", paddingTop: 16, display: "flex", alignItems: "center", gap: 7, ...mono, fontSize: 9.5, color: "var(--text-disabled)" }}><Icon k="gauge" size={12} sw={1.7} />Infracost refines on plan</div>
 						</div>
 					</div>
