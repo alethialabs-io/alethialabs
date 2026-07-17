@@ -9,6 +9,15 @@ import { getGitopsDeployStatus } from "@/app/server/actions/gitops-status";
 import { getPlanResult } from "@/app/server/actions/jobs";
 import { getProject } from "@/app/server/actions/projects";
 import { DeployPane } from "@/components/agent/deploy-pane";
+import { BuildPane } from "@/components/agent/build-pane";
+import type {
+	BuildJobState,
+	BuildServiceInput,
+} from "@/lib/agent/build-status";
+import type {
+	ProvisionJobStatus,
+	ProvisionJobType,
+} from "@/lib/db/schema/enums";
 import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { Badge } from "@repo/ui/badge";
 import { ScrollArea } from "@repo/ui/scroll-area";
@@ -29,12 +38,15 @@ import { cn } from "@repo/ui/utils";
 type ProjectDetail = Awaited<ReturnType<typeof getProject>>;
 
 interface PlanState {
-	status: string;
+	status: ProvisionJobStatus;
+	jobType: ProvisionJobType;
 	error: string | null;
 	planSummary: PlanSummary | null;
 	costSummary: CostSummary | null;
 	verifyReport: VerifyReport | null;
 	receipt: SignedReceipt | null;
+	/** BUILD jobs only: execution_metadata.build_result (service → pushed digest). */
+	buildResult: Record<string, string> | null;
 }
 
 /** Narrow a free-form provider string to a known slug (no casts). */
@@ -150,6 +162,7 @@ export function ArtifactPanel() {
 			const meta = r.execution_metadata;
 			setPlan({
 				status: r.status,
+				jobType: r.job_type,
 				error: r.error_message,
 				planSummary: meta?.plan_result ? parsePlanJSON(meta.plan_result) : null,
 				costSummary: meta?.cost_breakdown
@@ -157,6 +170,7 @@ export function ArtifactPanel() {
 					: null,
 				verifyReport: meta?.verify_result ?? null,
 				receipt: meta?.verify_receipt ?? null,
+				buildResult: meta?.build_result ?? null,
 			});
 		})();
 		return () => {
@@ -170,6 +184,16 @@ export function ArtifactPanel() {
 	// what the artifact actually carries.
 	const hasProject = !!projectId;
 	const hasJob = !!jobId;
+
+	// Build (#592): shown when the project has a repo-sourced service (image-sourced ones don't build).
+	// The BUILD job's live state feeds the phases; without a BUILD job open, the pane reads the
+	// persisted resolved_image instead.
+	const services: BuildServiceInput[] = project?.components.services ?? [];
+	const hasBuild = services.some((s) => s.source.kind === "repo");
+	const buildJob: BuildJobState | null =
+		plan?.jobType === "BUILD"
+			? { status: plan.status, buildResult: plan.buildResult ?? {} }
+			: null;
 
 	const title =
 		project?.project.project_name ??
@@ -195,6 +219,7 @@ export function ArtifactPanel() {
 					if (
 						v === "config" ||
 						v === "plan" ||
+						v === "build" ||
 						v === "deploy" ||
 						v === "cost" ||
 						v === "logs"
@@ -212,6 +237,11 @@ export function ArtifactPanel() {
 					{hasJob && (
 						<TabsTrigger value="plan" className="rounded-none text-xs">
 							Plan
+						</TabsTrigger>
+					)}
+					{hasBuild && (
+						<TabsTrigger value="build" className="rounded-none text-xs">
+							Build
 						</TabsTrigger>
 					)}
 					{hasProject && (
@@ -243,6 +273,13 @@ export function ArtifactPanel() {
 						<ScrollArea className="h-full">
 							<div className="p-4">
 								<PlanPane plan={plan} jobId={jobId} />
+							</div>
+						</ScrollArea>
+					</TabsContent>
+					<TabsContent value="build" className="m-0 h-full">
+						<ScrollArea className="h-full">
+							<div className="p-4">
+								<BuildPane services={services} build={buildJob} />
 							</div>
 						</ScrollArea>
 					</TabsContent>
