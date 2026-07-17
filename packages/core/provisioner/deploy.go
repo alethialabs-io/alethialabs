@@ -823,7 +823,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		if genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr); genErr != nil {
+		manifestWarnings, genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr)
+		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
 
@@ -923,6 +924,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// never a fabricated pass. Always non-nil after a real apply so the console can
 		// tell "direct mode" from "pre-#574 job with no data".
 		result.GitopsStatus = readGitopsSnapshot(gitopsRequested, vc.Repositories.AppsDestinationRepo, stdout, stderr)
+		// Attach the manifest-generation warnings (skipped services, unresolved bindings,
+		// unsatisfiable credential facets) so the console's Deploy tab can surface WHY a service
+		// may be misconfigured, instead of the operator digging through raw deploy logs (#717).
+		if result.GitopsStatus != nil {
+			result.GitopsStatus.ManifestWarnings = manifestWarnings
+		}
 	}
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")

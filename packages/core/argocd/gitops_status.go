@@ -56,6 +56,14 @@ type GitopsStatus struct {
 	// status.resources (kind Deployment/StatefulSet/DaemonSet/Rollout), keyed by
 	// resource name. Empty when resources were unreadable — an honest unknown.
 	Services map[string]ServiceHealth `json:"services,omitempty"`
+	// ManifestWarnings are non-fatal issues found while GENERATING the app manifests: a
+	// service skipped (unbuilt image / unsupported workload type), a binding endpoint that
+	// couldn't be resolved (fail-closed, #710), or a credential facet with no materializable
+	// secret. They explain why a rendered service may boot misconfigured — surfaced so the
+	// operator sees them without digging through raw deploy logs. Contains NO secret values
+	// (env/kind/facet/provider names only). Empty ⇒ generation was clean (or was skipped for a
+	// bring-your-own manifests repo).
+	ManifestWarnings []string `json:"manifest_warnings,omitempty"`
 }
 
 // ServiceHealth is one workload's ArgoCD resource status inside the apps Application:

@@ -51,6 +51,7 @@ export const gitopsStatusReportSchema = z.object({
 			}),
 		)
 		.optional(),
+	manifest_warnings: z.array(z.string()).optional(),
 });
 
 /** One component row on the Deploy tab: ArgoCD health + sync + optional message. */
@@ -94,6 +95,10 @@ export interface GitopsDeployStatus {
 	/** In-cluster data services (the addon-db-/cache-/queue- keys of addon_status).
 	 *  Cloud-managed data services live on the canvas, not here. */
 	dataServices: GitopsComponentRow[];
+	/** Non-fatal warnings from the LATEST deploy's manifest generation: a skipped service, an
+	 *  unresolved binding endpoint (#710), an unsatisfiable credential facet — why a rendered
+	 *  service may boot misconfigured. Empty ⇒ generation was clean (or bring-your-own). */
+	warnings: string[];
 }
 
 /** The empty read model — an environment that has never been deployed. */
@@ -111,6 +116,7 @@ export const EMPTY_GITOPS_DEPLOY_STATUS: GitopsDeployStatus = {
 	services: [],
 	addons: [],
 	dataServices: [],
+	warnings: [],
 };
 
 /** A gitops-carrying job reduced to what assembly needs. */
@@ -233,6 +239,9 @@ export function assembleGitopsDeployStatus(inputs: GitopsAssemblyInputs): Gitops
 		services,
 		addons,
 		dataServices,
+		// Manifest-generation warnings are a DEPLOY-time artifact (drift never regenerates), so they
+		// come from the latest deploy's snapshot — valid until the next deploy re-renders.
+		warnings: deployJob?.gitops?.manifest_warnings ?? [],
 	};
 }
 
