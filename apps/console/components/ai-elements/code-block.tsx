@@ -1,5 +1,6 @@
 "use client";
 
+import { toError } from "@/lib/errors";
 import { Button } from "@repo/ui/button";
 import {
   Select,
@@ -484,7 +485,7 @@ export const CodeBlockCopyButton = ({
         );
       }
     } catch (error) {
-      onError?.(error as Error);
+      onError?.(toError(error));
     }
   }, [code, onCopy, onError, timeout, isCopied]);
 
