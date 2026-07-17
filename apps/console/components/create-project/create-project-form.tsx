@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { lookup } from "@/lib/typed-object";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, Check, GitBranch, Loader2, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
@@ -521,7 +522,7 @@ function CloudTile({
 	// Missing platform creds (e.g. Azure's app id) → a connect can only fail, so offer no Connect.
 	const platformUnavailable = !connected && !platformConfigured;
 	const label =
-		PROVIDERS[integration.slug as ConnectableCloudSlug]?.shortName ?? integration.name;
+		lookup(PROVIDERS, integration.slug)?.shortName ?? integration.name;
 	const status = platformUnavailable
 		? "Not enabled on this instance"
 		: !connected

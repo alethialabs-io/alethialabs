@@ -7,6 +7,8 @@
 // it's handled, and the DB `permission`/`role` tables are seeded FROM this file
 // (4.2) so code and data never drift.
 
+import { isEnumMember } from "@/lib/coerce";
+
 /** Resource types the PDP reasons about. */
 export const RESOURCES = [
 	"org",
@@ -149,5 +151,5 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 
 /** True if `key` is a real permission (guards against typos / stale grants). */
 export function isPermissionKey(key: string): key is PermissionKey {
-	return ALL_KEYS.includes(key as PermissionKey);
+	return isEnumMember(key, ALL_KEYS);
 }
