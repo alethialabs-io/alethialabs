@@ -72,7 +72,7 @@ export function BindingsField({
 	/** Canvas resources of a given kind, as target-name options. */
 	const namesForKind = (kind: BindingTargetKind): string[] =>
 		nodes
-			.filter((n) => n.data.kind === (kind as NodeKind))
+			.filter((n) => n.data.kind === kind)
 			.map((n) => configName(n.data))
 			.filter((name): name is string => !!name);
 
