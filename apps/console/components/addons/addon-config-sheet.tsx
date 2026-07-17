@@ -10,6 +10,7 @@
 // (re-validated server-side); the YAML is validated on save and deep-merged on top of the knobs at
 // resolve time. Squared corners (`rounded-none`) to match the canvas chrome.
 
+import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -83,7 +84,7 @@ function seedField(f: AddOnField, stored: unknown): unknown {
 	if (f.type === "nested") {
 		const parent =
 			stored && typeof stored === "object"
-				? (stored as Record<string, unknown>)
+				? asRecord(stored)
 				: {};
 		const obj: Record<string, unknown> = {};
 		for (const child of f.fields ?? []) {
@@ -190,7 +191,7 @@ export function AddonConfigSheet({
 		if (f.type === "nested") {
 			const parent =
 				stored && typeof stored === "object"
-					? (stored as Record<string, unknown>)
+					? asRecord(stored)
 					: {};
 			return (
 				<div key={path} className="space-y-2">
@@ -358,7 +359,7 @@ export function AddonConfigSheet({
 							<Label>Delivery</Label>
 							<Select
 								value={mode}
-								onValueChange={(v) => form.setValue("_mode", v as AddOnMode)}
+								onValueChange={(v) => form.setValue("_mode", v === "gitops" ? "gitops" : "managed")}
 							>
 								<SelectTrigger>
 									<SelectValue />
