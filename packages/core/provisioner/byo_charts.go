@@ -20,7 +20,9 @@ import (
 // same pattern as EnsureAddOnSecrets is used). Never inlines a plaintext credential; a facet that
 // can't be resolved keylessly is logged and skipped, never referenced. Non-fatal — a bad binding
 // must not fail an otherwise-healthy deploy. Mutates each addon's Values in place.
-func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) {
+// Returns the names of the binding ExternalSecrets it successfully applied — the desired set the
+// caller passes to argocd.PruneChartBindingSecrets so a removed binding's Secret is swept.
+func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) []string {
 	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
 	strOutputs := make(map[string]string, len(outputs))
 	for k, v := range outputs {
@@ -28,6 +30,7 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 			strOutputs[k] = s
 		}
 	}
+	var applied []string
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
 		if len(a.Workloads) == 0 {
@@ -47,6 +50,9 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 				fmt.Fprintf(stdout, "BYO chart %s workload %s: binding %s unsatisfied (no value-path or no keyless secret) — not written.\n", a.ID, w.Name, knob)
 			}
 			for _, es := range res.ExternalSecrets {
+				// Mark it so PruneChartBindingSecrets can find + sweep it when the binding is removed
+				// (it is applied outside ArgoCD, so nothing else prunes it).
+				es.Labels = map[string]string{argocd.ByoBindingSecretLabel: "true"}
 				yaml, skipped, err := manifests.RenderExternalSecret(es)
 				if err != nil {
 					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret render failed (%s/%s): %v\n", a.ID, w.Name, err)
@@ -60,10 +66,13 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 				}
 				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {
 					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", a.ID, w.Name, err)
+					continue
 				}
+				applied = append(applied, manifests.BindingSecretName(es.ServiceName, es.Target))
 			}
 		}
 	}
+	return applied
 }
 
 // prepareByoCharts sets up the trust boundary for bring-your-own (git-source) charts BEFORE the

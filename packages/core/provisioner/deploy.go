@@ -834,6 +834,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
 		// read health back for the console. Non-fatal (like app-manifest generation): a bad
 		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
+		// The BYO binding ExternalSecrets this deploy (re)applies — the desired set for the prune
+		// below (declared out here so a fully-detached chart, vc.AddOns empty, still sweeps them).
+		var appliedBindingSecrets []string
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -860,7 +863,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now
 			// (runtime, against the tofu outputs) + seed their keyless binding ExternalSecrets —
 			// BEFORE the Applications render, so the write-back rides the same helm.values block.
-			applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
+			appliedBindingSecrets = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
 
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
@@ -886,6 +889,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if pruneErr := argocd.PruneManagedAddOns(argocd.ManagedAddOnNames(vc.AddOns), stdout, stderr); pruneErr != nil {
 			fmt.Fprintf(stderr, "Warning: add-on prune failed: %v\n", pruneErr)
 		}
+		// W5 Lane 2b: sweep any BYO binding ExternalSecret no longer desired (a removed binding or a
+		// detached chart) — they are runner-applied outside ArgoCD, so this is their only GC.
+		argocd.PruneChartBindingSecrets(appliedBindingSecrets, stdout, stderr)
 		// And the runner-seeded secret of any disabled add-on (W4.5) — no Application owns
 		// those Secrets (deliberately: no ArgoCD tracking metadata), so ArgoCD will never
 		// prune them; this is their only GC.

@@ -5,15 +5,38 @@ package manifests
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+func TestRenderExternalSecret_WithMarkerLabel(t *testing.T) {
+	yaml, skipped, err := RenderExternalSecret(ExternalSecretParams{
+		ServiceName: "web",
+		Namespace:   "ns",
+		Target:      types.ServiceBindingTarget{Kind: "database", Name: "orders"},
+		Provider:    "aws",
+		RemoteKey:   "arn:secret",
+		Facets:      []string{"password"},
+		Labels:      map[string]string{"alethia.io/byo-binding": "true"},
+	})
+	if err != nil || len(skipped) != 0 {
+		t.Fatalf("render err=%v skipped=%v", err, skipped)
+	}
+	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there.
+	if !strings.Contains(yaml, "alethia.io/byo-binding: true") {
+		t.Fatalf("marker label not rendered:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "app.kubernetes.io/managed-by: alethia") {
+		t.Fatalf("fixed labels dropped when adding an extra one:\n%s", yaml)
+	}
+}
+
 func chartDBBinding(facets ...[2]string) types.ServiceBinding {
 	b := types.ServiceBinding{Target: types.ServiceBindingTarget{Kind: "database", Name: "orders"}}
 	for _, f := range facets {
-		b.Inject = append(b.Inject, types.ServiceBindingInjection{Env: f[0], From: f[1]})
+		b.Inject = append(b.Inject, types.ServiceBindingInjection{Env: f[0], From: types.ServiceBindingFacet(f[1])})
 	}
 	return b
 }

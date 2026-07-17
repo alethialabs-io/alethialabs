@@ -85,15 +85,15 @@ func ResolveChartWorkloadBindings(
 
 	for _, b := range bindings {
 		for _, inj := range b.Inject {
-			knob := ChartBindingKnob(b.Target.Kind, b.Target.Name, inj.From)
+			knob := ChartBindingKnob(string(b.Target.Kind), b.Target.Name, string(inj.From))
 			path := valuePaths[knob]
 			if path == "" {
 				res.Unsatisfied = append(res.Unsatisfied, knob)
 				continue
 			}
-			if IsCredentialFacet(inj.From) {
-				remoteKey := outputs[chartCredentialSecretOutputKey(b.Target.Kind)]
-				_, hasProperty := facetProperty(provider, inj.From)
+			if IsCredentialFacet(string(inj.From)) {
+				remoteKey := outputs[chartCredentialSecretOutputKey(string(b.Target.Kind))]
+				_, hasProperty := facetProperty(provider, string(inj.From))
 				// Satisfiable only if the cloud has an ESO store, the resource exported a master
 				// secret, and the facet maps to a remote property. Otherwise: no patch (never point
 				// the chart at a Secret that won't exist), report unsatisfied.
@@ -101,25 +101,25 @@ func ResolveChartWorkloadBindings(
 					res.Unsatisfied = append(res.Unsatisfied, knob)
 					continue
 				}
-				tkey := b.Target.Kind + "|" + b.Target.Name
+				tkey := string(b.Target.Kind) + "|" + b.Target.Name
 				acc, ok := credByTarget[tkey]
 				if !ok {
 					acc = &credAcc{target: b.Target}
 					credByTarget[tkey] = acc
 					credOrder = append(credOrder, tkey)
 				}
-				acc.facets = append(acc.facets, inj.From)
+				acc.facets = append(acc.facets, string(inj.From))
 				// Reference the keyless Secret at the value-path (its name == BindingSecretName).
 				res.Patches[path] = BindingSecretName(workloadName, b.Target)
 				continue
 			}
 			// Non-secret facet: a literal from the tofu outputs.
 			var value string
-			switch inj.From {
+			switch string(inj.From) {
 			case "endpoint":
-				value = outputs[awsEndpointOutputKey(b.Target.Kind)]
+				value = outputs[endpointOutputKey(provider, string(b.Target.Kind))]
 			case "port":
-				value = defaultPort(b.Target.Kind)
+				value = defaultPort(string(b.Target.Kind))
 			}
 			if value == "" {
 				res.Unsatisfied = append(res.Unsatisfied, knob)
@@ -137,7 +137,7 @@ func ResolveChartWorkloadBindings(
 			Namespace:   namespace,
 			Target:      acc.target,
 			Provider:    provider,
-			RemoteKey:   outputs[chartCredentialSecretOutputKey(acc.target.Kind)],
+			RemoteKey:   outputs[chartCredentialSecretOutputKey(string(acc.target.Kind))],
 			Facets:      facets,
 		})
 	}
