@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 
-export type ArtifactTab = "config" | "plan" | "cost" | "logs";
+export type ArtifactTab = "config" | "plan" | "deploy" | "cost" | "logs";
 
 /** What the agent's inspector panel is currently showing. */
 export interface Artifact {

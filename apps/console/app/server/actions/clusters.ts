@@ -12,6 +12,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectRepositories,
 	projects,
 } from "@/lib/db/schema";
 
@@ -47,6 +48,8 @@ export interface ClusterData {
 		status: string;
 	}[];
 	project_dns: { domain_name: string | null; enabled: boolean } | null;
+	/** The GitOps apps destination repo (#574); null = direct apply (no apps repo wired). */
+	apps_destination_repo: string | null;
 }
 
 /** Fetches all active projects with their cluster, database, cache, and DNS data. */
@@ -76,6 +79,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 				cluster_status: projectCluster.status,
 				dns_domain_name: projectDns.domain_name,
 				dns_enabled: projectDns.enabled,
+				apps_destination_repo: projectRepositories.apps_destination_repo,
 			})
 			.from(projects)
 			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
@@ -98,6 +102,13 @@ export async function getClusters(): Promise<ClusterData[]> {
 				and(
 					eq(projectDns.project_id, projects.id),
 					eq(projectDns.environment_id, projectEnvironments.id),
+				),
+			)
+			.leftJoin(
+				projectRepositories,
+				and(
+					eq(projectRepositories.project_id, projects.id),
+					eq(projectRepositories.environment_id, projectEnvironments.id),
 				),
 			)
 			.where(eq(projectEnvironments.status, "ACTIVE"))
@@ -167,6 +178,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 				r.dns_enabled !== null
 					? { domain_name: r.dns_domain_name, enabled: r.dns_enabled }
 					: null,
+			apps_destination_repo: r.apps_destination_repo ?? null,
 		}));
 	});
 }

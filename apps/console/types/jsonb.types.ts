@@ -582,6 +582,10 @@ export interface ExecutionMetadata {
 	// reconcile). The status route raises a `system.project.orphan_risk` alert on this.
 	orphan_risk?: boolean;
 	orphan_risk_reason?: string;
+	// DEPLOY + DETECT_DRIFT jobs (#574): GitOps wiring outcome + apps-Application health
+	// snapshot. On a wiring hard-fail the runner posts a PARTIAL result carrying which step
+	// died; absent on pre-#574 jobs. Mirrors the Go `argocd.GitopsStatus`.
+	gitops_status?: GitopsStatusReport;
 }
 
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
@@ -590,6 +594,42 @@ export interface ExecutionMetadata {
 export interface AddOnStatusEntry {
 	health: string;
 	sync: string;
+}
+
+/**
+ * GitOps wiring outcome + apps-Application health snapshot for one DEPLOY (or the day-2
+ * DETECT_DRIFT refresh). Mirrors the Go `argocd.GitopsStatus` (#574). Fail-loud contract:
+ * `failed_step` set ⇒ the deploy died INSIDE the wiring and no health was read — render
+ * every component Unknown, never a stale pass.
+ */
+export interface GitopsStatusReport {
+	/** "gitops" when an apps destination repo is wired, "direct" otherwise. */
+	mode: "gitops" | "direct";
+	/** The customer's apps destination repo URL (gitops mode only). */
+	apps_repo?: string;
+	/** The ArgoCD Application syncing the apps repo ("apps"). */
+	argocd_app?: string;
+	/** The apps Application's status.sync.revision — the deployed commit. */
+	revision?: string;
+	/** Which wiring step died: argocd_install | git_token | repo_credentials |
+	 *  templates_missing | render | apply. Absent ⇒ the wiring did not fail. */
+	failed_step?: string;
+	/** The wiring failure message, token-sanitized at the source (Go). */
+	error?: string;
+	/** The whole apps Application's aggregate health/sync — the honest fallback row. */
+	app_health?: AddOnStatusEntry;
+	/** Per-workload health from the apps Application's resources, keyed by name.
+	 *  Empty = unreadable (an honest unknown), NOT "no services". */
+	services?: Record<string, GitopsServiceHealth>;
+}
+
+/** One workload's ArgoCD resource status inside the apps Application (Go `argocd.ServiceHealth`):
+ *  health/sync plus ArgoCD's per-resource health message ("Deployment exceeded its progress
+ *  deadline…"); empty when healthy. */
+export interface GitopsServiceHealth {
+	health: string;
+	sync: string;
+	message?: string;
 }
 
 // The cluster's aggregated Trivy-Operator vulnerability posture (packages/core/argocd
