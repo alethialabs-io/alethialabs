@@ -20,6 +20,14 @@ const eslintConfig = defineConfig([
 	]),
 	...nextVitals,
 	{
+		// Type-safety guard: the codebase holds ZERO explicit `any` (enforced here so it can't
+		// regress). Use the real generated/finite type, or `unknown` with proper narrowing.
+		files: ["**/*.{ts,tsx}"],
+		rules: {
+			"@typescript-eslint/no-explicit-any": "error",
+		},
+	},
+	{
 		// Test-quality guards — catch vacuous tests (no assertion, conditional/standalone expect,
 		// duplicate titles). Complements mutation testing + the check-test-imports tripwire.
 		files: ["tests/**/*.{ts,tsx}"],
