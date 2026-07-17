@@ -388,13 +388,15 @@ export function ConnectorsPage({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{[
-								{ id: "all" as GroupFilter, label: "All" },
-								...GROUP_META.map((g) => ({
-									id: g.id as GroupFilter,
-									label: g.label,
-								})),
-							].map((opt) => (
+							{(
+								[
+									{ id: "all", label: "All" },
+									...GROUP_META.map((g) => ({
+										id: g.id,
+										label: g.label,
+									})),
+								] satisfies { id: GroupFilter; label: string }[]
+							).map((opt) => (
 								<SelectItem key={opt.id} value={opt.id}>
 									<span className="flex w-full items-center justify-between gap-3">
 										<span>{opt.label}</span>
