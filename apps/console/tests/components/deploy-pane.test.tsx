@@ -53,6 +53,21 @@ describe("DeployPane", () => {
 		expect(screen.queryByText(/GitOps deploy failed/)).toBeNull();
 	});
 
+	it("manifest warnings: rendered in a Warnings section + counted in the rollup (#719)", () => {
+		const warning =
+			'binding facet "endpoint" (env DB_HOST) for api→database/orders-db could not be resolved — env omitted';
+		render(<DeployPane status={base({ warnings: [warning] })} />);
+		expect(screen.getByText(warning)).toBeDefined();
+		expect(screen.getByText(/Warnings · 1/)).toBeDefined();
+		// The rollup gains a warning count (base has 1 degraded component).
+		expect(screen.getByText("4 components · 1 degraded · 1 warning")).toBeDefined();
+	});
+
+	it("no Warnings section when the deploy generated cleanly", () => {
+		render(<DeployPane status={base({ warnings: [] })} />);
+		expect(screen.queryByText(/Warnings ·/)).toBeNull();
+	});
+
 	it("failed FIRST deploy: banner with step + fix hint, all rows Unknown", () => {
 		// A first deploy that died in the wiring: no add-on/data-service health exists
 		// yet either, so nothing on the pane may read Healthy (the fail-loud rule).
