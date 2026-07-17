@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { toArray, toStr } from "@/lib/coerce";
 import { asRecord } from "@/lib/records";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 
@@ -29,21 +30,21 @@ export function summarizeCanvas(ctx: CanvasContext | undefined): string {
 	if (!ctx) return "The canvas is empty.";
 	const f = ctx.form ?? {};
 	const project = asRecord(f.project);
-	const arr = (k: string) => (Array.isArray(f[k]) ? (f[k] as unknown[]) : []);
+	const arr = (k: string) => toArray(f[k]);
 	const named = (k: string) =>
 		arr(k)
-			.map((x) => (x as { name?: string }).name)
+			.map((x) => asRecord(x).name)
 			.filter(Boolean)
 			.join(", ");
 
 	const lines = [
 		`Core cloud provider: ${ctx.provider}`,
-		`Project: ${(project.project_name as string) || "(unnamed)"} · region ${
-			(project.region as string) || "(unset)"
-		} · ${(project.environment_stage as string) || "development"}`,
+		`Project: ${toStr(project.project_name) || "(unnamed)"} · region ${
+			toStr(project.region) || "(unset)"
+		} · ${toStr(project.environment_stage) || "development"}`,
 		`Cluster: ${f.cluster ? "present" : "none"} · Network: ${
 			f.network ? "present" : "none"
-		} · DNS: ${(f.dns as { enabled?: boolean })?.enabled ? "on" : "off"}`,
+		} · DNS: ${asRecord(f.dns).enabled ? "on" : "off"}`,
 		`Databases: [${named("databases")}]`,
 		`Caches: [${named("caches")}]`,
 		`Queues: [${named("queues")}]  Topics: [${named("topics")}]`,

@@ -22,3 +22,18 @@ export function toStrArray(v: unknown): string[] {
 		? v.filter((x): x is string => typeof x === "string")
 		: [];
 }
+
+/** An unknown value as a number, or `fallback` when it isn't one. */
+export function numOr(v: unknown, fallback: number): number {
+	return typeof v === "number" ? v : fallback;
+}
+
+/** An unknown value as a boolean, or `fallback` when it isn't one. */
+export function boolOr(v: unknown, fallback: boolean): boolean {
+	return typeof v === "boolean" ? v : fallback;
+}
+
+/** An unknown value as an array of unknowns (empty when it isn't an array). */
+export function toArray(v: unknown): unknown[] {
+	return Array.isArray(v) ? v : [];
+}

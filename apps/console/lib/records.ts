@@ -14,3 +14,8 @@ export function asRecord(v: unknown): Record<string, unknown> {
 		? (v as Record<string, unknown>)
 		: {};
 }
+
+/** An unknown value as an array of string-keyed records (each element coerced via asRecord). */
+export function toRecordArray(v: unknown): Record<string, unknown>[] {
+	return Array.isArray(v) ? v.map(asRecord) : [];
+}
