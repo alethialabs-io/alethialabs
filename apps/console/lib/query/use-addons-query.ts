@@ -27,7 +27,7 @@ export function useAddonsQuery(
 ): UseQueryResult<ProjectAddonsView> {
 	return useQuery({
 		queryKey: qk.addons(projectId ?? "none", environmentId),
-		queryFn: () => getProjectAddons(projectId as string, environmentId),
+		queryFn: () => getProjectAddons(projectId ?? "", environmentId),
 		refetchInterval: 15_000,
 		// Absent in the create flow (no project/environment yet) — don't fetch.
 		enabled: !!projectId,
