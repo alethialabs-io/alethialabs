@@ -93,7 +93,7 @@ const job = {
 	started_at: new Date("2026-07-14T12:00:00Z"),
 	job_type: "DEPLOY",
 	config_snapshot: {},
-};
+} satisfies Parameters<typeof sweepJob>[0];
 
 beforeEach(() => {
 	deleted.length = 0;
