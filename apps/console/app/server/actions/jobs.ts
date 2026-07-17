@@ -261,6 +261,7 @@ export async function getPlanResult(jobId: string) {
 		const [row] = await tx
 			.select({
 				status: jobs.status,
+				job_type: jobs.job_type,
 				error_message: jobs.error_message,
 				execution_metadata: jobs.execution_metadata,
 			})
