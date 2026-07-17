@@ -239,14 +239,14 @@ type TopicSubscription struct {
 
 type ProjectNosqlConfig struct {
 	Placement
-	Name                string `json:"name"`
-	PartitionKey        string `json:"partition_key"`
-	PartitionKeyType    string `json:"partition_key_type"`
-	SortKey             string `json:"sort_key"`
-	SortKeyType         string `json:"sort_key_type"`
-	TableType           string `json:"table_type"`
-	CapacityMode        string `json:"capacity_mode"`
-	PointInTimeRecovery bool   `json:"point_in_time_recovery"`
+	Name                string         `json:"name"`
+	PartitionKey        string         `json:"partition_key"`
+	PartitionKeyType    NosqlKeyType   `json:"partition_key_type"`
+	SortKey             string         `json:"sort_key"`
+	SortKeyType         NosqlKeyType   `json:"sort_key_type"`
+	TableType           NosqlTableType `json:"table_type"`
+	CapacityMode        string         `json:"capacity_mode"`
+	PointInTimeRecovery bool           `json:"point_in_time_recovery"`
 }
 
 type ProjectSecretConfig struct {
@@ -284,7 +284,7 @@ type ProjectStorageBucketConfig struct {
 type ProjectServiceConfig struct {
 	Placement
 	Name   string               `json:"name"`
-	Type   string               `json:"type"` // deployment | job | cronjob | statefulset
+	Type   ServiceWorkloadType  `json:"type"` // deployment | job | cronjob | statefulset
 	Source ProjectServiceSource `json:"source"`
 	Build  *ProjectServiceBuild `json:"build,omitempty"`
 	Env    []ServiceEnvVar      `json:"env"`

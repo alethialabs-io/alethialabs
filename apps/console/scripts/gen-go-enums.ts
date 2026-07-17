@@ -16,9 +16,13 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	chartWorkloadKind,
 	cloudProvider,
+	nosqlKeyType,
+	nosqlTableType,
 	provisionJobStatus,
 	provisionJobType,
+	serviceWorkloadType,
 } from "@/lib/db/schema/enums";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +52,10 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "JobType", dbName: "provision_job_type", values: provisionJobType.enumValues },
 	{ typeName: "JobStatus", dbName: "provision_job_status", values: provisionJobStatus.enumValues },
 	{ typeName: "CloudProvider", dbName: "cloud_provider", values: cloudProvider.enumValues },
+	{ typeName: "ServiceWorkloadType", dbName: "service_workload_type", values: serviceWorkloadType.enumValues },
+	{ typeName: "ChartWorkloadKind", dbName: "chart_workload_kind", values: chartWorkloadKind.enumValues },
+	{ typeName: "NosqlKeyType", dbName: "nosql_key_type", values: nosqlKeyType.enumValues },
+	{ typeName: "NosqlTableType", dbName: "nosql_table_type", values: nosqlTableType.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {

@@ -12,7 +12,7 @@ package types
 // consumes it (Lane 2). Contract-locked by test/e2e/fixtures/chart_workloads.json.
 type ChartWorkload struct {
 	Name         string                `json:"name"`
-	WorkloadKind string                `json:"workload_kind"` // deployment|statefulset|daemonset|cronjob|job
+	WorkloadKind ChartWorkloadKind     `json:"workload_kind"` // deployment|statefulset|daemonset|cronjob|job
 	Rendered     ChartWorkloadRendered `json:"rendered"`
 }
 

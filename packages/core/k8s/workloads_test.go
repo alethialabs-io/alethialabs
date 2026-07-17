@@ -122,7 +122,7 @@ func TestWorkloads_ExtractsEveryKind(t *testing.T) {
 	if len(got) != 5 {
 		names := make([]string, len(got))
 		for i, w := range got {
-			names[i] = w.WorkloadKind + "/" + w.Name
+			names[i] = string(w.WorkloadKind) + "/" + w.Name
 		}
 		t.Fatalf("expected 5 workloads (Service/ConfigMap skipped), got %d: %v", len(got), names)
 	}
