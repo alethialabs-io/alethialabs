@@ -4,14 +4,14 @@
 package types
 
 type ProjectConfig struct {
-	ID               string `json:"id"`
-	UserID           string `json:"user_id"`
-	ProjectName      string `json:"project_name"`
-	EnvironmentStage string `json:"environment_stage"`
-	Region           string `json:"region"`
-	IacVersion       string `json:"iac_version"`
-	CloudIdentityID  string `json:"cloud_identity_id"`
-	Provider         string `json:"provider"`
+	ID               string        `json:"id"`
+	UserID           string        `json:"user_id"`
+	ProjectName      string        `json:"project_name"`
+	EnvironmentStage string        `json:"environment_stage"`
+	Region           string        `json:"region"`
+	IacVersion       string        `json:"iac_version"`
+	CloudIdentityID  string        `json:"cloud_identity_id"`
+	Provider         CloudProvider `json:"provider"`
 
 	// EnvironmentID is the target environment's stable UUID (distinct from the human
 	// EnvironmentStage name). Emitted as the `alethia:environment-id` tag/label so a
@@ -118,9 +118,9 @@ func (c *ProjectConfig) ConnectorCredentialFor(category, slug string) map[string
 // several components already carry a pluggable connector slug under json:"provider"
 // (cloudflare/vault/…), which is an orthogonal concern from the cloud account.
 type Placement struct {
-	CloudProvider   string `json:"cloud_provider"`
-	CloudIdentityID string `json:"cloud_identity_id"`
-	Region          string `json:"region"`
+	CloudProvider   CloudProvider `json:"cloud_provider"`
+	CloudIdentityID string        `json:"cloud_identity_id"`
+	Region          string        `json:"region"`
 }
 
 type ProjectNetworkConfig struct {

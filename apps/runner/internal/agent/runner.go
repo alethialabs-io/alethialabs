@@ -616,7 +616,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
 	if provider == "" {
-		provider = vc.Provider
+		provider = string(vc.Provider)
 	}
 	if provider == "" {
 		provider = "aws"
@@ -880,7 +880,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
 	if provider == "" {
-		provider = vc.Provider
+		provider = string(vc.Provider)
 	}
 	if provider == "" {
 		provider = "aws"
@@ -997,7 +997,7 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
 	if provider == "" {
-		provider = vc.Provider
+		provider = string(vc.Provider)
 	}
 	if provider == "" {
 		provider = "aws"

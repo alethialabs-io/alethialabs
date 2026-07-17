@@ -47,7 +47,7 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
 		Domain:   vc.DNS.DomainName,
 		Outputs:  strOutputs,
-		Provider: vc.Provider, // selects the per-cloud tofu endpoint output keys (#711)
+		Provider: string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
 	})
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
@@ -140,7 +140,7 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 				ServiceName: s.Name,
 				Namespace:   appNamespace,
 				Target:      b.Target,
-				Provider:    vc.Provider,
+				Provider:    string(vc.Provider),
 				RemoteKey:   outputs[credentialSecretOutputKey(b.Target.Kind)],
 				Facets:      facets,
 			})
