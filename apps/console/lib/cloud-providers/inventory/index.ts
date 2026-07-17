@@ -10,6 +10,7 @@ import { eq, lt, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
 	type CloudIdentity,
+	type CloudProvider,
 	cloudCaches,
 	cloudContainerRegistries,
 	cloudDatabases,
@@ -56,7 +57,7 @@ const INVENTORY_TABLES = [
 const TOKEN_CLOUDS = new Set(["digitalocean", "hetzner", "civo"]);
 
 /** Whether a provider has a server-side inventory sync yet. */
-export function hasServerSideInventory(provider: string): boolean {
+export function hasServerSideInventory(provider: CloudProvider): boolean {
 	return (
 		provider === "aws" ||
 		provider === "azure" ||
