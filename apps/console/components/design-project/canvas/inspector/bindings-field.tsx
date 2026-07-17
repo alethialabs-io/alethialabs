@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { coerceEnum } from "@/lib/coerce";
 import { ArrowRight, Plus, X } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -22,7 +23,8 @@ import type { NodeKind } from "../graph/types";
  * (endpoint/port) as templated values, credential facets as a Kubernetes `secretKeyRef`. The shape
  * mirrors `serviceBindingSchema` (lib/validations/project-form.schema.ts) exactly.
  */
-export type BindingTargetKind = "database" | "cache" | "queue" | "secret";
+const BINDING_TARGET_KINDS = ["database", "cache", "queue", "secret"] as const;
+export type BindingTargetKind = (typeof BINDING_TARGET_KINDS)[number];
 export type BindingFrom =
 	| "endpoint"
 	| "port"
@@ -121,7 +123,7 @@ export function BindingsField({
 										patchBinding(bi, {
 											...binding,
 											// Changing kind clears the name — it referenced a resource of the old kind.
-											target: { kind: v as BindingTargetKind, name: "" },
+											target: { kind: coerceEnum(v, BINDING_TARGET_KINDS, "database"), name: "" },
 										})
 									}
 								>
@@ -200,7 +202,7 @@ export function BindingsField({
 											patchBinding(bi, {
 												...binding,
 												inject: binding.inject.map((x, j) =>
-													j === ii ? { ...x, from: v as BindingFrom } : x,
+													j === ii ? { ...x, from: coerceEnum(v, FROM_FACETS.map((ff) => ff.value), FROM_FACETS[0].value) } : x,
 												),
 											})
 										}

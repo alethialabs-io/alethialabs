@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { coerceEnum } from "@/lib/coerce";
 import { Button } from "@repo/ui/button";
 import {
 	Empty,
@@ -22,7 +23,8 @@ import { qk } from "@/lib/query/keys";
 import { CaseListItem } from "./case-list-item";
 
 /** The status buckets surfaced as tabs; "all" maps to no server filter. */
-type CaseFilter = "all" | "active" | "resolved";
+const CASE_FILTERS = ["all", "active", "resolved"] as const;
+type CaseFilter = (typeof CASE_FILTERS)[number];
 
 /**
  * The support case list. Reads the server-prefetched/hydrated `listMyCases` cache and lets
@@ -60,7 +62,7 @@ export function CaseList({
 			)}
 			<Tabs
 				value={filter}
-				onValueChange={(v) => setFilter(v as CaseFilter)}
+				onValueChange={(v) => setFilter(coerceEnum(v, CASE_FILTERS, "all"))}
 			>
 				<TabsList>
 					<TabsTrigger value="all">All</TabsTrigger>

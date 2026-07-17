@@ -37,3 +37,19 @@ export function boolOr(v: unknown, fallback: boolean): boolean {
 export function toArray(v: unknown): unknown[] {
 	return Array.isArray(v) ? v : [];
 }
+
+/**
+ * Narrow an arbitrary string to a known union member, or `fallback` when it is none of them.
+ * Cast-free: it returns the matching literal from `values` (already the union type), so a UI
+ * control that yields a bare `string` can feed a typed setter without an `as`.
+ */
+export function coerceEnum<T extends string>(
+	v: string,
+	values: readonly T[],
+	fallback: T,
+): T {
+	for (const candidate of values) {
+		if (candidate === v) return candidate;
+	}
+	return fallback;
+}
