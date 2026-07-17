@@ -78,7 +78,7 @@ export async function runSupervisor(
 	const ledger: Ledger = {
 		facts: [],
 		plan: initialTasks.map((t) => t.id),
-		tasks: initialTasks.map((t) => ({ ...t, status: "pending" as TaskStatus })),
+		tasks: initialTasks.map((t): Task => ({ ...t, status: "pending" })),
 		stall: 0,
 		replans: 0,
 	};
