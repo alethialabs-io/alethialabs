@@ -454,7 +454,7 @@ func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[s
 			"hash_key_type":                 orDefault(string(t.PartitionKeyType), "S"),
 			"range_key":                     t.SortKey,
 			"range_key_type":                orDefault(string(t.SortKeyType), "S"),
-			"billing_mode":                  ddbCapacityMode(t.CapacityMode),
+			"billing_mode":                  ddbCapacityMode(string(t.CapacityMode)),
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
 		}
 		result = append(result, entry)

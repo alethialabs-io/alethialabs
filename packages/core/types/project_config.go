@@ -206,9 +206,9 @@ type ProjectDatabaseConfig struct {
 
 type ProjectCacheConfig struct {
 	Placement
-	Name          string `json:"name"`
-	Engine        string `json:"engine"`
-	EngineVersion string `json:"engine_version"`
+	Name          string      `json:"name"`
+	Engine        CacheEngine `json:"engine"`
+	EngineVersion string      `json:"engine_version"`
 	// Concrete provider SKU (legacy / explicit). When empty, MemoryGB resolves it.
 	NodeType string `json:"node_type"`
 	// Cloud-indifferent size (preferred); resolved to the nearest provider SKU.
@@ -239,14 +239,14 @@ type TopicSubscription struct {
 
 type ProjectNosqlConfig struct {
 	Placement
-	Name                string         `json:"name"`
-	PartitionKey        string         `json:"partition_key"`
-	PartitionKeyType    NosqlKeyType   `json:"partition_key_type"`
-	SortKey             string         `json:"sort_key"`
-	SortKeyType         NosqlKeyType   `json:"sort_key_type"`
-	TableType           NosqlTableType `json:"table_type"`
-	CapacityMode        string         `json:"capacity_mode"`
-	PointInTimeRecovery bool           `json:"point_in_time_recovery"`
+	Name                string            `json:"name"`
+	PartitionKey        string            `json:"partition_key"`
+	PartitionKeyType    NosqlKeyType      `json:"partition_key_type"`
+	SortKey             string            `json:"sort_key"`
+	SortKeyType         NosqlKeyType      `json:"sort_key_type"`
+	TableType           NosqlTableType    `json:"table_type"`
+	CapacityMode        NosqlCapacityMode `json:"capacity_mode"`
+	PointInTimeRecovery bool              `json:"point_in_time_recovery"`
 }
 
 type ProjectSecretConfig struct {
