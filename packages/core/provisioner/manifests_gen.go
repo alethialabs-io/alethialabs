@@ -39,8 +39,9 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 		}
 	}
 	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
-		Domain:  vc.DNS.DomainName,
-		Outputs: strOutputs,
+		Domain:   vc.DNS.DomainName,
+		Outputs:  strOutputs,
+		Provider: vc.Provider, // selects the per-cloud tofu endpoint output keys (#711)
 	})
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
