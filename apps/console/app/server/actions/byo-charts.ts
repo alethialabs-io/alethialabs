@@ -13,6 +13,7 @@
 // namespace-PSA + admission-controller (Kyverno/Gatekeeper) gate — see the plan's E2 section.
 
 import { and, eq, notInArray } from "drizzle-orm";
+import { z } from "zod";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
@@ -27,9 +28,15 @@ import { parseValuesYaml } from "@/lib/addons/catalog";
 import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
-import { chartWorkloadWireArraySchema } from "@/lib/validations/chart-workloads";
+import {
+	chartWorkloadConfigSchema,
+	chartWorkloadValuePathsSchema,
+	chartWorkloadWireArraySchema,
+} from "@/lib/validations/chart-workloads";
+import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 import type {
 	AddOnValues,
+	ChartValuePathMap,
 	ChartWorkloadConfig,
 	ChartWorkloadRendered,
 	ServiceBinding,
@@ -242,6 +249,8 @@ export interface ChartWorkloadState {
 	/** W3 bindings + the editable overlay — preserved across re-scans (empty until the bind lane). */
 	bindings: ServiceBinding[];
 	config: ChartWorkloadConfig;
+	/** Logical knob → chart-values dot-path where the overlay writes (auto-inferred + overridable). */
+	valuePaths: ChartValuePathMap;
 }
 
 /**
@@ -265,6 +274,7 @@ export async function getProjectChartWorkloads(
 				rendered: projectChartWorkloads.rendered,
 				bindings: projectChartWorkloads.bindings,
 				config: projectChartWorkloads.config,
+				valuePaths: projectChartWorkloads.value_paths,
 			})
 			.from(projectChartWorkloads)
 			.innerJoin(
@@ -288,8 +298,76 @@ export async function getProjectChartWorkloads(
 			rendered: r.rendered,
 			bindings: r.bindings,
 			config: r.config,
+			valuePaths: r.valuePaths,
 		})),
 	};
+}
+
+/** Throws if the describe feature is disabled — the overlay editor is describe-gated. */
+function assertByoDescribeEnabled(): void {
+	if (!isByoDescribeEnabled()) {
+		throw new Error(
+			"Chart-workload describe is not enabled on this instance (set ALETHIA_BYO_DESCRIBE_ENABLED=true).",
+		);
+	}
+}
+
+/**
+ * Persists the user OVERLAY of a described chart workload (W5 Path A, Lane 3) — the W3 `bindings`, the
+ * editable `config` (replicas/env), and the `value_paths` override. Writes ONLY the overlay columns of
+ * `project_chart_workloads`; the immutable `rendered` description is never touched here (a re-scan owns
+ * it). Only the fields provided are updated (a partial patch), each validated against the same schema
+ * the row was inserted with.
+ *
+ * This is the console-side stage: the overlay lands on the row. Making it REACH the running chart —
+ * composing it into the chart's Helm `values` at the declared value-paths (keyless secret-refs for
+ * credential facets, never plaintext) — is Lane 2 (#664) at `resolveByoChartInstall`, which reads
+ * exactly these columns. Named distinctly from the Lane 2 write-back actions so the two lanes don't
+ * collide on this file.
+ */
+export async function setChartWorkloadOverlay(input: {
+	projectId: string;
+	environmentId?: string | null;
+	/** The project_chart_workloads row id (the canvas node's underlying id). */
+	workloadId: string;
+	bindings?: ServiceBinding[];
+	config?: ChartWorkloadConfig;
+	valuePaths?: ChartValuePathMap;
+}): Promise<{ ok: true }> {
+	assertByoDescribeEnabled();
+	const actor = await authorize("edit", { type: "project", id: input.projectId });
+	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+
+	// Build a partial patch from only the provided overlay fields, validating each.
+	const patch: {
+		bindings?: ServiceBinding[];
+		config?: ChartWorkloadConfig;
+		value_paths?: ChartValuePathMap;
+		updated_at: Date;
+	} = { updated_at: new Date() };
+	if (input.bindings !== undefined) {
+		patch.bindings = z.array(serviceBindingSchema).parse(input.bindings);
+	}
+	if (input.config !== undefined) {
+		patch.config = chartWorkloadConfigSchema.parse(input.config);
+	}
+	if (input.valuePaths !== undefined) {
+		patch.value_paths = chartWorkloadValuePathsSchema.parse(input.valuePaths);
+	}
+
+	await withOwnerScope(actor.userId, async (tx) => {
+		await tx
+			.update(projectChartWorkloads)
+			.set(patch)
+			.where(
+				and(
+					eq(projectChartWorkloads.id, input.workloadId),
+					eq(projectChartWorkloads.project_id, input.projectId),
+					eq(projectChartWorkloads.environment_id, envId),
+				),
+			);
+	});
+	return { ok: true };
 }
 
 /**

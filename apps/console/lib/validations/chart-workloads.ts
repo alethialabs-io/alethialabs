@@ -60,6 +60,13 @@ export const chartWorkloadConfigSchema = z.object({
 });
 
 /**
+ * Where each logical knob (a binding target key or "replicas") writes into the chart's Helm `values`
+ * — a map from a knob key to a dot-path (mirror of `ChartValuePathMap`). Auto-inferred at scan and
+ * user-overridable from the canvas (the value-path override affordance, Lane 3).
+ */
+export const chartWorkloadValuePathsSchema = z.record(z.string(), z.string());
+
+/**
  * Full project_chart_workloads insert. The overlay columns default like their DB columns so a
  * freshly-described workload (no user edits yet) parses.
  */
