@@ -28,7 +28,7 @@ func cfg(provider string) *types.ProjectConfig {
 		ProjectName:      "demo",
 		EnvironmentStage: "development",
 		Region:           "us-east-1",
-		Provider:         provider,
+		Provider:         types.CloudProvider(provider),
 		CloudAccountID:   "acct-123",
 	}
 	vc.DNS.Enabled = true

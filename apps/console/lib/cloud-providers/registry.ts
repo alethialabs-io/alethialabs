@@ -1,21 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { CloudProvider } from "@/lib/db/schema/enums";
+
 /**
  * Clouds with full provisioning templates today. The per-cloud provisioning-option
- * catalogs (instance types, regions, DB engines, …) are keyed by this set.
+ * catalogs (instance types, regions, DB engines, …) are keyed by this set — a curated
+ * SUBSET of the generated `cloud_provider` enum (derived, so it can't silently drift).
  */
-export type CloudProviderSlug = "aws" | "gcp" | "azure" | "hetzner" | "alibaba";
+export type CloudProviderSlug = Extract<
+	CloudProvider,
+	"aws" | "gcp" | "azure" | "hetzner" | "alibaba"
+>;
 
 /**
  * Every cloud a user can CONNECT (identity layer), including those whose OpenTofu
- * provisioning templates are still "coming soon" (digitalocean/civo).
- * The capability map (`PROVIDERS`) advertises service names for all of these.
+ * provisioning templates are still "coming soon" (digitalocean/civo). Every DB-representable
+ * cloud is connectable, so this is exactly the generated `cloud_provider` enum.
  */
-export type ConnectableCloudSlug =
-	| CloudProviderSlug
-	| "digitalocean"
-	| "civo";
+export type ConnectableCloudSlug = CloudProvider;
 
 /** High-level metadata and service name mappings for a cloud provider. */
 export interface CloudProviderMeta {

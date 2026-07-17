@@ -34,7 +34,7 @@ BEGIN
     'projects', 'project_environments', 'project_network', 'project_cluster', 'project_dns',
     'project_repositories', 'project_databases', 'project_caches', 'project_queues', 'project_topics',
     'project_nosql_tables', 'project_container_registries', 'project_secrets',
-    'project_storage_buckets', 'jobs',
+    'project_storage_buckets', 'project_chart_workloads', 'jobs',
     'environment_protection_rules', 'environment_promotions',
     'support_cases'
   ]) LOOP
@@ -957,7 +957,7 @@ BEGIN
     'project_environments', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
     'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
     'project_container_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets',
-    'project_changes',
+    'project_changes', 'project_chart_workloads',
     'environment_protection_rules', 'environment_promotions', 'promotion_approvals'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);

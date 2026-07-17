@@ -237,6 +237,30 @@ export interface NodeStatus {
 	costLines: { address: string; monthlyCost: number }[];
 	/** True once this node exists in the environment's provisioned state. */
 	deployed: boolean;
+	/** ArgoCD health/sync for GitOps-managed nodes (#574). An OVERLAY like drift — the node
+	 *  keeps its base state; render via {@link gitopsBadge}. Null when not GitOps-managed. */
+	gitops?: { health: string; sync: string } | null;
+}
+
+/**
+ * The GitOps badge for a node card (#574): a `vx-status` chip shown ONLY when the node is
+ * not plainly healthy — precedence DEGRADED > OUT OF SYNC > PROGRESSING > UNKNOWN. Returns
+ * null for Healthy+Synced (a calm canvas) and for nodes with no ArgoCD-read health. Like
+ * drift, this is an overlay riding on the node's base state, NOT a new NodeStatusState.
+ */
+export function gitopsBadge(
+	gitops: { health: string; sync: string } | null | undefined,
+): NodeStatusMeta | null {
+	if (!gitops) return null;
+	if (gitops.health === "Degraded" || gitops.health === "Missing") {
+		return { vx: "failed", label: "Degraded" };
+	}
+	if (gitops.sync === "OutOfSync") return { vx: "idle", label: "Out of sync" };
+	if (gitops.health === "Progressing") return { vx: "pending", label: "Progressing" };
+	if (gitops.health === "Unknown" || gitops.sync === "Unknown") {
+		return { vx: "disabled", label: "Unknown" };
+	}
+	return null; // Healthy + Synced — nothing to badge
 }
 
 /**
@@ -287,6 +311,11 @@ export function resolveNodeStatus(
 		monthlyCost: server.monthlyCost ?? null,
 		costLines: server.costLines ?? [],
 		deployed: true,
+		// ArgoCD health/sync (#574) — populated for GitOps-managed services; an overlay.
+		gitops:
+			server.health || server.sync
+				? { health: server.health ?? "Unknown", sync: server.sync ?? "Unknown" }
+				: null,
 	};
 
 	// 1 — a real break.

@@ -93,3 +93,71 @@ var AllCloudProviders = []CloudProvider{
 	CloudProviderHetzner,
 	CloudProviderCivo,
 }
+
+// ServiceWorkloadType mirrors the service_workload_type enum (lib/db/schema/enums.ts).
+type ServiceWorkloadType string
+
+const (
+	ServiceWorkloadTypeDeployment  ServiceWorkloadType = "deployment"
+	ServiceWorkloadTypeJob         ServiceWorkloadType = "job"
+	ServiceWorkloadTypeCronjob     ServiceWorkloadType = "cronjob"
+	ServiceWorkloadTypeStatefulset ServiceWorkloadType = "statefulset"
+)
+
+// AllServiceWorkloadTypes is every service_workload_type value, in schema order.
+var AllServiceWorkloadTypes = []ServiceWorkloadType{
+	ServiceWorkloadTypeDeployment,
+	ServiceWorkloadTypeJob,
+	ServiceWorkloadTypeCronjob,
+	ServiceWorkloadTypeStatefulset,
+}
+
+// ChartWorkloadKind mirrors the chart_workload_kind enum (lib/db/schema/enums.ts).
+type ChartWorkloadKind string
+
+const (
+	ChartWorkloadKindDeployment  ChartWorkloadKind = "deployment"
+	ChartWorkloadKindStatefulset ChartWorkloadKind = "statefulset"
+	ChartWorkloadKindDaemonset   ChartWorkloadKind = "daemonset"
+	ChartWorkloadKindCronjob     ChartWorkloadKind = "cronjob"
+	ChartWorkloadKindJob         ChartWorkloadKind = "job"
+)
+
+// AllChartWorkloadKinds is every chart_workload_kind value, in schema order.
+var AllChartWorkloadKinds = []ChartWorkloadKind{
+	ChartWorkloadKindDeployment,
+	ChartWorkloadKindStatefulset,
+	ChartWorkloadKindDaemonset,
+	ChartWorkloadKindCronjob,
+	ChartWorkloadKindJob,
+}
+
+// NosqlKeyType mirrors the nosql_key_type enum (lib/db/schema/enums.ts).
+type NosqlKeyType string
+
+const (
+	NosqlKeyTypeS NosqlKeyType = "S"
+	NosqlKeyTypeN NosqlKeyType = "N"
+	NosqlKeyTypeB NosqlKeyType = "B"
+)
+
+// AllNosqlKeyTypes is every nosql_key_type value, in schema order.
+var AllNosqlKeyTypes = []NosqlKeyType{
+	NosqlKeyTypeS,
+	NosqlKeyTypeN,
+	NosqlKeyTypeB,
+}
+
+// NosqlTableType mirrors the nosql_table_type enum (lib/db/schema/enums.ts).
+type NosqlTableType string
+
+const (
+	NosqlTableTypeStandard NosqlTableType = "standard"
+	NosqlTableTypeGlobal   NosqlTableType = "global"
+)
+
+// AllNosqlTableTypes is every nosql_table_type value, in schema order.
+var AllNosqlTableTypes = []NosqlTableType{
+	NosqlTableTypeStandard,
+	NosqlTableTypeGlobal,
+}

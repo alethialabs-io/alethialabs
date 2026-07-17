@@ -2,24 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Overview toolbar — project search (debounced → URL), a two-level "Filter by / Sort by" popover
-// (drill into a searchable Cloud or Repository selector), a card/table view toggle, and a "Create"
-// menu. All state is owned by the page (URL search params); this component only emits changes.
+// Overview toolbar — the console filter standard's visual grammar (lib/query/README.md),
+// in its URL→RSC form: FilterSearch + the shared CloudFilter + a Repository FacetFilter +
+// the mono Reset, then a sort segmented control + card/table view toggle + a Create menu.
+// All state is owned by the page (URL search params) — the standard's blessed URL→RSC
+// variant — so this component is presentational and only emits `onChange`.
 
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useState } from "react";
-import {
-	Activity,
-	ChevronLeft,
-	ChevronRight,
-	Check,
-	Cloud,
-	GitBranch,
-	Layers,
-	Plus,
-	Search,
-	SlidersHorizontal,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Activity, ArrowDownAZ, GitBranch, Plus } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
@@ -28,33 +19,28 @@ import {
 	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
-import { Input } from "@repo/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
-import { ProviderIcon } from "@repo/ui/provider-icon";
+import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
+import { PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
+import { cn } from "@repo/ui/utils";
 import { ViewToggle } from "@repo/ui/view-toggle";
-import type {
-	ProjectListResult,
-	ProjectRepoRef,
-} from "@/app/server/actions/projects";
+import type { ProjectListResult } from "@/app/server/actions/projects";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
+import { CloudFilter } from "@/components/filters/cloud-filter";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { globalHref } from "@/lib/routing";
 import type { OverviewState } from "@/app/(private)/[org]/overview-client";
 
-/** Human label for a cloud provider slug (falls back to uppercase). */
-const PROVIDER_LABEL: Record<string, string> = {
-	aws: "AWS",
-	gcp: "GCP",
-	azure: "Azure",
-	alibaba: "Alibaba",
-	digitalocean: "DigitalOcean",
-	hetzner: "Hetzner",
-	civo: "Civo",
-};
+/** Human label for a cloud provider slug (shared vocabulary, uppercase fallback). */
 function providerLabel(p: string): string {
-	return PROVIDER_LABEL[p] ?? p.toUpperCase();
+	return PROVIDER_LABELS[p as Provider] ?? p.toUpperCase();
 }
+
+/** The filter dims Reset clears (view + sort are not filters, so they don't count). */
+const FILTER_DEFAULTS = { q: "", clouds: [] as string[], repos: [] as string[] };
 
 export function OverviewToolbar({
 	orgSlug,
@@ -82,364 +68,104 @@ export function OverviewToolbar({
 		return () => clearTimeout(id);
 	}, [draft, state.q, onChange]);
 
+	const cloudOptions = facets.clouds.map((c) => ({
+		value: c.value,
+		label: providerLabel(c.value),
+		count: c.count,
+	}));
+	const repoOptions = facets.repos.map((r) => ({
+		value: r.url,
+		label: r.label,
+		hint: String(r.count),
+	}));
+
 	return (
-		<div className="flex items-center gap-2.5">
-			<div className="relative flex-1">
-				<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-				<Input
-					value={draft}
-					onChange={(e) => setDraft(e.target.value)}
-					placeholder="Search projects…"
-					className="h-10 pl-9 pr-12"
-				/>
-				<span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-					/
-				</span>
-			</div>
-
-			<FilterMenu state={state} facets={facets} onChange={onChange} />
-
-			<ViewToggle
-				value={state.view}
-				onChange={(view) => onChange({ view })}
-				className="h-10"
+		<FilterBar
+			end={
+				<div className="flex items-center gap-2.5">
+					<SortToggle
+						value={state.sort}
+						onChange={(sort) => onChange({ sort })}
+					/>
+					<ViewToggle value={state.view} onChange={(view) => onChange({ view })} />
+					<CreateMenu orgSlug={orgSlug} />
+				</div>
+			}
+		>
+			<FilterSearch
+				value={draft}
+				onChange={setDraft}
+				placeholder="Search projects…"
+				ariaLabel="Search projects"
+				className="w-[220px] max-w-[360px] flex-1"
 			/>
-
-			<CreateMenu orgSlug={orgSlug} />
-		</div>
-	);
-}
-
-/** The two-level filter + sort popover. */
-function FilterMenu({
-	state,
-	facets,
-	onChange,
-}: {
-	state: OverviewState;
-	facets: ProjectListResult["facets"];
-	onChange: (next: Partial<OverviewState>) => void;
-}) {
-	const [open, setOpen] = useState(false);
-	const [panel, setPanel] = useState<"root" | "cloud" | "repo">("root");
-	const filterCount = state.clouds.length + state.repos.length;
-
-	// Reset back to the root panel whenever the popover closes.
-	function onOpenChange(next: boolean) {
-		setOpen(next);
-		if (!next) setPanel("root");
-	}
-
-	const toggle = (key: "clouds" | "repos", value: string) => {
-		const arr = state[key];
-		onChange({
-			[key]: arr.includes(value)
-				? arr.filter((x) => x !== value)
-				: [...arr, value],
-		});
-	};
-
-	return (
-		<Popover open={open} onOpenChange={onOpenChange}>
-			<PopoverTrigger asChild>
-				<Button
-					variant="outline"
-					size="icon"
-					className="relative h-10 w-10"
-					aria-label="Filter & sort"
-				>
-					<SlidersHorizontal className="h-4 w-4" />
-					{filterCount > 0 && (
-						<span className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] text-background">
-							{filterCount}
-						</span>
-					)}
-				</Button>
-			</PopoverTrigger>
-			<PopoverContent align="end" className="w-64 p-2">
-				{panel === "root" ? (
-					<RootPanel
-						state={state}
-						facetCounts={{
-							clouds: facets.clouds.length,
-							repos: facets.repos.length,
-						}}
-						onChange={onChange}
-						onOpenPanel={setPanel}
-					/>
-				) : panel === "cloud" ? (
-					<CloudPanel
-						clouds={facets.clouds}
-						selected={state.clouds}
-						onBack={() => setPanel("root")}
-						onToggle={(c) => toggle("clouds", c)}
-					/>
-				) : (
-					<RepoPanel
-						repos={facets.repos}
-						selected={state.repos}
-						onBack={() => setPanel("root")}
-						onToggle={(url) => toggle("repos", url)}
-					/>
-				)}
-			</PopoverContent>
-		</Popover>
-	);
-}
-
-/** Level 1: pick a facet to drill into, and the sort order. */
-function RootPanel({
-	state,
-	facetCounts,
-	onChange,
-	onOpenPanel,
-}: {
-	state: OverviewState;
-	facetCounts: { clouds: number; repos: number };
-	onChange: (next: Partial<OverviewState>) => void;
-	onOpenPanel: (panel: "cloud" | "repo") => void;
-}) {
-	const dirty =
-		state.clouds.length > 0 || state.repos.length > 0 || state.sort !== "activity";
-
-	return (
-		<>
-			<div className="px-1.5 pb-1.5 pt-1 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-				Filter by
-			</div>
-			<FacetRow
-				icon={GitBranch}
+			<CloudFilter
+				value={state.clouds}
+				onChange={(next) => onChange({ clouds: next })}
+				options={cloudOptions}
+			/>
+			<FacetFilter
 				label="Repository"
-				count={state.repos.length}
-				disabled={facetCounts.repos === 0}
-				onClick={() => onOpenPanel("repo")}
+				icon={GitBranch}
+				options={repoOptions}
+				value={state.repos}
+				onChange={(next) => onChange({ repos: next })}
+				searchPlaceholder="Search repositories…"
+				emptyText="No repositories."
 			/>
-			<FacetRow
-				icon={Cloud}
-				label="Cloud"
-				count={state.clouds.length}
-				disabled={facetCounts.clouds === 0}
-				onClick={() => onOpenPanel("cloud")}
-			/>
-
-			<div className="my-1.5 h-px bg-border" />
-			<div className="px-1.5 pb-1.5 pt-1 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-				Sort by
-			</div>
-			{(
-				[
-					{ key: "activity", label: "Activity", icon: Activity },
-					{ key: "name", label: "Name", icon: Layers },
-				] as const
-			).map((opt) => (
-				<button
-					key={opt.key}
-					type="button"
-					onClick={() => onChange({ sort: opt.key })}
-					className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-				>
-					<opt.icon className="h-3.5 w-3.5" />
-					<span className="flex-1 text-left">{opt.label}</span>
-					{state.sort === opt.key && <Check className="h-3.5 w-3.5" />}
-				</button>
-			))}
-
-			{dirty && (
-				<>
-					<div className="my-1.5 h-px bg-border" />
-					<div className="flex justify-end">
-						<button
-							type="button"
-							onClick={() =>
-								onChange({ clouds: [], repos: [], sort: "activity" })
-							}
-							className="rounded-sm px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-						>
-							Reset
-						</button>
-					</div>
-				</>
-			)}
-		</>
-	);
-}
-
-/** A "Filter by" entry that drills into a facet selector. */
-function FacetRow({
-	icon: Icon,
-	label,
-	count,
-	disabled,
-	onClick,
-}: {
-	icon: typeof Cloud;
-	label: string;
-	count: number;
-	disabled: boolean;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-		>
-			<Icon className="h-3.5 w-3.5" />
-			<span className="flex-1 text-left">{label}</span>
-			{count > 0 && (
-				<span className="grid h-4 min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] text-background">
-					{count}
-				</span>
-			)}
-			<ChevronRight className="h-3.5 w-3.5" />
-		</button>
-	);
-}
-
-/** Level 2: searchable cloud selector. */
-function CloudPanel({
-	clouds,
-	selected,
-	onBack,
-	onToggle,
-}: {
-	clouds: string[];
-	selected: string[];
-	onBack: () => void;
-	onToggle: (cloud: string) => void;
-}) {
-	const [q, setQ] = useState("");
-	const matches = clouds.filter((c) =>
-		providerLabel(c).toLowerCase().includes(q.trim().toLowerCase()),
-	);
-	return (
-		<FacetSelector
-			title="Cloud"
-			query={q}
-			onQuery={setQ}
-			onBack={onBack}
-			empty={matches.length === 0}
-		>
-			{matches.map((c) => {
-				const on = selected.includes(c);
-				return (
-					<FacetOption key={c} on={on} onClick={() => onToggle(c)}>
-						<ProviderIcon provider={c} size={14} className="grayscale" />
-						<span className="flex-1 truncate text-left">{providerLabel(c)}</span>
-					</FacetOption>
-				);
-			})}
-		</FacetSelector>
-	);
-}
-
-/** Level 2: searchable repository selector. */
-function RepoPanel({
-	repos,
-	selected,
-	onBack,
-	onToggle,
-}: {
-	repos: ProjectRepoRef[];
-	selected: string[];
-	onBack: () => void;
-	onToggle: (url: string) => void;
-}) {
-	const [q, setQ] = useState("");
-	const matches = repos.filter((r) =>
-		r.label.toLowerCase().includes(q.trim().toLowerCase()),
-	);
-	return (
-		<FacetSelector
-			title="Repository"
-			query={q}
-			onQuery={setQ}
-			onBack={onBack}
-			empty={matches.length === 0}
-		>
-			{matches.map((r) => {
-				const on = selected.includes(r.url);
-				return (
-					<FacetOption key={r.url} on={on} onClick={() => onToggle(r.url)}>
-						<GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-						<span className="flex-1 truncate text-left font-mono text-[11px]">
-							{r.label}
-						</span>
-					</FacetOption>
-				);
-			})}
-		</FacetSelector>
-	);
-}
-
-/** Shared chrome for a level-2 facet selector: back header + search + scrollable list. */
-function FacetSelector({
-	title,
-	query,
-	onQuery,
-	onBack,
-	empty,
-	children,
-}: {
-	title: string;
-	query: string;
-	onQuery: (q: string) => void;
-	onBack: () => void;
-	empty: boolean;
-	children: ReactNode;
-}) {
-	return (
-		<>
-			<button
-				type="button"
-				onClick={onBack}
-				className="mb-1 flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-[13px] font-medium text-foreground transition-colors hover:bg-muted"
-			>
-				<ChevronLeft className="h-3.5 w-3.5" />
-				{title}
-			</button>
-			<div className="relative mb-1.5">
-				<Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-				<Input
-					value={query}
-					onChange={(e) => onQuery(e.target.value)}
-					placeholder={`Search ${title.toLowerCase()}…`}
-					className="h-8 pl-8 text-[13px]"
-				/>
-			</div>
-			<div className="max-h-56 overflow-y-auto">
-				{empty ? (
-					<p className="px-2 py-3 text-center text-xs text-muted-foreground">
-						No {title.toLowerCase()} found.
-					</p>
-				) : (
-					children
+			<FilterBarReset
+				count={countActiveFilters(
+					{ q: state.q, clouds: state.clouds, repos: state.repos },
+					FILTER_DEFAULTS,
 				)}
-			</div>
-		</>
+				onReset={() =>
+					onChange({ q: "", clouds: [], repos: [], sort: "activity" })
+				}
+			/>
+		</FilterBar>
 	);
 }
 
-/** A single toggleable facet option row with a check on the right when selected. */
-function FacetOption({
-	on,
-	onClick,
-	children,
+/** A compact segmented control for the grid's sort order (Activity / Name). Presentational —
+ * mirrors ViewToggle; sort is not a filter, so it lives beside the filter bar's Reset. */
+function SortToggle({
+	value,
+	onChange,
 }: {
-	on: boolean;
-	onClick: () => void;
-	children: ReactNode;
+	value: OverviewState["sort"];
+	onChange: (value: OverviewState["sort"]) => void;
 }) {
+	const OPTIONS = [
+		{ key: "activity", label: "Activity", Icon: Activity },
+		{ key: "name", label: "Name", Icon: ArrowDownAZ },
+	] as const;
 	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+		<div
+			className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-muted/20 p-1"
+			role="group"
+			aria-label="Sort"
 		>
-			{children}
-			{on && <Check className="h-3.5 w-3.5 shrink-0" />}
-		</button>
+			{OPTIONS.map(({ key, label, Icon }) => {
+				const active = value === key;
+				return (
+					<button
+						key={key}
+						type="button"
+						onClick={() => onChange(key)}
+						aria-pressed={active}
+						className={cn(
+							"inline-flex h-7 items-center gap-1.5 rounded px-2 text-[12px] transition-colors",
+							active
+								? "bg-background text-foreground shadow-sm"
+								: "text-muted-foreground hover:text-foreground",
+						)}
+					>
+						<Icon className="size-3.5" />
+						{label}
+					</button>
+				);
+			})}
+		</div>
 	);
 }
 
@@ -467,7 +193,7 @@ function CreateMenu({ orgSlug }: { orgSlug: string }) {
 		<>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<Button size="default" className="h-10 gap-1.5">
+					<Button size="default" className="gap-1.5">
 						<Plus className="h-4 w-4" />
 						Create
 					</Button>

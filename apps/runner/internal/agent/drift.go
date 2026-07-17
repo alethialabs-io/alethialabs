@@ -23,7 +23,7 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
 	if provider == "" {
-		provider = vc.Provider
+		provider = string(vc.Provider)
 	}
 	if provider == "" {
 		provider = "aws"
@@ -114,12 +114,17 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 	// The drift run's workspace outputs feed kubeconfig acquisition (alibaba/hetzner read the
 	// sensitive `kubeconfig` output) and stay strictly in-process — never posted to the console.
 	metadata := map[string]any{"drift_posture": posture}
-	addonStatus, security := provisioner.InspectCluster(ctx, vc, provider, outputs, stdout, stderr)
+	addonStatus, security, gitops := provisioner.InspectCluster(ctx, vc, provider, outputs, stdout, stderr)
 	if len(addonStatus) > 0 {
 		metadata["addon_status"] = addonStatus
 	}
 	if security != nil {
 		metadata["security_report"] = security
+	}
+	// GitOps status (issue #574): day-2 refresh of the apps Application's revision +
+	// per-service health, so the console's Deploy tab stays current between deploys.
+	if gitops != nil {
+		metadata["gitops_status"] = gitops
 	}
 
 	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)

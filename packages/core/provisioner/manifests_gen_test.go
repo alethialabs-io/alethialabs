@@ -55,12 +55,15 @@ func TestWriteBindingExternalSecrets(t *testing.T) {
 	}
 	outputs := map[string]string{"rds_master_credentials_secret_name": "alethia/proj/rds-maindb"}
 
-	n, err := writeBindingExternalSecrets(dir, vc, outputs, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("expected 1 ExternalSecret written, got %d", n)
+	}
+	if len(skips) != 0 {
+		t.Fatalf("a satisfiable facet should not skip, got %v", skips)
 	}
 
 	secretName := manifests.BindingSecretName("api", types.ServiceBindingTarget{Kind: "database", Name: "orders-db"})
@@ -82,6 +85,34 @@ func TestWriteBindingExternalSecrets(t *testing.T) {
 	}
 }
 
+// TestGenerateAppManifests_ReturnsWarnings locks #717: generateAppManifests returns the
+// manifest-generation warnings (here an unbuilt repo-sourced service, which FromServices skips) so
+// the caller can attach them to GitopsStatus.ManifestWarnings. The all-skipped path returns before
+// any git I/O, so this needs no repo.
+func TestGenerateAppManifests_ReturnsWarnings(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Repositories: types.ProjectRepositoriesConfig{
+			AppsDestinationRepo: "https://example.com/apps.git",
+		},
+		Services: []types.ProjectServiceConfig{{
+			Name:   "api",
+			Type:   "deployment",
+			Source: types.ProjectServiceSource{Kind: "repo", RepoURL: "https://github.com/acme/api"},
+			// No ResolvedImage → unbuilt → FromServices skips it → apps empty → returns before git.
+		}},
+	}
+	warnings, err := generateAppManifests(vc, map[string]interface{}{}, "token", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning (unbuilt service), got %v", warnings)
+	}
+	if !strings.Contains(warnings[0], "not built") {
+		t.Errorf("warning should name the unbuilt service, got %q", warnings[0])
+	}
+}
+
 // TestWriteBindingExternalSecrets_Unsatisfiable reports (never silently drops) a credential facet
 // that can't be materialized — here Hetzner, which has no ClusterSecretStore.
 func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
@@ -97,7 +128,7 @@ func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
 		}},
 	}
 	var log strings.Builder
-	n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, &log)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, &log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,5 +137,9 @@ func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "skipped") {
 		t.Errorf("an unsatisfiable facet must be reported, got: %q", log.String())
+	}
+	// The reason is also RETURNED (for GitopsStatus.ManifestWarnings), not only logged.
+	if len(skips) == 0 {
+		t.Errorf("an unsatisfiable facet must be returned as a skip reason, got none")
 	}
 }

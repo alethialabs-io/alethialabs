@@ -9,7 +9,11 @@
 import { Boxes, ListChecks, Workflow } from "lucide-react";
 import type { ConditionOptions } from "@/app/server/actions/alerts";
 import { FieldHelp } from "@/components/alerts/field-help";
-import { MIN_SEV_OPTIONS } from "@/components/alerts/policy-shared";
+import {
+	MIN_SEV_OPTIONS,
+	type MinSeverity,
+	toMinSeverity,
+} from "@/components/alerts/policy-shared";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { Label } from "@repo/ui/label";
 import {
@@ -22,7 +26,7 @@ import {
 
 /** Editable conditions value (mirrors AlertRuleMatch with a "any" sentinel for severity). */
 export interface ConditionsValue {
-	min_severity: string;
+	min_severity: MinSeverity;
 	project_ids: string[];
 	job_types: string[];
 	resource_types: string[];
@@ -76,7 +80,7 @@ export function PolicyConditions({
 				</div>
 				<Select
 					value={value.min_severity}
-					onValueChange={(val) => patch({ min_severity: val })}
+					onValueChange={(val) => patch({ min_severity: toMinSeverity(val) })}
 				>
 					<SelectTrigger className="w-full">
 						<SelectValue />

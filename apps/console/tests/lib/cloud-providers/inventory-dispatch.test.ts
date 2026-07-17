@@ -10,13 +10,16 @@ import { hasServerSideInventory } from "@/lib/cloud-providers/inventory";
 
 describe("hasServerSideInventory", () => {
 	it("includes all four managed clouds", () => {
-		for (const p of ["aws", "gcp", "azure", "alibaba"]) {
+		for (const p of ["aws", "gcp", "azure", "alibaba"] as const) {
 			expect(hasServerSideInventory(p)).toBe(true);
 		}
 	});
 
-	it("includes the token clouds and excludes unknowns", () => {
-		expect(hasServerSideInventory("hetzner")).toBe(true);
-		expect(hasServerSideInventory("nope")).toBe(false);
+	it("includes the token clouds", () => {
+		// The token-auth clouds also have inventory. The old "unknown provider → false" case is gone:
+		// the CloudProvider enum makes an unknown provider unrepresentable at the type level.
+		for (const p of ["hetzner", "digitalocean", "civo"] as const) {
+			expect(hasServerSideInventory(p)).toBe(true);
+		}
 	});
 });

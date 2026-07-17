@@ -38,6 +38,7 @@ import { CollectionNode } from "./nodes/collection-node";
 import { ServiceNode } from "./nodes/service-node";
 import { ZoneNode as ZoneNodeComponent } from "./nodes/zone-node";
 import { BindingEdge } from "./edges/binding-edge";
+import { ChartBindingEdge } from "./edges/chart-binding-edge";
 import { DependencyEdge } from "./edges/dependency-edge";
 import { GatedEdge } from "./edges/gated-edge";
 
@@ -61,7 +62,10 @@ const nodeTypes: NodeTypes = {
 const edgeTypes: EdgeTypes = {
 	dependency: DependencyEdge,
 	gated: GatedEdge,
+	// W3 — a service's dotted "consumes" edge to a backing resource it binds to.
 	binding: BindingEdge,
+	// W5 Path A — a described chart workload's dotted binding edge to a backing resource.
+	cw_binding: ChartBindingEdge,
 };
 
 /** The React Flow surface, controlled by the canvas store. */

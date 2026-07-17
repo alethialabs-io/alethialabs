@@ -18,7 +18,13 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectEnvironments, projects } from "@/lib/db/schema";
+import {
+	jobs,
+	projectEnvironments,
+	projects,
+	type ProvisionJobStatus,
+	type ProvisionJobType,
+} from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { withOwnerScope } from "@/lib/db";
 
@@ -212,8 +218,8 @@ export async function queueEnvironmentAudit(
 /** One row in the canvas's activity rail. */
 export interface EnvironmentJob {
 	id: string;
-	type: string;
-	status: string;
+	type: ProvisionJobType;
+	status: ProvisionJobStatus;
 	createdAt: string;
 	error: string | null;
 }

@@ -161,6 +161,13 @@ export function ClusterCard({
 						</code>
 						<CopyButton value={argocdPasswordCmd} />
 					</div>
+					{/* GitOps wiring (#574): the apps repo ArgoCD syncs, or an honest "direct". */}
+					<div className="flex items-center justify-between gap-2 pt-0.5">
+						<span className="text-[10px] text-muted-foreground">GitOps</span>
+						<span className="truncate font-mono text-[11px] text-foreground">
+							{data.apps_destination_repo ?? "Direct apply — no apps repo"}
+						</span>
+					</div>
 				</div>
 			)}
 

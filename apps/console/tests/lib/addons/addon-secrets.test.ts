@@ -21,8 +21,14 @@ afterEach(() => {
 });
 
 async function load() {
-	const { encryptAddonSecrets, decryptAddonSecrets, hasStoredSecret, stripAddonSecrets } =
-		await import("@/lib/addons/secrets");
+	const {
+		encryptAddonSecrets,
+		decryptAddonSecrets,
+		hasStoredSecret,
+		stripAddonSecrets,
+		redactAddonSecrets,
+		mergeAddonSecrets,
+	} = await import("@/lib/addons/secrets");
 	const { getAddOn, resolveAddOnInstall } = await import("@/lib/addons/catalog");
 	const externalDns = getAddOn("external-dns");
 	const minio = getAddOn("minio");
@@ -32,6 +38,8 @@ async function load() {
 		decryptAddonSecrets,
 		hasStoredSecret,
 		stripAddonSecrets,
+		redactAddonSecrets,
+		mergeAddonSecrets,
 		resolveAddOnInstall,
 		externalDns,
 		minio,
@@ -99,6 +107,75 @@ describe("add-on secret encrypt-at-rest", () => {
 		expect(stripped.provider).toBe("cloudflare");
 		// Legacy plaintext rows are stripped too — never resolved into values.
 		expect("apiToken" in stripAddonSecrets(externalDns, { apiToken: "legacy" })).toBe(false);
+	});
+});
+
+// The client read (getProjectAddons) must not ship the stored ciphertext to the browser, while
+// still telling the config sheet whether a secret is set. redactAddonSecrets replaces the envelope
+// with a set-shaped marker that carries no ciphertext.
+describe("redactAddonSecrets (client read)", () => {
+	it("redacts a stored secret to a set-marker with no ciphertext, drops an unset one", async () => {
+		const { encryptAddonSecrets, redactAddonSecrets, hasStoredSecret, externalDns } =
+			await load();
+		const stored = encryptAddonSecrets(externalDns, {
+			provider: "cloudflare",
+			apiToken: "SENTINEL-redact-token",
+		});
+		const redacted = redactAddonSecrets(externalDns, stored);
+		// Non-secret field untouched; the secret still reads as "set" but carries no ciphertext.
+		expect(redacted.provider).toBe("cloudflare");
+		expect(hasStoredSecret(redacted.apiToken)).toBe(true);
+		expect(redacted.apiToken).toEqual({ v: 0, iv: "", tag: "", data: "" });
+		expect(JSON.stringify(redacted)).not.toContain("SENTINEL-redact-token");
+		// An unset secret is dropped, never a blank marker.
+		const noSecret = redactAddonSecrets(externalDns, { provider: "cloudflare" });
+		expect("apiToken" in noSecret).toBe(false);
+	});
+});
+
+// A reconfigure replaces the whole values object; mergeAddonSecrets preserves a secret the user
+// left blank so re-saving other knobs never wipes it.
+describe("mergeAddonSecrets (preserve untouched on reconfigure)", () => {
+	it("encrypts a new value, preserves an untouched one, stays unset when neither exists", async () => {
+		const {
+			encryptAddonSecrets,
+			mergeAddonSecrets,
+			decryptAddonSecrets,
+			externalDns,
+		} = await load();
+		const existing = encryptAddonSecrets(externalDns, {
+			provider: "cloudflare",
+			apiToken: "SENTINEL-old-token",
+		});
+		// Untouched secret (incoming empty) → the existing envelope carries forward.
+		const kept = mergeAddonSecrets(
+			externalDns,
+			{ provider: "hetzner", apiToken: "" },
+			existing,
+		);
+		expect(kept.apiToken).toEqual(existing.apiToken);
+		expect(decryptAddonSecrets(externalDns, kept).apiToken).toBe(
+			"SENTINEL-old-token",
+		);
+		expect(kept.provider).toBe("hetzner");
+		// New plaintext → encrypted, replacing the old.
+		const changed = mergeAddonSecrets(
+			externalDns,
+			{ provider: "cloudflare", apiToken: "SENTINEL-new-token" },
+			existing,
+		);
+		expect(typeof changed.apiToken).toBe("object");
+		expect(JSON.stringify(changed.apiToken)).not.toContain("SENTINEL-new-token");
+		expect(decryptAddonSecrets(externalDns, changed).apiToken).toBe(
+			"SENTINEL-new-token",
+		);
+		// Neither incoming nor existing → stays unset (no blank secret).
+		const unset = mergeAddonSecrets(
+			externalDns,
+			{ provider: "cloudflare", apiToken: "" },
+			null,
+		);
+		expect("apiToken" in unset).toBe(false);
 	});
 });
 

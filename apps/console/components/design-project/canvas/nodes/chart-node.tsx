@@ -112,6 +112,8 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 			)}
 		>
 			<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+			{/* Sources the described chart-workload children (W5 Path A). */}
+			<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
 
 			<div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
 				<GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

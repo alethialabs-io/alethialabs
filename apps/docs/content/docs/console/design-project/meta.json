@@ -15,6 +15,7 @@
     "container-registry",
     "observability",
     "repositories",
+    "bring-your-own-charts",
     "cost-sidebar"
   ]
 }

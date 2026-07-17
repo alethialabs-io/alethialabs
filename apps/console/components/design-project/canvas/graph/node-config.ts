@@ -25,6 +25,8 @@ export function configName(data: CanvasNodeData): string | undefined {
 			return data.config.name;
 		case "chart":
 			return data.config.id;
+		case "chart_workload":
+			return data.config.name;
 		case "addon":
 			return data.config.name || data.config.id;
 		default:

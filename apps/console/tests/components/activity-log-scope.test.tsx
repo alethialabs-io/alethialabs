@@ -5,7 +5,8 @@
 // project's id onto the query, hides the redundant Project facet + Export, and shows the scope
 // caption. At the org scope the Project facet is back and no scope is forced.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // A flat list of projects under the org, as the projects query returns them.
@@ -19,6 +20,21 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useWorkspaceStore: (sel: (s: unknown) => unknown) =>
 		sel({ entitlements: { quotas: { activityRetentionDays: 7 } } }),
 }));
+// The activity feed now fetches through TanStack (filters in the key), whose hooks read
+// the org from the route params.
+vi.mock("next/navigation", () => ({
+	useParams: () => ({ org: "acme" }),
+}));
+
+/** Renders under a fresh QueryClient (retries off so a mock rejection fails fast). */
+function render(ui: React.ReactElement) {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	return rtlRender(
+		<QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+	);
+}
 vi.mock("@/lib/query/use-projects-query", () => ({
 	useProjectsQuery: () => ({ data: PROJECTS }),
 }));

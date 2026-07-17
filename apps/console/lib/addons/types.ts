@@ -8,6 +8,7 @@
 // merged Helm values + mode) that rides the DEPLOY job's config snapshot to the runner.
 
 import { z } from "zod";
+import type { AddonMode } from "@/lib/db/schema/enums";
 
 /** Day-2 categories an add-on belongs to (drives grouping in the marketplace UI). */
 export type AddOnCategory =
@@ -23,8 +24,8 @@ export type AddOnCategory =
 
 /** How an add-on is delivered into the cluster. `managed` = Alethia renders + applies the
  * ArgoCD Application directly; `gitops` = the manifest is written into the customer's apps
- * repo and ArgoCD syncs it from there (they own + edit it). Mirrors the `addon_mode` enum. */
-export type AddOnMode = "managed" | "gitops";
+ * repo and ArgoCD syncs it from there (they own + edit it). The generated `addon_mode` enum. */
+export type AddOnMode = AddonMode;
 
 /** lucide icon name the UI resolves — data stays JSX-free (mirrors the alerts catalog). */
 export type AddOnIcon =

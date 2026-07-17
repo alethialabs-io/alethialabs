@@ -134,7 +134,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		ProjectName:          vc.ProjectName,
 		Environment:          vc.EnvironmentStage,
 		Region:               vc.Region,
-		Provider:             vc.Provider,
+		Provider:             string(vc.Provider),
 		DomainName:           vc.DNS.DomainName,
 		DNSZoneID:            vc.DNS.ZoneID,
 		DNSEnabled:           vc.DNS.Enabled,
@@ -145,7 +145,9 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		Labels:               cloud.ClassificationLabels(vc),
 	}
 
-	switch vc.Provider {
+	// Switch on the string form: the per-cloud output keys are string-addressed, and the
+	// string-literal cases below are clearer here than the CloudProvider constants.
+	switch string(vc.Provider) {
 	case "gcp":
 		f.ClusterName = ExtractOutput(outputs, "gke_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "gke_cluster_endpoint")

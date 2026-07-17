@@ -240,7 +240,7 @@ func MaxConfigEnabled() bool {
 // MaxConfigProjectConfig builds the typed max-config ProjectConfig by folding every kind's Apply.
 // It is the single source both the free tfvar proof and the real-apply snapshot derive from.
 func MaxConfigProjectConfig(provider string) *types.ProjectConfig {
-	pc := &types.ProjectConfig{Provider: provider}
+	pc := &types.ProjectConfig{Provider: types.CloudProvider(provider)}
 	for _, k := range MaxConfigKinds {
 		k.Apply(pc)
 	}

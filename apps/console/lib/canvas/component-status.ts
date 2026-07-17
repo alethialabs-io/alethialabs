@@ -6,8 +6,15 @@
 // app/server/actions/component-status.ts; the resolver that merges this with the client-side
 // design readiness lives in lib/canvas/node-status.ts.
 
-import type { ComponentStatus } from "@/lib/db/schema/enums";
+import type {
+	ComponentStatus,
+	EnvironmentStage,
+	ProjectStatus,
+	ProvisionJobStatus,
+	ProvisionJobType,
+} from "@/lib/db/schema/enums";
 import type { DriftDetail } from "@/types/jsonb.types";
+import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import type { IacGroup } from "./iac-inventory";
 
 /**
@@ -91,8 +98,8 @@ export interface ComponentServerStatus {
 /** One job in the environment's recent history — the Activity tab / Overview "recent activity". */
 export interface EnvironmentJob {
 	id: string;
-	type: string;
-	status: string;
+	type: ProvisionJobType;
+	status: ProvisionJobStatus;
 	/** ISO timestamp the job was created. */
 	createdAt: string;
 }
@@ -105,15 +112,15 @@ export interface EnvironmentJob {
 export interface EnvironmentInfo {
 	id: string;
 	name: string;
-	stage: string;
-	status: string;
+	stage: EnvironmentStage;
+	status: ProjectStatus;
 }
 
 /** The environment's in-flight job — env-wide context, not a per-node state. */
 export interface ActiveJob {
 	id: string;
-	type: string;
-	status: string;
+	type: ProvisionJobType;
+	status: ProvisionJobStatus;
 }
 
 /**
@@ -149,6 +156,12 @@ export interface EnvironmentStatus {
 	 * component design is inert and `iac.groups` — not `components` — is the architecture.
 	 */
 	iac: IacEnvironment | null;
+	/**
+	 * GitOps wiring + per-component ArgoCD health (#574) — the same read model the Deploy tab
+	 * shows, riding this poll so canvas badges and the tab can never disagree. Null when the
+	 * environment could not be read.
+	 */
+	gitops: GitopsDeployStatus | null;
 }
 
 /** The empty status — an environment that has never been deployed (or one we couldn't read). */
@@ -164,4 +177,5 @@ export const EMPTY_ENVIRONMENT_STATUS: EnvironmentStatus = {
 	recentJobs: [],
 	environment: null,
 	iac: null,
+	gitops: null,
 };

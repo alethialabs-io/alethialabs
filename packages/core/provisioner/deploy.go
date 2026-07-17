@@ -125,6 +125,49 @@ type PlanResult struct {
 	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
 	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
 	InfraServices []argocd.InfraServiceDecision
+	// GitopsStatus is the GitOps wiring outcome + apps-Application health snapshot
+	// (issue #574): mode (gitops/direct), apps repo, synced revision, per-service
+	// health from the `apps` Application's resources — and, when the deploy died
+	// INSIDE the wiring, the failed step + sanitized error. Populated after every
+	// real apply; also set on the FAILURE path (RunDeployV2 then returns a partial
+	// result alongside the error) so the console can show WHY GitOps isn't wired
+	// instead of a bare failed job. Nil on dry-runs and cluster-less deploys.
+	GitopsStatus *argocd.GitopsStatus
+}
+
+// gitopsFailure builds the GitopsStatus for a GitOps-wiring hard-fail: which step died
+// plus a token-SANITIZED error message (the metadata scrub is key-based, so a tokened
+// git URL inside the value must be redacted here, before it crosses result.json).
+func gitopsFailure(requested bool, appsRepo, step string, err error, token string) *argocd.GitopsStatus {
+	mode := "direct"
+	if requested {
+		mode = "gitops"
+	}
+	return &argocd.GitopsStatus{
+		Mode:       mode,
+		AppsRepo:   appsRepo,
+		ArgocdApp:  argocd.UserAppsApplicationName,
+		FailedStep: step,
+		Error:      argocd.SanitizeGitopsError(err, token),
+	}
+}
+
+// readGitopsSnapshot records the post-wiring GitOps state: direct mode is just the mode
+// marker; gitops mode additionally reads the `apps` Application's aggregate health/sync,
+// synced revision, and per-workload service health (one kubectl read, best-effort).
+func readGitopsSnapshot(requested bool, appsRepo string, stdout, stderr io.Writer) *argocd.GitopsStatus {
+	if !requested {
+		return &argocd.GitopsStatus{Mode: "direct"}
+	}
+	agg, revision, services := argocd.ReadAppsStatus(argocd.UserAppsApplicationName, stdout, stderr)
+	return &argocd.GitopsStatus{
+		Mode:      "gitops",
+		AppsRepo:  appsRepo,
+		ArgocdApp: argocd.UserAppsApplicationName,
+		Revision:  revision,
+		AppHealth: &agg,
+		Services:  services,
+	}
 }
 
 // enabledAddonIDs lists the ids of every add-on in the desired set — the keep-set for
@@ -251,6 +294,11 @@ func gateRequiresReport(dryRun bool, report *verify.Report, ov *verify.Override,
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
+//
+// Error contract: a GitOps-wiring failure returns a PARTIAL non-nil result alongside the
+// error — carrying GitopsStatus (failed step + sanitized message) so the wiring failure
+// reaches execution_metadata (the sandbox writes result.json even on error). Callers must
+// therefore branch on err, not on result != nil.
 func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retErr error) {
 	vc := params.ProjectConfig
 	if vc == nil {
@@ -429,9 +477,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	restoreStateAuth := params.StateBackend.SetAuthEnv()
 	defer restoreStateAuth()
 	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
-
-	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
-		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
 
 	// Compose pluggable per-category connector modules (Cloudflare DNS, Vault,
 	// Docker Hub, observability). This merges their tfvars (including decrypted
@@ -696,21 +741,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// FAIL the job rather than logging a buried warning: a half-wired cluster that
 		// reports success is worse than an honest failure the operator can act on.
 		gitopsRequested := vc.Repositories.AppsDestinationRepo != ""
+		// On any wiring hard-fail below, record WHICH step died (+ a token-sanitized
+		// message) on the partial result — the sandbox writes result.json even on error,
+		// so the console can show an actionable GitOps failure, not just a failed job.
+		gitopsFailed := func(step string, err error) *argocd.GitopsStatus {
+			return gitopsFailure(gitopsRequested, vc.Repositories.AppsDestinationRepo, step, err, params.GitAccessToken)
+		}
 
 		setStage("argocd")
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
 			if gitopsRequested {
-				return nil, fmt.Errorf("ArgoCD install failed (GitOps requested for repo %s): %w", vc.Repositories.AppsDestinationRepo, err)
+				result.GitopsStatus = gitopsFailed(argocd.GitopsStepArgocdInstall, err)
+				return &result, fmt.Errorf("ArgoCD install failed (GitOps requested for repo %s): %w", vc.Repositories.AppsDestinationRepo, err)
 			}
 			fmt.Fprintf(stderr, "Warning: ArgoCD installation failed: %v\n", err)
 		}
 
 		if gitopsRequested {
 			if params.GitAccessToken == "" {
-				return nil, fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this project", vc.Repositories.AppsDestinationRepo)
+				err := fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this project", vc.Repositories.AppsDestinationRepo)
+				result.GitopsStatus = gitopsFailed(argocd.GitopsStepGitToken, err)
+				return &result, err
 			}
 			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
-				return nil, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
+				result.GitopsStatus = gitopsFailed(argocd.GitopsStepRepoCredentials, err)
+				return &result, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 			}
 		}
 
@@ -718,7 +773,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if argoTemplatesDir == "" {
 			// Templates are baked into the runner image; their absence is a build defect,
 			// not a user error. Silently skipping infra-services left clusters half-wired.
-			return nil, fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
+			err := fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
+			return &result, err
 		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
 		// Record the honest per-service install/skip decisions from the SAME gates the
@@ -740,11 +797,13 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
 		if renderErr != nil {
-			return nil, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepRender, renderErr)
+			return &result, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
 		}
 		defer os.RemoveAll(renderedDir)
 		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
-			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, applyErr)
+			return &result, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
 		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
 		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
@@ -764,7 +823,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		if genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr); genErr != nil {
+		manifestWarnings, genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr)
+		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
 
@@ -858,6 +918,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// every deploy (Trivy scans asynchronously after it's installed).
 		sec := argocd.ReadSecurityPosture(stdout, stderr)
 		result.SecurityPosture = &sec
+		// GitOps wiring surfaced honestly (issue #574): the wiring succeeded to here, so
+		// record mode + (in gitops mode) the apps Application's synced revision and
+		// per-workload health. Best-effort read — an unreadable status reports Unknown,
+		// never a fabricated pass. Always non-nil after a real apply so the console can
+		// tell "direct mode" from "pre-#574 job with no data".
+		result.GitopsStatus = readGitopsSnapshot(gitopsRequested, vc.Repositories.AppsDestinationRepo, stdout, stderr)
+		// Attach the manifest-generation warnings (skipped services, unresolved bindings,
+		// unsatisfiable credential facets) so the console's Deploy tab can surface WHY a service
+		// may be misconfigured, instead of the operator digging through raw deploy logs (#717).
+		if result.GitopsStatus != nil {
+			result.GitopsStatus.ManifestWarnings = manifestWarnings
+		}
 	}
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")
