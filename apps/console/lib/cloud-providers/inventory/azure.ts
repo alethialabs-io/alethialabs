@@ -46,7 +46,7 @@ async function armGet<T>(url: string, token: string): Promise<T> {
 			signal: controller.signal,
 		});
 		if (!res.ok) throw new Error(`Azure ARM HTTP ${res.status}`);
-		return (await res.json()) as T;
+		return await res.json();
 	} finally {
 		clearTimeout(timer);
 	}

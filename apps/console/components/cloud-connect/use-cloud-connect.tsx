@@ -20,6 +20,7 @@ import {
 	saveAlibaba,
 	saveTokenCloud,
 } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
+import { isEnumMember } from "@/lib/coerce";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { CONNECTOR_DOCS_BASE } from "@/components/connector/connector-assets";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -220,7 +221,7 @@ export function useCloudConnect({
 					setAzureSetup(await initAzureIdentity());
 				}
 				setAzureSheetOpen(true);
-			} else if ((EXTRA_CLOUDS as readonly string[]).includes(slug)) {
+			} else if (isEnumMember(slug, EXTRA_CLOUDS)) {
 				if (!extraSetup?.[slug] || addingAnother) {
 					setConnectingSlug(slug);
 					const init = await initExtraCloudIdentity(

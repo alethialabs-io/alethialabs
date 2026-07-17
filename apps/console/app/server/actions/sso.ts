@@ -83,7 +83,7 @@ const discoveryDoc = z.object({
 function parseJson<T>(s: string | null): T | null {
 	if (!s) return null;
 	try {
-		return JSON.parse(s) as T;
+		return JSON.parse(s);
 	} catch {
 		return null;
 	}
