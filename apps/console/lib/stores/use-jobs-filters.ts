@@ -12,9 +12,11 @@ import {
 	type JobsFilters,
 } from "@/components/jobs/jobs-query";
 
-/** sessionStorage-persisted facet selections (authors/envs/projects/statuses/types). */
+/** sessionStorage-persisted filter selections (search + authors/envs/projects/statuses/
+ * types). `version: 2` adds `search` — the bump discards the older persisted shape rather
+ * than shallow-merging it to a `search: undefined` that would uncontrol the search input. */
 export const useJobsFilters = createFilterStore<JobsFilters>({
 	name: "jobs-filters",
 	defaults: DEFAULT_JOBS_FILTERS,
-	version: 1,
+	version: 2,
 });

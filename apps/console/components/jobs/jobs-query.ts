@@ -12,6 +12,7 @@ import type { JobsQuery } from "@/app/server/actions/jobs";
 
 /** The store-held filter selections (a type alias — the factory's Record constraint). */
 export type JobsFilters = {
+	search: string;
 	authors: string[];
 	envs: string[];
 	projects: string[];
@@ -21,6 +22,7 @@ export type JobsFilters = {
 
 /** The default (empty) selections — the store's initial state and the Reset target. */
 export const DEFAULT_JOBS_FILTERS: JobsFilters = {
+	search: "",
 	authors: [],
 	envs: [],
 	projects: [],
@@ -41,9 +43,11 @@ export function normalizeJobsQuery(
 ): JobsQuery {
 	const sorted = (xs: string[]) => (xs.length ? [...xs].sort() : undefined);
 	const projects = projectId ? [projectId] : sorted(filters.projects);
+	const search = filters.search.trim();
 	return {
 		from: range.from,
 		to: range.to,
+		...(search ? { search } : {}),
 		...(sorted(filters.authors) ? { authors: sorted(filters.authors) } : {}),
 		...(sorted(filters.envs) ? { envs: sorted(filters.envs) } : {}),
 		...(projects ? { projects } : {}),

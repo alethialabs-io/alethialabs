@@ -39,4 +39,13 @@ describe("normalizeJobsQuery", () => {
 	it("defaults reduce to just the range", () => {
 		expect(normalizeJobsQuery(DEFAULT_JOBS_FILTERS, RANGE)).toEqual(RANGE);
 	});
+
+	it("trims a non-empty search and drops a blank one", () => {
+		expect(
+			normalizeJobsQuery({ ...DEFAULT_JOBS_FILTERS, search: "  prod  " }, RANGE),
+		).toEqual({ ...RANGE, search: "prod" });
+		expect(
+			normalizeJobsQuery({ ...DEFAULT_JOBS_FILTERS, search: "   " }, RANGE),
+		).toEqual(RANGE);
+	});
 });
