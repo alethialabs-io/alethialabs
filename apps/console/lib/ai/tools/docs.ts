@@ -18,7 +18,7 @@ interface DocRecord {
 	text: string;
 }
 
-const RECORDS: DocRecord[] = (indexJson as { records: DocRecord[] }).records;
+const RECORDS: DocRecord[] = indexJson.records;
 
 const STOP = new Set([
 	"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are", "how", "do", "i",

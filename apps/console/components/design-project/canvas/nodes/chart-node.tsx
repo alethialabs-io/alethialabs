@@ -63,13 +63,11 @@ const STATUS_META: Record<ChartStatus, { label: string; dot: string }> = {
 
 /** React Flow node renderer for a `chart` kind. */
 export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id)) as
-		| CanvasNode<"chart">
-		| undefined;
+	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
 	const ctx = useByoChartCanvas();
 	const [detaching, setDetaching] = useState(false);
 	const [sheetOpen, setSheetOpen] = useState(false);
-	if (!node) return null;
+	if (!node || node.data.kind !== "chart") return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
 	const chip = scanChip(c.scanStatus, c.scanReport);
