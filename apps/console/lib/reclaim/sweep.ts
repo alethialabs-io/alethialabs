@@ -19,7 +19,12 @@
 
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectEnvironments, projects } from "@/lib/db/schema";
+import {
+	jobs,
+	projectEnvironments,
+	projects,
+	type ProvisionJobType,
+} from "@/lib/db/schema";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { stateKeyForJob } from "@/lib/storage/tofu-state";
@@ -38,7 +43,7 @@ interface OrphanJob {
 	project_name: string | null;
 	environment_name: string | null;
 	started_at: Date | null;
-	job_type: string;
+	job_type: ProvisionJobType;
 	// The row's own type — stateKeyForJob reads runner_id out of it for runner-lifecycle jobs, so it
 	// must be the real snapshot shape rather than an invented `unknown`.
 	config_snapshot: typeof jobs.$inferSelect.config_snapshot;
