@@ -47,7 +47,7 @@ func Workloads(resources []Resource) []types.ChartWorkload {
 		mains := containers(ps, "containers")
 		out = append(out, types.ChartWorkload{
 			Name:         r.Name,
-			WorkloadKind: kind,
+			WorkloadKind: types.ChartWorkloadKind(kind),
 			Rendered: types.ChartWorkloadRendered{
 				Image:     firstImage(mains),
 				Ports:     ports(mains),
