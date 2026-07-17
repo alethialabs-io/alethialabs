@@ -16,9 +16,11 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	cacheEngine,
 	chartWorkloadKind,
 	cloudProvider,
 	environmentStage,
+	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
 	projectStatus,
@@ -60,6 +62,8 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "ChartWorkloadKind", dbName: "chart_workload_kind", values: chartWorkloadKind.enumValues },
 	{ typeName: "NosqlKeyType", dbName: "nosql_key_type", values: nosqlKeyType.enumValues },
 	{ typeName: "NosqlTableType", dbName: "nosql_table_type", values: nosqlTableType.enumValues },
+	{ typeName: "NosqlCapacityMode", dbName: "nosql_capacity_mode", values: nosqlCapacityMode.enumValues },
+	{ typeName: "CacheEngine", dbName: "cache_engine", values: cacheEngine.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {

@@ -201,3 +201,31 @@ var AllNosqlTableTypes = []NosqlTableType{
 	NosqlTableTypeStandard,
 	NosqlTableTypeGlobal,
 }
+
+// NosqlCapacityMode mirrors the nosql_capacity_mode enum (lib/db/schema/enums.ts).
+type NosqlCapacityMode string
+
+const (
+	NosqlCapacityModeOnDemand    NosqlCapacityMode = "on_demand"
+	NosqlCapacityModeProvisioned NosqlCapacityMode = "provisioned"
+)
+
+// AllNosqlCapacityModes is every nosql_capacity_mode value, in schema order.
+var AllNosqlCapacityModes = []NosqlCapacityMode{
+	NosqlCapacityModeOnDemand,
+	NosqlCapacityModeProvisioned,
+}
+
+// CacheEngine mirrors the cache_engine enum (lib/db/schema/enums.ts).
+type CacheEngine string
+
+const (
+	CacheEngineRedis  CacheEngine = "redis"
+	CacheEngineValkey CacheEngine = "valkey"
+)
+
+// AllCacheEngines is every cache_engine value, in schema order.
+var AllCacheEngines = []CacheEngine{
+	CacheEngineRedis,
+	CacheEngineValkey,
+}
