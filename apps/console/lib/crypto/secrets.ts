@@ -184,7 +184,7 @@ function tryDecryptWith(
 			decipher.update(Buffer.from(envelope.data, "base64")),
 			decipher.final(),
 		]);
-		return JSON.parse(plaintext.toString("utf8")) as Record<string, string>;
+		return JSON.parse(plaintext.toString("utf8"));
 	} catch {
 		return null;
 	}
