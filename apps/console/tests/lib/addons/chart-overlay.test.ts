@@ -39,6 +39,13 @@ describe("setByPath", () => {
 		expect(out).toEqual({ a: 1 });
 		expect(out).not.toBe(base);
 	});
+
+	it("refuses a prototype-polluting path (no-op, no pollution)", () => {
+		const out = setByPath({}, "__proto__.polluted", true);
+		expect(out).toEqual({});
+		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+		expect(setByPath({}, "constructor.prototype.x", 1)).toEqual({});
+	});
 });
 
 describe("isCredentialFacet", () => {
