@@ -114,7 +114,8 @@ export function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 	// backing resource it binds to — resolved by (kind, name) exactly like the service binding rule.
 	// A binding whose target isn't placed on the canvas simply draws nothing (never a dangling edge).
 	for (const wl of byKind("chart_workload")) {
-		const config = wl.data.config as NodeConfigMap["chart_workload"];
+		if (wl.data.kind !== "chart_workload") continue;
+		const config = wl.data.config;
 		const parent = nodes.find((n) => n.id === `chart-${config.chartId}`);
 		if (parent) {
 			edges.push({
@@ -235,23 +236,26 @@ function nodeName(n: CanvasNode): string {
 // rebuild a node's data from an edited config/placement assert the reunion here, once.
 
 /** Assemble a node's data payload from a kind + config (+ placement). */
-function buildNodeData(
-	kind: NodeKind,
-	config: NodeConfigMap[NodeKind] | Record<string, unknown>,
+function buildNodeData<K extends NodeKind>(
+	kind: K,
+	config: NodeConfigMap[K],
 	cloudIdentityId: string | null,
 	provider: CloudProviderSlug | null,
-): CanvasNodeData {
+): CanvasNodeData<K> {
 	return {
 		kind,
 		config,
 		cloud_identity_id: cloudIdentityId,
 		provider,
-	} as CanvasNodeData;
+	};
 }
 
 /** Merge a (partial) config patch into a node's data, keeping its kind. */
-function withConfig(data: CanvasNodeData, patch: Record<string, unknown>): CanvasNodeData {
-	return { ...data, config: { ...data.config, ...patch } } as CanvasNodeData;
+function withConfig<T extends CanvasNodeData>(
+	data: T,
+	patch: Partial<T["config"]>,
+): T {
+	return { ...data, config: { ...data.config, ...patch } };
 }
 
 /** Update a node's placement (identity + derived provider), keeping its kind + config. */
@@ -260,7 +264,7 @@ function withPlacement(
 	cloudIdentityId: string | null,
 	provider: CloudProviderSlug | null,
 ): CanvasNodeData {
-	return { ...data, cloud_identity_id: cloudIdentityId, provider } as CanvasNodeData;
+	return { ...data, cloud_identity_id: cloudIdentityId, provider };
 }
 
 /** For array kinds, suffix the config's `name` so it's unique among same-kind nodes. */
@@ -282,7 +286,7 @@ function applyUniqueName<K extends NodeKind>(
 			.map((n) => configName(n.data))
 			.filter((v): v is string => typeof v === "string"),
 	);
-	return { ...config, name: uniqueName(current, taken) } as NodeConfigMap[K];
+	return { ...config, name: uniqueName(current, taken) };
 }
 
 /**
