@@ -25,6 +25,7 @@ import {
 	projectNosqlTables,
 	projectQueues,
 	projectSecrets,
+	projectServices,
 	projectStorageBuckets,
 	projectTopics,
 	projects,
@@ -38,6 +39,7 @@ import {
 	type IacEnvironment,
 } from "@/lib/canvas/component-status";
 import { attributeDrift, kindForResourceType, type DriftTarget } from "@/lib/canvas/drift-map";
+import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { buildIacInventory, parsePlanInventory } from "@/lib/canvas/iac-inventory";
 import { getLatestEnvironmentCost } from "@/app/server/actions/cost";
 import { structuralHash } from "@/lib/promotions/diff";
@@ -72,6 +74,7 @@ const ARRAY_TABLES = [
 	["secret", projectSecrets],
 	["bucket", projectStorageBuckets],
 	["registry", projectContainerRegistries],
+	["service", projectServices],
 ] as const;
 
 /** A job the env is still working through. */
@@ -297,6 +300,20 @@ export async function getEnvironmentComponentStatus(
 
 	const cost = await getLatestEnvironmentCost(projectId, envId).catch(() => null);
 
+	// GitOps wiring + ArgoCD health (#574) — the Deploy tab's read model, shared here so
+	// canvas badges ride the same poll. Best-effort: a read failure must not blank the board.
+	const gitops = await readGitopsDeployStatus(projectId, envId).catch(() => null);
+	if (gitops) {
+		// Per-service ArgoCD health/sync onto the service nodes — the fields existed on
+		// ComponentServerStatus since W3 but were never populated (the classic dead slot).
+		for (const row of gitops.services) {
+			const component = components[`service:${row.name}`];
+			if (!component) continue;
+			component.health = row.health;
+			component.sync = row.sync;
+		}
+	}
+
 	// Is this environment governed by a bring-your-own IaC module? If so its component rows are
 	// INERT — designed but never provisioned, because the module replaced the template — and the
 	// architecture is the module's own resources.
@@ -377,6 +394,7 @@ export async function getEnvironmentComponentStatus(
 		})),
 		environment: { id: env.id, name: env.name, stage: env.stage, status: env.status },
 		iac,
+		gitops,
 	};
 }
 

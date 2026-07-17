@@ -25,6 +25,9 @@ import {
 import type {
 	AddOnValues,
 	AuditChanges,
+	ChartValuePathMap,
+	ChartWorkloadConfig,
+	ChartWorkloadRendered,
 	ClusterAdmin,
 	ClusterProviderConfig,
 	DetectedService,
@@ -38,6 +41,7 @@ import type {
 	QueueProviderConfig,
 	RegistryProviderConfig,
 	SecretsProviderConfig,
+	ServiceBinding,
 	ServiceBuild,
 	ServiceEnvVar,
 	ServicePort,
@@ -54,12 +58,14 @@ import {
 	auditAction,
 	cacheEngine,
 	changeOp,
+	chartWorkloadKind,
 	componentStatus,
 	gitCredentialMethod,
 	gitCredentialPurpose,
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
+	serviceWorkloadType,
 } from "./enums";
 import { cloudIdentities } from "./identities";
 import { projectEnvironments } from "./project-environments";
@@ -695,14 +701,19 @@ export const projectServices = pgTable(
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
-		// Workload type: deployment (default) | job | cronjob | statefulset. Validated in zod.
-		type: text().default("deployment").notNull(),
+		// Workload type: deployment (default) | job | cronjob | statefulset. pgEnum-backed so the
+		// column can't drift from the service form fragment's `type` union.
+		type: serviceWorkloadType().default("deployment").notNull(),
 		// Where the image comes from — {kind:"repo",repo_url,path} | {kind:"image",image}.
 		source: jsonb().$type<ServiceSource>().notNull(),
 		// Build config when source.kind === "repo" (Dockerfile/context); NULL for a prebuilt image.
 		build: jsonb().$type<ServiceBuild>(),
 		// Plain environment variables (secret env-from is W4).
 		env: jsonb().$type<ServiceEnvVar[]>().default([]).notNull(),
+		// W3 — declared edges to backing resources (service→database/cache/queue/secret) plus the
+		// env each injects. The runner resolves each binding to the provisioned resource's endpoint
+		// (tofu output) / credentials (ExternalSecret → k8s Secret) at deploy time.
+		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
 		// Container ports the workload exposes.
 		ports: jsonb().$type<ServicePort[]>().default([]).notNull(),
 		replicas: integer().default(2).notNull(),
@@ -710,6 +721,11 @@ export const projectServices = pgTable(
 		resources: jsonb().$type<ServiceResources>(),
 		// Readiness/liveness probe; NULL = none.
 		probe: jsonb().$type<ServiceProbe>(),
+		// W2 — the build's write-back slot (output column, like registries.repository_url):
+		// the pushed image digest URI (e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/<repo>@sha256:…")
+		// persisted from a BUILD job's result. Distinct from `source` (the user's input);
+		// never designed by the user, stripped from the form/design view.
+		resolved_image: text(),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),
@@ -720,6 +736,54 @@ export const projectServices = pgTable(
 		unique("project_services_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+// A workload DESCRIBED from a BYO Helm chart's rendered manifests (W5 Path A — Option B). The chart
+// (a project_addons source='byo' row) stays the single DEPLOY UNIT — its ArgoCD Application deploys
+// everything. These rows are read-mostly DESCRIPTIONS Alethia never renders or deploys itself: they
+// are deliberately NOT project_services rows, so a described workload can never enter the deploy
+// path (no double-deploy). One row per rendered workload (Deployment/StatefulSet/DaemonSet/CronJob/
+// Job). `rendered` is refreshed verbatim on every CHART_SCAN; the user overlay (bindings/config/
+// value_paths) is PRESERVED across re-scans. See management/spec/features/w5-path-a-byo-services.md.
+export const projectChartWorkloads = pgTable(
+	"project_chart_workloads",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// The owning BYO chart addon (project_addons.id, source='byo') — the deploy unit. ON DELETE
+		// CASCADE so detaching the chart removes its described workloads.
+		addon_id: uuid()
+			.notNull()
+			.references(() => projectAddons.id, { onDelete: "cascade" }),
+		// The rendered workload's metadata.name (unique within a chart addon).
+		name: text().notNull(),
+		// Which workload kind the manifest declared (normalized lowercase).
+		workload_kind: chartWorkloadKind().notNull(),
+		// The pure description extracted from `helm template` output — OVERWRITTEN wholesale on every
+		// re-scan (it mirrors the chart, not the user).
+		rendered: jsonb().$type<ChartWorkloadRendered>().notNull(),
+		// W3 — the user's declared bindings to backing resources. PRESERVED across re-scans. On deploy
+		// (Lane 2) each binding writes into the chart's values at the declared value-path (a keyless
+		// secret-ref for credential facets), never re-rendering the workload.
+		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
+		// The user's editable overlay (v1: replicas + env), written back into the chart's values on
+		// deploy. PRESERVED across re-scans.
+		config: jsonb().$type<ChartWorkloadConfig>().default({}).notNull(),
+		// Where each binding/config knob writes into the chart's values (logical knob → dot-path).
+		// Auto-inferred at scan + user-overridable (Lane 2). PRESERVED across re-scans.
+		value_paths: jsonb().$type<ChartValuePathMap>().default({}).notNull(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_chart_workloads_project_env_addon_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.addon_id,
 			t.name,
 		),
 	],

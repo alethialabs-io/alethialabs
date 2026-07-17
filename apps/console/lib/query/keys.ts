@@ -11,6 +11,10 @@ import type { NormalizedEvidenceQuery } from "@/components/evidence/evidence-que
 
 export const qk = {
 	jobs: (org: string) => ["jobs", org] as const,
+	/** The jobs PAGE, parameterized by the normalized filter query (normalizeJobsQuery).
+	 * Distinct from the shared unfiltered `jobs` cache, which palette/breadcrumbs/
+	 * overview/runners/plan all consume. */
+	jobsPage: (org: string, query: unknown) => ["jobs", org, "page", query] as const,
 	/** Evidence roll-up, parameterized by the normalized filter query
 	 * (normalizeEvidenceQuery — stable object, so equal filters hit the cache). */
 	evidence: (org: string, query: NormalizedEvidenceQuery) =>
@@ -37,6 +41,11 @@ export const qk = {
 	supportCase: (id: string) => ["support", "case", id] as const,
 	roles: (org: string, search?: string) =>
 		search ? (["roles", org, search] as const) : (["roles", org] as const),
+	/** Activity log, parameterized by the normalized filter query (sans cursor — the
+	 * cursor is the infinite query's pageParam, never part of the key). */
+	activity: (org: string, query: unknown) => ["activity", org, query] as const,
+	/** Org member rows (filter facets + name resolution on activity). */
+	members: (org: string) => ["members", org] as const,
 	ssoProviders: (org: string, filter?: unknown) =>
 		filter
 			? (["sso", "providers", org, filter] as const)

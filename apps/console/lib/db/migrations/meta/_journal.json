@@ -715,6 +715,34 @@
       "when": 1784201211746,
       "tag": "0101_demonic_mantis",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1784207450173,
+      "tag": "0102_silly_hawkeye",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1784209812971,
+      "tag": "0103_lumpy_master_chief",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1784213585720,
+      "tag": "0104_wandering_avengers",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1784283167355,
+      "tag": "0105_gigantic_frightful_four",
+      "breakpoints": true
     }
   ]
 }

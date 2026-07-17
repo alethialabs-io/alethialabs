@@ -91,17 +91,19 @@ const serviceBuildSchema = z.object({
 	dockerfile: z.string().optional(),
 	context: z.string().optional(),
 });
-const serviceEnvSchema = z.object({
+// Exported for reuse by the BYO chart-workload validators (lib/validations/chart-workloads.ts),
+// which describe the same env/port/resource/binding shapes read off a rendered chart.
+export const serviceEnvSchema = z.object({
 	name: z.string().min(1, "Env var name is required"),
 	value: z.string(),
 });
-const servicePortSchema = z.object({
+export const servicePortSchema = z.object({
 	name: z.string().optional(),
 	container_port: z.number().int().min(1).max(65535),
 	protocol: z.enum(["TCP", "UDP"]).optional(),
 });
 const serviceQuantitySchema = z.object({ cpu: z.string(), memory: z.string() });
-const serviceResourcesSchema = z.object({
+export const serviceResourcesSchema = z.object({
 	requests: serviceQuantitySchema,
 	limits: serviceQuantitySchema,
 });
@@ -110,11 +112,35 @@ const serviceProbeSchema = z.object({
 	path: z.string().optional(),
 	port: z.number().int().min(1).max(65535),
 });
+// W3 — a service's edge to a backing resource ({kind, name}) plus the env each connection facet
+// injects. `from` distinguishes non-secret facets (endpoint/port → templated values) from
+// credential facets (→ ExternalSecret secretKeyRef); the runner resolves them at deploy time.
+export const serviceBindingSchema = z.object({
+	target: z.object({
+		kind: z.enum(["database", "cache", "queue", "secret"]),
+		name: z.string().min(1, "Binding target is required"),
+	}),
+	inject: z.array(
+		z.object({
+			env: z.string().min(1, "Env var name is required"),
+			from: z.enum([
+				"endpoint",
+				"port",
+				"username",
+				"password",
+				"connection_string",
+			]),
+		}),
+	),
+});
 const servicesInsert = createInsertSchema(projectServices, {
 	source: serviceSourceSchema,
 	build: serviceBuildSchema.nullable().optional(),
 	env: z.array(serviceEnvSchema),
 	ports: z.array(servicePortSchema),
+	// A service with no backing-infra needs carries no bindings — optional, defaults to [] like the
+	// DB column, so services authored before W3 (and every existing fixture) still parse.
+	bindings: z.array(serviceBindingSchema).default([]),
 	resources: serviceResourcesSchema.nullable().optional(),
 	probe: serviceProbeSchema.nullable().optional(),
 });
@@ -244,12 +270,18 @@ const registryItemSchema = registriesInsert
 	.extend({ name: z.string().min(1, "Registry name is required") });
 
 // W1 — a first-class service/workload the customer designs on the canvas.
-const serviceItemSchema = servicesInsert.omit(componentAutoFields).extend({
-	name: z.string().min(1, "Service name is required"),
-	type: z
-		.enum(["deployment", "job", "cronjob", "statefulset"])
-		.default("deployment"),
-});
+const serviceItemSchema = servicesInsert
+	.omit({
+		...componentAutoFields,
+		// Output column (the W2 build's write-back digest), never designed by the user.
+		resolved_image: true,
+	})
+	.extend({
+		name: z.string().min(1, "Service name is required"),
+		type: z
+			.enum(["deployment", "job", "cronjob", "statefulset"])
+			.default("deployment"),
+	});
 
 export const projectFormSchema = z.object({
 	project: projectSchema,

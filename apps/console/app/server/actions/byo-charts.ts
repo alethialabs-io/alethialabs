@@ -12,15 +12,29 @@
 // authed edits of trusted charts on the org's own cluster. Untrusted third-party charts wait on a
 // namespace-PSA + admission-controller (Kyverno/Gatekeeper) gate — see the plan's E2 section.
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
-import { type ComponentStatus, jobs, projectAddons } from "@/lib/db/schema";
+import {
+	type ChartWorkloadKind,
+	type ComponentStatus,
+	jobs,
+	projectAddons,
+	projectChartWorkloads,
+} from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
+import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
-import type { AddOnValues, VerifyReport } from "@/types/jsonb.types";
+import { chartWorkloadWireArraySchema } from "@/lib/validations/chart-workloads";
+import type {
+	AddOnValues,
+	ChartWorkloadConfig,
+	ChartWorkloadRendered,
+	ServiceBinding,
+	VerifyReport,
+} from "@/types/jsonb.types";
 
 /** Throws if the feature is disabled — every mutating BYO action calls this first. */
 function assertByoHelmEnabled(): void {
@@ -216,6 +230,68 @@ export async function getProjectByoCharts(
 	return { environmentId: envId, charts };
 }
 
+/** A DESCRIBED chart workload as the canvas reads it back (W5 Path A). */
+export interface ChartWorkloadState {
+	id: string;
+	/** The owning chart node (project_addons.addon_id slug) these group under. */
+	chartId: string;
+	name: string;
+	kind: ChartWorkloadKind;
+	/** Read-only description from `helm template` (image/ports/env keys/resources/replicas). */
+	rendered: ChartWorkloadRendered;
+	/** W3 bindings + the editable overlay — preserved across re-scans (empty until the bind lane). */
+	bindings: ServiceBinding[];
+	config: ChartWorkloadConfig;
+}
+
+/**
+ * Reads the DESCRIBED workloads of an environment's BYO charts (W5 Path A) — the canvas renders each
+ * as a service-like child of its chart node (joined back to the chart's slug via the addon uuid).
+ * Empty until a CHART_SCAN has run with the describe flag on.
+ */
+export async function getProjectChartWorkloads(
+	projectId: string,
+	environmentId?: string | null,
+): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
+	const rows = await withOwnerScope(actor.userId, async (tx) =>
+		tx
+			.select({
+				id: projectChartWorkloads.id,
+				chartId: projectAddons.addon_id,
+				name: projectChartWorkloads.name,
+				kind: projectChartWorkloads.workload_kind,
+				rendered: projectChartWorkloads.rendered,
+				bindings: projectChartWorkloads.bindings,
+				config: projectChartWorkloads.config,
+			})
+			.from(projectChartWorkloads)
+			.innerJoin(
+				projectAddons,
+				eq(projectChartWorkloads.addon_id, projectAddons.id),
+			)
+			.where(
+				and(
+					eq(projectChartWorkloads.project_id, projectId),
+					eq(projectChartWorkloads.environment_id, envId),
+				),
+			),
+	);
+	return {
+		environmentId: envId,
+		workloads: rows.map((r) => ({
+			id: r.id,
+			chartId: r.chartId,
+			name: r.name,
+			kind: r.kind,
+			rendered: r.rendered,
+			bindings: r.bindings,
+			config: r.config,
+		})),
+	};
+}
+
 /**
  * Queues a CHART_SCAN job for an attached BYO chart: the runner clones the repo, `helm template`s
  * it, and runs verify.EvaluateManifests over the rendered manifests, posting a verify.Report that
@@ -300,7 +376,10 @@ export async function finalizeChartScan(jobId: string): Promise<void> {
 	const addonId = typeof snap.addon_id === "string" ? snap.addon_id : null;
 	if (!projectId || !environmentId || !addonId) return;
 
-	const meta = (job.execution_metadata ?? {}) as { verify_result?: VerifyReport };
+	const meta = (job.execution_metadata ?? {}) as {
+		verify_result?: VerifyReport;
+		chart_workloads?: unknown;
+	};
 	const report = meta.verify_result ?? null;
 	const done = job.status === "SUCCESS" && report !== null;
 
@@ -319,5 +398,96 @@ export async function finalizeChartScan(jobId: string): Promise<void> {
 				eq(projectAddons.addon_id, addonId),
 				eq(projectAddons.source, "byo"),
 			),
+		);
+
+	// W5 Path A — DESCRIBE: on a clean scan, persist the chart's rendered workloads so the canvas can
+	// show + bind them. Dark-launched (ALETHIA_BYO_DESCRIBE_ENABLED). The chart stays the deploy
+	// unit — project_chart_workloads never feeds the deploy path, so a described workload can't
+	// double-deploy. Only reconciles on SUCCESS (a failed scan keeps the last-known description).
+	if (done && isByoDescribeEnabled()) {
+		await reconcileChartWorkloads(db, {
+			projectId,
+			environmentId,
+			addonSlug: addonId,
+			workloads: meta.chart_workloads,
+		});
+	}
+}
+
+/**
+ * Reconciles the DESCRIBED workloads of a BYO chart into project_chart_workloads from a CHART_SCAN's
+ * execution_metadata.chart_workloads wire: validates it, resolves the owning chart addon's uuid,
+ * UPSERTs each workload refreshing ONLY the rendered description (the user overlay —
+ * bindings/config/value_paths — is preserved across re-scans), then prunes workloads the chart no
+ * longer renders. Uses the service DB (the runner-facing status route has no user session).
+ */
+async function reconcileChartWorkloads(
+	db: ReturnType<typeof getServiceDb>,
+	args: {
+		projectId: string;
+		environmentId: string;
+		addonSlug: string;
+		workloads: unknown;
+	},
+): Promise<void> {
+	const parsed = chartWorkloadWireArraySchema.safeParse(args.workloads ?? []);
+	if (!parsed.success) {
+		console.error("finalizeChartScan: invalid chart_workloads wire", parsed.error);
+		return;
+	}
+	const workloads = parsed.data;
+
+	// The FK target is the addon's uuid PK; the job only carries the per-env slug.
+	const [addon] = await db
+		.select({ id: projectAddons.id })
+		.from(projectAddons)
+		.where(
+			and(
+				eq(projectAddons.project_id, args.projectId),
+				eq(projectAddons.environment_id, args.environmentId),
+				eq(projectAddons.addon_id, args.addonSlug),
+				eq(projectAddons.source, "byo"),
+			),
+		)
+		.limit(1);
+	if (!addon) return;
+
+	for (const w of workloads) {
+		await db
+			.insert(projectChartWorkloads)
+			.values({
+				project_id: args.projectId,
+				environment_id: args.environmentId,
+				addon_id: addon.id,
+				name: w.name,
+				workload_kind: w.workload_kind,
+				rendered: w.rendered,
+			})
+			.onConflictDoUpdate({
+				target: [
+					projectChartWorkloads.project_id,
+					projectChartWorkloads.environment_id,
+					projectChartWorkloads.addon_id,
+					projectChartWorkloads.name,
+				],
+				set: {
+					workload_kind: w.workload_kind,
+					rendered: w.rendered,
+					updated_at: new Date(),
+				},
+			});
+	}
+
+	// Prune workloads the chart no longer renders (their overlay is moot once they're gone).
+	const names = workloads.map((w) => w.name);
+	await db
+		.delete(projectChartWorkloads)
+		.where(
+			names.length > 0
+				? and(
+						eq(projectChartWorkloads.addon_id, addon.id),
+						notInArray(projectChartWorkloads.name, names),
+					)
+				: eq(projectChartWorkloads.addon_id, addon.id),
 		);
 }

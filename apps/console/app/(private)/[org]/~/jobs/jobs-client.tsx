@@ -2,16 +2,26 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Jobs list — the console filter standard (#578): zustand store + URL sync, server-side
+// filtering + facet counts (getJobsPage), the normalized query in the TanStack key, and
+// keepPreviousData dimming instead of client-side .filter() over the whole cache.
+
 import { DataTable } from "@/components/data-table";
 import { buildJobColumns } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";
+import {
+	DEFAULT_JOBS_FILTERS,
+	normalizeJobsQuery,
+} from "@/components/jobs/jobs-query";
 import { JOB_TYPES } from "@/lib/jobs/format";
-import { getMembers, type MemberRow } from "@/app/server/actions/members";
 import { displayName } from "@/lib/user-display";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
-import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useMembersQuery } from "@/lib/query/use-activity-query";
+import { useJobsPageQuery } from "@/lib/query/use-jobs-page-query";
+import { useJobsFilters } from "@/lib/stores/use-jobs-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import type { JobWithMeta } from "@/app/server/actions/jobs";
+import type { JobsFacetOption, JobWithMeta } from "@/app/server/actions/jobs";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import {
@@ -22,6 +32,8 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@repo/ui/empty";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
@@ -31,6 +43,8 @@ import {
 	RANGE_PRESETS,
 } from "@repo/ui/range";
 import { TooltipProvider } from "@repo/ui/tooltip";
+import { cn } from "@repo/ui/utils";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { Activity, Boxes, ClipboardList, Layers, Users, Wrench } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -39,41 +53,42 @@ import { useEffect, useMemo, useState } from "react";
 /** Jobs default to a wide window so history isn't hidden; users narrow with the range picker. */
 const JOBS_DEFAULT_PRESET = "12mo";
 
-const STATUS_OPTIONS = [
-	"QUEUED",
-	"CLAIMED",
-	"PROCESSING",
-	"SUCCESS",
-	"FAILED",
-	"CANCELLED",
-].map((s) => ({ value: s, label: s.charAt(0) + s.slice(1).toLowerCase() }));
+const STATUS_LABELS = new Map(
+	["QUEUED", "CLAIMED", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED"].map((s) => [
+		s,
+		s.charAt(0) + s.slice(1).toLowerCase(),
+	]),
+);
 
-const TYPE_OPTIONS = Object.entries(JOB_TYPES).map(([value, info]) => ({
-	value,
-	label: info.label,
-}));
+/** Facet options → MultiCombobox options: label fallback + the count as the hint. */
+function comboOptions(
+	facet: JobsFacetOption[] | undefined,
+	label: (o: JobsFacetOption) => string = (o) => o.label ?? o.value,
+) {
+	return (facet ?? []).map((o) => ({
+		value: o.value,
+		label: label(o),
+		hint: String(o.count),
+	}));
+}
 
 /**
- * Jobs list UI. Data comes from the shared `useJobsQuery` cache (server-prefetched, hydrated,
- * then polled); filters are local. Pass `projectId` to scope it to one project (the Project facet
- * + column are then hidden) — used by a project's jobs tab; the org route passes none.
+ * Jobs list UI. Filters live in the jobs filter store (URL-synced); rows + facet counts
+ * come from the parameterized `getJobsPage` (server-side filtering — the standard). Pass
+ * `projectId` to scope it to one project (the Project facet + column are then hidden) —
+ * used by a project's jobs tab; the org route passes none.
  */
 export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
-	const { data: jobs = [] } = useJobsQuery();
-	const { data: projects = [], isPending: projectsLoading } = useProjectsQuery();
-	const [members, setMembers] = useState<MemberRow[]>([]);
-	const [membersLoading, setMembersLoading] = useState(true);
 
-	useEffect(() => {
-		getMembers()
-			.then(setMembers)
-			.catch(() => setMembers([]))
-			.finally(() => setMembersLoading(false));
-	}, []);
-
-	// Filters.
+	// The console filter standard: store + URL sync. The date range stays local — its
+	// presets are now-relative, so persisting a resolved range would go stale (see
+	// components/jobs/jobs-query.ts).
+	const filters = useJobsFilters((s) => s.filters);
+	const set = useJobsFilters((s) => s.set);
+	const reset = useJobsFilters((s) => s.reset);
+	useFilterUrlSync(useJobsFilters, DEFAULT_JOBS_FILTERS);
 	const [range, setRange] = useState<DateRange>(() =>
 		presetRange(JOBS_DEFAULT_PRESET),
 	);
@@ -81,92 +96,62 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
 			"Last 12 months",
 	);
-	const [authorIds, setAuthorIds] = useState<string[]>([]);
-	const [envIds, setEnvIds] = useState<string[]>([]);
-	const [projectIds, setProjectIds] = useState<string[]>([]);
-	const [statuses, setStatuses] = useState<string[]>([]);
-	const [types, setTypes] = useState<string[]>([]);
 	const [pageIndex, setPageIndex] = useState(0);
 
+	// Search stays responsive (bound to filters.search) but only re-keys the query after a
+	// 300ms pause — the input recomputes the memo on every keystroke, yet the normalized
+	// object (and so the structural TanStack key) is stable until the debounced value moves.
+	const debouncedSearch = useDebouncedValue(filters.search, 300);
+
+	// The normalized query IS the key: equal filters hit the cache, and the range's
+	// concrete ISO bounds only change when the user picks a range.
+	const query = useMemo(
+		() =>
+			normalizeJobsQuery(
+				{ ...filters, search: debouncedSearch },
+				{ from: range.from.toISOString(), to: range.to.toISOString() },
+				projectId,
+			),
+		[filters, debouncedSearch, range, projectId],
+	);
+	const page = useJobsPageQuery(query);
+	const rows = useMemo(() => page.data?.rows ?? [], [page.data]);
+	const facets = page.data?.facets;
+
+	// Author labels/avatars resolve through the cached members query; counts come from
+	// the unfiltered facet universe.
+	const { data: members = [], isPending: membersLoading } = useMembersQuery();
+	const memberById = useMemo(() => new Map(members.map((m) => [m.userId, m])), [members]);
 	const authorById = useMemo(
 		() =>
 			new Map<string, JobAuthorInfo>(
 				members.map((m) => [
 					m.userId,
-					{
-						name: m.name,
-						username: m.username,
-						email: m.email,
-						image: m.image,
-					},
+					{ name: m.name, username: m.username, email: m.email, image: m.image },
 				]),
 			),
 		[members],
 	);
-
 	const userOptions = useMemo(
 		() =>
-			members.map((m) => ({
-				value: m.userId,
-				label: displayName({ name: m.name, username: m.username, email: m.email }),
-				image: m.image,
-			})),
-		[members],
+			(facets?.authors ?? []).map((o) => {
+				const m = memberById.get(o.value);
+				return {
+					value: o.value,
+					label: m
+						? displayName({ name: m.name, username: m.username, email: m.email })
+						: o.value,
+					image: m?.image,
+					hint: String(o.count),
+				};
+			}),
+		[facets, memberById],
 	);
-	const projectOptions = useMemo(
-		() => projects.map((p) => ({ value: p.id, label: p.project_name })),
-		[projects],
-	);
-	// Environment options are derived from the jobs in view (a job carries env id + name).
-	const envOptions = useMemo(() => {
-		const seen = new Map<string, string>();
-		for (const j of jobs) {
-			if (j.environment_id && j.environment_name && !seen.has(j.environment_id)) {
-				seen.set(
-					j.environment_id,
-					j.environment_stage
-						? `${j.environment_name} (${j.environment_stage})`
-						: j.environment_name,
-				);
-			}
-		}
-		return [...seen].map(([value, label]) => ({ value, label }));
-	}, [jobs]);
-
-	const filtered = useMemo(() => {
-		const from = range.from.getTime();
-		const to = range.to.getTime();
-		const authorSet = new Set(authorIds);
-		const envSet = new Set(envIds);
-		const projectSet = new Set(projectIds);
-		const statusSet = new Set(statuses);
-		const typeSet = new Set(types);
-
-		return jobs.filter((j) => {
-			if (projectId && j.project_id !== projectId) return false;
-			if (j.created_at) {
-				const t = new Date(j.created_at).getTime();
-				if (t < from || t > to) return false;
-			}
-			if (authorSet.size && (!j.user_id || !authorSet.has(j.user_id))) return false;
-			if (envSet.size && (!j.environment_id || !envSet.has(j.environment_id)))
-				return false;
-			if (
-				!projectId &&
-				projectSet.size &&
-				(!j.project_id || !projectSet.has(j.project_id))
-			)
-				return false;
-			if (statusSet.size && !statusSet.has(j.status)) return false;
-			if (typeSet.size && !typeSet.has(j.job_type)) return false;
-			return true;
-		});
-	}, [jobs, projectId, range, authorIds, envIds, projectIds, statuses, types]);
 
 	// Reset to the first page whenever the filters change (the set may shrink).
 	useEffect(() => {
 		setPageIndex(0);
-	}, [range, authorIds, envIds, projectIds, statuses, types]);
+	}, [query]);
 
 	const columns = useMemo(
 		() => buildJobColumns({ showProject: !projectId, authorById }),
@@ -177,9 +162,11 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		router.push(`/${orgSlug}/~/jobs/${job.id}`);
 	};
 
+	const total = page.data?.total ?? 0;
+
 	return (
 		<div className="space-y-6">
-			{jobs.length === 0 ? (
+			{!page.isPending && total === 0 ? (
 				<Empty className="min-h-[60vh]">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
@@ -199,7 +186,21 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 				</Empty>
 			) : (
 				<>
-					<div className="flex flex-wrap items-center gap-2.5">
+					<FilterBar
+						end={
+							<FilterBarReset
+								count={countActiveFilters(filters, DEFAULT_JOBS_FILTERS)}
+								onReset={reset}
+							/>
+						}
+					>
+						<FilterSearch
+							value={filters.search}
+							onChange={(v) => set("search", v)}
+							placeholder="Filter by project, environment, or error…"
+							ariaLabel="Search jobs"
+							className="w-[220px] max-w-[340px] flex-1"
+						/>
 						<QuickRangeFilter
 							label={rangeLabel}
 							value={range}
@@ -219,26 +220,25 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 							placeholder="All authors"
 							icon={Users}
 							options={userOptions}
-							value={authorIds}
-							onChange={setAuthorIds}
+							value={filters.authors}
+							onChange={(next) => set("authors", next)}
 							withAvatar
 							loading={membersLoading}
 						/>
 						<MultiCombobox
 							placeholder="All environments"
 							icon={Layers}
-							options={envOptions}
-							value={envIds}
-							onChange={setEnvIds}
+							options={comboOptions(facets?.envs)}
+							value={filters.envs}
+							onChange={(next) => set("envs", next)}
 						/>
 						{!projectId && (
 							<MultiCombobox
 								placeholder="All projects"
 								icon={Boxes}
-								options={projectOptions}
-								value={projectIds}
-								onChange={setProjectIds}
-								loading={projectsLoading}
+								options={comboOptions(facets?.projects)}
+								value={filters.projects}
+								onChange={(next) => set("projects", next)}
 								emptyAction={{
 									label: "Create project",
 									onSelect: () => router.push(`/${orgSlug}/~/new`),
@@ -248,28 +248,43 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 						<MultiCombobox
 							placeholder="All statuses"
 							icon={Activity}
-							options={STATUS_OPTIONS}
-							value={statuses}
-							onChange={setStatuses}
+							options={comboOptions(
+								facets?.statuses,
+								(o) => STATUS_LABELS.get(o.value) ?? o.value,
+							)}
+							value={filters.statuses}
+							onChange={(next) => set("statuses", next)}
 						/>
 						<MultiCombobox
 							placeholder="All types"
 							icon={Wrench}
-							options={TYPE_OPTIONS}
-							value={types}
-							onChange={setTypes}
+							options={comboOptions(
+								facets?.types,
+								(o) => JOB_TYPES[o.value as keyof typeof JOB_TYPES]?.label ?? o.value,
+							)}
+							value={filters.types}
+							onChange={(next) => set("types", next)}
 						/>
-					</div>
+					</FilterBar>
 
 					<TooltipProvider delayDuration={300}>
-						<DataTable
-							columns={columns}
-							data={filtered}
-							onRowClick={handleRowClick}
-							pageIndex={pageIndex}
-							onPageIndexChange={setPageIndex}
-							scrollHeight="h-[70vh]"
-						/>
+						{/* keepPreviousData: the previous rows stay visible, dimmed, while a
+						    filter change refetches (the standard's isPlaceholderData rule). */}
+						<div
+							className={cn(
+								"transition-opacity",
+								page.isPlaceholderData && "opacity-60",
+							)}
+						>
+							<DataTable
+								columns={columns}
+								data={rows}
+								onRowClick={handleRowClick}
+								pageIndex={pageIndex}
+								onPageIndexChange={setPageIndex}
+								scrollHeight="h-[70vh]"
+							/>
+						</div>
 					</TooltipProvider>
 				</>
 			)}

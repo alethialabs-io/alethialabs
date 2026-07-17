@@ -34,6 +34,7 @@ import {
 	projectRepositories,
 	projectSourceRepos,
 	projectSecrets,
+	projectServices,
 	projectStorageBuckets,
 	projectTopics,
 	projects,
@@ -183,6 +184,12 @@ export interface CreateProjectInput {
 		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
 		"repository_url"
 	>[];
+	// W1 — first-class application workloads. resolved_image is the W2 build's write-back
+	// slot (output column, like registries.repository_url) — never part of a create/save.
+	services?: Omit<
+		ComponentInsert<typeof projectServices.$inferInsert>,
+		"resolved_image"
+	>[];
 }
 
 // ============================================================
@@ -255,6 +262,10 @@ async function writeComponents(
 		await tx
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
+	if (data.services?.length)
+		await tx
+			.insert(projectServices)
+			.values(data.services.map((s) => ({ ...base, ...s })));
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas
@@ -289,6 +300,9 @@ async function clearComponents(
 	await tx
 		.delete(projectContainerRegistries)
 		.where(envScope(projectContainerRegistries, projectId, environmentId));
+	await tx
+		.delete(projectServices)
+		.where(envScope(projectServices, projectId, environmentId));
 }
 
 export async function createProject(data: CreateProjectInput) {
@@ -533,6 +547,10 @@ export async function getProject(
 				.select()
 				.from(projectContainerRegistries)
 				.where(envScope(projectContainerRegistries, projectId, envId));
+			const services = await tx
+				.select()
+				.from(projectServices)
+				.where(envScope(projectServices, projectId, envId));
 			return {
 				network: network ?? null,
 				cluster: cluster ?? null,
@@ -547,6 +565,7 @@ export async function getProject(
 				secrets,
 				storage_buckets: storageBuckets,
 				container_registries: containerRegistries,
+				services,
 			};
 		}
 
@@ -566,6 +585,7 @@ export async function getProject(
 					secrets: [],
 					storage_buckets: [],
 					container_registries: [],
+					services: [],
 				};
 
 		let cloudProvider = "aws";
@@ -581,8 +601,10 @@ export async function getProject(
 		return {
 			project: {
 				...project,
-				// The env being viewed (active), so the canvas/form reflect that environment.
-				environment_stage: activeEnv?.name ?? "development",
+				// The env being viewed (active), so the canvas/form reflect that environment. Sourced
+				// from the env's `stage` pgEnum (a narrow EnvironmentStage), not its free-text `name` —
+				// this IS the stage, and it lets getProjectAsFormData drop its narrowing helper.
+				environment_stage: activeEnv?.stage ?? "development",
 				status: activeEnv?.status ?? "DRAFT",
 				default_environment_id: defaultEnv?.id ?? null,
 			},
@@ -712,6 +734,10 @@ async function buildConfigSnapshot(
 			.select()
 			.from(projectStorageBuckets)
 			.where(envScope(projectStorageBuckets, projectId, envId));
+		const services = await tx
+			.select()
+			.from(projectServices)
+			.where(envScope(projectServices, projectId, envId));
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
@@ -804,6 +830,33 @@ async function buildConfigSnapshot(
 				for (const c of present) {
 					if (blocked.has(c.kind)) {
 						throw unsupportedKindGateError(c.kind, identity.provider, c.name);
+					}
+				}
+			}
+
+			// W3 fail-closed binding gate: every service binding must reference a backing resource
+			// that exists in THIS environment. A dangling {kind,name} would reach the runner and
+			// fail to resolve at deploy (no endpoint/secret to inject) — fail loudly here instead of
+			// a confusing deploy-time error. Skipped in BYO-IaC replace mode (inside `!iacSource`),
+			// where the backing resource may be provisioned by the customer's module, not the graph.
+			const dbNames = new Set(databases.map((d) => d.name));
+			const cacheNames = new Set(caches.map((c) => c.name));
+			const queueNames = new Set(queues.map((q) => q.name));
+			const secretNames = new Set(secrets.map((s) => s.name));
+			for (const svc of services) {
+				for (const b of svc.bindings ?? []) {
+					const targetExists =
+						b.target.kind === "database"
+							? dbNames.has(b.target.name)
+							: b.target.kind === "cache"
+								? cacheNames.has(b.target.name)
+								: b.target.kind === "queue"
+									? queueNames.has(b.target.name)
+									: secretNames.has(b.target.name);
+					if (!targetExists) {
+						throw new Error(
+							`Service "${svc.name}" binds to ${b.target.kind} "${b.target.name}", which does not exist in this environment. Add the ${b.target.kind} or remove the binding.`,
+						);
 					}
 				}
 			}
@@ -1031,6 +1084,9 @@ async function buildConfigSnapshot(
 				...b,
 				...resolvePlacement(b),
 			})),
+			// W1 — first-class application workloads (the customer's own code). The runner renders
+			// each into k8s manifests; image build/push (from source when kind==="repo") is W2.
+			services: services.map((s) => ({ ...s, ...resolvePlacement(s) })),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
@@ -1198,6 +1254,85 @@ export async function planProject(
 	return result;
 }
 
+/** True when a frozen config snapshot carries at least one repo-sourced service — a W2
+ * build input (the in-cluster kaniko build turns it into a pushed image). */
+function hasRepoSourcedServices(configSnapshot: {
+	services?: { source?: { kind?: string } | null }[];
+}): boolean {
+	return (configSnapshot.services ?? []).some((s) => s?.source?.kind === "repo");
+}
+
+/**
+ * Queue a BUILD job (W2 image build & push): kaniko builds every repo-sourced service's
+ * image IN the environment's own cluster and pushes it to the provisioned registry via
+ * the build-SA's IRSA (keyless). On SUCCESS the job-status route persists each digest to
+ * project_services.resolved_image and chains the app DEPLOY (builds.ts), which renders
+ * the services with real images. The build runs in-cluster, so it only queues off an
+ * ACTIVE (provisioned) environment.
+ */
+export async function buildProject(
+	projectId: string,
+	environmentId?: string | null,
+	runnerId?: string | null,
+) {
+	const actor = await authorize("deploy", { type: "project", id: projectId });
+	// Defense-in-depth: a client-supplied assigned runner must belong to the
+	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
+	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
+	await assertUsageAllowed(actor.orgId);
+	const owner = actor.userId;
+	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		projectId,
+		environmentId,
+		"deploy",
+	);
+
+	if (!hasRepoSourcedServices(configSnapshot))
+		throw new Error(
+			"Nothing to build — this environment has no repo-sourced services.",
+		);
+	if (environment.status !== "ACTIVE")
+		throw new Error(
+			"Builds run in the environment's own cluster — provision the infrastructure first.",
+		);
+
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				project_id: projectId,
+				environment_id: environment.id,
+				cloud_identity_id: identity.id,
+				job_type: "BUILD",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				// New trace root for this build operation (enqueue → claim → runner).
+				traceparent: newTraceparent(),
+				...(runnerId ? { assigned_runner_id: runnerId } : {}),
+			})
+			.returning({ id: jobs.id });
+
+		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+			orgId: actor.orgId,
+			projectId,
+		});
+
+		await tx.insert(auditLog).values({
+			project_id: projectId,
+			user_id: owner,
+			action: "PROVISIONED",
+			changes: { job_id: job.id, environment_id: environment.id, job_type: "BUILD" },
+		});
+
+		return { jobId: job.id };
+	});
+
+	notifyScaler();
+	return result;
+}
+
 export async function provisionProject(
 	projectId: string,
 	planJobId?: string,
@@ -1213,6 +1348,52 @@ export async function provisionProject(
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, projectId, environmentId, "deploy");
 	assertIacSourceQueueable(iacSource, "deploy");
+
+	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
+	// services queues the BUILD first — the status route persists the digests and chains
+	// the DEPLOY (builds.ts), so the deploy renders real images instead of skipping
+	// unbuilt services. First-time provisioning (infra not up) deploys infra directly —
+	// the in-cluster build has nowhere to run until the cluster exists. A gated
+	// plan→apply (planJobId) never reroutes: it must apply exactly the reviewed plan.
+	if (
+		!planJobId &&
+		environment.status === "ACTIVE" &&
+		hasRepoSourcedServices(configSnapshot)
+	) {
+		const result = await withOwnerScope(owner, async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values({
+					user_id: owner,
+					project_id: projectId,
+					environment_id: environment.id,
+					cloud_identity_id: identity.id,
+					job_type: "BUILD",
+					config_snapshot: configSnapshot,
+					status: "QUEUED",
+					traceparent: newTraceparent(),
+					...(runnerId ? { assigned_runner_id: runnerId } : {}),
+				})
+				.returning({ id: jobs.id });
+
+			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+				orgId: actor.orgId,
+				projectId,
+			});
+
+			await tx.insert(auditLog).values({
+				project_id: projectId,
+				user_id: owner,
+				action: "PROVISIONED",
+				changes: { job_id: job.id, environment_id: environment.id, job_type: "BUILD" },
+			});
+
+			return { jobId: job.id, jobType: "BUILD" as const };
+		});
+
+		notifyScaler();
+		return result;
+	}
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -1438,6 +1619,9 @@ export async function deleteProject(projectId: string) {
 // Duplicate for another provider
 // ============================================================
 
+// `projectServices.type` and the env's `environment_stage` source are now pgEnum-backed (see
+// schema/enums.ts), so getProject returns them already narrowed — the #580 narrowing helpers are gone.
+
 /** Converts a project's DB representation to ProjectFormData for duplication / pre-populating forms. */
 export async function getProjectAsFormData(
 	projectId: string,
@@ -1584,7 +1768,21 @@ export async function getProjectAsFormData(
 			provider: r.provider ?? undefined,
 			provider_config: r.provider_config ?? undefined,
 		})),
-	} as ProjectFormData;
+		// Output columns (resolved_image) are provisioned state, not design — stripped here.
+		// Bindings (W3) ARE design — the user's declared service→infra edges — so they round-trip.
+		services: source.components.services.map((s) => ({
+			name: s.name,
+			type: s.type,
+			source: s.source,
+			build: s.build ?? undefined,
+			env: s.env,
+			bindings: s.bindings,
+			ports: s.ports,
+			replicas: s.replicas,
+			resources: s.resources ?? undefined,
+			probe: s.probe ?? undefined,
+		})),
+	};
 
 	return { formData, provider };
 }
@@ -1845,13 +2043,13 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 		}),
 	);
 
-	// composite key ("type name") → { present sigs per env }
+	// composite key ("typename") → { present sigs per env }
 	const keys = new Map<string, { component_type: string; key: string }>();
 	const sigByEnv = new Map<string, Map<string, string>>(); // envId → (compositeKey → sig)
 	for (const { env, inventory } of designs) {
 		const m = new Map<string, string>();
 		for (const entry of inventory) {
-			const composite = `${entry.component_type} ${entry.key}`;
+			const composite = `${entry.component_type}${entry.key}`;
 			keys.set(composite, { component_type: entry.component_type, key: entry.key });
 			m.set(composite, entry.sig);
 		}
@@ -2043,10 +2241,23 @@ export interface ProjectListQuery {
 	sort?: "activity" | "name";
 }
 
-/** The filtered/sorted grid rows plus the full (unfiltered) facet universe for the popover. */
+/** A cloud facet option with its count over the unfiltered org universe. */
+export interface CloudFacet {
+	value: string;
+	count: number;
+}
+
+/** A repository facet option (url + display label) with its unfiltered count. */
+export interface RepoFacet extends ProjectRepoRef {
+	count: number;
+}
+
+/** The filtered/sorted grid rows plus the full (unfiltered) facet universe — with counts
+ * so the filter bar's options show how many projects each matches (the console filter
+ * standard: counts over the universe, options never disappear as you select them). */
 export interface ProjectListResult {
 	projects: ProjectListItem[];
-	facets: { clouds: string[]; repos: ProjectRepoRef[] };
+	facets: { clouds: CloudFacet[]; repos: RepoFacet[] };
 }
 
 /**
@@ -2098,15 +2309,27 @@ export async function queryProjects(
 			repositories: repoMap.get(p.id) ?? [],
 		}));
 
-		// Facets: the full universe of clouds + repos across the org (never narrowed by filters).
-		const cloudSet = new Set<string>();
-		const repoFacet = new Map<string, ProjectRepoRef>();
+		// Facets: the full universe of clouds + repos across the org (never narrowed by
+		// filters), each with the count of projects it matches. A project's repositories are
+		// already distinct by URL, so one increment per (project, repo) = projects-per-repo.
+		const cloudCount = new Map<string, number>();
+		const repoFacet = new Map<string, RepoFacet>();
 		for (const p of items) {
-			if (p.cloud_provider) cloudSet.add(p.cloud_provider);
-			for (const r of p.repositories) repoFacet.set(r.url, r);
+			if (p.cloud_provider)
+				cloudCount.set(
+					p.cloud_provider,
+					(cloudCount.get(p.cloud_provider) ?? 0) + 1,
+				);
+			for (const r of p.repositories) {
+				const cur = repoFacet.get(r.url);
+				if (cur) cur.count += 1;
+				else repoFacet.set(r.url, { ...r, count: 1 });
+			}
 		}
 		const facets = {
-			clouds: [...cloudSet].sort(),
+			clouds: [...cloudCount.entries()]
+				.map(([value, count]) => ({ value, count }))
+				.sort((a, b) => a.value.localeCompare(b.value)),
 			repos: [...repoFacet.values()].sort((a, b) =>
 				a.label.localeCompare(b.label),
 			),

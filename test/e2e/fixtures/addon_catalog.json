@@ -6,7 +6,14 @@
 		"chart": "argo-rollouts",
 		"version": "2.37.7",
 		"namespace": "argo-rollouts",
-		"values": {},
+		"values": {
+			"controller": {
+				"replicas": 2
+			},
+			"dashboard": {
+				"enabled": false
+			}
+		},
 		"syncWave": 2
 	},
 	{
@@ -19,6 +26,13 @@
 		"values": {
 			"crds": {
 				"enabled": true
+			},
+			"replicaCount": 1,
+			"prometheus": {
+				"enabled": true,
+				"servicemonitor": {
+					"enabled": false
+				}
 			}
 		},
 		"syncWave": 1
@@ -44,7 +58,17 @@
 		"chart": "falco",
 		"version": "4.9.0",
 		"namespace": "falco",
-		"values": {},
+		"values": {
+			"driver": {
+				"kind": "auto"
+			},
+			"falco": {
+				"json_output": false
+			},
+			"falcosidekick": {
+				"enabled": false
+			}
+		},
 		"syncWave": 2
 	},
 	{
@@ -54,7 +78,14 @@
 		"chart": "goldilocks",
 		"version": "9.0.0",
 		"namespace": "goldilocks",
-		"values": {},
+		"values": {
+			"vpa": {
+				"enabled": false
+			},
+			"dashboard": {
+				"replicaCount": 2
+			}
+		},
 		"syncWave": 4
 	},
 	{
@@ -71,6 +102,9 @@
 						"size": "50Gi"
 					}
 				}
+			},
+			"expose": {
+				"type": "ingress"
 			}
 		},
 		"syncWave": 2
@@ -82,7 +116,17 @@
 		"chart": "ingress-nginx",
 		"version": "4.11.2",
 		"namespace": "ingress-nginx",
-		"values": {},
+		"values": {
+			"controller": {
+				"replicaCount": 1,
+				"service": {
+					"type": "LoadBalancer"
+				},
+				"metrics": {
+					"enabled": false
+				}
+			}
+		},
 		"syncWave": 1
 	},
 	{
@@ -92,7 +136,11 @@
 		"chart": "keda",
 		"version": "2.15.1",
 		"namespace": "keda",
-		"values": {},
+		"values": {
+			"operator": {
+				"replicaCount": 1
+			}
+		},
 		"syncWave": 2
 	},
 	{
@@ -109,6 +157,7 @@
 			"prometheus": {
 				"prometheusSpec": {
 					"retention": "15d",
+					"scrapeInterval": "30s",
 					"storageSpec": {
 						"volumeClaimTemplate": {
 							"spec": {
@@ -121,6 +170,9 @@
 						}
 					}
 				}
+			},
+			"alertmanager": {
+				"enabled": true
 			}
 		},
 		"syncWave": 2
@@ -132,7 +184,14 @@
 		"chart": "kyverno",
 		"version": "3.2.6",
 		"namespace": "kyverno",
-		"values": {},
+		"values": {
+			"admissionController": {
+				"replicas": 3
+			},
+			"backgroundController": {
+				"enabled": true
+			}
+		},
 		"syncWave": 1
 	},
 	{
@@ -177,6 +236,11 @@
 			},
 			"backend": {
 				"replicas": 1
+			},
+			"singleBinary": {
+				"persistence": {
+					"size": "10Gi"
+				}
 			}
 		},
 		"syncWave": 3
@@ -248,7 +312,8 @@
 						}
 					}
 				}
-			}
+			},
+			"replicaCount": 1
 		},
 		"syncWave": 3
 	},
@@ -259,7 +324,14 @@
 		"chart": "reloader",
 		"version": "1.1.0",
 		"namespace": "reloader",
-		"values": {},
+		"values": {
+			"reloader": {
+				"watchGlobally": true,
+				"deployment": {
+					"replicas": 1
+				}
+			}
+		},
 		"syncWave": 1
 	},
 	{
@@ -269,7 +341,9 @@
 		"chart": "sealed-secrets",
 		"version": "2.16.1",
 		"namespace": "kube-system",
-		"values": {},
+		"values": {
+			"keyrenewperiod": "720h"
+		},
 		"syncWave": 1
 	},
 	{
@@ -279,7 +353,15 @@
 		"chart": "tempo",
 		"version": "1.10.3",
 		"namespace": "monitoring",
-		"values": {},
+		"values": {
+			"tempo": {
+				"retention": "24h"
+			},
+			"persistence": {
+				"enabled": true,
+				"size": "10Gi"
+			}
+		},
 		"syncWave": 3
 	},
 	{
@@ -323,7 +405,8 @@
 		"version": "7.2.1",
 		"namespace": "velero",
 		"values": {
-			"snapshotsEnabled": true
+			"snapshotsEnabled": true,
+			"deployNodeAgent": false
 		},
 		"syncWave": 3
 	}

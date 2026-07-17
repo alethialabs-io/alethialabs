@@ -39,3 +39,40 @@ if [ -n "$hits" ]; then
 fi
 
 echo "✓ project templates are plan-out-safe (no in-tofu Kubernetes-applying resources)"
+
+# ── Second invariant: the AZ / zone COUNT must be plan-known ──────────────────────────────────
+#
+# The same `tofu plan -out` requirement means every `count`/`for_each` must resolve at plan. An
+# availability-zones DATA SOURCE resolves to UNKNOWN at plan under the runner's deferred provider
+# (assume-role / OIDC / WIF / RAM — credentials only resolve at apply). So `azs = data.<...>zones`
+# or `length(data.<...>zones)` feeding a subnet/NAT count makes the count undeterminable → the
+# plan fails "Invalid count argument" BEFORE apply. This broke the real aws nightly (#551, fixed in
+# #608 by deriving AZs statically). Derive the AZ/zone count from a plan-known static list instead.
+ZONES_PATTERN='(\bazs[[:space:]]*=[[:space:]]*data\.|length\(data\.[a-z_]*(availability_)?zones)'
+
+# Reviewed exceptions — files that still carry the pattern, each with a tracking issue. DELETE the
+# entry when the referenced fix lands. (Mirrors infra/.trivyignore: an allowlist, never a silent skip.)
+ZONES_ALLOWLIST=(
+)
+
+zone_hits="$(grep -rnE "$ZONES_PATTERN" "$ROOT" 2>/dev/null || true)"
+# Drop allowlisted files.
+for f in "${ZONES_ALLOWLIST[@]}"; do
+  zone_hits="$(printf '%s\n' "$zone_hits" | grep -vF "$f" || true)"
+done
+zone_hits="$(printf '%s\n' "$zone_hits" | grep -vE '^[[:space:]]*$' || true)"
+
+if [ -n "$zone_hits" ]; then
+  echo "❌ plan-out-safety violation — AZ/zone count derived from a zones DATA SOURCE (unknown at plan):"
+  echo ""
+  echo "$zone_hits"
+  echo ""
+  echo "Under the runner's deferred provider (assume-role/OIDC/WIF/RAM), a zones data source is unknown"
+  echo "at plan, so a subnet/NAT 'count' built from it fails 'tofu plan -out' before apply (see #551/#608)."
+  echo "Derive the AZ/zone count from a plan-known static list (e.g. aws: azs = [\"\${var.region}a\", …]),"
+  echo "or make the subnet count a fixed number that indexes into the discovered zones."
+  echo "If a template legitimately needs an exception, add it to ZONES_ALLOWLIST with a tracking issue."
+  exit 1
+fi
+
+echo "✓ project templates derive AZ/zone counts plan-safely (no count from a zones data source)"

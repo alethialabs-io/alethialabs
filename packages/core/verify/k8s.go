@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	tfjson "github.com/hashicorp/terraform-json"
-	"gopkg.in/yaml.v3"
 )
 
 // ParseCustomerPlan parses a customer-provided OpenTofu/Terraform `show -json` plan so
@@ -39,30 +39,18 @@ type k8sResource struct {
 	raw       map[string]any
 }
 
-// decodeManifests decodes a (possibly multi-document) YAML manifest stream into k8s
-// resources, skipping empty/null documents.
+// decodeManifests decodes a (possibly multi-document) YAML manifest stream into the reduced
+// k8sResource the controls read. It delegates the parse to the shared k8s.Decode so the verify
+// controls and the BYO chart-workload extractor can never disagree about what a manifest stream
+// contains; the mapping just projects the shared Resource onto the controls' local shape.
 func decodeManifests(manifests []byte) ([]k8sResource, error) {
-	dec := yaml.NewDecoder(bytes.NewReader(manifests))
-	var out []k8sResource
-	for {
-		var doc map[string]any
-		err := dec.Decode(&doc)
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return nil, fmt.Errorf("invalid k8s YAML: %w", err)
-		}
-		if doc == nil {
-			continue
-		}
-		meta, _ := doc["metadata"].(map[string]any)
-		out = append(out, k8sResource{
-			kind:      asString(doc["kind"]),
-			name:      asString(meta["name"]),
-			namespace: asString(meta["namespace"]),
-			raw:       doc,
-		})
+	rs, err := k8s.Decode(manifests)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]k8sResource, len(rs))
+	for i, r := range rs {
+		out[i] = k8sResource{kind: r.Kind, name: r.Name, namespace: r.Namespace, raw: r.Raw}
 	}
 	return out, nil
 }

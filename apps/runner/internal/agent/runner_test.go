@@ -103,6 +103,10 @@ func (m *mockAPI) FetchGitToken(jobID, repoURL string) (string, error) {
 	return "", nil
 }
 
+func (m *mockAPI) FetchAddonSecrets(jobID string) (map[string]map[string]string, error) {
+	return nil, nil
+}
+
 func (m *mockAPI) FetchStateToken(jobID string) (string, error) {
 	return "test-state-token", nil
 }

@@ -27,6 +27,7 @@ const (
 	JobTypeIacScan       JobType = "IAC_SCAN"
 	JobTypeStateSurgery  JobType = "STATE_SURGERY"
 	JobTypeProbeCluster  JobType = "PROBE_CLUSTER"
+	JobTypeBuild         JobType = "BUILD"
 )
 
 // AllJobTypes is every provision_job_type value, in schema order.
@@ -44,6 +45,7 @@ var AllJobTypes = []JobType{
 	JobTypeIacScan,
 	JobTypeStateSurgery,
 	JobTypeProbeCluster,
+	JobTypeBuild,
 }
 
 // JobStatus mirrors the provision_job_status enum (lib/db/schema/enums.ts).

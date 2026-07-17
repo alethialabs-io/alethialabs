@@ -60,6 +60,9 @@ export type SchemaKey =
 
 /** Display order of the Add-palette groups (mirrors the provisionable service types). */
 export const PALETTE_GROUP_ORDER = [
+	// The application workload is the north-star centrepiece, so it leads the palette in its own
+	// group — above the cloud infrastructure it binds to.
+	"Workloads",
 	"Data",
 	"Storage",
 	"Messaging",
@@ -614,10 +617,9 @@ export const NODE_REGISTRY: NodeRegistry = {
 			provider_config: {},
 		}),
 	},
-	// W1 — a first-class application workload. Minimal registry entry (facts + defaultData); the
-	// rich config card + add-palette presentation are the class:ui lane (#571). Not cloud-scoped: a
-	// service runs on the cluster, not a cloud account. No palette yet (manual add is class:ui;
-	// population from scan/BYO/AI is W5/W6).
+	// W1 — a first-class application workload. Not cloud-scoped: a service runs on the cluster, not a
+	// cloud account, so it leads the palette in its own Workloads group. The rich config sheet is the
+	// class:ui lane (#571). Population from scan/BYO/AI is W5/W6.
 	service: {
 		kind: "service",
 		schemaKey: "services",
@@ -627,6 +629,10 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Service",
 		label: "Service",
 		icon: Boxes,
+		palette: {
+			group: "Workloads",
+			subtitle: "App workload — from your repo or a prebuilt image",
+		},
 		card: {
 			facts: ({ config }) => [
 				{ label: "Type", value: config.type ?? "deployment" },
@@ -643,6 +649,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 			type: "deployment",
 			source: { kind: "repo", repo_url: "", path: "" },
 			env: [],
+			bindings: [],
 			ports: [],
 			replicas: 2,
 		}),
@@ -788,6 +795,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 
 /** Kinds offered in the palette (everything except the fixed project root). */
 export const ADDABLE_KINDS: NodeKind[] = [
+	"service",
 	"network",
 	"cluster",
 	"database",

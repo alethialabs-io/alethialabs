@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
+	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
@@ -88,8 +89,20 @@ func (w *Runner) executeChartScan(ctx context.Context, job *Job, stdout, stderr 
 	if err != nil {
 		return fmt.Errorf("read scan result: %w", err)
 	}
+	// Post the safety verdict and the W5 DESCRIBE output together, so the console's finalize sees
+	// both in one execution_metadata update. Missing describe output (older render, no workloads) is
+	// benign — the console only persists chart_workloads when the describe flag is on.
+	meta := map[string]any{}
 	if report != nil {
-		_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{"verify_result": report})
+		meta["verify_result"] = report
+	}
+	if workloads, werr := readChartWorkloads(workDir); werr != nil {
+		fmt.Fprintf(stderr, "Read described workloads failed (non-fatal): %v\n", werr)
+	} else if len(workloads) > 0 {
+		meta["chart_workloads"] = workloads
+	}
+	if len(meta) > 0 {
+		_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", meta)
 	}
 	return nil
 }
@@ -99,7 +112,6 @@ func (w *Runner) executeChartScan(ctx context.Context, job *Job, stdout, stderr 
 // Shared by the Passthrough closure and the container child — no git token, no egress.
 func runChartScanStage(ctx context.Context, p stageChartScanPayload, workDir string, stdout, stderr io.Writer) error {
 	_ = ctx
-	_ = stderr
 
 	helmCmd := fmt.Sprintf("helm template scan %s", shellQuote(p.ChartDir))
 	if len(p.Values) > 0 {
@@ -128,8 +140,26 @@ func runChartScanStage(ctx context.Context, p stageChartScanPayload, workDir str
 		report.Verdict, report.Summary.Pass, report.Summary.Fail, report.Summary.Warn,
 		report.Summary.NotEvaluable)
 
+	res := stageResult{}
 	rb, _ := json.Marshal(report)
-	return writeStageResult(workDir, stageResult{VerifyReport: rb}, nil)
+	res.VerifyReport = rb
+
+	// W5 Path A DESCRIBE: extract the chart's workloads from the SAME rendered manifests the verify
+	// report ran over (the render already succeeded, so a decode error here would be surprising —
+	// it's non-fatal to the scan, which is fundamentally the safety verdict). Pure parsing, no
+	// secrets: env is reduced to key NAMES inside k8s.Workloads.
+	if resources, derr := k8s.Decode([]byte(manifests)); derr == nil {
+		if workloads := k8s.Workloads(resources); len(workloads) > 0 {
+			if wb, werr := json.Marshal(workloads); werr == nil {
+				res.ChartWorkloads = wb
+			}
+			fmt.Fprintf(stdout, "Described %d workload(s) from the chart.\n", len(workloads))
+		}
+	} else {
+		fmt.Fprintf(stderr, "Workload describe skipped (decode: %v)\n", derr)
+	}
+
+	return writeStageResult(workDir, res, nil)
 }
 
 // shellQuote single-quotes a path for a `bash -c` command line (utils.ExecuteCommand* uses bash),

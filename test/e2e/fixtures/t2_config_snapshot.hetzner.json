@@ -60,6 +60,7 @@
 	"secrets": [],
 	"container_registries": [],
 	"storage_buckets": [],
+	"services": [],
 	"addons": [
 		{
 			"id": "reloader",
@@ -68,7 +69,14 @@
 			"chart": "reloader",
 			"version": "1.1.0",
 			"namespace": "reloader",
-			"values": {},
+			"values": {
+				"reloader": {
+					"watchGlobally": true,
+					"deployment": {
+						"replicas": 1
+					}
+				}
+			},
 			"syncWave": 1
 		}
 	],

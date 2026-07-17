@@ -315,6 +315,74 @@ resource "aws_iam_policy" "irsa_ai_bedrock_s3" {
  EOT  
 
 }
+#############################################
+#IRSA for in-cluster image builds (W2)      #
+#############################################
+# The kaniko build Job's ServiceAccount assumes this role to push built service images into
+# the project's ECR repositories — keyless (no registry credentials ever minted or mounted).
+# The SA coordinates are a fixed contract with the BUILD job renderer (packages/core/build):
+# namespace "alethia-build", ServiceAccount "kaniko-builder".
+locals {
+  ecr_build_namespace       = "alethia-build"
+  ecr_build_service_account = "kaniko-builder"
+}
+
+resource "aws_iam_policy" "irsa_ecr_build" {
+  count = var.provision_ecr ? 1 : 0
+
+  name_prefix = "irsa_ecr_build"
+  description = "ECR push for the in-cluster build ServiceAccount of cluster ${local.eks_name}"
+  policy      = <<EOT
+{
+    "Statement": [
+        {
+            "Action": [
+                "ecr:GetAuthorizationToken"
+            ],
+            "Effect": "Allow",
+            "Resource": "*",
+            "Sid": "EcrLogin"
+        },
+        {
+            "Action": [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:InitiateLayerUpload",
+                "ecr:UploadLayerPart",
+                "ecr:CompleteLayerUpload",
+                "ecr:PutImage"
+            ],
+            "Effect": "Allow",
+            "Resource": "arn:aws:ecr:${var.region}:${var.aws_account_id}:repository/${var.project_name}-*",
+            "Sid": "EcrPushProjectRepos"
+        }
+    ],
+    "Version": "2012-10-17"
+}
+EOT
+}
+
+module "irsa_ecr_build" {
+
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  count   = var.provision_ecr ? 1 : 0
+  version = "5.34.0"
+
+  assume_role_condition_test = "StringEquals"
+  create_role                = true
+  role_name                  = "ecr-build-${local.eks_name}"
+  role_policy_arns = {
+    ecr_build_policy = aws_iam_policy.irsa_ecr_build[0].arn
+  }
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks[0].oidc_provider_arn
+      namespace_service_accounts = ["${local.ecr_build_namespace}:${local.ecr_build_service_account}"]
+    }
+  }
+}
+
 ##########################
 #IRSA for S3 bucket   #
 ##########################

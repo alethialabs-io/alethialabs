@@ -12,7 +12,8 @@
 	},
 	"scripts": {
 		"build": "esbuild src/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/index.js",
-		"check-types": "tsc -p tsconfig.json --noEmit"
+		"check-types": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run"
 	},
 	"peerDependencies": {
 		"@better-auth/sso": "^1.6.0",
@@ -25,6 +26,8 @@
 	"devDependencies": {
 		"@types/node": "^20",
 		"esbuild": "^0.21.5",
-		"typescript": "^5"
+		"jose": "^5.0.0",
+		"typescript": "^5",
+		"vitest": "^2.1.9"
 	}
 }
