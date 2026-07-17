@@ -17,6 +17,7 @@ import { LifeBuoy } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { listMyCases } from "@/app/server/actions/support";
+import { ErrorState } from "@/components/errors/error-state";
 import { qk } from "@/lib/query/keys";
 import { CaseListItem } from "./case-list-item";
 
@@ -39,7 +40,12 @@ export function CaseList({
 }) {
 	const [filter, setFilter] = useState<CaseFilter>("all");
 
-	const { data: cases = [], isPending } = useQuery({
+	const {
+		data: cases = [],
+		isPending,
+		isError,
+		refetch,
+	} = useQuery({
 		queryKey: qk.supportCases(filter),
 		queryFn: () =>
 			listMyCases(filter === "all" ? {} : { status: filter }),
@@ -63,7 +69,18 @@ export function CaseList({
 				</TabsList>
 			</Tabs>
 
-			{cases.length === 0 && !isPending ? (
+			{isError ? (
+				// A fetch failure must not render as "no cases yet".
+				<ErrorState
+					title="Couldn't load your cases"
+					description="Something went wrong fetching your support cases. Check your connection and try again."
+					actions={
+						<Button variant="outline" size="sm" onClick={() => refetch()}>
+							Retry
+						</Button>
+					}
+				/>
+			) : cases.length === 0 && !isPending ? (
 				<Empty className="rounded-md border">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
