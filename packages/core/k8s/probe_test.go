@@ -132,3 +132,26 @@ func TestNotReadyReasons(t *testing.T) {
 		t.Fatalf("bad json should be nil, got %#v", r)
 	}
 }
+
+func TestPodProbeVerdict(t *testing.T) {
+	// Ran but couldn't connect → the (correct) network verdict.
+	if v := podProbeVerdict("Running", ""); !strings.Contains(v, "pod network is broken") {
+		t.Fatalf("Running should give the network verdict: %q", v)
+	}
+	if v := podProbeVerdict("Succeeded", ""); !strings.Contains(v, "pod network is broken") {
+		t.Fatalf("Succeeded should give the network verdict: %q", v)
+	}
+	// Never started → NOT a network verdict; names the blocker.
+	v := podProbeVerdict("Pending", "ImagePullBackOff")
+	if strings.Contains(v, "pod network is broken") || !strings.Contains(v, "never started") || !strings.Contains(v, "ImagePullBackOff") {
+		t.Fatalf("Pending/ImagePullBackOff misclassified: %q", v)
+	}
+	// Unscheduled (no waiting reason yet) still avoids the network verdict.
+	if v := podProbeVerdict("Pending", ""); strings.Contains(v, "pod network is broken") || !strings.Contains(v, "never started") {
+		t.Fatalf("Pending misclassified: %q", v)
+	}
+	// No pod observed at all.
+	if v := podProbeVerdict("", ""); !strings.Contains(v, "no pod observed") {
+		t.Fatalf("empty should say no pod observed: %q", v)
+	}
+}
