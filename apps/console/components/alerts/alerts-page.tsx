@@ -10,6 +10,7 @@
 // Docs link). The whole surface is gated behind the `alerting` entitlement (Pro+); below
 // that we show the upsell.
 
+import { coerceEnum } from "@/lib/coerce";
 import { Activity, BookOpen, type LucideIcon, ShieldAlert, Webhook } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -49,7 +50,11 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 			const el = document.getElementById(id);
 			if (el) observer.observe(el);
 		}
-		const hash = window.location.hash.slice(1) as AlertsSection;
+		const hash = coerceEnum(
+			window.location.hash.slice(1),
+			SECTIONS,
+			"policies",
+		);
 		if (SECTIONS.includes(hash)) {
 			document
 				.getElementById(hash)

@@ -59,7 +59,7 @@ function fallbackPrice(plan: PlanId): LivePlanPrice {
 export const getPlanPrice = cache(async (plan: PlanId): Promise<LivePlanPrice> => {
 	if (plan === "community" || !isStripeConfigured()) return fallbackPrice(plan);
 	try {
-		const price = await getStripe().prices.retrieve(priceIdForPlan(plan as PaidPlan), {
+		const price = await getStripe().prices.retrieve(priceIdForPlan(plan), {
 			expand: ["currency_options"],
 		});
 		if (typeof price.unit_amount !== "number") return fallbackPrice(plan);
