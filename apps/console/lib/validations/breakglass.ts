@@ -5,13 +5,13 @@
 // dispatcher runs — no manual string matching.
 
 import { z } from "zod";
-import { breakglassAction } from "@/lib/db/schema/enums";
+import { breakglassAction, projectStatus } from "@/lib/db/schema/enums";
 
 /** The typed action-input block (mirrors BreakglassActionInput in types/jsonb.types.ts). */
 export const breakglassInputSchema = z
 	.object({
-		expectedFrom: z.array(z.string()).optional(),
-		to: z.string().optional(),
+		expectedFrom: z.array(z.enum(projectStatus.enumValues)).optional(),
+		to: z.enum(projectStatus.enumValues).optional(),
 		stateKey: z.string().optional(),
 		fleetReason: z.string().optional(),
 		projectId: z.string().uuid().optional(),
