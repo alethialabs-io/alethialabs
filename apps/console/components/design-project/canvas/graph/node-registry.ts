@@ -634,6 +634,9 @@ export const NODE_REGISTRY: NodeRegistry = {
 			subtitle: "App workload — from your repo or a prebuilt image",
 		},
 		card: {
+			// A service is both a target (it runs ON the cluster) and a source (it BINDS to backing
+			// resources — the W3 binding edges originate here).
+			handles: { source: true, target: true },
 			facts: ({ config }) => [
 				{ label: "Type", value: config.type ?? "deployment" },
 				{

@@ -47,7 +47,7 @@ function effectiveIdentity(node: CanvasNode, core: string | null): string | null
  * cluster and cluster→{every leaf}. A CORE↔CORE edge whose endpoints resolve to
  * different cloud identities is a hot cross-cloud edge → typed "gated".
  */
-function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
+export function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 	const core = coreIdentity(nodes);
 	const byKind = (kind: NodeKind) => nodes.filter((n) => n.data.kind === kind);
 	const cluster = byKind("cluster")[0];
@@ -72,6 +72,7 @@ function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 	if (network && cluster) link(network, cluster);
 	if (cluster) {
 		const leafKinds: NodeKind[] = [
+			"service",
 			"database",
 			"cache",
 			"queue",
@@ -85,6 +86,26 @@ function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 		];
 		for (const kind of leafKinds) {
 			for (const leaf of byKind(kind)) link(cluster, leaf);
+		}
+	}
+
+	// W3: a service's declared bindings become service→resource edges — derived from the model like
+	// every other edge (the binding lives on the service's config). A binding whose target isn't
+	// placed draws nothing; the service node's readiness surfaces that dangling binding instead.
+	for (const svc of nodes) {
+		if (svc.data.kind !== "service") continue;
+		for (const b of svc.data.config.bindings ?? []) {
+			const target = nodes.find(
+				(n) => n.data.kind === b.target.kind && configName(n.data) === b.target.name,
+			);
+			if (!target) continue;
+			edges.push({
+				// One edge per (service, resource) relationship — collapses multiple injects to one wire.
+				id: `bind:${svc.id}->${target.id}`,
+				source: svc.id,
+				target: target.id,
+				type: "binding",
+			});
 		}
 	}
 	return edges;

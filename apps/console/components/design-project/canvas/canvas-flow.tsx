@@ -37,6 +37,7 @@ import { ChartNode } from "./nodes/chart-node";
 import { CollectionNode } from "./nodes/collection-node";
 import { ServiceNode } from "./nodes/service-node";
 import { ZoneNode as ZoneNodeComponent } from "./nodes/zone-node";
+import { BindingEdge } from "./edges/binding-edge";
 import { DependencyEdge } from "./edges/dependency-edge";
 import { GatedEdge } from "./edges/gated-edge";
 
@@ -60,6 +61,7 @@ const nodeTypes: NodeTypes = {
 const edgeTypes: EdgeTypes = {
 	dependency: DependencyEdge,
 	gated: GatedEdge,
+	binding: BindingEdge,
 };
 
 /** The React Flow surface, controlled by the canvas store. */
