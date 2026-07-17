@@ -667,6 +667,9 @@ export interface GitopsStatusReport {
 	/** Per-workload health from the apps Application's resources, keyed by name.
 	 *  Empty = unreadable (an honest unknown), NOT "no services". */
 	services?: Record<string, GitopsServiceHealth>;
+	/** Non-fatal manifest-generation warnings (skipped service, unresolved binding endpoint,
+	 *  unsatisfiable credential facet). No secret values — names only (Go `ManifestWarnings`). */
+	manifest_warnings?: string[];
 }
 
 /** One workload's ArgoCD resource status inside the apps Application (Go `argocd.ServiceHealth`):

@@ -38,6 +38,7 @@ function base(overrides: Partial<GitopsDeployStatus> = {}): GitopsDeployStatus {
 		dataServices: [
 			{ name: "db-primary", health: "Healthy", sync: "Synced", message: null },
 		],
+		warnings: [],
 		...overrides,
 	};
 }
