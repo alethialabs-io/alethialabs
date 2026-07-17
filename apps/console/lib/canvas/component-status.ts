@@ -8,6 +8,7 @@
 
 import type { ComponentStatus } from "@/lib/db/schema/enums";
 import type { DriftDetail } from "@/types/jsonb.types";
+import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import type { IacGroup } from "./iac-inventory";
 
 /**
@@ -149,6 +150,12 @@ export interface EnvironmentStatus {
 	 * component design is inert and `iac.groups` — not `components` — is the architecture.
 	 */
 	iac: IacEnvironment | null;
+	/**
+	 * GitOps wiring + per-component ArgoCD health (#574) — the same read model the Deploy tab
+	 * shows, riding this poll so canvas badges and the tab can never disagree. Null when the
+	 * environment could not be read.
+	 */
+	gitops: GitopsDeployStatus | null;
 }
 
 /** The empty status — an environment that has never been deployed (or one we couldn't read). */
@@ -164,4 +171,5 @@ export const EMPTY_ENVIRONMENT_STATUS: EnvironmentStatus = {
 	recentJobs: [],
 	environment: null,
 	iac: null,
+	gitops: null,
 };

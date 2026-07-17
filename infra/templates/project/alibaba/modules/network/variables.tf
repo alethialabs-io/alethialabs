@@ -18,7 +18,18 @@ variable "vswitch_prefix" {
 
 variable "zone_ids" {
   type        = list(string)
-  description = "Availability zone ids to create vswitches in"
+  description = "Discovered availability zone ids (apply-resolved VALUES; never drives a count — #621)"
+}
+
+variable "vswitch_count" {
+  type        = number
+  default     = 3
+  description = "STATIC number of vswitches to create (plan-known; zone assignment wraps via element())"
+
+  validation {
+    condition     = var.vswitch_count >= 1 && var.vswitch_count <= 8
+    error_message = "vswitch_count must be between 1 and 8."
+  }
 }
 
 variable "single_cloud_nat" {

@@ -351,12 +351,14 @@ export async function listProjectComponents(
 	return out;
 }
 
-/** Inserts a component of `kind` on a project. Singletons upsert on their project_id;
- * multi kinds require a name and conflict (handled by the caller) on (project_id, name).
- * Returns the created/updated row's wire. */
+/** Inserts a component of `kind` on a project, scoped to `environmentId`. Singletons upsert on the
+ * composite `(project_id, environment_id)` — the table's actual unique; multi kinds require a name
+ * and conflict (handled by the caller) on `(project_id, environment_id, name)`. Returns the
+ * created/updated row's wire. */
 export async function insertProjectComponent(
 	kind: string,
 	projectId: string,
+	environmentId: string,
 	name: string,
 	values: Record<string, unknown>,
 ): Promise<ComponentWire> {
@@ -365,14 +367,23 @@ export async function insertProjectComponent(
 	const db = getServiceDb();
 	const cols = getTableColumns(def.table);
 
-	const insertValues: Record<string, unknown> = { project_id: projectId, ...values };
+	// environment_id is required — a component in a NULL env is invisible to the env-scoped deploy,
+	// and the singleton unique is composite, so the conflict target below must include it.
+	const insertValues: Record<string, unknown> = {
+		project_id: projectId,
+		environment_id: environmentId,
+		...values,
+	};
 	if (!def.singleton) insertValues.name = name;
 
 	if (def.singleton) {
 		const [row] = await db
 			.insert(def.table)
 			.values(insertValues)
-			.onConflictDoUpdate({ target: cols.project_id, set: values })
+			.onConflictDoUpdate({
+				target: [cols.project_id, cols.environment_id],
+				set: values,
+			})
 			.returning();
 		return rowToComponentWire(kind, row);
 	}

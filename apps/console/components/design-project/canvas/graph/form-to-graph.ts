@@ -101,7 +101,8 @@ export function formToGraph(
 			| "nosql"
 			| "secret"
 			| "bucket"
-			| "registry",
+			| "registry"
+			| "service",
 	>(
 		kind: K,
 		items: NodeConfigMap[K][],
@@ -121,6 +122,7 @@ export function formToGraph(
 	pushItems("secret", form.secrets ?? [], 5);
 	pushItems("bucket", form.storage_buckets ?? [], 6);
 	pushItems("registry", form.container_registries ?? [], 7);
+	pushItems("service", form.services ?? [], 8);
 
 	return { nodes };
 }

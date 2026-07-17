@@ -51,6 +51,22 @@ turns out not to stamp: set the sweep tags via StorageClass `parameters.tagSpeci
 driver's `--extra-tags` flag (`controller.additionalArgs`) — both are driver-native tagging paths
 independent of the addon `configuration_values`.
 
+## ECR + in-cluster builds (W2)
+
+`ecr.tf` creates one repository per entry of **`ecr_names_map`** (`{ <logical name> = <repo base> }`,
+composed as `<project_name>-<base>`). The map is populated by the tfvars emitter
+(`packages/core/cloud/aws_provider.go: buildECRNamesMap`) — one entry per **native** container-registry
+component plus one per **repo-sourced service** (the W2 build destination). `provision_ecr = true`
+with an empty map creates nothing; `checks.tf: ecr_names_present_when_provisioned` fails that plan
+loudly instead of silently.
+
+The build path is keyless: `irsa.tf` defines the **build-SA IRSA role** (`ecr-build-<eks_name>`),
+trusted only by `alethia-build:kaniko-builder` — the exact ServiceAccount the kaniko Job renderer
+schedules builds under — and scoped to `ecr:GetAuthorizationToken` + push/pull on the project's own
+`<project_name>-*` repositories. Outputs the BUILD/render lanes consume: **`ecr_repository_urls_map`**
+(push destination per logical name), **`ecr_build_role_arn`** (annotate the SA), and
+**`ecr_build_service_account`** (the namespace:sa contract).
+
 ## Money-guards (A1.2)
 
 `cost_guards.tf` enforces **plan-failing** cost ceilings. `check` blocks (in `checks.tf`) only emit

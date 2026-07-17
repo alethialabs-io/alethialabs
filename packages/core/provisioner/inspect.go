@@ -30,31 +30,32 @@ func clusterNameOutputKey(providerSlug string) string {
 	}
 }
 
-// InspectCluster reads the current ArgoCD add-on health + Trivy security posture from an
-// already-provisioned cluster WITHOUT a deploy — the day-2 "keep proving it" refresh. It
-// acquires kubeconfig via the cloud provider from the given tofu outputs (the drift run's
-// workspace outputs — alibaba/hetzner need the sensitive `kubeconfig` output, which cannot
-// be synthesized), falling back to a synthesized cluster-name entry so aws/gcp/azure work
-// with nil outputs. Then it runs the same probes the deploy path uses
-// (argocd.ReadAddOnHealth + argocd.ReadSecurityPosture). Best-effort by design: no cluster
-// name, an unknown provider, or a kubeconfig failure returns (nil, nil) — a day-2 job
-// (drift) must never fail because the cluster is briefly unreachable. Cloud creds are
-// assumed already activated by the caller. Outputs must never be persisted by callers —
-// they can contain sensitive values.
+// InspectCluster reads the current ArgoCD add-on health, GitOps apps-Application status,
+// and Trivy security posture from an already-provisioned cluster WITHOUT a deploy — the
+// day-2 "keep proving it" refresh. It acquires kubeconfig via the cloud provider from the
+// given tofu outputs (the drift run's workspace outputs — alibaba/hetzner need the
+// sensitive `kubeconfig` output, which cannot be synthesized), falling back to a
+// synthesized cluster-name entry so aws/gcp/azure work with nil outputs. Then it runs the
+// same probes the deploy path uses (argocd.ReadAddOnHealth + readGitopsSnapshot +
+// argocd.ReadSecurityPosture). Best-effort by design: no cluster name, an unknown
+// provider, or a kubeconfig failure returns (nil, nil, nil) — a day-2 job (drift) must
+// never fail because the cluster is briefly unreachable. Cloud creds are assumed already
+// activated by the caller. Outputs must never be persisted by callers — they can contain
+// sensitive values.
 func InspectCluster(
 	ctx context.Context,
 	vc *types.ProjectConfig,
 	providerSlug string,
 	outputs map[string]interface{},
 	stdout, stderr io.Writer,
-) (map[string]argocd.AddOnHealth, *argocd.SecurityPosture) {
+) (map[string]argocd.AddOnHealth, *argocd.SecurityPosture, *argocd.GitopsStatus) {
 	if vc == nil || vc.Cluster.ClusterName == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	provider, err := cloud.NewCloudProvider(providerSlug)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cluster inspection skipped: %v\n", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 	merged := map[string]interface{}{}
 	for k, v := range outputs {
@@ -65,13 +66,16 @@ func InspectCluster(
 	}
 	if err := provider.ConfigureKubeconfig(ctx, vc, merged, stdout); err != nil {
 		fmt.Fprintf(stderr, "Cluster inspection skipped (kubeconfig): %v\n", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var addonStatus map[string]argocd.AddOnHealth
 	if len(vc.AddOns) > 0 {
 		addonStatus = argocd.ReadAddOnHealth(argocd.AllAddOnNames(vc.AddOns), stdout, stderr)
 	}
+	// GitOps snapshot (issue #574): day-2 refresh of the apps Application's revision +
+	// per-service health, same read the deploy's success path records.
+	gitops := readGitopsSnapshot(vc.Repositories.AppsDestinationRepo != "", vc.Repositories.AppsDestinationRepo, stdout, stderr)
 	sec := argocd.ReadSecurityPosture(stdout, stderr)
-	return addonStatus, &sec
+	return addonStatus, &sec, gitops
 }

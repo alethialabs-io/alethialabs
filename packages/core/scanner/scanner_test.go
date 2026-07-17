@@ -338,3 +338,93 @@ func itoa(i int) string {
 	}
 	return string(b)
 }
+
+// W6 Path-B (#649): env-var KEY names from a service's .env.example land on THAT service's
+// Env (values dropped), attributed per-service like needs. Comments, `export`, value-less keys,
+// duplicates, and invalid names are handled.
+func TestScan_AttributesEnvKeysPerService(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "package.json", `{"name":"mono"}`)
+	write(t, root, "apps/api/Dockerfile", "FROM node:20\nEXPOSE 3000\n")
+	write(t, root, "apps/api/.env.example", "# database\nDATABASE_URL=postgres://x\nexport PORT=3000\nPORT=3000\n\n1BAD=nope\n=alsobad\n")
+	write(t, root, "apps/worker/Dockerfile", "FROM node:20\n")
+	write(t, root, "apps/worker/.env.sample", "AMQP_URL=\nQUEUE_NAME=jobs\n")
+
+	d, err := Scan(root, "https://github.com/acme/mono.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	envByPath := map[string][]string{}
+	for _, s := range d.Services {
+		envByPath[s.Path] = s.Env
+	}
+	// api: DATABASE_URL + PORT (export stripped, PORT deduped, sorted); comment/blank/1BAD/=alsobad dropped.
+	if got := envByPath["apps/api"]; len(got) != 2 || got[0] != "DATABASE_URL" || got[1] != "PORT" {
+		t.Errorf("apps/api env = %v, want [DATABASE_URL PORT]", got)
+	}
+	// worker: a value-less key (AMQP_URL=) is still a declared key.
+	if got := envByPath["apps/worker"]; len(got) != 2 || got[0] != "AMQP_URL" || got[1] != "QUEUE_NAME" {
+		t.Errorf("apps/worker env = %v, want [AMQP_URL QUEUE_NAME]", got)
+	}
+}
+
+// W3 Path-B seed (#620): backing-service signals must land on the SERVICE whose files
+// carry them (per-service `needs`), not just on the repo-wide Signals list.
+func TestScan_AttributesNeedsPerService(t *testing.T) {
+	root := t.TempDir()
+	// Monorepo: api (postgres + redis in its own compose) and worker (rabbitmq via a
+	// nested env example); a root service exists via the workspace manifest, and the
+	// repo root carries a kafka signal in CI config that no sub-service encloses.
+	write(t, root, "package.json", `{"name":"mono"}`)
+	write(t, root, "apps/api/Dockerfile", "FROM golang:1.25\nEXPOSE 8080\n")
+	write(t, root, "apps/api/docker-compose.yml", "services:\n  db:\n    image: postgres:16\n  cache:\n    image: redis:7\n")
+	write(t, root, "apps/worker/Dockerfile", "FROM node:20\n")
+	write(t, root, "apps/worker/.env.example", "AMQP_URL=amqp://guest@localhost\n")
+	write(t, root, ".github/workflows/ci.yml", "name: ci\n# talks to kafka in integration tests\n")
+
+	d, err := Scan(root, "https://github.com/acme/mono.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	needsByPath := map[string][]string{}
+	for _, s := range d.Services {
+		needsByPath[s.Path] = s.Needs
+	}
+	if got := needsByPath["apps/api"]; len(got) != 2 || got[0] != "postgresql" || got[1] != "redis" {
+		t.Errorf("apps/api needs = %v, want [postgresql redis] (sorted)", got)
+	}
+	if got := needsByPath["apps/worker"]; len(got) != 1 || got[0] != "rabbitmq" {
+		t.Errorf("apps/worker needs = %v, want [rabbitmq]", got)
+	}
+	// The CI file is enclosed by no sub-service → falls back to the root service.
+	if got := needsByPath[""]; len(got) != 1 || got[0] != "kafka" {
+		t.Errorf("root needs = %v, want [kafka] (unattributed fallback)", got)
+	}
+	// The repo-wide Signals union is unchanged by attribution.
+	if len(d.Signals) != 4 {
+		t.Errorf("repo-wide signals = %v, want 4 (kafka postgresql rabbitmq redis)", d.Signals)
+	}
+}
+
+// Without a root service, signals enclosed by no service stay repo-wide only (never
+// dropped silently into a wrong service).
+func TestScan_UnattributedNeedsStayRepoWide(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "apps/api/Dockerfile", "FROM golang:1.25\n")
+	// A root-level compose no service encloses (no root manifest → no root service).
+	write(t, root, "docker-compose.yml", "services:\n  search:\n    image: elasticsearch:8\n")
+
+	d, err := Scan(root, "https://github.com/acme/one.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, s := range d.Services {
+		if s.Path == "apps/api" && len(s.Needs) != 0 {
+			t.Errorf("apps/api must not inherit the root compose signal, got %v", s.Needs)
+		}
+	}
+	if len(d.Signals) != 1 || d.Signals[0] != "elasticsearch" {
+		t.Errorf("repo-wide signals = %v, want [elasticsearch]", d.Signals)
+	}
+}

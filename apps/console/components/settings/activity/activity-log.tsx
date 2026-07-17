@@ -18,9 +18,13 @@ import {
 	type ActivityQuery,
 	type ActivityRow,
 	getActivityExportCsv,
-	getActivityLog,
 } from "@/app/server/actions/activity";
-import { getMembers, type MemberRow } from "@/app/server/actions/members";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import {
+	normalizeActivityQuery,
+	useActivityQuery,
+	useMembersQuery,
+} from "@/lib/query/use-activity-query";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
@@ -78,17 +82,13 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 	);
 	const { data: projects = [] } = useProjectsQuery();
 
-	const [members, setMembers] = useState<MemberRow[]>([]);
-
-	// Paged results (accumulated across "Load more").
-	const [rows, setRows] = useState<ActivityRow[]>([]);
-	const [nextCursor, setNextCursor] = useState<number | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [loadingMore, setLoadingMore] = useState(false);
+	// Members drive the filter options + the humanizer's name resolution (projects come
+	// from the shared query cache; members from theirs — no fetch-into-state effect).
+	const { data: members = [] } = useMembersQuery();
 
 	// Filters.
 	const [search, setSearch] = useState("");
-	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE);
 	const [range, setRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
 	const [rangeLabel, setRangeLabel] = useState(
 		RANGE_PRESETS.find((p) => p.id === DEFAULT_PRESET)?.label ?? "Last 7 days",
@@ -99,20 +99,6 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 
 	const [exporting, setExporting] = useState(false);
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
-
-	// Members drive the filter options + the humanizer's name resolution (projects come
-	// from the shared query cache).
-	useEffect(() => {
-		getMembers()
-			.then(setMembers)
-			.catch(() => setMembers([]));
-	}, []);
-
-	// Debounce the free-text search so it doesn't refetch on every keystroke.
-	useEffect(() => {
-		const id = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE);
-		return () => clearTimeout(id);
-	}, [search]);
 
 	// Resource-name lookups that drive the humanizer's name resolution.
 	const lookups = useMemo(() => {
@@ -136,9 +122,10 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 		[lookups],
 	);
 
-	// The query the current filters describe (sans cursor). When the feed is locked to a
-	// `projectId` (project settings) that scope is forced; otherwise the Project facet drives
-	// the `resourceIds` (the selected project ids), keeping scoping server-side + page-correct.
+	// The NORMALIZED query the current filters describe (sans cursor) — it IS the query
+	// key, so equal filters hit the cache (the standard). When the feed is locked to a
+	// `projectId` (project settings) that scope is forced; otherwise the Project facet
+	// drives the `resourceIds` (the selected project ids), keeping scoping server-side.
 	const query = useMemo<ActivityQuery>(() => {
 		const { resourceTypes, decision } = splitEventTokens(eventTokens);
 		const resourceIds = projectId
@@ -146,54 +133,37 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 			: projectIds.length
 				? projectIds
 				: undefined;
-		return {
+		return normalizeActivityQuery({
 			from: range.from.toISOString(),
 			to: range.to.toISOString(),
-			actorIds: actorIds.length ? actorIds : undefined,
-			resourceTypes: resourceTypes.length ? resourceTypes : undefined,
+			actorIds,
+			resourceTypes,
 			decision,
 			resourceIds,
-			search: debouncedSearch.trim() || undefined,
-		};
+			search: debouncedSearch,
+		});
 	}, [range, actorIds, projectIds, eventTokens, debouncedSearch, projectId]);
 
-	// (Re)load the first page whenever the filters change.
-	useEffect(() => {
-		let cancelled = false;
-		setLoading(true);
-		getActivityLog(query)
-			.then((page) => {
-				if (cancelled) return;
-				setRows(page.rows);
-				setNextCursor(page.nextCursor);
-			})
-			.catch(() => {
-				if (cancelled) return;
-				setRows([]);
-				setNextCursor(null);
-			})
-			.finally(() => {
-				if (!cancelled) setLoading(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [query]);
+	// Cursor-paginated fetch, filters in the key, keepPreviousData across filter changes —
+	// replaces the raw `useEffect` + `cancelled`-flag chain (forbidden by the standard).
+	const activity = useActivityQuery(query);
+	const rows = useMemo<ActivityRow[]>(
+		() => (activity.data?.pages ?? []).flatMap((p) => p.rows),
+		[activity.data],
+	);
+	const nextCursor = activity.data?.pages.at(-1)?.nextCursor ?? null;
+	const loading = activity.isPending;
+	const loadingMore = activity.isFetchingNextPage;
 
-	/** Fetch the next page (older rows) and append it. */
+	/** Fetch the next page (older rows); TanStack appends it to `pages`. */
 	const onLoadMore = useCallback(async () => {
 		if (nextCursor == null || loadingMore) return;
-		setLoadingMore(true);
 		try {
-			const page = await getActivityLog({ ...query, cursor: nextCursor });
-			setRows((prev) => [...prev, ...page.rows]);
-			setNextCursor(page.nextCursor);
+			await activity.fetchNextPage();
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Failed to load more activity");
-		} finally {
-			setLoadingMore(false);
 		}
-	}, [query, nextCursor, loadingMore]);
+	}, [activity, nextCursor, loadingMore]);
 
 	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. */
 	const applyRange = useCallback(

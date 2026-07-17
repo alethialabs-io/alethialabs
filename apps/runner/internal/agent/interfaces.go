@@ -17,6 +17,10 @@ type JobAPI interface {
 	Heartbeat() ([]string, error)
 	GetJob(jobID string) (*Job, error)
 	FetchGitToken(jobID, repoURL string) (string, error)
+	// FetchAddonSecrets pulls the decrypted add-on secret-knob values for a DEPLOY job the
+	// runner owns (W4.5 #640) — addon id → field key → plaintext, seeded as in-cluster
+	// Secrets pre-sync. Values are never logged and never persisted runner-side.
+	FetchAddonSecrets(jobID string) (map[string]map[string]string, error)
 	// FetchStateToken mints the per-job tofu-state token for the http state backend;
 	// PurgeProjectState removes the state object after a successful destroy.
 	FetchStateToken(jobID string) (string, error)

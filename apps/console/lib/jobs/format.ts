@@ -91,6 +91,11 @@ export const JOB_TYPES: Record<
 		icon: Activity,
 		description: "Live cluster-alive probe — dials the cluster API server to record reachability",
 	},
+	BUILD: {
+		label: "Build",
+		icon: Container,
+		description: "Build & push service images in-cluster (kaniko → registry, keyless)",
+	},
 };
 
 /** Formats an elapsed millisecond span as `42s` or `1m 12s`. */

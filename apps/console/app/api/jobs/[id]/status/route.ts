@@ -9,6 +9,11 @@ import {
 } from "@/app/server/actions/deployments";
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
 import { finalizeIacScan } from "@/app/server/actions/byo-iac";
+import {
+	enqueueBuildAfterProvision,
+	enqueueDeployAfterBuild,
+	finalizeBuild,
+} from "@/app/server/actions/builds";
 import { recordDriftPosture } from "@/app/server/actions/drift";
 import { recordEnvironmentCost } from "@/app/server/actions/cost";
 import {
@@ -321,6 +326,12 @@ export async function PUT(
 						await finalizePromotionOnDeploy(jobId).catch((err) =>
 							jlog.error("finalize promotion error", { err }),
 						);
+						// Infra is up (env ACTIVE) — auto-enqueue a BUILD for any unbuilt repo-sourced
+						// service, closing the repo→running loop. buildProject otherwise has no
+						// automatic trigger; no-op when everything is built or nothing is repo-sourced.
+						await enqueueBuildAfterProvision(jobId).catch((err) =>
+							jlog.error("enqueue build after provision error", { err }),
+						);
 					}
 				} else if (job.job_type === "DESTROY") {
 					if (status === "PROCESSING") {
@@ -489,6 +500,20 @@ export async function PUT(
 			if (job?.job_type === "IAC_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
 				await finalizeIacScan(jobId).catch((err) =>
 					jlog.error("finalize IaC scan error", { err }),
+				);
+			}
+
+			// BUILD (W2 image build & push): persist each service's built image digest
+			// (execution_metadata.build_result) into project_services.resolved_image, then chain
+			// the app-workload DEPLOY that renders those services with the real images (retiring
+			// ":latest"). Both are best-effort — a finalize/enqueue hiccup must not fail the
+			// runner's status update.
+			if (job?.job_type === "BUILD" && status === "SUCCESS") {
+				await finalizeBuild(jobId).catch((err) =>
+					jlog.error("finalize build error", { err }),
+				);
+				await enqueueDeployAfterBuild(jobId).catch((err) =>
+					jlog.error("enqueue deploy after build error", { err }),
 				);
 			}
 

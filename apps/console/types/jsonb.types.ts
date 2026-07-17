@@ -100,6 +100,14 @@ export interface DetectedService {
 	runtime?: string;
 	/** Container port, when detected from the Dockerfile/manifest. */
 	port?: number;
+	/** Normalized backing-service signals found in THIS service's own files (per-service
+	 * attribution of the repo-wide signals) — mapped to SUGGESTED ServiceBindings (W3,
+	 * lib/scanner/suggest-bindings.ts) for the user to accept/edit. */
+	needs?: string[];
+	/** Env-variable KEY names declared in THIS service's own .env.example-family files (values
+	 * dropped). The scan authors them as empty-valued `services[].env` entries (Path-B W6
+	 * "skeleton → real": the env surface arrives pre-populated for the user to fill). */
+	env?: string[];
 }
 
 // ── Service / workload (W1) ─────────────────────────────────────────
@@ -142,6 +150,86 @@ export interface ServiceProbe {
 	path?: string;
 	port: number;
 }
+
+// ── Service → backing-infra binding (W3) ────────────────────────────
+// A service declares it NEEDS a backing resource and how that resource's connection info is
+// injected into the workload's container env. Resolution is DEPLOY-TIME, not snapshot-time: a
+// database's endpoint is a provisioned output unknown when the config is authored, so a binding
+// models the INTENT and the runner resolves it against the provisioned resource.
+
+/** The kind of backing resource a service can bind to (referenced together with its name — the
+ * config join key every component shares). */
+export type ServiceBindingKind = "database" | "cache" | "queue" | "secret";
+
+/** Which connection facet of the bound resource an env var receives. `endpoint`/`port` are
+ * NON-secret and inject as templated values from the resource's tofu outputs; the credential
+ * facets inject KEYLESSLY via an ExternalSecret (ESO ClusterSecretStore) → k8s Secret →
+ * secretKeyRef — a provisioned credential is never exported as a literal env value. */
+export type ServiceBindingFacet =
+	| "endpoint"
+	| "port"
+	| "username"
+	| "password"
+	| "connection_string";
+
+/** One env var on the workload ← one facet of the bound resource. */
+export interface ServiceBindingInjection {
+	env: string;
+	from: ServiceBindingFacet;
+}
+
+/** A service's edge to a backing resource plus the env it injects. `target` references the
+ * resource by {kind, name}; the runner resolves the connection info at deploy time. */
+export interface ServiceBinding {
+	target: { kind: ServiceBindingKind; name: string };
+	inject: ServiceBindingInjection[];
+}
+
+// ── BYO chart described workload (W5 Path A — Option B) ─────────────
+// A workload extracted from a bring-your-own Helm chart's rendered manifests (`helm template`) and
+// surfaced as a read-mostly canvas node. The chart addon (project_addons source='byo') stays the
+// single DEPLOY UNIT — its ArgoCD Application deploys everything; these rows only DESCRIBE what it
+// runs and carry the user's binding/config overlay. Stored on `project_chart_workloads`. They are
+// deliberately NOT `project_services` rows, so a described workload can never enter the deploy path
+// (no double-deploy). See management/spec/features/w5-path-a-byo-services.md.
+
+/**
+ * The immutable description of a chart workload extracted from `helm template` output — image,
+ * ports, env keys, resources, rendered replicas. Refreshed VERBATIM on every CHART_SCAN (it mirrors
+ * the chart, not the user), so it never carries user edits. Env is reduced to KEY NAMES only
+ * (values/valueFrom refs dropped, like the repo scanner) so a description never persists a rendered
+ * secret value.
+ */
+export interface ChartWorkloadRendered {
+	/** The workload's primary container image (first container). */
+	image: string;
+	/** Container ports declared across the workload's containers. */
+	ports: ServicePort[];
+	/** Env-variable KEY names on the containers (values + valueFrom dropped — names only). */
+	env_keys: string[];
+	/** Compute requests/limits from the first container that declares them; omitted otherwise. */
+	resources?: ServiceResources;
+	/** Replica count as rendered (Deployment/StatefulSet); omitted for DaemonSet/Job/CronJob. */
+	replicas?: number;
+}
+
+/**
+ * The user's editable overlay on a described chart workload (v1: replicas + env). Written back into
+ * the owning chart's Helm `values` at the declared value-paths on deploy (Lane 2) — Alethia never
+ * re-renders the workload itself. Preserved across re-scans.
+ */
+export interface ChartWorkloadConfig {
+	replicas?: number;
+	env?: ServiceEnvVar[];
+}
+
+/**
+ * Where each logical binding/config knob writes into the owning chart's Helm `values`: a map from a
+ * logical knob key (e.g. "replicas", or a binding target `"database:orders-db"`) to the dot-path
+ * within the chart values (e.g. "postgresql.auth.existingSecret"). Auto-inferred at scan +
+ * user-overridable (Lane 2). Preserved across re-scans.
+ */
+export type ChartValuePathMap = Record<string, string>;
 
 // ── Support cases ───────────────────────────────────────────────────
 // SupportContactPrefs / SupportCaseContext / SupportAbuseDetails moved to @repo/support
@@ -340,6 +428,9 @@ export interface ObservabilityProviderConfig {
 // project_addons.values — the user's tuned knobs for a marketplace add-on. Validated + typed
 // per add-on by its Zod `configSchema` (lib/addons/catalog.ts); stored open here since the
 // shape varies by add-on. In gitops mode this may instead hold a raw Helm-values override.
+// W4: a `secret`-typed AddOnField's value is stored here as an `EncryptedSecret` envelope (below,
+// encrypted-at-rest via lib/crypto/secrets.ts), NOT as plaintext — server code discriminates by
+// shape and decrypts only when assembling the deploy snapshot.
 export type AddOnValues = Record<string, unknown>;
 
 // project_iac_sources.var_values — the customer's NON-SECRET tfvars for a bring-your-own IaC
@@ -517,6 +608,11 @@ export interface ExecutionMetadata {
 	// SUCCESS with reachable=false — the status route ingests it into environment_probes and
 	// alerts on a true→false liveness transition.
 	probe_result?: ProbeResult;
+	// BUILD jobs (W2): per-service pushed-image digest map { service_name → image_digest_uri }
+	// (e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/<repo>@sha256:…") for every service with
+	// source.kind === "repo". The console persists each entry into project_services.resolved_image.
+	// Digests are non-secret (pass the scrub denylist); registry credentials must NEVER appear here.
+	build_result?: Record<string, string>;
 	// DEPLOY jobs: post-apply ArgoCD health/sync per managed marketplace add-on, keyed by
 	// the ArgoCD Application name ("addon-<id>"). Written back to project_addons by the
 	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.
@@ -532,6 +628,10 @@ export interface ExecutionMetadata {
 	// reconcile). The status route raises a `system.project.orphan_risk` alert on this.
 	orphan_risk?: boolean;
 	orphan_risk_reason?: string;
+	// DEPLOY + DETECT_DRIFT jobs (#574): GitOps wiring outcome + apps-Application health
+	// snapshot. On a wiring hard-fail the runner posts a PARTIAL result carrying which step
+	// died; absent on pre-#574 jobs. Mirrors the Go `argocd.GitopsStatus`.
+	gitops_status?: GitopsStatusReport;
 }
 
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
@@ -540,6 +640,42 @@ export interface ExecutionMetadata {
 export interface AddOnStatusEntry {
 	health: string;
 	sync: string;
+}
+
+/**
+ * GitOps wiring outcome + apps-Application health snapshot for one DEPLOY (or the day-2
+ * DETECT_DRIFT refresh). Mirrors the Go `argocd.GitopsStatus` (#574). Fail-loud contract:
+ * `failed_step` set ⇒ the deploy died INSIDE the wiring and no health was read — render
+ * every component Unknown, never a stale pass.
+ */
+export interface GitopsStatusReport {
+	/** "gitops" when an apps destination repo is wired, "direct" otherwise. */
+	mode: "gitops" | "direct";
+	/** The customer's apps destination repo URL (gitops mode only). */
+	apps_repo?: string;
+	/** The ArgoCD Application syncing the apps repo ("apps"). */
+	argocd_app?: string;
+	/** The apps Application's status.sync.revision — the deployed commit. */
+	revision?: string;
+	/** Which wiring step died: argocd_install | git_token | repo_credentials |
+	 *  templates_missing | render | apply. Absent ⇒ the wiring did not fail. */
+	failed_step?: string;
+	/** The wiring failure message, token-sanitized at the source (Go). */
+	error?: string;
+	/** The whole apps Application's aggregate health/sync — the honest fallback row. */
+	app_health?: AddOnStatusEntry;
+	/** Per-workload health from the apps Application's resources, keyed by name.
+	 *  Empty = unreadable (an honest unknown), NOT "no services". */
+	services?: Record<string, GitopsServiceHealth>;
+}
+
+/** One workload's ArgoCD resource status inside the apps Application (Go `argocd.ServiceHealth`):
+ *  health/sync plus ArgoCD's per-resource health message ("Deployment exceeded its progress
+ *  deadline…"); empty when healthy. */
+export interface GitopsServiceHealth {
+	health: string;
+	sync: string;
+	message?: string;
 }
 
 // The cluster's aggregated Trivy-Operator vulnerability posture (packages/core/argocd

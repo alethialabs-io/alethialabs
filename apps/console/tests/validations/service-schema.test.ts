@@ -91,4 +91,51 @@ describe("service form-fragment (W1 seam)", () => {
 		expect(r.success).toBe(true);
 		if (r.success) expect(r.data.services).toEqual([]);
 	});
+
+	// #572 — the refuter extension: each contract enum/required-field must actually reject,
+	// so the Go side (which switches on these values) can trust the wire never carries them.
+
+	it("rejects an unknown workload type", () => {
+		expect(withServices([{ ...fullService, type: "daemonset" }]).success).toBe(false);
+	});
+
+	it("rejects an unknown source kind (bad discriminant)", () => {
+		expect(
+			withServices([{ ...fullService, source: { kind: "registry", image: "x" } }]).success,
+		).toBe(false);
+	});
+
+	it("rejects an image source missing image", () => {
+		expect(withServices([{ ...fullService, source: { kind: "image" } }]).success).toBe(false);
+	});
+
+	it("rejects an env var with an empty name", () => {
+		expect(
+			withServices([{ ...fullService, env: [{ name: "", value: "x" }] }]).success,
+		).toBe(false);
+	});
+
+	it("rejects an unknown probe type and an out-of-range probe port", () => {
+		expect(
+			withServices([{ ...fullService, probe: { type: "exec", port: 8080 } }]).success,
+		).toBe(false);
+		expect(
+			withServices([{ ...fullService, probe: { type: "http", port: 0 } }]).success,
+		).toBe(false);
+	});
+
+	it("rejects partial resources (requests without limits)", () => {
+		expect(
+			withServices([
+				{ ...fullService, resources: { requests: { cpu: "100m", memory: "128Mi" } } },
+			]).success,
+		).toBe(false);
+	});
+
+	it("rejects an unknown port protocol", () => {
+		expect(
+			withServices([{ ...fullService, ports: [{ container_port: 8080, protocol: "SCTP" }] }])
+				.success,
+		).toBe(false);
+	});
 });

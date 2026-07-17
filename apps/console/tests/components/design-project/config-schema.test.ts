@@ -246,3 +246,103 @@ describe("field get/set escape hatches", () => {
 		});
 	});
 });
+
+describe("service config (W1)", () => {
+	const field = (key: string) =>
+		getKindConfig("service")
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === key);
+	const repoCfg = {
+		type: "deployment",
+		replicas: 2,
+		source: { kind: "repo", repo_url: "https://github.com/acme/api.git", path: "." },
+	};
+	const imageCfg = {
+		type: "job",
+		replicas: 1,
+		source: { kind: "image", image: "ghcr.io/org/api:1.4.0" },
+	};
+	const visible = (key: string, config: Record<string, unknown>) => {
+		const f = field(key);
+		const ctx: FieldCtx = { provider: null, config };
+		return !f?.visibleWhen || f.visibleWhen(config, ctx);
+	};
+
+	it("summarizes from type · replicas · source basename (repo and image)", () => {
+		const summary = (config: object) =>
+			getKindConfig("service")?.summary(config as Record<string, unknown>, null);
+		expect(summary(repoCfg)).toBe("deployment · 2 replicas · api");
+		expect(summary(imageCfg)).toBe("job · 1 replica · api:1.4.0");
+	});
+
+	it("swaps the source discriminated union when the kind radio changes", () => {
+		expect(field("source_kind")?.get?.(repoCfg)).toBe("repo");
+		expect(field("source_kind")?.set?.("image", repoCfg)).toEqual({
+			source: { kind: "image", image: "" },
+		});
+		expect(field("source_kind")?.set?.("repo", imageCfg)).toEqual({
+			source: { kind: "repo", repo_url: "", path: "" },
+		});
+	});
+
+	it("reads/writes repo_url and image only within their own branch", () => {
+		expect(field("repo_url")?.get?.(repoCfg)).toBe("https://github.com/acme/api.git");
+		// Reading the wrong branch is empty, never a crash on the missing union arm.
+		expect(field("repo_url")?.get?.(imageCfg)).toBe("");
+		expect(field("image")?.get?.(imageCfg)).toBe("ghcr.io/org/api:1.4.0");
+		expect(field("repo_url")?.set?.("https://x/y", repoCfg)).toEqual({
+			source: { kind: "repo", repo_url: "https://x/y", path: "." },
+		});
+	});
+
+	it("shows repo + build fields only for a repo source, image field only for an image", () => {
+		expect(visible("repo_url", repoCfg)).toBe(true);
+		expect(visible("repo_url", imageCfg)).toBe(false);
+		expect(visible("build_dockerfile", repoCfg)).toBe(true);
+		expect(visible("build_dockerfile", imageCfg)).toBe(false);
+		expect(visible("image", imageCfg)).toBe(true);
+		expect(visible("image", repoCfg)).toBe(false);
+	});
+
+	it("round-trips nested resource requests/limits without clobbering siblings", () => {
+		expect(field("requests_cpu")?.set?.("100m", {})).toEqual({
+			resources: { requests: { cpu: "100m", memory: "" }, limits: { cpu: "", memory: "" } },
+		});
+		const cfg = {
+			resources: {
+				requests: { cpu: "100m", memory: "128Mi" },
+				limits: { cpu: "500m", memory: "512Mi" },
+			},
+		};
+		expect(field("requests_memory")?.get?.(cfg)).toBe("128Mi");
+		expect(field("limits_cpu")?.set?.("1", cfg)).toEqual({
+			resources: {
+				requests: { cpu: "100m", memory: "128Mi" },
+				limits: { cpu: "1", memory: "512Mi" },
+			},
+		});
+	});
+
+	it("toggles the optional probe and reveals the http path only for an http probe", () => {
+		expect(field("probe_enabled")?.get?.({})).toBe(false);
+		expect(field("probe_enabled")?.set?.(true, {})).toEqual({
+			probe: { type: "http", port: 8080 },
+		});
+		expect(
+			field("probe_enabled")?.set?.(false, { probe: { type: "http", port: 8080 } }),
+		).toEqual({ probe: null });
+		expect(visible("probe_path", { probe: { type: "http", port: 8080 } })).toBe(true);
+		expect(visible("probe_path", { probe: { type: "tcp", port: 8080 } })).toBe(false);
+	});
+
+	it("edits backing-infra bindings through the dedicated bindings field type", () => {
+		const bindings = field("bindings");
+		expect(bindings?.type).toBe("bindings");
+		expect(
+			bindings?.get?.({
+				bindings: [{ target: { kind: "database", name: "orders-db" }, inject: [] }],
+			}),
+		).toEqual([{ target: { kind: "database", name: "orders-db" }, inject: [] }]);
+		expect(bindings?.set?.([], {})).toEqual({ bindings: [] });
+	});
+});

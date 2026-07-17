@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,6 +79,9 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 		Languages: map[string]int{},
 	}
 	signalSet := map[string]bool{}
+	// Per-directory signals (keyed by the captured file's dir) — attributed to the
+	// enclosing detected service after detectServices runs (the W3 Path-B seed).
+	dirSignals := map[string]map[string]bool{}
 	walked := 0
 
 	capture := func(bucket *[]types.RepoFile, path string) {
@@ -94,6 +98,11 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 		for _, s := range serviceSignals {
 			if strings.Contains(lower, s.kw) {
 				signalSet[s.signal] = true
+				dir := dirKey(rel)
+				if dirSignals[dir] == nil {
+					dirSignals[dir] = map[string]bool{}
+				}
+				dirSignals[dir][s.signal] = true
 			}
 		}
 	}
@@ -150,6 +159,8 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 	sort.Strings(d.Signals)
 
 	d.Services = detectServices(d, repoURL)
+	attributeNeeds(d.Services, dirSignals)
+	attributeEnvKeys(d.Services, d.EnvExamples)
 
 	if log != nil {
 		log(fmt.Sprintf("Scanned %d files — %d manifests, %d Dockerfiles, %d compose, %d k8s, %d CI, %d signals, %d services",
@@ -196,6 +207,131 @@ func detectServices(d *types.RepoDigest, repoURL string) []types.DetectedService
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// attributeNeeds assigns each captured file's backing-service signals to the DEEPEST
+// detected service whose path encloses the file (a monorepo's apps/web compose signals
+// land on apps/web, not on the repo-root service). Files enclosed by no service fall
+// back to the root service when one exists; otherwise the signal stays repo-wide only
+// (RepoDigest.Signals). The result is each service's `needs` — the Path-B seed the
+// console maps to SUGGESTED ServiceBindings (W3).
+func attributeNeeds(services []types.DetectedService, dirSignals map[string]map[string]bool) {
+	if len(services) == 0 || len(dirSignals) == 0 {
+		return
+	}
+	for i, set := range attributeToDeepest(services, dirSignals) {
+		if len(set) > 0 {
+			services[i].Needs = sortedKeys(set)
+		}
+	}
+}
+
+// attributeToDeepest maps each dir-keyed value set to the DEEPEST detected service whose path
+// encloses that dir (a monorepo's apps/web files land on apps/web, not the repo root). Dirs
+// enclosed by no service fall back to the root service when one exists. Returns per-service value
+// sets, index-aligned with `services`. Shared by the needs (W3) + env-key (W6) attribution.
+func attributeToDeepest(services []types.DetectedService, dirValues map[string]map[string]bool) []map[string]bool {
+	out := make([]map[string]bool, len(services))
+	rootIdx := -1
+	for i, svc := range services {
+		out[i] = map[string]bool{}
+		if svc.Path == "" {
+			rootIdx = i
+		}
+	}
+	for dir, vals := range dirValues {
+		best := -1
+		for i, svc := range services {
+			if svc.Path == "" {
+				continue // the root service is the fallback, not a prefix winner
+			}
+			if dir == svc.Path || strings.HasPrefix(dir+"/", svc.Path+"/") {
+				if best == -1 || len(svc.Path) > len(services[best].Path) {
+					best = i
+				}
+			}
+		}
+		if best == -1 {
+			best = rootIdx
+		}
+		if best == -1 {
+			continue
+		}
+		for v := range vals {
+			out[best][v] = true
+		}
+	}
+	return out
+}
+
+// sortedKeys returns a set's members as a sorted slice (deterministic output).
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// envKeyName matches a valid environment-variable NAME (the key before `=` on a .env line).
+var envKeyName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// parseEnvKeys extracts the declared variable KEY names from a .env-example file's content:
+// `KEY=value` / `export KEY=value`, skipping blank lines + `#` comments, dropping the values (an
+// example file carries no real secret). Deduped, first-seen order.
+func parseEnvKeys(content string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		eq := strings.IndexByte(line, '=')
+		if eq <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eq])
+		if !envKeyName.MatchString(key) || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
+	}
+	return out
+}
+
+// attributeEnvKeys assigns each .env-example file's declared KEY names to the DEEPEST detected
+// service whose path encloses the file (same enclosing rule as attributeNeeds), writing each
+// service's sorted, deduped Env — the Path-B "skeleton → real" env surface the console pre-fills.
+func attributeEnvKeys(services []types.DetectedService, envExamples []types.RepoFile) {
+	if len(services) == 0 || len(envExamples) == 0 {
+		return
+	}
+	dirEnvKeys := map[string]map[string]bool{}
+	for _, f := range envExamples {
+		keys := parseEnvKeys(f.Content)
+		if len(keys) == 0 {
+			continue
+		}
+		dir := dirKey(f.Path)
+		if dirEnvKeys[dir] == nil {
+			dirEnvKeys[dir] = map[string]bool{}
+		}
+		for _, k := range keys {
+			dirEnvKeys[dir][k] = true
+		}
+	}
+	if len(dirEnvKeys) == 0 {
+		return
+	}
+	for i, set := range attributeToDeepest(services, dirEnvKeys) {
+		if len(set) > 0 {
+			services[i].Env = sortedKeys(set)
+		}
+	}
 }
 
 // dirKey normalizes a captured file's directory to a service path ("" = repo root).

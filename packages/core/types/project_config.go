@@ -283,15 +283,24 @@ type ProjectStorageBucketConfig struct {
 // build/push (from Source when Kind=="repo") is W2, infra-binding is W3.
 type ProjectServiceConfig struct {
 	Placement
-	Name      string               `json:"name"`
-	Type      string               `json:"type"` // deployment | job | cronjob | statefulset
-	Source    ProjectServiceSource `json:"source"`
-	Build     *ProjectServiceBuild `json:"build,omitempty"`
-	Env       []ServiceEnvVar      `json:"env"`
-	Ports     []ServicePort        `json:"ports"`
-	Replicas  int                  `json:"replicas"`
-	Resources *ServiceResources    `json:"resources,omitempty"`
-	Probe     *ServiceProbe        `json:"probe,omitempty"`
+	Name   string               `json:"name"`
+	Type   string               `json:"type"` // deployment | job | cronjob | statefulset
+	Source ProjectServiceSource `json:"source"`
+	Build  *ProjectServiceBuild `json:"build,omitempty"`
+	Env    []ServiceEnvVar      `json:"env"`
+	// Bindings are the W3 edges to backing resources (service→database/cache/queue/secret) and
+	// the env each injects. The runner resolves each to the provisioned resource's endpoint
+	// (tofu output) / credentials (ExternalSecret → k8s Secret) at deploy time.
+	Bindings  []ServiceBinding  `json:"bindings"`
+	Ports     []ServicePort     `json:"ports"`
+	Replicas  int               `json:"replicas"`
+	Resources *ServiceResources `json:"resources,omitempty"`
+	Probe     *ServiceProbe     `json:"probe,omitempty"`
+	// ResolvedImage is the W2 build's write-back slot — the pushed image digest URI
+	// (e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/<repo>@sha256:…") persisted from a BUILD
+	// job's result. Distinct from Source (the user's input); empty until a build has run.
+	// The manifest renderer substitutes it for the workload image (retiring ":latest").
+	ResolvedImage string `json:"resolved_image,omitempty"`
 }
 
 // ProjectServiceSource is the flattened form of the TS discriminated union
@@ -313,6 +322,27 @@ type ProjectServiceBuild struct {
 type ServiceEnvVar struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+}
+
+// ServiceBinding is a service's declared edge to a backing resource (referenced by {Kind, Name} —
+// the config join key) plus the env its connection facets inject. Non-secret facets
+// (endpoint/port) resolve to templated values from the resource's tofu outputs; credential facets
+// resolve keylessly via an ExternalSecret (ESO ClusterSecretStore) → k8s Secret → secretKeyRef.
+type ServiceBinding struct {
+	Target ServiceBindingTarget      `json:"target"`
+	Inject []ServiceBindingInjection `json:"inject"`
+}
+
+// ServiceBindingTarget references the backing resource by kind + name.
+type ServiceBindingTarget struct {
+	Kind string `json:"kind"` // database | cache | queue | secret
+	Name string `json:"name"`
+}
+
+// ServiceBindingInjection maps one workload env var to one facet of the bound resource.
+type ServiceBindingInjection struct {
+	Env  string `json:"env"`
+	From string `json:"from"` // endpoint | port | username | password | connection_string
 }
 
 // ServicePort is a container port the workload exposes.

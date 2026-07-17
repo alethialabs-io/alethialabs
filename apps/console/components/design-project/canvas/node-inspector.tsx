@@ -29,6 +29,7 @@ import {
 	isCollectionKind,
 	kindFromCollectionId,
 } from "@/lib/canvas/collections";
+import { DeployPane } from "@/components/agent/deploy-pane";
 import { CollectionPanel } from "./inspector/collection-panel";
 import { ExternalPanel } from "./inspector/external-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
@@ -110,6 +111,12 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 		? schema.summary(node.data.config, provider)
 		: undefined;
 
+	// The GitOps Deploy tab (#574) is environment-wide, so it lives on the cluster — the
+	// environment's control-plane node, where ArgoCD/gitops already surface (the cluster card's
+	// ArgoCD section). It reads the same `env.gitops` the artifact panel's Deploy tab does,
+	// riding the already-polled EnvironmentStatus — no per-node fetch.
+	const showDeploy = node.data.kind === "cluster";
+
 	// A member of a collapsed kind has no card of its own on the board, so without a way back up
 	// you'd be stranded in a secret with no route to the vault it belongs to.
 	const parentCollection = isCollectionKind(node.data.kind) ? node.data.kind : null;
@@ -186,10 +193,16 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 				defaultValue="overview"
 				className="flex min-h-0 flex-1 flex-col gap-0"
 			>
-				<TabsList className="mx-4 mt-3 grid shrink-0 grid-cols-4">
+				<TabsList
+					className={cn(
+						"mx-4 mt-3 grid shrink-0",
+						showDeploy ? "grid-cols-5" : "grid-cols-4",
+					)}
+				>
 					<TabsTrigger value="overview">Overview</TabsTrigger>
 					<TabsTrigger value="cost">Cost</TabsTrigger>
 					<TabsTrigger value="activity">Activity</TabsTrigger>
+					{showDeploy && <TabsTrigger value="deploy">Deploy</TabsTrigger>}
 					<TabsTrigger value="settings">Settings</TabsTrigger>
 				</TabsList>
 
@@ -213,6 +226,15 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 				>
 					<ActivityTab />
 				</TabsContent>
+
+				{showDeploy && (
+					<TabsContent
+						value="deploy"
+						className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-4"
+					>
+						<DeployPane status={env.gitops} />
+					</TabsContent>
+				)}
 
 				<TabsContent
 					value="settings"

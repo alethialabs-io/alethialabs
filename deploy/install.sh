@@ -55,8 +55,14 @@ cd "$ALETHIA_DIR"
 if [ ! -f .env ]; then
 	log "Creating .env with generated secrets…"
 	$SUDO cp .env.example .env
-	# hex values are sed-safe (no / or + to clash with the delimiter)
-	set_kv() { $SUDO sed -i "s|^$1=.*|$1=$2|" .env; }
+	# hex values are sed-safe (no / or + to clash with the delimiter). Fail loud if the key
+	# isn't already in .env (copied from .env.example): a plain sed would silently no-op and
+	# the box would boot with the default/empty secret. scripts/validate-selfhost.sh guards
+	# this statically too, but never ship a secret-less instance even if that drifts.
+	set_kv() {
+		grep -qE "^$1=" .env || die "install.sh: $1 is missing from .env.example — refusing to leave a default secret"
+		$SUDO sed -i "s|^$1=.*|$1=$2|" .env
+	}
 	set_kv CLI_JWT_SECRET "$(openssl rand -hex 32)"
 	set_kv BETTER_AUTH_SECRET "$(openssl rand -hex 32)"
 	set_kv ALETHIA_DB_PASSWORD "$(openssl rand -hex 24)"
@@ -72,6 +78,11 @@ if [ ! -f .env ]; then
 	} | $SUDO tee -a .env >/dev/null
 else
 	log ".env already present — leaving it untouched."
+	# A re-run with a different DOMAIN silently keeps the old one — warn so it isn't mistaken
+	# for a domain change (edit .env by hand, or remove it to regenerate).
+	if [ -n "$DOMAIN" ] && ! grep -qE "^ALETHIA_DOMAIN=$DOMAIN$" .env 2>/dev/null; then
+		printf '\033[33m! DOMAIN=%s differs from the existing .env — not changed. Edit %s/.env to update it.\033[0m\n' "$DOMAIN" "$ALETHIA_DIR" >&2
+	fi
 fi
 
 # 4. Bring up the bundle from prebuilt public GHCR images (no on-box build)
@@ -85,4 +96,6 @@ else
 	URL="http://$(hostname -I 2>/dev/null | awk '{print $1}')"
 fi
 log "Alethia is starting at ${URL}"
+# The backticks below are literal help text, not a command substitution — SC2016 is a false positive.
+# shellcheck disable=SC2016
 printf '  Next: edit %s/.env for OAuth + email (ALETHIA_SES_*), then re-run this script (or `docker compose ... up -d`).\n' "$ALETHIA_DIR"

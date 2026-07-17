@@ -54,15 +54,15 @@ output "node_security_group" {
 }
 
 output "az1" {
-  value = data.aws_availability_zones.available.names[0]
+  value = local.azs[0]
 }
 
 output "az2" {
-  value = data.aws_availability_zones.available.names[1]
+  value = local.azs[1]
 }
 
 output "az3" {
-  value = data.aws_availability_zones.available.names[2]
+  value = local.azs[2]
 }
 
 output "subnet1" {
@@ -136,8 +136,16 @@ output "ecr_repository_names" {
   value       = module.ecr.repository_names
 }
 output "ecr_repository_urls_map" {
-  description = "The URL of the repositories"
+  description = "Repository URLs keyed by the component's logical name (registry / service name) — the W2 BUILD job and the manifest renderer resolve each service's push destination here"
   value       = module.ecr.repository_urls_map
+}
+output "ecr_build_role_arn" {
+  description = "IRSA role ARN the in-cluster build ServiceAccount assumes to push images (W2 kaniko builds)"
+  value       = var.provision_ecr ? module.irsa_ecr_build[0].iam_role_arn : null
+}
+output "ecr_build_service_account" {
+  description = "The namespace:serviceaccount the build IRSA role trusts — the kaniko Job renderer must schedule builds under exactly this identity"
+  value       = var.provision_ecr ? "${local.ecr_build_namespace}:${local.ecr_build_service_account}" : null
 }
 
 # Elasticache Redis

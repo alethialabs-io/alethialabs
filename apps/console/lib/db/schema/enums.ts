@@ -63,6 +63,28 @@ export const addonMode = pgEnum("addon_mode", ["managed", "gitops"]);
 
 export const cacheEngine = pgEnum("cache_engine", ["redis", "valkey"]);
 
+// The kind of Kubernetes workload a service compiles to. Matches the service form fragment's
+// `type` union (lib/validations/project-form.schema.ts) so the column can't hold a value the
+// form rejects — replaces the loose `text` the getProjectAsFormData narrowing helper guarded.
+export const serviceWorkloadType = pgEnum("service_workload_type", [
+	"deployment",
+	"job",
+	"cronjob",
+	"statefulset",
+]);
+
+// The kind of Kubernetes workload DESCRIBED from a BYO Helm chart's rendered manifests (W5 Path A —
+// project_chart_workloads). Superset of serviceWorkloadType (adds `daemonset`, which a chart can
+// render but Alethia never authors as a first-class service). Normalized to lowercase from the
+// rendered manifest's PascalCase `kind`.
+export const chartWorkloadKind = pgEnum("chart_workload_kind", [
+	"deployment",
+	"statefulset",
+	"daemonset",
+	"cronjob",
+	"job",
+]);
+
 export const nosqlTableType = pgEnum("nosql_table_type", ["standard", "global"]);
 export const nosqlKeyType = pgEnum("nosql_key_type", ["S", "N", "B"]);
 // Cloud-neutral capacity mode; mappers translate to the provider value
@@ -137,6 +159,13 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	// one honest environment_probes row. Unreachable is a SUCCESSFUL probe with reachable=false — the
 	// job only FAILS when the probe itself couldn't run, not when the cluster is down.
 	"PROBE_CLUSTER",
+	// W2 image build & push: for each service where source.kind=="repo", schedule an in-cluster
+	// kaniko Job (git context + Dockerfile → push to the provisioned registry via build-SA IRSA),
+	// watch it, and report a per-service digest map { service_name → image_digest_uri } in
+	// execution_metadata.build_result. Digests are non-secret; registry credentials must never
+	// enter execution_metadata. Runs AFTER infra-up (the cluster hosts the build), BEFORE the
+	// app-workload manifest commit (which substitutes resolved_image).
+	"BUILD",
 ]);
 
 // Break-glass (privileged incident recovery) action catalog + per-action blast-radius label.
@@ -363,6 +392,7 @@ export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
+export type ChartWorkloadKind = (typeof chartWorkloadKind.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
 export type BillingPlan = (typeof billingPlan.enumValues)[number];
 export type BillingStatus = (typeof billingStatus.enumValues)[number];

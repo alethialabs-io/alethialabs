@@ -477,6 +477,10 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// the canvas Run menu, so every probe job failed and environment_probes was never written:
 		// a cluster whose API server had died still read "Live" on the board.
 		execErr = w.executeProbeCluster(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+	case types.JobTypeBuild:
+		// W2 image build & push — schedules kaniko Jobs in the customer's own cluster and
+		// reports the per-service digest map on execution_metadata.build_result. See build.go.
+		execErr = w.executeBuild(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -679,6 +683,26 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
+	// Add-on secret-knob values (W4.5 #640): the config snapshot carries only a SecretRef
+	// per add-on (name/namespace/keys — never values); the plaintext is fetched HERE, over
+	// the same authenticated job channel as the git token, and crosses the sandbox as a
+	// stage secret so it never touches the persisted payload. Fetched only when some
+	// add-on actually declares a ref (most deploys skip the round-trip).
+	var addonSecrets map[string]map[string]string
+	for i := range vc.AddOns {
+		if vc.AddOns[i].SecretRef == nil {
+			continue
+		}
+		if fetched, fetchErr := w.api.FetchAddonSecrets(job.ID); fetchErr != nil {
+			// Fail-safe direction: the deploy proceeds; the affected chart surfaces the
+			// missing Secret on ITS Application rather than the whole deploy dying here.
+			fmt.Fprintf(stderr, "Warning: failed to fetch add-on secrets: %v\n", fetchErr)
+		} else {
+			addonSecrets = fetched
+		}
+		break
+	}
+
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {
 		return err
@@ -718,7 +742,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if err != nil {
 		return err
 	}
-	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token}
+	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets}
 
 	// Run the untrusted provisioning work through the isolation seam. Passthrough runs
 	// runDeployStage in-process; the container backend re-execs it in a per-job container.
@@ -740,29 +764,43 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if shouldMarkOrphanRisk(readDeployPhase(workDir), w.cancels.wasCancelled(job.ID), ctx.Err()) {
 			w.cancels.markOrphanRisk(job.ID)
 		}
+		// A GitOps-wiring hard-fail still writes a PARTIAL PlanResult into result.json
+		// (carrying gitops_status: which step died + a sanitized message — issue #574).
+		// Post it so the console can show WHY GitOps isn't wired, not just a failed job.
+		// The PROCESSING post only jsonb-merges metadata; the caller's FAILED transition
+		// is untouched. Read BEFORE the deferred RemoveAll(workDir).
+		w.postDeployMetadata(job.ID, workDir, stderr)
 		return err
 	}
 
+	w.postDeployMetadata(job.ID, workDir, stderr)
+	return nil
+}
+
+// postDeployMetadata reads the sandbox's result.json (which exists on success AND on a
+// mid-deploy failure — writeStageResult marshals any non-nil partial result), assembles
+// the execution_metadata blob, scrubs it, and posts it to the console. Best-effort: a
+// missing/unreadable result just logs a warning.
+func (w *Runner) postDeployMetadata(jobID, workDir string, stderr *JobLogger) {
 	result, err := readPlanResult(workDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
 	}
-	if result != nil {
-		metadata := buildDeployMetadata(result)
-		// Defense-in-depth over the WHOLE assembled blob: even if buildDeployMetadata regresses
-		// (a re-added top-level secret) or a new tofu output shape carries credential material,
-		// scrubMetadataTree walks every nested key against the denylist and drops any match BEFORE
-		// the metadata crosses into the console Postgres. A non-empty drop list means a regression
-		// the backstop caught — surface it loudly in the job log.
-		if dropped := scrubMetadataTree(metadata); len(dropped) > 0 {
-			fmt.Fprintf(stderr, "Warning: dropped %d secret-bearing metadata key(s) before posting: %v\n", len(dropped), dropped)
-		}
-		if len(metadata) > 0 {
-			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
-		}
+	if result == nil {
+		return
 	}
-
-	return nil
+	metadata := buildDeployMetadata(result)
+	// Defense-in-depth over the WHOLE assembled blob: even if buildDeployMetadata regresses
+	// (a re-added top-level secret) or a new tofu output shape carries credential material,
+	// scrubMetadataTree walks every nested key against the denylist and drops any match BEFORE
+	// the metadata crosses into the console Postgres. A non-empty drop list means a regression
+	// the backstop caught — surface it loudly in the job log.
+	if dropped := scrubMetadataTree(metadata); len(dropped) > 0 {
+		fmt.Fprintf(stderr, "Warning: dropped %d secret-bearing metadata key(s) before posting: %v\n", len(dropped), dropped)
+	}
+	if len(metadata) > 0 {
+		_ = w.api.UpdateJobStatus(jobID, "PROCESSING", "", metadata)
+	}
 }
 
 // buildDeployMetadata assembles the execution_metadata the runner persists to the console
@@ -826,6 +864,12 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 	}
 	if result.SecurityPosture != nil {
 		metadata["security_report"] = result.SecurityPosture
+	}
+	if result.GitopsStatus != nil {
+		// GitOps wiring outcome + apps-Application health snapshot (issue #574). On a
+		// wiring hard-fail this is the only channel telling the console WHICH step died;
+		// the error text is token-sanitized at the source (argocd.SanitizeGitopsError).
+		metadata["gitops_status"] = result.GitopsStatus
 	}
 	return metadata
 }

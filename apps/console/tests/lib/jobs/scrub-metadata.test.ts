@@ -130,6 +130,29 @@ describe("scrubExecutionMetadata", () => {
 		expect(scrubExecutionMetadata(meta)).toEqual([]);
 		expect(meta.verify_receipt).toMatchObject({ key_id: "k1", signature: "sig" });
 	});
+
+	it("keeps a BUILD job's resolved-image digest map while dropping any cred-shaped key (W2 #591)", () => {
+		// The BUILD handler reports a { service -> image_digest_uri } map so the console can persist
+		// each service's resolved_image. The digest URIs are NON-secret provenance and must survive
+		// the ingest scrub; a legacy / self-registered runner that also attaches registry creds must
+		// have those dropped. Service names (the map keys) are not credential-named either.
+		const digestMap = {
+			api: "111122223333.dkr.ecr.us-east-1.amazonaws.com/acme-api@sha256:deadbeef",
+			web: "111122223333.dkr.ecr.us-east-1.amazonaws.com/acme-web@sha256:cafebabe",
+		};
+		const meta: Record<string, unknown> = {
+			resolved_images: { ...digestMap },
+			registry_password: SENTINEL,
+			ecr_auth_token: SENTINEL,
+		};
+		expect(scrubExecutionMetadata(meta).sort()).toEqual([
+			"ecr_auth_token",
+			"registry_password",
+		]);
+		// The digest map is untouched — both services intact, no sentinel leaked in.
+		expect(meta.resolved_images).toEqual(digestMap);
+		expect(JSON.stringify(meta)).not.toContain(SENTINEL);
+	});
 });
 
 describe("isSensitiveMetadataKey", () => {

@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package manifests generates minimal, opinionated Kubernetes manifests (Deployment +
-// Service + optional Ingress) for the services a scan detected, so ArgoCD has something
-// to deploy without the customer hand-writing YAML. It is the "generate" half of the
-// apps story; the "bring-your-own" half simply points ArgoCD at the customer's repo.
+// Service + optional Ingress) for the project's first-class services (vc.Services — the
+// W1 canvas model), so ArgoCD has something to deploy without the customer hand-writing
+// YAML. It is the "generate" half of the apps story; the "bring-your-own" half simply
+// points ArgoCD at the customer's repo.
+//
+// The container image is REAL (W2): a service renders with its ResolvedImage — the digest
+// URI the BUILD job pushed — or its prebuilt Source.Image. There is deliberately no
+// ":latest" fallback anymore (verify/k8s.go IMAGE-001 fails mutable/untagged images); a
+// repo-sourced service that has not been built yet is skipped and reported, never
+// rendered with a fabricated tag.
 //
 // Generation is pure + deterministic (a fixed App list → the same YAML) so it is
 // golden-testable. Committing the output to the GitOps repo is the caller's job.
@@ -28,7 +35,9 @@ type App struct {
 	Name string
 	// Target namespace (defaults to "default" when empty).
 	Namespace string
-	// Fully-qualified container image (registry/repo:tag).
+	// Fully-qualified container image — a digest URI (registry/repo@sha256:…) or a
+	// pinned tag. REQUIRED: rendering fails on an empty image rather than fabricating
+	// a mutable ":latest" (which verify/k8s.go IMAGE-001 rejects).
 	Image string
 	// Container/Service port. 0 → 8080.
 	Port int
@@ -38,9 +47,29 @@ type App struct {
 	Host string
 	// Optional ServiceAccount name (e.g. a workload-identity KSA).
 	ServiceAccount string
+	// Plain environment variables (values rendered quoted). Includes W3 binding-derived
+	// non-secret facets (a backing resource's endpoint/port, resolved from tofu outputs).
+	Env []types.ServiceEnvVar
+	// SecretEnv are env vars sourced from a k8s Secret via valueFrom.secretKeyRef — W3
+	// binding credential facets, materialized keylessly by an ExternalSecret (#618).
+	SecretEnv []AppSecretEnv
+	// Compute requests/limits; nil → the opinionated scaffold defaults.
+	Resources *types.ServiceResources
+	// Readiness/liveness probe; nil → none.
+	Probe *types.ServiceProbe
 }
 
-// normalize fills defaults + sanitizes the name to DNS-1123.
+// AppSecretEnv is one container env var sourced from a k8s Secret key (valueFrom.secretKeyRef).
+// The Secret is materialized by the ExternalSecret lane (#618) under the name BindingSecretName
+// derives — this struct is the render-time half of that contract.
+type AppSecretEnv struct {
+	Env        string // container env var name
+	SecretName string // k8s Secret name (see BindingSecretName)
+	SecretKey  string // key within the Secret (the binding facet: username|password|connection_string)
+}
+
+// normalize fills defaults + sanitizes the name to DNS-1123. The image deliberately has
+// NO default — see App.Image.
 func (a App) normalize() App {
 	a.Name = dns1123(a.Name)
 	if a.Name == "" {
@@ -55,8 +84,16 @@ func (a App) normalize() App {
 	if a.Replicas == 0 {
 		a.Replicas = 2
 	}
-	if a.Image == "" {
-		a.Image = a.Name + ":latest"
+	if a.Resources == nil {
+		a.Resources = &types.ServiceResources{
+			Requests: types.ServiceResourceQuantities{CPU: "100m", Memory: "128Mi"},
+			Limits:   types.ServiceResourceQuantities{CPU: "500m", Memory: "512Mi"},
+		}
+	}
+	if a.Probe != nil && a.Probe.Port == 0 {
+		p := *a.Probe
+		p.Port = a.Port
+		a.Probe = &p
 	}
 	return a
 }
@@ -87,13 +124,47 @@ spec:
           image: {{ .Image }}
           ports:
             - containerPort: {{ .Port }}
+          {{- if or .Env .SecretEnv }}
+          env:
+            {{- range .Env }}
+            - name: {{ printf "%q" .Name }}
+              value: {{ printf "%q" .Value }}
+            {{- end }}
+            {{- range .SecretEnv }}
+            - name: {{ printf "%q" .Env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .SecretName }}
+                  key: {{ .SecretKey }}
+            {{- end }}
+          {{- end }}
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: {{ .Resources.Requests.CPU }}
+              memory: {{ .Resources.Requests.Memory }}
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: {{ .Resources.Limits.CPU }}
+              memory: {{ .Resources.Limits.Memory }}
+          {{- if .Probe }}
+          readinessProbe:
+            {{- if eq .Probe.Type "http" }}
+            httpGet:
+              path: {{ if .Probe.Path }}{{ .Probe.Path }}{{ else }}/{{ end }}
+              port: {{ .Probe.Port }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Probe.Port }}
+            {{- end }}
+          livenessProbe:
+            {{- if eq .Probe.Type "http" }}
+            httpGet:
+              path: {{ if .Probe.Path }}{{ .Probe.Path }}{{ else }}/{{ end }}
+              port: {{ .Probe.Port }}
+            {{- else }}
+            tcpSocket:
+              port: {{ .Probe.Port }}
+            {{- end }}
+          {{- end }}
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -141,8 +212,13 @@ spec:
 `))
 
 // RenderApp renders the Deployment (+ Service + optional Ingress) YAML for one app.
+// An empty image is an ERROR, not a ":latest" default — a mutable/untagged image fails
+// the elench verify gate (IMAGE-001), so fabricating one here would ship a broken app.
 func RenderApp(app App) (string, error) {
 	a := app.normalize()
+	if a.Image == "" {
+		return "", fmt.Errorf("render %s: no container image (repo-sourced services must be BUILT first — resolved_image is empty)", a.Name)
+	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, a); err != nil {
 		return "", fmt.Errorf("render %s: %w", a.Name, err)
@@ -182,42 +258,126 @@ func GenerateManifests(apps []App) (map[string]string, error) {
 type Options struct {
 	// Namespace all apps deploy into.
 	Namespace string
-	// Registry base (e.g. an ECR/GAR/ACR URL); the image becomes "<base>/<name>:latest"
-	// when a service has no explicit image. Empty → "<name>:latest".
-	RegistryBase string
 	// ServiceAccount to bind (e.g. a workload-identity KSA); optional.
 	ServiceAccount string
 	// Base domain; when set, each app gets an Ingress at "<name>.<domain>".
 	Domain string
+	// Outputs are the provision's tofu outputs (endpoint values etc.), used to resolve a W3
+	// binding's non-secret facets into concrete env values. Nil/empty is fine — a service with
+	// no bindings needs none. AWS-first: the endpoint output keys are the AWS template's.
+	Outputs map[string]string
 }
 
-// FromServices builds Apps from detected services. Only services that carry a Dockerfile
-// (i.e. are deployable) are included; a monorepo's non-container dirs are skipped.
-func FromServices(services []types.DetectedService, opts Options) []App {
-	apps := make([]App, 0, len(services))
+// awsEndpointOutputKey maps a binding kind to the AWS template's endpoint output key. AWS-first —
+// per-cloud key maps are a follow-up. The template provisions a SINGLE db/cache per env today, so
+// the binding's target NAME does not yet disambiguate (a multi-resource infra lane will add that).
+func awsEndpointOutputKey(kind string) string {
+	switch kind {
+	case "database":
+		return "rds_cluster_endpoint"
+	case "cache":
+		return "redis_primary_endpoint_address"
+	default:
+		return ""
+	}
+}
+
+// defaultPort is the conventional port for a backing kind (no port output is emitted today).
+func defaultPort(kind string) string {
+	switch kind {
+	case "database":
+		return "5432"
+	case "cache":
+		return "6379"
+	case "queue":
+		return "5672"
+	default:
+		return ""
+	}
+}
+
+// resolveBindings turns a service's W3 bindings into container env: non-secret facets
+// (endpoint/port) as plain values resolved from the provision's tofu outputs, credential facets as
+// secretKeyRef into the Secret the ExternalSecret lane materializes. It shares IsCredentialFacet +
+// BindingSecretName (externalsecret.go) with #618 so the workload reads exactly the Secret #618
+// creates — one source of truth, no drift. Pure — a map lookup, no I/O.
+func resolveBindings(serviceName string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv) {
+	for _, b := range bindings {
+		for _, inj := range b.Inject {
+			if IsCredentialFacet(inj.From) {
+				secretEnv = append(secretEnv, AppSecretEnv{
+					Env:        inj.Env,
+					SecretName: BindingSecretName(serviceName, b.Target),
+					SecretKey:  inj.From,
+				})
+				continue
+			}
+			var value string
+			switch inj.From {
+			case "endpoint":
+				value = outputs[awsEndpointOutputKey(b.Target.Kind)]
+			case "port":
+				value = defaultPort(b.Target.Kind)
+			}
+			env = append(env, types.ServiceEnvVar{Name: inj.Env, Value: value})
+		}
+	}
+	return env, secretEnv
+}
+
+// FromServices builds Apps from the project's FIRST-CLASS services (vc.Services — the W1
+// model), replacing the retired scanner-DetectedService path. Image precedence per
+// service: ResolvedImage (the digest URI the W2 BUILD pushed) over Source.Image (the
+// user's prebuilt image). There is NO ":latest" fallback — the retired scanner path's
+// `<name>:latest` default is exactly what verify/k8s.go IMAGE-001 fails.
+//
+// Not everything renders: a repo-sourced service that has not been built yet has no image,
+// and only type=="deployment" has a template today (job/cronjob/statefulset rendering is a
+// follow-up lane). Those are returned in `skipped` (name: reason) so the caller REPORTS
+// them — a silent drop would read as "deployed" when it wasn't.
+func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []App, skipped []string) {
+	apps = make([]App, 0, len(services))
 	for _, s := range services {
-		if !s.HasDockerfile {
+		name := dns1123(s.Name)
+		if s.Type != "" && s.Type != "deployment" {
+			skipped = append(skipped, fmt.Sprintf("%s: workload type %q has no manifest template yet", name, s.Type))
 			continue
 		}
-		name := dns1123(s.Name)
-		image := name + ":latest"
-		if opts.RegistryBase != "" {
-			image = strings.TrimRight(opts.RegistryBase, "/") + "/" + name + ":latest"
+		image := s.ResolvedImage
+		if image == "" && s.Source.Kind == "image" {
+			image = s.Source.Image
+		}
+		if image == "" {
+			skipped = append(skipped, fmt.Sprintf("%s: repo-sourced service not built yet (resolved_image empty)", name))
+			continue
+		}
+		port := 0
+		if len(s.Ports) > 0 {
+			port = s.Ports[0].ContainerPort
 		}
 		host := ""
 		if opts.Domain != "" {
 			host = name + "." + opts.Domain
 		}
+		// W3 — resolve the service's bindings into env: endpoint/port as values (from tofu
+		// outputs), credentials as secretKeyRef. User-authored env comes first, then binding env.
+		bindEnv, secretEnv := resolveBindings(s.Name, s.Bindings, opts.Outputs)
+		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(bindEnv)), s.Env...), bindEnv...)
 		apps = append(apps, App{
 			Name:           name,
 			Namespace:      opts.Namespace,
 			Image:          image,
-			Port:           s.Port,
+			Port:           port,
+			Replicas:       s.Replicas,
 			Host:           host,
 			ServiceAccount: opts.ServiceAccount,
+			Env:            env,
+			SecretEnv:      secretEnv,
+			Resources:      s.Resources,
+			Probe:          s.Probe,
 		})
 	}
-	return apps
+	return apps, skipped
 }
 
 // WriteManifests renders the apps and writes each "<name>.yaml" into dir (created if

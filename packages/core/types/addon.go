@@ -45,10 +45,34 @@ type AddOnInstall struct {
 	Project string `json:"project,omitempty"`
 	// Namespace the chart installs into (CreateNamespace on sync).
 	Namespace string `json:"namespace"`
-	// Fully-merged Helm values (catalog defaults + user knobs).
+	// Fully-merged Helm values (catalog defaults + user knobs). NEVER contains a
+	// secret-typed knob's value (W4.5 #640) — only SecretKeyRef wiring; see SecretRef.
 	Values map[string]interface{} `json:"values"`
 	// ArgoCD sync-wave ordering (lower installs first).
 	SyncWave int `json:"syncWave"`
+	// SecretRef names the per-add-on k8s Secret this chart's secret knobs read from
+	// (W4.5 #640). It carries NO values — the runner fetches the plaintext at execution
+	// time over the authenticated job channel (FetchAddonSecrets, the git-token pattern)
+	// and seeds the Secret in-cluster BEFORE the Application syncs. Nil when the add-on
+	// has no stored secret knobs. Mirrors the TS `AddOnSecretRef`.
+	SecretRef *AddOnSecretRef `json:"secretRef,omitempty"`
+}
+
+// AddOnSecretRef is the runner-facing description of one add-on's in-cluster Secret:
+// where it lives and which data keys the chart expects — never the values themselves.
+type AddOnSecretRef struct {
+	// SecretName is the Secret's metadata.name (deterministic: "alethia-addon-<id>").
+	SecretName string `json:"secretName"`
+	// Namespace the Secret lives in — the add-on's install namespace.
+	Namespace string `json:"namespace"`
+	// Keys the runner must populate (= the secret-typed field keys with stored values).
+	Keys []string `json:"keys"`
+	// StaticData are NON-secret constants that must live in the SAME Secret because the
+	// chart reads a paired key from it (grafana's userKey, minio's rootUser — the admin
+	// USERNAME is an ordinary knob, but the chart resolves it from the admin Secret
+	// alongside the password). Snapshot-safe by declaration; a fetched value wins on a
+	// key collision. Mirrors the TS `AddOnSecretRef.staticData`.
+	StaticData map[string]string `json:"staticData,omitempty"`
 }
 
 // IsGitSource reports whether this install pulls a chart from a git repo (a BYO chart) rather
