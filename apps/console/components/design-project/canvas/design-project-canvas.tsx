@@ -25,7 +25,10 @@ import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
 import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
 import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
-import { getProjectByoCharts } from "@/app/server/actions/byo-charts";
+import {
+	getProjectByoCharts,
+	getProjectChartWorkloads,
+} from "@/app/server/actions/byo-charts";
 import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
 import { IacSourceCanvasProvider } from "@/components/design-project/byo/iac-source-canvas-context";
 import { IacNode } from "@/components/design-project/byo/iac-node";
@@ -71,6 +74,9 @@ interface DesignProjectCanvasProps {
 	/** Whether bring-your-own Helm charts are enabled on this instance (server flag). Gates the
 	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
 	byoHelmEnabled?: boolean;
+	/** Whether BYO chart-workload DESCRIBE is enabled (server flag). Gates loading + rendering the
+	 * described `project_chart_workloads` child nodes. Server actions enforce the real gate. */
+	byoDescribeEnabled?: boolean;
 	/** Whether bring-your-own IaC is enabled on this instance (server flag). Gates the ⌘K "Bring
 	 * your own IaC" entry + the module's source card. Server actions enforce the real gate. */
 	byoIacEnabled?: boolean;
@@ -92,6 +98,7 @@ function CanvasInner({
 	environmentId,
 	dockInShell,
 	byoHelmEnabled,
+	byoDescribeEnabled,
 	byoIacEnabled,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
@@ -127,6 +134,7 @@ function CanvasInner({
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
+	const setChartWorkloadNodes = useCanvasStore((s) => s.setChartWorkloadNodes);
 	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
 	const setIacNodes = useCanvasStore((s) => s.setIacNodes);
 	// The environment's server truth (provided by the project shell) — it now also carries the BYO
@@ -151,9 +159,28 @@ function CanvasInner({
 			});
 	}, [projectId, environmentId, byoHelmEnabled, setChartNodes]);
 
-	useEffect(() => {
+	// Described chart workloads (W5 Path A) are out-of-band too: load them into the canvas as children
+	// of their chart nodes. Only in edit mode with the describe flag on; a fetch failure just leaves
+	// the workloads absent (the honest empty state — a chart with no described children yet).
+	const refreshChartWorkloads = useCallback(() => {
+		if (!projectId || !byoDescribeEnabled) return;
+		void getProjectChartWorkloads(projectId, environmentId ?? null)
+			.then((res) => setChartWorkloadNodes(res.workloads))
+			.catch(() => {
+				/* best-effort — leaves the canvas without described-workload nodes */
+			});
+	}, [projectId, environmentId, byoDescribeEnabled, setChartWorkloadNodes]);
+
+	// A chart attach / detach / rescan (or the overlay editor) should refresh both the chart nodes and
+	// their described workloads together.
+	const refreshByo = useCallback(() => {
 		refreshCharts();
-	}, [refreshCharts]);
+		refreshChartWorkloads();
+	}, [refreshCharts, refreshChartWorkloads]);
+
+	useEffect(() => {
+		refreshByo();
+	}, [refreshByo]);
 
 	// Installed marketplace add-ons become NODES. They were configured in a sheet and explicitly not
 	// graph nodes, so an installed Grafana was invisible on the architecture — even though it's an
@@ -503,7 +530,7 @@ function CanvasInner({
 					onOpenChange={setByoDialogOpen}
 					projectId={projectId}
 					environmentId={environmentId ?? null}
-					onAttached={refreshCharts}
+					onAttached={refreshByo}
 				/>
 			)}
 			{projectId && byoIacEnabled && (
@@ -544,7 +571,7 @@ function CanvasInner({
 	const withByoContext = (content: React.ReactNode) =>
 		projectId ? (
 			<ByoChartCanvasProvider
-				value={{ projectId, environmentId: environmentId ?? null, refresh: refreshCharts }}
+				value={{ projectId, environmentId: environmentId ?? null, refresh: refreshByo }}
 			>
 				<IacSourceCanvasProvider
 					value={{

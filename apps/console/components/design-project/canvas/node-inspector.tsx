@@ -30,6 +30,7 @@ import {
 	kindFromCollectionId,
 } from "@/lib/canvas/collections";
 import { DeployPane } from "@/components/agent/deploy-pane";
+import { ChartWorkloadPanel } from "./inspector/chart-workload-panel";
 import { CollectionPanel } from "./inspector/collection-panel";
 import { ExternalPanel } from "./inspector/external-panel";
 import { NODE_REGISTRY } from "./graph/node-registry";
@@ -92,6 +93,12 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 	// read-only member list instead of the config form (which would otherwise render an editable name
 	// field and write a `name` into a config that has none).
 	if (node.data.kind === "external") return <ExternalPanel nodeId={node.id} />;
+
+	// A described chart workload (W5 Path A) is read-mostly: its `rendered` description is owned by the
+	// chart (overwritten each scan), and only the overlay (W3 bindings + replicas/env + value-paths)
+	// is editable — so it gets its own panel, not the generic config form.
+	if (node.data.kind === "chart_workload")
+		return <ChartWorkloadPanel nodeId={node.id} />;
 
 	const gated =
 		def.classification === "core" &&

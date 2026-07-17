@@ -5,7 +5,7 @@ import { applyNodeChanges, type NodeChange } from "@xyflow/react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import type { ByoChartState } from "@/app/server/actions/byo-charts";
+import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo-charts";
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
@@ -87,6 +87,35 @@ function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 			for (const leaf of byKind(kind)) link(cluster, leaf);
 		}
 	}
+
+	// W5 Path A — described chart workloads. Each is drawn as a child of its parent `chart-` node
+	// (a solid parent edge), and each of its W3 bindings draws a dotted "consumes" edge to the
+	// backing resource it binds to — resolved by (kind, name) exactly like the service binding rule.
+	// A binding whose target isn't placed on the canvas simply draws nothing (never a dangling edge).
+	for (const wl of byKind("chart_workload")) {
+		const config = wl.data.config as NodeConfigMap["chart_workload"];
+		const parent = nodes.find((n) => n.id === `chart-${config.chartId}`);
+		if (parent) {
+			edges.push({
+				id: `${parent.id}->${wl.id}`,
+				source: parent.id,
+				target: wl.id,
+				type: "dependency",
+			});
+		}
+		for (const b of config.bindings ?? []) {
+			const target = nodes.find(
+				(n) => n.data.kind === b.target.kind && configName(n.data) === b.target.name,
+			);
+			if (!target) continue;
+			edges.push({
+				id: `cwbind:${wl.id}->${target.id}`,
+				source: wl.id,
+				target: target.id,
+				type: "cw_binding",
+			});
+		}
+	}
 	return edges;
 }
 
@@ -159,7 +188,12 @@ function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
  * `graphToForm`, and must never appear in the Deploy diff — they aren't staged changes. Deploying a
  * card the design does not own would be the Deploy button lying.
  */
-export const OUT_OF_BAND = new Set<NodeKind>(["chart", "addon", "external"]);
+export const OUT_OF_BAND = new Set<NodeKind>([
+	"chart",
+	"chart_workload",
+	"addon",
+	"external",
+]);
 
 /** A staged difference between the canvas (desired) and the saved baseline. */
 export interface PendingChange {
@@ -293,6 +327,9 @@ interface CanvasStore {
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
 	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
 	setChartNodes: (charts: ByoChartState[]) => void;
+	/** Replace all described chart-workload nodes from getProjectChartWorkloads (W5 Path A;
+	 * out-of-band; read-mostly; not a staged change). Each renders as a child of its `chart-` node. */
+	setChartWorkloadNodes: (workloads: ChartWorkloadState[]) => void;
 	/** Replace the external cards of a BYO IaC module (out-of-band; read-only; not a staged
 	 * change). Built by `buildIacInventory` from the module's scan + last plan. */
 	setIacNodes: (groups: IacGroup[]) => void;
@@ -482,6 +519,45 @@ export const useCanvasStore = create<CanvasStore>()(
 					},
 				}));
 				const next = [...nonChart, ...chartNodes];
+				set({ nodes: next, edges: deriveEdges(next) });
+			},
+
+			setChartWorkloadNodes: (workloads) => {
+				const others = get().nodes.filter((n) => n.data.kind !== "chart_workload");
+				// Stack each chart's described workloads beneath its parent `chart-` node (fallback to a
+				// column if the chart node hasn't loaded yet — the two loaders run independently). Like
+				// chart nodes, these are non-deletable: they're an out-of-band description, not a staged
+				// change, so a stray Backspace must not orphan the render.
+				const perChart = new Map<string, number>();
+				const workloadNodes: CanvasNode[] = workloads.map((w) => {
+					const parent = others.find((n) => n.id === `chart-${w.chartId}`);
+					const i = perChart.get(w.chartId) ?? 0;
+					perChart.set(w.chartId, i + 1);
+					const px = parent?.position.x ?? 900;
+					const py = parent?.position.y ?? 160;
+					return {
+						id: `cw-${w.id}`,
+						type: "chart_workload",
+						deletable: false,
+						position: { x: px + 40, y: py + 150 + i * 130 },
+						data: {
+							kind: "chart_workload",
+							config: {
+								id: w.id,
+								chartId: w.chartId,
+								name: w.name,
+								kind: w.kind,
+								rendered: w.rendered,
+								bindings: w.bindings,
+								config: w.config,
+								valuePaths: w.valuePaths,
+							},
+							cloud_identity_id: null,
+							provider: null,
+						},
+					};
+				});
+				const next = [...others, ...workloadNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
 			},
 

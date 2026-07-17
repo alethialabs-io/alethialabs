@@ -743,6 +743,50 @@ export const NODE_REGISTRY: NodeRegistry = {
 			namespace: "default",
 		}),
 	},
+	// A workload DESCRIBED from a BYO chart (W5 Path A — Option B): one node per Deployment/
+	// StatefulSet/DaemonSet/CronJob/Job the chart renders. Out-of-band (project_chart_workloads),
+	// loaded from getProjectChartWorkloads, never addable, never in the Deploy diff. Classified
+	// `external` (dashed) like its parent chart — read-mostly and NOT owned by the design, which is
+	// exactly what keeps it visually distinct from the solid `core` first-class `service` node (the
+	// two-model invariant). Renders through its own component (chart-workload-node.tsx); these facts
+	// keep the registry exhaustive. defaultData is a placeholder — real config always comes from the DB.
+	chart_workload: {
+		kind: "chart_workload",
+		schemaKey: "charts",
+		cardinality: "array",
+		classification: "external",
+		cloudScoped: false,
+		eyebrow: "Chart workload",
+		label: "Chart workload",
+		icon: Package,
+		card: {
+			// Target: the parent chart sources this workload. Source: the workload sources its binding
+			// edges to backing resources (the same rule the service node uses).
+			handles: { source: true, target: true },
+			facts: ({ config }) => [
+				{ label: "Kind", value: config.kind },
+				{
+					label: "Image",
+					value: config.rendered.image.replace(/^.*\//, "") || "—",
+				},
+				{
+					label: "Replicas",
+					value:
+						config.rendered.replicas != null ? String(config.rendered.replicas) : "—",
+				},
+			],
+		},
+		defaultData: () => ({
+			id: "",
+			chartId: "",
+			name: "workload",
+			kind: "deployment",
+			rendered: { image: "", ports: [], env_keys: [] },
+			bindings: [],
+			config: {},
+			valuePaths: {},
+		}),
+	},
 	// One card of a bring-your-own IaC module: every resource of one KIND, in one Terraform
 	// module. Out-of-band and read-only — derived from the module's IAC_SCAN inventory (or, once
 	// planned, its plan's resource_changes) by lib/canvas/iac-inventory.ts; never addable, never
