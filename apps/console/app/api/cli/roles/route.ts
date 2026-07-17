@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { typedKeys } from "@/lib/typed-object";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
@@ -40,7 +41,7 @@ function sanitize(keys: string[]): string[] {
 
 /** The built-in role templates as CLI wire shapes (`"*"` expands to every key). */
 function builtinRoleWires() {
-	return (Object.keys(BUILTIN_ROLE_IDS) as BuiltInRole[]).map((name) => {
+	return typedKeys(BUILTIN_ROLE_IDS).map((name) => {
 		const keys = BUILT_IN_ROLES[name];
 		return {
 			id: BUILTIN_ROLE_IDS[name],

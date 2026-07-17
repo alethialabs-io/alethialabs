@@ -46,6 +46,8 @@ export function scopeToolsToAgent<T extends Record<string, unknown>>(
 	if (!toolScope || toolScope.length === 0) return { ...tools };
 	const allow = new Set(toolScope);
 	const out: Partial<T> = {};
+	// Writing Partial<T> by a keyof-index needs the string-narrowed key here (TS2862 on a
+	// generic write); Object.keys is string[] by spec, so this narrow can't be expressed cast-free.
 	for (const name of Object.keys(tools) as (keyof T & string)[]) {
 		if (allow.has(name)) out[name] = tools[name];
 	}

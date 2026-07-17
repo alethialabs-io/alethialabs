@@ -7,6 +7,7 @@
 // the keys + per-plan price IDs and Stripe drives the organization_billing record.
 // Server-only — never import from a client component.
 
+import { typedEntries } from "@/lib/typed-object";
 import { z } from "zod";
 import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan } from "@/lib/db/schema/enums";
@@ -141,7 +142,7 @@ export function meterPriceIdForPlan(plan: PaidPlan): string | undefined {
 /** The paid plan a Stripe Price ID maps to, or null if it isn't one of ours. */
 export function planForPriceId(priceId: string): PaidPlan | null {
 	const { prices } = getStripeConfig();
-	const entry = (Object.entries(prices) as [PaidPlan, string | undefined][]).find(
+	const entry = typedEntries(prices).find(
 		([, id]) => id === priceId,
 	);
 	return entry ? entry[0] : null;

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { typedKeys } from "@/lib/typed-object";
 import { and, desc, eq } from "drizzle-orm";
 import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
@@ -72,7 +73,7 @@ export async function getGrantOptions(): Promise<GrantOptions> {
 			listCustomRoles(),
 		]);
 
-	const builtin = (Object.keys(BUILTIN_ROLE_IDS) as BuiltInRole[]).map((name) => ({
+	const builtin = typedKeys(BUILTIN_ROLE_IDS).map((name) => ({
 		id: BUILTIN_ROLE_IDS[name],
 		name,
 		builtin: true,
