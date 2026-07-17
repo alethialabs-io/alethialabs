@@ -7,6 +7,7 @@
 // instance types: job is ephemeral + high-volume and never individually shared, so
 // its permissions resolve at the org (org-wide grants only).
 
+import { typedKeys } from "@/lib/typed-object";
 import type { Resource } from "@/lib/authz/registry";
 
 export const PARENTS: Partial<Record<Resource, Resource[]>> = {
@@ -17,7 +18,7 @@ export const PARENTS: Partial<Record<Resource, Resource[]>> = {
 };
 
 /** The per-id resource types (those with a parent chain). */
-export const INSTANCE_TYPES = Object.keys(PARENTS) as Resource[];
+export const INSTANCE_TYPES = typedKeys(PARENTS);
 
 /** True when a resource has its own per-instance object (vs. an org-level capability). */
 export function isInstanceType(resource: Resource): boolean {

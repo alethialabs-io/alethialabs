@@ -97,6 +97,8 @@ export function externalToolsOnly<T extends Record<string, unknown>>(
 	tools: T,
 ): Partial<T> {
 	const out: Partial<T> = {};
+	// Writing Partial<T> by a keyof-index needs the string-narrowed key here (TS2862 on a
+	// generic write); Object.keys is string[] by spec, so this narrow can't be expressed cast-free.
 	for (const name of Object.keys(tools) as (keyof T & string)[]) {
 		if (isExternalTool(name)) out[name] = tools[name];
 	}

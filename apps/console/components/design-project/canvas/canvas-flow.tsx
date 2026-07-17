@@ -11,6 +11,7 @@ import {
 	type NodeChange,
 	type NodeTypes,
 } from "@xyflow/react";
+import { typedKeys } from "@/lib/typed-object";
 import "@xyflow/react/dist/style.css";
 import { useMemo, useState } from "react";
 import {
@@ -49,7 +50,7 @@ import { GatedEdge } from "./edges/gated-edge";
 // Defined at module scope so React Flow doesn't warn about new objects per render.
 const nodeTypes: NodeTypes = {
 	...Object.fromEntries(
-		(Object.keys(NODE_REGISTRY) as NodeKind[]).map((kind) => [kind, ServiceNode]),
+		typedKeys(NODE_REGISTRY).map((kind) => [kind, ServiceNode]),
 	),
 	chart: ChartNode,
 	// The collapsed card for a high-cardinality kind (the Secrets vault). Synthetic — it has no
