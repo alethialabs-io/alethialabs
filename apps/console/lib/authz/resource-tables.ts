@@ -5,6 +5,7 @@
 // a type within an org. Used by both PDP engines for `listAccessible`'s org-wide path
 // (an org-wide grant ⇒ every resource of that type in the org).
 
+import { lookup } from "@/lib/typed-object";
 import { eq } from "drizzle-orm";
 import type { Resource } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
@@ -29,7 +30,7 @@ export async function listOrgResourceIds(
 	resourceType: Resource,
 	orgId: string,
 ): Promise<string[]> {
-	const table = RESOURCE_TABLE[resourceType as keyof typeof RESOURCE_TABLE];
+	const table = lookup(RESOURCE_TABLE, resourceType);
 	if (!table) return [];
 	const rows = await getServiceDb()
 		.select({ id: table.id })

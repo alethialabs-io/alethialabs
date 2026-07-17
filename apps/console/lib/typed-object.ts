@@ -22,3 +22,15 @@ export function typedValues<T extends object>(o: T): T[keyof T][] {
 export function typedEntries<T extends object>(o: T): [keyof T, T[keyof T]][] {
 	return Object.entries(o) as [keyof T, T[keyof T]][];
 }
+
+/**
+ * A record value by an arbitrary (possibly-untyped) key, or undefined when the key is absent.
+ * The one assertion needed to index `T` by a runtime key lives here, so lookups against a
+ * Record<Enum, V> by a broad `string` stay cast-free at the call site.
+ */
+export function lookup<T extends object>(
+	record: T,
+	key: PropertyKey,
+): T[keyof T] | undefined {
+	return key in record ? record[key as keyof T] : undefined;
+}

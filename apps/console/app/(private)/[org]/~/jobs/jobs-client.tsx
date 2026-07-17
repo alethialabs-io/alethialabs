@@ -6,6 +6,7 @@
 // filtering + facet counts (getJobsPage), the normalized query in the TanStack key, and
 // keepPreviousData dimming instead of client-side .filter() over the whole cache.
 
+import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
 import { ErrorState } from "@/components/errors/error-state";
 import { buildJobColumns } from "@/components/jobs/columns";
@@ -273,7 +274,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 							icon={Wrench}
 							options={comboOptions(
 								facets?.types,
-								(o) => JOB_TYPES[o.value as keyof typeof JOB_TYPES]?.label ?? o.value,
+								(o) => lookup(JOB_TYPES, o.value)?.label ?? o.value,
 							)}
 							value={filters.types}
 							onChange={(next) => set("types", next)}

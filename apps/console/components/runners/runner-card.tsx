@@ -5,6 +5,7 @@
 // One runner as a card (replaces the former dense table row). Grayscale: status reads
 // through a StatusBadge dot + mono label, never hue.
 
+import { lookup } from "@/lib/typed-object";
 import { Card } from "@repo/ui/card";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -97,7 +98,7 @@ export function RunnerCard({
 							))}
 							<span className="truncate text-muted-foreground">
 								{providers.length === 1
-									? (PROVIDER_LABELS[providers[0] as Provider] ?? providers[0])
+									? (lookup(PROVIDER_LABELS, providers[0]) ?? providers[0])
 									: `${providers.length} clouds`}
 							</span>
 						</span>
