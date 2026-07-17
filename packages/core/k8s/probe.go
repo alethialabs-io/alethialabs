@@ -38,12 +38,43 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 	deadline := time.Now().Add(timeout)
 	fmt.Fprintf(stdout, "Waiting for the cluster to become reachable (timeout %s)...\n", timeout)
 
-	// 1. API server reachable.
-	if err := pollUntil(ctx, deadline, 10*time.Second, func() bool {
-		_, err := utils.ExecuteCommandWithOutput("kubectl get --raw=/readyz", ".", nil)
-		return err == nil
-	}); err != nil {
-		return fmt.Errorf("cluster API server did not become reachable within %s: %w", timeout, err)
+	// 1. API server reachable — poll readyz, but keep WHY it fails (auth vs network vs not-ready)
+	// so a timeout is diagnosable at a glance, and fast-fail on a persistent auth rejection (an
+	// access-entry/RBAC problem never resolves by waiting — no reason to burn the full timeout).
+	var lastErr error
+	var lastOut string
+	authRejections := 0
+	apiErr := func() error {
+		for {
+			out, e := utils.ExecuteCommandWithOutput("kubectl get --raw=/readyz", ".", nil)
+			if e == nil {
+				return nil
+			}
+			lastErr, lastOut = e, out
+			if classifyReachability(e, out) == reachAuth {
+				authRejections++
+				if authRejections >= authRejectFastFail {
+					return fmt.Errorf("auth rejected on %d consecutive probes", authRejections)
+				}
+			} else {
+				authRejections = 0
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timed out")
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Second):
+			}
+		}
+	}()
+	if apiErr != nil {
+		if lastErr == nil {
+			lastErr = apiErr
+		}
+		return fmt.Errorf("cluster API server did not become reachable within %s — %s: %w",
+			timeout, classifyReachability(lastErr, lastOut), lastErr)
 	}
 	fmt.Fprintln(stdout, "Cluster API server is reachable.")
 
@@ -69,6 +100,56 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 	}
 	fmt.Fprintf(stdout, "%d/%d nodes Ready.\n", lastReady, lastTotal)
 	return nil
+}
+
+// reachClass names WHICH layer a reachability probe is failing at, so a timeout tells the operator
+// where to look instead of just "not reachable".
+type reachClass string
+
+const (
+	reachAuth     reachClass = "AUTH REJECTED (the runner's identity is not authorized on the cluster — check the access entry / RBAC ↔ the kube-token identity)"
+	reachNetwork  reachClass = "NETWORK UNREACHABLE (the API endpoint is not reachable from the runner — check the public-access CIDR allowlist / security groups / VPC)"
+	reachNotReady reachClass = "API NOT READY (the endpoint answered but readyz is not green yet)"
+	reachUnknown  reachClass = "UNKNOWN (see the last probe error)"
+)
+
+// authRejectFastFail is the number of CONSECUTIVE auth rejections after which WaitClusterReady stops
+// waiting: an access-entry/RBAC misconfig never resolves by waiting, so burning the full timeout is
+// wasted. Big enough to ride out token/endpoint warm-up jitter (~60s at the 10s poll interval).
+const authRejectFastFail = 6
+
+// classifyReachability maps a kubectl reachability-probe error + its output to the failing layer.
+// Pure + unit-tested. A nil error means the command ran but readyz wasn't 200 (API not ready yet).
+func classifyReachability(err error, out string) reachClass {
+	if err == nil {
+		return reachNotReady
+	}
+	s := strings.ToLower(err.Error() + " " + out)
+	switch {
+	case containsAny(s,
+		"unauthorized", "forbidden", "the server has asked for the client to provide credentials",
+		"you must be logged in", "u_a_authentication", "error from server (forbidden)"):
+		return reachAuth
+	case containsAny(s,
+		"no route to host", "i/o timeout", "connection refused", "dial tcp", "could not resolve host",
+		"no such host", "network is unreachable", "connection timed out", "context deadline exceeded",
+		"tls handshake timeout"):
+		return reachNetwork
+	case containsAny(s, "503", "500", "readyz", "apiserver is not ready", "not ready"):
+		return reachNotReady
+	default:
+		return reachUnknown
+	}
+}
+
+// containsAny reports whether s contains any of the substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // WaitPodToAPIServer proves that an ORDINARY POD can reach the Kubernetes API server across
