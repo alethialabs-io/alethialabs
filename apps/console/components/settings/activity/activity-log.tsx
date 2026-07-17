@@ -25,6 +25,7 @@ import {
 	useActivityQuery,
 	useMembersQuery,
 } from "@/lib/query/use-activity-query";
+import { ErrorState } from "@/components/errors/error-state";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
@@ -288,7 +289,22 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 				)}
 			</div>
 
-			{loading && rows.length === 0 ? (
+			{activity.isError ? (
+				// A fetch failure must not render as an empty activity feed.
+				<ErrorState
+					title="Couldn't load activity"
+					description="Something went wrong fetching the activity log. Check your connection and try again."
+					actions={
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => activity.refetch()}
+						>
+							Retry
+						</Button>
+					}
+				/>
+			) : loading && rows.length === 0 ? (
 				<div className="space-y-3">
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />
