@@ -7,6 +7,7 @@ import {
 	renameCloudIdentity,
 	reverifyCloudIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
+import { isEnumMember } from "@/lib/coerce";
 import { asGitProvider } from "@/lib/connectors/git-providers";
 import { disconnectAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";
 import { disconnectGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
@@ -333,7 +334,7 @@ export function ConnectorsPage({
 			} else if (integration.slug === "azure") {
 				if (!cloudId) throw new Error("Missing identity ID");
 				await disconnectAzureIdentity(cloudId);
-			} else if ((EXTRA_CLOUDS as readonly string[]).includes(integration.slug)) {
+			} else if (isEnumMember(integration.slug, EXTRA_CLOUDS)) {
 				if (!cloudId) throw new Error("Missing identity ID");
 				await disconnectExtraCloud(
 					cloudId,
