@@ -10,7 +10,10 @@ import {
 	isSingletonKind,
 	validateComponentFields,
 } from "@/lib/cli/project-components";
-import { resolveCliProject } from "@/lib/cli/resolve-project";
+import {
+	resolveCliProject,
+	resolveDefaultEnvironmentId,
+} from "@/lib/cli/resolve-project";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import {
@@ -65,9 +68,17 @@ export async function POST(
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
+		const environmentId = await resolveDefaultEnvironmentId(project.id);
+		if (!environmentId) {
+			return NextResponse.json(
+				{ error: "Project has no environment to add the component to" },
+				{ status: 400 },
+			);
+		}
 		const component = await insertProjectComponent(
 			kind,
 			project.id,
+			environmentId,
 			name ?? "",
 			validated.values,
 		);
