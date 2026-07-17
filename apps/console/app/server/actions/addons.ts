@@ -7,6 +7,7 @@
 // applied by the runner on the next DEPLOY (managed mode renders an ArgoCD Application); this
 // layer only persists intent + the tuned knobs into project_addons.
 
+import { asRecord } from "@/lib/records";
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
@@ -214,7 +215,7 @@ export async function enableAddon(input: {
 			.limit(1);
 		const storedValues: AddOnValues = mergeAddonSecrets(
 			def,
-			parsed.data as AddOnValues,
+			asRecord(parsed.data),
 			existing?.values ?? null,
 		) as AddOnValues;
 		await tx
