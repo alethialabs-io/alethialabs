@@ -51,7 +51,7 @@ export function ClusterCard({
 	initialAssignments?: AssignedValue[];
 }) {
 	const provider = data.cloud_identities?.provider ?? "aws";
-	const meta = getProvider(provider as CloudProviderSlug);
+	const meta = getProvider(provider);
 	const cluster = Array.isArray(data.project_cluster) ? data.project_cluster[0] : data.project_cluster;
 	const databases = data.project_databases ?? [];
 	const caches = data.project_caches ?? [];
