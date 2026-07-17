@@ -259,20 +259,20 @@ export async function sweepJob(job: OrphanJob): Promise<ReclaimDecision[]> {
 const RECLAIM_LOOP_ID = "orphan-reclaim";
 const RECLAIM_INTERVAL_MS = 5 * 60 * 1000;
 
-const globalForReclaim = globalThis as unknown as {
-	__alethiaOrphanReclaim?: NodeJS.Timeout;
-};
+declare global {
+	var __alethiaOrphanReclaim: NodeJS.Timeout | undefined;
+}
 
 /**
  * Starts the periodic orphan-reclaim sweep in-process (idempotent across HMR/instances), mirroring
  * startConnectionSweeper. Heartbeat-supervised so /health can see it ticking.
  */
 export function startOrphanReclaim(): void {
-	if (globalForReclaim.__alethiaOrphanReclaim) return;
+	if (globalThis.__alethiaOrphanReclaim) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	registerLoop(RECLAIM_LOOP_ID, { intervalMs: RECLAIM_INTERVAL_MS });
-	globalForReclaim.__alethiaOrphanReclaim = setInterval(() => {
+	globalThis.__alethiaOrphanReclaim = setInterval(() => {
 		void superviseLoop(RECLAIM_LOOP_ID, () => sweepOrphans());
 	}, RECLAIM_INTERVAL_MS);
 }

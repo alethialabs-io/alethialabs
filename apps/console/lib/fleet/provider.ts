@@ -57,24 +57,24 @@ class ManualFleetProvider implements FleetProvider {
 	}
 }
 
-const globalForFleet = globalThis as unknown as {
-	__alethiaFleetProvider?: FleetProvider;
-};
+declare global {
+	var __alethiaFleetProvider: FleetProvider | undefined;
+}
 
 /** Process-wide fleet provider (seam). Default = manual; `FLEET_PROVIDER=hcloud` = Hetzner. */
 export function getFleetProvider(): FleetProvider {
-	if (!globalForFleet.__alethiaFleetProvider) {
-		globalForFleet.__alethiaFleetProvider =
+	if (!globalThis.__alethiaFleetProvider) {
+		globalThis.__alethiaFleetProvider =
 			process.env.FLEET_PROVIDER === "hcloud"
 				? getHcloudFleetProvider()
 				: new ManualFleetProvider();
 	}
-	return globalForFleet.__alethiaFleetProvider;
+	return globalThis.__alethiaFleetProvider;
 }
 
 /** For tests: install a specific provider (e.g. the fake). */
 export function setFleetProvider(p: FleetProvider): void {
-	globalForFleet.__alethiaFleetProvider = p;
+	globalThis.__alethiaFleetProvider = p;
 }
 
 /** @internal — exported for tests. */

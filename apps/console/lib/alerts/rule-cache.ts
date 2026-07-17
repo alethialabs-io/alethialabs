@@ -19,10 +19,10 @@ interface Entry {
 	loadedAt: number;
 }
 
-const globalForRuleCache = globalThis as unknown as {
-	__alethiaAlertRuleCache?: Map<string, Entry>;
-};
-const cache = (globalForRuleCache.__alethiaAlertRuleCache ??= new Map());
+declare global {
+	var __alethiaAlertRuleCache: Map<string, Entry> | undefined;
+}
+const cache = (globalThis.__alethiaAlertRuleCache ??= new Map());
 
 /** Enabled rules for an org, cached for TTL_MS. */
 export async function getEnabledRules(orgId: string): Promise<AlertRule[]> {
