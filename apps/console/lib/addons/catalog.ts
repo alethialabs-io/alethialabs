@@ -8,6 +8,7 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { asRecord } from "@/lib/records";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
@@ -38,8 +39,8 @@ export function deepMerge(
 			!Array.isArray(b)
 		) {
 			out[k] = deepMerge(
-				b as Record<string, unknown>,
-				v as Record<string, unknown>,
+				asRecord(b),
+				asRecord(v),
 			);
 		} else {
 			out[k] = v;
@@ -1009,7 +1010,7 @@ export function parseValuesYaml(
 	try {
 		const parsed = parseYaml(yaml);
 		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
+			return asRecord(parsed);
 		}
 	} catch {
 		// Malformed YAML — ignore (the enable action validates before persisting).

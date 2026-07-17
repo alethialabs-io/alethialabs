@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import { cn } from "@repo/ui/utils";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
@@ -129,7 +130,7 @@ function ActionLine({
 	// update_config — the one that most needs a BEFORE. "set min_capacity to 8" tells you nothing
 	// unless you know it was 0.5.
 	const node = nodes.find((n) => n.id === action.nodeId);
-	const before = (node?.data.config ?? {}) as Record<string, unknown>;
+	const before = asRecord(node?.data.config);
 	return (
 		<>
 			<div className="font-mono text-[11px] text-foreground">

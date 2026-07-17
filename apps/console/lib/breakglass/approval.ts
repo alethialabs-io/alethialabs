@@ -11,6 +11,7 @@
 // at most once even under a race. This is enforced ENTIRELY server-side — a caller cannot skip it by
 // hitting the endpoint directly, because the dispatcher requires it for every high-blast action.
 
+import { asRecord } from "@/lib/records";
 import { createHash } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { BreakglassActionInput } from "@/types/jsonb.types";
@@ -34,7 +35,7 @@ function sortKeys(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(sortKeys);
 	if (value && typeof value === "object") {
 		return Object.fromEntries(
-			Object.entries(value as Record<string, unknown>)
+			Object.entries(asRecord(value))
 				.sort(([a], [b]) => a.localeCompare(b))
 				.map(([k, v]) => [k, sortKeys(v)]),
 		);
