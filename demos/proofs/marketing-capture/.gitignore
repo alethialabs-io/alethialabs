@@ -1,0 +1,2 @@
+# Regeneratable capture output (stills are re-produced by scripts/capture-stills.mjs)
+*.png
