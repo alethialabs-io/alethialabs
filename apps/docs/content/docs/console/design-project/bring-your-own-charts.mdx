@@ -65,6 +65,18 @@ Environment is captured as variable **names only** — a described workload neve
 value, so a secret baked into a chart's manifests is never read back into Alethia.
 </Callout>
 
+## On the canvas
+
+Once a chart is scanned, its workloads appear as **child nodes beneath the chart node** — a line from
+the chart to each thing it deploys. A workload node is drawn as a read-mostly card with a dashed, "not
+owned by the design" treatment that sets it apart from an Alethia-built service, so you can tell at a
+glance which nodes you author and which your chart brings.
+
+Select a workload to open its **inspector**. The top of the panel is the description above —
+image, ports, environment variable names, resources, and replicas, all read-only because they mirror
+the chart. Below it is the only part you edit: the **overlay** — bindings, a couple of overrides, and
+the value-paths those write to.
+
 ## Binding a chart to your infrastructure
 
 Because each workload is described, you can **bind** it to the databases, caches, queues, and secrets
@@ -82,6 +94,26 @@ Binding works by writing into a **declared path** in your chart's values (for ex
 can override it. A chart that exposes no way to accept an existing secret is flagged honestly rather
 than having a credential forced into it.
 
+## Overrides: replicas and environment
+
+Beyond bindings, a described workload carries a small **editable overlay** you set from the inspector
+without touching the chart:
+
+- **Replicas** — override the rendered replica count.
+- **Environment** — add or override environment variables (name → value).
+
+Like bindings, these are written into the chart's values at deploy — they never re-author the chart,
+and they survive a re-scan. Everything else on the card stays a read-only mirror of what the chart
+renders.
+
+## Value-path overrides
+
+Every binding and override needs to know **where** in your chart's values to write. Alethia infers
+these paths from common chart conventions (`replicaCount`, `image.tag`,
+`*.existingSecret` / `auth.existingSecret`) when it scans. When your chart's shape is non-standard, the
+inspector's **value-paths** editor lets you correct any knob → dot-path mapping by hand — your override
+always wins over the inferred default, and it's preserved across re-scans.
+
 <Callout type="warn">
 Bring-your-own Helm charts are an **opt-in** capability, enabled per deployment and — in the current
 trusted-charts phase — scoped to charts you own on your own cluster. Described workloads and binding
@@ -93,8 +125,9 @@ roll out behind the same gate. Ask your operator whether it's enabled on your in
 1. **Attach** the chart from a connected repo (repo · chart path · ref · values).
 2. **Scan** — the Runner renders it in the sandbox and Elench verifies the manifests.
 3. **Describe** — from that render, each workload the chart deploys becomes a canvas node.
-4. **Bind** — connect a described workload to your provisioned infrastructure; the binding is written
-   into the chart's values (credentials as keyless secret references).
+4. **Bind & override** — from a workload's inspector, connect it to your provisioned infrastructure and
+   set its replicas/environment overlay; bindings and overrides are written into the chart's values
+   (credentials as keyless secret references) at the inferred or overridden value-paths.
 5. **Deploy** — your chart, unchanged, syncs as a single ArgoCD Application with the bound values applied.
 
 See also: [The Canvas](/console/design-project/the-canvas) · [Repositories](/console/design-project/repositories) · [Bring Your Own IaC](/concepts/bring-your-own-iac).
