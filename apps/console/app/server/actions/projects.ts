@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
@@ -1682,7 +1683,7 @@ export async function getProjectAsFormData(
 			return row;
 		});
 		if (!ci) throw new Error("Cloud identity not found");
-		provider = ci.provider as CloudProviderSlug;
+		provider = asCloudProviderSlug(ci.provider);
 	}
 
 	const formData: ProjectFormData = {
@@ -1856,7 +1857,7 @@ export async function duplicateProjectForProvider(
 
 	if (!targetIdentity) throw new Error("Target cloud identity not found");
 
-	const targetProvider = targetIdentity.provider as CloudProviderSlug;
+	const targetProvider = asCloudProviderSlug(targetIdentity.provider);
 
 	const { data: converted, warnings } = convertProjectConfig(
 		formData,

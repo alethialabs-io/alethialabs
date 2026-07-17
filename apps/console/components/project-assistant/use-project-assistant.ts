@@ -20,7 +20,7 @@ export function snapshotCanvas(): CanvasContext | undefined {
 	if (store.nodes.length === 0) return undefined;
 	return {
 		provider:
-			(store.getEffectiveProvider(PROJECT_NODE_ID) as CloudProviderSlug) ?? "aws",
+			store.getEffectiveProvider(PROJECT_NODE_ID) ?? "aws",
 		form: graphToForm(store.nodes),
 		nodes: store.nodes.map((n) => ({
 			id: n.id,

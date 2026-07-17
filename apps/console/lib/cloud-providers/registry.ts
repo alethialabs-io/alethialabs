@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { CloudProvider } from "@/lib/db/schema/enums";
+import { cloudProvider, type CloudProvider } from "@/lib/db/schema/enums";
 
 /**
  * Clouds with full provisioning templates today. The per-cloud provisioning-option
@@ -19,6 +19,32 @@ export type CloudProviderSlug = Extract<
  * cloud is connectable, so this is exactly the generated `cloud_provider` enum.
  */
 export type ConnectableCloudSlug = CloudProvider;
+
+/** The provisioning-slug values as a runtime set, kept in lockstep with the type via `satisfies`. */
+const CLOUD_PROVIDER_SLUGS = [
+	"aws",
+	"gcp",
+	"azure",
+	"hetzner",
+	"alibaba",
+] as const satisfies readonly CloudProviderSlug[];
+const CLOUD_PROVIDER_SLUG_SET = new Set<string>(CLOUD_PROVIDER_SLUGS);
+const CONNECTABLE_SLUG_SET = new Set<string>(cloudProvider.enumValues);
+
+/** Cast-free narrow: true when a string is a provisioning-capable cloud slug. */
+export function isCloudProviderSlug(s: string): s is CloudProviderSlug {
+	return CLOUD_PROVIDER_SLUG_SET.has(s);
+}
+
+/** Cast-free narrow: true when a string is a connectable cloud (the full cloud_provider enum). */
+export function isConnectableCloudSlug(s: string): s is ConnectableCloudSlug {
+	return CONNECTABLE_SLUG_SET.has(s);
+}
+
+/** A string as a provisioning slug, defaulting to `aws` when it isn't one. */
+export function asCloudProviderSlug(s: string): CloudProviderSlug {
+	return isCloudProviderSlug(s) ? s : "aws";
+}
 
 /** High-level metadata and service name mappings for a cloud provider. */
 export interface CloudProviderMeta {
@@ -178,5 +204,5 @@ export const CACHE_TTL_HOURS = 24;
 
 /** Returns provider metadata, defaulting to AWS if slug is unrecognized. */
 export function getProvider(slug: string): CloudProviderMeta {
-	return PROVIDERS[slug as CloudProviderSlug] ?? PROVIDERS.aws;
+	return isConnectableCloudSlug(slug) ? PROVIDERS[slug] : PROVIDERS.aws;
 }
