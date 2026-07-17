@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { applyNodeChanges, type NodeChange } from "@xyflow/react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -706,10 +707,11 @@ export const useCanvasStore = create<CanvasStore>()(
 					}
 				}
 				get().commit();
-				const ownProvider = cloudIdentityId
-					? ((identities.find((i) => i.id === cloudIdentityId)
-							?.provider as CloudProviderSlug) ?? null)
-					: null;
+				const ownFound = identities.find(
+					(i) => i.id === cloudIdentityId,
+				)?.provider;
+				const ownProvider =
+					ownFound && isCloudProviderSlug(ownFound) ? ownFound : null;
 				const provider =
 					ownProvider ?? get().getEffectiveProvider(PROJECT_NODE_ID) ?? "aws";
 				const merged: Record<string, unknown> = {
