@@ -476,6 +476,7 @@ jobs:
             emit ALETHIA_FLEET_ACTION_RETENTION_DAYS
             echo "FLEET_PROVIDER=hcloud"
             echo "HCLOUD_TOKEN=$(val HCLOUD_FLEET_TOKEN)"   # runtime fleet token (not the CP token)
+            emit FLEET_POOLS                                 # declarative warm-pool set → seedFleetPoolsFromEnv on boot
             emit HCLOUD_SSH_KEYS
             echo "HCLOUD_SERVER_TYPE=$SERVER_TYPE"
             echo "FLEET_RUNNER_IMAGE_TAG=latest"
