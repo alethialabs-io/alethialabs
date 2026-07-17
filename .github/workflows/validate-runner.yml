@@ -12,6 +12,8 @@ on:
       - 'apps/runner/**'
       - 'packages/core/**'
       - 'go.work'
+      # Re-run when the workflow itself changes, so an edit to the build steps self-tests.
+      - '.github/workflows/validate-runner.yml'
   workflow_dispatch:
 
 jobs:
@@ -33,9 +35,21 @@ jobs:
 
       - name: Build runner-base
         run: |
-          docker build -f apps/runner/Dockerfile.base \
-            --build-arg VERSION="${{ github.sha }}" \
-            -t runner-base:pr .
+          # The base build's `FROM golang` pulls from Docker Hub, which throttles transiently — a
+          # flaky pull would otherwise red the whole job. Retry it (the later steps are FROM the
+          # local runner-base, so this is the only Docker Hub-pulling step). Fails hard only if all
+          # attempts fail, so a genuine build error still breaks the build.
+          ok=""
+          for attempt in 1 2 3; do
+            if docker build -f apps/runner/Dockerfile.base \
+                --build-arg VERSION="${{ github.sha }}" \
+                -t runner-base:pr .; then
+              ok=1; break
+            fi
+            echo "::warning::runner-base build attempt ${attempt} failed (likely a transient Docker Hub pull); retrying..."
+            sleep $((attempt * 20))
+          done
+          [ -n "$ok" ] || { echo "::error::runner-base build failed after 3 attempts"; exit 1; }
 
       # Full multi-cloud runner (the box image) — CLI-free (cluster auth is minted in-process by the runner
       # `kube-token` exec-plugin); runs `tofu init` for all five templates, so a green build proves the base
