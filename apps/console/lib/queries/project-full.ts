@@ -4,6 +4,12 @@
 import { type SQL, sql } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
 import type {
+	CloudProvider,
+	ComponentStatus,
+	EnvironmentStage,
+	ProjectStatus,
+} from "@/lib/db/schema/enums";
+import type {
 	ClusterAdmin,
 	ClusterProviderConfig,
 	DnsProviderConfig,
@@ -26,12 +32,12 @@ export type ProjectFull = {
 	user_id: string;
 	cloud_identity_id: string | null;
 	project_name: string;
-	environment_stage: string;
+	environment_stage: EnvironmentStage;
 	region: string;
-	cloud_provider: string | null;
+	cloud_provider: CloudProvider | null;
 	cloud_account_id: string | null;
 	iac_version: string;
-	status: string;
+	status: ProjectStatus;
 	estimated_monthly_cost: number | null;
 	created_at: string;
 	updated_at: string;
@@ -41,7 +47,7 @@ export type ProjectFull = {
 	cidr_block: string | null;
 	network_id: string | null;
 	single_nat_gateway: boolean | null;
-	network_status: string | null;
+	network_status: ComponentStatus | null;
 
 	// Cluster (provider-specific knobs in cluster_provider_config)
 	cluster_version: string | null;
@@ -53,7 +59,7 @@ export type ProjectFull = {
 	node_desired_size: number | null;
 	cluster_name: string | null;
 	cluster_endpoint: string | null;
-	cluster_status: string | null;
+	cluster_status: ComponentStatus | null;
 
 	// DNS (provider-specific knobs in dns_provider_config)
 	dns_enabled: boolean | null;
@@ -62,7 +68,7 @@ export type ProjectFull = {
 	dns_managed_certificate: boolean | null;
 	dns_waf_enabled: boolean | null;
 	dns_provider_config: DnsProviderConfig | null;
-	dns_status: string | null;
+	dns_status: ComponentStatus | null;
 
 	// Repositories
 	apps_destination_repo: string | null;
