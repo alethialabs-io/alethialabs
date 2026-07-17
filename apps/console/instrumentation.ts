@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { errorDigest, errorMessage, errorStack } from "@/lib/errors";
+
 /** Next.js server-startup hook. Runs once per app instance on the Node runtime. */
 export async function register() {
 	if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -81,14 +83,13 @@ export async function onRequestError(
 	request: { path?: string; method?: string },
 	context: { routePath?: string; routeType?: string },
 ): Promise<void> {
-	const e = error as { message?: string; stack?: string; digest?: string };
 	const { log } = await import("@/lib/observability/log");
 	log.child({ component: "onRequestError" }).error("uncaught request error", {
 		method: request.method ?? "?",
 		path: request.path ?? context.routePath ?? "?",
 		route_type: context.routeType ?? "?",
-		digest: e?.digest ?? "-",
-		stack: e?.stack ?? e?.message ?? String(error),
+		digest: errorDigest(error) ?? "-",
+		stack: errorStack(error) ?? errorMessage(error),
 	});
 	// Also forward to PostHog Error Tracking so server-side throws (Route Handlers, Server Actions,
 	// Server Components) are visible in prod — not just stdout. Node-only (posthog-node); best-effort:
@@ -101,7 +102,7 @@ export async function onRequestError(
 				path: request.path ?? context.routePath ?? "unknown",
 				method: request.method ?? "unknown",
 				routeType: context.routeType ?? "unknown",
-				digest: e?.digest ?? "",
+				digest: errorDigest(error) ?? "",
 			},
 		});
 		// Also forward to Sentry (→ self-hosted GlitchTip) when SENTRY_DSN is set. DSN-gated no-op
@@ -113,7 +114,7 @@ export async function onRequestError(
 				method: request.method,
 				routeType: context.routeType,
 				routePath: context.routePath,
-				digest: e?.digest,
+				digest: errorDigest(error),
 			});
 		}
 	}

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { toError } from "@/lib/errors";
 import { randomBytes } from "node:crypto";
 import {
 	type Attributes,
@@ -86,7 +87,7 @@ export async function withJobSpan<T>(
 		span.setStatus({ code: SpanStatusCode.OK });
 		return out;
 	} catch (err) {
-		span.recordException(err as Error);
+		span.recordException(toError(err));
 		span.setStatus({ code: SpanStatusCode.ERROR });
 		throw err;
 	} finally {
