@@ -3,7 +3,11 @@
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
 
-import type { AlertSeverity, CloudProvider } from "@/lib/db/schema/enums";
+import type {
+	AlertSeverity,
+	CloudProvider,
+	ProjectStatus,
+} from "@/lib/db/schema/enums";
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
@@ -1101,9 +1105,9 @@ export interface DashboardSpec {
  */
 export interface BreakglassActionInput {
 	/** unstick_env: the explicit CAS precondition — the env must currently be in one of these. */
-	expectedFrom?: string[];
+	expectedFrom?: ProjectStatus[];
 	/** unstick_env: the target status to move the env to (the CAS `to`). */
-	to?: string;
+	to?: ProjectStatus;
 	/** force_release_state_lock / state_surgery: the tofu state object key. */
 	stateKey?: string;
 	/** drain_runner / restart_runner: the fleet-action "why" reason token echoed to the ledger. */
