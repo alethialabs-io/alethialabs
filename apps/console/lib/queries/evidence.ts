@@ -240,7 +240,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 
 	const rows: EvidenceEnvRow[] = envs.map((env) => {
 		const v = verifyByEnv.get(env.environmentId);
-		const meta = (v?.meta as ExecutionMetadata | null) ?? null;
+		const meta = v?.meta ?? null;
 		const report = meta?.verify_result ?? null;
 		const verify: EvidenceVerify | null =
 			v && report
