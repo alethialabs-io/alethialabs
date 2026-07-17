@@ -113,3 +113,22 @@ func TestClassifyReachability(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestNotReadyReasons(t *testing.T) {
+	raw := []byte(`{"items":[
+		{"status":{"conditions":[{"type":"Ready","status":"False","reason":"KubeletNotReady","message":"container runtime network not ready: NetworkReady=false"}]}},
+		{"status":{"conditions":[{"type":"Ready","status":"False","reason":"KubeletNotReady","message":"container runtime network not ready: NetworkReady=false"}]}},
+		{"status":{"conditions":[{"type":"Ready","status":"True","reason":"KubeletReady"}]}}
+	]}`)
+	got := NotReadyReasons(raw)
+	// Distinct — the two identical NotReady nodes collapse to one; the Ready node is excluded.
+	if len(got) != 1 || !strings.Contains(got[0], "KubeletNotReady") || !strings.Contains(got[0], "NetworkReady=false") {
+		t.Fatalf("NotReadyReasons = %#v", got)
+	}
+	if r := NotReadyReasons([]byte(`{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`)); len(r) != 0 {
+		t.Fatalf("all-ready should be empty, got %#v", r)
+	}
+	if r := NotReadyReasons([]byte("not json")); r != nil {
+		t.Fatalf("bad json should be nil, got %#v", r)
+	}
+}
