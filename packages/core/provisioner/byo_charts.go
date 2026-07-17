@@ -8,8 +8,63 @@ import (
 	"io"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
+
+// applyByoChartBindings resolves each BYO chart workload's W3 bindings (W5 Lane 2b) against the
+// provision's tofu `outputs` and writes them into the chart's Values BEFORE its Application renders:
+// a non-secret facet (endpoint/port) becomes a literal at its value-path; a credential facet becomes
+// a keyless `existingSecret` reference backed by a runner-seeded ExternalSecret applied pre-sync via
+// direct kubectl apply (the hardened BYO AppProject forbids namespaced CRs through ArgoCD, so the
+// same pattern as EnsureAddOnSecrets is used). Never inlines a plaintext credential; a facet that
+// can't be resolved keylessly is logged and skipped, never referenced. Non-fatal — a bad binding
+// must not fail an otherwise-healthy deploy. Mutates each addon's Values in place.
+func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) {
+	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
+	strOutputs := make(map[string]string, len(outputs))
+	for k, v := range outputs {
+		if s, ok := v.(string); ok {
+			strOutputs[k] = s
+		}
+	}
+	for i := range vc.AddOns {
+		a := &vc.AddOns[i]
+		if len(a.Workloads) == 0 {
+			continue
+		}
+		if a.Values == nil {
+			a.Values = map[string]interface{}{}
+		}
+		for _, w := range a.Workloads {
+			res := manifests.ResolveChartWorkloadBindings(
+				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace,
+			)
+			for path, val := range res.Patches {
+				manifests.SetByPath(a.Values, path, val)
+			}
+			for _, knob := range res.Unsatisfied {
+				fmt.Fprintf(stdout, "BYO chart %s workload %s: binding %s unsatisfied (no value-path or no keyless secret) — not written.\n", a.ID, w.Name, knob)
+			}
+			for _, es := range res.ExternalSecrets {
+				yaml, skipped, err := manifests.RenderExternalSecret(es)
+				if err != nil {
+					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret render failed (%s/%s): %v\n", a.ID, w.Name, err)
+					continue
+				}
+				for _, reason := range skipped {
+					fmt.Fprintf(stdout, "BYO binding facet skipped (%s/%s): %s\n", a.ID, w.Name, reason)
+				}
+				if yaml == "" {
+					continue
+				}
+				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {
+					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", a.ID, w.Name, err)
+				}
+			}
+		}
+	}
+}
 
 // prepareByoCharts sets up the trust boundary for bring-your-own (git-source) charts BEFORE the
 // add-on renderer applies their ArgoCD Applications:

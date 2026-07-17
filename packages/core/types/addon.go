@@ -56,6 +56,26 @@ type AddOnInstall struct {
 	// and seeds the Secret in-cluster BEFORE the Application syncs. Nil when the add-on
 	// has no stored secret knobs. Mirrors the TS `AddOnSecretRef`.
 	SecretRef *AddOnSecretRef `json:"secretRef,omitempty"`
+	// Workloads carries a BYO chart's described workloads' user overlay (W5 Lane 2b): their W3
+	// bindings + value_paths. The runner resolves the bindings against the provision's tofu outputs
+	// at deploy — a non-secret facet becomes a literal value, a credential facet a keyless
+	// existingSecret ref — and writes them into Values at the declared paths. Nil for non-BYO
+	// add-ons or a BYO chart with no bound workloads. Mirrors the TS `AddOnInstallSpec.workloads`.
+	Workloads []ChartWorkloadBinding `json:"workloads,omitempty"`
+}
+
+// ChartWorkloadBinding is one described BYO-chart workload's runtime-resolvable overlay: its W3
+// bindings and the value_paths (logical knob → chart-values dot-path) they write to. The runner
+// resolves it at deploy via manifests.ResolveChartWorkloadBindings.
+type ChartWorkloadBinding struct {
+	// Name is the workload's rendered metadata.name — used to name its keyless binding Secret.
+	Name string `json:"name"`
+	// Bindings are the workload's W3 edges to backing resources (the same ServiceBinding a
+	// first-class service declares).
+	Bindings []ServiceBinding `json:"bindings,omitempty"`
+	// ValuePaths maps a binding-facet knob (`bind:{kind}:{name}:{facet}`) to the chart-values
+	// dot-path the resolved value/ref is written to.
+	ValuePaths map[string]string `json:"valuePaths,omitempty"`
 }
 
 // AddOnSecretRef is the runner-facing description of one add-on's in-cluster Secret:

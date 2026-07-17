@@ -857,6 +857,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// SecretKeyRef wiring the console resolved into helm.values.
 			argocd.EnsureAddOnSecrets(vc.AddOns, params.AddOnSecretValues, stdout, stderr)
 
+			// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now
+			// (runtime, against the tofu outputs) + seed their keyless binding ExternalSecrets —
+			// BEFORE the Applications render, so the write-back rides the same helm.values block.
+			applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
+
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
