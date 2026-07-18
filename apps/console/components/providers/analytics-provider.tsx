@@ -66,6 +66,9 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 					},
 					session_recording: { maskAllInputs: true, maskTextSelector: "[data-ph-mask]" },
 				});
+				// Tag every event (incl. $exception) with the deploy release, so a captured stack
+				// symbolicates against the source maps uploaded for that same build (see next.config.ts).
+				if (cfg.posthog!.release) posthog.register({ release: cfg.posthog!.release });
 				window.__posthog = posthog;
 			} catch {
 				/* analytics is best-effort — never break the app */

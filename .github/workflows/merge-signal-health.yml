@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Weekly reliability report for the merge queue's OBSERVE-ONLY heavy signals (real-runner
+# provision-e2e + the browser E2Es). It runs scripts/merge-signal-health.sh over recent
+# merge_group CI runs and reports each signal's pass-rate + a PROMOTE/OBSERVE verdict, so
+# "observe then promote" is a data trigger, not a calendar reminder. When a signal earns the
+# bar, promotion is a one-line edit to var.required_status_checks (infra/github) the report
+# spells out. See docs/development/merge-queue.
+
+name: Merge-signal health
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC (after the Monday mutation cron; weekly cadence)
+  workflow_dispatch: # run on demand from the Actions tab
+
+permissions:
+  contents: read
+  actions: read # read CI run + job conclusions
+  issues: write # upsert the report onto the tracking issue (if MERGE_SIGNAL_ISSUE is set)
+
+jobs:
+  report:
+    name: Merge-signal health report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute merge-signal health
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Optional: repo variable MERGE_SIGNAL_ISSUE = the tracking issue number to comment on.
+          MSI_ISSUE: ${{ vars.MERGE_SIGNAL_ISSUE }}
+        run: |
+          args=()
+          [ -n "$MSI_ISSUE" ] && args=(--issue "$MSI_ISSUE")
+          report="$(bash scripts/merge-signal-health.sh "${args[@]}")"
+          echo "$report"
+          # Always surface it as the run's job summary, even without a tracking issue.
+          {
+            echo '## Merge-signal health'
+            echo '```'
+            echo "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

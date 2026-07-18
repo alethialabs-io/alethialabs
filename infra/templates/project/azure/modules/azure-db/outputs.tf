@@ -13,6 +13,11 @@ output "admin_username" {
   value       = local.is_postgres ? azurerm_postgresql_flexible_server.this[0].administrator_login : null
 }
 
+output "server_name" {
+  description = "PostgreSQL Flexible Server name (for the keyless AAD administrator, #722)"
+  value       = local.is_postgres ? azurerm_postgresql_flexible_server.this[0].name : null
+}
+
 output "admin_password" {
   description = "Administrator password"
   value       = random_password.admin.result

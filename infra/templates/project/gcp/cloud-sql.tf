@@ -25,6 +25,10 @@ module "cloud_sql" {
   iam_auth = var.cloud_sql_iam_auth
   port     = var.cloud_sql_port
 
+  # Keyless app DB user (#722): when IAM auth is on, register the app GSA as a
+  # CLOUD_IAM_SERVICE_ACCOUNT database user so the workload logs in with an IAM token, no password.
+  app_iam_sa_email = local.enable_app_db_iam ? google_service_account.app_db[0].email : null
+
   authorized_networks = var.cloud_sql_authorized_networks
 
   labels = local.gcp_default_labels

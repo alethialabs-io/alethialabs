@@ -153,6 +153,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 		if db.IamAuth != nil {
 			tfvars["rds_iam_auth_enabled"] = *db.IamAuth
+			// Keyless parity (#722): one iam_auth toggle drives BOTH the RDS engine flag and the app
+			// IRSA role the keyless workload assumes (rds_iam_auth_irsa_arn) — otherwise enabling IAM
+			// auth would produce a DB that accepts tokens but no identity able to mint one.
+			tfvars["rds_iam_irsa"] = *db.IamAuth
 		}
 	}
 

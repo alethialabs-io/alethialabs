@@ -427,9 +427,11 @@ describe("getProject", () => {
 		expect(r.environments).toHaveLength(1);
 	});
 
-	it("throws when the project row is missing", async () => {
+	it("calls notFound() when the project row is missing", async () => {
 		setupDb({ select: new Map([[projects, []]]) });
-		await expect(getProject("missing")).rejects.toThrow(/Project not found/);
+		// A stale/deleted id on this render loader → Next notFound() (digest NEXT_HTTP_ERROR_FALLBACK),
+		// not a captured Error.
+		await expect(getProject("missing")).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 	});
 
 	it("defaults the cloud provider to aws when no identity is linked (no identity query)", async () => {

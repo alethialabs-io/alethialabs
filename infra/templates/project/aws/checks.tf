@@ -59,6 +59,16 @@ check "rds_db_name_present_when_created" {
   }
 }
 
+# Keyless RDS IAM auth (#722): when the RDS engine flag is on, the app IRSA role must also be created
+# (one iam_auth toggle drives both, via the provider tfvars) — otherwise the DB accepts IAM tokens but
+# no workload identity can mint one and the keyless binding fails closed.
+check "keyless_rds_iam_irsa_wired" {
+  assert {
+    condition     = !var.rds_iam_auth_enabled || length(module.rds_iam_auth) == 1
+    error_message = "rds_iam_auth_enabled is on but the app RDS-IAM IRSA role is missing; set rds_iam_irsa (the iam_auth toggle should drive both)."
+  }
+}
+
 # Every S3 bucket must keep public access blocked (block_public_acls / restrict_public_buckets must
 # not be explicitly false). null is allowed — the module defaults those to a blocked posture.
 check "s3_buckets_block_public_access" {
