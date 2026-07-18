@@ -47,7 +47,7 @@ receives merges from `staging`.
 
 | Branch | Role | Merges from | Deploy |
 |---|---|---|---|
-| `dev` | integration — all feature/fix PRs land here | feature branches (PR + green CI) | — (CI only) |
+| `dev` | integration — all feature/fix PRs land here | feature branches (PR + green CI, **via merge queue**) | — (CI only) |
 | `staging` | release candidate | `dev` (PR + green CI) | — (built/tested; no deploy yet) |
 | `main` | production | `staging` **only** (PR + green CI, linear history) | auto → alethialabs.io (`deploy-console.yml`) |
 
@@ -55,6 +55,16 @@ receives merges from `staging`.
   linear history; force-push/deletion blocked; admins included. No direct pushes — ever.
   **0 required approvals** (solo repo — you can't approve your own PR); bump
   `required_approving_review_count` in `infra/github` when a second reviewer exists.
+- **`dev` uses a merge queue.** Don't merge your PR directly. When CI is green, enable auto-merge —
+  `gh pr merge --auto --squash` — and GitHub adds it to the queue: it rebuilds your PR on the
+  *projected* `dev` tip (its base plus any PRs ahead of you), re-runs the required checks via the
+  `merge_group` event, and squash-merges in order. This is what makes concurrent PRs safe — every
+  merge is validated against the `dev` it will actually land on, so two green-against-stale PRs can't
+  race and break the branch. Auto-merge needs a conflict-free PR; if GitHub flags a conflict, rebase
+  onto `origin/dev`, push, and re-enable auto-merge. The queue gates on the 7 fast required checks; the
+  heavy real-runner + browser E2Es run at queue time as observe-only signals (tracked by
+  `scripts/merge-signal-health.sh` / the weekly *Merge-signal health* workflow, promoted to required
+  once proven reliable).
 - **`staging` is protected too** (PR + green CI), lighter than `main`.
 - **release-please** runs on `main` and opens the release PRs (CLI + runner version
   bumps); this flow is unchanged by the branch model.

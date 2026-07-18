@@ -113,6 +113,11 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ github.sha }}
+            ${{ matrix.image == 'console' && format('POSTHOG_PROJECT_ID={0}', secrets.POSTHOG_PROJECT_ID) || '' }}
+          # PostHog source-map upload (console only): the personal WRITE key as a BuildKit secret so it
+          # never lands in an image layer. Empty for the other matrix images (no-op).
+          secrets: |
+            ${{ matrix.image == 'console' && format('posthog_api_key={0}', secrets.POSTHOG_PERSONAL_API_KEY) || '' }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}

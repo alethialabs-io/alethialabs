@@ -2,7 +2,8 @@
 
 Many Claude instances (and humans) drive the north star in parallel. Isolation and integration are already
 solved by the multi-instance rules in `CLAUDE.md` (one worktree per instance via `pnpm wt`; PR → `dev`;
-self-merge on green; lock-guarded migrations). **This file is the missing third half: how work is
+**enqueue on green via the merge queue** — `gh pr merge --auto --squash`, never a direct merge; lock-guarded
+migrations). **This file is the missing third half: how work is
 distributed** so N instances claim disjoint work without collision, respect dependencies, and never tangle
 each other's files.
 
@@ -31,13 +32,14 @@ like #530). You already built and debugged this for provisioning — this reuses
 ## The two work classes (the routing rule)
 
 **`class:backend`** — server actions, runner, schema, core, tofu, tests, docs. **Fully autonomous:**
-claim → `pnpm wt` → build → PR into `dev` → **self-merge on green**. The human is NOT in the loop.
+claim → `pnpm wt` → build → PR into `dev` → **enqueue on green** (`gh pr merge --auto --squash`; the merge
+queue rebuilds on the projected `dev` tip and lands it in order). The human is NOT in the loop.
 
 **`class:ui`** — canvas, components, anything visual. **Human-in-the-loop.** A UI unit's deliverable is NOT a
 merged PR — it is a **UI design spec grounded in the data model** the backend lanes define (the seams issue +
 `project_*` schema), authored per the `alethia-design` skill and shaped for **Claude Design** ingestion. The
 visual is then built and **the human gates the merge.** A `class:ui` issue lands `needs:design` and surfaces
-to the human; it never enters the autonomous self-merge path. Because backend lanes define the data model
+to the human; it never enters the autonomous enqueue-on-green path. Because backend lanes define the data model
 first, UI specs always have a stable model to consume (never pixels-before-schema). This operationalizes the
 "UI work is a spec" rule.
 
@@ -48,7 +50,7 @@ Every instance, at kickoff, reads this file, then:
 ```
 scripts/claim-work.sh --class backend      # atomically claim the next ready backend unit
 cd ../wt-<slug>                             # the script prints the pnpm wt slug
-# ... build; PR into dev with "Closes #<n>"; self-merge on green (backend) ...
+# ... build; PR into dev with "Closes #<n>"; enqueue on green: gh pr merge --auto --squash (backend) ...
 scripts/complete-work.sh <n>               # release the claim; coordinate opens downstream
 scripts/claim-work.sh --class backend      # loop
 ```
