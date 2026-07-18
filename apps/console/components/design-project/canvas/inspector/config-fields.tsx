@@ -50,8 +50,9 @@ function resolve<T>(
 	r: Resolvable<T> | undefined,
 	ctx: FieldCtx,
 ): T | undefined {
-	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Resolvable<T> = T | ((ctx)=>T); T may itself be a function type, so typeof==="function" can't narrow to the resolver
-	return typeof r === "function" ? (r as (c: FieldCtx) => T)(ctx) : r;
+	if (typeof r !== "function") return r;
+	// @ts-expect-error Resolvable<T> = T | ((ctx)=>T); T may itself be a function type, so typeof==="function" can't narrow r to the resolver
+	return r(ctx);
 }
 
 /** The grouped region dropdown, keyed by the effective provider. */

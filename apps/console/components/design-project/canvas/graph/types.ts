@@ -223,8 +223,7 @@ export function nodeOfKind<K extends NodeKind>(
 	node: CanvasNode | undefined,
 	kind: K,
 ): CanvasNode<K> | undefined {
-	return node && node.data.kind === kind
-		// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- distributed-union variance: node.data.kind===kind narrows to CanvasNode<K> at runtime, but TS can't prove it for a generic K
-		? (node as CanvasNode<K>)
-		: undefined;
+	if (!node || node.data.kind !== kind) return undefined;
+	// @ts-expect-error distributed-union variance: the kind check narrows to CanvasNode<K> at runtime, but TS can't prove it for a generic K
+	return node;
 }

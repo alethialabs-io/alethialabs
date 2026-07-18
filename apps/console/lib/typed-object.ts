@@ -10,8 +10,8 @@
 
 /** `Object.keys` with the precise `keyof T` element type. */
 export function typedKeys<T extends object>(o: T): (keyof T)[] {
-	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object.keys is string[] by spec; for a known-exact record these ARE keyof T (the single place this is asserted)
-	return Object.keys(o) as (keyof T)[];
+	// @ts-expect-error Object.keys is typed string[] by spec; for an owned exact record these ARE keyof T (the single place this is acknowledged)
+	return Object.keys(o);
 }
 
 /** `Object.values` with the precise value type. */
@@ -21,8 +21,8 @@ export function typedValues<T extends object>(o: T): T[keyof T][] {
 
 /** `Object.entries` with precise `[keyof T, value]` tuples. */
 export function typedEntries<T extends object>(o: T): [keyof T, T[keyof T]][] {
-	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object.entries keys are string by spec; for a known-exact record these ARE keyof T (the single place this is asserted)
-	return Object.entries(o) as [keyof T, T[keyof T]][];
+	// @ts-expect-error Object.entries keys are typed string by spec; for an owned exact record these ARE keyof T (the single place this is acknowledged)
+	return Object.entries(o);
 }
 
 /**
