@@ -51,6 +51,14 @@ output "cloud_sql_app_gsa_email" {
   value       = local.enable_app_db_iam ? google_service_account.app_db[0].email : null
 }
 
+# Keyless bootstrap (#722 R5): the Secret Manager secret id holding the BUILT_IN admin (default user)
+# credentials. The bootstrap Job's ExternalSecret pulls username+password from it (via the gcpsm
+# ClusterSecretStore) to connect as admin and grant the app IAM user its scoped privileges.
+output "cloud_sql_credentials_secret" {
+  description = "Secret Manager secret id of the Cloud SQL admin (default user) credentials — the keyless bootstrap Job's admin ExternalSecret RemoteKey (#722)"
+  value       = var.create_cloud_sql ? module.cloud_sql[0].credentials_secret_id : null
+}
+
 #########################################################################
 ##                     Artifact Registry Outputs                       ##
 #########################################################################

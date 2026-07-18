@@ -99,6 +99,13 @@ output "rds_master_credentials_secret_name" {
   value       = var.create_rds ? module.rds_maindb[0].rds_master_credentials_secret_name : null
 }
 
+# Keyless bootstrap (#722 R5): the initial database name — the bootstrap Job's admin connection target
+# (PGDATABASE) and the object in its `GRANT CONNECT ON DATABASE` for the app's least-priv role.
+output "rds_database_name" {
+  description = "Initial RDS database name (the keyless bootstrap Job's admin connection target, #722)"
+  value       = var.create_rds ? var.rds_config.db_name : null
+}
+
 output "rds_extra_credentials_secret_arn" {
   description = "RDS Extra Credentials Secret ARN"
   value       = var.create_rds ? module.rds_maindb[0].rds_extra_credentials_secret_arn : null

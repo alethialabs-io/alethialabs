@@ -134,12 +134,18 @@ resource "random_password" "db_password" {
   special = true
 }
 
+# The default user is ALWAYS a BUILT_IN password user, even when iam_auth is on. Cloud SQL grants a
+# BUILT_IN user the `cloudsqlsuperuser` role automatically, so this is the platform's admin login — the
+# keyless bootstrap Job (#722) connects as it to grant the app's IAM user its scoped privileges (SQL
+# GRANTs the Cloud SQL Admin API can't perform). It is NOT typed CLOUD_IAM_USER: that expects an IAM
+# principal email (this name isn't one) and would leave the instance with no password admin to
+# bootstrap grants. The APP stays keyless — it uses the separate CLOUD_IAM_SERVICE_ACCOUNT user below.
 resource "google_sql_user" "default" {
   name     = "${var.project_name}-user"
   project  = var.project_id
   instance = google_sql_database_instance.this.name
   password = random_password.db_password.result
-  type     = var.iam_auth ? "CLOUD_IAM_USER" : "BUILT_IN"
+  type     = "BUILT_IN"
 }
 
 ################################################################################

@@ -74,14 +74,23 @@ check "azure_db_engine_present_when_created" {
   }
 }
 
-# Keyless Postgres auth (#722): when Entra auth is on, the app must have a federated Workload-Identity
-# path to the DB — the app UAMI + its federated credential + its registration as the server's Entra
-# administrator. Assert they're wired so a keyless binding can't render pointed at an identity that
-# can never log in. Requires AKS (the OIDC issuer the credential federates through) and postgres.
+# Keyless Postgres auth (#722 R5): when Entra auth is on, the app must have a federated
+# Workload-Identity path to the DB AND a dedicated admin must own the Entra-administrator role — the
+# app identity must NOT be admin (least-privilege). Assert both UAMIs + both federated credentials
+# exist and the SOLE Entra administrator is db_admin, so a keyless binding can't render pointed at an
+# identity that can never log in, and the app can never be a DB superuser. Requires AKS (the OIDC
+# issuer the credentials federate through) and postgres.
 check "keyless_azure_db_app_identity_wired" {
   assert {
-    condition     = !(var.create_azure_db && var.azure_db_iam_auth && var.azure_db_engine == "postgres") || (var.provision_aks && length(azurerm_user_assigned_identity.app_db) == 1 && length(azurerm_postgresql_flexible_server_active_directory_administrator.app_db) == 1)
-    error_message = "azure_db_iam_auth is on for postgres but the keyless app identity is incomplete: it needs provision_aks=true, the app UAMI, its federated credential, and its Entra-administrator registration."
+    condition = !(var.create_azure_db && var.azure_db_iam_auth && var.azure_db_engine == "postgres") || (
+      var.provision_aks &&
+      length(azurerm_user_assigned_identity.app_db) == 1 &&
+      length(azurerm_federated_identity_credential.app_db) == 1 &&
+      length(azurerm_user_assigned_identity.db_admin) == 1 &&
+      length(azurerm_federated_identity_credential.db_admin) == 1 &&
+      length(azurerm_postgresql_flexible_server_active_directory_administrator.db_admin) == 1
+    )
+    error_message = "azure_db_iam_auth is on for postgres but the keyless identities are incomplete: it needs provision_aks=true, the app UAMI + its federated credential, and a DEDICATED db_admin UAMI + its federated credential registered as the sole Entra administrator (the app must not be admin)."
   }
 }
 
