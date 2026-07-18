@@ -10,6 +10,7 @@
 // plan caps, and provisioned-runner hours stay org-wide (link out from the Usage page).
 
 import { eq } from "drizzle-orm";
+import { notFound } from "next/navigation";
 import { currentActor } from "@/lib/authz/guard";
 import { getOrgBilling } from "@/lib/billing/queries";
 import {
@@ -41,7 +42,9 @@ async function assertProjectInScope(projectId: string) {
 		.where(eq(projects.id, projectId))
 		.limit(1);
 	if (!row || row.orgId !== actor.orgId) {
-		throw new Error("Project not found");
+		// Missing OR foreign project on a render path → 404 (also hides existence from other tenants),
+		// not a captured error. notFound()'s NEXT_NOT_FOUND is treated as expected by onRequestError.
+		notFound();
 	}
 	return actor;
 }
