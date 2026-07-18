@@ -8,7 +8,6 @@
 
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getChannelSender } from "@/lib/alerts/channels";
 import { deliverOne } from "@/lib/alerts/dispatch";
@@ -51,7 +50,8 @@ function startCatcher() {
 			body += c;
 		});
 		req.on("end", () => {
-			reqs.push({ sig: req.headers["x-alethia-signature"] as string, body });
+			const sigHeader = req.headers["x-alethia-signature"];
+			reqs.push({ sig: typeof sigHeader === "string" ? sigHeader : null, body });
 			res.writeHead(200);
 			res.end("ok");
 		});
@@ -59,7 +59,8 @@ function startCatcher() {
 	return new Promise<{ url: string; reqs: typeof reqs; close: () => void }>(
 		(resolve) => {
 			server.listen(0, "127.0.0.1", () => {
-				const port = (server.address() as AddressInfo).port;
+				const addr = server.address();
+				const port = addr && typeof addr === "object" ? addr.port : 0;
 				resolve({
 					url: `http://127.0.0.1:${port}/hook`,
 					reqs,
