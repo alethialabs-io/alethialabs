@@ -40,6 +40,7 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 	projects,
+	clusterAdmins,
 	topicSubscriptions,
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
@@ -227,7 +228,22 @@ async function writeComponents(
 ) {
 	const base = { project_id: projectId, environment_id: environmentId };
 	await tx.insert(projectNetwork).values({ ...base, ...data.network });
-	await tx.insert(projectCluster).values({ ...base, ...data.cluster });
+	// Dual-write the cluster's admins: the row keeps its cluster_admins JSONB (rollback net, dropped
+	// in a follow-up) AND each admin is normalized into cluster_admins (username + text[] groups + FK).
+	const [insertedCluster] = await tx
+		.insert(projectCluster)
+		.values({ ...base, ...data.cluster })
+		.returning({ id: projectCluster.id });
+	if (insertedCluster && data.cluster?.cluster_admins?.length) {
+		await tx.insert(clusterAdmins).values(
+			data.cluster.cluster_admins.map((a, i) => ({
+				cluster_id: insertedCluster.id,
+				username: a.username,
+				groups: a.groups,
+				ordinal: i,
+			})),
+		);
+	}
 	await tx.insert(projectDns).values({ ...base, ...data.dns });
 	await tx.insert(projectRepositories).values({ ...base, ...data.repositories });
 	if (data.source_repos?.length)

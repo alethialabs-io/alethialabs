@@ -988,6 +988,20 @@ CREATE POLICY owner_all ON public.topic_subscriptions FOR ALL
          WHERE p.user_id = current_setting('app.current_owner', true)::uuid
             OR p.org_id = current_setting('app.current_org', true)::uuid));
 
+-- cluster_admins: normalized child of project_cluster (no direct project_id) — tenancy flows through
+-- the parent cluster → project, same join-through shape as topic_subscriptions.
+ALTER TABLE public.cluster_admins ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.cluster_admins;
+CREATE POLICY owner_all ON public.cluster_admins FOR ALL
+  USING (cluster_id IN (SELECT c.id FROM public.project_cluster c
+         JOIN public.projects p ON p.id = c.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid))
+  WITH CHECK (cluster_id IN (SELECT c.id FROM public.project_cluster c
+         JOIN public.projects p ON p.id = c.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid));
+
 -- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
 -- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;
