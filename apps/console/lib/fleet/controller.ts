@@ -33,6 +33,7 @@ export interface FleetActionRecord {
 }
 import { log } from "@/lib/observability/log";
 import {
+	recordDispatchableDepth,
 	recordFleetSize,
 	recordQueueDepth,
 	recordScalerAction,
@@ -52,8 +53,12 @@ export interface RunnerState {
 export interface ControllerDeps {
 	/** instanceId → correlated managed-runner state. */
 	runnerMap(provider: string): Promise<Map<string, RunnerState>>;
-	/** QUEUED jobs targeting this provider. */
+	/** QUEUED jobs targeting this provider (raw backlog — recorded on the ledger + queue_depth gauge). */
 	backlog(provider: string): Promise<number>;
+	/** DISPATCHABLE backlog: the subset of `backlog` a runner could claim now given per-org plan caps.
+	 *  This is what SIZES the fleet (raw backlog over-provisions past what the caps will dispatch).
+	 *  Optional so test fakes without it fall back to raw `backlog` (byte-identical to pre-cap-aware). */
+	dispatchableBacklog?(provider: string): Promise<number>;
 	/** Current in-flight (CLAIMED/PROCESSING) jobs — drives auto-grow of the warm floor. */
 	recentPeak(provider: string): Promise<number>;
 	/** Newest released version for a channel (or null if none). */
@@ -143,20 +148,29 @@ export async function reconcilePool(
 			),
 	);
 
-	const target = targetCount(resolved, backlog, recentPeak);
+	// Size the fleet to DISPATCHABLE demand — the subset of the queue claimable now given per-org
+	// plan caps — not the raw backlog (which over-provisions VMs the caps themselves will block).
+	// Falls back to raw backlog when the dep is absent (test fakes) so behaviour is unchanged there.
+	const dispatchable = deps.dispatchableBacklog
+		? await deps.dispatchableBacklog(project.provider)
+		: backlog;
+
+	const target = targetCount(resolved, dispatchable, recentPeak);
 	const onlineNow = observedInstances.filter((i) => i.status === "online").length;
 	const surplusTicks = onlineNow > target ? (surplus.get(project.provider) ?? 0) + 1 : 0;
 	surplus.set(project.provider, surplusTicks);
 
-	// Telemetry (no-op unless an OTLP endpoint is configured): sample the per-provider
-	// queue depth + online fleet size each tick. Labels are the low-cardinality provider
+	// Telemetry (no-op unless an OTLP endpoint is configured): sample both the raw queue depth and
+	// the dispatchable (cap-aware) demand + online fleet size each tick. A large raw-vs-dispatchable
+	// gap means jobs are queued behind caps, not capacity. Labels are the low-cardinality provider
 	// only — never a job_id / runner_id.
 	recordQueueDepth(project.provider, backlog);
+	recordDispatchableDepth(project.provider, dispatchable);
 	recordFleetSize(project.provider, onlineNow);
 
 	const actions = plan(resolved, {
 		instances: observedInstances,
-		backlog,
+		backlog: dispatchable,
 		recentPeak,
 		bootGraceSeconds: deps.bootGraceSeconds,
 		surplusTicks,

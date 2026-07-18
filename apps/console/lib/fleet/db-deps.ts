@@ -8,6 +8,7 @@ import type { ControllerDeps } from "@/lib/fleet/controller";
 import {
 	backlogByProvider,
 	countInflightForProvider,
+	dispatchableBacklogByProvider,
 	insertFleetAction,
 	latestReleaseVersion,
 	managedRunnersByInstance,
@@ -26,6 +27,8 @@ export function makeDbDeps(): ControllerDeps {
 	return {
 		runnerMap: (provider) => managedRunnersByInstance(provider),
 		backlog: async (provider) => (await backlogByProvider()).get(provider) ?? 0,
+		dispatchableBacklog: async (provider) =>
+			(await dispatchableBacklogByProvider()).get(provider) ?? 0,
 		recentPeak: (provider) => countInflightForProvider(provider),
 		resolveChannel: () => latestReleaseVersion(),
 		drain: (runnerId) => markRunnerDraining(runnerId),

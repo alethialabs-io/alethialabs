@@ -32,6 +32,13 @@ function buildInstruments() {
 			description: "QUEUED provisioning jobs awaiting a runner, per provider",
 			unit: "{job}",
 		}),
+		/** DISPATCHABLE backlog per provider — the subset of the queue that is claimable RIGHT NOW
+		 *  given each org's plan concurrency cap. This (not raw queue_depth) is what drives scaling,
+		 *  so a large gap between the two means jobs are queued behind caps, not behind capacity. */
+		dispatchableDepth: meter.createGauge("alethia.fleet.dispatchable_depth", {
+			description: "Claimable-now provisioning jobs (cap-aware), per provider",
+			unit: "{job}",
+		}),
 		/** Online managed runners per provider (sampled each scaler tick). */
 		fleetSize: meter.createGauge("alethia.fleet.size", {
 			description: "Online managed runners, per provider",
@@ -87,6 +94,14 @@ export function recordQueueDepth(
 	depth: number,
 ): void {
 	inst().queueDepth.record(depth, { provider: providerLabel(provider) });
+}
+
+/** Records the dispatchable (cap-aware) backlog for a provider (fleet controller tick). */
+export function recordDispatchableDepth(
+	provider: string | null | undefined,
+	depth: number,
+): void {
+	inst().dispatchableDepth.record(depth, { provider: providerLabel(provider) });
 }
 
 /** Records the count of online runners for a provider (fleet controller tick). */

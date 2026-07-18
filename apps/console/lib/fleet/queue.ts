@@ -55,6 +55,58 @@ export async function backlogByProvider(): Promise<Map<string, number>> {
 	return out;
 }
 
+/**
+ * DISPATCHABLE QUEUED job counts grouped by target provider — the subset of the raw backlog a managed
+ * runner could actually claim RIGHT NOW, given each org's plan concurrency cap. Raw `backlogByProvider`
+ * over-counts: a free (community) org that queues 50 jobs while already running its 2 has 48 jobs
+ * `claim_next_job` will refuse — sizing the fleet to those provisions VMs the caps themselves block
+ * (idle billable capacity). Here, per provider, we sum each org's LEAST(queued, remaining cap headroom);
+ * a NULL cap (enterprise) contributes its full queued count.
+ *
+ * The cap headroom is per-ORG and shared across providers, but credited per (org, provider): an org
+ * queueing on two providers at once can double-count its headroom (bounded, and rare — an org usually
+ * targets one cloud per burst). That errs toward slightly OVER-provisioning, never under — the opposite
+ * of, and far smaller than, the raw-backlog over-count it replaces. Mirrors the managed-claim
+ * eligibility filters in claim_next_job (unassigned, not self-required).
+ */
+export async function dispatchableBacklogByProvider(): Promise<
+	Map<string, number>
+> {
+	const rows = await getServiceDb().execute<ProviderCountRow>(sql`
+		with inflight as (
+			select k.org_id, count(*)::int as n
+			from public.jobs k
+			join public.runners r on r.id = k.runner_id
+			where k.status in ('CLAIMED', 'PROCESSING') and r.operator = 'managed'
+			group by k.org_id
+		),
+		queued as (
+			select org_id, provider, count(*)::int as n
+			from public.jobs
+			where status = 'QUEUED'
+			  and assigned_runner_id is null
+			  and requires_self_runner = false
+			group by org_id, provider
+		)
+		select q.provider,
+			sum(
+				case
+					when public.plan_max_concurrency(public.org_effective_plan(q.org_id)) is null then q.n
+					else least(
+						q.n,
+						greatest(0, public.plan_max_concurrency(public.org_effective_plan(q.org_id)) - coalesce(i.n, 0))
+					)
+				end
+			)::int as n
+		from queued q
+		left join inflight i on i.org_id = q.org_id
+		group by q.provider
+	`);
+	const out = new Map<string, number>();
+	for (const r of rows) out.set(r.provider ?? "any", Number(r.n));
+	return out;
+}
+
 /** ONLINE managed runners that can serve a provider (NULL supported_providers = any). */
 export async function countManagedRunnersForProvider(
 	provider: CloudProvider,
