@@ -10,6 +10,7 @@
 
 /** `Object.keys` with the precise `keyof T` element type. */
 export function typedKeys<T extends object>(o: T): (keyof T)[] {
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object.keys is string[] by spec; for a known-exact record these ARE keyof T (the single place this is asserted)
 	return Object.keys(o) as (keyof T)[];
 }
 
@@ -20,6 +21,7 @@ export function typedValues<T extends object>(o: T): T[keyof T][] {
 
 /** `Object.entries` with precise `[keyof T, value]` tuples. */
 export function typedEntries<T extends object>(o: T): [keyof T, T[keyof T]][] {
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Object.entries keys are string by spec; for a known-exact record these ARE keyof T (the single place this is asserted)
 	return Object.entries(o) as [keyof T, T[keyof T]][];
 }
 

@@ -28,6 +28,22 @@ const eslintConfig = defineConfig([
 		},
 	},
 	{
+		// Cast guard (product code): `as` type assertions bypass the checker, so they're banned
+		// outside tests. The ~17 that remain are irreducible TypeScript/library limitations
+		// (Object.keys→keyof, distributed-union variance, generic Partial<T> writes, and
+		// upstream library type mismatches) and each carries an inline eslint-disable with its
+		// reason. `as const` is exempt (it narrows, it doesn't assert a foreign type). This keeps
+		// NEW casts from landing — the real finite-typing discipline, enforced.
+		files: ["**/*.{ts,tsx}"],
+		ignores: ["tests/**", "e2e/**"],
+		rules: {
+			"@typescript-eslint/consistent-type-assertions": [
+				"error",
+				{ assertionStyle: "never" },
+			],
+		},
+	},
+	{
 		// Test-quality guards — catch vacuous tests (no assertion, conditional/standalone expect,
 		// duplicate titles). Complements mutation testing + the check-test-imports tripwire.
 		files: ["tests/**/*.{ts,tsx}"],

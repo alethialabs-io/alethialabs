@@ -34,6 +34,7 @@ export const maxDuration = 300;
 // runtime. Bridge to the exact shape withMcpAuth requires (no behaviour change).
 type McpAuthInstance = Parameters<typeof withMcpAuth>[0];
 
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- better-auth widens `plugins`, erasing mcp()'s getMcpSession on `auth`'s static type though it exists at runtime
 const handler = withMcpAuth(auth as unknown as McpAuthInstance, async (_req, session) => {
 	const actor = await getActiveScope(session.userId);
 

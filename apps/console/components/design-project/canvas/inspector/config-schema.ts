@@ -1505,5 +1505,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
  * this single, documented widening is the erasure boundary of the key-driven engine.
  */
 export function getKindConfig(kind: NodeKind): KindConfig | undefined {
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- KindConfig<C> is contravariant in C (its setter), so the K-specific entry can't widen to KindConfig<AnyConfig>
 	return CONFIG_SCHEMA[kind] as KindConfig | undefined;
 }

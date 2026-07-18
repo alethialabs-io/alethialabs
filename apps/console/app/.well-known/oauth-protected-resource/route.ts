@@ -11,5 +11,6 @@ import { auth } from "@/lib/auth";
 // lib/auth widens `plugins`, erasing the mcp() plugin's endpoint inference on `auth`
 // though it exists at runtime — bridge to the shape the helper requires.
 export const GET = oAuthProtectedResourceMetadata(
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- better-auth widens `plugins`, erasing mcp()'s resource inference on `auth` though it exists at runtime
 	auth as unknown as Parameters<typeof oAuthProtectedResourceMetadata>[0],
 );

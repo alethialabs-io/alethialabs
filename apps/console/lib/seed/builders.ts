@@ -138,6 +138,7 @@ export async function seedOrgAndPeople(ctx: SeedCtx): Promise<void> {
 /** Keyless cloud connectors; returns provider → cloud_identity id. */
 export async function seedConnectors(ctx: SeedCtx): Promise<Record<CloudProvider, string>> {
 	const { db, ownerId, orgId, id, now } = ctx;
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- filled completely in the loop below; keeping the finite Record<CloudProvider,string> key type needs the completeness assertion
 	const map = {} as Record<CloudProvider, string>;
 	for (const c of CONNECTORS) {
 		const cid = id(`connector:${c.provider}`);
