@@ -28,18 +28,31 @@ const eslintConfig = defineConfig([
 		},
 	},
 	{
-		// Cast guard (product code): `as` type assertions bypass the checker, so they're banned
-		// outside tests. The ~17 that remain are irreducible TypeScript/library limitations
-		// (Object.keys→keyof, distributed-union variance, generic Partial<T> writes, and
-		// upstream library type mismatches) and each carries an inline eslint-disable with its
-		// reason. `as const` is exempt (it narrows, it doesn't assert a foreign type). This keeps
-		// NEW casts from landing — the real finite-typing discipline, enforced.
+		// Cast guard (product code): ZERO `as` type assertions. They bypass the checker, so they're
+		// banned outside tests — `as const` is exempt (it narrows, it doesn't assert a foreign type).
+		// The handful of places TypeScript genuinely can't express a runtime-correct fact
+		// (Object.keys→keyof T, distributed-union variance, generic Partial<T> writes per TS2862,
+		// and upstream better-auth/AI-SDK/Stripe/react-flow type mismatches) use a described
+		// `@ts-expect-error` instead: it carries no fabricated type, keeps the finite annotation,
+		// and SELF-CLEANS — the day a TS/library upgrade fixes the limitation, the directive errors
+		// as unused and forces its own removal. `@ts-ignore`/`@ts-nocheck` stay banned (they don't
+		// self-clean); every `@ts-expect-error` must state why. Companion to no-explicit-any.
 		files: ["**/*.{ts,tsx}"],
 		ignores: ["tests/**", "e2e/**"],
 		rules: {
 			"@typescript-eslint/consistent-type-assertions": [
 				"error",
 				{ assertionStyle: "never" },
+			],
+			"@typescript-eslint/ban-ts-comment": [
+				"error",
+				{
+					"ts-expect-error": "allow-with-description",
+					"ts-ignore": true,
+					"ts-nocheck": true,
+					"ts-check": false,
+					minimumDescriptionLength: 10,
+				},
 			],
 		},
 	},

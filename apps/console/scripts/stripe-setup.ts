@@ -129,8 +129,8 @@ async function ensureProduct(
 // alike). The REST API accepts `unit_amount_decimal` as a plain string, so we pass the string and
 // shim it to the SDK's type (the third-party-type-mismatch pattern used across lib/cloud-providers).
 // Isolated to this one helper.
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Stripe's SDK brands unit_amount_decimal as Decimal but the REST API accepts a plain string
-const decimalString = (value: string): Stripe.Decimal => value as unknown as Stripe.Decimal;
+// @ts-expect-error Stripe's SDK brands unit_amount_decimal as Decimal but the REST API accepts a plain string
+const decimalString = (value: string): Stripe.Decimal => value;
 
 /** Ensures the graduated runner-minutes metered Price exists WITH the EUR currency option
  *  (free ≤ included, then the per-minute overage in USD + EUR). Mints a fresh multi-currency

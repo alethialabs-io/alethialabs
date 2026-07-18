@@ -9,12 +9,14 @@
 // change refetches. Replaces the page's raw `useEffect` + `cancelled`-flag chain.
 
 import {
+	type InfiniteData,
 	keepPreviousData,
 	useInfiniteQuery,
 	useQuery,
 } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 import {
+	type ActivityPage,
 	getActivityLog,
 	type ActivityQuery,
 } from "@/app/server/actions/activity";
@@ -47,12 +49,19 @@ export function normalizeActivityQuery(query: ActivityQuery): ActivityQuery {
 export function useActivityQuery(query: ActivityQuery) {
 	const params = useParams<{ org: string }>();
 	const org = params.org;
-	return useInfiniteQuery({
+	// Explicit generics pin the page-param type to the cursor (number | null) so `initialPageParam:
+	// null` needs no assertion — inference alone would fix it to `null` and clash with getNextPageParam.
+	return useInfiniteQuery<
+		ActivityPage,
+		Error,
+		InfiniteData<ActivityPage, number | null>,
+		ReturnType<typeof qk.activity>,
+		number | null
+	>({
 		queryKey: qk.activity(org, query),
 		queryFn: ({ pageParam }) =>
 			getActivityLog(pageParam == null ? query : { ...query, cursor: pageParam }),
-		// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- TanStack resolves the page-param type from this literal's inline annotation; a separate typed const breaks the overload inference
-		initialPageParam: null as number | null,
+		initialPageParam: null,
 		getNextPageParam: (last) => last.nextCursor,
 		placeholderData: keepPreviousData,
 	});

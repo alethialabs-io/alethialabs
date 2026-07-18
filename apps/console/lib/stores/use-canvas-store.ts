@@ -274,13 +274,14 @@ function applyUniqueName<K extends NodeKind>(
 	config: NodeConfigMap[K],
 	nodes: CanvasNode[],
 ): NodeConfigMap[K] {
-	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- distributed-union variance (see buildNodeData): the generic {kind,config} can't be proven a CanvasNodeData member
-	const current = configName({
+	// @ts-expect-error distributed-union variance (see buildNodeData): the generic {kind,config} can't be proven a CanvasNodeData member
+	const nodeData: CanvasNodeData = {
 		kind,
 		config,
 		cloud_identity_id: null,
 		provider: null,
-	} as CanvasNodeData);
+	};
+	const current = configName(nodeData);
 	if (NODE_REGISTRY[kind].cardinality !== "array" || !current) return config;
 	const taken = new Set(
 		nodes
