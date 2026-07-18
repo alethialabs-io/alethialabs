@@ -45,9 +45,10 @@ func CredentialFacetNames(b types.ServiceBinding) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, inj := range b.Inject {
-		if credentialFacet[inj.From] && !seen[inj.From] {
-			seen[inj.From] = true
-			out = append(out, inj.From)
+		facet := string(inj.From)
+		if credentialFacet[facet] && !seen[facet] {
+			seen[facet] = true
+			out = append(out, facet)
 		}
 	}
 	sort.Strings(out)
@@ -61,7 +62,7 @@ func CredentialFacetNames(b types.ServiceBinding) []string {
 // the single declaration for the package (generate_test.go relies on it; tested in
 // externalsecret_test.go).
 func BindingSecretName(serviceName string, t types.ServiceBindingTarget) string {
-	return dns1123(serviceName + "-" + t.Kind + "-" + t.Name)
+	return dns1123(serviceName + "-" + string(t.Kind) + "-" + t.Name)
 }
 
 // StoreNameFor maps a cloud provider to its ESO ClusterSecretStore name (defined per-cloud in

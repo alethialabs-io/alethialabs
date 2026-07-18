@@ -233,7 +233,7 @@ func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 		subs := []map[string]string{}
 		for _, s := range t.Subscriptions {
 			subs = append(subs, map[string]string{
-				"protocol": s.Protocol,
+				"protocol": string(s.Protocol),
 				"endpoint": s.Endpoint,
 			})
 		}

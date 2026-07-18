@@ -338,20 +338,20 @@ func defaultPort(kind string) string {
 func resolveBindings(serviceName, provider string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv, unresolved []string) {
 	for _, b := range bindings {
 		for _, inj := range b.Inject {
-			if IsCredentialFacet(inj.From) {
+			if IsCredentialFacet(string(inj.From)) {
 				secretEnv = append(secretEnv, AppSecretEnv{
 					Env:        inj.Env,
 					SecretName: BindingSecretName(serviceName, b.Target),
-					SecretKey:  inj.From,
+					SecretKey:  string(inj.From),
 				})
 				continue
 			}
 			var value string
-			switch inj.From {
+			switch string(inj.From) {
 			case "endpoint":
-				value = outputs[endpointOutputKey(provider, b.Target.Kind)]
+				value = outputs[endpointOutputKey(provider, string(b.Target.Kind))]
 			case "port":
-				value = defaultPort(b.Target.Kind)
+				value = defaultPort(string(b.Target.Kind))
 			}
 			if value == "" {
 				unresolved = append(unresolved, fmt.Sprintf(

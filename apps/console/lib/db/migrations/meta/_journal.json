@@ -743,6 +743,13 @@
       "when": 1784283167355,
       "tag": "0105_gigantic_frightful_four",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1784369758781,
+      "tag": "0106_free_rick_jones",
+      "breakpoints": true
     }
   ]
 }
