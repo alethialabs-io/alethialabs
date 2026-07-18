@@ -39,7 +39,17 @@ Both clouds converge on the same shape: the app connects to a **local proxy side
 `127.0.0.1`, and the sidecar authenticates upstream with the pod's own identity. Your application
 code is unchanged — it just connects to localhost with no password.
 
-<Tabs items={["GCP", "Azure"]}>
+There are two mechanisms: GCP has a native auth proxy; AWS and Azure have no proxy, so a small
+refresher sidecar keeps a short-lived token fresh for a local PgBouncer. Either way the app only ever
+talks to `127.0.0.1`.
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    RDS with **IAM database authentication**. A refresher sidecar mints an RDS auth token from the
+    pod's **IRSA** role (`rds-db:connect`, ~15-minute tokens) and keeps it fresh for a local PgBouncer
+    on `127.0.0.1`. Alethia creates a least-privilege IAM role scoped to the app's Kubernetes service
+    account and a database user for it.
+  </Tab>
   <Tab value="GCP">
     Cloud SQL with **IAM database authentication**. The pod runs the **Cloud SQL Auth Proxy** as a
     sidecar (`--auto-iam-authn`), which mints a Cloud SQL IAM token from the pod's **Workload
@@ -53,10 +63,15 @@ code is unchanged — it just connects to localhost with no password.
     local PgBouncer serves the app on `127.0.0.1`. Alethia provisions a managed identity for the app,
     federates it to the app's Kubernetes service account, and registers it on the server.
   </Tab>
-  <Tab value="AWS">
-    RDS IAM authentication is on the roadmap; today AWS uses the provisioned-password path.
-  </Tab>
 </Tabs>
+
+### Where it doesn't apply
+
+- **Alibaba Cloud (ApsaraDB RDS)** — ApsaraDB has no IAM/RAM token-based database login (its RAM
+  controls the *management* API, not database logins), so an Alibaba database stays on the
+  provisioned-password path even with IAM Auth on.
+- **Hetzner** — Hetzner databases are in-cluster ArgoCD add-ons, not a managed cloud service with an
+  IAM plane, so there is no keyless identity to use; they use the password path.
 
 ## Rollout status
 
