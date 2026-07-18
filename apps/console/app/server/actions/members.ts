@@ -248,7 +248,7 @@ export async function getInviteContext(): Promise<InviteContext> {
 		getBillingSummary(),
 		actor.orgId === actor.userId
 			? Promise.resolve(
-					[] as { memberEmail: string | null; inviteEmail: string | null }[],
+					Array<{ memberEmail: string | null; inviteEmail: string | null }>(),
 				)
 			: db
 					.select({ memberEmail: user.email, inviteEmail: invitation.email })

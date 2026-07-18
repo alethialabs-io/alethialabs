@@ -9,6 +9,8 @@
 // so there is no AccessKey and no request signature. A successful assume is the proof of access.
 
 import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
+import { toStr } from "@/lib/coerce";
+import { asRecord } from "@/lib/records";
 import type { CloudIdentity } from "@/lib/db/schema";
 
 const STS_ENDPOINT = "https://sts.aliyuncs.com/";
@@ -109,30 +111,28 @@ export async function assumeAlibabaRole(
 			body,
 			signal: controller.signal,
 		});
-		const resBody = (await res.json().catch(() => ({}))) as {
-			Code?: string;
-			Message?: string;
-			Credentials?: {
-				AccessKeyId?: string;
-				AccessKeySecret?: string;
-				SecurityToken?: string;
-				Expiration?: string;
-			};
-		};
+		const resBody = asRecord(await res.json().catch(() => ({})));
 		if (!res.ok || resBody.Code) {
-			throw new Error(resBody.Message || resBody.Code || `Alibaba STS HTTP ${res.status}`);
+			throw new Error(
+				toStr(resBody.Message) ||
+					toStr(resBody.Code) ||
+					`Alibaba STS HTTP ${res.status}`,
+			);
 		}
-		const c = resBody.Credentials;
-		if (!c?.AccessKeyId || !c.AccessKeySecret || !c.SecurityToken) {
+		const c = asRecord(resBody.Credentials);
+		const accessKeyId = toStr(c.AccessKeyId);
+		const accessKeySecret = toStr(c.AccessKeySecret);
+		const securityToken = toStr(c.SecurityToken);
+		if (!accessKeyId || !accessKeySecret || !securityToken) {
 			throw new Error("Alibaba AssumeRoleWithOIDC returned no credentials.");
 		}
 		return {
 			accountId: accountIdFromArn(roleArn),
 			credentials: {
-				accessKeyId: c.AccessKeyId,
-				accessKeySecret: c.AccessKeySecret,
-				securityToken: c.SecurityToken,
-				expiration: c.Expiration ?? null,
+				accessKeyId,
+				accessKeySecret,
+				securityToken,
+				expiration: toStr(c.Expiration) || null,
 			},
 		};
 	} finally {

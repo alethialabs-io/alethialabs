@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { coerceEnum } from "@/lib/coerce";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
@@ -98,7 +99,7 @@ export function GcpConnection({
 		>
 			<MethodTabs
 				value={method}
-				onChange={(id) => setMethod(id as "gcloud" | "terraform")}
+				onChange={(id) => setMethod(coerceEnum(id, ["gcloud", "terraform"] as const, "terraform"))}
 				help={
 					<>
 						<b className="text-foreground">gcloud CLI</b> runs a script in Google Cloud

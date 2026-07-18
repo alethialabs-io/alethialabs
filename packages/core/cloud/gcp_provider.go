@@ -137,7 +137,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			tfvars["memorystore_tier"] = "STANDARD_HA"
 		}
 		if cache.Engine != "" {
-			tfvars["memorystore_engine"] = cache.Engine
+			tfvars["memorystore_engine"] = string(cache.Engine)
 		}
 		if cache.EngineVersion != "" {
 			tfvars["memorystore_redis_version"] = cache.EngineVersion
@@ -259,7 +259,7 @@ func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]int
 	for _, t := range tables {
 		entry := map[string]interface{}{
 			"name":         t.Name,
-			"billing_mode": ddbCapacityMode(t.CapacityMode),
+			"billing_mode": ddbCapacityMode(string(t.CapacityMode)),
 		}
 		if t.PointInTimeRecovery {
 			entry["point_in_time_recovery"] = true

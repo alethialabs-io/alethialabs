@@ -10,6 +10,7 @@
 // native id we MISS means we delete a resource tofu is actively managing. Those are not comparable, so
 // the code is generous on purpose.
 
+import { asRecord } from "@/lib/records";
 import { storage } from "@/lib/storage";
 import { TOFU_STATE_BUCKET } from "@/lib/storage/tofu-state";
 
@@ -50,17 +51,17 @@ export async function stateNativeIds(
 	}
 
 	const ids = new Set<string>();
-	const resources = (parsed as { resources?: unknown })?.resources;
+	const resources = asRecord(parsed).resources;
 	if (!Array.isArray(resources)) return ids;
 
 	for (const resource of resources) {
-		const instances = (resource as { instances?: unknown })?.instances;
+		const instances = asRecord(resource).instances;
 		if (!Array.isArray(instances)) continue;
 		for (const instance of instances) {
-			const attrs = (instance as { attributes?: unknown })?.attributes;
+			const attrs = asRecord(instance).attributes;
 			if (!attrs || typeof attrs !== "object") continue;
 			for (const attr of ID_ATTRS) {
-				const value = (attrs as Record<string, unknown>)[attr];
+				const value = asRecord(attrs)[attr];
 				// Providers type ids as string or number (hcloud uses numeric ids). Normalize both.
 				if (typeof value === "string" && value) ids.add(value);
 				else if (typeof value === "number") ids.add(String(value));

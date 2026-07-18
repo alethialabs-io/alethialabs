@@ -5,7 +5,7 @@
 // here (auth + provisioning-capability), instantly and without a runner. There is no non-server-side
 // path anymore: connections are platform-managed (hosted = Alethia's account; OSS = the operator's).
 
-import type { CloudIdentity } from "@/lib/db/schema";
+import type { CloudIdentity, CloudProvider } from "@/lib/db/schema";
 import { probeAlibabaHealth } from "./alibaba";
 import { probeAwsHealth } from "./aws";
 import { probeAzureHealth } from "./azure";
@@ -27,7 +27,7 @@ const SERVER_SIDE = new Set([
 ]);
 
 /** Whether a provider has a server-side health probe. */
-export function hasServerSideHealth(provider: string): boolean {
+export function hasServerSideHealth(provider: CloudProvider): boolean {
 	return SERVER_SIDE.has(provider);
 }
 

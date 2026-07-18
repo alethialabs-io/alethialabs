@@ -8,8 +8,13 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { asRecord } from "@/lib/records";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import {
+	type ChartWorkloadOverlay,
+	composeChartOverlay,
+} from "./chart-overlay";
 import { hasStoredSecret, secretFieldKeys, stripAddonSecrets } from "./secrets";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
@@ -34,8 +39,8 @@ export function deepMerge(
 			!Array.isArray(b)
 		) {
 			out[k] = deepMerge(
-				b as Record<string, unknown>,
-				v as Record<string, unknown>,
+				asRecord(b),
+				asRecord(v),
 			);
 		} else {
 			out[k] = v;
@@ -1005,7 +1010,7 @@ export function parseValuesYaml(
 	try {
 		const parsed = parseYaml(yaml);
 		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
+			return asRecord(parsed);
 		}
 	} catch {
 		// Malformed YAML — ignore (the enable action validates before persisting).
@@ -1106,18 +1111,28 @@ const BYO_CHART_SYNC_WAVE = 5;
  * Returns null when required git coordinates are missing (a mis-built row is skipped, never
  * mis-provisioned).
  */
-export function resolveByoChartInstall(row: {
-	addon_id: string;
-	mode: AddOnMode;
-	version?: string | null;
-	chart_repo?: string | null;
-	chart_path?: string | null;
-	namespace?: string | null;
-	values?: Record<string, unknown> | null;
-	values_yaml?: string | null;
-}): AddOnInstallSpec | null {
+export function resolveByoChartInstall(
+	row: {
+		addon_id: string;
+		mode: AddOnMode;
+		version?: string | null;
+		chart_repo?: string | null;
+		chart_path?: string | null;
+		namespace?: string | null;
+		values?: Record<string, unknown> | null;
+		values_yaml?: string | null;
+	},
+	// The described workloads' user overlay (W5 Lane 2). Their static config (replicas/env) is
+	// composed onto the pristine `values` at each knob's value-path — see lib/addons/chart-overlay.
+	// Binding write-back is runner-side (Lane 2b) and intentionally not composed here.
+	workloads: ChartWorkloadOverlay[] = [],
+): AddOnInstallSpec | null {
 	if (!row.chart_repo || !row.chart_path) return null;
+	// Precedence (low → high): pristine project_addons.values → workload config overlay → raw YAML.
 	let values: Record<string, unknown> = { ...(row.values ?? {}) };
+	if (workloads.length > 0) {
+		values = composeChartOverlay(values, workloads).values;
+	}
 	const rawOverride = parseValuesYaml(row.values_yaml);
 	if (rawOverride) values = deepMerge(values, rawOverride);
 	return {

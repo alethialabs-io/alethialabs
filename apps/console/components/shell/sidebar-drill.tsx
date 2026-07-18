@@ -6,10 +6,8 @@ import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SettingsNav } from "@/components/settings/settings-nav";
-import {
-	type AlertsSection,
-	useAlertsSection,
-} from "@/lib/stores/use-alerts-section";
+import { ALERTS_SECTIONS, useAlertsSection } from "@/lib/stores/use-alerts-section";
+import { isEnumMember } from "@/lib/coerce";
 import { orgHref, projectHref } from "@/lib/routing";
 import {
 	type DrillDef,
@@ -54,7 +52,7 @@ export function SidebarDrill({
 				document
 					.getElementById(id)
 					?.scrollIntoView({ behavior: "smooth", block: "start" });
-				setActiveSection(id as AlertsSection);
+				if (isEnumMember(id, ALERTS_SECTIONS)) setActiveSection(id);
 				history.replaceState(null, "", `#${id}`);
 			},
 		};

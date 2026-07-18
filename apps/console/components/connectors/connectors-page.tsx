@@ -7,6 +7,8 @@ import {
 	renameCloudIdentity,
 	reverifyCloudIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
+import { isEnumMember } from "@/lib/coerce";
+import { asGitProvider } from "@/lib/connectors/git-providers";
 import { disconnectAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";
 import { disconnectGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
 import { disconnectExtraCloud } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
@@ -215,7 +217,7 @@ export function ConnectorsPage({
 			case "git": {
 				setConnectingSlug(slug);
 				try {
-					const provider = slug as PublicGitProvider;
+					const provider = asGitProvider(slug);
 					const callbackURL = `/${orgSlug}/~/connectors`;
 					const { error } =
 						provider === "github"
@@ -320,7 +322,7 @@ export function ConnectorsPage({
 				identityId ?? integration.connection_details?.cloud_identity_id;
 			if (integration.category === "git") {
 				const result = await deleteProviderToken(
-					integration.slug as PublicGitProvider,
+					asGitProvider(integration.slug),
 				);
 				if (result.error) throw new Error(result.error);
 			} else if (integration.slug === "aws") {
@@ -332,12 +334,9 @@ export function ConnectorsPage({
 			} else if (integration.slug === "azure") {
 				if (!cloudId) throw new Error("Missing identity ID");
 				await disconnectAzureIdentity(cloudId);
-			} else if ((EXTRA_CLOUDS as readonly string[]).includes(integration.slug)) {
+			} else if (isEnumMember(integration.slug, EXTRA_CLOUDS)) {
 				if (!cloudId) throw new Error("Missing identity ID");
-				await disconnectExtraCloud(
-					cloudId,
-					integration.slug as (typeof EXTRA_CLOUDS)[number],
-				);
+				await disconnectExtraCloud(cloudId, integration.slug);
 			} else if (integration.auth_method === "api_key") {
 				const result = await deleteConnectorCredential(integration.slug);
 				if (!result.ok) throw new Error(result.error);
@@ -388,13 +387,15 @@ export function ConnectorsPage({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{[
-								{ id: "all" as GroupFilter, label: "All" },
-								...GROUP_META.map((g) => ({
-									id: g.id as GroupFilter,
-									label: g.label,
-								})),
-							].map((opt) => (
+							{(
+								[
+									{ id: "all", label: "All" },
+									...GROUP_META.map((g) => ({
+										id: g.id,
+										label: g.label,
+									})),
+								] satisfies { id: GroupFilter; label: string }[]
+							).map((opt) => (
 								<SelectItem key={opt.id} value={opt.id}>
 									<span className="flex w-full items-center justify-between gap-3">
 										<span>{opt.label}</span>

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { ToolSet } from "ai";
+
 /**
  * The tool registry's exposure SSOT (elench A2/A5).
  *
@@ -93,12 +95,12 @@ export function isExternalTool(name: string): boolean {
  * never leak externally; `assertAudienceCoverage` catches the misclassification
  * in tests/CI.
  */
-export function externalToolsOnly<T extends Record<string, unknown>>(
-	tools: T,
-): Partial<T> {
-	const out: Partial<T> = {};
-	for (const name of Object.keys(tools) as (keyof T & string)[]) {
-		if (isExternalTool(name)) out[name] = tools[name];
+export function externalToolsOnly(tools: ToolSet): ToolSet {
+	// ToolSet is a concrete Record<string, Tool>, so a string-keyed write is allowed (no generic
+	// TS2862) and entries carry the value type — the projection stays cast-free.
+	const out: ToolSet = {};
+	for (const [name, tool] of Object.entries(tools)) {
+		if (isExternalTool(name)) out[name] = tool;
 	}
 	return out;
 }

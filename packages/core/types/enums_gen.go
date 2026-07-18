@@ -93,3 +93,139 @@ var AllCloudProviders = []CloudProvider{
 	CloudProviderHetzner,
 	CloudProviderCivo,
 }
+
+// EnvironmentStage mirrors the environment_stage enum (lib/db/schema/enums.ts).
+type EnvironmentStage string
+
+const (
+	EnvironmentStageDevelopment EnvironmentStage = "development"
+	EnvironmentStageStaging     EnvironmentStage = "staging"
+	EnvironmentStageProduction  EnvironmentStage = "production"
+)
+
+// AllEnvironmentStages is every environment_stage value, in schema order.
+var AllEnvironmentStages = []EnvironmentStage{
+	EnvironmentStageDevelopment,
+	EnvironmentStageStaging,
+	EnvironmentStageProduction,
+}
+
+// ProjectStatus mirrors the project_status enum (lib/db/schema/enums.ts).
+type ProjectStatus string
+
+const (
+	ProjectStatusDraft        ProjectStatus = "DRAFT"
+	ProjectStatusQueued       ProjectStatus = "QUEUED"
+	ProjectStatusProvisioning ProjectStatus = "PROVISIONING"
+	ProjectStatusActive       ProjectStatus = "ACTIVE"
+	ProjectStatusFailed       ProjectStatus = "FAILED"
+	ProjectStatusDestroying   ProjectStatus = "DESTROYING"
+	ProjectStatusDestroyed    ProjectStatus = "DESTROYED"
+)
+
+// AllProjectStatuses is every project_status value, in schema order.
+var AllProjectStatuses = []ProjectStatus{
+	ProjectStatusDraft,
+	ProjectStatusQueued,
+	ProjectStatusProvisioning,
+	ProjectStatusActive,
+	ProjectStatusFailed,
+	ProjectStatusDestroying,
+	ProjectStatusDestroyed,
+}
+
+// ServiceWorkloadType mirrors the service_workload_type enum (lib/db/schema/enums.ts).
+type ServiceWorkloadType string
+
+const (
+	ServiceWorkloadTypeDeployment  ServiceWorkloadType = "deployment"
+	ServiceWorkloadTypeJob         ServiceWorkloadType = "job"
+	ServiceWorkloadTypeCronjob     ServiceWorkloadType = "cronjob"
+	ServiceWorkloadTypeStatefulset ServiceWorkloadType = "statefulset"
+)
+
+// AllServiceWorkloadTypes is every service_workload_type value, in schema order.
+var AllServiceWorkloadTypes = []ServiceWorkloadType{
+	ServiceWorkloadTypeDeployment,
+	ServiceWorkloadTypeJob,
+	ServiceWorkloadTypeCronjob,
+	ServiceWorkloadTypeStatefulset,
+}
+
+// ChartWorkloadKind mirrors the chart_workload_kind enum (lib/db/schema/enums.ts).
+type ChartWorkloadKind string
+
+const (
+	ChartWorkloadKindDeployment  ChartWorkloadKind = "deployment"
+	ChartWorkloadKindStatefulset ChartWorkloadKind = "statefulset"
+	ChartWorkloadKindDaemonset   ChartWorkloadKind = "daemonset"
+	ChartWorkloadKindCronjob     ChartWorkloadKind = "cronjob"
+	ChartWorkloadKindJob         ChartWorkloadKind = "job"
+)
+
+// AllChartWorkloadKinds is every chart_workload_kind value, in schema order.
+var AllChartWorkloadKinds = []ChartWorkloadKind{
+	ChartWorkloadKindDeployment,
+	ChartWorkloadKindStatefulset,
+	ChartWorkloadKindDaemonset,
+	ChartWorkloadKindCronjob,
+	ChartWorkloadKindJob,
+}
+
+// NosqlKeyType mirrors the nosql_key_type enum (lib/db/schema/enums.ts).
+type NosqlKeyType string
+
+const (
+	NosqlKeyTypeS NosqlKeyType = "S"
+	NosqlKeyTypeN NosqlKeyType = "N"
+	NosqlKeyTypeB NosqlKeyType = "B"
+)
+
+// AllNosqlKeyTypes is every nosql_key_type value, in schema order.
+var AllNosqlKeyTypes = []NosqlKeyType{
+	NosqlKeyTypeS,
+	NosqlKeyTypeN,
+	NosqlKeyTypeB,
+}
+
+// NosqlTableType mirrors the nosql_table_type enum (lib/db/schema/enums.ts).
+type NosqlTableType string
+
+const (
+	NosqlTableTypeStandard NosqlTableType = "standard"
+	NosqlTableTypeGlobal   NosqlTableType = "global"
+)
+
+// AllNosqlTableTypes is every nosql_table_type value, in schema order.
+var AllNosqlTableTypes = []NosqlTableType{
+	NosqlTableTypeStandard,
+	NosqlTableTypeGlobal,
+}
+
+// NosqlCapacityMode mirrors the nosql_capacity_mode enum (lib/db/schema/enums.ts).
+type NosqlCapacityMode string
+
+const (
+	NosqlCapacityModeOnDemand    NosqlCapacityMode = "on_demand"
+	NosqlCapacityModeProvisioned NosqlCapacityMode = "provisioned"
+)
+
+// AllNosqlCapacityModes is every nosql_capacity_mode value, in schema order.
+var AllNosqlCapacityModes = []NosqlCapacityMode{
+	NosqlCapacityModeOnDemand,
+	NosqlCapacityModeProvisioned,
+}
+
+// CacheEngine mirrors the cache_engine enum (lib/db/schema/enums.ts).
+type CacheEngine string
+
+const (
+	CacheEngineRedis  CacheEngine = "redis"
+	CacheEngineValkey CacheEngine = "valkey"
+)
+
+// AllCacheEngines is every cache_engine value, in schema order.
+var AllCacheEngines = []CacheEngine{
+	CacheEngineRedis,
+	CacheEngineValkey,
+}

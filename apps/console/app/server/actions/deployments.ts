@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
+import { argocdHealth, argocdSync } from "@/lib/gitops/argocd-status";
 import {
 	jobs,
 	projectCaches,
@@ -45,7 +46,7 @@ const deployMetaSchema = z.object({
 	addon_status: z
 		.record(
 			z.string(),
-			z.object({ health: z.string(), sync: z.string() }),
+			z.object({ health: argocdHealth, sync: argocdSync }),
 		)
 		.optional()
 		.catch(undefined),

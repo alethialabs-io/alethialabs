@@ -154,22 +154,22 @@ export interface RealtimeTransport {
 	subscribe(jobId: string, cb: (logId: number) => void): () => void;
 }
 
-const globalForRealtime = globalThis as unknown as {
-	__alethiaRealtime?: RealtimeTransport;
-	__alethiaWake?: WakeTransport;
-	__alethiaSupport?: ChannelTransport<string>;
-	__alethiaCancel?: ChannelTransport<string>;
-};
+declare global {
+	var __alethiaRealtime: RealtimeTransport | undefined;
+	var __alethiaWake: WakeTransport | undefined;
+	var __alethiaSupport: ChannelTransport<string> | undefined;
+	var __alethiaCancel: ChannelTransport<string> | undefined;
+}
 
 /** The process-wide job-log realtime transport (HMR/instance-safe singleton). */
 export function getRealtimeTransport(): RealtimeTransport {
-	if (!globalForRealtime.__alethiaRealtime) {
-		globalForRealtime.__alethiaRealtime = new PgListenTransport<number>(
+	if (!globalThis.__alethiaRealtime) {
+		globalThis.__alethiaRealtime = new PgListenTransport<number>(
 			"job_logs",
 			routeJobLog,
 		);
 	}
-	return globalForRealtime.__alethiaRealtime;
+	return globalThis.__alethiaRealtime;
 }
 
 /**
@@ -178,13 +178,13 @@ export function getRealtimeTransport(): RealtimeTransport {
  * the SSE route then fetches the row (visible messages only) and emits it.
  */
 export function getSupportMessageTransport(): ChannelTransport<string> {
-	if (!globalForRealtime.__alethiaSupport) {
-		globalForRealtime.__alethiaSupport = new PgListenTransport<string>(
+	if (!globalThis.__alethiaSupport) {
+		globalThis.__alethiaSupport = new PgListenTransport<string>(
 			"support_messages",
 			routeSupportMessage,
 		);
 	}
-	return globalForRealtime.__alethiaSupport;
+	return globalThis.__alethiaSupport;
 }
 
 /**
@@ -194,13 +194,13 @@ export function getSupportMessageTransport(): ChannelTransport<string> {
  * runner's wake SSE route forwards it as a typed cancel event to that runner only.
  */
 export function getCancelTransport(): ChannelTransport<string> {
-	if (!globalForRealtime.__alethiaCancel) {
-		globalForRealtime.__alethiaCancel = new PgListenTransport<string>(
+	if (!globalThis.__alethiaCancel) {
+		globalThis.__alethiaCancel = new PgListenTransport<string>(
 			"runner_cancel",
 			routeRunnerCancel,
 		);
 	}
-	return globalForRealtime.__alethiaCancel;
+	return globalThis.__alethiaCancel;
 }
 
 // ── Runner wake fan-out ──────────────────────────────────────────────────────
@@ -247,8 +247,8 @@ class PgWakeTransport implements WakeTransport {
 
 /** The process-wide runner-wake transport (HMR/instance-safe singleton). */
 export function getWakeTransport(): WakeTransport {
-	if (!globalForRealtime.__alethiaWake) {
-		globalForRealtime.__alethiaWake = new PgWakeTransport();
+	if (!globalThis.__alethiaWake) {
+		globalThis.__alethiaWake = new PgWakeTransport();
 	}
-	return globalForRealtime.__alethiaWake;
+	return globalThis.__alethiaWake;
 }

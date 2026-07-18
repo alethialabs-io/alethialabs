@@ -25,7 +25,7 @@ export function ValueDrillDrawer({
 	dimensionLabel: string;
 	onClose: () => void;
 }) {
-	const { data, isPending } = useQuery({
+	const { data, isPending, isError, refetch } = useQuery({
 		queryKey: ["classification", "value-breakdown", value?.id],
 		queryFn: () => getValueResourceBreakdown(value?.id ?? ""),
 		enabled: Boolean(value),
@@ -56,9 +56,11 @@ export function ValueDrillDrawer({
 									<div className="mt-1.5 text-[12px] text-text-secondary">
 										{isPending
 											? "Loading…"
-											: total === 0
-												? "No resources"
-												: `${total} resource${total === 1 ? "" : "s"} across ${(data ?? []).length} kind${(data ?? []).length === 1 ? "" : "s"}`}
+											: isError
+												? "Couldn't load"
+												: total === 0
+													? "No resources"
+													: `${total} resource${total === 1 ? "" : "s"} across ${(data ?? []).length} kind${(data ?? []).length === 1 ? "" : "s"}`}
 									</div>
 								</div>
 								<button
@@ -78,6 +80,21 @@ export function ValueDrillDrawer({
 									<Skeleton className="h-11 w-full" />
 									<Skeleton className="h-11 w-full" />
 									<Skeleton className="h-11 w-full" />
+								</div>
+							) : isError ? (
+								// A fetch failure must not read as "no resources use this value" — that would
+								// wrongly invite deleting a value that may be in use.
+								<div className="px-4 py-9 text-center">
+									<div className="mb-1.5 text-[13px] text-text-secondary">
+										Couldn&apos;t load which resources use this value.
+									</div>
+									<button
+										type="button"
+										onClick={() => void refetch()}
+										className="text-[11.5px] text-text-primary underline-offset-2 hover:underline"
+									>
+										Retry
+									</button>
 								</div>
 							) : total === 0 ? (
 								<div className="px-4 py-9 text-center">

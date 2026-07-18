@@ -104,9 +104,9 @@ const PENDING_IDENTITY_TTL_H = Number(
 	process.env.ALETHIA_PENDING_IDENTITY_TTL_H ?? "24",
 );
 
-const globalForRecovery = globalThis as unknown as {
-	__alethiaJobRecovery?: ReturnType<typeof setInterval>;
-};
+declare global {
+	var __alethiaJobRecovery: ReturnType<typeof setInterval> | undefined;
+}
 
 /** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
 export const RECOVERY_LOOP_ID = "job-recovery";
@@ -159,11 +159,11 @@ export async function runRecoveryTick(
  * heartbeat-supervised (lib/observability/heartbeats.ts) so /health can see it ticking.
  */
 export function startStaleJobRecovery(): void {
-	if (globalForRecovery.__alethiaJobRecovery) return;
+	if (globalThis.__alethiaJobRecovery) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	registerLoop(RECOVERY_LOOP_ID, { intervalMs: RECOVERY_INTERVAL_MS });
-	globalForRecovery.__alethiaJobRecovery = setInterval(() => {
+	globalThis.__alethiaJobRecovery = setInterval(() => {
 		void superviseLoop(RECOVERY_LOOP_ID, () => runRecoveryTick());
 	}, RECOVERY_INTERVAL_MS);
 }

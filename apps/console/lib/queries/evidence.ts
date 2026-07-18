@@ -4,6 +4,7 @@
 import "server-only";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
+import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import {
 	cloudIdentities,
 	environmentDrift,
@@ -75,7 +76,7 @@ export interface EvidenceEnvRow {
 	projectSlug: string | null;
 	environmentId: string;
 	environmentName: string;
-	stage: string;
+	stage: EnvironmentStage;
 	/** Cloud provider for the row's logo — the connected identity's provider, falling
 	 * back to the verify report's detected provider ("mixed" for multi-cloud plans). */
 	provider: string | null;
@@ -239,7 +240,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 
 	const rows: EvidenceEnvRow[] = envs.map((env) => {
 		const v = verifyByEnv.get(env.environmentId);
-		const meta = (v?.meta as ExecutionMetadata | null) ?? null;
+		const meta = v?.meta ?? null;
 		const report = meta?.verify_result ?? null;
 		const verify: EvidenceVerify | null =
 			v && report

@@ -7,6 +7,7 @@
 // and seeds the per-add-on k8s Secret in-cluster, so no credential lands in the DB, the
 // rendered Application manifest, or the customer's gitops repo.
 
+import { errorName } from "@/lib/errors";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getServiceDb } from "@/lib/db";
@@ -109,7 +110,7 @@ export async function POST(
 		return NextResponse.json({ secrets });
 	} catch (err: unknown) {
 		// Deliberately generic: never echo decryption errors (they can reference key material).
-		console.error("Addon secrets fetch error for job", jobId, "-", (err as Error)?.name);
+		console.error("Addon secrets fetch error for job", jobId, "-", errorName(err));
 		return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
 	}
 }

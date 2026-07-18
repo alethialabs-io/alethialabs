@@ -31,10 +31,9 @@ export const maxDuration = 300;
 // lib/auth annotates `plugins` as BetterAuthOptions["plugins"] (widened, to allow the
 // conditional enterprise pushes), which erases per-plugin type inference — so the mcp()
 // plugin's getMcpSession isn't surfaced on `auth`'s static type though it exists at
-// runtime. Bridge to the exact shape withMcpAuth requires (no behaviour change).
-type McpAuthInstance = Parameters<typeof withMcpAuth>[0];
-
-const handler = withMcpAuth(auth as unknown as McpAuthInstance, async (_req, session) => {
+// runtime. It is present at runtime, so pass `auth` directly.
+// @ts-expect-error better-auth widens `plugins`, erasing mcp()'s getMcpSession on `auth`'s static type though it exists at runtime
+const handler = withMcpAuth(auth, async (_req, session) => {
 	const actor = await getActiveScope(session.userId);
 
 	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.

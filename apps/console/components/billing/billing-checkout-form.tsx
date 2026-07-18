@@ -11,6 +11,7 @@
 // <StripeElementsProvider clientSecret={…}>. Reused by the create-org sheet, /onboarding,
 // the upgrade-org sheet, and billing settings.
 
+import { coerceEnum } from "@/lib/coerce";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	CardCvcElement,
@@ -541,7 +542,7 @@ function TaxIdSection({
 					render={({ field }) => (
 						<Select
 							value={field.value}
-							onValueChange={(v) => field.onChange(v as TaxIdType)}
+							onValueChange={(v) => field.onChange(coerceEnum(v, TAX_ID_TYPES.map((t) => t.value), DEFAULT_TAX_ID_TYPE))}
 						>
 							<SelectTrigger>
 								<SelectValue />

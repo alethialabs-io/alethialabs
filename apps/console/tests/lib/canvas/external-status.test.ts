@@ -47,7 +47,9 @@ const changing = { source: "plan" as const, members: [{ action: "no-op" }, { act
 const declared = { source: "scan" as const, members: [{}] };
 
 const NO_JOB = { activeJob: null };
-const RUNNING_JOB = { activeJob: { id: "j1", type: "DEPLOY", status: "PROCESSING" } };
+const RUNNING_JOB = {
+	activeJob: { id: "j1", type: "DEPLOY", status: "PROCESSING" },
+} satisfies Parameters<typeof resolveExternalStatus>[3];
 
 describe("resolveExternalStatus — the precedence ladder", () => {
 	it("1. FAILED outranks everything, including a clean scan and a live deploy", () => {
@@ -125,14 +127,18 @@ describe("resolveExternalStatus — the precedence ladder", () => {
 describe("resolveExternalStatus — drift and cost are OVERLAYS, never states", () => {
 	it("a drifted card is still live, and carries its drift alongside", () => {
 		// The rule that stops the status system degenerating into one state per combination.
-		const drift = [{ address: "aws_vpc.main", type: "aws_vpc", kind: "managed" }];
+		const drift: ComponentServerStatus["drift"] = [
+			{ address: "aws_vpc.main", type: "aws_vpc", kind: "modified" },
+		];
 		const s = resolveExternalStatus(noop, deployed(), server({ drift }), NO_JOB);
 		expect(s.state).toBe("live");
 		expect(s.drift).toHaveLength(1);
 	});
 
 	it("drift survives every state — it rides on failed too", () => {
-		const drift = [{ address: "aws_vpc.main", type: "aws_vpc", kind: "managed" }];
+		const drift: ComponentServerStatus["drift"] = [
+			{ address: "aws_vpc.main", type: "aws_vpc", kind: "modified" },
+		];
 		const s = resolveExternalStatus(
 			noop,
 			deployed(),

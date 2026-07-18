@@ -16,7 +16,7 @@ import { cn } from "@repo/ui/utils";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { detachByoChart, scanByoChart } from "@/app/server/actions/byo-charts";
 import { ChartScanSheet } from "@/components/design-project/byo/chart-scan-sheet";
-import type { CanvasNode } from "../graph/types";
+import { type CanvasNode, nodeOfKind } from "../graph/types";
 import type { VerifyReport } from "@/types/jsonb.types";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
 
@@ -63,9 +63,8 @@ const STATUS_META: Record<ChartStatus, { label: string; dot: string }> = {
 
 /** React Flow node renderer for a `chart` kind. */
 export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id)) as
-		| CanvasNode<"chart">
-		| undefined;
+	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const node = nodeOfKind(raw, "chart");
 	const ctx = useByoChartCanvas();
 	const [detaching, setDetaching] = useState(false);
 	const [sheetOpen, setSheetOpen] = useState(false);
@@ -112,6 +111,8 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 			)}
 		>
 			<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+			{/* Sources the described chart-workload children (W5 Path A). */}
+			<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
 
 			<div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
 				<GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

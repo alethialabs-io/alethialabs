@@ -102,7 +102,7 @@ func TestE2ELocalKindProvisioning(t *testing.T) {
 	// registered earlier (inside startTestStateServer), so destroy runs first (it
 	// needs the state server), then the server closes. A docker-level fallback
 	// removes the kind container if `tofu destroy` itself failed, so no cluster leaks.
-	clusterName := vc.ProjectName + "-" + vc.EnvironmentStage
+	clusterName := vc.ProjectName + "-" + string(vc.EnvironmentStage)
 	t.Cleanup(func() {
 		dctx, dcancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer dcancel()

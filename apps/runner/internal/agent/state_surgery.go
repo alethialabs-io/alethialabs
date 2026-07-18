@@ -81,8 +81,8 @@ func (w *Runner) executeStateSurgery(ctx context.Context, job *Job, stdout, stde
 
 	res, err := provisioner.RunStateImport(ctx, provisioner.ImportParams{
 		ProjectConfig: vc,
-		Provider:      provider,
-		TemplatesDir:  filepath.Join(resolveProjectTemplatesDir(), provider),
+		Provider:      string(provider),
+		TemplatesDir:  filepath.Join(resolveProjectTemplatesDir(), string(provider)),
 		CategoriesDir: resolveCategoriesTemplatesDir(),
 		StateBackend:  stateBackend,
 		Address:       address,

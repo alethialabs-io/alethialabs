@@ -264,22 +264,48 @@ type Options struct {
 	Domain string
 	// Outputs are the provision's tofu outputs (endpoint values etc.), used to resolve a W3
 	// binding's non-secret facets into concrete env values. Nil/empty is fine — a service with
-	// no bindings needs none. AWS-first: the endpoint output keys are the AWS template's.
+	// no bindings needs none. The per-cloud endpoint output keys are selected by Provider.
 	Outputs map[string]string
+	// Provider is the cloud the project provisioned on (a types.CloudProvider value) — it selects
+	// the per-cloud tofu endpoint output keys a binding's endpoint facet resolves from. Empty → no
+	// endpoint resolves (every endpoint facet is reported unresolvable, fail-closed).
+	Provider string
 }
 
-// awsEndpointOutputKey maps a binding kind to the AWS template's endpoint output key. AWS-first —
-// per-cloud key maps are a follow-up. The template provisions a SINGLE db/cache per env today, so
-// the binding's target NAME does not yet disambiguate (a multi-resource infra lane will add that).
-func awsEndpointOutputKey(kind string) string {
-	switch kind {
-	case "database":
-		return "rds_cluster_endpoint"
-	case "cache":
-		return "redis_primary_endpoint_address"
-	default:
-		return ""
+// endpointOutputKey maps a (provider, backing-kind) to the tofu output holding that resource's
+// connection endpoint in Alethia's own per-cloud project templates. "" → no endpoint output for
+// that pair, so resolveBindings reports the facet unresolvable + omits it (fail-closed, #710) rather
+// than injecting an empty endpoint. The case values are tied to the CloudProvider enum so a rename
+// is caught at compile time. The template provisions a SINGLE db/cache per env today, so the
+// binding's target NAME doesn't yet disambiguate (a multi-resource infra lane will add that).
+//
+// Hetzner is intentionally absent: its data services are ArgoCD add-ons (not tofu), so there is no
+// endpoint output — bindings to them stay fail-closed until that lane lands.
+func endpointOutputKey(provider, kind string) string {
+	switch provider {
+	case string(types.CloudProviderAws):
+		switch kind {
+		case "database":
+			return "rds_cluster_endpoint"
+		case "cache":
+			return "redis_primary_endpoint_address"
+		}
+	case string(types.CloudProviderGcp):
+		switch kind {
+		case "database":
+			return "cloud_sql_ip"
+		case "cache":
+			return "memorystore_host"
+		}
+	case string(types.CloudProviderAzure):
+		switch kind {
+		case "database":
+			return "azure_db_fqdn"
+		case "cache":
+			return "azure_cache_hostname"
+		}
 	}
+	return ""
 }
 
 // defaultPort is the conventional port for a backing kind (no port output is emitted today).
@@ -301,7 +327,15 @@ func defaultPort(kind string) string {
 // secretKeyRef into the Secret the ExternalSecret lane materializes. It shares IsCredentialFacet +
 // BindingSecretName (externalsecret.go) with #618 so the workload reads exactly the Secret #618
 // creates — one source of truth, no drift. Pure — a map lookup, no I/O.
-func resolveBindings(serviceName string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv) {
+//
+// Non-secret facets resolve FAIL-CLOSED (mirroring the credential lane's unsatisfiable-facet
+// reporting in manifests_gen.go): a facet whose value can't be resolved — an unknown backing kind,
+// a provider with no endpoint output for that kind (e.g. Hetzner's add-on data services), or a bound
+// BYO-IaC resource whose customer-named outputs the template key map can't reach yet — is REPORTED in
+// `unresolved`
+// and its env var OMITTED, never injected empty. An empty endpoint would boot the workload pointed
+// at nothing (a silent misconfig); an absent required env fails loudly instead.
+func resolveBindings(serviceName, provider string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv, unresolved []string) {
 	for _, b := range bindings {
 		for _, inj := range b.Inject {
 			if IsCredentialFacet(inj.From) {
@@ -315,14 +349,20 @@ func resolveBindings(serviceName string, bindings []types.ServiceBinding, output
 			var value string
 			switch inj.From {
 			case "endpoint":
-				value = outputs[awsEndpointOutputKey(b.Target.Kind)]
+				value = outputs[endpointOutputKey(provider, b.Target.Kind)]
 			case "port":
 				value = defaultPort(b.Target.Kind)
+			}
+			if value == "" {
+				unresolved = append(unresolved, fmt.Sprintf(
+					"binding facet %q (env %s) for %s→%s/%s could not be resolved — env omitted",
+					inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name))
+				continue
 			}
 			env = append(env, types.ServiceEnvVar{Name: inj.Env, Value: value})
 		}
 	}
-	return env, secretEnv
+	return env, secretEnv, unresolved
 }
 
 // FromServices builds Apps from the project's FIRST-CLASS services (vc.Services — the W1
@@ -361,7 +401,11 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		}
 		// W3 — resolve the service's bindings into env: endpoint/port as values (from tofu
 		// outputs), credentials as secretKeyRef. User-authored env comes first, then binding env.
-		bindEnv, secretEnv := resolveBindings(s.Name, s.Bindings, opts.Outputs)
+		// A non-secret facet that can't be resolved is REPORTED (not injected empty) so the caller
+		// surfaces it alongside the skipped-service reasons — the app still renders (a missing
+		// required env fails loudly at boot; an empty one would silently connect to nothing).
+		bindEnv, secretEnv, unresolved := resolveBindings(s.Name, opts.Provider, s.Bindings, opts.Outputs)
+		skipped = append(skipped, unresolved...)
 		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(bindEnv)), s.Env...), bindEnv...)
 		apps = append(apps, App{
 			Name:           name,

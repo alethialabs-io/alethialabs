@@ -31,13 +31,13 @@ const TICK_INTERVAL_MS = 60_000;
 /** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
 export const FLEET_LOOP_ID = "fleet-scaler";
 
-const globalForScaler = globalThis as unknown as {
-	__alethiaFleetScaler?: ReturnType<typeof setInterval>;
+declare global {
+	var __alethiaFleetScaler: ReturnType<typeof setInterval> | undefined;
 	/** The single in-flight reconcile pass (null when idle). Its presence is the serializer's mutex. */
-	__alethiaFleetTickInFlight?: Promise<void> | null;
+	var __alethiaFleetTickInFlight: Promise<void> | null | undefined;
 	/** A wake arrived while a pass was running → run exactly one follow-up after it, no matter how many. */
-	__alethiaFleetTickQueued?: boolean;
-};
+	var __alethiaFleetTickQueued: boolean | undefined;
+}
 
 const surplus: SurplusState = new Map();
 
@@ -58,17 +58,17 @@ const surplus: SurplusState = new Map();
  * for the multi-replica ceiling / advisory-lock note).
  */
 function scheduleTick(): void {
-	if (globalForScaler.__alethiaFleetTickInFlight) {
-		globalForScaler.__alethiaFleetTickQueued = true;
+	if (globalThis.__alethiaFleetTickInFlight) {
+		globalThis.__alethiaFleetTickQueued = true;
 		return;
 	}
 	const run = (): void => {
-		globalForScaler.__alethiaFleetTickInFlight = superviseLoop(FLEET_LOOP_ID, tick)
+		globalThis.__alethiaFleetTickInFlight = superviseLoop(FLEET_LOOP_ID, tick)
 			.then(() => undefined)
 			.finally(() => {
-				globalForScaler.__alethiaFleetTickInFlight = null;
-				if (globalForScaler.__alethiaFleetTickQueued) {
-					globalForScaler.__alethiaFleetTickQueued = false;
+				globalThis.__alethiaFleetTickInFlight = null;
+				if (globalThis.__alethiaFleetTickQueued) {
+					globalThis.__alethiaFleetTickQueued = false;
 					run();
 				}
 			});
@@ -81,11 +81,11 @@ function scheduleTick(): void {
  *  a cheap no-op, but newly-created pools converge without a restart. Each tick is
  *  heartbeat-supervised (lib/observability/heartbeats.ts). */
 export function startFleetScaler(): void {
-	if (globalForScaler.__alethiaFleetScaler) return;
+	if (globalThis.__alethiaFleetScaler) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return;
 
 	registerLoop(FLEET_LOOP_ID, { intervalMs: TICK_INTERVAL_MS });
-	globalForScaler.__alethiaFleetScaler = setInterval(() => {
+	globalThis.__alethiaFleetScaler = setInterval(() => {
 		scheduleTick();
 	}, TICK_INTERVAL_MS);
 }
@@ -94,7 +94,7 @@ export function startFleetScaler(): void {
  *  through the serializer so a wake during an in-flight pass coalesces into one follow-up rather than
  *  racing a second concurrent pass (which would double-provision off a stale instance snapshot). */
 export function wakeFleetScaler(): void {
-	if (!globalForScaler.__alethiaFleetScaler) return;
+	if (!globalThis.__alethiaFleetScaler) return;
 	scheduleTick();
 }
 

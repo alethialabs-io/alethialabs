@@ -691,7 +691,7 @@ func TeardownCluster(ctx context.Context, cpURL, jobID, project, env, templatesD
 	vc := &types.ProjectConfig{
 		ID:               "e2e-" + env,
 		ProjectName:      project,
-		EnvironmentStage: env,
+		EnvironmentStage: types.EnvironmentStage(env),
 		Region:           "local",
 	}
 	backend := &cloud.HTTPBackendConfig{ConsoleURL: cpURL, JobID: jobID, Token: "e2e-teardown"}

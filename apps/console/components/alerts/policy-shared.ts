@@ -33,9 +33,18 @@ export const CATEGORY_ICON: Record<CategoryIcon, LucideIcon> = {
 	LifeBuoy,
 };
 
+/** The policy's minimum-severity threshold: a real `alert_severity`, or the "any" sentinel
+ * (no threshold). Derived from the generated enum — the sentinel is the only addition. */
+export type MinSeverity = AlertSeverity | "any";
+
 /** Narrows a select value to a real severity (drops the "any" sentinel). */
 export function isSeverity(v: string): v is AlertSeverity {
 	return v === "info" || v === "warning" || v === "critical";
+}
+
+/** Narrows a select value to a MinSeverity (a real severity or the "any" sentinel). */
+export function toMinSeverity(v: string): MinSeverity {
+	return isSeverity(v) ? v : "any";
 }
 
 /** Dedup-window presets (seconds) for the policy throttle. */
@@ -48,7 +57,7 @@ export const THROTTLE_OPTIONS: { value: string; label: string }[] = [
 ];
 
 /** Minimum-severity filter presets ("any" maps to no filter). */
-export const MIN_SEV_OPTIONS: { value: string; label: string }[] = [
+export const MIN_SEV_OPTIONS: { value: MinSeverity; label: string }[] = [
 	{ value: "any", label: "Any severity" },
 	{ value: "info", label: "Info and above" },
 	{ value: "warning", label: "Warning and above" },

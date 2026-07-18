@@ -31,7 +31,7 @@ export async function POST(req: Request): Promise<Response> {
 
 	const result = await executeBreakglassAction(
 		guard.operator,
-		parsed.data as BreakglassCommand,
+		parsed.data,
 	);
 	if (!result.ok) {
 		return json({ error: result.message }, result.code);

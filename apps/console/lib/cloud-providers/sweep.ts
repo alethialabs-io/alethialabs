@@ -160,9 +160,9 @@ const SWEEP_INTERVAL_MS = 60_000;
 /** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
 export const CONNECTION_SWEEPER_LOOP_ID = "connection-sweeper";
 
-const globalForSweep = globalThis as unknown as {
-	__alethiaConnectionSweeper?: ReturnType<typeof setInterval>;
-};
+declare global {
+	var __alethiaConnectionSweeper: ReturnType<typeof setInterval> | undefined;
+}
 
 /**
  * Starts the periodic connection sweep in-process (idempotent across HMR/instances) — the reliable
@@ -172,11 +172,11 @@ const globalForSweep = globalThis as unknown as {
  * The `/api/internal/connections/sweep` route stays available for an external cron on hosted.
  */
 export function startConnectionSweeper(): void {
-	if (globalForSweep.__alethiaConnectionSweeper) return;
+	if (globalThis.__alethiaConnectionSweeper) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	registerLoop(CONNECTION_SWEEPER_LOOP_ID, { intervalMs: SWEEP_INTERVAL_MS });
-	globalForSweep.__alethiaConnectionSweeper = setInterval(() => {
+	globalThis.__alethiaConnectionSweeper = setInterval(() => {
 		void superviseLoop(CONNECTION_SWEEPER_LOOP_ID, runConnectionSweep);
 	}, SWEEP_INTERVAL_MS);
 }

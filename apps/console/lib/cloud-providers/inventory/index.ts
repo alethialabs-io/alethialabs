@@ -7,9 +7,12 @@
 // never fails the connect — the sweep retries.
 
 import { eq, lt, sql } from "drizzle-orm";
+import { numOr } from "@/lib/coerce";
+import { asRecord } from "@/lib/records";
 import { getServiceDb } from "@/lib/db";
 import {
 	type CloudIdentity,
+	type CloudProvider,
 	cloudCaches,
 	cloudContainerRegistries,
 	cloudDatabases,
@@ -56,7 +59,7 @@ const INVENTORY_TABLES = [
 const TOKEN_CLOUDS = new Set(["digitalocean", "hetzner", "civo"]);
 
 /** Whether a provider has a server-side inventory sync yet. */
-export function hasServerSideInventory(provider: string): boolean {
+export function hasServerSideInventory(provider: CloudProvider): boolean {
 	return (
 		provider === "aws" ||
 		provider === "azure" ||
@@ -111,8 +114,8 @@ export async function gcRemovedInventory(retentionDays: number): Promise<number>
 	for (const table of INVENTORY_TABLES) {
 		const res = await db
 			.delete(table)
-			.where(lt(table.removed_at, cutoff as never));
-		purged += (res as { rowCount?: number }).rowCount ?? 0;
+			.where(sql`${table.removed_at} < ${cutoff}`);
+		purged += numOr(asRecord(res).rowCount, 0);
 	}
 	return purged;
 }

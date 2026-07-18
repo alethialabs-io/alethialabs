@@ -6,6 +6,7 @@
 // "start from a template" step that pre-fills the fields and stages a set of values — nothing is
 // written until Save (then createDimensionWithValues). Edit mode updates the dimension only.
 
+import { typedEntries } from "@/lib/typed-object";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -137,10 +138,7 @@ export function DimensionEditorSheet({
 		else set.add(kind);
 		form.setValue("applies_to", [...set]);
 	};
-	const KIND_ENTRIES = Object.entries(RESOURCE_KIND_LABELS) as [
-		ResourceKind,
-		string,
-	][];
+	const KIND_ENTRIES = typedEntries(RESOURCE_KIND_LABELS);
 
 	const addStaged = () => {
 		const label = addLabel.trim();

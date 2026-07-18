@@ -38,7 +38,7 @@ const DEFAULT_VALUES: ProjectFormData = {
 	storage_buckets: [],
 	container_registries: [],
 	services: [],
-} as ProjectFormData;
+};
 
 function FormWrapper({
 	children,

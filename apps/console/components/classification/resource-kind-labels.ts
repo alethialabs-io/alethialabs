@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { lookup } from "@/lib/typed-object";
 import type { ResourceKind } from "@/lib/db/schema/enums";
 
 /** Human labels for the classifiable resource kinds (drill-down + coverage panels). */
@@ -23,5 +24,5 @@ export const RESOURCE_KIND_LABELS: Record<ResourceKind, string> = {
 
 /** The label for a resource kind, falling back to the raw slug. */
 export function kindLabel(kind: string): string {
-	return RESOURCE_KIND_LABELS[kind as ResourceKind] ?? kind;
+	return lookup(RESOURCE_KIND_LABELS, kind) ?? kind;
 }

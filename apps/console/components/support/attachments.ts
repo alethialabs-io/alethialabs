@@ -61,5 +61,5 @@ export async function uploadAttachment(
 	if (!res.ok) {
 		throw new Error(`Attachment upload failed (${res.status})`);
 	}
-	return (await res.json()) as UploadedAttachment;
+	return await res.json();
 }

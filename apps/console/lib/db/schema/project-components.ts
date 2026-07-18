@@ -24,6 +24,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type {
 	AddOnValues,
+	ArgocdSyncStatus,
 	AuditChanges,
 	ChartValuePathMap,
 	ChartWorkloadConfig,
@@ -40,6 +41,7 @@ import type {
 	ProviderOutputs,
 	QueueProviderConfig,
 	RegistryProviderConfig,
+	ScanStatus,
 	SecretsProviderConfig,
 	ServiceBinding,
 	ServiceBuild,
@@ -272,11 +274,11 @@ export const projectAddons = pgTable(
 		// Missing | Unknown. NULL until the first post-deploy read.
 		health: text(),
 		// ArgoCD sync state: Synced | OutOfSync | Unknown.
-		sync_status: text(),
+		sync_status: text().$type<ArgocdSyncStatus>(),
 		last_synced_at: timestamp({ withTimezone: true }),
 		// BYO chart-safety scan (source='byo'): the elench verify.Report over the chart's rendered
 		// manifests (helm template → EvaluateManifests), its lifecycle, and when it last ran.
-		scan_status: text().default("unscanned").notNull(), // unscanned | scanning | done | failed
+		scan_status: text().$type<ScanStatus>().default("unscanned").notNull(), // unscanned | scanning | done | failed
 		scan_report: jsonb().$type<VerifyReport>(),
 		scanned_at: timestamp({ withTimezone: true }),
 		created_at: ts(),
@@ -376,7 +378,7 @@ export const projectIacSources = pgTable(
 		var_values: jsonb().$type<IacVarValues>().default({}),
 		enabled: boolean().default(true).notNull(),
 		// IaC-safety scan lifecycle: unscanned | scanning | done | failed (projectAddons pattern).
-		scan_status: text().default("unscanned").notNull(),
+		scan_status: text().$type<ScanStatus>().default("unscanned").notNull(),
 		scan_report: jsonb().$type<IacScanReport>(),
 		scanned_at: timestamp({ withTimezone: true }),
 		status: componentStatus().default("PENDING").notNull(),

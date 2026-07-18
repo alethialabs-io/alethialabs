@@ -66,7 +66,8 @@ export function useFilterUrlSync<F extends Record<string, UrlFilterValue>>(
 		for (const key of Object.keys(defaults)) {
 			const raw = searchParams.get(paramFor(key));
 			if (raw !== null) {
-				fromUrl[key as keyof F] = decode(raw, defaults[key]) as F[keyof F];
+				// @ts-expect-error generic Partial<F> can only be written by a keyof-F key (TS2862) and decode returns the broad UrlFilterValue
+				fromUrl[key] = decode(raw, defaults[key]);
 			}
 		}
 		if (Object.keys(fromUrl).length > 0) store.getState().patch(fromUrl);

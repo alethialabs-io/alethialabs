@@ -91,11 +91,12 @@ export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 
 	// A node's `kind` discriminant and its registry entry are correlated at runtime, but TypeScript
 	// can't prove it through the keyed lookup (the same discriminated-union limitation the canvas
-	// store's `buildNodeData` documents). Assert the reunion once, here.
-	const factsOf = def.card.facts as (ctx: {
+	// store's `buildNodeData` documents). Reunite the correlation once, here.
+	// @ts-expect-error def is the union NodeKindDef; its per-kind facts fn isn't callable with the union config
+	const factsOf: (ctx: {
 		config: NodeConfig;
 		provider: CloudProviderSlug | null;
-	}) => NodeFact[];
+	}) => NodeFact[] = def.card.facts;
 	const facts = factsOf({ config: node.data.config, provider });
 
 	// Status derives from the client store (sessionStorage-persisted), so SSR and the first client

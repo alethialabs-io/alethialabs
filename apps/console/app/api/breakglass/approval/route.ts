@@ -12,7 +12,6 @@ import { catalogSpec } from "@/lib/breakglass/catalog";
 import { guardBreakglass, json } from "@/lib/breakglass/guard";
 import { resourceTypeFor } from "@/lib/breakglass/actions";
 import { mintApprovalSchema } from "@/lib/validations/breakglass";
-import type { BreakglassAction } from "@/lib/db/schema/enums";
 
 export async function POST(req: Request): Promise<Response> {
 	const guard = await guardBreakglass(req);
@@ -28,7 +27,7 @@ export async function POST(req: Request): Promise<Response> {
 	if (!parsed.success) {
 		return json({ error: "Invalid request", issues: parsed.error.issues }, 400);
 	}
-	const action = parsed.data.action as BreakglassAction;
+	const action = parsed.data.action;
 	const spec = catalogSpec(action);
 	if (!spec) return json({ error: `Unknown action ${action}` }, 400);
 	// Only high-blast actions consume approvals; minting one for a low-blast action is a misuse.

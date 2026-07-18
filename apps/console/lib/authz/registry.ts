@@ -7,6 +7,9 @@
 // it's handled, and the DB `permission`/`role` tables are seeded FROM this file
 // (4.2) so code and data never drift.
 
+import { arrayIncludes } from "@/lib/type-guards";
+import { isEnumMember } from "@/lib/coerce";
+
 /** Resource types the PDP reasons about. */
 export const RESOURCES = [
 	"org",
@@ -89,7 +92,7 @@ export const PERMISSIONS: PermissionDef[] = RESOURCES.flatMap((resource) =>
 	(MATRIX[resource] ?? []).map((action) => ({
 		// `${Resource}:${Action}` is a valid PermissionKey by construction; TS widens
 		// template literals with union holes to `string`, so narrow it here once.
-		key: `${resource}:${action}` as PermissionKey,
+		key: `${resource}:${action}`,
 		resource,
 		action,
 		description: `${action} a ${resource}`,
@@ -128,7 +131,8 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Also read alert config (operators care about ops alerts) but not mutate it.
 	operator: PERMISSIONS.filter(
 		(p) =>
-			((["view", "create", "edit", "plan", "deploy", "destroy"] as Action[]).includes(
+			(arrayIncludes(
+				["view", "create", "edit", "plan", "deploy", "destroy"],
 				p.action,
 			) &&
 				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||
@@ -149,5 +153,5 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 
 /** True if `key` is a real permission (guards against typos / stale grants). */
 export function isPermissionKey(key: string): key is PermissionKey {
-	return ALL_KEYS.includes(key as PermissionKey);
+	return isEnumMember(key, ALL_KEYS);
 }

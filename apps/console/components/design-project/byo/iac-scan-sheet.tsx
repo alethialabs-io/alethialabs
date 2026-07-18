@@ -140,10 +140,14 @@ export function IacScanSheet({
 		acc[key] = (acc[key] ?? 0) + 1;
 		return acc;
 	}, {});
-	const verdict =
+	const verdict: { icon: IconKey; label: string; tone: Tone } =
 		report && report.ok
-			? { icon: "shield-check" as IconKey, label: "No blocking issues found", tone: "good" as Tone }
-			: { icon: "shield-alert" as IconKey, label: "Issues found — resolve before deploying", tone: "bad" as Tone };
+			? { icon: "shield-check", label: "No blocking issues found", tone: "good" }
+			: {
+					icon: "shield-alert",
+					label: "Issues found — resolve before deploying",
+					tone: "bad",
+				};
 
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>

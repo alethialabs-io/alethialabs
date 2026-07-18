@@ -66,6 +66,36 @@ const INSTALL: AddonInstallState = {
 	lastSyncedAt: null,
 };
 
+/** An add-on exercising the new field types: enum (Select), secret (masked), nested (group). */
+const FIELD_TYPES_ITEM: AddonMarketItem = {
+	...BASE_ITEM,
+	id: "minio",
+	name: "MinIO",
+	fields: [
+		{
+			key: "mode",
+			label: "Mode",
+			type: "enum",
+			default: "standalone",
+			options: [
+				{ value: "standalone", label: "Standalone (single node)" },
+				{ value: "distributed", label: "Distributed (HA)" },
+			],
+		},
+		{ key: "rootPassword", label: "Root password", type: "secret", secret: true },
+		{
+			key: "resources",
+			label: "Resource requests",
+			type: "nested",
+			fields: [
+				{ key: "cpu", label: "CPU", type: "string", default: "250m" },
+				{ key: "memory", label: "Memory", type: "string", default: "512Mi" },
+			],
+		},
+	],
+	install: null,
+};
+
 describe("AddonConfigSheet", () => {
 	it("renders the schema'd knobs + delivery mode when opening a not-installed add-on", () => {
 		render(
@@ -111,6 +141,89 @@ describe("AddonConfigSheet", () => {
 		expect(
 			screen.queryByRole("button", { name: /enable add-on/i }),
 		).not.toBeInTheDocument();
+	});
+
+	it("renders enum as a Select showing the default option's label", () => {
+		render(
+			<AddonConfigSheet
+				item={FIELD_TYPES_ITEM}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo={false}
+				provider={null}
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("Mode")).toBeInTheDocument();
+		// Renders as a Select whose trigger shows the default option's LABEL, not its value.
+		expect(
+			screen.getAllByText("Standalone (single node)").length,
+		).toBeGreaterThan(0);
+		expect(screen.queryByText("standalone")).not.toBeInTheDocument();
+	});
+
+	it("renders secret as a masked, write-only input marked Unset (never the ciphertext)", () => {
+		render(
+			<AddonConfigSheet
+				item={FIELD_TYPES_ITEM}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo={false}
+				provider={null}
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		const input = screen.getByLabelText("Root password");
+		expect(input).toHaveAttribute("type", "password");
+		expect(input).toHaveValue("");
+		expect(screen.getByText("Unset")).toBeInTheDocument();
+	});
+
+	it("marks a stored secret Set without exposing its envelope", () => {
+		render(
+			<AddonConfigSheet
+				item={{
+					...FIELD_TYPES_ITEM,
+					install: {
+						...INSTALL,
+						values: {
+							mode: "standalone",
+							rootPassword: { v: 1, iv: "x", tag: "y", data: "z" },
+						},
+					},
+				}}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo
+				provider={null}
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		const input = screen.getByLabelText("Root password");
+		// Write-only: the field is Set, but empty and never rendering the ciphertext.
+		expect(screen.getByText("Set")).toBeInTheDocument();
+		expect(input).toHaveValue("");
+		expect(screen.queryByText(/data/)).not.toBeInTheDocument();
+	});
+
+	it("renders a nested field as a one-level group of its children", () => {
+		render(
+			<AddonConfigSheet
+				item={FIELD_TYPES_ITEM}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo={false}
+				provider={null}
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("Resource requests")).toBeInTheDocument();
+		expect(screen.getByLabelText("CPU")).toHaveValue("250m");
+		expect(screen.getByLabelText("Memory")).toHaveValue("512Mi");
 	});
 
 	it("renders nothing when no item is selected", () => {

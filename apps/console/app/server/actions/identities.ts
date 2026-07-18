@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isEnumMember } from "@/lib/coerce";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { currentActor } from "@/lib/authz/guard";
@@ -18,7 +19,7 @@ import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 const GIT_PROVIDERS = ["github", "gitlab", "bitbucket"] as const;
 
 function isGitProvider(p: string): p is PublicGitProvider {
-	return (GIT_PROVIDERS as readonly string[]).includes(p);
+	return isEnumMember(p, GIT_PROVIDERS);
 }
 
 /** Git providers the current user has linked (from Better Auth accounts). */

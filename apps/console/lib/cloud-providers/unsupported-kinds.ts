@@ -3,6 +3,7 @@
 
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import type { CloudProvider } from "@/lib/db/schema/enums";
 
 /**
  * Node kinds a given cloud's built-in template can't provision — the SINGLE source of truth
@@ -36,10 +37,12 @@ export const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 
 /**
  * The kinds the given provider's template can't provision (empty when it backs everything).
- * Accepts a plain string so DB-enum provider values (which include clouds outside the narrower
- * `CloudProviderSlug` design set, e.g. digitalocean/civo) can be checked without a cast.
+ * Takes the full generated `cloud_provider` enum — wider than the `CloudProviderSlug` design set,
+ * since a DB provider value may be a connect-only cloud (digitalocean/civo) with no unsupported map.
  */
-export function unsupportedKindsFor(provider: string | null): readonly NodeKind[] {
+export function unsupportedKindsFor(
+	provider: CloudProvider | null,
+): readonly NodeKind[] {
 	if (!provider) return [];
 	const byProvider: Partial<Record<string, readonly NodeKind[]>> =
 		UNSUPPORTED_KINDS_BY_PROVIDER;

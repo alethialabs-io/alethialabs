@@ -20,11 +20,13 @@ import {
 	getProjectUsage,
 	getProjectUsageOverTime,
 } from "@/app/server/actions/project-usage";
+import { ErrorState } from "@/components/errors/error-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Bars, Stat } from "@/components/settings/usage/usage-primitives";
 import { qk } from "@/lib/query/keys";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
@@ -100,6 +102,31 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 				<Skeleton className="h-24 w-full" />
 				<Skeleton className="h-48 w-full" />
 			</div>
+		);
+	}
+
+	// A fetch failure must not read as "no usage" (dashes everywhere) — surface it with a retry
+	// that refetches every read the panel needs.
+	if (usage.isError && !usage.data) {
+		return (
+			<ErrorState
+				title="Couldn't load usage"
+				description="Something went wrong fetching this project's usage. Check your connection and try again."
+				actions={
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => {
+							void usage.refetch();
+							void counts.refetch();
+							void ai.refetch();
+							void overTime.refetch();
+						}}
+					>
+						Retry
+					</Button>
+				}
+			/>
 		);
 	}
 

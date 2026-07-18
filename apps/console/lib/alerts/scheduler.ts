@@ -18,18 +18,18 @@ const SWEEP_INTERVAL_MS = 60_000;
 /** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
 export const ALERT_SCHEDULER_LOOP_ID = "alert-scheduler";
 
-const globalForAlertSweep = globalThis as unknown as {
-	__alethiaAlertSweep?: ReturnType<typeof setInterval>;
-};
+declare global {
+	var __alethiaAlertSweep: ReturnType<typeof setInterval> | undefined;
+}
 
 /** Starts the periodic delivery sweep (idempotent across HMR/instances). Heartbeat-supervised
  *  (lib/observability/heartbeats.ts) so /health can see it ticking. */
 export function startAlertScheduler(): void {
-	if (globalForAlertSweep.__alethiaAlertSweep) return;
+	if (globalThis.__alethiaAlertSweep) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	registerLoop(ALERT_SCHEDULER_LOOP_ID, { intervalMs: SWEEP_INTERVAL_MS });
-	globalForAlertSweep.__alethiaAlertSweep = setInterval(() => {
+	globalThis.__alethiaAlertSweep = setInterval(() => {
 		void superviseLoop(ALERT_SCHEDULER_LOOP_ID, sweepDueDeliveries);
 	}, SWEEP_INTERVAL_MS);
 }

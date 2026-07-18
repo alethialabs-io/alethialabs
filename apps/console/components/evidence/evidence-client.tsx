@@ -10,6 +10,8 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@repo/ui/button";
+import { ErrorState } from "@/components/errors/error-state";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
@@ -37,7 +39,7 @@ export function EvidenceClient() {
 	const filters = useEvidenceFilters((s) => s.filters);
 	const reset = useEvidenceFilters((s) => s.reset);
 	useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
-	const { data: result, isPlaceholderData } = useEvidenceQuery();
+	const { data: result, isPlaceholderData, isError, refetch } = useEvidenceQuery();
 
 	// Row interaction.
 	const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -72,6 +74,22 @@ export function EvidenceClient() {
 		if (!row.verify?.receipt) return;
 		setToast(downloadReceipt(row.verify.receipt, row.verify.jobId));
 	};
+
+	// A fetch failure must not render as a blank page (or fall through to onboarding) — show the
+	// branded error surface with a retry instead.
+	if (isError) {
+		return (
+			<ErrorState
+				title="Couldn't load evidence"
+				description="Something went wrong fetching your environment evidence. Check your connection and try again."
+				actions={
+					<Button variant="outline" size="sm" onClick={() => refetch()}>
+						Retry
+					</Button>
+				}
+			/>
+		);
+	}
 
 	// Persisted-session filters can miss the prefetched key on a return visit —
 	// nothing to render for exactly one frame while the refetch lands.

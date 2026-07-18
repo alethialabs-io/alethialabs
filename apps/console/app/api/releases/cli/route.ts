@@ -12,7 +12,7 @@ import { bearerMatches } from "@/lib/auth/internal-auth";
 /** Returns the Postgres error code if present (e.g. 23505 unique violation). */
 function pgErrorCode(err: unknown): string | undefined {
 	if (typeof err === "object" && err !== null && "code" in err) {
-		return String((err as { code: unknown }).code);
+		return String(err.code);
 	}
 	return undefined;
 }

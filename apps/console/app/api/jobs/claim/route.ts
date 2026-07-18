@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -28,17 +29,17 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 		if (typeof v === "string" && v && v !== "native") slugs.add(v);
 	};
 	if (snapshot && typeof snapshot === "object") {
-		const s = snapshot as Record<string, unknown>;
-		const dns = s.dns as Record<string, unknown> | undefined;
+		const s = asRecord(snapshot);
+		const dns = asRecord(s.dns);
 		add(dns?.provider);
-		const obs = s.observability as Record<string, unknown> | undefined;
+		const obs = asRecord(s.observability);
 		add(obs?.provider);
 		for (const key of ["secrets", "container_registries"]) {
 			const arr = s[key];
 			if (Array.isArray(arr)) {
 				for (const item of arr) {
 					if (item && typeof item === "object") {
-						add((item as Record<string, unknown>).provider);
+						add(asRecord(item).provider);
 					}
 				}
 			}

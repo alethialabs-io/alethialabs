@@ -18,6 +18,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { cliContract } from "@/lib/validations/cli-contract";
+import { toArray } from "@/lib/coerce";
+import { asRecord } from "@/lib/records";
+import { typedEntries } from "@/lib/typed-object";
 
 // Fixed sample values (deterministic). The UUID is a valid v4 that also satisfies
 // drizzle-zod's strict uuid pattern; the timestamp satisfies z.iso.datetime.
@@ -29,12 +32,12 @@ type JsonSchema = Record<string, unknown>;
 /** Resolves a local $ref against the root document's $defs/definitions. */
 function deref(schema: unknown, root: JsonSchema): JsonSchema | undefined {
 	if (!schema || typeof schema !== "object") return undefined;
-	const s = schema as JsonSchema;
+	const s = asRecord(schema);
 	if (typeof s.$ref === "string") {
 		const segments = s.$ref.replace(/^#\//, "").split("/");
 		let cur: unknown = root;
-		for (const seg of segments) cur = (cur as JsonSchema | undefined)?.[seg];
-		return cur as JsonSchema | undefined;
+		for (const seg of segments) cur = asRecord(cur)[seg];
+		return cur && typeof cur === "object" ? asRecord(cur) : undefined;
 	}
 	return s;
 }
@@ -45,8 +48,8 @@ function sample(node: unknown, root: JsonSchema): unknown {
 	if (!schema) return null;
 
 	// Unions (nullable renders as anyOf:[X, {type:null}]) — take the first non-null branch.
-	const union = (schema.anyOf ?? schema.oneOf) as JsonSchema[] | undefined;
-	if (Array.isArray(union)) {
+	const union = toArray(schema.anyOf ?? schema.oneOf);
+	if (union.length > 0) {
 		const nonNull =
 			union.find((b) => deref(b, root)?.type !== "null") ?? union[0];
 		return sample(nonNull, root);
@@ -54,13 +57,15 @@ function sample(node: unknown, root: JsonSchema): unknown {
 
 	if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
 
-	let type = schema.type as string | string[] | undefined;
-	if (Array.isArray(type)) type = type.find((t) => t !== "null") ?? type[0];
+	const typeVal = schema.type;
+	const type = Array.isArray(typeVal)
+		? (typeVal.find((t) => t !== "null") ?? typeVal[0])
+		: typeVal;
 
 	switch (type) {
 		case "object": {
-			const props = schema.properties as Record<string, unknown> | undefined;
-			if (props) {
+			const props = asRecord(schema.properties);
+			if (Object.keys(props).length > 0) {
 				// Emit every property (ignore `required`) so optional/nullable fields
 				// the Go struct models are always present — keeps the Go reverse-check green.
 				const out: Record<string, unknown> = {};
@@ -136,9 +141,8 @@ const testdataDir = join(
 );
 mkdirSync(testdataDir, { recursive: true });
 
-for (const [key, file] of Object.entries(FIXTURES)) {
-	const schema = cliContract[key as keyof typeof cliContract] as z.ZodType;
-	const js = z.toJSONSchema(schema, { target: "draft-7" }) as JsonSchema;
+for (const [key, file] of typedEntries(FIXTURES)) {
+	const js = asRecord(z.toJSONSchema(cliContract[key], { target: "draft-7" }));
 	const value = sample(js, js);
 	writeFileSync(join(testdataDir, file), `${JSON.stringify(value, null, "\t")}\n`);
 	console.log(`wrote testdata/${file}`);
