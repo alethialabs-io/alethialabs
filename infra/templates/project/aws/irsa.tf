@@ -1,25 +1,28 @@
 ##########################
 #IRSA for RDS IAM Auth   #
 ##########################
+# The keyless app workload's identity (#722). Least-privilege on both axes:
+#   - scoped to the EXACT app KSA (default/alethia-app), not "*:*" — only that pod can assume it, so a
+#     stray workload can't mint DB tokens (parity with the GCP/Azure per-KSA subject binding);
+#   - rds-db:connect ONLY, and only as the `alethia_app` user (the bootstrap-created least-priv role),
+#     not the former rds-db:* on dbuser:*/*. The unrelated SQS-FullAccess / KMS-PowerUser grants that
+#     used to ride on this role are dropped — a keyless DB identity has no business holding them.
 module "rds_iam_auth" {
 
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   count   = var.rds_iam_irsa ? 1 : 0
   version = "5.34.0"
 
-  assume_role_condition_test = "StringLike"
+  assume_role_condition_test = "StringEquals"
   create_role                = true
   role_name                  = "rds-iam-auth-${local.eks_name}"
   role_policy_arns = {
     rds_iam_auth_policy = aws_iam_policy.rds_iam_auth.arn
-    policy_sqs          = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-    policy_sqs          = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-    policy_kmspw        = "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
   }
   oidc_providers = {
     main = {
       provider_arn               = module.eks[0].oidc_provider_arn
-      namespace_service_accounts = ["*:*"]
+      namespace_service_accounts = ["default:alethia-app"]
     }
   }
 }
@@ -29,17 +32,16 @@ module "rds_iam_auth" {
 resource "aws_iam_policy" "rds_iam_auth" {
 
   name_prefix = "rds_iam_auth"
-  description = "Policy for ServiceAccounts allowing RDS_IAM access for cluster ${local.eks_name}"
+  description = "Policy for the keyless app ServiceAccount allowing RDS IAM connect as alethia_app for cluster ${local.eks_name}"
   policy      = <<EOT
 {
     "Statement": [
         {
             "Action": [
-                "rds-db:connect",
-                "rds-db:*"
+                "rds-db:connect"
             ],
             "Effect": "Allow",
-            "Resource": "arn:aws:rds-db:${var.region}:${var.aws_account_id}:dbuser:*/*",
+            "Resource": "arn:aws:rds-db:${var.region}:${var.aws_account_id}:dbuser:*/alethia_app",
             "Sid": "AllowRDSiamAccess"
         }
     ],

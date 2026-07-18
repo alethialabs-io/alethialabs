@@ -123,6 +123,11 @@ type esTemplateData struct {
 	StoreName   string
 	Data        []esDatum
 	ExtraLabels []esLabel
+	// Annotations, when set, render onto the ExternalSecret's metadata. Binding-credential secrets
+	// (#618) pass none (output byte-identical); the keyless bootstrap Job's ADMIN secret (#722 R5)
+	// passes ArgoCD hook annotations so it (and, via ownerRef, the materialized admin Secret) is
+	// created just-in-time and deleted after the PreSync phase — no lingering superuser credential.
+	Annotations map[string]string
 }
 
 // v1beta1 to match the deployed ESO chart (0.9.12) + the ClusterSecretStore definitions in
@@ -138,6 +143,12 @@ metadata:
 {{- range .ExtraLabels }}
     {{ .Key }}: {{ .Value }}
 {{- end }}
+  {{- if .Annotations }}
+  annotations:
+    {{- range $k, $v := .Annotations }}
+    {{ $k }}: {{ printf "%q" $v }}
+    {{- end }}
+  {{- end }}
 spec:
   refreshInterval: 1h
   secretStoreRef:

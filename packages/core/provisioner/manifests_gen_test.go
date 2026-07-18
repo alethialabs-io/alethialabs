@@ -14,6 +14,8 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 func TestHasManifests(t *testing.T) {
 	// Empty repo (or README-only) → no manifests → safe to scaffold.
 	empty := t.TempDir()
@@ -55,7 +57,7 @@ func TestWriteBindingExternalSecrets(t *testing.T) {
 	}
 	outputs := map[string]string{"rds_master_credentials_secret_name": "alethia/proj/rds-maindb"}
 
-	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, false, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +84,43 @@ func TestWriteBindingExternalSecrets(t *testing.T) {
 		if !strings.Contains(y, want) {
 			t.Errorf("ExternalSecret missing %q:\n%s", want, y)
 		}
+	}
+}
+
+// TestWriteBindingExternalSecrets_KeylessSkips locks the keyless skip (#722): when the flag is on and
+// the bound database has iam_auth, NO ExternalSecret is written (the renderer wired an auth-proxy
+// sidecar instead) — in lock-step with FromServices. Flag off → the password ExternalSecret is
+// written as before (no regression).
+func TestWriteBindingExternalSecrets_KeylessSkips(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Provider:  "gcp",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Services: []types.ProjectServiceConfig{{
+			Name: "api",
+			Bindings: []types.ServiceBinding{{
+				Target: types.ServiceBindingTarget{Kind: "database", Name: "orders-db"},
+				Inject: []types.ServiceBindingInjection{{Env: "DATABASE_PASSWORD", From: "password"}},
+			}},
+		}},
+	}
+
+	// Flag ON + iam_auth db → skipped (no ExternalSecret).
+	_, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, true, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("keyless binding must write no ExternalSecret, got %d", n)
+	}
+
+	// Flag OFF → the password path still runs (here fail-closed: no master-secret output on GCP, so it
+	// reports a skip rather than writing — but crucially it does NOT skip via the keyless branch).
+	skips, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 || len(skips) == 0 {
+		t.Errorf("flag off → password path (fail-closed skip reported), got n=%d skips=%v", n2, skips)
 	}
 }
 
@@ -128,7 +167,7 @@ func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
 		}},
 	}
 	var log strings.Builder
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, &log)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, &log)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,6 +30,28 @@ func main() {
 		return
 	}
 
+	// Keyless DB-auth refresher mode (#722): as a sidecar next to a workload bound to a
+	// cloud-native-auth database, mint a short-lived DB token from the pod's Workload Identity
+	// and keep it fresh on a shared file the local proxy reads. Long-running (loops until SIGTERM),
+	// so — like kube-token — it must be handled before the normal runner boot.
+	if len(os.Args) > 1 && os.Args[1] == "db-token" {
+		if err := agent.RunDBToken(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "db-token error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Keyless DB least-privilege bootstrap (#722): a one-shot Job runs this as the DB admin to create
+	// the scoped app role (the alternative to handing the app superuser/AAD-admin). Emits the SQL.
+	if len(os.Args) > 1 && os.Args[1] == "db-bootstrap" {
+		if err := agent.RunDBBootstrap(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "db-bootstrap error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container-sandbox child mode: this process was re-exec'd INSIDE a per-job sandbox
 	// container to run one untrusted stage. It has an allowlisted env only (no runner
 	// token / storage keys / bootstrap token), so it must run the stage and exit BEFORE
