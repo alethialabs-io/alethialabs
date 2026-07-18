@@ -8,10 +8,12 @@
 // caller stays cast-free: a non-object yields an empty record, so property reads degrade to
 // `undefined` rather than crashing.
 
-/** An unknown value as a readable string-keyed record ({} when it isn't a non-null object). */
+/** An unknown value as a readable string-keyed record ({} when it isn't a non-null object).
+ *  Rebuilt from its own entries so the string-keyed index type comes back without an assertion
+ *  (a shallow copy — fine for the read-only field access this exists for). */
 export function asRecord(v: unknown): Record<string, unknown> {
 	return typeof v === "object" && v !== null
-		? (v as Record<string, unknown>)
+		? Object.fromEntries(Object.entries(v))
 		: {};
 }
 

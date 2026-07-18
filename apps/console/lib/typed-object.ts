@@ -15,7 +15,7 @@ export function typedKeys<T extends object>(o: T): (keyof T)[] {
 
 /** `Object.values` with the precise value type. */
 export function typedValues<T extends object>(o: T): T[keyof T][] {
-	return Object.values(o) as T[keyof T][];
+	return Object.values(o);
 }
 
 /** `Object.entries` with precise `[keyof T, value]` tuples. */
@@ -25,12 +25,13 @@ export function typedEntries<T extends object>(o: T): [keyof T, T[keyof T]][] {
 
 /**
  * A record value by an arbitrary (possibly-untyped) key, or undefined when the key is absent.
- * The one assertion needed to index `T` by a runtime key lives here, so lookups against a
- * Record<Enum, V> by a broad `string` stay cast-free at the call site.
+ * Scans own entries so the value comes back at its declared type without indexing `T` by a
+ * broad key — lookups against a `Record<Enum, V>` by a plain `string` stay cast-free.
  */
 export function lookup<T extends object>(
 	record: T,
 	key: PropertyKey,
 ): T[keyof T] | undefined {
-	return key in record ? record[key as keyof T] : undefined;
+	for (const [k, v] of Object.entries(record)) if (k === key) return v;
+	return undefined;
 }
