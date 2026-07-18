@@ -12,9 +12,7 @@ import {
 	BreadcrumbSeparator,
 } from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
-import { projectHref } from "@/lib/routing";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
@@ -54,7 +52,6 @@ interface Crumb {
 /** Branding + route-aware breadcrumb bar for the dashboard header. */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { data: projects = [] } = useProjectsQuery();
 	const { data: jobs = [] } = useJobsQuery();
 
 	const crumbs = useMemo(() => {
@@ -100,17 +97,11 @@ export function HeaderBreadcrumbs() {
 
 			// `/{org}/{project}` — the canvas IS the project's Overview (the project name is
 			// already shown in the Project switcher). Deeper `/{org}/{project}/{sub}...` pages
-			// show project name → sub-page labels. (Env now lives in `?environment_id=`, not a
-			// path segment, so there's no env crumb.)
+			// show only the sub-page labels — the project name is not repeated here. (Env now
+			// lives in `?environment_id=`, not a path segment, so there's no env crumb.)
 			const [, projectSlug, ...rest] = segs;
 			if (rest.length === 0) return [{ label: "Overview" }];
-			const project = projects.find((p) => p.slug === projectSlug);
-			const out: Crumb[] = [
-				{
-					label: project?.project_name ?? projectSlug,
-					href: projectHref(orgSeg, projectSlug),
-				},
-			];
+			const out: Crumb[] = [];
 			for (let j = 0; j < rest.length; j++) {
 				const s = rest[j];
 				const isLast = j === rest.length - 1;
@@ -162,7 +153,7 @@ export function HeaderBreadcrumbs() {
 		}
 
 		return result;
-	}, [pathname, projects, jobs]);
+	}, [pathname, jobs]);
 
 	// On /dashboard there are no route crumbs — the bar is just "[·] / Org".
 	if (crumbs.length === 0) return null;
