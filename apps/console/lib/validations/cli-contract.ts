@@ -78,6 +78,27 @@ export const clusterWire = createSelectSchema(projectCluster, {
 		region: z.string(),
 	});
 
+/** Compact ArgoCD / GitOps posture for a cluster's default environment, derived from the
+ *  Deploy-tab read model (readGitopsDeployStatus). null when it can't be computed. */
+export const clusterGitops = z.object({
+	mode: z.enum(["gitops", "direct"]),
+	apps_repo: z.string().nullable(),
+	revision: z.string().nullable(),
+	total: z.number().int(),
+	synced: z.number().int(),
+	healthy: z.number().int(),
+	status_available: z.boolean(),
+	last_deploy_failed: z.boolean(),
+	failed_step: z.string().nullable(),
+	failure_message: z.string().nullable(),
+});
+
+/** A single cluster + its GitOps posture (GET /api/cli/clusters/:id). */
+export const cliClusterDetailResponse = z.object({
+	cluster: clusterWire,
+	gitops: clusterGitops.nullable(),
+});
+
 /** A cloud identity (GET /api/cli/cloud-identities). `label` is computed. */
 export const cloudIdentityWire = createSelectSchema(cloudIdentities, {
 	created_at: iso,
@@ -518,6 +539,7 @@ export const cliOkResponse = z.object({ ok: z.literal(true) });
 export const cliContract = {
 	RunnersResponse: cliRunnersResponse,
 	ClustersResponse: cliClustersResponse,
+	ClusterDetailResponse: cliClusterDetailResponse,
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,
 	JobsPageResponse: cliJobsPageResponse,
 	JobResponse: cliJobResponse,

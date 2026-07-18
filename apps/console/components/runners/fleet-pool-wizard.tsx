@@ -34,12 +34,7 @@ import {
 } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
 import { FieldHelp, FieldLabel, RequiredMark } from "@/components/runners/field-help";
-import {
-	cloudProvider,
-	hetznerLocation,
-	type FleetPool,
-	type HetznerLocation,
-} from "@/lib/db/schema";
+import { cloudProvider, type FleetPool } from "@/lib/db/schema";
 import { useCreatePool, useUpdatePool } from "@/lib/query/use-fleet-query";
 import type { FleetPoolCreateInput } from "@/lib/validations/fleet";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -48,11 +43,6 @@ import { useEffect, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-
-// Valid Hetzner location codes (the enum backing fleet_pools.locations). Used to narrow the
-// comma-separated free-text input to the typed enum and surface unknown codes inline.
-const HETZNER_LOCATIONS = new Set<string>(hetznerLocation.enumValues);
-const isHetznerLocation = (l: string): l is HetznerLocation => HETZNER_LOCATIONS.has(l);
 
 // Form-level schema: locations are entered as a comma-separated string and the version source
 // is an explicit toggle; both map to the server input on submit. Cross-field rules live in the
@@ -75,14 +65,6 @@ const formSchema = z
 	})
 	.superRefine((v, ctx) => {
 		const locs = v.locationsCsv.split(",").map((s) => s.trim()).filter(Boolean);
-		const invalidLocs = locs.filter((l) => !isHetznerLocation(l));
-		if (invalidLocs.length > 0) {
-			ctx.addIssue({
-				code: "custom",
-				path: ["locationsCsv"],
-				message: `Unknown location code${invalidLocs.length > 1 ? "s" : ""}: ${invalidLocs.join(", ")}. Allowed: ${hetznerLocation.enumValues.join(", ")}.`,
-			});
-		}
 		if (locs.length === 0) {
 			ctx.addIssue({
 				code: "custom",
@@ -170,7 +152,7 @@ function formToInput(v: FormValues): FleetPoolCreateInput {
 	return {
 		provider: v.provider,
 		name: v.name?.trim() ? v.name.trim() : undefined,
-		locations: v.locationsCsv.split(",").map((s) => s.trim()).filter(isHetznerLocation),
+		locations: v.locationsCsv.split(",").map((s) => s.trim()).filter(Boolean),
 		warmMin: v.warmMin,
 		max: v.max,
 		slotsPerRunner: v.slotsPerRunner,

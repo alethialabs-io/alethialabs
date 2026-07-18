@@ -100,9 +100,13 @@ export async function seedFleetPoolsFromEnv(): Promise<void> {
 	const db = getServiceDb();
 	const existing = await db.select({ id: fleetPools.id }).from(fleetPools).limit(1);
 	if (existing.length > 0) return;
-	await db
-		.insert(fleetPools)
-		.values(envPools.map(projectToRow))
-		.onConflictDoNothing({ target: fleetPools.provider });
-	flog.info("seeded pools from FLEET_POOLS env", { pool_count: envPools.length });
+	// One pool per provider. Dedupe so a FLEET_POOLS with a repeated provider can't trip the
+	// unique index — and DON'T use ON CONFLICT: the index is PARTIAL (`where deleting = false`,
+	// schema/fleet.ts), which a bare `ON CONFLICT (provider)` can't match (Postgres errors
+	// "no unique or exclusion constraint matching the ON CONFLICT specification" — the real
+	// cause of a silent "pool seed failed"). The empty-table guard above already makes a plain
+	// insert conflict-free.
+	const byProvider = new Map(envPools.map((p) => [p.provider, p]));
+	await db.insert(fleetPools).values([...byProvider.values()].map(projectToRow));
+	flog.info("seeded pools from FLEET_POOLS env", { pool_count: byProvider.size });
 }

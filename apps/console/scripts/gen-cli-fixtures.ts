@@ -96,6 +96,7 @@ function sample(node: unknown, root: JsonSchema): unknown {
 const FIXTURES: Record<keyof typeof cliContract, string> = {
 	RunnersResponse: "runners.json",
 	ClustersResponse: "clusters.json",
+	ClusterDetailResponse: "cluster_detail.json",
 	CloudIdentitiesResponse: "cloud_identities.json",
 	JobsPageResponse: "jobs_page.json",
 	JobResponse: "job_response.json",

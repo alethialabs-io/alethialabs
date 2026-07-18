@@ -42,6 +42,28 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 					// Surface unhandled errors + promise rejections in PostHog Error tracking (with the
 					// session replay attached). Replaces a separate Sentry.
 					capture_exceptions: true,
+					// Drop the benign "ResizeObserver loop completed with undelivered notifications" — a
+					// browser quirk (not an app fault, never actionable) that otherwise floods Error
+					// tracking. Real errors (incl. React #310) pass through untouched.
+					before_send: (cr) => {
+						if (cr?.event === "$exception") {
+							const list: unknown = cr.properties?.$exception_list;
+							if (
+								Array.isArray(list) &&
+								list.some(
+									(ex) =>
+										!!ex &&
+										typeof ex === "object" &&
+										"value" in ex &&
+										typeof ex.value === "string" &&
+										ex.value.includes("ResizeObserver loop"),
+								)
+							) {
+								return null;
+							}
+						}
+						return cr;
+					},
 					session_recording: { maskAllInputs: true, maskTextSelector: "[data-ph-mask]" },
 				});
 				window.__posthog = posthog;

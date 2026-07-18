@@ -1135,6 +1135,15 @@ export function resolveByoChartInstall(
 	}
 	const rawOverride = parseValuesYaml(row.values_yaml);
 	if (rawOverride) values = deepMerge(values, rawOverride);
+	// Forward the workloads' bindings + value_paths for the runner to resolve at deploy (Lane 2b):
+	// only those with bindings (the runtime write-back is the only reason the runner needs them).
+	const bound = workloads
+		.filter((w) => w.bindings.length > 0)
+		.map((w) => ({
+			name: w.name,
+			bindings: w.bindings,
+			valuePaths: w.value_paths,
+		}));
 	return {
 		id: row.addon_id,
 		mode: row.mode,
@@ -1149,6 +1158,7 @@ export function resolveByoChartInstall(
 		namespace: row.namespace ?? "default",
 		values,
 		syncWave: BYO_CHART_SYNC_WAVE,
+		...(bound.length > 0 ? { workloads: bound } : {}),
 		// project is set by the runner (byo-<slug>); leave undefined here.
 	};
 }
