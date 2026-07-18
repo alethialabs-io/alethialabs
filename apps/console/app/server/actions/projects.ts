@@ -644,11 +644,16 @@ export async function reconcileEnvironmentComponents(
 
 async function buildConfigSnapshot(
 	owner: string,
+	orgId: string,
 	projectId: string,
 	environmentId?: string | null,
 	jobKind: "plan" | "deploy" | "destroy" | "drift" = "deploy",
 ) {
-	return withOwnerScope(owner, async (tx) => {
+	// Scope to the ACTIVE ORG, not just the owner. `withOwnerScope` stamps `org_id = user_id`
+	// (community assumption), so under a real multi-member org an ORG-scoped cloud_identity
+	// (`scope='org'`, `org_id = actor.orgId ≠ userId`) is invisible → the identity lookup below
+	// throws the misleading "Cloud account is not verified". Same fix as createProject.
+	return withScope({ ownerId: owner, orgId }, async (tx) => {
 		const [project] = await tx
 			.select()
 			.from(projects)
@@ -1265,10 +1270,10 @@ export async function planProject(
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, projectId, environmentId, "plan");
+		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "plan");
 	assertIacSourceQueueable(iacSource, "plan");
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
@@ -1325,6 +1330,7 @@ export async function buildProject(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
+		actor.orgId,
 		projectId,
 		environmentId,
 		"deploy",
@@ -1339,7 +1345,7 @@ export async function buildProject(
 			"Builds run in the environment's own cluster — provision the infrastructure first.",
 		);
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
@@ -1388,7 +1394,7 @@ export async function provisionProject(
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, projectId, environmentId, "deploy");
+		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "deploy");
 	assertIacSourceQueueable(iacSource, "deploy");
 
 	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
@@ -1402,7 +1408,7 @@ export async function provisionProject(
 		environment.status === "ACTIVE" &&
 		hasRepoSourcedServices(configSnapshot)
 	) {
-		const result = await withOwnerScope(owner, async (tx) => {
+		const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 			const [job] = await tx
 				.insert(jobs)
 				.values({
@@ -1437,7 +1443,7 @@ export async function provisionProject(
 		return result;
 	}
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
@@ -1492,11 +1498,12 @@ export async function queueDriftDetection(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
+		actor.orgId,
 		projectId,
 		environmentId,
 	);
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
@@ -1537,10 +1544,10 @@ export async function destroyProject(
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, projectId, environmentId, "destroy");
+		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "destroy");
 	assertIacSourceQueueable(iacSource, "destroy");
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
@@ -1596,11 +1603,12 @@ export async function detectDrift(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
+		actor.orgId,
 		projectId,
 		environmentId,
 	);
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({

@@ -24,7 +24,7 @@ import { buildProject, provisionProject } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -78,6 +78,10 @@ function setupDb(select: Map<unknown, Rows>, insert: Map<unknown, Rows>) {
 	};
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
+	);
+	// Provisioning-queue paths scope by the ACTIVE ORG (withScope), not withOwnerScope.
+	vi.mocked(withScope).mockImplementation(
+		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	vi.mocked(getServiceDb).mockReturnValue({} as never);
 	return { valuesSpy, executeSpy };
