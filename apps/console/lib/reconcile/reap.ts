@@ -30,6 +30,7 @@
 // manual intervention. A fresh successful DEPLOY resets the counters (see finalizeDeployment).
 
 import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import type { Db } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
@@ -203,7 +204,7 @@ export async function reapExpiredEphemeralEnvs(
 					projectId: env.project_id,
 				});
 				if (!moved) return false;
-				await tx.insert(jobs).values({
+				await tx.insert(jobs).values(signedJob({
 					user_id: env.user_id,
 					org_id: env.org_id ?? undefined,
 					project_id: env.project_id,
@@ -214,7 +215,7 @@ export async function reapExpiredEphemeralEnvs(
 					status: "QUEUED",
 					// A reap teardown is a fresh operation → a new trace root.
 					traceparent: newTraceparent(),
-				});
+				}));
 				// Charge the attempt in the same tx as the enqueue: reap_attempts+1 gates the give-up
 				// cap, last_reap_at=now arms the backoff clock for the next pass. If this DESTROY fails
 				// (env settles back to FAILED), the next reap will wait reapBackoffMs(reap_attempts).

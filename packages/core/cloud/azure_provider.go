@@ -52,9 +52,12 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		"vnet_cidr":          orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
 		"single_nat_gateway": config.Network.SingleNatGateway,
 
-		// AKS
+		// AKS. NOTE: keep this on a version in Azure's STANDARD support window — an AKS create
+		// rejects a version that has aged into LTS-only ("K8sVersionNotSupported"). 1.31 fell out of
+		// standard support into LTS; 1.33 is current-standard (Azure serves 1.32–1.36 as standard in
+		// westeurope as of 2026-07). Needs periodic bumping as the support window advances (#775).
 		"provision_aks":       true,
-		"aks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.31"),
+		"aks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.33"),
 
 		// DNS
 		"azure_dns_enabled":   config.DNS.Enabled,

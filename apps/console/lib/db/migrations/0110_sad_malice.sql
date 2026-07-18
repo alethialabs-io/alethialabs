@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "config_snapshot_sig" text;

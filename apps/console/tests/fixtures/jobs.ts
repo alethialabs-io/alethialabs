@@ -19,6 +19,7 @@ export function makeJob(overrides: Partial<JobWithMeta> = {}): JobWithMeta {
 		job_type: "DEPLOY",
 		config_snapshot: {},
 		configuration_hash: null,
+		config_snapshot_sig: null,
 		status: "QUEUED",
 		priority: 0,
 		provider: null,

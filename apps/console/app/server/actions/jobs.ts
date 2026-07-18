@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorize } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { signedJob } from "@/lib/db/signed-job";
+import { withOwnerScope, withScope } from "@/lib/db";
 import {
 	cloudIdentities,
 	jobs,
@@ -22,7 +23,7 @@ import { and, desc, eq, gte, ilike, inArray, lte, or } from "drizzle-orm";
 export async function getJobStatus(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [row] = await tx
 			.select({ status: jobs.status, error_message: jobs.error_message })
 			.from(jobs)
@@ -37,7 +38,7 @@ export async function getJobStatus(jobId: string) {
 export async function getJob(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [row] = await tx
 			.select()
 			.from(jobs)
@@ -51,7 +52,7 @@ export async function getJob(jobId: string) {
 export async function getJobs() {
 	const actor = await authorize("view", { type: "job" });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const rows = await tx
 			.select({
 				job: jobs,
@@ -139,7 +140,7 @@ function parseBound(iso?: string): Date | undefined {
 export async function getJobsPage(query: JobsQuery = {}) {
 	const actor = await authorize("view", { type: "job" });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const statuses = narrowTo(provisionJobStatus.enumValues, query.statuses);
 		const types = narrowTo(provisionJobType.enumValues, query.types);
 		const from = parseBound(query.from);
@@ -275,7 +276,7 @@ export type JobsPage = Awaited<ReturnType<typeof getJobsPage>>;
 export async function getPlanResult(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [row] = await tx
 			.select({
 				status: jobs.status,
@@ -294,7 +295,7 @@ export async function getPlanResult(jobId: string) {
 export async function getProjectJobs(projectId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		return tx
 			.select()
 			.from(jobs)
@@ -307,7 +308,7 @@ export async function rerunJob(jobId: string) {
 	const actor = await authorize("create", { type: "job" });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [original] = await tx
 			.select({
 				job_type: jobs.job_type,
@@ -323,8 +324,9 @@ export async function rerunJob(jobId: string) {
 
 		const [newJob] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				job_type: original.job_type,
 				config_snapshot: original.config_snapshot,
 				cloud_identity_id: original.cloud_identity_id,
@@ -332,7 +334,7 @@ export async function rerunJob(jobId: string) {
 				status: "QUEUED",
 				// A rerun is a fresh operation → a new trace root (not the original's).
 				traceparent: newTraceparent(),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		notifyScaler();
@@ -351,7 +353,7 @@ export async function rerunJob(jobId: string) {
 export async function cancelJob(jobId: string) {
 	const actor = await authorize("edit", { type: "job", id: jobId });
 	const owner = actor.userId;
-	const signal = await withOwnerScope(owner, async (tx) => {
+	const signal = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.select({ status: jobs.status, runner_id: jobs.runner_id })
 			.from(jobs)
@@ -412,7 +414,7 @@ export async function recordVerifyOverride(
 	const actor = await authorize("edit", { type: "job", id: jobId });
 	const owner = actor.userId;
 	const expiry = new Date(Date.now() + ttlHours * 3_600_000).toISOString();
-	return withOwnerScope(owner, async (tx) => {
+	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.select({ status: jobs.status })
 			.from(jobs)

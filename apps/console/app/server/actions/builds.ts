@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
@@ -113,7 +114,7 @@ export async function enqueueDeployAfterBuild(buildJobId: string) {
 
 	const [deploy] = await db
 		.insert(jobs)
-		.values({
+		.values(signedJob({
 			user_id: buildJob.user_id,
 			org_id: buildJob.org_id ?? undefined,
 			project_id: buildJob.project_id,
@@ -122,7 +123,7 @@ export async function enqueueDeployAfterBuild(buildJobId: string) {
 			job_type: "DEPLOY",
 			config_snapshot: buildJob.config_snapshot,
 			status: "QUEUED",
-		})
+		}))
 		.returning({ id: jobs.id });
 
 	notifyScaler();
@@ -202,7 +203,7 @@ export async function enqueueBuildAfterProvision(deployJobId: string) {
 
 	const [build] = await db
 		.insert(jobs)
-		.values({
+		.values(signedJob({
 			user_id: job.user_id,
 			org_id: job.org_id ?? undefined,
 			project_id: job.project_id,
@@ -211,7 +212,7 @@ export async function enqueueBuildAfterProvision(deployJobId: string) {
 			job_type: "BUILD",
 			config_snapshot: job.config_snapshot,
 			status: "QUEUED",
-		})
+		}))
 		.returning({ id: jobs.id });
 
 	notifyScaler();

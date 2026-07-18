@@ -23,7 +23,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { FleetActionMetadata } from "@/types/jsonb.types";
-import { cloudProvider, fleetActionType } from "./enums";
+import { cloudProvider, fleetActionType, hetznerLocation } from "./enums";
 import { runners } from "./runners";
 
 export const fleetPools = pgTable(
@@ -41,7 +41,7 @@ export const fleetPools = pgTable(
 		// Concurrent jobs one runner handles; divides backlog into runner demand.
 		slots_per_runner: integer().default(1).notNull(),
 		// Locations to spread across (≥1), e.g. ["fsn1","nbg1"].
-		locations: text().array().default(["fsn1"]).notNull(),
+		locations: hetznerLocation().array().default(["fsn1"]).notNull(),
 		// Minimum healthy instances to keep in each listed location.
 		min_per_location: integer().default(0).notNull(),
 		// Max extra instances allowed above the floor during a rollout (maxSurge).

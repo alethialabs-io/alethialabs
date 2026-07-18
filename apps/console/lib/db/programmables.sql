@@ -973,6 +973,80 @@ BEGIN
   END LOOP;
 END $$;
 
+-- topic_subscriptions: normalized child of project_topics (no direct project_id), so tenancy flows
+-- through the parent topic → project — the same join-through shape as the support-case child tables.
+-- FOR ALL because the app delete+reinserts these on every save (RLS is the tenancy wall).
+ALTER TABLE public.topic_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.topic_subscriptions;
+CREATE POLICY owner_all ON public.topic_subscriptions FOR ALL
+  USING (topic_id IN (SELECT t.id FROM public.project_topics t
+         JOIN public.projects p ON p.id = t.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid))
+  WITH CHECK (topic_id IN (SELECT t.id FROM public.project_topics t
+         JOIN public.projects p ON p.id = t.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid));
+
+-- cluster_admins: normalized child of project_cluster (no direct project_id) — tenancy flows through
+-- the parent cluster → project, same join-through shape as topic_subscriptions.
+ALTER TABLE public.cluster_admins ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.cluster_admins;
+CREATE POLICY owner_all ON public.cluster_admins FOR ALL
+  USING (cluster_id IN (SELECT c.id FROM public.project_cluster c
+         JOIN public.projects p ON p.id = c.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid))
+  WITH CHECK (cluster_id IN (SELECT c.id FROM public.project_cluster c
+         JOIN public.projects p ON p.id = c.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid));
+
+-- service_bindings: a binding belongs to a service XOR a chart workload, so its tenancy is a 2-path
+-- join-through — visible when EITHER owner resolves to the org's project. service_binding_injections
+-- inherit tenancy through their parent binding (the same predicate, one hop further).
+ALTER TABLE public.service_bindings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.service_bindings;
+CREATE POLICY owner_all ON public.service_bindings FOR ALL
+  USING (service_id IN (SELECT s.id FROM public.project_services s
+             JOIN public.projects p ON p.id = s.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid)
+      OR chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+             JOIN public.projects p ON p.id = w.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid))
+  WITH CHECK (service_id IN (SELECT s.id FROM public.project_services s
+             JOIN public.projects p ON p.id = s.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid)
+      OR chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+             JOIN public.projects p ON p.id = w.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid));
+
+ALTER TABLE public.service_binding_injections ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.service_binding_injections;
+CREATE POLICY owner_all ON public.service_binding_injections FOR ALL
+  USING (binding_id IN (SELECT b.id FROM public.service_bindings b
+         WHERE b.service_id IN (SELECT s.id FROM public.project_services s
+               JOIN public.projects p ON p.id = s.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)
+            OR b.chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+               JOIN public.projects p ON p.id = w.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)))
+  WITH CHECK (binding_id IN (SELECT b.id FROM public.service_bindings b
+         WHERE b.service_id IN (SELECT s.id FROM public.project_services s
+               JOIN public.projects p ON p.id = s.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)
+            OR b.chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+               JOIN public.projects p ON p.id = w.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)));
+
 -- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
 -- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;

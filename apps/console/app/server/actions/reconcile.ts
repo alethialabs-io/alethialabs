@@ -10,6 +10,7 @@
 // production is always approval-gated. getEnvReconcileStates powers the console's per-env badges.
 
 import { and, desc, eq } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
@@ -100,7 +101,7 @@ export async function maybeAutoHeal(
 			.update(projectEnvironments)
 			.set({ last_auto_heal_at: new Date() })
 			.where(eq(projectEnvironments.id, environmentId));
-		await tx.insert(jobs).values({
+		await tx.insert(jobs).values(signedJob({
 			user_id: env.user_id,
 			org_id: env.org_id ?? undefined,
 			project_id: projectId,
@@ -111,7 +112,7 @@ export async function maybeAutoHeal(
 			status: "QUEUED",
 			// An auto-heal re-apply is a fresh operation → a new trace root.
 			traceparent: newTraceparent(),
-		});
+		}));
 		return true;
 	});
 	// Only wake the scaler once the whole enqueue committed (a rolled-back tx queued nothing).

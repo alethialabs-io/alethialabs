@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { eq } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { requireOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -48,12 +49,12 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				job_type: "ANALYZE_REPO",
 				status: "QUEUED",
 				config_snapshot: { repo_url: url, ...(opts?.ref ? { ref: opts.ref } : {}) },
-			})
+			}))
 			.returning({ id: jobs.id });
 		return job.id;
 	});
