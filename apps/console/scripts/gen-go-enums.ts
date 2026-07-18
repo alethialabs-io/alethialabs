@@ -26,7 +26,10 @@ import {
 	projectStatus,
 	provisionJobStatus,
 	provisionJobType,
+	serviceBindingFacet,
+	serviceBindingKind,
 	serviceWorkloadType,
+	topicSubscriptionProtocol,
 } from "@/lib/db/schema/enums";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +67,9 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "NosqlTableType", dbName: "nosql_table_type", values: nosqlTableType.enumValues },
 	{ typeName: "NosqlCapacityMode", dbName: "nosql_capacity_mode", values: nosqlCapacityMode.enumValues },
 	{ typeName: "CacheEngine", dbName: "cache_engine", values: cacheEngine.enumValues },
+	{ typeName: "ServiceBindingKind", dbName: "service_binding_kind", values: serviceBindingKind.enumValues },
+	{ typeName: "ServiceBindingFacet", dbName: "service_binding_facet", values: serviceBindingFacet.enumValues },
+	{ typeName: "TopicSubscriptionProtocol", dbName: "topic_subscription_protocol", values: topicSubscriptionProtocol.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {

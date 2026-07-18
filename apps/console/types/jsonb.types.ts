@@ -7,7 +7,12 @@ import type {
 	AlertSeverity,
 	CloudProvider,
 	ProjectStatus,
+	ServiceBindingFacet,
+	ServiceBindingKind,
+	TopicSubscriptionProtocol,
 } from "@/lib/db/schema/enums";
+
+export type { ServiceBindingKind, ServiceBindingFacet };
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
@@ -163,18 +168,9 @@ export interface ServiceProbe {
 
 /** The kind of backing resource a service can bind to (referenced together with its name — the
  * config join key every component shares). */
-export type ServiceBindingKind = "database" | "cache" | "queue" | "secret";
-
-/** Which connection facet of the bound resource an env var receives. `endpoint`/`port` are
- * NON-secret and inject as templated values from the resource's tofu outputs; the credential
- * facets inject KEYLESSLY via an ExternalSecret (ESO ClusterSecretStore) → k8s Secret →
- * secretKeyRef — a provisioned credential is never exported as a literal env value. */
-export type ServiceBindingFacet =
-	| "endpoint"
-	| "port"
-	| "username"
-	| "password"
-	| "connection_string";
+// ServiceBindingKind (database|cache|queue|secret) and ServiceBindingFacet
+// (endpoint/port non-secret templated; username/password/connection_string keyless via ESO) are
+// the `service_binding_kind` / `service_binding_facet` pgEnums (imported + re-exported above).
 
 /** One env var on the workload ← one facet of the bound resource. */
 export interface ServiceBindingInjection {
@@ -540,7 +536,7 @@ export interface ProviderOutputs {
 }
 
 export interface TopicSubscription {
-	protocol: string;
+	protocol: TopicSubscriptionProtocol;
 	endpoint: string;
 }
 

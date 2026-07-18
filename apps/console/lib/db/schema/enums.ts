@@ -73,6 +73,34 @@ export const serviceWorkloadType = pgEnum("service_workload_type", [
 	"statefulset",
 ]);
 
+// W3 service→backing-resource bindings (service.bindings / chart_workload.bindings JSONB, and the
+// normalized service_bindings table). `kind` is the bound resource's kind; `facet` is which
+// connection facet an env var receives (endpoint/port are non-secret templated values; the rest
+// inject keylessly via ESO). SSOT for both the TS interfaces (types/jsonb.types.ts) and the Go
+// runner's ServiceBindingTarget.Kind / ServiceBindingInjection.From (enums_gen.go).
+export const serviceBindingKind = pgEnum("service_binding_kind", [
+	"database",
+	"cache",
+	"queue",
+	"secret",
+]);
+export const serviceBindingFacet = pgEnum("service_binding_facet", [
+	"endpoint",
+	"port",
+	"username",
+	"password",
+	"connection_string",
+]);
+
+// Delivery protocol of a topic subscription (topic.subscriptions JSONB / topic_subscriptions table).
+// The finite set the inspector offers + the templates provision (SNS-style fan-out).
+export const topicSubscriptionProtocol = pgEnum("topic_subscription_protocol", [
+	"https",
+	"sqs",
+	"email",
+	"lambda",
+]);
+
 // The kind of Kubernetes workload DESCRIBED from a BYO Helm chart's rendered manifests (W5 Path A —
 // project_chart_workloads). Superset of serviceWorkloadType (adds `daemonset`, which a chart can
 // render but Alethia never authors as a first-class service). Normalized to lowercase from the
@@ -392,6 +420,12 @@ export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
+export type ServiceBindingKind =
+	(typeof serviceBindingKind.enumValues)[number];
+export type ServiceBindingFacet =
+	(typeof serviceBindingFacet.enumValues)[number];
+export type TopicSubscriptionProtocol =
+	(typeof topicSubscriptionProtocol.enumValues)[number];
 export type ChartWorkloadKind = (typeof chartWorkloadKind.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
 export type BillingPlan = (typeof billingPlan.enumValues)[number];
