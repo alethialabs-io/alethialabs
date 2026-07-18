@@ -167,18 +167,21 @@ EXISTING_ROLE=$(az role assignment list \
   --scope "/subscriptions/${SUBSCRIPTION_ID}" \
   --query "[0].id" -o tsv 2>/dev/null || true)
 if [ -n "${EXISTING_ROLE}" ]; then
-  echo "    Role assignment already exists, skipping."
-else
-  az role assignment create \
-    --assignee-object-id "${PRINCIPAL_ID}" \
-    --assignee-principal-type ServicePrincipal \
-    --role "${ROLE_NAME}" \
-    --scope "/subscriptions/${SUBSCRIPTION_ID}" \
-    --condition "${CONDITION}" \
-    --condition-version "2.0" \
-    -o none
-  echo "    Least-privilege role assigned."
+  # Re-apply idempotently: DELETE + recreate so an updated ABAC condition (e.g. the expanded
+  # least-privilege role set) actually takes effect — Azure can't update an assignment's condition
+  # in place, and a plain "skip if exists" would strand the old (too-narrow) condition on re-run.
+  echo "    Existing assignment found — re-applying (the least-priv condition may have changed)..."
+  az role assignment delete --ids "${EXISTING_ROLE}" -o none || true
 fi
+az role assignment create \
+  --assignee-object-id "${PRINCIPAL_ID}" \
+  --assignee-principal-type ServicePrincipal \
+  --role "${ROLE_NAME}" \
+  --scope "/subscriptions/${SUBSCRIPTION_ID}" \
+  --condition "${CONDITION}" \
+  --condition-version "2.0" \
+  -o none
+echo "    Least-privilege role assigned (condition applied)."
 
 echo ""
 echo "============================================================"
