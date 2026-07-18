@@ -26,9 +26,13 @@ vi.mock("@/lib/fleet/pools-db", () => ({
 vi.mock("@/lib/fleet/provider", () => ({ getFleetProvider: vi.fn(() => ({ provider: true })) }));
 // The tick also GC's bootstrap tokens (real → DB); stub it so the loop stays hermetic in tests.
 vi.mock("@/lib/runners/bootstrap-token", () => ({ sweepBootstrapTokens: vi.fn(async () => {}) }));
+// The tick first acquires the cross-replica leader lease (real → DB). Default this replica to leader
+// so the reconcile proceeds; the "not leader" test flips it to false to prove the tick no-ops.
+vi.mock("@/lib/fleet/queue", () => ({ tryBecomeFleetLeader: vi.fn(async () => true) }));
 
 import { startFleetScaler, wakeFleetScaler } from "@/lib/fleet/scaler";
 import { reconcileAll } from "@/lib/fleet/controller";
+import { tryBecomeFleetLeader } from "@/lib/fleet/queue";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
 import { loadFleetPools } from "@/lib/fleet/pools-db";
 import { getFleetProvider } from "@/lib/fleet/provider";
@@ -87,6 +91,16 @@ describe("tick / wakeFleetScaler", () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(loadFleetPools).toHaveBeenCalledTimes(1);
 		expect(reconcileAll).toHaveBeenCalledWith([], { provider: true }, { deps: true }, expect.any(Map));
+	});
+
+	it("no-ops the tick when this replica does NOT hold the leader lease", async () => {
+		vi.mocked(tryBecomeFleetLeader).mockResolvedValueOnce(false); // another replica leads
+		startFleetScaler();
+		tick!();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(tryBecomeFleetLeader).toHaveBeenCalledTimes(1);
+		expect(loadFleetPools).not.toHaveBeenCalled();
+		expect(reconcileAll).not.toHaveBeenCalled();
 	});
 
 	it("wakeFleetScaler is a no-op until the loop is started", async () => {
