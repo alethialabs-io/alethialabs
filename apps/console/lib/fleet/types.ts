@@ -64,7 +64,9 @@ export interface ObservedInstance extends ProviderInstance {
 /** Everything the planner needs to decide the next safe step for a pool. */
 export interface Observed {
 	instances: ObservedInstance[];
-	/** QUEUED jobs targeting this provider. */
+	/** Demand-driving backlog for this provider: the DISPATCHABLE (cap-aware) QUEUED count — jobs a
+	 *  runner could claim now given per-org plan caps — so the planner never sizes to work the caps
+	 *  block. (The controller passes raw queue depth only to the ledger/telemetry, not here.) */
 	backlog: number;
 	/** Recent peak concurrent demand (drives auto-grow of the warm floor). */
 	recentPeak: number;
