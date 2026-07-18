@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Auto-dispatch a Claude session on an auto-filed PostHog error issue. When posthog-error-issues.yml
+# labels an issue `claude:investigate`, Claude reads the issue (+ its PostHog link), traces the root
+# cause in this repo, and opens a **draft** PR into `dev`. Guardrails: draft only, NEVER self-merge,
+# human review required.
+#
+# OFF until enabled: needs repo secret ANTHROPIC_API_KEY (separate from the deploy vault's copy — GitHub
+# Actions can't read the AWS vault). Without it the job SKIPS cleanly.
+
+name: Claude investigate (PostHog issue)
+
+on:
+  issues:
+    types: [labeled]
+
+# Least-privilege: enough to branch, open a draft PR, and comment back on the issue.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: claude-investigate-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  investigate:
+    # Only for the label our filer adds — never on arbitrary labels.
+    if: github.event.label.name == 'claude:investigate'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — skip cleanly when the Anthropic key is absent
+        id: guard
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY not set — skipping. Add it as a repo secret to enable auto-investigation."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          fetch-depth: 0
+          ref: dev
+      - uses: anthropics/claude-code-action@v1
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          base_branch: dev
+          claude_args: |
+            --max-turns 40
+            --model sonnet
+          prompt: |
+            A recurring production error was auto-filed from PostHog as issue #${{ github.event.issue.number }}:
+            "${{ github.event.issue.title }}".
+
+            1. Read the issue body (it links the PostHog issue with the stack trace + session replay).
+            2. Trace the root cause in THIS repository.
+            3. Open a **DRAFT** pull request into `dev` with a minimal, well-scoped fix, its body
+               referencing the issue (`Closes #${{ github.event.issue.number }}`).
+            4. Do NOT merge, and do NOT target `staging`/`main`. If you cannot determine a safe fix,
+               post your findings as a comment on the issue instead of opening a PR.
+
+            Follow the repo's CLAUDE.md conventions (no `any`/`as`, JSDoc, @repo/ui, etc.).
