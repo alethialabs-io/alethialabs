@@ -57,3 +57,22 @@ export function errorHttpStatus(e: unknown): number | undefined {
 export function toError(e: unknown): Error {
 	return e instanceof Error ? e : new Error(String(e));
 }
+
+/**
+ * True when a thrown request error is EXPECTED control flow, not a bug: Next.js's redirect()/notFound()
+ * signals (carried on `digest`) and the auth "no session" sentinel (`requireOwner()` throws
+ * `Unauthorized` for a logged-out/crawler request on an authed route). These aren't actionable and
+ * otherwise flood error tracking, so `onRequestError` logs them quietly and does NOT forward them to
+ * PostHog/Sentry.
+ */
+export function isExpectedRequestError(e: unknown): boolean {
+	const digest = errorDigest(e) ?? "";
+	if (
+		digest.startsWith("NEXT_REDIRECT") ||
+		digest.startsWith("NEXT_HTTP_ERROR_FALLBACK") ||
+		digest === "NEXT_NOT_FOUND"
+	) {
+		return true;
+	}
+	return errorMessage(e) === "Unauthorized";
+}
