@@ -12,5 +12,6 @@ import { auth } from "@/lib/auth";
 // mcp() plugin's endpoint inference on `auth` though it exists at runtime — bridge
 // to the exact shape the helper requires (no behaviour change).
 export const GET = oAuthDiscoveryMetadata(
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- better-auth widens `plugins`, erasing mcp()'s endpoint inference on `auth` though it exists at runtime
 	auth as unknown as Parameters<typeof oAuthDiscoveryMetadata>[0],
 );

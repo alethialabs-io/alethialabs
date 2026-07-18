@@ -35,6 +35,7 @@ export function formToGraph(
 		const own = ownIdentity ?? null;
 		// The kind↔config correlation can't be carried into the union type for a generic
 		// K, so the assembled data asserts its membership (both come from the same K).
+		// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- distributed-union variance: {kind:K, config} IS the K-th CanvasNodeData member, but TS can't prove it for a generic K
 		const data = {
 			kind,
 			config,

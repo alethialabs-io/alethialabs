@@ -263,6 +263,7 @@ export function CanvasFlow() {
 					// Everything left refers to a real store node. React Flow types the change against
 					// the board's union; narrowing it back is sound precisely because the synthetic ids —
 					// the only source of container/collection changes — were just filtered out.
+					// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- synthetic container/collection ids were filtered out above, so this change refers to a real CanvasNode; react-flow can't express that runtime narrowing
 					passthrough.push(change as NodeChange<CanvasNode>);
 				}
 				for (const [id, partial] of resizeGeom) {

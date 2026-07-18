@@ -46,6 +46,7 @@ function stringify(value: unknown): string {
 export function registerAiToolsOnMcp(server: McpServer, tools: ToolSet): void {
 	for (const [name, def] of Object.entries(tools)) {
 		// Bridge the published Tool type to its runtime shape (see BridgeableTool).
+		// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- AI-SDK's published Tool type brands execute's input and erases the concrete zod schema; bridge to its runtime shape
 		const tool = def as unknown as BridgeableTool;
 		const { execute } = tool;
 		if (typeof execute !== "function") continue;

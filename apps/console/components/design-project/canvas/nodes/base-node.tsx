@@ -92,6 +92,7 @@ export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 	// A node's `kind` discriminant and its registry entry are correlated at runtime, but TypeScript
 	// can't prove it through the keyed lookup (the same discriminated-union limitation the canvas
 	// store's `buildNodeData` documents). Assert the reunion once, here.
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- def is the union NodeKindDef; its per-kind facts fn isn't callable with the union config — reunite the correlation once
 	const factsOf = def.card.facts as (ctx: {
 		config: NodeConfig;
 		provider: CloudProviderSlug | null;

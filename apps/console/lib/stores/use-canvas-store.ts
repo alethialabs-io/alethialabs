@@ -274,6 +274,7 @@ function applyUniqueName<K extends NodeKind>(
 	config: NodeConfigMap[K],
 	nodes: CanvasNode[],
 ): NodeConfigMap[K] {
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- distributed-union variance (see buildNodeData): the generic {kind,config} can't be proven a CanvasNodeData member
 	const current = configName({
 		kind,
 		config,
