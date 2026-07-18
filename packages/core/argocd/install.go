@@ -22,11 +22,13 @@ var applyCRDRaceMaxWait = 5 * time.Minute
 func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 	cmd := fmt.Sprintf("kubectl apply -f %s", renderedDir)
 	fmt.Fprintln(stdout, "Applying ArgoCD infrastructure applications...")
-	// The rendered dir mixes ArgoCD Applications — which install their CRDs ASYNCHRONOUSLY via ArgoCD
-	// sync (e.g. external-secrets-operator installs the external-secrets CRDs) — with CRD-INSTANCES in
-	// the same file (the per-cloud ClusterSecretStore). On a FRESH cluster the instance races its CRD
-	// → "no matches for kind ClusterSecretStore". The Applications DO apply on the first pass; ArgoCD
-	// then establishes the CRDs, so retry the (idempotent) apply until the instances land — bounded.
+	// The rendered dir mixes ArgoCD Applications — which install their CRDs + admission webhooks
+	// ASYNCHRONOUSLY via ArgoCD sync (e.g. external-secrets-operator) — with CRD-INSTANCES in the same
+	// file (the per-cloud ClusterSecretStore). On a FRESH cluster the instance races the operator in
+	// two stages: (1) the CRD isn't registered yet ("no matches for kind"), then (2) the CRD exists
+	// but the operator's validating webhook has no ready endpoints yet ("failed calling webhook … no
+	// endpoints available"). The Applications DO apply on the first pass; ArgoCD then brings the
+	// operator up, so retry the (idempotent) apply through BOTH stages until the instances land.
 	deadline := time.Now().Add(applyCRDRaceMaxWait)
 	for attempt := 1; ; attempt++ {
 		var captured bytes.Buffer
@@ -35,21 +37,32 @@ func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stdout, "ArgoCD infrastructure applications applied.")
 			return nil
 		}
-		// Retry ONLY the "CRD not established yet" race; any other failure is fatal.
-		if !isCRDNotReady(captured.String()) || time.Now().After(deadline) {
+		// Retry ONLY the "operator not fully up yet" races; any other failure is fatal.
+		if !isOperatorNotReady(captured.String()) || time.Now().After(deadline) {
 			return fmt.Errorf("kubectl apply failed: %w", err)
 		}
-		fmt.Fprintf(stdout, "  A custom-resource CRD isn't established yet (attempt %d) — "+
-			"waiting 15s for ArgoCD to install it...\n", attempt)
+		fmt.Fprintf(stdout, "  An operator (CRD/webhook) isn't ready yet (attempt %d) — "+
+			"waiting 15s for ArgoCD to finish installing it...\n", attempt)
 		time.Sleep(15 * time.Second)
 	}
 }
 
-// isCRDNotReady reports whether a kubectl failure is the "the CRD backing this custom resource does
-// not exist yet" race — the only condition ApplyApplications retries.
-func isCRDNotReady(kubectlOutput string) bool {
-	return strings.Contains(kubectlOutput, "no matches for kind") ||
-		strings.Contains(kubectlOutput, "resource mapping not found")
+// isOperatorNotReady reports whether a kubectl failure is a transient "the operator that backs this
+// custom resource isn't fully installed yet" race — its CRD isn't registered, or its admission
+// webhook has no ready endpoints. These are the only conditions ApplyApplications retries; a real
+// validation/authz/config error is NOT retried.
+func isOperatorNotReady(kubectlOutput string) bool {
+	for _, marker := range []string{
+		"no matches for kind",          // the CRD isn't registered yet
+		"resource mapping not found",   // ditto (RESTMapper hasn't seen the CRD)
+		"failed calling webhook",       // the admission webhook backend isn't reachable yet
+		"no endpoints available",       // the webhook Service has no ready pods yet
+	} {
+		if strings.Contains(kubectlOutput, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // externalDNSSecretManifest builds the namespace + token Secret manifest external-dns's
