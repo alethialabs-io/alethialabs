@@ -213,6 +213,33 @@ export async function tryFleetScaleLock(
 	});
 }
 
+/**
+ * Try to acquire or renew the single-row fleet-controller leader LEASE for this replica, in one
+ * atomic upsert. Returns true iff `holder` now owns the lease (freshly seized because it was unheld/
+ * expired, or renewed because `holder` already held it) — the caller then runs the reconcile tick;
+ * a false means another live replica holds it, so this tick no-ops. The `ON CONFLICT … WHERE` only
+ * overwrites an EXPIRED lease or the holder's own row, so a live leader is never stolen; RETURNING
+ * yields no row when the update is skipped → not leader. TTL should exceed the tick interval so the
+ * leader renews each tick it wins and holds across ticks; a crashed leader is superseded after ≤TTL.
+ * Unlike a held advisory-lock transaction, the lease pins no connection across the tick's slow cloud
+ * calls (no idle-in-transaction). Global platform row (no RLS) → getServiceDb().
+ */
+export async function tryBecomeFleetLeader(
+	holder: string,
+	ttlSeconds: number,
+): Promise<boolean> {
+	const rows = await getServiceDb().execute<{ is_leader: boolean }>(sql`
+		insert into public.fleet_leader (singleton, holder, expires_at, updated_at)
+		values (true, ${holder}::uuid, now() + make_interval(secs => ${ttlSeconds}), now())
+		on conflict (singleton) do update
+			set holder = excluded.holder, expires_at = excluded.expires_at, updated_at = now()
+			where public.fleet_leader.expires_at < now()
+			   or public.fleet_leader.holder = excluded.holder
+		returning (holder = ${holder}::uuid) as is_leader
+	`);
+	return rows[0]?.is_leader === true;
+}
+
 /** Mark a removed runner OFFLINE and close its open usage session at now(). */
 export async function retireRunner(runnerId: string): Promise<void> {
 	await getServiceDb().execute(sql`
