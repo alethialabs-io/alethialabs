@@ -10,6 +10,7 @@
 // (re-validated server-side); the YAML is validated on save and deep-merged on top of the knobs at
 // resolve time. Squared corners (`rounded-none`) to match the canvas chrome.
 
+import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -42,7 +43,7 @@ import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
-import type { AddOnMode } from "@/lib/addons/types";
+import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import {
 	useDisableAddon,
@@ -56,6 +57,44 @@ type FormShape = Record<string, unknown> & {
 	_valuesYaml: string;
 };
 
+/**
+ * Whether a stored value counts as a present secret — an `EncryptedSecret` envelope, or a
+ * legacy non-empty plaintext string. Mirrors `lib/addons/secrets.ts::hasStoredSecret` inline
+ * so the client never imports the server-only crypto module that file also exports.
+ */
+function isSecretSet(v: unknown): boolean {
+	return (
+		(typeof v === "object" &&
+			v !== null &&
+			"iv" in v &&
+			"tag" in v &&
+			"data" in v) ||
+		(typeof v === "string" && v.length > 0)
+	);
+}
+
+/**
+ * Seeds one field's form value from its stored value. A `secret` is write-only — it is seeded
+ * BLANK, never with the stored `EncryptedSecret` (the ciphertext must not reach the form/DOM,
+ * and an untouched submit must not send the envelope back through the string schema). A `nested`
+ * field recurses into an object of its children; a scalar takes the stored value or its default.
+ */
+function seedField(f: AddOnField, stored: unknown): unknown {
+	if (f.type === "secret") return "";
+	if (f.type === "nested") {
+		const parent =
+			stored && typeof stored === "object"
+				? asRecord(stored)
+				: {};
+		const obj: Record<string, unknown> = {};
+		for (const child of f.fields ?? []) {
+			obj[child.key] = seedField(child, parent[child.key]);
+		}
+		return obj;
+	}
+	return stored ?? f.default;
+}
+
 /** Builds the form's default values: the add-on knobs + mode + raw YAML (existing install wins). */
 function initialValues(item: AddonMarketItem): FormShape {
 	const out: FormShape = {
@@ -63,7 +102,7 @@ function initialValues(item: AddonMarketItem): FormShape {
 		_valuesYaml: item.install?.valuesYaml ?? "",
 	};
 	for (const f of item.fields) {
-		out[f.key] = item.install?.values?.[f.key] ?? f.default;
+		out[f.key] = seedField(f, item.install?.values?.[f.key]);
 	}
 	return out;
 }
@@ -92,10 +131,9 @@ export function AddonConfigSheet({
 }) {
 	const enable = useEnableAddon(projectId, environmentId);
 	const disable = useDisableAddon(projectId, environmentId);
+	const emptyForm: FormShape = { _mode: "managed", _valuesYaml: "" };
 	const form = useForm<FormShape>({
-		values: item
-			? initialValues(item)
-			: ({ _mode: "managed", _valuesYaml: "" } as FormShape),
+		values: item ? initialValues(item) : emptyForm,
 	});
 	const mode = form.watch("_mode");
 
@@ -137,6 +175,122 @@ export function AddonConfigSheet({
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Failed to remove add-on");
 		}
+	};
+
+	/**
+	 * Renders one schema'd knob, discriminated on `f.type`, at RHF path `path` (dotted for a
+	 * nested child, e.g. `resources.cpu`). `stored` is this field's persisted value, used for a
+	 * boolean's initial state and a secret's set/unset indicator. Recurses one level for `nested`.
+	 */
+	const renderField = (f: AddOnField, path: string, stored: unknown) => {
+		const help = f.help ? (
+			<p className="text-xs text-muted-foreground">{f.help}</p>
+		) : null;
+
+		if (f.type === "nested") {
+			const parent =
+				stored && typeof stored === "object"
+					? asRecord(stored)
+					: {};
+			return (
+				<div key={path} className="space-y-2">
+					<Label>{f.label}</Label>
+					<div className="space-y-4 rounded-md border border-l-2 border-l-border bg-muted/20 p-3">
+						{(f.fields ?? []).map((child) =>
+							renderField(child, `${path}.${child.key}`, parent[child.key]),
+						)}
+					</div>
+					{help}
+				</div>
+			);
+		}
+
+		if (f.type === "boolean") {
+			return (
+				<div key={path} className="space-y-2">
+					<div className="flex items-center justify-between">
+						<Label htmlFor={path}>{f.label}</Label>
+						<Switch
+							id={path}
+							defaultChecked={Boolean(stored ?? f.default)}
+							onCheckedChange={(v) => form.setValue(path, v)}
+						/>
+					</div>
+					{help}
+				</div>
+			);
+		}
+
+		if (f.type === "enum") {
+			// Uncontrolled: Radix owns the display from `defaultValue`; RHF gets each change via
+			// setValue (the stored value is already seeded into the form's initial values). The
+			// value is stored, the option label is shown.
+			const initial = String(stored ?? f.default ?? "");
+			return (
+				<div key={path} className="space-y-2">
+					<Label htmlFor={path}>{f.label}</Label>
+					<Select
+						defaultValue={initial}
+						onValueChange={(v) => form.setValue(path, v)}
+					>
+						<SelectTrigger id={path}>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{(f.options ?? []).map((o) => (
+								<SelectItem key={o.value} value={o.value}>
+									{o.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					{help}
+				</div>
+			);
+		}
+
+		if (f.type === "secret") {
+			// Write-only: the input never binds to the stored value (an EncryptedSecret envelope),
+			// so the ciphertext never reaches the DOM. The pill reads set/unset from the stored
+			// value; typing sets a new plaintext (encrypted server-side).
+			const set = isSecretSet(stored);
+			return (
+				<div key={path} className="space-y-2">
+					<div className="flex items-center justify-between">
+						<Label htmlFor={path}>{f.label}</Label>
+						<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+							{set ? "Set" : "Unset"}
+						</span>
+					</div>
+					<Input
+						id={path}
+						type="password"
+						autoComplete="off"
+						placeholder={set ? "Enter a new value to replace" : "Set a value"}
+						onChange={(e) => form.setValue(path, e.target.value)}
+					/>
+					{help}
+				</div>
+			);
+		}
+
+		// number / string
+		return (
+			<div key={path} className="space-y-2">
+				<Label htmlFor={path}>{f.label}</Label>
+				<Input
+					id={path}
+					type={f.type === "number" ? "number" : "text"}
+					min={f.min}
+					max={f.max}
+					{...form.register(
+						path,
+						f.type === "number" ? { valueAsNumber: true } : {},
+					)}
+				/>
+				{help}
+			</div>
+		);
 	};
 
 	return (
@@ -204,7 +358,7 @@ export function AddonConfigSheet({
 							<Label>Delivery</Label>
 							<Select
 								value={mode}
-								onValueChange={(v) => form.setValue("_mode", v as AddOnMode)}
+								onValueChange={(v) => form.setValue("_mode", v === "gitops" ? "gitops" : "managed")}
 							>
 								<SelectTrigger>
 									<SelectValue />
@@ -227,40 +381,10 @@ export function AddonConfigSheet({
 							</p>
 						</div>
 
-						{/* Schema'd knobs */}
-						{item.fields.map((f) => (
-							<div key={f.key} className="space-y-2">
-								{f.type === "boolean" ? (
-									<div className="flex items-center justify-between">
-										<Label htmlFor={f.key}>{f.label}</Label>
-										<Switch
-											id={f.key}
-											defaultChecked={Boolean(
-												item.install?.values?.[f.key] ?? f.default,
-											)}
-											onCheckedChange={(v) => form.setValue(f.key, v)}
-										/>
-									</div>
-								) : (
-									<>
-										<Label htmlFor={f.key}>{f.label}</Label>
-										<Input
-											id={f.key}
-											type={f.type === "number" ? "number" : "text"}
-											min={f.min}
-											max={f.max}
-											{...form.register(
-												f.key,
-												f.type === "number" ? { valueAsNumber: true } : {},
-											)}
-										/>
-									</>
-								)}
-								{f.help && (
-									<p className="text-xs text-muted-foreground">{f.help}</p>
-								)}
-							</div>
-						))}
+						{/* Schema'd knobs — discriminated on field type (enum/secret/nested + scalars). */}
+						{item.fields.map((f) =>
+							renderField(f, f.key, item.install?.values?.[f.key]),
+						)}
 
 						{/* Advanced — raw Helm values */}
 						<Collapsible>

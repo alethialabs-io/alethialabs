@@ -9,13 +9,40 @@
 
 import { randomUUID } from "crypto";
 import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
+import { log } from "@/lib/observability/log";
 
 const HCLOUD_API = "https://api.hetzner.cloud/v1";
+
+const flog = log.child({ component: "fleet" });
+
+/** A non-2xx Hetzner API response, carrying the HTTP status + parsed error `code` so callers can
+ *  distinguish a retryable placement/capacity miss (412 / `resource_unavailable`) from a real fault. */
+export class HcloudApiError extends Error {
+	constructor(
+		readonly status: number,
+		readonly code: string | null,
+		message: string,
+	) {
+		super(message);
+		this.name = "HcloudApiError";
+	}
+}
 
 /** Resolved Hetzner + runner-image config for provisioning a fleet VM. */
 export interface HcloudConfig {
 	token: string;
-	serverType: string;
+	/**
+	 * Server-type preference list, tried in order until one PLACES. Prefer cheap ARM (`cax`) and
+	 * fall back to x86 (`cpx`) when ARM has no capacity — Hetzner ARM is chronically capacity-
+	 * constrained and is EU-only, so a single fixed type strands the whole fleet (`412 error during
+	 * placement`). The per-cloud runner images are multi-arch, so any type here can run the runner.
+	 */
+	serverTypes: string[];
+	/**
+	 * Locations tried (after the pool's requested location) when the requested one can't place any
+	 * server type — lets the fleet spill to a region that has capacity (incl. x86-only US DCs).
+	 */
+	fallbackLocations: string[];
 	image: string;
 	sshKeys: string[];
 	defaultImageTag: string;
@@ -52,7 +79,8 @@ export function hcloudConfigFromEnv(): HcloudConfig {
 	}
 	return {
 		token,
-		serverType: process.env.HCLOUD_SERVER_TYPE ?? "cax21",
+		serverTypes: resolveServerTypes(),
+		fallbackLocations: csv(process.env.HCLOUD_FALLBACK_LOCATIONS) ?? DEFAULT_FALLBACK_LOCATIONS,
 		image: process.env.HCLOUD_IMAGE ?? "ubuntu-24.04",
 		sshKeys: (process.env.HCLOUD_SSH_KEYS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 		defaultImageTag: process.env.FLEET_RUNNER_IMAGE_TAG ?? "latest",
@@ -72,6 +100,41 @@ export function hcloudConfigFromEnv(): HcloudConfig {
 /** Truthy-env helper (1/true/yes/on). */
 function envTrue(v: string | undefined): boolean {
 	return ["1", "true", "yes", "on"].includes((v ?? "").trim().toLowerCase());
+}
+
+/** Parse a comma-separated env list → trimmed non-empty items, or undefined if unset/empty. */
+function csv(v: string | undefined): string[] | undefined {
+	if (v === undefined) return undefined;
+	const items = v.split(",").map((s) => s.trim()).filter(Boolean);
+	return items.length ? items : undefined;
+}
+
+/** Default placement preference: cheap ARM first, x86 fallback. Both run the multi-arch runner image. */
+const DEFAULT_SERVER_TYPES = ["cax21", "cpx31"];
+/** Extra locations to spill into (after the pool's own) when the primary can't place any type. */
+const DEFAULT_FALLBACK_LOCATIONS = ["nbg1", "hel1", "ash", "hil"];
+/** Hetzner ARM (`cax*`) is EU-only — skip ARM types in non-EU DCs instead of a guaranteed 412. */
+const EU_LOCATIONS = new Set(["fsn1", "nbg1", "hel1"]);
+
+/** Resolve the server-type preference list from env, honouring the legacy single `HCLOUD_SERVER_TYPE`
+ *  by appending the x86 fallback so an existing deployment gains failover without a config change. */
+function resolveServerTypes(): string[] {
+	const explicit = csv(process.env.HCLOUD_SERVER_TYPES);
+	if (explicit) return dedupe(explicit);
+	const legacy = process.env.HCLOUD_SERVER_TYPE?.trim();
+	if (legacy) return dedupe([legacy, "cpx31"]);
+	return [...DEFAULT_SERVER_TYPES];
+}
+
+/** Order-preserving dedupe. */
+function dedupe(xs: string[]): string[] {
+	return [...new Set(xs)];
+}
+
+/** True for a Hetzner error that means "no capacity here, try elsewhere" (retryable placement). */
+function isPlacementError(err: unknown): boolean {
+	if (!(err instanceof HcloudApiError)) return false;
+	return err.status === 412 || err.code === "resource_unavailable";
 }
 
 /** The forward-proxy service name + port the runner (and its nested child) point HTTP(S)_PROXY at. */
@@ -245,7 +308,13 @@ runcmd:
 export function serverCreatePayload(
 	cfg: HcloudConfig,
 	project: FleetTarget,
-	opts: { name: string; location: string; version: string | null; bootstrapToken: string },
+	opts: {
+		name: string;
+		serverType: string;
+		location: string;
+		version: string | null;
+		bootstrapToken: string;
+	},
 ): Record<string, unknown> {
 	const labels: Record<string, string> = {
 		"alethia-managed": "true",
@@ -254,7 +323,7 @@ export function serverCreatePayload(
 	if (opts.version) labels["alethia-version"] = opts.version;
 	return {
 		name: opts.name,
-		server_type: cfg.serverType,
+		server_type: opts.serverType,
 		location: opts.location,
 		image: cfg.image,
 		ssh_keys: cfg.sshKeys,
@@ -362,15 +431,62 @@ class HcloudFleetProvider implements FleetProvider {
 			throw new Error("hcloud create requires a per-VM bootstrapToken (E0 0b)");
 		}
 		const name = `fleet-${project.provider}-${randomUUID().slice(0, 8)}`;
-		await this.api(
-			"POST",
-			"/servers",
-			serverCreatePayload(this.cfg, project, {
-				name,
-				location: opts.location,
-				version: opts.version,
-				bootstrapToken: opts.bootstrapToken,
-			}),
+		// Failsafe placement: try each server type (cheap ARM first, x86 fallback) across the pool's
+		// location then the fallback locations, until one PLACES. A `412 error during placement`
+		// (ARM/region out of capacity) advances to the next candidate; any other error is a real
+		// failure and aborts. First success wins — so a healthy pool with ARM capacity is unchanged,
+		// and a fleet only spills to x86/other DCs when it genuinely must.
+		const locations = dedupe([opts.location, ...this.cfg.fallbackLocations]);
+		const attempts: { serverType: string; location: string }[] = [];
+		for (const serverType of this.cfg.serverTypes) {
+			for (const location of locations) {
+				// Hetzner ARM is EU-only — don't burn a create round-trip on a guaranteed placement miss.
+				if (serverType.startsWith("cax") && !EU_LOCATIONS.has(location)) continue;
+				attempts.push({ serverType, location });
+			}
+		}
+		let lastPlacementErr: unknown = null;
+		for (let i = 0; i < attempts.length; i++) {
+			const { serverType, location } = attempts[i];
+			try {
+				await this.api(
+					"POST",
+					"/servers",
+					serverCreatePayload(this.cfg, project, {
+						name,
+						serverType,
+						location,
+						version: opts.version,
+						bootstrapToken: opts.bootstrapToken,
+					}),
+				);
+				if (i > 0) {
+					// Only log when we actually fell back — the "why this VM is x86/elsewhere" signal.
+					flog.warn("fleet placement fell back", {
+						provider: project.provider,
+						server_type: serverType,
+						location,
+						skipped: i,
+					});
+				}
+				flog.info("fleet VM created", {
+					provider: project.provider,
+					server_type: serverType,
+					location,
+				});
+				return;
+			} catch (err) {
+				if (isPlacementError(err)) {
+					lastPlacementErr = err;
+					continue; // no capacity for this type/location — try the next candidate
+				}
+				throw err; // real error (auth, bad ssh key, quota) — don't mask it
+			}
+		}
+		throw new Error(
+			`hcloud create: no capacity for ${project.provider} across ` +
+				`${this.cfg.serverTypes.join("/")} in ${locations.join("/")} ` +
+				`(last: ${lastPlacementErr instanceof Error ? lastPlacementErr.message : "placement failed"})`,
 		);
 	}
 
@@ -388,7 +504,17 @@ class HcloudFleetProvider implements FleetProvider {
 			body: body ? JSON.stringify(body) : undefined,
 		});
 		if (!res.ok) {
-			throw new Error(`hcloud ${method} ${path} → ${res.status}: ${await res.text()}`);
+			const text = await res.text();
+			let code: string | null = null;
+			try {
+				const parsed: unknown = JSON.parse(text);
+				if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.code === "string") {
+					code = parsed.error.code;
+				}
+			} catch {
+				// non-JSON body — leave code null, keep the raw text in the message
+			}
+			throw new HcloudApiError(res.status, code, `hcloud ${method} ${path} → ${res.status}: ${text}`);
 		}
 		return res.status === 204 ? null : res.json();
 	}

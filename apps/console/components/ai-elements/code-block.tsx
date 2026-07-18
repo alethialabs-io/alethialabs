@@ -1,5 +1,6 @@
 "use client";
 
+import { toError } from "@/lib/errors";
 import { Button } from "@repo/ui/button";
 import {
   Select,
@@ -58,23 +59,26 @@ const addKeysToTokens = (lines: ThemedToken[][]): KeyedLine[] =>
   }));
 
 // Token rendering component
-const TokenSpan = ({ token }: { token: ThemedToken }) => (
-  <span
-    className="dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)]"
-    style={
-      {
-        backgroundColor: token.bgColor,
-        color: token.color,
-        fontStyle: isItalic(token.fontStyle) ? "italic" : undefined,
-        fontWeight: isBold(token.fontStyle) ? "bold" : undefined,
-        textDecoration: isUnderline(token.fontStyle) ? "underline" : undefined,
-        ...token.htmlStyle,
-      } as CSSProperties
-    }
-  >
-    {token.content}
-  </span>
-);
+const TokenSpan = ({ token }: { token: ThemedToken }) => {
+  // shiki's htmlStyle carries `--shiki-*` custom properties, which aren't part of React's
+  // CSSProperties — so the style is typed as CSSProperties plus a `--*` index, not asserted.
+  const style: CSSProperties & Record<`--${string}`, string> = {
+    backgroundColor: token.bgColor,
+    color: token.color,
+    fontStyle: isItalic(token.fontStyle) ? "italic" : undefined,
+    fontWeight: isBold(token.fontStyle) ? "bold" : undefined,
+    textDecoration: isUnderline(token.fontStyle) ? "underline" : undefined,
+    ...token.htmlStyle,
+  };
+  return (
+    <span
+      className="dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)]"
+      style={style}
+    >
+      {token.content}
+    </span>
+  );
+};
 
 // Line number styles using CSS counters
 const LINE_NUMBER_CLASSES = cn(
@@ -175,7 +179,8 @@ const createRawTokens = (code: string): TokenizedCode => ({
           {
             color: "inherit",
             content: line,
-          } as ThemedToken,
+            offset: 0,
+          },
         ]
   ),
 });
@@ -484,7 +489,7 @@ export const CodeBlockCopyButton = ({
         );
       }
     } catch (error) {
-      onError?.(error as Error);
+      onError?.(toError(error));
     }
   }, [code, onCopy, onError, timeout, isCopied]);
 

@@ -233,7 +233,7 @@ describe("the card's panel — read-only, and joined by exact address", () => {
 		const env = envStatus();
 		const network = groups.find((g) => g.kind === "network");
 		env.components[`external:${network!.key}`].drift = [
-			{ address: "module.vpc.aws_vpc.this", type: "aws_vpc", kind: "managed" },
+			{ address: "module.vpc.aws_vpc.this", type: "aws_vpc", kind: "modified" },
 		];
 		renderPanel(env);
 

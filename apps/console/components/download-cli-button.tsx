@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { typedKeys } from "@/lib/typed-object";
 import { CopyButton } from "@repo/ui/copy-button";
 import { Button } from "@repo/ui/button";
 import {
@@ -69,7 +70,7 @@ export function DownloadCliButton() {
 
 				{/* OS selector */}
 				<div className="flex items-center gap-1 px-3 pt-3">
-					{(Object.keys(COMMANDS) as OS[]).map((key) => (
+					{typedKeys(COMMANDS).map((key) => (
 						<button
 							key={key}
 							type="button"

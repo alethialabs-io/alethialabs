@@ -10,6 +10,7 @@
 // or runner_id (those are unbounded — they live on SPANS and LOGS, not metric labels).
 
 import { type Attributes, metrics } from "@opentelemetry/api";
+import type { ProvisionJobType } from "@/lib/db/schema/enums";
 
 /** The provisioning outcome dimension — a fixed, low-cardinality set. */
 export type ProvisionOutcome = "success" | "fail" | "cancel";
@@ -119,7 +120,7 @@ export function recordClaimLatency(
  */
 export function recordProvision(args: {
 	provider: string | null | undefined;
-	jobType: string;
+	jobType: ProvisionJobType;
 	outcome: ProvisionOutcome;
 	seconds: number;
 }): void {

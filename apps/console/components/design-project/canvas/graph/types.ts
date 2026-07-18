@@ -2,10 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Edge, Node } from "@xyflow/react";
+import type { ChartWorkloadKind } from "@/lib/db/schema";
 import type { IacMember } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import type { VerifyReport } from "@/types/jsonb.types";
+import type {
+	ChartValuePathMap,
+	ChartWorkloadConfig,
+	ChartWorkloadRendered,
+	ServiceBinding,
+	VerifyReport,
+} from "@/types/jsonb.types";
 
 /**
  * Node kinds in the Milestone-2a canvas slice. "project" is the fixed root that
@@ -28,6 +35,7 @@ export type NodeKind =
 	| "service"
 	| "repositories"
 	| "chart"
+	| "chart_workload"
 	| "addon"
 	| "external";
 
@@ -54,6 +62,40 @@ export type ByoChartNodeConfig = {
 	scanStatus?: string;
 	/** The elench verify.Report over the chart's rendered manifests (null until scanned). */
 	scanReport?: VerifyReport | null;
+};
+
+/**
+ * A DESCRIBED chart workload (W5 Path A — Option B): one node per workload the owning BYO chart
+ * renders (`getProjectChartWorkloads` → `project_chart_workloads`). Out-of-band like `chart`, and
+ * DELIBERATELY NOT a `ProjectFormData["services"]` fragment — a described workload is read-mostly and
+ * can never enter the deploy path (the chart addon stays the single deploy unit). Two models, kept
+ * apart: this is the reason chart-workload nodes are visually and behaviorally distinct from the
+ * first-class `service` node.
+ *
+ * `rendered` is the immutable description (`helm template` output — env is KEY NAMES only, never a
+ * value), overwritten wholesale on every re-scan. `bindings`/`config`/`value_paths` are the user
+ * overlay, preserved across re-scans: bindings speak the W3 `ServiceBinding` vocabulary; config is the
+ * v1 editable `replicas`/`env`; value_paths maps a logical knob → the chart-values dot-path it writes
+ * to. The overlay reaches the running chart on Lane 2 (#664) at `resolveByoChartInstall`; this node
+ * only reads + stages it.
+ */
+export type ChartWorkloadNodeConfig = {
+	/** The `project_chart_workloads` row id. */
+	id: string;
+	/** The owning chart node's slug (`project_addons.addon_id`) — the parent `chart-${chartId}` node. */
+	chartId: string;
+	/** The rendered workload's metadata.name (unique within its chart). */
+	name: string;
+	/** Which workload kind the chart renders (deployment|statefulset|daemonset|cronjob|job). */
+	kind: ChartWorkloadKind;
+	/** Read-only description from the render — overwritten each scan. */
+	rendered: ChartWorkloadRendered;
+	/** W3 bindings to backing resources (user overlay, preserved across re-scans). */
+	bindings: ServiceBinding[];
+	/** Editable overlay: replicas + env (user overlay, preserved across re-scans). */
+	config: ChartWorkloadConfig;
+	/** Logical knob → chart-values dot-path (auto-inferred + user-overridable; preserved). */
+	valuePaths: ChartValuePathMap;
 };
 
 /**
@@ -108,6 +150,9 @@ export type NodeConfigMap = {
 	service: ProjectFormData["services"][number];
 	// Out-of-band (not a ProjectFormData fragment) — see ByoChartNodeConfig.
 	chart: ByoChartNodeConfig;
+	// Out-of-band (project_chart_workloads) — a workload DESCRIBED from a BYO chart; read-mostly,
+	// deliberately distinct from `service`. See ChartWorkloadNodeConfig.
+	chart_workload: ChartWorkloadNodeConfig;
 	// Out-of-band (project_addons) — a marketplace add-on the cluster comes up with.
 	addon: AddonNodeConfig;
 	// Out-of-band (project_iac_sources + the last plan) — see ExternalNodeConfig.
@@ -165,3 +210,20 @@ export type CanvasNodeData<K extends NodeKind = NodeKind> = {
 
 export type CanvasNode<K extends NodeKind = NodeKind> = Node<CanvasNodeData<K>>;
 export type CanvasEdge = Edge;
+
+/**
+ * The node with the given `id`/lookup narrowed to `kind`, or undefined when it is absent or of
+ * another kind. The one sanctioned seam for going from `CanvasNode | undefined` (what
+ * `store.nodes.find` yields) to `CanvasNode<K>`: `CanvasNodeData<K>` is a distributed mapped type,
+ * so TS can't prove a generic `data.kind === kind` compare narrows the `Node<…>` wrapper (nor that
+ * `CanvasNode<K>` is assignable back to `CanvasNode`, TS2677) — the same discriminated-union limit
+ * `buildNodeData` documents. Asserted once here so every caller stays cast-free.
+ */
+export function nodeOfKind<K extends NodeKind>(
+	node: CanvasNode | undefined,
+	kind: K,
+): CanvasNode<K> | undefined {
+	if (!node || node.data.kind !== kind) return undefined;
+	// @ts-expect-error distributed-union variance: the kind check narrows to CanvasNode<K> at runtime, but TS can't prove it for a generic K
+	return node;
+}

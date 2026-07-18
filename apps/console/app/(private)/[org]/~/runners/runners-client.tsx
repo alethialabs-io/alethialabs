@@ -6,8 +6,10 @@
 // stacks the warm Pools and the Versions changelog; the right column is the filterable,
 // paginated grid of runner cards. No eyebrow/title/KPI chrome — pools and runners show first.
 
+import { lookup } from "@/lib/typed-object";
 import { Button } from "@repo/ui/button";
 import { AddRunnerButton } from "@/components/runners/add-runner-button";
+import { ErrorState } from "@/components/errors/error-state";
 import { PoolCard, PoolCardSkeleton, PoolsEmpty } from "@/components/runners/pool-card";
 import { FleetPoolWizard } from "@/components/runners/fleet-pool-wizard";
 import { RunnerCard, RunnerCardSkeleton } from "@/components/runners/runner-card";
@@ -51,7 +53,12 @@ const RUNNER_JOB_TYPES = new Set<PublicProvisionJobType>([
 ]);
 
 export function RunnersClient() {
-	const { data: runnersData, isPending: isLoading } = useRunnersQuery();
+	const {
+		data: runnersData,
+		isPending: isLoading,
+		isError,
+		refetch,
+	} = useRunnersQuery();
 	const runners = runnersData?.runners ?? [];
 	// Deployment-mode + entitlement gating. Self-managed operators see everything; hosted tenants
 	// need the byoRunners entitlement (Pro+) for the runner surface, and never see managed pools.
@@ -169,7 +176,7 @@ export function RunnersClient() {
 			.map(([value, count]) => ({
 				value,
 				label:
-					value === "any" ? "Any" : (PROVIDER_LABELS[value as Provider] ?? value.toUpperCase()),
+					value === "any" ? "Any" : (lookup(PROVIDER_LABELS, value) ?? value.toUpperCase()),
 				count,
 			}));
 		const asOptions = (m: Map<string, number>, label: (v: string) => string): RunnerFacetOption[] =>
@@ -293,7 +300,18 @@ export function RunnersClient() {
 						versionOptions={facets.versions}
 					/>
 
-					{isLoading && runners.length === 0 ? (
+					{isError ? (
+						// A fetch failure must not render as "no runners".
+						<ErrorState
+							title="Couldn't load runners"
+							description="Something went wrong fetching your runners. Check your connection and try again."
+							actions={
+								<Button variant="outline" size="sm" onClick={() => refetch()}>
+									Retry
+								</Button>
+							}
+						/>
+					) : isLoading && runners.length === 0 ? (
 						<div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
 							{[1, 2, 3, 4].map((i) => (
 								<RunnerCardSkeleton key={i} />

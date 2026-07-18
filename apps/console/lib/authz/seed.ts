@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { typedKeys } from "@/lib/typed-object";
 import { notInArray, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { permission, role, rolePermission } from "@/lib/db/schema";
@@ -26,7 +27,7 @@ export async function seedAuthz(): Promise<void> {
 	seeded = true;
 
 	const db = getServiceDb();
-	const roleNames = Object.keys(BUILT_IN_ROLES) as BuiltInRole[];
+	const roleNames = typedKeys(BUILT_IN_ROLES);
 	const allKeys = PERMISSIONS.map((p) => p.key);
 
 	await db

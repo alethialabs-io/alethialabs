@@ -3,7 +3,11 @@
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
 
-import type { AlertSeverity } from "@/lib/db/schema/enums";
+import type {
+	AlertSeverity,
+	CloudProvider,
+	ProjectStatus,
+} from "@/lib/db/schema/enums";
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
@@ -241,13 +245,16 @@ export * from "@repo/support/types";
  * `drift.ResourceDrift` (packages/core/drift). Stored on `environment_drift.details`;
  * produced by a DETECT_DRIFT job's `tofu plan -refresh-only` → `drift.Analyze`.
  */
+/** How a resource diverged from state (mirrors the Go `drift.Kind`). */
+export type DriftResourceKind = "modified" | "deleted" | "other";
+
 export interface DriftDetail {
 	/** Terraform address of the drifted resource. */
 	address: string;
 	/** Resource type (e.g. aws_db_instance). */
 	type: string;
 	/** "modified" | "deleted" | "other" — how it diverged. */
-	kind: string;
+	kind: DriftResourceKind;
 }
 
 /**
@@ -543,7 +550,7 @@ export interface AuditChanges {
 
 export interface RunnerDeployConfig {
 	region: string;
-	cloud_provider: string;
+	cloud_provider: CloudProvider;
 	image_tag: string;
 	alethia_url: string;
 	cpu: number;
@@ -632,14 +639,45 @@ export interface ExecutionMetadata {
 	// snapshot. On a wiring hard-fail the runner posts a PARTIAL result carrying which step
 	// died; absent on pre-#574 jobs. Mirrors the Go `argocd.GitopsStatus`.
 	gitops_status?: GitopsStatusReport;
+	// CHART_SCAN jobs (W5 Path A — DESCRIBE): the chart's rendered workloads extracted from the
+	// helm-template render. An opaque wire payload — validated by lib/validations/chart-workloads.ts
+	// before reconcileChartWorkloads persists it into project_chart_workloads.
+	chart_workloads?: unknown;
 }
+
+/** ArgoCD Application/resource health (packages/core/argocd). ArgoCD's fixed health set. */
+export type ArgocdHealthStatus =
+	| "Healthy"
+	| "Progressing"
+	| "Degraded"
+	| "Suspended"
+	| "Missing"
+	| "Unknown";
+
+/** ArgoCD sync state (status.sync.status). ArgoCD's fixed sync set. */
+export type ArgocdSyncStatus = "Synced" | "OutOfSync" | "Unknown";
+
+/**
+ * The scan lifecycle shared by the chart-describe (CHART_SCAN) and IaC-safety (projectAddons)
+ * flows: `unscanned` → `scanning` → `done` | `failed`.
+ */
+export type ScanStatus = "unscanned" | "scanning" | "done" | "failed";
+
+/** Which GitOps wiring step died (packages/core/argocd `GitopsStatus.FailedStep`). */
+export type GitopsFailedStep =
+	| "argocd_install"
+	| "git_token"
+	| "repo_credentials"
+	| "templates_missing"
+	| "render"
+	| "apply";
 
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
 // {Healthy, Progressing, Degraded, Suspended, Missing, Unknown}; sync ∈ {Synced, OutOfSync,
 // Unknown}.
 export interface AddOnStatusEntry {
-	health: string;
-	sync: string;
+	health: ArgocdHealthStatus;
+	sync: ArgocdSyncStatus;
 }
 
 /**
@@ -659,7 +697,7 @@ export interface GitopsStatusReport {
 	revision?: string;
 	/** Which wiring step died: argocd_install | git_token | repo_credentials |
 	 *  templates_missing | render | apply. Absent ⇒ the wiring did not fail. */
-	failed_step?: string;
+	failed_step?: GitopsFailedStep;
 	/** The wiring failure message, token-sanitized at the source (Go). */
 	error?: string;
 	/** The whole apps Application's aggregate health/sync — the honest fallback row. */
@@ -667,14 +705,17 @@ export interface GitopsStatusReport {
 	/** Per-workload health from the apps Application's resources, keyed by name.
 	 *  Empty = unreadable (an honest unknown), NOT "no services". */
 	services?: Record<string, GitopsServiceHealth>;
+	/** Non-fatal manifest-generation warnings (skipped service, unresolved binding endpoint,
+	 *  unsatisfiable credential facet). No secret values — names only (Go `ManifestWarnings`). */
+	manifest_warnings?: string[];
 }
 
 /** One workload's ArgoCD resource status inside the apps Application (Go `argocd.ServiceHealth`):
  *  health/sync plus ArgoCD's per-resource health message ("Deployment exceeded its progress
  *  deadline…"); empty when healthy. */
 export interface GitopsServiceHealth {
-	health: string;
-	sync: string;
+	health: ArgocdHealthStatus;
+	sync: ArgocdSyncStatus;
 	message?: string;
 }
 
@@ -695,7 +736,7 @@ export interface SecurityReport {
 export interface DriftResource {
 	address: string;
 	type: string;
-	kind: "modified" | "deleted" | "other";
+	kind: DriftResourceKind;
 }
 
 export interface DriftPosture {
@@ -1068,9 +1109,9 @@ export interface DashboardSpec {
  */
 export interface BreakglassActionInput {
 	/** unstick_env: the explicit CAS precondition — the env must currently be in one of these. */
-	expectedFrom?: string[];
+	expectedFrom?: ProjectStatus[];
 	/** unstick_env: the target status to move the env to (the CAS `to`). */
-	to?: string;
+	to?: ProjectStatus;
 	/** force_release_state_lock / state_surgery: the tofu state object key. */
 	stateKey?: string;
 	/** drain_runner / restart_runner: the fleet-action "why" reason token echoed to the ledger. */

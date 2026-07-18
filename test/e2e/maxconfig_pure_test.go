@@ -128,7 +128,7 @@ func awsMaxConfigTfvars(t *testing.T, skip string) map[string]any {
 // maxConfigPCExcept applies every kind except `skip` (empty = all), leaving the skipped kind's field
 // at its zero value.
 func maxConfigPCExcept(provider, skip string) *types.ProjectConfig {
-	pc := &types.ProjectConfig{Provider: provider}
+	pc := &types.ProjectConfig{Provider: types.CloudProvider(provider)}
 	for _, k := range MaxConfigKinds {
 		if k.Kind == skip {
 			continue

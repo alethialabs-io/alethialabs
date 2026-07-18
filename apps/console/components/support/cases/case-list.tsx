@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { coerceEnum } from "@/lib/coerce";
 import { Button } from "@repo/ui/button";
 import {
 	Empty,
@@ -17,11 +18,13 @@ import { LifeBuoy } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { listMyCases } from "@/app/server/actions/support";
+import { ErrorState } from "@/components/errors/error-state";
 import { qk } from "@/lib/query/keys";
 import { CaseListItem } from "./case-list-item";
 
 /** The status buckets surfaced as tabs; "all" maps to no server filter. */
-type CaseFilter = "all" | "active" | "resolved";
+const CASE_FILTERS = ["all", "active", "resolved"] as const;
+type CaseFilter = (typeof CASE_FILTERS)[number];
 
 /**
  * The support case list. Reads the server-prefetched/hydrated `listMyCases` cache and lets
@@ -39,7 +42,12 @@ export function CaseList({
 }) {
 	const [filter, setFilter] = useState<CaseFilter>("all");
 
-	const { data: cases = [], isPending } = useQuery({
+	const {
+		data: cases = [],
+		isPending,
+		isError,
+		refetch,
+	} = useQuery({
 		queryKey: qk.supportCases(filter),
 		queryFn: () =>
 			listMyCases(filter === "all" ? {} : { status: filter }),
@@ -54,7 +62,7 @@ export function CaseList({
 			)}
 			<Tabs
 				value={filter}
-				onValueChange={(v) => setFilter(v as CaseFilter)}
+				onValueChange={(v) => setFilter(coerceEnum(v, CASE_FILTERS, "all"))}
 			>
 				<TabsList>
 					<TabsTrigger value="all">All</TabsTrigger>
@@ -63,7 +71,18 @@ export function CaseList({
 				</TabsList>
 			</Tabs>
 
-			{cases.length === 0 && !isPending ? (
+			{isError ? (
+				// A fetch failure must not render as "no cases yet".
+				<ErrorState
+					title="Couldn't load your cases"
+					description="Something went wrong fetching your support cases. Check your connection and try again."
+					actions={
+						<Button variant="outline" size="sm" onClick={() => refetch()}>
+							Retry
+						</Button>
+					}
+				/>
+			) : cases.length === 0 && !isPending ? (
 				<Empty className="rounded-md border">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">

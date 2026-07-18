@@ -16,9 +16,17 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	cacheEngine,
+	chartWorkloadKind,
 	cloudProvider,
+	environmentStage,
+	nosqlCapacityMode,
+	nosqlKeyType,
+	nosqlTableType,
+	projectStatus,
 	provisionJobStatus,
 	provisionJobType,
+	serviceWorkloadType,
 } from "@/lib/db/schema/enums";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +56,14 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "JobType", dbName: "provision_job_type", values: provisionJobType.enumValues },
 	{ typeName: "JobStatus", dbName: "provision_job_status", values: provisionJobStatus.enumValues },
 	{ typeName: "CloudProvider", dbName: "cloud_provider", values: cloudProvider.enumValues },
+	{ typeName: "EnvironmentStage", dbName: "environment_stage", values: environmentStage.enumValues },
+	{ typeName: "ProjectStatus", dbName: "project_status", values: projectStatus.enumValues },
+	{ typeName: "ServiceWorkloadType", dbName: "service_workload_type", values: serviceWorkloadType.enumValues },
+	{ typeName: "ChartWorkloadKind", dbName: "chart_workload_kind", values: chartWorkloadKind.enumValues },
+	{ typeName: "NosqlKeyType", dbName: "nosql_key_type", values: nosqlKeyType.enumValues },
+	{ typeName: "NosqlTableType", dbName: "nosql_table_type", values: nosqlTableType.enumValues },
+	{ typeName: "NosqlCapacityMode", dbName: "nosql_capacity_mode", values: nosqlCapacityMode.enumValues },
+	{ typeName: "CacheEngine", dbName: "cache_engine", values: cacheEngine.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {

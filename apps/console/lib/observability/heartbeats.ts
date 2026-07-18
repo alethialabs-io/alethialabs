@@ -62,27 +62,27 @@ export interface LoopHeartbeat {
 /** Default: DEGRADED after 3 missed intervals without a success. */
 const DEFAULT_DEGRADED_MULTIPLIER = 3;
 
-const globalForHeartbeats = globalThis as unknown as {
-	__alethiaLoopHeartbeats?: Map<string, LoopHeartbeat>;
+declare global {
+	var __alethiaLoopHeartbeats: Map<string, LoopHeartbeat> | undefined;
 	/** Per-loop episode latch: true while we've already alerted for the current degraded episode. */
-	__alethiaLoopAlerted?: Map<string, boolean>;
+	var __alethiaLoopAlerted: Map<string, boolean> | undefined;
 	/** The independent watcher interval (drives evaluateHeartbeatAlerts), separate from any loop. */
-	__alethiaHeartbeatWatcher?: ReturnType<typeof setInterval>;
-};
+	var __alethiaHeartbeatWatcher: ReturnType<typeof setInterval> | undefined;
+}
 
 /** How often the independent watcher evaluates every loop's liveness (drives the degraded alerts). */
 const WATCHER_INTERVAL_MS = 30_000;
 
 /** The shared registry (one entry per loop id), on globalThis so it survives HMR + is process-wide. */
 function registry(): Map<string, LoopHeartbeat> {
-	globalForHeartbeats.__alethiaLoopHeartbeats ??= new Map();
-	return globalForHeartbeats.__alethiaLoopHeartbeats;
+	globalThis.__alethiaLoopHeartbeats ??= new Map();
+	return globalThis.__alethiaLoopHeartbeats;
 }
 
 /** The degraded-episode latch map (drives one-alert-per-episode throttling). */
 function alertLatch(): Map<string, boolean> {
-	globalForHeartbeats.__alethiaLoopAlerted ??= new Map();
-	return globalForHeartbeats.__alethiaLoopAlerted;
+	globalThis.__alethiaLoopAlerted ??= new Map();
+	return globalThis.__alethiaLoopAlerted;
 }
 
 /**
@@ -203,8 +203,8 @@ export function ageMsOf(hb: LoopHeartbeat, now: Date = new Date()): number | nul
  * across HMR/instances; each pass is wrapped so it can never become an unhandled rejection.
  */
 export function startHeartbeatWatcher(intervalMs = WATCHER_INTERVAL_MS): void {
-	if (globalForHeartbeats.__alethiaHeartbeatWatcher) return;
-	globalForHeartbeats.__alethiaHeartbeatWatcher = setInterval(() => {
+	if (globalThis.__alethiaHeartbeatWatcher) return;
+	globalThis.__alethiaHeartbeatWatcher = setInterval(() => {
 		try {
 			evaluateHeartbeatAlerts(new Date());
 		} catch (err) {

@@ -78,7 +78,7 @@ func newLocalProjectConfig(project, env string) *types.ProjectConfig {
 	return &types.ProjectConfig{
 		ID:               "e2e-" + env,
 		ProjectName:      project,
-		EnvironmentStage: env,
+		EnvironmentStage: types.EnvironmentStage(env),
 		Region:           "local",
 	}
 }

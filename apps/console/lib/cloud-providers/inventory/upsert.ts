@@ -34,7 +34,7 @@ export function sealSensitive(attrs: CloudSensitiveAttrs): string | null {
 export function openSensitive(sealed: string | null | undefined): CloudSensitiveAttrs {
 	if (!sealed) return {};
 	try {
-		return decryptSecret(JSON.parse(sealed) as EncryptedSecret) as CloudSensitiveAttrs;
+		return decryptSecret(JSON.parse(sealed));
 	} catch {
 		return {};
 	}

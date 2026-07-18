@@ -7,10 +7,13 @@ import {
 	runnerStateKey,
 	stateKeyForJob,
 } from "@/lib/storage/tofu-state";
+import type { ProvisionJobType } from "@/lib/db/schema";
 
 const RUNNER_UUID = "a1b2c3d4-e5f6-4890-abcd-ef1234567890";
 
-function job(overrides: Partial<Parameters<typeof stateKeyForJob>[0]>) {
+type JobArg = Parameters<typeof stateKeyForJob>[0];
+
+function job(overrides: Partial<JobArg>): JobArg {
 	return {
 		job_type: "DEPLOY",
 		project_id: null,
@@ -33,7 +36,7 @@ describe("stateKeyForJob", () => {
 		expect("error" in r && r.status).toBe(400);
 	});
 
-	it.each(["DEPLOY_RUNNER", "UPDATE_RUNNER", "DESTROY_RUNNER"])(
+	it.each<ProvisionJobType>(["DEPLOY_RUNNER", "UPDATE_RUNNER", "DESTROY_RUNNER"])(
 		"keys %s by the target runner UUID from config_snapshot",
 		(job_type) => {
 			const r = stateKeyForJob(

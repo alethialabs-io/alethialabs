@@ -445,16 +445,16 @@ func hasGlobalTables(tables []types.ProjectNosqlConfig) bool {
 func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[string]interface{} {
 	result := []map[string]interface{}{}
 	for _, t := range tables {
-		if t.TableType != tableType {
+		if string(t.TableType) != tableType {
 			continue
 		}
 		entry := map[string]interface{}{
 			"table_name_suffix":             t.Name,
 			"hash_key":                      t.PartitionKey,
-			"hash_key_type":                 orDefault(t.PartitionKeyType, "S"),
+			"hash_key_type":                 orDefault(string(t.PartitionKeyType), "S"),
 			"range_key":                     t.SortKey,
-			"range_key_type":                orDefault(t.SortKeyType, "S"),
-			"billing_mode":                  ddbCapacityMode(t.CapacityMode),
+			"range_key_type":                orDefault(string(t.SortKeyType), "S"),
+			"billing_mode":                  ddbCapacityMode(string(t.CapacityMode)),
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
 		}
 		result = append(result, entry)

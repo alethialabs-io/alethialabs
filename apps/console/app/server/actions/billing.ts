@@ -27,6 +27,7 @@ import { creditPack } from "@/lib/billing/ai-credits";
 import {
 	AI_SESSION_WINDOW_MS,
 	type AiTier,
+	type AiPlanContext,
 	aiTierSpec,
 	effectiveAiTierSpec,
 	resolveAiPlan,
@@ -411,8 +412,8 @@ const AI_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
-	const plan = await resolveAiPlan(actor.orgId).catch(() => ({
-		tier: "ai_free" as AiTier,
+	const plan = await resolveAiPlan(actor.orgId).catch((): AiPlanContext => ({
+		tier: "ai_free",
 		hardCap: false,
 		orgWeeklyCapCredits: null,
 		perUserWeeklyCapCredits: null,

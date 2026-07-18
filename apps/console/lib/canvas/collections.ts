@@ -12,6 +12,8 @@
 // graphToForm, the staged-change diff, drift attribution, and per-component status all keep working
 // exactly as before — a collection is a rendering decision, not a data model.
 
+import { isEnumMember } from "@/lib/coerce";
+import { typedKeys, typedValues } from "@/lib/typed-object";
 import type { Node, XYPosition } from "@xyflow/react";
 import {
 	NODE_REGISTRY,
@@ -24,9 +26,7 @@ import type {
 import type { NodeStatusState } from "./node-status";
 
 /** The kinds that collapse into a single card. Derived from the registry — never hand-listed. */
-export const COLLECTION_KINDS: NodeKind[] = (
-	Object.values(NODE_REGISTRY) as NodeKindDef[]
-)
+export const COLLECTION_KINDS: NodeKind[] = typedValues(NODE_REGISTRY)
 	.filter((def) => def.collection)
 	.map((def) => def.kind);
 
@@ -43,8 +43,9 @@ export function collectionNodeId(kind: NodeKind): string {
 /** The kind behind a collection id, or null when the id isn't one. */
 export function kindFromCollectionId(id: string): NodeKind | null {
 	if (!id.startsWith("collection:")) return null;
-	const kind = id.slice("collection:".length) as NodeKind;
-	return kind in NODE_REGISTRY && isCollectionKind(kind) ? kind : null;
+	const kind = id.slice("collection:".length);
+	if (!isEnumMember(kind, typedKeys(NODE_REGISTRY))) return null;
+	return isCollectionKind(kind) ? kind : null;
 }
 
 /**

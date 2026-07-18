@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
+import { coerceEnum } from "@/lib/coerce";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { Button } from "@repo/ui/button";
 import {
@@ -53,6 +54,8 @@ const PROVIDER_HOSTS: Record<string, PublicGitProvider> = {
 
 /** Maps a saved repo URL to its git provider by exact host match; null for
  *  non-URLs (e.g. an `owner/repo` slug) or unrecognized hosts. */
+const GIT_PROVIDERS = ["github", "bitbucket", "gitlab"] as const satisfies readonly PublicGitProvider[];
+
 function providerFromRepoUrl(url: string): PublicGitProvider | null {
 	try {
 		const host = new URL(url).hostname.toLowerCase();
@@ -135,13 +138,13 @@ export function RepositorySelector({
 				if (detected) initialProvider = detected;
 
 				if (providers.includes(initialProvider)) {
-					setSelectedProvider(initialProvider as PublicGitProvider);
+					setSelectedProvider(initialProvider);
 					await fetchRepositories(
-						initialProvider as PublicGitProvider,
+						initialProvider,
 					);
 				} else {
-					setSelectedProvider(providers[0] as PublicGitProvider);
-					await fetchRepositories(providers[0] as PublicGitProvider);
+					setSelectedProvider(providers[0]);
+					await fetchRepositories(providers[0]);
 				}
 			}
 		} catch (err) {
@@ -347,7 +350,7 @@ export function RepositorySelector({
 					<Select
 						value={selectedProvider || ""}
 						onValueChange={(val) =>
-							handleProviderChange(val as PublicGitProvider)
+							handleProviderChange(coerceEnum(val, GIT_PROVIDERS, "github"))
 						}
 					>
 						<SelectTrigger className="w-[50px] shrink-0 rounded-none border-0 border-r bg-muted/20 focus:ring-0 focus:ring-offset-0 justify-center px-0">

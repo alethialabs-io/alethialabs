@@ -114,7 +114,7 @@ function ValueRow({
 
 /** The "coverage by resource kind" panel for the selected dimension (lazy). */
 function CoverageByKind({ dim }: { dim: DimensionDTO }) {
-	const { data, isPending } = useQuery({
+	const { data, isPending, isError, refetch } = useQuery({
 		queryKey: ["classification", "dimension-breakdown", dim.id],
 		queryFn: () => getDimensionResourceBreakdown(dim.id),
 	});
@@ -152,6 +152,20 @@ function CoverageByKind({ dim }: { dim: DimensionDTO }) {
 				<div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
 					<Skeleton className="h-4 w-full" />
 					<Skeleton className="h-4 w-full" />
+				</div>
+			) : isError ? (
+				// A fetch failure must not read as an empty breakdown for a dimension that IS applied.
+				<div className="flex items-center gap-2">
+					<span className="font-mono text-[11px] text-text-tertiary">
+						Couldn&apos;t load the breakdown.
+					</span>
+					<button
+						type="button"
+						onClick={() => void refetch()}
+						className="font-mono text-[11px] text-text-primary underline-offset-2 hover:underline"
+					>
+						Retry
+					</button>
 				</div>
 			) : (
 				<div className="grid grid-cols-1 gap-x-[26px] gap-y-2.5 sm:grid-cols-2">

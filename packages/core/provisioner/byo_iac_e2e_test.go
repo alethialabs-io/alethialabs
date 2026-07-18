@@ -332,7 +332,7 @@ func TestE2EByoIacLifecycleKind(t *testing.T) {
 	vc := &types.ProjectConfig{
 		ID:               "byo-" + env,
 		ProjectName:      "byoiac",
-		EnvironmentStage: env,
+		EnvironmentStage: types.EnvironmentStage(env),
 		Region:           "local",
 		IacSource: &types.ProjectIacSourceConfig{
 			RepoURL:   repoURL,
@@ -341,7 +341,7 @@ func TestE2EByoIacLifecycleKind(t *testing.T) {
 			CommitSHA: pinnedSHA, // what the scan pinned — NOT the moving ref
 		},
 	}
-	clusterName := vc.ProjectName + "-" + vc.EnvironmentStage
+	clusterName := vc.ProjectName + "-" + string(vc.EnvironmentStage)
 	rs := startRecordingStateServer(t)
 	logw := tLogWriter{t}
 
@@ -533,7 +533,7 @@ output "pwned" {
 	rsA := startRecordingStateServer(t)
 	envA := "toctou" + shortID(t)
 	vcA := &types.ProjectConfig{
-		ID: "byo-" + envA, ProjectName: "byotoctou", EnvironmentStage: envA, Region: "local",
+		ID: "byo-" + envA, ProjectName: "byotoctou", EnvironmentStage: types.EnvironmentStage(envA), Region: "local",
 		IacSource: &types.ProjectIacSourceConfig{
 			RepoURL: repoURL, Ref: branch, Path: moduleSub, CommitSHA: pinnedSHA,
 		},
@@ -569,7 +569,7 @@ output "pwned" {
 	rsB := startRecordingStateServer(t)
 	envB := "moved" + shortID(t)
 	vcB := &types.ProjectConfig{
-		ID: "byo-" + envB, ProjectName: "byomoved", EnvironmentStage: envB, Region: "local",
+		ID: "byo-" + envB, ProjectName: "byomoved", EnvironmentStage: types.EnvironmentStage(envB), Region: "local",
 		IacSource: &types.ProjectIacSourceConfig{
 			RepoURL: repoURL, Ref: branch, Path: moduleSub, CommitSHA: movedSHA,
 		},

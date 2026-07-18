@@ -77,6 +77,25 @@ describe("assembleGitopsDeployStatus", () => {
 		expect(s.dataServices.map((r) => r.name)).toEqual(["cache-main", "db-primary"]);
 	});
 
+	it("surfaces the latest deploy's manifest_warnings (defaults to none)", () => {
+		// #717: manifest-generation warnings (unresolved binding, skipped service, unsatisfiable
+		// credential) ride the deploy snapshot so the Deploy tab can explain a misconfigured service.
+		expect(assembleGitopsDeployStatus(BASE).warnings).toEqual([]);
+		const s = assembleGitopsDeployStatus({
+			...BASE,
+			deployJob: successDeploy({
+				gitops: {
+					mode: "gitops",
+					manifest_warnings: [
+						'binding facet "endpoint" (env DB_HOST) for api→database/orders-db could not be resolved — env omitted',
+					],
+				},
+			}),
+		});
+		expect(s.warnings).toHaveLength(1);
+		expect(s.warnings[0]).toContain("DB_HOST");
+	});
+
 	it("failed wiring: banner facts set, services Unknown — never a stale pass", () => {
 		const s = assembleGitopsDeployStatus({
 			...BASE,
@@ -218,6 +237,14 @@ describe("gitopsStatusReportSchema", () => {
 			argocd_app: "apps",
 			failed_step: "repo_credentials",
 			error: "failed to apply repo credentials: exit 1",
+		});
+		expect(parsed.success).toBe(true);
+	});
+
+	it("parses manifest_warnings (#717)", () => {
+		const parsed = gitopsStatusReportSchema.safeParse({
+			mode: "gitops",
+			manifest_warnings: ["api: repo-sourced service not built yet (resolved_image empty)"],
 		});
 		expect(parsed.success).toBe(true);
 	});

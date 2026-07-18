@@ -7,6 +7,7 @@
 // applied by the runner on the next DEPLOY (managed mode renders an ArgoCD Application); this
 // layer only persists intent + the tuned knobs into project_addons.
 
+import { asRecord } from "@/lib/records";
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
@@ -19,7 +20,7 @@ import {
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
-import { encryptAddonSecrets } from "@/lib/addons/secrets";
+import { mergeAddonSecrets, redactAddonSecrets } from "@/lib/addons/secrets";
 import type {
 	AddOnCategory,
 	AddOnField,
@@ -128,7 +129,8 @@ export async function getProjectAddons(
 			? {
 					enabled: row.enabled,
 					mode: row.mode,
-					values: row.values ?? {},
+					// Secrets redacted for the client — a set/unset marker, never the stored ciphertext.
+					values: redactAddonSecrets(def, row.values ?? {}),
 					valuesYaml: row.values_yaml,
 					status: row.status,
 					health: row.health,
@@ -182,13 +184,6 @@ export async function enableAddon(input: {
 	if (!parsed.success) {
 		throw new Error(`Invalid add-on configuration: ${parsed.error.message}`);
 	}
-	// Encrypt any secret-typed knob (e.g. a provider API token) before it touches the DB — the
-	// value is stored as an EncryptedSecret envelope, never plaintext (W4). Decrypted server-side
-	// only, in resolveAddOnInstall, when the deploy snapshot is assembled.
-	const storedValues: AddOnValues = encryptAddonSecrets(
-		def,
-		parsed.data as AddOnValues,
-	);
 	// Validate the raw YAML override parses to a mapping (reject a scalar/list/garbage here).
 	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
@@ -203,6 +198,26 @@ export async function enableAddon(input: {
 	const mode: AddonMode = input.mode ?? "managed";
 
 	await withOwnerScope(actor.userId, async (tx) => {
+		// Encrypt secret knobs before they touch the DB (stored as EncryptedSecret, never plaintext —
+		// W4), PRESERVING any secret the user left blank: the row is replaced wholesale, so without
+		// this a reconfigure of other knobs would wipe a set secret. Read the existing envelopes and
+		// carry them forward for untouched secrets (mergeAddonSecrets).
+		const [existing] = await tx
+			.select({ values: projectAddons.values })
+			.from(projectAddons)
+			.where(
+				and(
+					eq(projectAddons.project_id, input.projectId),
+					eq(projectAddons.environment_id, envId),
+					eq(projectAddons.addon_id, def.id),
+				),
+			)
+			.limit(1);
+		const storedValues: AddOnValues = mergeAddonSecrets(
+			def,
+			asRecord(parsed.data),
+			existing?.values ?? null,
+		);
 		await tx
 			.insert(projectAddons)
 			.values({

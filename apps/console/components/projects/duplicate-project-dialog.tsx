@@ -14,6 +14,7 @@ import {
 	Info,
 	Loader2,
 } from "lucide-react";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -147,7 +148,9 @@ export function DuplicateProjectDialog({
 					allIdentities.filter(
 						(i) =>
 							i.provider !== summary.provider &&
-							TARGET_PROVIDERS.includes(i.provider as CloudProviderSlug),
+							// `.some(===)` compares the identity's CloudProvider against the
+							// CloudProviderSlug targets without a cast (the slugs derive from the enum).
+							TARGET_PROVIDERS.some((t) => t === i.provider),
 					),
 				);
 			} catch {
@@ -161,8 +164,11 @@ export function DuplicateProjectDialog({
 		};
 	}, [open, sourceProjectId, reset]);
 
-	const targetProvider = identities.find((i) => i.id === selectedIdentityId)
-		?.provider as CloudProviderSlug | undefined;
+	const targetIdentity = identities.find((i) => i.id === selectedIdentityId);
+	const targetProvider =
+		targetIdentity && isCloudProviderSlug(targetIdentity.provider)
+			? targetIdentity.provider
+			: undefined;
 
 	/** Submits the duplication request and shows the conversion result. */
 	async function handleDuplicate() {

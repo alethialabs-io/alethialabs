@@ -7,6 +7,15 @@
 // read-only — HITL/canvas/job-queuing tools never leak to a customer's agent.
 
 import { describe, expect, it, vi } from "vitest";
+import { tool } from "ai";
+import { z } from "zod";
+
+/** A minimal real AI-SDK tool — the projection is value-agnostic, so one stub covers every slot. */
+const stubTool = tool({
+	description: "stub",
+	inputSchema: z.object({}),
+	execute: async () => ({}),
+});
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/app/server/actions/aws/identities");
@@ -126,10 +135,10 @@ describe("tool audience registry", () => {
 
 	it("externalToolsOnly filters a synthetic tool set", () => {
 		const set = {
-			list_projects: 1,
-			propose_operation: 2,
-			get_job: 3,
-			scan_repo: 4,
+			list_projects: stubTool,
+			propose_operation: stubTool,
+			get_job: stubTool,
+			scan_repo: stubTool,
 		};
 		expect(Object.keys(externalToolsOnly(set)).sort()).toEqual([
 			"get_job",

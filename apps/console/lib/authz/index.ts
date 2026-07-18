@@ -29,14 +29,16 @@ export {
 export type { Action, BuiltInRole, PermissionKey, Resource } from "./registry";
 export { getEntitlements } from "./entitlements";
 
-const globalForPdp = globalThis as unknown as { __alethiaPdp?: Pdp };
+declare global {
+	var __alethiaPdp: Pdp | undefined;
+}
 
 /** The active PDP — the enterprise engine if registered, else community PostgresRbacPDP. */
 export function getPdp(): Pdp {
 	const ee = getEnterprise()?.pdp;
 	if (ee) return ee;
-	if (!globalForPdp.__alethiaPdp) {
-		globalForPdp.__alethiaPdp = new PostgresRbacPDP();
+	if (!globalThis.__alethiaPdp) {
+		globalThis.__alethiaPdp = new PostgresRbacPDP();
 	}
-	return globalForPdp.__alethiaPdp;
+	return globalThis.__alethiaPdp;
 }

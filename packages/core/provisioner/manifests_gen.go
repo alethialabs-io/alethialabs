@@ -26,9 +26,15 @@ import (
 // digest URI) or its prebuilt Source.Image — never a fabricated ":latest" (which the
 // elench verify gate fails). Unrenderable services (unbuilt, or a workload type without a
 // template yet) are reported to stdout, not silently dropped.
-func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{}, token string, stdout, stderr io.Writer) error {
+//
+// Returns `warnings`: non-fatal manifest-generation issues (a skipped service, an unresolved
+// binding endpoint, an unsatisfiable credential facet) that the caller attaches to GitopsStatus so
+// the console surfaces them — the render we deploy IS authoritative here, so these explain why a
+// service may boot misconfigured. A bring-your-own manifests repo returns no warnings: the
+// customer's manifests own the deploy, so our render (and its warnings) don't apply.
+func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{}, token string, stdout, stderr io.Writer) (warnings []string, err error) {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
-		return nil
+		return nil, nil
 	}
 	// Normalize the tofu outputs to string values so the pure renderer can resolve a service's
 	// W3 binding endpoints (a database's endpoint, etc.) into concrete env values.
@@ -39,54 +45,57 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 		}
 	}
 	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
-		Domain:  vc.DNS.DomainName,
-		Outputs: strOutputs,
+		Domain:   vc.DNS.DomainName,
+		Outputs:  strOutputs,
+		Provider: string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
 	})
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
 	}
+	warnings = append(warnings, skipped...)
 	if len(apps) == 0 {
-		return nil // no renderable services to scaffold
+		return warnings, nil // no renderable services to scaffold (but report why they were skipped)
 	}
 
 	dir, err := os.MkdirTemp("", "alethia-apps-*")
 	if err != nil {
-		return err
+		return warnings, err
 	}
 	defer os.RemoveAll(dir)
 
 	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
 	if err := repo.Clone("", false); err != nil {
-		return fmt.Errorf("clone apps repo: %w", err)
+		return warnings, fmt.Errorf("clone apps repo: %w", err)
 	}
 
 	if hasManifests(dir) {
 		fmt.Fprintf(stdout, "Apps repo already contains manifests — leaving it untouched (bring-your-own).\n")
-		return nil
+		return nil, nil // BYO owns the manifests; our render + its warnings don't apply
 	}
 
 	written, err := manifests.WriteManifests(dir, apps)
 	if err != nil {
-		return err
+		return warnings, err
 	}
 	// W3 — the keyless credential last hop: for each service's credential-facet bindings, write an
 	// ExternalSecret alongside the app manifests. ArgoCD applies it; ESO (via the per-cloud
 	// ClusterSecretStore) materializes the k8s Secret the workload's secretKeyRef reads. The Secret
 	// name matches BindingSecretName(s.Name, target) — exactly the secretKeyRef.name the renderer
 	// emitted for this service (per-service, so no two ExternalSecrets fight over one Secret).
-	esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, stdout)
+	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, stdout)
 	if err != nil {
-		return err
+		return warnings, err
 	}
+	warnings = append(warnings, esSkips...)
 	if err := repo.AddAndCommit("chore: scaffold app manifests (alethia)"); err != nil {
-		return fmt.Errorf("commit generated manifests: %w", err)
+		return warnings, fmt.Errorf("commit generated manifests: %w", err)
 	}
 	if err := repo.Push(); err != nil {
-		return fmt.Errorf("push generated manifests: %w", err)
+		return warnings, fmt.Errorf("push generated manifests: %w", err)
 	}
 	fmt.Fprintf(stdout, "Scaffolded %d app manifest(s)%s into the GitOps repo: %s\n",
 		len(written), esCountSuffix(esCount), strings.Join(written, ", "))
-	return nil
+	return warnings, nil
 }
 
 // appNamespace is the namespace both the generated Deployments (via App.normalize's default) and
@@ -118,40 +127,41 @@ func credentialSecretOutputKey(kind string) string {
 // writes it into dir (alongside the app manifests) for ArgoCD to apply. It passes ServiceName:
 // s.Name so the materialized Secret's name equals the renderer's per-service secretKeyRef target.
 // Unsatisfiable facets (no store for the cloud, no provisioned secret, a facet the secret lacks)
-// are reported to stdout, never dropped silently. Returns the count written.
-func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, stdout io.Writer) (int, error) {
-	count := 0
+// are reported to stdout AND returned as `skips`, never dropped silently. Returns those skip reasons
+// + the count written. The skip reasons carry no secret values (facet/kind/provider names only).
+func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, stdout io.Writer) (skips []string, count int, err error) {
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
 			facets := manifests.CredentialFacetNames(b)
 			if len(facets) == 0 {
 				continue // endpoint/port-only binding needs no Secret
 			}
-			yaml, skipped, err := manifests.RenderExternalSecret(manifests.ExternalSecretParams{
+			yaml, skipped, renderErr := manifests.RenderExternalSecret(manifests.ExternalSecretParams{
 				ServiceName: s.Name,
 				Namespace:   appNamespace,
 				Target:      b.Target,
-				Provider:    vc.Provider,
+				Provider:    string(vc.Provider),
 				RemoteKey:   outputs[credentialSecretOutputKey(b.Target.Kind)],
 				Facets:      facets,
 			})
-			if err != nil {
-				return count, fmt.Errorf("render ExternalSecret for %s→%s/%s: %w", s.Name, b.Target.Kind, b.Target.Name, err)
+			if renderErr != nil {
+				return skips, count, fmt.Errorf("render ExternalSecret for %s→%s/%s: %w", s.Name, b.Target.Kind, b.Target.Name, renderErr)
 			}
 			for _, reason := range skipped {
 				fmt.Fprintf(stdout, "ExternalSecret skipped %s\n", reason)
 			}
+			skips = append(skips, skipped...)
 			if yaml == "" {
 				continue
 			}
 			file := filepath.Join(dir, manifests.BindingSecretName(s.Name, b.Target)+"-externalsecret.yaml")
-			if err := os.WriteFile(file, []byte(yaml), 0o644); err != nil {
-				return count, err
+			if writeErr := os.WriteFile(file, []byte(yaml), 0o644); writeErr != nil {
+				return skips, count, writeErr
 			}
 			count++
 		}
 	}
-	return count, nil
+	return skips, count, nil
 }
 
 // hasManifests reports whether the repo root already holds any Kubernetes YAML — the

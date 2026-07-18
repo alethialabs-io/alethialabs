@@ -4,14 +4,14 @@
 package types
 
 type ProjectConfig struct {
-	ID               string `json:"id"`
-	UserID           string `json:"user_id"`
-	ProjectName      string `json:"project_name"`
-	EnvironmentStage string `json:"environment_stage"`
-	Region           string `json:"region"`
-	IacVersion       string `json:"iac_version"`
-	CloudIdentityID  string `json:"cloud_identity_id"`
-	Provider         string `json:"provider"`
+	ID               string           `json:"id"`
+	UserID           string           `json:"user_id"`
+	ProjectName      string           `json:"project_name"`
+	EnvironmentStage EnvironmentStage `json:"environment_stage"`
+	Region           string           `json:"region"`
+	IacVersion       string           `json:"iac_version"`
+	CloudIdentityID  string           `json:"cloud_identity_id"`
+	Provider         CloudProvider    `json:"provider"`
 
 	// EnvironmentID is the target environment's stable UUID (distinct from the human
 	// EnvironmentStage name). Emitted as the `alethia:environment-id` tag/label so a
@@ -118,9 +118,9 @@ func (c *ProjectConfig) ConnectorCredentialFor(category, slug string) map[string
 // several components already carry a pluggable connector slug under json:"provider"
 // (cloudflare/vault/…), which is an orthogonal concern from the cloud account.
 type Placement struct {
-	CloudProvider   string `json:"cloud_provider"`
-	CloudIdentityID string `json:"cloud_identity_id"`
-	Region          string `json:"region"`
+	CloudProvider   CloudProvider `json:"cloud_provider"`
+	CloudIdentityID string        `json:"cloud_identity_id"`
+	Region          string        `json:"region"`
 }
 
 type ProjectNetworkConfig struct {
@@ -206,9 +206,9 @@ type ProjectDatabaseConfig struct {
 
 type ProjectCacheConfig struct {
 	Placement
-	Name          string `json:"name"`
-	Engine        string `json:"engine"`
-	EngineVersion string `json:"engine_version"`
+	Name          string      `json:"name"`
+	Engine        CacheEngine `json:"engine"`
+	EngineVersion string      `json:"engine_version"`
 	// Concrete provider SKU (legacy / explicit). When empty, MemoryGB resolves it.
 	NodeType string `json:"node_type"`
 	// Cloud-indifferent size (preferred); resolved to the nearest provider SKU.
@@ -239,14 +239,14 @@ type TopicSubscription struct {
 
 type ProjectNosqlConfig struct {
 	Placement
-	Name                string `json:"name"`
-	PartitionKey        string `json:"partition_key"`
-	PartitionKeyType    string `json:"partition_key_type"`
-	SortKey             string `json:"sort_key"`
-	SortKeyType         string `json:"sort_key_type"`
-	TableType           string `json:"table_type"`
-	CapacityMode        string `json:"capacity_mode"`
-	PointInTimeRecovery bool   `json:"point_in_time_recovery"`
+	Name                string            `json:"name"`
+	PartitionKey        string            `json:"partition_key"`
+	PartitionKeyType    NosqlKeyType      `json:"partition_key_type"`
+	SortKey             string            `json:"sort_key"`
+	SortKeyType         NosqlKeyType      `json:"sort_key_type"`
+	TableType           NosqlTableType    `json:"table_type"`
+	CapacityMode        NosqlCapacityMode `json:"capacity_mode"`
+	PointInTimeRecovery bool              `json:"point_in_time_recovery"`
 }
 
 type ProjectSecretConfig struct {
@@ -284,7 +284,7 @@ type ProjectStorageBucketConfig struct {
 type ProjectServiceConfig struct {
 	Placement
 	Name   string               `json:"name"`
-	Type   string               `json:"type"` // deployment | job | cronjob | statefulset
+	Type   ServiceWorkloadType  `json:"type"` // deployment | job | cronjob | statefulset
 	Source ProjectServiceSource `json:"source"`
 	Build  *ProjectServiceBuild `json:"build,omitempty"`
 	Env    []ServiceEnvVar      `json:"env"`

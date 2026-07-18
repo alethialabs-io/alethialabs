@@ -38,12 +38,43 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 	deadline := time.Now().Add(timeout)
 	fmt.Fprintf(stdout, "Waiting for the cluster to become reachable (timeout %s)...\n", timeout)
 
-	// 1. API server reachable.
-	if err := pollUntil(ctx, deadline, 10*time.Second, func() bool {
-		_, err := utils.ExecuteCommandWithOutput("kubectl get --raw=/readyz", ".", nil)
-		return err == nil
-	}); err != nil {
-		return fmt.Errorf("cluster API server did not become reachable within %s: %w", timeout, err)
+	// 1. API server reachable — poll readyz, but keep WHY it fails (auth vs network vs not-ready)
+	// so a timeout is diagnosable at a glance, and fast-fail on a persistent auth rejection (an
+	// access-entry/RBAC problem never resolves by waiting — no reason to burn the full timeout).
+	var lastErr error
+	var lastOut string
+	authRejections := 0
+	apiErr := func() error {
+		for {
+			out, e := utils.ExecuteCommandWithOutput("kubectl get --raw=/readyz", ".", nil)
+			if e == nil {
+				return nil
+			}
+			lastErr, lastOut = e, out
+			if classifyReachability(e, out) == reachAuth {
+				authRejections++
+				if authRejections >= authRejectFastFail {
+					return fmt.Errorf("auth rejected on %d consecutive probes", authRejections)
+				}
+			} else {
+				authRejections = 0
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timed out")
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Second):
+			}
+		}
+	}()
+	if apiErr != nil {
+		if lastErr == nil {
+			lastErr = apiErr
+		}
+		return fmt.Errorf("cluster API server did not become reachable within %s — %s: %w",
+			timeout, classifyReachability(lastErr, lastOut), lastErr)
 	}
 	fmt.Fprintln(stdout, "Cluster API server is reachable.")
 
@@ -53,22 +84,104 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 
 	// 2. At least one node Ready.
 	var lastReady, lastTotal int
+	var lastNodesRaw []byte
 	if err := pollUntil(ctx, deadline, 15*time.Second, func() bool {
 		raw, err := utils.ExecuteCommandWithOutput("kubectl get nodes -o json", ".", nil)
 		if err != nil {
 			return false
 		}
-		ready, total, perr := CountReadyNodes([]byte(raw))
+		lastNodesRaw = []byte(raw)
+		ready, total, perr := CountReadyNodes(lastNodesRaw)
 		if perr != nil {
 			return false
 		}
 		lastReady, lastTotal = ready, total
 		return ready > 0
 	}); err != nil {
-		return fmt.Errorf("no cluster node reached Ready within %s (%d/%d ready): %w", timeout, lastReady, lastTotal, err)
+		// Surface WHY the nodes are NotReady (KubeletNotReady, "container runtime network not
+		// ready" = CNI missing, taints) so a node-datapath failure is diagnosable without kubectl.
+		detail := ""
+		if reasons := NotReadyReasons(lastNodesRaw); len(reasons) > 0 {
+			detail = " — NotReady: " + strings.Join(reasons, "; ")
+		}
+		return fmt.Errorf("no cluster node reached Ready within %s (%d/%d ready)%s: %w", timeout, lastReady, lastTotal, detail, err)
 	}
 	fmt.Fprintf(stdout, "%d/%d nodes Ready.\n", lastReady, lastTotal)
 	return nil
+}
+
+// reachClass names WHICH layer a reachability probe is failing at, so a timeout tells the operator
+// where to look instead of just "not reachable".
+type reachClass string
+
+const (
+	reachAuth     reachClass = "AUTH REJECTED (the runner's identity is not authorized on the cluster — check the access entry / RBAC ↔ the kube-token identity)"
+	reachNetwork  reachClass = "NETWORK UNREACHABLE (the API endpoint is not reachable from the runner — check the public-access CIDR allowlist / security groups / VPC)"
+	reachNotReady reachClass = "API NOT READY (the endpoint answered but readyz is not green yet)"
+	reachUnknown  reachClass = "UNKNOWN (see the last probe error)"
+)
+
+// authRejectFastFail is the number of CONSECUTIVE auth rejections after which WaitClusterReady stops
+// waiting: an access-entry/RBAC misconfig never resolves by waiting, so burning the full timeout is
+// wasted. Big enough to ride out token/endpoint warm-up jitter (~60s at the 10s poll interval).
+const authRejectFastFail = 6
+
+// classifyReachability maps a kubectl reachability-probe error + its output to the failing layer.
+// Pure + unit-tested. A nil error means the command ran but readyz wasn't 200 (API not ready yet).
+func classifyReachability(err error, out string) reachClass {
+	if err == nil {
+		return reachNotReady
+	}
+	s := strings.ToLower(err.Error() + " " + out)
+	switch {
+	case containsAny(s,
+		"unauthorized", "forbidden", "the server has asked for the client to provide credentials",
+		"you must be logged in", "u_a_authentication", "error from server (forbidden)"):
+		return reachAuth
+	case containsAny(s,
+		"no route to host", "i/o timeout", "connection refused", "dial tcp", "could not resolve host",
+		"no such host", "network is unreachable", "connection timed out", "context deadline exceeded",
+		"tls handshake timeout"):
+		return reachNetwork
+	case containsAny(s, "503", "500", "readyz", "apiserver is not ready", "not ready"):
+		return reachNotReady
+	default:
+		return reachUnknown
+	}
+}
+
+// podProbeVerdict turns the in-cluster probe pod's last phase + container waiting reason into the
+// RIGHT failure message. A pod that never reached Running/Succeeded (Pending: unschedulable /
+// ImagePullBackOff / no capacity / a taint) never executed the connect, so the pod-network verdict
+// would be a misdiagnosis — say scheduling/image instead. Pure/unit-tested.
+func podProbeVerdict(phase, waitingReason string) string {
+	phase = strings.TrimSpace(phase)
+	if phase == "Running" || phase == "Succeeded" {
+		return "the cluster pod network is broken (the pod ran but could not reach the API server across the cluster network — cross-node pod->apiserver)"
+	}
+	detail := phase
+	if wr := strings.TrimSpace(waitingReason); wr != "" {
+		if detail != "" {
+			detail += "/" + wr
+		} else {
+			detail = wr
+		}
+	}
+	if detail == "" {
+		detail = "no pod observed"
+	}
+	return "the probe pod never started (" + detail +
+		") — this is NOT a pod-network verdict; check scheduling / image pull / node capacity / taints"
+}
+
+// containsAny reports whether s contains any of the substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // WaitPodToAPIServer proves that an ORDINARY POD can reach the Kubernetes API server across
@@ -120,7 +233,7 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 	fmt.Fprintf(stdout, "Verifying a pod can reach the API server (ClusterIP %s:443) across the cluster network...\n", clusterIP)
 
 	deadline := time.Now().Add(timeout)
-	var lastState string
+	var lastState, lastWaiting string
 	err = pollUntil(ctx, deadline, 8*time.Second, func() bool {
 		succeeded, _ := utils.ExecuteCommandWithOutput(
 			"kubectl get job "+jobName+" -n default -o jsonpath={.status.succeeded}", ".", nil)
@@ -129,12 +242,17 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 		}
 		lastState, _ = utils.ExecuteCommandWithOutput(
 			"kubectl get pods -n default -l job-name="+jobName+" -o jsonpath={.items[*].status.phase}", ".", nil)
+		// Why a not-Running pod is stuck (ImagePullBackOff, unschedulable, …) — so a scheduling/
+		// image failure isn't misreported as a pod-network verdict below.
+		lastWaiting, _ = utils.ExecuteCommandWithOutput(
+			"kubectl get pods -n default -l job-name="+jobName+
+				" -o jsonpath={.items[*].status.containerStatuses[*].state.waiting.reason}", ".", nil)
 		return false
 	})
 	if err != nil {
-		return fmt.Errorf("a pod could not reach the API server (ClusterIP %s:443) within %s (pod phase: %q) — "+
-			"the cluster pod network is broken (cross-node pod->apiserver). This is fatal: pods that cannot reach "+
-			"the API server cannot run any real workload: %w", clusterIP, timeout, strings.TrimSpace(lastState), err)
+		return fmt.Errorf("in-cluster API-server probe failed within %s (ClusterIP %s:443) — %s. "+
+			"This is fatal: a cluster whose pods cannot run + reach the API server runs no real workload: %w",
+			timeout, clusterIP, podProbeVerdict(lastState, lastWaiting), err)
 	}
 	fmt.Fprintln(stdout, "A pod reached the API server across the cluster network — pod datapath is healthy.")
 	return nil
@@ -233,4 +351,53 @@ func CountReadyNodes(raw []byte) (ready, total int, err error) {
 		}
 	}
 	return ready, total, nil
+}
+
+// NotReadyReasons extracts the distinct Ready-condition "reason: message" of every node whose Ready
+// condition is not "True" — the common ones being KubeletNotReady and "container runtime network not
+// ready" (a missing/failed CNI). Surfaced on the WaitClusterReady node timeout so a node-datapath
+// failure is diagnosable at a glance. Pure/unit-testable; empty when all nodes are Ready or the JSON
+// is empty/unparseable.
+func NotReadyReasons(raw []byte) []string {
+	var list struct {
+		Items []struct {
+			Status struct {
+				Conditions []struct {
+					Type    string `json:"type"`
+					Status  string `json:"status"`
+					Reason  string `json:"reason"`
+					Message string `json:"message"`
+				} `json:"conditions"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range list.Items {
+		for _, c := range item.Status.Conditions {
+			if c.Type != "Ready" || c.Status == "True" {
+				continue
+			}
+			reason := strings.TrimSpace(c.Reason)
+			if msg := strings.TrimSpace(c.Message); msg != "" {
+				if reason != "" {
+					reason += ": " + msg
+				} else {
+					reason = msg
+				}
+			}
+			if reason == "" {
+				reason = "Ready=" + c.Status
+			}
+			if !seen[reason] {
+				seen[reason] = true
+				out = append(out, reason)
+			}
+			break // one Ready condition per node
+		}
+	}
+	return out
 }

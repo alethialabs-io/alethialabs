@@ -20,7 +20,7 @@ import { and, eq } from "drizzle-orm";
 import type { BreakglassActionInput } from "@/types/jsonb.types";
 import { getServiceDb } from "@/lib/db";
 import { setEnvStatus } from "@/lib/db/env-status";
-import type { BreakglassAction, ProjectStatus } from "@/lib/db/schema/enums";
+import type { BreakglassAction } from "@/lib/db/schema/enums";
 import {
 	jobs,
 	projectEnvironments,
@@ -307,8 +307,8 @@ async function unstickEnv(
 	envId: string,
 	input: BreakglassActionInput | undefined,
 ): Promise<BreakglassResult> {
-	const from = (input?.expectedFrom ?? []) as ProjectStatus[];
-	const to = input?.to as ProjectStatus | undefined;
+	const from = input?.expectedFrom ?? [];
+	const to = input?.to;
 	if (from.length === 0 || !to) {
 		return refuse(400, "unstick_env requires input.expectedFrom[] and input.to.");
 	}

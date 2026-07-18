@@ -52,7 +52,7 @@ async function gcpGet<T>(url: string, token: string): Promise<T> {
 			signal: controller.signal,
 		});
 		if (!res.ok) throw new Error(`GCP API HTTP ${res.status}`);
-		return (await res.json()) as T;
+		return await res.json();
 	} finally {
 		clearTimeout(timer);
 	}

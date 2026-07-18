@@ -19,7 +19,13 @@
 
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectEnvironments, projects } from "@/lib/db/schema";
+import {
+	type CloudProvider,
+	jobs,
+	projectEnvironments,
+	projects,
+	type ProvisionJobType,
+} from "@/lib/db/schema";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { stateKeyForJob } from "@/lib/storage/tofu-state";
@@ -31,14 +37,14 @@ import type { LabelSelector, ReclaimDecision } from "./types";
 /** A job flagged orphan_risk whose environment may hold untracked cloud resources. */
 interface OrphanJob {
 	id: string;
-	provider: string | null;
+	provider: CloudProvider | null;
 	cloud_identity_id: string | null;
 	project_id: string | null;
 	environment_id: string | null;
 	project_name: string | null;
 	environment_name: string | null;
 	started_at: Date | null;
-	job_type: string;
+	job_type: ProvisionJobType;
 	// The row's own type — stateKeyForJob reads runner_id out of it for runner-lifecycle jobs, so it
 	// must be the real snapshot shape rather than an invented `unknown`.
 	config_snapshot: typeof jobs.$inferSelect.config_snapshot;
@@ -253,20 +259,20 @@ export async function sweepJob(job: OrphanJob): Promise<ReclaimDecision[]> {
 const RECLAIM_LOOP_ID = "orphan-reclaim";
 const RECLAIM_INTERVAL_MS = 5 * 60 * 1000;
 
-const globalForReclaim = globalThis as unknown as {
-	__alethiaOrphanReclaim?: NodeJS.Timeout;
-};
+declare global {
+	var __alethiaOrphanReclaim: NodeJS.Timeout | undefined;
+}
 
 /**
  * Starts the periodic orphan-reclaim sweep in-process (idempotent across HMR/instances), mirroring
  * startConnectionSweeper. Heartbeat-supervised so /health can see it ticking.
  */
 export function startOrphanReclaim(): void {
-	if (globalForReclaim.__alethiaOrphanReclaim) return;
+	if (globalThis.__alethiaOrphanReclaim) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	registerLoop(RECLAIM_LOOP_ID, { intervalMs: RECLAIM_INTERVAL_MS });
-	globalForReclaim.__alethiaOrphanReclaim = setInterval(() => {
+	globalThis.__alethiaOrphanReclaim = setInterval(() => {
 		void superviseLoop(RECLAIM_LOOP_ID, () => sweepOrphans());
 	}, RECLAIM_INTERVAL_MS);
 }

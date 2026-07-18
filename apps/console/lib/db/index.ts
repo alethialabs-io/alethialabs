@@ -10,10 +10,10 @@ import * as schema from "./schema";
 export type Db = PostgresJsDatabase<typeof schema>;
 
 // Cache the postgres-js clients + drizzle instances across HMR / module reloads.
-const globalForDb = globalThis as unknown as {
-	__alethiaServiceDb?: Db;
-	__alethiaAppDb?: Db;
-};
+declare global {
+	var __alethiaServiceDb: Db | undefined;
+	var __alethiaAppDb: Db | undefined;
+}
 
 /** Builds a pooler-safe postgres-js client (prepare:false → transaction-pooler compatible). */
 function makeClient(url: string) {
@@ -30,13 +30,13 @@ function makeClient(url: string) {
  * runner + CLI API routes and the SECURITY DEFINER RPC calls. Never use for user-facing reads/writes.
  */
 export function getServiceDb(): Db {
-	if (!globalForDb.__alethiaServiceDb) {
-		globalForDb.__alethiaServiceDb = drizzle(
+	if (!globalThis.__alethiaServiceDb) {
+		globalThis.__alethiaServiceDb = drizzle(
 			makeClient(getDatabaseConfig().serviceUrl),
 			{ schema, casing: "snake_case" },
 		);
 	}
-	return globalForDb.__alethiaServiceDb;
+	return globalThis.__alethiaServiceDb;
 }
 
 /**
@@ -44,13 +44,13 @@ export function getServiceDb(): Db {
  * through withOwnerScope() so a query never runs without the owner set.
  */
 function getAppDb(): Db {
-	if (!globalForDb.__alethiaAppDb) {
-		globalForDb.__alethiaAppDb = drizzle(
+	if (!globalThis.__alethiaAppDb) {
+		globalThis.__alethiaAppDb = drizzle(
 			makeClient(getDatabaseConfig().appUrl),
 			{ schema, casing: "snake_case" },
 		);
 	}
-	return globalForDb.__alethiaAppDb;
+	return globalThis.__alethiaAppDb;
 }
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];

@@ -1,14 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
+import type { CloudProvider } from "@/lib/db/schema/enums";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-/** The provisionable clouds whose token-mint routes are per-job-bound. */
-export type MintProvider = "aws" | "gcp" | "azure" | "alibaba";
+/** The provisionable clouds whose token-mint routes are per-job-bound — a subset of the
+ * generated `cloud_provider` enum (derived so it can't drift). */
+export type MintProvider = Extract<
+	CloudProvider,
+	"aws" | "gcp" | "azure" | "alibaba"
+>;
 
 /**
  * Authorizes a per-job cloud-token mint. A runner token alone is not enough: the caller
@@ -35,10 +41,8 @@ export async function authorizeTokenMint(
 	if (error) return { error };
 
 	// Old runners POST an empty body; new runners send { job_id }. Never throw on either.
-	const body = (await req.json().catch(() => null)) as {
-		job_id?: unknown;
-	} | null;
-	const jobId = typeof body?.job_id === "string" ? body.job_id : null;
+	const body = asRecord(await req.json().catch(() => null));
+	const jobId = typeof body.job_id === "string" ? body.job_id : null;
 
 	if (!jobId) {
 		if (operator === "managed") {

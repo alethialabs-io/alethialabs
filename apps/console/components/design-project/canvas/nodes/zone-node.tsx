@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { asRecord } from "@/lib/records";
 import { NodeResizer, type Node, type NodeProps } from "@xyflow/react";
 import { Boxes, Maximize2, Network, Server } from "lucide-react";
 import { cn } from "@repo/ui/utils";
@@ -110,7 +111,7 @@ export function ZoneNode({ id, data, selected }: NodeProps<Node<ZoneNodeData>>) 
 
 /** The one-line summary a region header shows, read from its anchor card's config. */
 function summarize(zone: "network" | "cluster", config: unknown): string | null {
-	const c = config as Record<string, unknown>;
+	const c = asRecord(config);
 	if (zone === "network") {
 		if (c.provision_network === false) {
 			return typeof c.network_id === "string" ? c.network_id : "existing network";

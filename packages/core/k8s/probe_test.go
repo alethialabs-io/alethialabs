@@ -84,3 +84,74 @@ func TestWaitPodToAPIServerSkip(t *testing.T) {
 		t.Fatalf("skip env should short-circuit to nil, got %v", err)
 	}
 }
+
+func TestClassifyReachability(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		out  string
+		want reachClass
+	}{
+		{"nil err = api not ready", nil, "", reachNotReady},
+		{"unauthorized = auth", errString("error: You must be logged in to the server (Unauthorized)"), "", reachAuth},
+		{"forbidden = auth", errString("Error from server (Forbidden): clusterroles.rbac.authorization.k8s.io is forbidden"), "", reachAuth},
+		{"dial timeout = network", errString("Unable to connect to the server: dial tcp 1.2.3.4:443: i/o timeout"), "", reachNetwork},
+		{"no route = network", errString("dial tcp: lookup x: no such host"), "", reachNetwork},
+		{"tls handshake = network", errString("net/http: TLS handshake timeout"), "", reachNetwork},
+		{"503 = not ready", errString("an error on the server (\"[+]ping ok\\n[-]etcd failed\") has prevented the request from succeeding"), "503 readyz", reachNotReady},
+		{"other = unknown", errString("some unexpected kubectl failure"), "", reachUnknown},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := classifyReachability(c.err, c.out); got != c.want {
+				t.Fatalf("classifyReachability(%q,%q) = %q, want %q", c.err, c.out, got, c.want)
+			}
+		})
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
+
+func TestNotReadyReasons(t *testing.T) {
+	raw := []byte(`{"items":[
+		{"status":{"conditions":[{"type":"Ready","status":"False","reason":"KubeletNotReady","message":"container runtime network not ready: NetworkReady=false"}]}},
+		{"status":{"conditions":[{"type":"Ready","status":"False","reason":"KubeletNotReady","message":"container runtime network not ready: NetworkReady=false"}]}},
+		{"status":{"conditions":[{"type":"Ready","status":"True","reason":"KubeletReady"}]}}
+	]}`)
+	got := NotReadyReasons(raw)
+	// Distinct — the two identical NotReady nodes collapse to one; the Ready node is excluded.
+	if len(got) != 1 || !strings.Contains(got[0], "KubeletNotReady") || !strings.Contains(got[0], "NetworkReady=false") {
+		t.Fatalf("NotReadyReasons = %#v", got)
+	}
+	if r := NotReadyReasons([]byte(`{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`)); len(r) != 0 {
+		t.Fatalf("all-ready should be empty, got %#v", r)
+	}
+	if r := NotReadyReasons([]byte("not json")); r != nil {
+		t.Fatalf("bad json should be nil, got %#v", r)
+	}
+}
+
+func TestPodProbeVerdict(t *testing.T) {
+	// Ran but couldn't connect → the (correct) network verdict.
+	if v := podProbeVerdict("Running", ""); !strings.Contains(v, "pod network is broken") {
+		t.Fatalf("Running should give the network verdict: %q", v)
+	}
+	if v := podProbeVerdict("Succeeded", ""); !strings.Contains(v, "pod network is broken") {
+		t.Fatalf("Succeeded should give the network verdict: %q", v)
+	}
+	// Never started → NOT a network verdict; names the blocker.
+	v := podProbeVerdict("Pending", "ImagePullBackOff")
+	if strings.Contains(v, "pod network is broken") || !strings.Contains(v, "never started") || !strings.Contains(v, "ImagePullBackOff") {
+		t.Fatalf("Pending/ImagePullBackOff misclassified: %q", v)
+	}
+	// Unscheduled (no waiting reason yet) still avoids the network verdict.
+	if v := podProbeVerdict("Pending", ""); strings.Contains(v, "pod network is broken") || !strings.Contains(v, "never started") {
+		t.Fatalf("Pending misclassified: %q", v)
+	}
+	// No pod observed at all.
+	if v := podProbeVerdict("", ""); !strings.Contains(v, "no pod observed") {
+		t.Fatalf("empty should say no pod observed: %q", v)
+	}
+}

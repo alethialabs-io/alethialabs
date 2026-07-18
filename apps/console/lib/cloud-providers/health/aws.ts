@@ -12,6 +12,7 @@ import {
 	DescribeVpcsCommand,
 	EC2Client,
 } from "@aws-sdk/client-ec2";
+import { errorName } from "@/lib/errors";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import type { CloudIdentity } from "@/lib/db/schema";
 import { assumeAwsRole } from "../session/aws";
@@ -21,7 +22,7 @@ const TIMEOUT_MS = 12_000;
 
 /** True when an AWS SDK error is an authorization denial (vs a transient/network error). */
 function isAccessDenied(e: unknown): boolean {
-	const name = (e as { name?: string })?.name ?? "";
+	const name = errorName(e) ?? "";
 	return /AccessDenied|UnauthorizedOperation|Forbidden/i.test(name);
 }
 

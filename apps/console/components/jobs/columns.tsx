@@ -7,7 +7,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { cn } from "@repo/ui/utils";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
-import type { ProvisionJobType } from "@/lib/db/schema";
+import type {
+	ProvisionJobStatus,
+	ProvisionJobType,
+} from "@/lib/db/schema";
 import { JOB_TYPES, formatDuration } from "@/lib/jobs/format";
 import { JobAuthor, type JobAuthorInfo } from "@/components/jobs/job-author";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -47,7 +50,7 @@ function JobStatus({
 	status,
 	errorMessage,
 }: {
-	status: string;
+	status: ProvisionJobStatus;
 	errorMessage?: string | null;
 }) {
 	const badge = <StatusBadge status={status} />;

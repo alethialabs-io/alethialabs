@@ -18,7 +18,7 @@ import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { NODE_STATUS_META, nodeStatusKey, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { NODE_REGISTRY } from "../graph/node-registry";
-import type { CanvasNode } from "../graph/types";
+import { type CanvasNode, nodeOfKind } from "../graph/types";
 
 /** How a plan action reads. `no-op` is the calm one — it means "already live and unchanged". */
 const ACTION_LABEL: Record<string, string> = {
@@ -31,9 +31,8 @@ const ACTION_LABEL: Record<string, string> = {
 
 /** The read-only member list for one external group. */
 export function ExternalPanel({ nodeId }: { nodeId: string }) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId)) as
-		| CanvasNode<"external">
-		| undefined;
+	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId));
+	const node = nodeOfKind(raw, "external");
 	const env = useEnvironmentStatus();
 	const status = useNodeStatus(nodeId);
 

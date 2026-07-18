@@ -8,6 +8,7 @@
 // and the upgrade-org sheet (existing Hobby → Pro) render through these so the purchase
 // UI has a single source of truth (per the monorepo "promote, don't duplicate" rule).
 
+import { coerceEnum } from "@/lib/coerce";
 import { ArrowRight, CreditCard, Plus, X } from "lucide-react";
 import type React from "react";
 import { z } from "zod";
@@ -222,7 +223,7 @@ export function RoleField({
 	className?: string;
 }) {
 	return (
-		<Select value={value} onValueChange={(v) => onChange(v as Role)}>
+		<Select value={value} onValueChange={(v) => onChange(coerceEnum(v, ROLES, "viewer"))}>
 			<SelectTrigger size="sm" aria-label="Role" className={cn("capitalize", className)}>
 				<SelectValue />
 			</SelectTrigger>

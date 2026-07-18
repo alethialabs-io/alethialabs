@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { Button } from "@repo/ui/button";
 import { ClusterCard } from "@/components/clusters/cluster-card";
+import { ErrorState } from "@/components/errors/error-state";
 import { useClustersQuery } from "@/lib/query/use-clusters-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { Server } from "lucide-react";
@@ -15,7 +17,7 @@ import Link from "next/link";
  * project drilldown's Clusters page reuses this with the shared org cache.
  */
 export function ClustersClient({ projectId }: { projectId?: string }) {
-	const { data: allClusters = [] } = useClustersQuery();
+	const { data: allClusters = [], isError, refetch } = useClustersQuery();
 	const clusters = projectId
 		? allClusters.filter((c) => c.id === projectId)
 		: allClusters;
@@ -44,7 +46,18 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 				</p>
 			</div>
 
-			{clusters.length === 0 ? (
+			{isError ? (
+				// A fetch failure must not render as "no clusters provisioned".
+				<ErrorState
+					title="Couldn't load clusters"
+					description="Something went wrong fetching your clusters. Check your connection and try again."
+					actions={
+						<Button variant="outline" size="sm" onClick={() => refetch()}>
+							Retry
+						</Button>
+					}
+				/>
+			) : clusters.length === 0 ? (
 				<div className="flex flex-col items-center justify-center py-16 text-center">
 					<div className="p-3 bg-muted/50 rounded-full mb-4">
 						<Server className="h-8 w-8 text-muted-foreground" />

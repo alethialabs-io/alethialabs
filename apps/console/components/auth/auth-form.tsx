@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { lookup } from "@/lib/typed-object";
 import type React from "react";
 
 import { authClient } from "@/lib/auth/client";
@@ -514,9 +515,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 							{loadingProvider === provider ? (
 								<Loader2 className="size-[17px] animate-spin" />
 							) : (
-								<ProviderIcon provider={provider as Provider} size={17} />
+								<ProviderIcon provider={provider} size={17} />
 							)}
-							{PROVIDER_LABELS[provider as Provider]}
+							{lookup(PROVIDER_LABELS, provider)}
 						</button>
 					))}
 				</div>

@@ -59,6 +59,12 @@ export const chartWorkloadConfigSchema = z.object({
 	env: z.array(serviceEnvSchema).optional(),
 });
 
+/** W3 bindings on a chart workload — the same ServiceBinding[] a first-class service declares. */
+export const chartWorkloadBindingsSchema = z.array(serviceBindingSchema);
+
+/** The overlay's logical-knob → chart-values dot-path map (user override of the inferred paths). */
+export const chartWorkloadValuePathsSchema = z.record(z.string(), z.string());
+
 /**
  * Full project_chart_workloads insert. The overlay columns default like their DB columns so a
  * freshly-described workload (no user edits yet) parses.

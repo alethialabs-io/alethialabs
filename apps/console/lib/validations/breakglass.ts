@@ -5,13 +5,13 @@
 // dispatcher runs — no manual string matching.
 
 import { z } from "zod";
-import { breakglassAction } from "@/lib/db/schema/enums";
+import { breakglassAction, projectStatus } from "@/lib/db/schema/enums";
 
 /** The typed action-input block (mirrors BreakglassActionInput in types/jsonb.types.ts). */
 export const breakglassInputSchema = z
 	.object({
-		expectedFrom: z.array(z.string()).optional(),
-		to: z.string().optional(),
+		expectedFrom: z.array(z.enum(projectStatus.enumValues)).optional(),
+		to: z.enum(projectStatus.enumValues).optional(),
 		stateKey: z.string().optional(),
 		fleetReason: z.string().optional(),
 		projectId: z.string().uuid().optional(),
@@ -27,12 +27,9 @@ export const openSessionSchema = z.object({
 });
 
 /** The dispatchable actions (everything except the session-open pseudo-action). */
-const dispatchAction = z.enum(
-	breakglassAction.enumValues.filter((a) => a !== "open_session") as [
-		string,
-		...string[],
-	],
-);
+const dispatchAction = z
+	.enum(breakglassAction.enumValues)
+	.exclude(["open_session"]);
 
 /** Body for POST /api/breakglass/approval — a second operator mints a two-person approval. */
 export const mintApprovalSchema = z.object({

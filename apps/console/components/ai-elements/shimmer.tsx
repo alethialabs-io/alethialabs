@@ -31,6 +31,14 @@ const ShimmerComponent = ({
 		[children, spread],
 	);
 
+	// CSS custom properties (`--spread`) aren't part of React's CSSProperties, so the style is
+	// typed as CSSProperties plus a `--*` index rather than asserted.
+	const style: CSSProperties & Record<`--${string}`, string> = {
+		"--spread": `${dynamicSpread}px`,
+		backgroundImage:
+			"var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
+	};
+
 	return (
 		<motion.span
 			animate={{ backgroundPosition: "0% center" }}
@@ -40,13 +48,7 @@ const ShimmerComponent = ({
 				className,
 			)}
 			initial={{ backgroundPosition: "100% center" }}
-			style={
-				{
-					"--spread": `${dynamicSpread}px`,
-					backgroundImage:
-						"var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
-				} as CSSProperties
-			}
+			style={style}
 			transition={{
 				duration,
 				ease: "linear",

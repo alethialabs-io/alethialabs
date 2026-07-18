@@ -67,10 +67,12 @@ function rollup(status: GitopsDeployStatus): string {
 	const rows = [...status.services, ...status.addons, ...status.dataServices];
 	const degraded = rows.filter((r) => r.health === "Degraded" || r.health === "Missing").length;
 	const outOfSync = rows.filter((r) => r.sync === "OutOfSync").length;
+	const warned = status.warnings.length;
 	const parts = [`${rows.length} component${rows.length === 1 ? "" : "s"}`];
 	if (degraded) parts.push(`${degraded} degraded`);
 	if (outOfSync) parts.push(`${outOfSync} out of sync`);
-	if (!degraded && !outOfSync) parts.push("all healthy");
+	if (warned) parts.push(`${warned} warning${warned === 1 ? "" : "s"}`);
+	if (!degraded && !outOfSync && !warned) parts.push("all healthy");
 	return parts.join(" · ");
 }
 
@@ -192,6 +194,27 @@ export function DeployPane({ status }: { status: GitopsDeployStatus | null }) {
 						</span>
 					</div>
 				</div>
+			)}
+
+			{status.warnings.length > 0 && (
+				<Section
+					title={`Warnings · ${status.warnings.length}`}
+					hint="Non-fatal — the deploy proceeded, but these workloads may boot misconfigured (a binding that couldn't resolve, a service skipped) until you fix them and re-deploy."
+				>
+					{status.warnings.map((w) => (
+						<div
+							key={w}
+							className="flex items-start gap-2.5 border-b border-border py-2 last:border-0"
+						>
+							<span className="flex-none pt-px font-mono text-[11px] leading-none text-muted-foreground">
+								!
+							</span>
+							<span className="font-mono text-[11px] leading-snug text-foreground">
+								{w}
+							</span>
+						</div>
+					))}
+				</Section>
 			)}
 
 			<Section

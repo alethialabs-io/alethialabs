@@ -14,5 +14,8 @@ export function arrayIncludes<T>(
 	arr: readonly T[],
 	value: unknown,
 ): value is T {
-	return arr.includes(value as T);
+	for (const item of arr) {
+		if (item === value) return true;
+	}
+	return false;
 }

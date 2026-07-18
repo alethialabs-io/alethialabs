@@ -10,6 +10,7 @@
 // stay a child of the form owner (not receive `form` as a prop). Consumed by the role editor and
 // the SSO provider editor.
 
+import { asRecord } from "@/lib/records";
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import {
@@ -68,7 +69,7 @@ export interface AccordionFormProps<T extends FieldValues> {
 function at(obj: unknown, path: string): unknown {
 	return path.split(".").reduce<unknown>((acc, key) => {
 		if (acc == null || typeof acc !== "object") return undefined;
-		return (acc as Record<string, unknown>)[key];
+		return asRecord(acc)[key];
 	}, obj);
 }
 

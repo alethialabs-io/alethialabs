@@ -29,7 +29,24 @@ import {
 	projectRepositories,
 	projectServices,
 } from "@/lib/db/schema";
-import type { ExecutionMetadata, GitopsStatusReport } from "@/types/jsonb.types";
+import type {
+	AddOnStatusEntry,
+	ExecutionMetadata,
+	GitopsFailedStep,
+	GitopsStatusReport,
+} from "@/types/jsonb.types";
+import { addonStatusSchema, argocdHealth, argocdSync } from "./argocd-status";
+
+// Our own GitOps wiring steps (set by the runner — a controlled domain, so it parses strict),
+// kept in lockstep with the jsonb.types union via `satisfies`.
+const GITOPS_STEPS = [
+	"argocd_install",
+	"git_token",
+	"repo_credentials",
+	"templates_missing",
+	"render",
+	"apply",
+] as const satisfies readonly GitopsFailedStep[];
 
 /** Wire-shape validator for `execution_metadata.gitops_status` (Go `argocd.GitopsStatus`).
  *  Every field beyond `mode` is optional so pre-#574 and partial payloads parse. */
@@ -38,19 +55,20 @@ export const gitopsStatusReportSchema = z.object({
 	apps_repo: z.string().optional(),
 	argocd_app: z.string().optional(),
 	revision: z.string().optional(),
-	failed_step: z.string().optional(),
+	failed_step: z.enum(GITOPS_STEPS).optional(),
 	error: z.string().optional(),
-	app_health: z.object({ health: z.string(), sync: z.string() }).optional(),
+	app_health: z.object({ health: argocdHealth, sync: argocdSync }).optional(),
 	services: z
 		.record(
 			z.string(),
 			z.object({
-				health: z.string(),
-				sync: z.string(),
+				health: argocdHealth,
+				sync: argocdSync,
 				message: z.string().optional(),
 			}),
 		)
 		.optional(),
+	manifest_warnings: z.array(z.string()).optional(),
 });
 
 /** One component row on the Deploy tab: ArgoCD health + sync + optional message. */
@@ -94,6 +112,10 @@ export interface GitopsDeployStatus {
 	/** In-cluster data services (the addon-db-/cache-/queue- keys of addon_status).
 	 *  Cloud-managed data services live on the canvas, not here. */
 	dataServices: GitopsComponentRow[];
+	/** Non-fatal warnings from the LATEST deploy's manifest generation: a skipped service, an
+	 *  unresolved binding endpoint (#710), an unsatisfiable credential facet — why a rendered
+	 *  service may boot misconfigured. Empty ⇒ generation was clean (or bring-your-own). */
+	warnings: string[];
 }
 
 /** The empty read model — an environment that has never been deployed. */
@@ -111,6 +133,7 @@ export const EMPTY_GITOPS_DEPLOY_STATUS: GitopsDeployStatus = {
 	services: [],
 	addons: [],
 	dataServices: [],
+	warnings: [],
 };
 
 /** A gitops-carrying job reduced to what assembly needs. */
@@ -120,7 +143,7 @@ export interface GitopsJobFacts {
 	createdAt: Date;
 	gitops: GitopsStatusReport | null;
 	/** `execution_metadata.addon_status` — carries the in-cluster data-service keys. */
-	addonStatus: Record<string, { health: string; sync: string }> | null;
+	addonStatus: Record<string, AddOnStatusEntry> | null;
 }
 
 /** Everything assembleGitopsDeployStatus needs — pure inputs, so the scenario matrix
@@ -233,6 +256,9 @@ export function assembleGitopsDeployStatus(inputs: GitopsAssemblyInputs): Gitops
 		services,
 		addons,
 		dataServices,
+		// Manifest-generation warnings are a DEPLOY-time artifact (drift never regenerates), so they
+		// come from the latest deploy's snapshot — valid until the next deploy re-renders.
+		warnings: deployJob?.gitops?.manifest_warnings ?? [],
 	};
 }
 
@@ -245,9 +271,7 @@ function jobFacts(row: {
 }): GitopsJobFacts {
 	const meta = row.execution_metadata;
 	const gitops = gitopsStatusReportSchema.safeParse(meta?.gitops_status);
-	const addonStatus = z
-		.record(z.string(), z.object({ health: z.string(), sync: z.string() }))
-		.safeParse(meta?.addon_status);
+	const addonStatus = addonStatusSchema.safeParse(meta?.addon_status);
 	return {
 		status: row.status,
 		errorMessage: row.error_message,

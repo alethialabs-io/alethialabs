@@ -25,6 +25,8 @@ const HCLOUD_ENV_KEYS = [
 	"NEXT_PUBLIC_APP_URL",
 	"ALETHIA_RUNNER_BOOTSTRAP_TOKEN",
 	"HCLOUD_SERVER_TYPE",
+	"HCLOUD_SERVER_TYPES",
+	"HCLOUD_FALLBACK_LOCATIONS",
 	"HCLOUD_IMAGE",
 	"HCLOUD_SSH_KEYS",
 	"FLEET_RUNNER_IMAGE_TAG",
@@ -51,7 +53,8 @@ function restoreEnv() {
 function baseCfg(over: Partial<HcloudConfig> = {}): HcloudConfig {
 	return {
 		token: "test-token",
-		serverType: "cax21",
+		serverTypes: ["cax21"],
+		fallbackLocations: [],
 		image: "ubuntu-24.04",
 		sshKeys: ["key-a"],
 		defaultImageTag: "latest",
@@ -93,6 +96,11 @@ beforeAll(() => {
 	process.env.HCLOUD_TOKEN = "test-token";
 	process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
 	process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot-xyz";
+	// Pin the failover config to its defaults so the singleton's create() candidates are deterministic
+	// (serverTypes = [cax21, cpx31], fallbackLocations = [nbg1, hel1, ash, hil]).
+	delete process.env.HCLOUD_SERVER_TYPE;
+	delete process.env.HCLOUD_SERVER_TYPES;
+	delete process.env.HCLOUD_FALLBACK_LOCATIONS;
 	vi.stubGlobal("fetch", fetchMock);
 	getHcloudFleetProvider(); // force construction now → cfg.token === "test-token"
 });
@@ -125,13 +133,37 @@ describe("hcloudConfigFromEnv", () => {
 		delete process.env.HCLOUD_SSH_KEYS;
 		delete process.env.FLEET_RUNNER_SLOTS;
 
+		delete process.env.HCLOUD_SERVER_TYPES;
+		delete process.env.HCLOUD_FALLBACK_LOCATIONS;
+
 		const cfg = hcloudConfigFromEnv();
 		expect(cfg.webOrigin).toBe("https://fallback.test");
-		expect(cfg.serverType).toBe("cax21");
+		// Default failover preference: cheap ARM first, x86 fallback.
+		expect(cfg.serverTypes).toEqual(["cax21", "cpx31"]);
+		expect(cfg.fallbackLocations).toEqual(["nbg1", "hel1", "ash", "hil"]);
 		expect(cfg.image).toBe("ubuntu-24.04");
 		expect(cfg.defaultImageTag).toBe("latest");
 		expect(cfg.sshKeys).toEqual([]);
 		expect(cfg.slots).toBe(1);
+	});
+
+	it("resolves the server-type preference: HCLOUD_SERVER_TYPES wins, legacy single gets an x86 fallback", () => {
+		process.env.HCLOUD_TOKEN = "tok";
+		process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot";
+
+		// Explicit plural list wins verbatim (order-preserving dedupe).
+		process.env.HCLOUD_SERVER_TYPES = "cpx31, cax21 , cpx31";
+		expect(hcloudConfigFromEnv().serverTypes).toEqual(["cpx31", "cax21"]);
+
+		// Legacy single type gains the x86 fallback so an existing deploy fails over without a config change.
+		delete process.env.HCLOUD_SERVER_TYPES;
+		process.env.HCLOUD_SERVER_TYPE = "cax21";
+		expect(hcloudConfigFromEnv().serverTypes).toEqual(["cax21", "cpx31"]);
+
+		// A custom fallback-locations list is parsed (trim + drop empties).
+		process.env.HCLOUD_FALLBACK_LOCATIONS = " ash , , hil ";
+		expect(hcloudConfigFromEnv().fallbackLocations).toEqual(["ash", "hil"]);
 	});
 
 	it("parses HCLOUD_SSH_KEYS (trim + drop empties) and a numeric slots", () => {
@@ -318,6 +350,7 @@ describe("serverCreatePayload", () => {
 	it("carries the pool label and version label when versioned", () => {
 		const payload = serverCreatePayload(baseCfg(), target("aws"), {
 			name: "fleet-aws-abc12345",
+			serverType: "cax21",
 			location: "fsn1",
 			version: "v9",
 			bootstrapToken: "vm-boot-tok",
@@ -339,6 +372,7 @@ describe("serverCreatePayload", () => {
 	it("omits the version label when version is null", () => {
 		const payload = serverCreatePayload(baseCfg(), target("gcp"), {
 			name: "n",
+			serverType: "cax21",
 			location: "nbg1",
 			version: null,
 			bootstrapToken: "vm-boot-tok",
@@ -480,6 +514,65 @@ describe("HcloudFleetProvider.create", () => {
 		expect(body.labels["alethia-pool"]).toBe("aws");
 		expect(String(body.user_data)).toContain("runner-aws:v3");
 		expect(String(body.user_data)).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="vm-boot-tok"');
+	});
+});
+
+describe("HcloudFleetProvider.create — failsafe placement", () => {
+	/** Hetzner placement/capacity miss (retryable). */
+	const placementErr = () =>
+		errRes(412, JSON.stringify({ error: { code: "resource_unavailable", message: "error during placement" } }));
+
+	it("falls back from ARM (cax) to x86 (cpx) when ARM has no capacity", async () => {
+		// Every ARM attempt misses; the first x86 attempt places.
+		fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+			const body = JSON.parse(init.body);
+			return String(body.server_type).startsWith("cax") ? placementErr() : jsonRes({ server: { id: 1 } }, 201);
+		});
+
+		await expect(
+			getHcloudFleetProvider().create(target("aws"), {
+				location: "fsn1",
+				version: "v3",
+				bootstrapToken: "vm-boot-tok",
+			}),
+		).resolves.toBeUndefined();
+
+		const bodies = fetchMock.mock.calls.map((c) => JSON.parse(c[1].body));
+		// ARM is tried FIRST (cheapest), at the pool's location.
+		expect(bodies[0].server_type).toBe("cax21");
+		expect(bodies[0].location).toBe("fsn1");
+		// The placed VM is x86 (fell back).
+		expect(bodies[bodies.length - 1].server_type).toBe("cpx31");
+		// EU-only guard: no ARM attempt is ever aimed at a non-EU DC (ash/hil).
+		const armInUs = bodies.some(
+			(b) => String(b.server_type).startsWith("cax") && ["ash", "hil"].includes(String(b.location)),
+		);
+		expect(armInUs).toBe(false);
+	});
+
+	it("does NOT retry a real (non-placement) error — surfaces it immediately", async () => {
+		fetchMock.mockResolvedValue(
+			errRes(404, JSON.stringify({ error: { code: "not_found", message: "SSH key not found" } })),
+		);
+		await expect(
+			getHcloudFleetProvider().create(target("aws"), {
+				location: "fsn1",
+				version: null,
+				bootstrapToken: "t",
+			}),
+		).rejects.toThrow(/SSH key not found/);
+		expect(fetchMock).toHaveBeenCalledTimes(1); // aborted on the first attempt, no failover
+	});
+
+	it("throws a clear no-capacity error when every candidate is exhausted", async () => {
+		fetchMock.mockResolvedValue(placementErr());
+		await expect(
+			getHcloudFleetProvider().create(target("gcp"), {
+				location: "fsn1",
+				version: null,
+				bootstrapToken: "t",
+			}),
+		).rejects.toThrow(/no capacity for gcp/);
 	});
 });
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
+import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
@@ -54,7 +55,7 @@ export function CloudIdentitySelector({
 	useEffect(() => {
 		if (identities.length === 1 && !value) {
 			const first = identities[0];
-			selectIdentity(first.id, first.provider as CloudProviderSlug);
+			selectIdentity(first.id, asCloudProviderSlug(first.provider));
 		}
 	}, [identities, value, selectIdentity]);
 
@@ -81,7 +82,7 @@ export function CloudIdentitySelector({
 				onValueChange={(id) => {
 					const identity = identities.find((i) => i.id === id);
 					if (identity) {
-						selectIdentity(id, identity.provider as CloudProviderSlug);
+						selectIdentity(id, asCloudProviderSlug(identity.provider));
 					}
 				}}
 			>

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
@@ -18,11 +19,10 @@ export function formToGraph(
 	form: ProjectFormData,
 	identities: CloudIdentityOption[],
 ): { nodes: CanvasNode[] } {
-	const providerOf = (id?: string | null): CloudProviderSlug | null =>
-		id
-			? ((identities.find((i) => i.id === id)?.provider as CloudProviderSlug) ??
-				null)
-			: null;
+	const providerOf = (id?: string | null): CloudProviderSlug | null => {
+		const p = id ? identities.find((i) => i.id === id)?.provider : null;
+		return p && isCloudProviderSlug(p) ? p : null;
+	};
 
 	const coreId = form.project.cloud_identity_id || null;
 
@@ -34,13 +34,14 @@ export function formToGraph(
 	): CanvasNode => {
 		const own = ownIdentity ?? null;
 		// The kind↔config correlation can't be carried into the union type for a generic
-		// K, so the assembled data asserts its membership (both come from the same K).
-		const data = {
+		// K, so both fields coming from the same K make this the correct member at runtime.
+		// @ts-expect-error distributed-union variance: {kind:K, config} IS the K-th CanvasNodeData member, but TS can't prove it for a generic K
+		const data: CanvasNodeData = {
 			kind,
 			config,
 			cloud_identity_id: own,
 			provider: providerOf(own ?? coreId),
-		} as CanvasNodeData;
+		};
 		return {
 			id:
 				kind === "project"

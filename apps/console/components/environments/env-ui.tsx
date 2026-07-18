@@ -141,6 +141,7 @@ export interface GateView {
 /** Maps a stored gate result to its display view. */
 export function gateView(g: GateResult): GateView {
 	const meta = GATE_META[g.type] ?? { label: g.type, icon: ShieldCheck };
-	const st = GATE_STATUS[g.status] ?? { tier: "pending" as StatusTier, word: g.status };
+	const st: { tier: StatusTier; word: string } =
+		GATE_STATUS[g.status] ?? { tier: "pending", word: g.status };
 	return { type: g.type, label: meta.label, icon: meta.icon, tier: st.tier, word: st.word, detail: g.detail };
 }

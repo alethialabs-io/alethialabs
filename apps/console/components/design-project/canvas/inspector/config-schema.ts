@@ -7,6 +7,8 @@
 // entry here (+ its registry row) — no new inspector components. Dynamic, provider-specific option
 // lists / bounds are expressed as functions of the field context.
 
+import { z } from "zod";
+import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
@@ -16,6 +18,8 @@ import {
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { coerceEnum } from "@/lib/coerce";
+import { toStrArray } from "@/lib/coerce";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
@@ -459,7 +463,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						description:
 							"Connect this service to a resource on the canvas. Alethia injects its endpoint and credentials at deploy — keyless.",
 						get: (c) => c.bindings,
-						set: (v) => ({ bindings: v as NodeConfigMap["service"]["bindings"] }),
+						set: (v) => ({ bindings: z.array(serviceBindingSchema).catch([]).parse(v) }),
 					},
 				],
 			},
@@ -561,7 +565,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						get: (c) => c.probe?.type ?? "http",
 						set: (v, c) => ({
 							probe: {
-								type: v as "http" | "tcp",
+								type: coerceEnum(String(v), ["http", "tcp"] as const, "http"),
 								path: c.probe?.path,
 								port: c.probe?.port ?? 8080,
 							},
@@ -787,7 +791,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						set: (v, c) => {
 							const existing = c.cluster_admins ?? [];
 							return {
-								cluster_admins: (v as string[]).map((username) => ({
+								cluster_admins: toStrArray(v).map((username) => ({
 									username,
 									groups:
 										existing.find((a) => a.username === username)?.groups ?? [
@@ -1501,5 +1505,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
  * this single, documented widening is the erasure boundary of the key-driven engine.
  */
 export function getKindConfig(kind: NodeKind): KindConfig | undefined {
-	return CONFIG_SCHEMA[kind] as KindConfig | undefined;
+	// @ts-expect-error KindConfig<C> is contravariant in C (its setter), so the K-specific entry can't widen to KindConfig<AnyConfig>
+	return CONFIG_SCHEMA[kind];
 }

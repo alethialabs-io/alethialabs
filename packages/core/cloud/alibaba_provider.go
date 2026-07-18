@@ -248,7 +248,7 @@ func buildOTSTables(tables []types.ProjectNosqlConfig) []map[string]interface{} 
 		entry := map[string]interface{}{
 			"name":             t.Name,
 			"primary_key":      t.PartitionKey,
-			"primary_key_type": otsKeyType(t.PartitionKeyType),
+			"primary_key_type": otsKeyType(string(t.PartitionKeyType)),
 		}
 		result = append(result, entry)
 	}

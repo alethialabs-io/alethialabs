@@ -12,6 +12,7 @@ import {
 import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
+import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 /** Per-project tab title from the URL slug (kept cheap — no extra project fetch). */
@@ -73,6 +74,7 @@ export default async function ProjectArchitecturePage({
 				environmentId={environmentId ?? undefined}
 				dockInShell
 				byoHelmEnabled={isByoHelmEnabled()}
+				byoDescribeEnabled={isByoDescribeEnabled()}
 				byoIacEnabled={isByoIacEnabled()}
 			/>
 		</div>

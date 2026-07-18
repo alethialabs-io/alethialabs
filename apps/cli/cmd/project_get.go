@@ -72,7 +72,7 @@ func projectSummaryRows(c types.Configuration) [][]string {
 	rows := [][]string{
 		{"ID", c.ID},
 		{"Project", c.ProjectName},
-		{"Environment", c.EnvironmentStage},
+		{"Environment", string(c.EnvironmentStage)},
 		{"Container Platform", c.ContainerPlatform},
 		{"Cloud Account ID", c.CloudAccountID},
 		{"Region", c.Region},

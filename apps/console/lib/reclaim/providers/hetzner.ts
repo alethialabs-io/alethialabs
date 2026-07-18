@@ -12,7 +12,9 @@
 // The adapter lists and deletes. It decides nothing — see lib/reclaim/guards.ts.
 
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
+import { asRecord } from "@/lib/records";
 import { cloudIdentities } from "@/lib/db/schema";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { CloudResourceRef, LabelSelector, ReclaimAdapter } from "../types";
@@ -37,14 +39,18 @@ const COLLECTIONS = [
 ] as const;
 
 /** One entry of an hcloud list response — every collection shares this shape. */
-interface HcloudItem {
-	id: number;
-	name?: string | null;
-	created?: string | null;
-	labels?: Record<string, string> | null;
-	location?: { name?: string } | null;
-	datacenter?: { location?: { name?: string } } | null;
-}
+/** One hcloud resource as its collection endpoints return it — validated (not asserted) so a
+ *  shape change degrades to an empty page rather than a bad read. */
+const hcloudItemSchema = z.object({
+	id: z.number(),
+	name: z.string().nullish(),
+	created: z.string().nullish(),
+	labels: z.record(z.string(), z.string()).nullish(),
+	location: z.object({ name: z.string().optional() }).nullish(),
+	datacenter: z
+		.object({ location: z.object({ name: z.string().optional() }).nullish() })
+		.nullish(),
+});
 
 /** Resolves the account's API token from the stored (encrypted) cloud identity. */
 async function tokenFor(identityId: string): Promise<string> {
@@ -104,8 +110,8 @@ async function listCollection(
 
 	for (let page = 1; ; page++) {
 		const body = await call(token, `${path}?${query}&page=${page}&per_page=50`);
-		const items = (body as Record<string, HcloudItem[] | undefined> | null)?.[key];
-		if (!Array.isArray(items) || items.length === 0) break;
+		const items = z.array(hcloudItemSchema).catch([]).parse(asRecord(body)[key]);
+		if (items.length === 0) break;
 
 		for (const item of items) {
 			out.push({

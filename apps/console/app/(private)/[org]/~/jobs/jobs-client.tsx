@@ -6,7 +6,9 @@
 // filtering + facet counts (getJobsPage), the normalized query in the TanStack key, and
 // keepPreviousData dimming instead of client-side .filter() over the whole cache.
 
+import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
+import { ErrorState } from "@/components/errors/error-state";
 import { buildJobColumns } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";
 import {
@@ -166,7 +168,19 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 
 	return (
 		<div className="space-y-6">
-			{!page.isPending && total === 0 ? (
+			{page.isError ? (
+					// A fetch failure must NOT fall through to the empty state — that would tell the
+					// user they have no jobs when the request actually failed.
+					<ErrorState
+						title="Couldn't load jobs"
+						description="Something went wrong fetching your jobs. Check your connection and try again."
+						actions={
+							<Button variant="outline" size="sm" onClick={() => page.refetch()}>
+								Retry
+							</Button>
+						}
+					/>
+				) : !page.isPending && total === 0 ? (
 				<Empty className="min-h-[60vh]">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
@@ -260,7 +274,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 							icon={Wrench}
 							options={comboOptions(
 								facets?.types,
-								(o) => JOB_TYPES[o.value as keyof typeof JOB_TYPES]?.label ?? o.value,
+								(o) => lookup(JOB_TYPES, o.value)?.label ?? o.value,
 							)}
 							value={filters.types}
 							onChange={(next) => set("types", next)}

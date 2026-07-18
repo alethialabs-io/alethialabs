@@ -28,7 +28,7 @@ export function SourceReposCard() {
 		const project = nodes.find((n) => n.id === PROJECT_NODE_ID);
 		const sr =
 			project?.data.kind === "project" ? project.data.config.source_repos : undefined;
-		return Array.isArray(sr) ? (sr as SourceRepoRow[]) : [];
+		return Array.isArray(sr) ? sr : [];
 	}, [nodes]);
 
 	if (repos.length === 0) return null;

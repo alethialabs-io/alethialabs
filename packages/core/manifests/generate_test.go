@@ -265,7 +265,7 @@ func TestFromServices_ResolvesBindings(t *testing.T) {
 				},
 			}},
 		},
-	}, Options{Outputs: map[string]string{"rds_cluster_endpoint": "orders.abc.rds.amazonaws.com"}})
+	}, Options{Provider: "aws", Outputs: map[string]string{"rds_cluster_endpoint": "orders.abc.rds.amazonaws.com"}})
 	if len(skipped) != 0 {
 		t.Fatalf("nothing should skip, got %v", skipped)
 	}
@@ -300,6 +300,119 @@ func TestFromServices_ResolvesBindings(t *testing.T) {
 	for i, s := range wantSecret {
 		if a.SecretEnv[i] != s {
 			t.Errorf("secretEnv[%d] = %+v, want %+v", i, a.SecretEnv[i], s)
+		}
+	}
+}
+
+// TestFromServices_ResolvesBindings_PerCloud locks the per-cloud endpoint output-key map (#711): a
+// service's endpoint facet resolves from the RIGHT tofu output for the provision's cloud — Cloud SQL
+// / Memorystore on GCP, the DB FQDN / Cache hostname on Azure — not only the AWS keys. Ports stay on
+// the standard managed-service defaults (5432 / 6379) across clouds.
+func TestFromServices_ResolvesBindings_PerCloud(t *testing.T) {
+	cases := []struct {
+		provider     string
+		dbEndpointK  string
+		cacheEndK    string
+		wantDBHost   string
+		wantCacheHst string
+	}{
+		{"gcp", "cloud_sql_ip", "memorystore_host", "10.20.0.3", "10.20.0.4"},
+		{"azure", "azure_db_fqdn", "azure_cache_hostname", "db.postgres.database.azure.com", "cache.redis.cache.windows.net"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			apps, skipped := FromServices([]types.ProjectServiceConfig{{
+				Name:   "api",
+				Type:   "deployment",
+				Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+				Bindings: []types.ServiceBinding{
+					{
+						Target: types.ServiceBindingTarget{Kind: "database", Name: "main"},
+						Inject: []types.ServiceBindingInjection{
+							{Env: "DB_HOST", From: "endpoint"},
+							{Env: "DB_PORT", From: "port"},
+						},
+					},
+					{
+						Target: types.ServiceBindingTarget{Kind: "cache", Name: "sessions"},
+						Inject: []types.ServiceBindingInjection{{Env: "CACHE_HOST", From: "endpoint"}},
+					},
+				},
+			}}, Options{Provider: tc.provider, Outputs: map[string]string{
+				tc.dbEndpointK: tc.wantDBHost,
+				tc.cacheEndK:   tc.wantCacheHst,
+			}})
+			if len(skipped) != 0 {
+				t.Fatalf("%s: nothing should skip, got %v", tc.provider, skipped)
+			}
+			wantEnv := []types.ServiceEnvVar{
+				{Name: "DB_HOST", Value: tc.wantDBHost},
+				{Name: "DB_PORT", Value: "5432"},
+				{Name: "CACHE_HOST", Value: tc.wantCacheHst},
+			}
+			if len(apps[0].Env) != len(wantEnv) {
+				t.Fatalf("%s: env = %+v, want %+v", tc.provider, apps[0].Env, wantEnv)
+			}
+			for i, e := range wantEnv {
+				if apps[0].Env[i] != e {
+					t.Errorf("%s: env[%d] = %+v, want %+v", tc.provider, i, apps[0].Env[i], e)
+				}
+			}
+		})
+	}
+}
+
+// TestFromServices_UnresolvableBindingFailsClosed locks the fail-closed rule (#687): a non-secret
+// facet whose value can't be resolved — here a `cache` endpoint on an AWS provision that emitted no
+// such tofu output (or a bound BYO-IaC resource the template key map can't reach) — is REPORTED and
+// its env var OMITTED, never injected empty. An empty endpoint would boot the app pointed at
+// nothing; an absent required env fails loudly instead. The port facet (a kind default, not an
+// output lookup) still resolves, and the app still renders.
+func TestFromServices_UnresolvableBindingFailsClosed(t *testing.T) {
+	apps, skipped := FromServices([]types.ProjectServiceConfig{
+		{
+			Name:   "api",
+			Type:   "deployment",
+			Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+			Env:    []types.ServiceEnvVar{{Name: "LOG_LEVEL", Value: "info"}},
+			Bindings: []types.ServiceBinding{{
+				Target: types.ServiceBindingTarget{Kind: "cache", Name: "sessions"},
+				Inject: []types.ServiceBindingInjection{
+					{Env: "REDIS_HOST", From: "endpoint"}, // no output emitted → unresolved, omitted
+					{Env: "REDIS_PORT", From: "port"},     // kind default → resolves
+				},
+			}},
+		},
+	}, Options{Provider: "aws", Outputs: map[string]string{}}) // AWS, but no cache endpoint output emitted
+
+	if len(apps) != 1 {
+		t.Fatalf("app must still render, got %d apps", len(apps))
+	}
+	// The unresolvable endpoint must be reported, naming the facet + service.
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 unresolved-binding report, got %v", skipped)
+	}
+	for _, want := range []string{"endpoint", "REDIS_HOST", "api", "cache/sessions"} {
+		if !strings.Contains(skipped[0], want) {
+			t.Errorf("report %q missing %q", skipped[0], want)
+		}
+	}
+	// The empty endpoint env must NOT be injected; the resolvable port must be.
+	for _, e := range apps[0].Env {
+		if e.Name == "REDIS_HOST" {
+			t.Errorf("unresolvable endpoint must be omitted, not injected: %+v", e)
+		}
+	}
+	wantEnv := []types.ServiceEnvVar{
+		{Name: "LOG_LEVEL", Value: "info"},
+		{Name: "REDIS_PORT", Value: "6379"},
+	}
+	if len(apps[0].Env) != len(wantEnv) {
+		t.Fatalf("env = %+v, want %+v", apps[0].Env, wantEnv)
+	}
+	for i, e := range wantEnv {
+		if apps[0].Env[i] != e {
+			t.Errorf("env[%d] = %+v, want %+v", i, apps[0].Env[i], e)
 		}
 	}
 }

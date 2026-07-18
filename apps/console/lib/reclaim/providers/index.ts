@@ -13,6 +13,7 @@ import { azureReclaim } from "./azure";
 import { gcpReclaim } from "./gcp";
 import { hetznerReclaim } from "./hetzner";
 import type { ReclaimAdapter } from "../types";
+import type { CloudProvider } from "@/lib/db/schema/enums";
 
 const ADAPTERS: ReclaimAdapter[] = [
 	hetznerReclaim,
@@ -23,6 +24,8 @@ const ADAPTERS: ReclaimAdapter[] = [
 ];
 
 /** The reclaim adapter for a provider, or undefined when we have none (⇒ that cloud is never swept). */
-export function adapterFor(provider: string): ReclaimAdapter | undefined {
+export function adapterFor(
+	provider: CloudProvider,
+): ReclaimAdapter | undefined {
 	return ADAPTERS.find((a) => a.provider === provider);
 }

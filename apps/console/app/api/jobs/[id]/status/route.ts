@@ -402,7 +402,7 @@ export async function PUT(
 							details: (posture.details ?? []).map((d) => ({
 								address: d.address,
 								type: d.type,
-								kind: String(d.kind),
+								kind: d.kind,
 							})),
 							scannedAt: posture.scanned_at ?? new Date().toISOString(),
 						});

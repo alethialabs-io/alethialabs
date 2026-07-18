@@ -151,7 +151,7 @@ func TestProviderTfvars_AllCloudsEmitClassificationTags(t *testing.T) {
 			ID:             "proj-abc",
 			EnvironmentID:  "env-xyz",
 			ProjectName:    "acme",
-			Provider:       provider,
+			Provider:       types.CloudProvider(provider),
 			Region:         "eu-central-1",
 			Classification: map[string][]string{"tier": {"prod"}},
 		}

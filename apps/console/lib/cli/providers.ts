@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isEnumMember } from "@/lib/coerce";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { getActiveScope } from "@/lib/auth/scope";
 import type { CloudProvider, ConnScope } from "@/lib/cloud-providers/connections";
@@ -9,7 +10,7 @@ import { NextResponse } from "next/server";
 const PROVIDERS: readonly CloudProvider[] = ["aws", "gcp", "azure", "alibaba"];
 
 export function isCloudProvider(value: string): value is CloudProvider {
-	return (PROVIDERS as readonly string[]).includes(value);
+	return isEnumMember(value, PROVIDERS);
 }
 
 type Resolved =

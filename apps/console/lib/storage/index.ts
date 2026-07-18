@@ -9,6 +9,7 @@ import {
 	PutObjectCommand,
 	S3Client,
 } from "@aws-sdk/client-s3";
+import { errorHttpStatus, errorName } from "@/lib/errors";
 import { getStorageConfig } from "@/lib/config/storage";
 
 /**
@@ -47,16 +48,15 @@ function s3Client(): S3Client {
 /** True when an S3 error means the key/bucket is absent. */
 function isNotFound(err: unknown): boolean {
 	if (typeof err !== "object" || err === null) return false;
-	const name = (err as { name?: string }).name;
-	const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata
-		?.httpStatusCode;
+	const name = errorName(err);
+	const status = errorHttpStatus(err);
 	return name === "NoSuchKey" || name === "NotFound" || status === 404;
 }
 
 /** True when CreateBucket failed only because the bucket already exists. */
 function isAlreadyExists(err: unknown): boolean {
 	if (typeof err !== "object" || err === null) return false;
-	const name = (err as { name?: string }).name;
+	const name = errorName(err);
 	return (
 		name === "BucketAlreadyOwnedByYou" || name === "BucketAlreadyExists"
 	);

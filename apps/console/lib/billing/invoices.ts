@@ -76,12 +76,12 @@ export async function mirrorPaidInvoice(
 	// fallback when Odoo isn't configured/reachable.
 	const factura = await issueFactura(inv);
 	const pdfKey = await storeInvoicePdf(orgId, inv, factura);
-	const values = {
+	const values: typeof invoice.$inferInsert = {
 		organizationId: orgId,
 		stripeInvoiceId: inv.id,
 		stripeCustomerId: customerIdOf(inv),
 		number: factura?.number ?? inv.number ?? null,
-		status: "paid" as InvoiceStatus,
+		status: "paid",
 		amountTotal: inv.total,
 		currency: inv.currency,
 		periodStart: toDate(inv.period_start),

@@ -130,10 +130,10 @@ export async function reconcilePool(
 	// write hiccup never blocks reconciliation). Lets the Fleet cockpit show where runners run.
 	await Promise.all(
 		observedInstances
-			.filter((o) => o.runnerId !== null && o.location)
+			.filter((o): o is (typeof observedInstances)[number] & { runnerId: string } => o.runnerId !== null && Boolean(o.location))
 			.map((o) =>
 				deps
-					.persistObserved(o.runnerId as string, { location: o.location, version: o.version })
+					.persistObserved(o.runnerId, { location: o.location, version: o.version })
 					.catch((err) =>
 						flog.error("persistObserved failed", {
 							instance_id: o.instanceId,

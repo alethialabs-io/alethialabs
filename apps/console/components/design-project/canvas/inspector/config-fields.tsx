@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { toNum, toStr, toStrArray } from "@/lib/coerce";
 import { ChevronDown } from "lucide-react";
 import { useId, useState } from "react";
 import {
@@ -49,7 +50,9 @@ function resolve<T>(
 	r: Resolvable<T> | undefined,
 	ctx: FieldCtx,
 ): T | undefined {
-	return typeof r === "function" ? (r as (c: FieldCtx) => T)(ctx) : r;
+	if (typeof r !== "function") return r;
+	// @ts-expect-error Resolvable<T> = T | ((ctx)=>T); T may itself be a function type, so typeof==="function" can't narrow r to the resolver
+	return r(ctx);
 }
 
 /** The grouped region dropdown, keyed by the effective provider. */
@@ -119,7 +122,7 @@ function FieldControl({
 			return (
 				<Input
 					id={id}
-					value={(raw as string) ?? ""}
+					value={toStr(raw)}
 					placeholder={resolve(field.placeholder, ctx)}
 					className={cn("h-9 text-sm", field.mono && "font-mono")}
 					onChange={(e) =>
@@ -143,7 +146,7 @@ function FieldControl({
 					max={resolve(field.max, ctx)}
 					step={step}
 					placeholder={resolve(field.placeholder, ctx)}
-					value={(raw as number) ?? ""}
+					value={toNum(raw)}
 					className="h-9 text-sm"
 					onChange={(e) => {
 						const n = isFloat
@@ -162,7 +165,7 @@ function FieldControl({
 			const options = resolve(field.options, ctx) ?? [];
 			return (
 				<Select
-					value={(raw as string) || options[0]?.value || ""}
+					value={toStr(raw) || options[0]?.value || ""}
 					onValueChange={patch}
 				>
 					<SelectTrigger id={id} className="h-9 text-sm">
@@ -184,7 +187,7 @@ function FieldControl({
 			return (
 				<RadioCardGroup
 					ariaLabel={field.label}
-					value={(raw as string) || options[0]?.value || ""}
+					value={toStr(raw) || options[0]?.value || ""}
 					onChange={patch}
 					options={options}
 					columns={options.length >= 2 ? 2 : 1}
@@ -200,7 +203,7 @@ function FieldControl({
 			return provider ? (
 				<RegionSelect
 					provider={provider}
-					value={(raw as string) ?? ""}
+					value={toStr(raw)}
 					onChange={patch}
 				/>
 			) : null;
@@ -210,7 +213,7 @@ function FieldControl({
 				<RepositorySelector
 					label=""
 					placeholder="Select repository"
-					value={(raw as string) || undefined}
+					value={toStr(raw) || undefined}
 					onChange={(v) => patch(v || "")}
 				/>
 			);
@@ -219,7 +222,7 @@ function FieldControl({
 			return (
 				<ListField
 					ariaLabel={field.label}
-					value={Array.isArray(raw) ? (raw as string[]) : []}
+					value={toStrArray(raw)}
 					placeholder={field.item?.placeholder}
 					mono={field.item?.mono ?? field.mono}
 					// Blank rows are dropped on write: an empty CIDR isn't a value, and letting one
@@ -233,7 +236,7 @@ function FieldControl({
 				<SubresourceField
 					spec={field.sub}
 					provider={ctx.provider}
-					value={Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []}
+					value={Array.isArray(raw) ? raw : []}
 					onChange={patch}
 				/>
 			) : null;
@@ -241,7 +244,7 @@ function FieldControl({
 		case "bindings":
 			return (
 				<BindingsField
-					value={Array.isArray(raw) ? (raw as ServiceBinding[]) : []}
+					value={Array.isArray(raw) ? raw : []}
 					onChange={patch}
 				/>
 			);
