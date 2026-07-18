@@ -89,18 +89,27 @@ func TestClusterRowsCostAndMessage(t *testing.T) {
 		ClusterVersion: "1.30", Status: "FAILED", StatusMessage: "node pool exhausted",
 		EstimatedMonthlyCost: &cost, Region: "eu-central-1",
 	}}
+	// Columns: Project, Cluster, Version, Status, ArgoCD, Nodes, Region, Cost.
 	row := clusterRows(withExtras)[0]
-	status, costCell := row[3], row[6]
+	status, argocdCell, costCell := row[3], row[4], row[7]
 	if !strings.Contains(status, "node pool exhausted") || !strings.Contains(status, "—") {
 		t.Errorf("status cell should surface the message, got %q", status)
+	}
+	// A provisioned cluster with no managed-ingress URL reads "port-fwd".
+	if argocdCell != "port-fwd" {
+		t.Errorf("argocd cell = %q, want port-fwd", argocdCell)
 	}
 	if costCell != "$128/mo" {
 		t.Errorf("cost cell = %q, want $128/mo", costCell)
 	}
 
 	bare := clusterRows([]api.ClusterSummary{{ProjectName: "x", Status: "ACTIVE"}})[0]
-	if bare[6] != ui.SymbolDash {
-		t.Errorf("uncosted cluster should show dash, got %q", bare[6])
+	if bare[7] != ui.SymbolDash {
+		t.Errorf("uncosted cluster should show dash, got %q", bare[7])
+	}
+	// No cluster_name yet ⇒ ArgoCD not installed ⇒ dash.
+	if bare[4] != ui.SymbolDash {
+		t.Errorf("un-provisioned cluster argocd cell should be dash, got %q", bare[4])
 	}
 }
 
