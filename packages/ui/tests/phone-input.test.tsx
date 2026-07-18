@@ -10,7 +10,7 @@
 // dial code, and clearing emits "".
 
 import * as React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PhoneInput } from "../src/phone-input";
@@ -53,9 +53,10 @@ describe("PhoneInput", () => {
 
 		await user.type(input, "2025550123");
 
-		// onChange fired and the final emission is the US-prefixed E.164 number.
+		// onChange fired and the final emission is the US-prefixed E.164 number (poll: the
+		// last keystroke's onChange can settle a microtask after user.type resolves under load).
 		expect(onChange).toHaveBeenCalled();
-		expect(lastValue(onChange)).toBe("+12025550123");
+		await waitFor(() => expect(lastValue(onChange)).toBe("+12025550123"));
 		// And the field shows the library's national formatting (not raw digits).
 		expect(input.value).toMatch(/\(?202\)?\s?555/);
 	});
@@ -69,29 +70,37 @@ describe("PhoneInput", () => {
 		await user.clear(input);
 
 		expect(onChange).toHaveBeenCalled();
-		// The component normalizes RPNI's `undefined` empty value to "".
-		expect(lastValue(onChange)).toBe("");
+		// The component normalizes RPNI's `undefined` empty value to "" (poll until settled).
+		await waitFor(() => expect(lastValue(onChange)).toBe(""));
 	});
 
 	it("re-prefixes the dial code when a different country is selected", async () => {
 		const user = userEvent.setup();
 		const { onChange, trigger, input } = renderPhone("US");
 
-		// Enter a national number under the default US country first.
+		// Enter a national number under the default US country first. The final onChange
+		// settles a tick after the last keystroke under load, so poll rather than read once.
 		await user.type(input, "2025550123");
-		expect(lastValue(onChange)).toBe("+12025550123");
+		await waitFor(() => expect(lastValue(onChange)).toBe("+12025550123"));
 
-		// Open the country picker and choose Germany via the searchable command list.
+		// Open the country picker and choose Germany via the searchable command list. The
+		// popover content is portaled + mounts async, so wait for the search box (findBy, not getBy).
 		await user.click(trigger);
-		const search = screen.getByPlaceholderText(/search country/i);
+		const search = await screen.findByPlaceholderText(/search country/i);
 		await user.type(search, "Germany");
-		const option = await screen.findByRole("option", { name: /germany/i });
+		// cmdk filters asynchronously; give the match extra headroom on a loaded CI box.
+		const option = await screen.findByRole(
+			"option",
+			{ name: /germany/i },
+			{ timeout: 3000 },
+		);
 		// The option surfaces the +49 dial code alongside the country label.
 		expect(within(option).getByText("+49")).toBeInTheDocument();
 		await user.click(option);
 
-		// The composed value now carries Germany's calling code instead of +1.
-		expect(lastValue(onChange)).toMatch(/^\+49/);
+		// The composed value now carries Germany's calling code instead of +1. The country
+		// change re-emits onChange in a follow-up microtask, so poll until it settles.
+		await waitFor(() => expect(lastValue(onChange)).toMatch(/^\+49/));
 		expect(lastValue(onChange)).not.toMatch(/^\+1\d/);
 	});
 
@@ -100,7 +109,10 @@ describe("PhoneInput", () => {
 		const { trigger } = renderPhone("US");
 
 		await user.click(trigger);
-		await user.type(screen.getByPlaceholderText(/search country/i), "zzzznotacountry");
+		await user.type(
+			await screen.findByPlaceholderText(/search country/i),
+			"zzzznotacountry",
+		);
 
 		// The CommandEmpty fallback shows when nothing matches.
 		expect(await screen.findByText(/no country found/i)).toBeInTheDocument();
