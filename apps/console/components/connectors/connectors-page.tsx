@@ -235,7 +235,13 @@ export function ConnectorsPage({
 				setConnectingSlug(slug);
 				try {
 					const provider = asGitProvider(slug);
-					const callbackURL = `/${orgSlug}/~/connectors`;
+					// ABSOLUTE, not relative. Better Auth validates a callbackURL against trustedOrigins:
+					// an absolute URL matches by ORIGIN (window.location.origin is trusted), while a
+					// RELATIVE one is checked against an allow-list regex whose char class excludes `~` —
+					// so `/${org}/~/connectors` (the org tilde-route) 403s as INVALID_CALLBACK_URL. This
+					// only surfaced on link (the origin check runs when a session cookie is present),
+					// which is why login worked but Connect didn't.
+					const callbackURL = `${window.location.origin}/${orgSlug}/~/connectors`;
 					const { error } =
 						provider === "github"
 							? await authClient.linkSocial({
