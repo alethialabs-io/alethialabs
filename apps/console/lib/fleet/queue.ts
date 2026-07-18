@@ -182,6 +182,17 @@ export async function countInflightForProvider(provider: string): Promise<number
 	return Number(rows[0]?.n ?? 0);
 }
 
+/** Approx fleet-wide live managed VMs: managed runners not OFFLINE (ONLINE + DRAINING). Feeds the
+ *  global instance-ceiling headroom. Undercounts a brand-new VM still booting (no runner row yet) —
+ *  acceptable for a COGS backstop that self-corrects next tick (the per-pool `max` is the hard bound). */
+export async function countLiveManagedInstances(): Promise<number> {
+	const rows = await getServiceDb().execute<CountRow>(sql`
+		select count(*)::int as n from public.runners
+		where operator = 'managed' and status <> 'OFFLINE'
+	`);
+	return Number(rows[0]?.n ?? 0);
+}
+
 /** Newest runner release version (the channel resolves to this; one release stream today). */
 export async function latestReleaseVersion(): Promise<string | null> {
 	const rows = await getServiceDb().execute<{ version: string }>(sql`
