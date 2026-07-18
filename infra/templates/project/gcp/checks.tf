@@ -36,6 +36,17 @@ check "network_cidrs_valid_when_provisioned" {
   }
 }
 
+# Keyless Cloud SQL auth (#722): when IAM auth is on, the app must have a Workload-Identity path to
+# the DB — the app GSA + its CLOUD_IAM_SERVICE_ACCOUNT database user + the GKE cluster it federates
+# through. Assert they're all wired so a keyless binding can't render pointed at a login that never
+# got created (which would fail closed at deploy, but louder to catch here at plan time).
+check "keyless_cloud_sql_app_identity_wired" {
+  assert {
+    condition     = !local.enable_app_db_iam || (var.provision_gke && length(google_service_account.app_db) == 1 && module.cloud_sql[0].app_iam_user != null)
+    error_message = "cloud_sql_iam_auth is on but the keyless app identity is incomplete: it needs provision_gke=true, the app GSA, and the CLOUD_IAM_SERVICE_ACCOUNT database user."
+  }
+}
+
 # When an existing network is used (provision_network = false) its self-links must be supplied.
 check "existing_network_ids_present" {
   assert {

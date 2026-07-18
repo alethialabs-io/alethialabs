@@ -30,7 +30,24 @@ const (
 	// pgBouncerImage fronts Azure Postgres on 127.0.0.1; the token-refresher sidecar keeps its
 	// upstream credential (the Entra access token) fresh. Refined in Lane D (#722).
 	pgBouncerImage = "bitnami/pgbouncer:1.23.1"
+
+	// keylessKSAName / keylessKSANamespace name the Workload-Identity ServiceAccount a keyless app
+	// pod runs as. These MUST match the per-cloud templates' WIF/federated-identity subject binding
+	// (GCP app-db-identity.tf app_ksa_name/namespace; Azure the federated credential subject).
+	keylessKSAName      = "alethia-app"
+	keylessKSANamespace = "default"
 )
+
+// keylessWiring is everything a keyless database binding adds to the workload's pod: the auth-proxy
+// sidecar(s), any shared volume(s), and the Workload-Identity ServiceAccount the pod must run as
+// (annotated/labelled so the cloud federates the pod's identity — GCP GSA impersonation, Azure UAMI).
+type keylessWiring struct {
+	sidecars      []Sidecar
+	volumes       []Volume
+	saName        string
+	saAnnotations map[string]string
+	saLabels      map[string]string
+}
 
 // KeylessDBTarget reports whether a binding target is a database that should use keyless IAM/AAD auth
 // — kind "database", provider gcp or azure, and the matched db's IamAuth is true. A password-auth db,
@@ -79,53 +96,78 @@ func credentialIdentityOutputKey(provider, kind string) string {
 //   - Azure: an `alethia db-token` refresher (reusing the runner's Entra workload-identity minting,
 //     Lane D) writes the token to a shared emptyDir; a PgBouncer sidecar serves 127.0.0.1:5432 from
 //     it. Needs `azure_db_fqdn` + the runner image (opts.RunnerImage).
-func keylessDBSidecar(opts Options, t types.ServiceBindingTarget) (sidecars []Sidecar, volumes []Volume, err error) {
+func keylessDBSidecar(opts Options, t types.ServiceBindingTarget) (keylessWiring, error) {
+	// The templates pin the WIF/federated-identity subject to keylessKSANamespace/keylessKSAName; if
+	// the app deploys into a different namespace the pod's identity won't federate, so fail closed
+	// rather than render a pod that can never authenticate. ("" defaults to keylessKSANamespace.)
+	if opts.Namespace != "" && opts.Namespace != keylessKSANamespace {
+		return keylessWiring{}, fmt.Errorf("keyless DB auth requires namespace %q (the Workload-Identity subject), got %q", keylessKSANamespace, opts.Namespace)
+	}
 	switch opts.Provider {
 	case string(types.CloudProviderGcp):
 		conn := opts.Outputs["cloud_sql_connection_name"]
 		if conn == "" {
-			return nil, nil, fmt.Errorf("no cloud_sql_connection_name output for keyless Cloud SQL auth")
+			return keylessWiring{}, fmt.Errorf("no cloud_sql_connection_name output for keyless Cloud SQL auth")
 		}
-		return []Sidecar{{
-			Name:  "cloudsql-proxy",
-			Image: cloudSQLProxyImage,
-			Args: []string{
-				"--private-ip",
-				"--auto-iam-authn",
-				"--port=5432",
-				conn,
-			},
-			Ports: []int{5432},
-		}}, nil, nil
+		gsa := opts.Outputs["cloud_sql_app_gsa_email"]
+		if gsa == "" {
+			return keylessWiring{}, fmt.Errorf("no cloud_sql_app_gsa_email output for the keyless app Workload Identity")
+		}
+		return keylessWiring{
+			sidecars: []Sidecar{{
+				Name:  "cloudsql-proxy",
+				Image: cloudSQLProxyImage,
+				Args: []string{
+					"--private-ip",
+					"--auto-iam-authn",
+					"--port=5432",
+					conn,
+				},
+				Ports: []int{5432},
+			}},
+			saName:        keylessKSAName,
+			saAnnotations: map[string]string{"iam.gke.io/gcp-service-account": gsa},
+		}, nil
 
 	case string(types.CloudProviderAzure):
 		fqdn := opts.Outputs["azure_db_fqdn"]
 		if fqdn == "" {
-			return nil, nil, fmt.Errorf("no azure_db_fqdn output for keyless Entra auth")
+			return keylessWiring{}, fmt.Errorf("no azure_db_fqdn output for keyless Entra auth")
+		}
+		clientID := opts.Outputs["azure_db_client_id"]
+		if clientID == "" {
+			return keylessWiring{}, fmt.Errorf("no azure_db_client_id output for the keyless app federated identity")
 		}
 		if opts.RunnerImage == "" {
-			return nil, nil, fmt.Errorf("no runner image for the Azure db-token refresher sidecar")
+			return keylessWiring{}, fmt.Errorf("no runner image for the Azure db-token refresher sidecar")
 		}
 		const tokenDir = "/azure-db-token"
 		vol := Volume{Name: "azure-db-token"}
-		refresher := Sidecar{
-			Name:   "azure-db-token",
-			Image:  opts.RunnerImage,
-			Args:   []string{"db-token", "--provider", "azure", "--out", tokenDir + "/token"},
-			Ports:  nil,
-			Mounts: []VolumeMount{{Name: vol.Name, MountPath: tokenDir}},
-		}
-		bouncer := Sidecar{
-			Name:  "pgbouncer",
-			Image: pgBouncerImage,
-			Env: []types.ServiceEnvVar{
-				{Name: "PGB_UPSTREAM_HOST", Value: fqdn},
-				{Name: "PGB_TOKEN_FILE", Value: tokenDir + "/token"},
+		return keylessWiring{
+			sidecars: []Sidecar{
+				{
+					Name:   "azure-db-token",
+					Image:  opts.RunnerImage,
+					Args:   []string{"db-token", "--provider", "azure", "--out", tokenDir + "/token"},
+					Mounts: []VolumeMount{{Name: vol.Name, MountPath: tokenDir}},
+				},
+				{
+					Name:  "pgbouncer",
+					Image: pgBouncerImage,
+					Env: []types.ServiceEnvVar{
+						{Name: "PGB_UPSTREAM_HOST", Value: fqdn},
+						{Name: "PGB_TOKEN_FILE", Value: tokenDir + "/token"},
+					},
+					Ports:  []int{5432},
+					Mounts: []VolumeMount{{Name: vol.Name, MountPath: tokenDir, ReadOnly: true}},
+				},
 			},
-			Ports:  []int{5432},
-			Mounts: []VolumeMount{{Name: vol.Name, MountPath: tokenDir, ReadOnly: true}},
-		}
-		return []Sidecar{refresher, bouncer}, []Volume{vol}, nil
+			volumes: []Volume{vol},
+			saName:  keylessKSAName,
+			// Azure Workload Identity: the KSA is labelled use=true and annotated with the UAMI client id.
+			saLabels:      map[string]string{"azure.workload.identity/use": "true"},
+			saAnnotations: map[string]string{"azure.workload.identity/client-id": clientID},
+		}, nil
 	}
-	return nil, nil, fmt.Errorf("keyless DB auth is not supported for provider %q", opts.Provider)
+	return keylessWiring{}, fmt.Errorf("keyless DB auth is not supported for provider %q", opts.Provider)
 }

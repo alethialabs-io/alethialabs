@@ -51,6 +51,7 @@ func TestKeyless_GCP_CloudSQLProxy(t *testing.T) {
 		Outputs: map[string]string{
 			"cloud_sql_connection_name": "proj:us-central1:orders",
 			"cloud_sql_iam_user":        "orders-app@proj.iam",
+			"cloud_sql_app_gsa_email":   "orders-app@proj.iam.gserviceaccount.com",
 		},
 	})
 	if len(skipped) != 0 {
@@ -83,14 +84,24 @@ func TestKeyless_GCP_CloudSQLProxy(t *testing.T) {
 	if len(a.Volumes) != 0 {
 		t.Errorf("GCP proxy needs no volume, got %+v", a.Volumes)
 	}
+	// The pod runs as the Workload-Identity KSA, annotated with the app GSA.
+	if a.ServiceAccount != "alethia-app" {
+		t.Errorf("ServiceAccount = %q, want alethia-app", a.ServiceAccount)
+	}
+	if a.ServiceAccountAnnotations["iam.gke.io/gcp-service-account"] != "orders-app@proj.iam.gserviceaccount.com" {
+		t.Errorf("KSA annotation wrong: %+v", a.ServiceAccountAnnotations)
+	}
 
-	// The sidecar renders into the Deployment's container list with the hardened securityContext.
+	// The sidecar + the annotated ServiceAccount both render.
 	yaml, err := RenderApp(a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(yaml, "name: cloudsql-proxy") || !strings.Contains(yaml, cloudSQLProxyImage) {
 		t.Errorf("rendered YAML missing the proxy sidecar:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "kind: ServiceAccount") || !strings.Contains(yaml, "iam.gke.io/gcp-service-account") {
+		t.Errorf("rendered YAML missing the annotated KSA:\n%s", yaml)
 	}
 }
 
@@ -103,8 +114,9 @@ func TestKeyless_Azure_TokenRefresherAndBouncer(t *testing.T) {
 		RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
 		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 		Outputs: map[string]string{
-			"azure_db_fqdn":     "orders.postgres.database.azure.com",
-			"azure_db_aad_user": "orders-app",
+			"azure_db_fqdn":      "orders.postgres.database.azure.com",
+			"azure_db_aad_user":  "orders-app",
+			"azure_db_client_id": "11111111-2222-3333-4444-555555555555",
 		},
 	})
 	if len(skipped) != 0 {
@@ -131,6 +143,12 @@ func TestKeyless_Azure_TokenRefresherAndBouncer(t *testing.T) {
 	if a.Sidecars[0].Image != "ghcr.io/alethialabs-io/runner:1.2.3" ||
 		!strings.Contains(strings.Join(a.Sidecars[0].Args, " "), "db-token") {
 		t.Errorf("refresher sidecar wrong: %+v", a.Sidecars[0])
+	}
+	// The pod runs as the Azure Workload-Identity KSA (labelled use=true, annotated client-id).
+	if a.ServiceAccount != "alethia-app" ||
+		a.ServiceAccountLabels["azure.workload.identity/use"] != "true" ||
+		a.ServiceAccountAnnotations["azure.workload.identity/client-id"] != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("Azure KSA wiring wrong: sa=%q labels=%+v annotations=%+v", a.ServiceAccount, a.ServiceAccountLabels, a.ServiceAccountAnnotations)
 	}
 }
 

@@ -100,6 +100,12 @@ variable "iam_auth" {
   default     = false
 }
 
+variable "app_iam_sa_email" {
+  type        = string
+  description = "Email of the app-workload Google service account granted keyless Cloud SQL IAM access (#722). When set, a CLOUD_IAM_SERVICE_ACCOUNT database user is created for it so the workload authenticates with a short-lived IAM token instead of a password. null → no keyless app user."
+  default     = null
+}
+
 variable "port" {
   type        = number
   description = "Database port (defaults to 5432 for PostgreSQL, 3306 for MySQL)"

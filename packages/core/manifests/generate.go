@@ -47,6 +47,12 @@ type App struct {
 	Host string
 	// Optional ServiceAccount name (e.g. a workload-identity KSA).
 	ServiceAccount string
+	// When set (keyless-DB path, #722), a ServiceAccount object named ServiceAccount is EMITTED with
+	// these annotations/labels — the Workload-Identity binding the pod federates through (GCP
+	// iam.gke.io/gcp-service-account, Azure azure.workload.identity/*). Empty → no SA object is
+	// emitted (ServiceAccount, if set, is assumed to already exist — e.g. a chart-created KSA).
+	ServiceAccountAnnotations map[string]string
+	ServiceAccountLabels      map[string]string
 	// Plain environment variables (values rendered quoted). Includes W3 binding-derived
 	// non-secret facets (a backing resource's endpoint/port, resolved from tofu outputs).
 	Env []types.ServiceEnvVar
@@ -131,7 +137,28 @@ func (a App) normalize() App {
 	return a
 }
 
-var tmpl = template.Must(template.New("app").Parse(`apiVersion: apps/v1
+var tmpl = template.Must(template.New("app").Parse(`
+{{- if or .ServiceAccountAnnotations .ServiceAccountLabels -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .ServiceAccount }}
+  namespace: {{ .Namespace }}
+  {{- if .ServiceAccountLabels }}
+  labels:
+    {{- range $k, $v := .ServiceAccountLabels }}
+    {{ $k }}: {{ printf "%q" $v }}
+    {{- end }}
+  {{- end }}
+  {{- if .ServiceAccountAnnotations }}
+  annotations:
+    {{- range $k, $v := .ServiceAccountAnnotations }}
+    {{ $k }}: {{ printf "%q" $v }}
+    {{- end }}
+  {{- end }}
+---
+{{ end -}}
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Name }}
@@ -430,11 +457,14 @@ func defaultPort(kind string) string {
 // secretKeyRef), any keyless-DB auth sidecars/volumes to co-schedule, and the fail-closed
 // `unresolved` report the caller surfaces (Deploy-tab warnings, #718).
 type bindingResolution struct {
-	env        []types.ServiceEnvVar
-	secretEnv  []AppSecretEnv
-	sidecars   []Sidecar
-	volumes    []Volume
-	unresolved []string
+	env           []types.ServiceEnvVar
+	secretEnv     []AppSecretEnv
+	sidecars      []Sidecar
+	volumes       []Volume
+	saName        string            // keyless Workload-Identity KSA the pod must run as (overrides opts.ServiceAccount)
+	saAnnotations map[string]string // rendered onto the emitted KSA (GCP GSA / Azure client-id)
+	saLabels      map[string]string
+	unresolved    []string
 }
 
 func resolveBindings(serviceName string, opts Options, bindings []types.ServiceBinding) bindingResolution {
@@ -452,7 +482,7 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 			// with no proxy behind it. Endpoint rewrite is coupled to a proxy actually being there.
 			key := string(b.Target.Kind) + "/" + b.Target.Name
 			if !proxied[key] {
-				sc, vol, err := keylessDBSidecar(opts, b.Target)
+				w, err := keylessDBSidecar(opts, b.Target)
 				if err != nil {
 					r.unresolved = append(r.unresolved, fmt.Sprintf(
 						"keyless binding %s→%s/%s: %v — binding omitted (fail-closed)",
@@ -460,8 +490,15 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					continue
 				}
 				proxied[key] = true
-				r.sidecars = append(r.sidecars, sc...)
-				r.volumes = append(r.volumes, vol...)
+				r.sidecars = append(r.sidecars, w.sidecars...)
+				r.volumes = append(r.volumes, w.volumes...)
+				// The keyless pod runs as the Workload-Identity KSA (all keyless bindings on a service
+				// share one identity, so first-writer wins — they're the same GSA/UAMI per project).
+				if r.saName == "" {
+					r.saName = w.saName
+					r.saAnnotations = w.saAnnotations
+					r.saLabels = w.saLabels
+				}
 			}
 		}
 		for _, inj := range b.Inject {
@@ -554,20 +591,28 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		binds := resolveBindings(s.Name, opts, s.Bindings)
 		skipped = append(skipped, binds.unresolved...)
 		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(binds.env)), s.Env...), binds.env...)
+		// A keyless binding overrides the ServiceAccount with the Workload-Identity KSA it emits;
+		// otherwise the app keeps opts.ServiceAccount (a chart-created KSA, assumed to exist).
+		sa := opts.ServiceAccount
+		if binds.saName != "" {
+			sa = binds.saName
+		}
 		apps = append(apps, App{
-			Name:           name,
-			Namespace:      opts.Namespace,
-			Image:          image,
-			Port:           port,
-			Replicas:       s.Replicas,
-			Host:           host,
-			ServiceAccount: opts.ServiceAccount,
-			Env:            env,
-			SecretEnv:      binds.secretEnv,
-			Sidecars:       binds.sidecars,
-			Volumes:        binds.volumes,
-			Resources:      s.Resources,
-			Probe:          s.Probe,
+			Name:                      name,
+			Namespace:                 opts.Namespace,
+			Image:                     image,
+			Port:                      port,
+			Replicas:                  s.Replicas,
+			Host:                      host,
+			ServiceAccount:            sa,
+			ServiceAccountAnnotations: binds.saAnnotations,
+			ServiceAccountLabels:      binds.saLabels,
+			Env:                       env,
+			SecretEnv:                 binds.secretEnv,
+			Sidecars:                  binds.sidecars,
+			Volumes:                   binds.volumes,
+			Resources:                 s.Resources,
+			Probe:                     s.Probe,
 		})
 	}
 	return apps, skipped

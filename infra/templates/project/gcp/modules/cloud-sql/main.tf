@@ -143,6 +143,24 @@ resource "google_sql_user" "default" {
 }
 
 ################################################################################
+# Keyless app database user (#722)
+#
+# When the root passes the app-workload GSA email, create a CLOUD_IAM_SERVICE_ACCOUNT
+# database user for it. The workload (via the Cloud SQL Auth Proxy with --auto-iam-authn)
+# then logs in with a short-lived IAM token minted from its Workload Identity — no password.
+# Cloud SQL expects the IAM SA username to be the SA email WITHOUT the ".gserviceaccount.com"
+# suffix.
+################################################################################
+
+resource "google_sql_user" "app_iam" {
+  count    = var.app_iam_sa_email != null ? 1 : 0
+  name     = trimsuffix(var.app_iam_sa_email, ".gserviceaccount.com")
+  project  = var.project_id
+  instance = google_sql_database_instance.this.name
+  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+}
+
+################################################################################
 # Store credentials in Secret Manager
 ################################################################################
 
