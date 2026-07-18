@@ -143,10 +143,12 @@ export function UsageCard({
 	}, [projectCount]);
 
 	return (
-		<div className="rounded-lg border bg-card shadow-sm">
+		<div className="rounded-lg border bg-surface shadow-sm">
 			<div className="flex min-h-[50px] items-center gap-2 border-b px-4 py-2.5">
-				<span className="font-display text-sm font-semibold">Usage</span>
-				<span className="font-mono text-[10px] text-muted-foreground">
+				<span className="font-display text-sm font-semibold text-text-primary">
+					Usage
+				</span>
+				<span className="font-mono text-[10px] text-text-tertiary">
 					Last 30 days
 				</span>
 				{data && <UsageHeaderCta orgSlug={orgSlug} data={data} />}
@@ -165,9 +167,9 @@ export function UsageCard({
 							<UsageMeter key={g.label} row={g} />
 						))}
 						{data.counts.length > 0 && (
-							<div className="grid grid-cols-2 gap-3 border-t py-3">
+							<div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t py-3">
 								{data.counts.map((c) => (
-									<CountStat key={c.label} row={c} />
+									<CountReadout key={c.label} row={c} />
 								))}
 							</div>
 						)}
@@ -211,12 +213,12 @@ function UsageHeaderCta({
 
 	return (
 		<div className="ml-auto flex items-center gap-2">
-			<span className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+			<span className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-text-tertiary">
 				{planMeta(data.plan).name}
 			</span>
 			<Link
 				href={billingHref}
-				className="font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+				className="font-mono text-[11px] text-text-tertiary transition-colors hover:text-text-primary"
 			>
 				Manage →
 			</Link>
@@ -232,16 +234,16 @@ function UsageMeter({ row }: { row: GaugeRow }) {
 		<div className="flex items-center gap-3 border-b border-border/60 py-2.5 last:border-b-0">
 			<UsageRing used={row.used} limit={row.limit} />
 			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-1.5 text-[13px] text-foreground">
+				<div className="flex items-center gap-1.5 text-[13px] text-text-primary">
 					{row.label}
 					<MetricTip tip={row.tip} />
 				</div>
-				<div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+				<div className="mt-0.5 font-mono text-[10px] text-text-tertiary">
 					{pct}% used
 				</div>
 			</div>
 			<div
-				className={`font-mono text-xs ${near ? "font-semibold text-foreground" : "text-muted-foreground"}`}
+				className={`font-mono text-xs ${near ? "font-semibold text-text-primary" : "text-text-tertiary"}`}
 			>
 				{row.readout ??
 					`${row.used.toLocaleString()} / ${row.limit.toLocaleString()}${row.unit ? ` ${row.unit}` : ""}`}
@@ -250,17 +252,18 @@ function UsageMeter({ row }: { row: GaugeRow }) {
 	);
 }
 
-/** A compact count stat — a big number + label, no gauge (uncapped on paid plans). */
-function CountStat({ row }: { row: CountRow }) {
+/** A count readout — a label + mono value inline (uncapped on paid plans, so no gauge
+ * and no KPI tile: counts live as mono text, not a bordered stat box). */
+function CountReadout({ row }: { row: CountRow }) {
 	return (
-		<div className="rounded-md border bg-muted/20 px-3 py-2">
-			<div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+		<div className="flex items-baseline gap-2">
+			<span className="flex items-center gap-1 text-[12px] text-text-secondary">
 				{row.label}
 				<MetricTip tip={row.tip} />
-			</div>
-			<div className="mt-0.5 font-display text-lg font-semibold tabular-nums">
+			</span>
+			<span className="font-mono text-[13px] tabular-nums text-text-primary">
 				{row.value.toLocaleString()}
-			</div>
+			</span>
 		</div>
 	);
 }
@@ -270,7 +273,7 @@ function MetricTip({ tip }: { tip: string }) {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<span className="inline-flex cursor-default text-muted-foreground/60 hover:text-muted-foreground">
+				<span className="inline-flex cursor-default text-text-tertiary hover:text-text-secondary">
 					<Info className="h-3 w-3" />
 				</span>
 			</TooltipTrigger>

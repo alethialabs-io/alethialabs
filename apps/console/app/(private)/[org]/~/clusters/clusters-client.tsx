@@ -3,10 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Button } from "@repo/ui/button";
+import {
+	Empty,
+	EmptyContent,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@repo/ui/empty";
 import { ClusterCard } from "@/components/clusters/cluster-card";
 import { ErrorState } from "@/components/errors/error-state";
 import { useClustersQuery } from "@/lib/query/use-clusters-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { Server } from "lucide-react";
 import Link from "next/link";
 
@@ -14,9 +23,11 @@ import Link from "next/link";
  * Clusters grid. Data comes from the server-prefetched `useClustersQuery` cache, which
  * then polls on the reconciliation cadence; `loading.tsx` covers the prefetch window. Pass
  * `projectId` to scope the grid to a single project (each row's `id` is its project id) — the
- * project drilldown's Clusters page reuses this with the shared org cache.
+ * project drilldown's Clusters page reuses this with the shared org cache. No page header:
+ * the surface opens straight into content, like evidence / jobs / runners.
  */
 export function ClustersClient({ projectId }: { projectId?: string }) {
+	const orgSlug = useActiveOrgSlug();
 	const { data: allClusters = [], isError, refetch } = useClustersQuery();
 	const clusters = projectId
 		? allClusters.filter((c) => c.id === projectId)
@@ -35,63 +46,57 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 		clusterIds,
 	);
 
-	return (
-		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-					Clusters
-				</h1>
-				<p className="text-sm text-muted-foreground mt-1">
-					Provisioned infrastructure and access credentials.
-				</p>
-			</div>
+	if (isError) {
+		// A fetch failure must not render as "no clusters provisioned".
+		return (
+			<ErrorState
+				title="Couldn't load clusters"
+				description="Something went wrong fetching your clusters. Check your connection and try again."
+				actions={
+					<Button variant="outline" size="sm" onClick={() => refetch()}>
+						Retry
+					</Button>
+				}
+			/>
+		);
+	}
 
-			{isError ? (
-				// A fetch failure must not render as "no clusters provisioned".
-				<ErrorState
-					title="Couldn't load clusters"
-					description="Something went wrong fetching your clusters. Check your connection and try again."
-					actions={
-						<Button variant="outline" size="sm" onClick={() => refetch()}>
-							Retry
-						</Button>
-					}
-				/>
-			) : clusters.length === 0 ? (
-				<div className="flex flex-col items-center justify-center py-16 text-center">
-					<div className="p-3 bg-muted/50 rounded-full mb-4">
-						<Server className="h-8 w-8 text-muted-foreground" />
-					</div>
-					<h3 className="text-sm font-medium text-foreground mb-1">
-						No clusters provisioned
-					</h3>
-					<p className="text-xs text-muted-foreground max-w-sm">
-						Clusters appear here after you deploy a project. Go to a
-						project&apos;s detail page and click Deploy.
-					</p>
-					<Link
-						href="/dashboard/new"
-						className="mt-4 text-xs text-primary hover:underline"
-					>
-						Create a project
-					</Link>
-				</div>
-			) : (
-				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-					{clusters.map((cluster) => {
-						const pc = Array.isArray(cluster.project_cluster)
-							? cluster.project_cluster[0]
-							: cluster.project_cluster;
-						return (
-							<ClusterCard
-								key={cluster.id}
-								data={cluster}
-								initialAssignments={pc?.id ? classMap[pc.id] : undefined}
-							/>
-						);
-					})}
-				</div>
-			)}
+	if (clusters.length === 0) {
+		return (
+			<Empty className="min-h-[60vh]">
+				<EmptyHeader>
+					<EmptyMedia variant="icon">
+						<Server />
+					</EmptyMedia>
+					<EmptyTitle>No clusters provisioned</EmptyTitle>
+					<EmptyDescription>
+						Clusters appear here once a project deploys its first environment. Open a
+						project and deploy to get started.
+					</EmptyDescription>
+				</EmptyHeader>
+				<EmptyContent>
+					<Button asChild variant="outline" size="sm">
+						<Link href={`/${orgSlug}/~/new`}>Browse projects</Link>
+					</Button>
+				</EmptyContent>
+			</Empty>
+		);
+	}
+
+	return (
+		<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+			{clusters.map((cluster) => {
+				const pc = Array.isArray(cluster.project_cluster)
+					? cluster.project_cluster[0]
+					: cluster.project_cluster;
+				return (
+					<ClusterCard
+						key={cluster.id}
+						data={cluster}
+						initialAssignments={pc?.id ? classMap[pc.id] : undefined}
+					/>
+				);
+			})}
 		</div>
 	);
 }
