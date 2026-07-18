@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Recurring PostHog error → GitHub issue filer. Queries the PostHog error-tracking issues API for
-# active issues that recur above a threshold and files ONE deduped GitHub issue each (labelled
-# `claude:investigate`, which triggers claude-investigate.yml to open a draft fix PR). PostHog can't
-# open GitHub issues itself (manual integration + Slack/webhook-only alerts), so this closes the loop.
+# active issues that recur above a threshold and files ONE deduped GitHub issue each into a triage
+# queue (label `from:posthog`), to be worked (e.g. in a Claude session) when someone is around.
+# PostHog can't open GitHub issues itself (manual integration + Slack/webhook-only alerts), so this
+# closes the loop. NOTE: filing only — no automated fix/LLM run (that would cost per-issue).
 #
 # OFF until enabled: needs repo secrets POSTHOG_PERSONAL_API_KEY (scopes error_tracking:read +
 # query:read) and POSTHOG_PROJECT_ID (the environment/project id). Without them the job SKIPS cleanly

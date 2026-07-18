@@ -5,10 +5,10 @@
 //
 // PostHog can't natively open GitHub issues (its GitHub integration is manual; alerts only hit
 // Slack/webhook), so this queries the error-tracking issues API, keeps the ones that recur above a
-// threshold, and files ONE deduped GitHub issue each — labelled so `claude-investigate.yml` picks it
-// up and opens a draft PR. Idempotent: dedup is by a hidden marker in the issue body
-// (`posthog-issue:<id>`), matched via GitHub search, so re-runs update rather than duplicate. No
-// per-issue labels (avoids label sprawl); the fixed label set is bug / from:posthog / claude:investigate.
+// threshold, and files ONE deduped GitHub issue each into a triage queue (label `from:posthog`) — to
+// be picked up and worked (e.g. in a Claude session) when someone is around. Idempotent: dedup is by a
+// hidden marker in the issue body (`posthog-issue:<id>`), matched via GitHub search, so re-runs update
+// rather than duplicate. Fixed label set only (bug / from:posthog) — no per-issue labels (avoids sprawl).
 //
 // Pure Node (global fetch, Node 20+); no deps. Auth: PostHog personal API key + GITHUB_TOKEN.
 // Run `--dry-run` to print what it WOULD file (and the raw shape of the first issue) without writing.
@@ -23,7 +23,7 @@ const LOOKBACK_DAYS = Number(process.env.PH_LOOKBACK_DAYS || "7");
 const MAX_ISSUES = Number(process.env.PH_MAX_ISSUES || "20"); // cap issues filed per run (anti-spam)
 const DRY_RUN = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 
-const LABELS = ["bug", "from:posthog", "claude:investigate"];
+const LABELS = ["bug", "from:posthog"];
 
 /** Fail with a clear message + non-zero exit. */
 function die(msg) {
@@ -107,9 +107,9 @@ function renderIssue(issue) {
 		lastSeen ? `- **Last seen:** ${lastSeen}` : "",
 		`- **PostHog:** ${posthogIssueUrl(id)}`,
 		"",
-		"### For the Claude session",
-		"Investigate the stack trace in PostHog (session replay attached), find the root cause in the",
-		"codebase, and open a **draft** PR into `dev`. Do not self-merge.",
+		"### How to work this",
+		"Open the PostHog link for the stack trace + session replay, find the root cause in the codebase,",
+		"and open a PR into `dev`. (Good candidate to hand to a Claude session.)",
 		"",
 		`<!-- ${marker(id)} -->`,
 	]

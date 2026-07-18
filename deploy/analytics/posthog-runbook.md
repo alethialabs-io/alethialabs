@@ -172,18 +172,16 @@ PostHog is usage-based with a monthly free tier (1M events, 5k replays, 1M flag 
 predictable: set a **billing limit** per product; keep **replay sampling** sane as traffic grows (the main
 cost driver alongside autocapture); the reverse-proxy doesn't change cost, only capture rate.
 
-## 16. Recurring errors → GitHub issues → Claude session
+## 16. Recurring errors → GitHub issue triage queue
 
-Recurring PostHog error-tracking issues are auto-filed as GitHub issues that auto-dispatch a Claude fix
-session. Two workflows (both SKIP cleanly until their secrets exist, so they're safe to merge dark):
+Recurring PostHog error-tracking issues are auto-filed as GitHub issues you can then pick up and work
+(e.g. in a Claude session). **Filing only — no automated LLM fix run** (that would cost per issue).
 
-1. **`.github/workflows/posthog-error-issues.yml`** (cron every 6h + `workflow_dispatch`) runs
-   `scripts/posthog-error-issues.mjs`: queries the error-tracking issues API for active issues recurring
-   above `PH_MIN_OCCURRENCES` (default 10), dedups by a hidden `posthog-issue:<id>` marker in the issue
-   body, and files ONE issue each (labels `bug`, `from:posthog`, `claude:investigate`; capped per run).
-2. **`.github/workflows/claude-investigate.yml`** (on issue labelled `claude:investigate`) runs
-   `anthropics/claude-code-action` to trace the root cause and open a **draft** PR into `dev`
-   (never self-merges; human review required).
+**`.github/workflows/posthog-error-issues.yml`** (cron every 6h + `workflow_dispatch`) runs
+`scripts/posthog-error-issues.mjs`: queries the error-tracking issues API for active issues recurring
+above `PH_MIN_OCCURRENCES` (default 10), dedups by a hidden `posthog-issue:<id>` marker in the issue
+body, and files ONE issue each (labels `bug`, `from:posthog`; capped per run). SKIPS cleanly until the
+secret exists, so it's safe to merge dark.
 
 **Enable it — add these as GitHub Actions repo secrets** (Settings → Secrets and variables → Actions):
 
@@ -191,12 +189,12 @@ session. Two workflows (both SKIP cleanly until their secrets exist, so they're 
 | --- | --- | --- |
 | `POSTHOG_PERSONAL_API_KEY` | A PostHog **personal** API key (NOT the `phc_` ingestion key) | `error_tracking:read` + `query:read` |
 | `POSTHOG_PROJECT_ID` | The project/environment id (PostHog → Settings → Project) | — |
-| `ANTHROPIC_API_KEY` | Anthropic key for the investigate action (separate from the deploy vault's copy — Actions can't read the AWS vault) | — |
 
 Optional repo **variable** `POSTHOG_HOST` (default `https://eu.posthog.com`). Preview safely first: run the
 filer via `workflow_dispatch` with `dry_run: true` (prints what it would file + the raw shape of the first
 issue), or locally: `POSTHOG_PERSONAL_API_KEY=… POSTHOG_PROJECT_ID=… node scripts/posthog-error-issues.mjs --dry-run`.
-Tune volume with `PH_MIN_OCCURRENCES` / `PH_MAX_ISSUES` / `PH_LOOKBACK_DAYS` in the workflow env.
+Tune volume with `PH_MIN_OCCURRENCES` / `PH_MAX_ISSUES` / `PH_LOOKBACK_DAYS` in the workflow env. To work
+the queue, filter issues by the `from:posthog` label and hand one to a Claude session.
 
 ## Deferred (not yet wired)
 
