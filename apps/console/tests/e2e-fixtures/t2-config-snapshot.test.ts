@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), getServiceDb: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
@@ -36,7 +36,7 @@ import { provisionProject } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
 import {
 	cloudIdentities,
 	jobs,
@@ -93,6 +93,9 @@ function setupDb(select: Map<unknown, Rows>, insert: Map<unknown, Rows>) {
 	};
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
+	);
+	vi.mocked(withScope).mockImplementation(
+		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	vi.mocked(getServiceDb).mockReturnValue({} as never);
 	return valuesSpy;
