@@ -94,11 +94,10 @@ test.describe("Hero happy-path", () => {
 		).toBeVisible();
 
 		// 9. …and the clusters surface. Nothing is provisioned (we stopped before a real deploy), so it
-		//    correctly renders the empty state — the truthful end of a hermetic hero run.
+		//    correctly renders the empty state — the truthful end of a hermetic hero run. (List pages no
+		//    longer render a page-title heading since #762's "no list-page headers" pass, so assert the
+		//    empty state itself, not a "Clusters" heading.)
 		await page.goto(`/${orgSlug}/~/clusters`);
-		await expect(
-			page.getByRole("heading", { name: "Clusters", exact: true }),
-		).toBeVisible();
 		await expect(page.getByText(/no clusters provisioned/i)).toBeVisible();
 	});
 });
