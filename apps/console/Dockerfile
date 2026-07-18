@@ -38,12 +38,25 @@ ENV BETTER_AUTH_SECRET=build-time-placeholder \
 # to bake the design-project canvas into the image.
 ARG NEXT_PUBLIC_CANVAS_ENABLED=false
 ENV NEXT_PUBLIC_CANVAS_ENABLED=$NEXT_PUBLIC_CANVAS_ENABLED
+# Deploy release (git SHA) — inlined so the browser bundle tags PostHog errors with it and the
+# source-map upload keys maps to the same release. CI passes VERSION=${{ github.sha }}.
+ARG VERSION=dev
+ENV NEXT_PUBLIC_APP_VERSION=$VERSION
+# PostHog Error-tracking source-map upload (see next.config.ts). projectId + API host are non-secret
+# build args; the personal WRITE key is a BuildKit secret mounted ONLY on the console build step below,
+# so it never lands in an image layer. No key → withPostHogConfig no-ops (OSS/local build unaffected).
+ARG POSTHOG_PROJECT_ID=
+ARG POSTHOG_API_HOST=https://eu.posthog.com
+ENV POSTHOG_PROJECT_ID=$POSTHOG_PROJECT_ID POSTHOG_API_HOST=$POSTHOG_API_HOST
 # Build the enterprise package (esbuild → ee/dist/index.js) BEFORE next build, so
 # next's serverExternalPackages trace pulls @alethia/ee + its deps into the
 # standalone bundle. Without dist/, the loader's tolerant require falls back to the
 # community build (no orgs/teams/SSO).
 RUN pnpm --filter @alethia/ee build
-RUN pnpm --filter console build
+# The PostHog write key (BuildKit secret) is exported only for this RUN; absent → empty → no upload.
+RUN --mount=type=secret,id=posthog_api_key \
+    POSTHOG_API_KEY="$(cat /run/secrets/posthog_api_key 2>/dev/null || true)" \
+    pnpm --filter console build
 
 # ---- migrate: one-shot DB migrate (drizzle migrator lives in full node_modules) ----
 FROM build AS migrate
