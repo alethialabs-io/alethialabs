@@ -1325,6 +1325,7 @@ export async function planProject(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1397,6 +1398,7 @@ export async function buildProject(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1460,6 +1462,7 @@ export async function provisionProject(
 				.insert(jobs)
 				.values(signedJob({
 					user_id: owner,
+					org_id: actor.orgId,
 					project_id: projectId,
 					environment_id: environment.id,
 					cloud_identity_id: identity.id,
@@ -1495,6 +1498,7 @@ export async function provisionProject(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1555,6 +1559,7 @@ export async function queueDriftDetection(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1599,6 +1604,7 @@ export async function destroyProject(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1660,6 +1666,7 @@ export async function detectDrift(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,

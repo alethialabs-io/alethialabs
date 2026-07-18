@@ -37,12 +37,21 @@ export async function GET(
 	const actor = await getActiveScope(owner);
 	const db = getServiceDb();
 
+	// This read uses the service DB (RLS-bypassing), so re-apply the tenant predicate by hand.
+	// It MUST mirror the jobs `owner_all` RLS policy exactly — `user_id = current_owner OR
+	// org_id = current_org` (programmables.sql) — not a stricter org-only check: the `set_org_id`
+	// trigger stamps `org_id = user_id` for any job whose insert didn't set org_id, so on a hosted
+	// org (orgId ≠ userId) a legitimately-owned job can carry `org_id = userId`. A strict
+	// `org_id === actor.orgId` gate 404s those, the EventSource error is swallowed, and the job's
+	// logs silently never render even though the list (RLS) shows the job.
 	const [job] = await db
-		.select({ org_id: jobs.org_id })
+		.select({ org_id: jobs.org_id, user_id: jobs.user_id })
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
-	if (!job || job.org_id !== actor.orgId) {
+	// Re-apply the owner_all RLS predicate on this no-RLS read; the PDP (authorizeUserId) gated above.
+	const owns = !!job && (job.user_id === actor.userId || job.org_id === actor.orgId); // authz-scope-ok
+	if (!owns) {
 		return new Response("Not found", { status: 404 });
 	}
 
