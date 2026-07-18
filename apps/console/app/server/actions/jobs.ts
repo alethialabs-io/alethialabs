@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorize } from "@/lib/authz/guard";
+import { signedJob } from "@/lib/db/signed-job";
 import { withOwnerScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -323,7 +324,7 @@ export async function rerunJob(jobId: string) {
 
 		const [newJob] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
 				job_type: original.job_type,
 				config_snapshot: original.config_snapshot,
@@ -332,7 +333,7 @@ export async function rerunJob(jobId: string) {
 				status: "QUEUED",
 				// A rerun is a fresh operation → a new trace root (not the original's).
 				traceparent: newTraceparent(),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		notifyScaler();

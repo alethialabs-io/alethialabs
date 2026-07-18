@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { eq, inArray } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import type { Db } from "@/lib/db";
 import {
 	auditLog,
@@ -319,7 +320,7 @@ export async function seedJobsAndEvidence(
 			// PLAN (SUCCESS) — carries verify_result + receipt + cost.
 			await db
 				.insert(jobs)
-				.values({
+				.values(signedJob({
 					id: planId,
 					user_id: ownerId,
 					org_id: orgId,
@@ -341,14 +342,14 @@ export async function seedJobsAndEvidence(
 						verify_result: report,
 						verify_receipt: rcpt,
 					} satisfies ExecutionMetadata,
-				})
+				}))
 				.onConflictDoNothing();
 			await insertLogs(db, planId, planLog(p, addCount));
 
 			// DEPLOY (SUCCESS) — the latest verify per env; carries gitops + security + receipt.
 			await db
 				.insert(jobs)
-				.values({
+				.values(signedJob({
 					id: deployId,
 					user_id: ownerId,
 					org_id: orgId,
@@ -377,7 +378,7 @@ export async function seedJobsAndEvidence(
 						addon_status: Object.fromEntries(p.components.addons.map((a) => [a.addon_id, { health: "Healthy", sync: "Synced" }])),
 						gitops_status: { mode: "gitops", apps_repo: `github.com/acme/${p.key}-gitops`, argocd_app: p.key, revision: planSha(`${p.key}/${env.stage}`).slice(0, 7), app_health: { health: "Healthy", sync: "Synced" } },
 					} satisfies ExecutionMetadata,
-				})
+				}))
 				.onConflictDoNothing();
 			await insertLogs(db, deployId, deployLog(p));
 
@@ -402,7 +403,7 @@ export async function seedJobsAndEvidence(
 		const driftId = ctx.id(`job:${p.key}/drift`);
 		await db
 			.insert(jobs)
-			.values({ id: driftId, user_id: ownerId, org_id: orgId, project_id: projectId, environment_id: defaultEnv.envId, cloud_identity_id: connectors[provider], job_type: "DETECT_DRIFT", provider, status: "SUCCESS", config_snapshot: {}, runner_id: runnerId, claimed_at: minsAgo(32), started_at: minsAgo(32), completed_at: minsAgo(30), execution_metadata: { drift_posture: { in_sync: defaultEnv.env.drifted === 0, drifted: defaultEnv.env.drifted, unmanaged: 0, unmanaged_known: true, scanned_at: minsAgo(30).toISOString() } } satisfies ExecutionMetadata })
+			.values(signedJob({ id: driftId, user_id: ownerId, org_id: orgId, project_id: projectId, environment_id: defaultEnv.envId, cloud_identity_id: connectors[provider], job_type: "DETECT_DRIFT", provider, status: "SUCCESS", config_snapshot: {}, runner_id: runnerId, claimed_at: minsAgo(32), started_at: minsAgo(32), completed_at: minsAgo(30), execution_metadata: { drift_posture: { in_sync: defaultEnv.env.drifted === 0, drifted: defaultEnv.env.drifted, unmanaged: 0, unmanaged_known: true, scanned_at: minsAgo(30).toISOString() } } satisfies ExecutionMetadata }))
 			.onConflictDoNothing();
 	}
 
@@ -411,11 +412,11 @@ export async function seedJobsAndEvidence(
 	if (first) {
 		await db
 			.insert(jobs)
-			.values({ id: ctx.id("job:queued"), user_id: ownerId, org_id: orgId, project_id: first.projectId, environment_id: first.envs[0].envId, job_type: "PLAN", provider: first.project.provider, status: "QUEUED", config_snapshot: {}, created_at: minsAgo(2) })
+			.values(signedJob({ id: ctx.id("job:queued"), user_id: ownerId, org_id: orgId, project_id: first.projectId, environment_id: first.envs[0].envId, job_type: "PLAN", provider: first.project.provider, status: "QUEUED", config_snapshot: {}, created_at: minsAgo(2) }))
 			.onConflictDoNothing();
 		await db
 			.insert(jobs)
-			.values({ id: ctx.id("job:processing"), user_id: ownerId, org_id: orgId, project_id: first.projectId, environment_id: first.envs[0].envId, job_type: "AUDIT", provider: first.project.provider, status: "PROCESSING", config_snapshot: {}, claimed_at: minsAgo(4), started_at: minsAgo(4) })
+			.values(signedJob({ id: ctx.id("job:processing"), user_id: ownerId, org_id: orgId, project_id: first.projectId, environment_id: first.envs[0].envId, job_type: "AUDIT", provider: first.project.provider, status: "PROCESSING", config_snapshot: {}, claimed_at: minsAgo(4), started_at: minsAgo(4) }))
 			.onConflictDoNothing();
 	}
 }

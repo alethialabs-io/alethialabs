@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema/jobs";
 import { projectEnvironments } from "@/lib/db/schema/project-environments";
@@ -128,7 +129,7 @@ export async function sweepProbeSchedule(
 	for (const c of due) {
 		const src = latestDeployByEnv.get(c.environmentId);
 		if (!src) continue;
-		await db.insert(jobs).values({
+		await db.insert(jobs).values(signedJob({
 			user_id: src.user_id,
 			project_id: src.project_id,
 			environment_id: c.environmentId,
@@ -136,7 +137,7 @@ export async function sweepProbeSchedule(
 			job_type: "PROBE_CLUSTER",
 			config_snapshot: src.config_snapshot,
 			status: "QUEUED",
-		});
+		}));
 		enqueued++;
 	}
 	if (enqueued > 0) notifyScaler();

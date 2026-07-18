@@ -13,6 +13,7 @@
 // namespace-PSA + admission-controller (Kyverno/Gatekeeper) gate — see the plan's E2 section.
 
 import { and, eq, notInArray } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
@@ -454,7 +455,7 @@ export async function scanByoChart(input: {
 		}
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "CHART_SCAN",
@@ -470,7 +471,7 @@ export async function scanByoChart(input: {
 					environment_id: envId,
 					addon_id: id,
 				},
-			})
+			}))
 			.returning({ id: jobs.id });
 		await tx
 			.update(projectAddons)

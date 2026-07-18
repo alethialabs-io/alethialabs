@@ -15,6 +15,7 @@ import { decryptSecret } from "@/lib/crypto/secrets";
 import { recordClaimLatency } from "@/lib/observability/metrics";
 import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+import { verifySnapshot } from "@/lib/runners/snapshot-sig";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -82,6 +83,29 @@ export async function POST(req: Request) {
 			.limit(1);
 		if (!job) {
 			return NextResponse.json({ job: null });
+		}
+
+		// Authenticity gate (Phase A): the config_snapshot the runner provisions from must carry a
+		// valid signature (or be a legacy/unsigned row — verifySnapshot no-ops then). A mismatch means
+		// the row was tampered after enqueue; fail the (already-claimed) job so it can't hang, and
+		// refuse to serve it. Signing is off when no key is configured, so this never blocks by default.
+		if (!verifySnapshot(job.config_snapshot, job.config_snapshot_sig)) {
+			await db
+				.update(jobs)
+				.set({
+					status: "FAILED",
+					error_message:
+						"config_snapshot signature verification failed — the snapshot was modified after enqueue",
+					completed_at: new Date(),
+				})
+				.where(eq(jobs.id, job.id));
+			console.error(
+				`[claim] config_snapshot signature mismatch for job ${job.id} — failed the job`,
+			);
+			return NextResponse.json(
+				{ error: "config_snapshot signature verification failed" },
+				{ status: 409 },
+			);
 		}
 
 		// Telemetry (no-op unless an OTLP endpoint is configured): record how long this job

@@ -14,6 +14,7 @@
 // — see assertIacSourceQueueable in projects.ts.
 
 import { and, eq } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
@@ -283,7 +284,7 @@ export async function scanIacSource(input: {
 
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "IAC_SCAN",
@@ -299,7 +300,7 @@ export async function scanIacSource(input: {
 					environment_id: envId,
 					iac_source_id: row.id,
 				},
-			})
+			}))
 			.returning({ id: jobs.id });
 		await tx
 			.update(projectIacSources)
