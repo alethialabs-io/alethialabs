@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var clusterListColumns = []string{"Project", "Cluster", "Version", "Status", "Nodes", "Region", "Cost"}
+var clusterListColumns = []string{"Project", "Cluster", "Version", "Status", "ArgoCD", "Nodes", "Region", "Cost"}
 
 var clusterListCmd = &cobra.Command{
 	Use:   "list",
@@ -44,7 +44,7 @@ var clusterListCmd = &cobra.Command{
 				return
 			}
 			columns := make([]table.Column, len(clusterListColumns))
-			widths := []int{22, 20, 10, 26, 12, 12, 12}
+			widths := []int{22, 20, 10, 26, 11, 12, 12, 12}
 			for i, title := range clusterListColumns {
 				columns[i] = table.Column{Title: title, Width: widths[i]}
 			}
@@ -93,11 +93,22 @@ func clusterRows(clusters []api.ClusterSummary) [][]string {
 		if c.EstimatedMonthlyCost != nil {
 			cost = fmt.Sprintf("$%.0f/mo", *c.EstimatedMonthlyCost)
 		}
+		// ArgoCD (cluster-side GitOps CD) is installed on every provisioned cluster;
+		// "exposed" = a managed-ingress URL exists (see `cluster get`), else port-forward.
+		argocd := ui.SymbolDash
+		if c.ClusterName != "" {
+			if c.ArgocdURL != "" {
+				argocd = "exposed"
+			} else {
+				argocd = "port-fwd"
+			}
+		}
 		rows[i] = []string{
 			projectLabel,
 			clusterName,
 			version,
 			status,
+			argocd,
 			nodes,
 			c.Region,
 			cost,

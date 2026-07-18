@@ -15,8 +15,9 @@ import type { ProvisionJobType } from "@/lib/db/schema/enums";
 /** The provisioning outcome dimension — a fixed, low-cardinality set. */
 export type ProvisionOutcome = "success" | "fail" | "cancel";
 
-/** A fleet scaler action — a fixed, low-cardinality set. */
-export type ScalerAction = "create" | "drain" | "destroy";
+/** A fleet scaler action — a fixed, low-cardinality set. `create-failed` marks a create that
+ *  the provider rejected (quota / exhausted SKU / API error) so a failed placement is countable. */
+export type ScalerAction = "create" | "drain" | "destroy" | "create-failed";
 
 /**
  * Lazily-built instrument set. Built on first use — AFTER startOtel has registered the
@@ -30,6 +31,13 @@ function buildInstruments() {
 		/** QUEUED backlog per provider (a point-in-time gauge, sampled each scaler tick). */
 		queueDepth: meter.createGauge("alethia.fleet.queue_depth", {
 			description: "QUEUED provisioning jobs awaiting a runner, per provider",
+			unit: "{job}",
+		}),
+		/** DISPATCHABLE backlog per provider — the subset of the queue that is claimable RIGHT NOW
+		 *  given each org's plan concurrency cap. This (not raw queue_depth) is what drives scaling,
+		 *  so a large gap between the two means jobs are queued behind caps, not behind capacity. */
+		dispatchableDepth: meter.createGauge("alethia.fleet.dispatchable_depth", {
+			description: "Claimable-now provisioning jobs (cap-aware), per provider",
 			unit: "{job}",
 		}),
 		/** Online managed runners per provider (sampled each scaler tick). */
@@ -87,6 +95,14 @@ export function recordQueueDepth(
 	depth: number,
 ): void {
 	inst().queueDepth.record(depth, { provider: providerLabel(provider) });
+}
+
+/** Records the dispatchable (cap-aware) backlog for a provider (fleet controller tick). */
+export function recordDispatchableDepth(
+	provider: string | null | undefined,
+	depth: number,
+): void {
+	inst().dispatchableDepth.record(depth, { provider: providerLabel(provider) });
 }
 
 /** Records the count of online runners for a provider (fleet controller tick). */

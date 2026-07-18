@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import type { AddonMode } from "@/lib/db/schema/enums";
+import type { ChartValuePathMap, ServiceBinding } from "@/types/jsonb.types";
 
 /** Day-2 categories an add-on belongs to (drives grouping in the marketplace UI). */
 export type AddOnCategory =
@@ -238,4 +239,17 @@ export interface AddOnInstallSpec {
 	/** The k8s Secret the runner seeds pre-sync for this add-on's secret knobs (W4.5).
 	 * Absent when the add-on has no secret-typed field with a stored value. */
 	secretRef?: AddOnSecretRef;
+	/** A BYO chart's described workloads' binding overlay (W5 Lane 2b): the runner resolves each
+	 * workload's W3 bindings against the provision's tofu outputs at deploy and writes them into
+	 * `values` at the declared value-paths (a keyless existingSecret ref for a credential facet,
+	 * a literal for endpoint/port). Absent for non-BYO add-ons. Mirrors the Go `AddOnInstall.Workloads`. */
+	workloads?: ChartWorkloadBindingSpec[];
+}
+
+/** One described BYO-chart workload's runtime-resolvable binding overlay (its W3 bindings + the
+ * value_paths they write to). Mirrors the Go `types.ChartWorkloadBinding`. */
+export interface ChartWorkloadBindingSpec {
+	name: string;
+	bindings: ServiceBinding[];
+	valuePaths: ChartValuePathMap;
 }

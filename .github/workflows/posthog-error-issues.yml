@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Recurring PostHog error → GitHub issue filer. Queries the PostHog error-tracking issues API for
+# active issues that recur above a threshold and files ONE deduped GitHub issue each into a triage
+# queue (label `from:posthog`), to be worked (e.g. in a Claude session) when someone is around.
+# PostHog can't open GitHub issues itself (manual integration + Slack/webhook-only alerts), so this
+# closes the loop. NOTE: filing only — no automated fix/LLM run (that would cost per-issue).
+#
+# OFF until enabled: needs repo secrets POSTHOG_PERSONAL_API_KEY (scopes error_tracking:read +
+# query:read) and POSTHOG_PROJECT_ID (the environment/project id). Without them the job SKIPS cleanly
+# (loud warning, never a false red). Start with `workflow_dispatch` (dry_run: true) to preview; the
+# schedule is conservative (MIN_OCCURRENCES=10, capped per run) to avoid issue spam.
+
+name: PostHog errors → issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print what would be filed; don't create issues"
+        type: boolean
+        default: true
+  schedule:
+    - cron: "17 */6 * * *" # every 6h at :17 (off-minute)
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: posthog-error-issues
+  cancel-in-progress: false
+
+jobs:
+  file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — skip cleanly when the PostHog key is absent
+        id: guard
+        env:
+          PH_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+        run: |
+          if [ -z "$PH_KEY" ]; then
+            echo "::warning::POSTHOG_PERSONAL_API_KEY not set — skipping. Add repo secrets POSTHOG_PERSONAL_API_KEY + POSTHOG_PROJECT_ID to enable."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.skip != 'true'
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          node-version: "20"
+      - name: File recurring errors as issues
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_PROJECT_ID: ${{ secrets.POSTHOG_PROJECT_ID }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST || 'https://eu.posthog.com' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PH_MIN_OCCURRENCES: "10"
+          PH_LOOKBACK_DAYS: "7"
+          PH_MAX_ISSUES: "20"
+        run: node scripts/posthog-error-issues.mjs ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}

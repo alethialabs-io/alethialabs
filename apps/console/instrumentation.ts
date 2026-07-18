@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { errorDigest, errorMessage, errorStack } from "@/lib/errors";
+import { errorDigest, errorMessage, errorStack, isExpectedRequestError } from "@/lib/errors";
 
 /** Next.js server-startup hook. Runs once per app instance on the Node runtime. */
 export async function register() {
@@ -84,7 +84,19 @@ export async function onRequestError(
 	context: { routePath?: string; routeType?: string },
 ): Promise<void> {
 	const { log } = await import("@/lib/observability/log");
-	log.child({ component: "onRequestError" }).error("uncaught request error", {
+	const logger = log.child({ component: "onRequestError" });
+	// Expected control flow (Next redirect()/notFound(), or the "no session" auth sentinel) is not a
+	// bug — log it quietly and do NOT forward to error tracking, which it otherwise floods with
+	// non-actionable noise (e.g. logged-out/crawler hits on authed routes throwing "Unauthorized").
+	if (isExpectedRequestError(error)) {
+		logger.debug("expected request error (not reported)", {
+			method: request.method ?? "?",
+			path: request.path ?? context.routePath ?? "?",
+			digest: errorDigest(error) ?? "-",
+		});
+		return;
+	}
+	logger.error("uncaught request error", {
 		method: request.method ?? "?",
 		path: request.path ?? context.routePath ?? "?",
 		route_type: context.routeType ?? "?",

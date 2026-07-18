@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 import {
 	cliCloudIdentitiesResponse,
+	cliClusterDetailResponse,
 	cliClustersResponse,
 	cliJobLogsResponse,
 	cliJobResponse,
@@ -41,6 +42,7 @@ function loadFixture(name: string): unknown {
 const cases: ReadonlyArray<[string, z.ZodType]> = [
 	["runners.json", cliRunnersResponse],
 	["clusters.json", cliClustersResponse],
+	["cluster_detail.json", cliClusterDetailResponse],
 	["cloud_identities.json", cliCloudIdentitiesResponse],
 	["jobs_page.json", cliJobsPageResponse],
 	["job.json", jobWire],

@@ -5,18 +5,22 @@
 // instance runs the 60s tick, plus an on-demand wake (wakeFleetScaler) when a job is enqueued.
 // Default (no FLEET_POOLS) → no-op. See dataroom/spec/mvp/26.
 //
-// Concurrency: the tick is a lock-free read→plan→create, so two overlapping passes over-provision.
-// scheduleTick() serializes passes WITHIN a process (bounding the ~15 fire-and-forget wakes — the
-// bug this guards). It is NOT cross-replica: the state is per-process, so >1 replica can still run
-// concurrent passes against the same pool. True multi-replica safety needs a DB advisory lock
-// (e.g. pg_advisory_xact_lock around reconcilePool's read→plan→act). Today prod is a single box, so
-// this is not live exposure — but the reconcile is only "convergent" across replicas over TIME, not
-// free of a transient same-tick over-provision.
+// Concurrency has two layers:
+//   • WITHIN a process, scheduleTick() serializes passes (coalescing the ~15 fire-and-forget wakes)
+//     so overlapping wakes never race a duplicate read→plan→act.
+//   • ACROSS replicas, every replica runs the interval, but the tick first tries to hold the single
+//     fleet-controller leader LEASE (tryBecomeFleetLeader); only the holder reconciles, so N replicas
+//     don't each hit the cloud provider API + DB every tick, and can't plan off divergent snapshots.
+//     A time-bounded lease (not a held advisory-lock tx) means nothing sits idle-in-transaction across
+//     the tick's slow cloud calls, and a crashed leader is superseded once its lease expires. The
+//     per-provider apply lock (tryFleetScaleLock, in the controller) remains as inner defense-in-depth.
 
+import { randomUUID } from "node:crypto";
 import { reconcileAll, type SurplusState } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
 import { loadFleetPools, reapDeletedPools } from "@/lib/fleet/pools-db";
 import { getFleetProvider } from "@/lib/fleet/provider";
+import { tryBecomeFleetLeader } from "@/lib/fleet/queue";
 import {
 	registerLoop,
 	superviseLoop,
@@ -27,6 +31,12 @@ import { sweepBootstrapTokens } from "@/lib/runners/bootstrap-token";
 const flog = log.child({ component: "fleet" });
 
 const TICK_INTERVAL_MS = 60_000;
+
+/** This replica's stable leader-lease identity (regenerated each process start). */
+const LEADER_ID = randomUUID();
+/** Lease TTL — held longer than the tick interval so the leader renews each winning tick and holds
+ *  across ticks; a crashed leader is superseded after at most this long. */
+const LEADER_TTL_SECONDS = Math.ceil((TICK_INTERVAL_MS / 1000) * 1.5);
 
 /** Stable supervision id for this loop (lib/observability/heartbeats.ts). */
 export const FLEET_LOOP_ID = "fleet-scaler";
@@ -99,6 +109,13 @@ export function wakeFleetScaler(): void {
 }
 
 async function tick(): Promise<void> {
+	// Cross-replica singleton: only the lease holder reconciles. A non-leader replica no-ops this tick
+	// (the leader is doing the work), so the cloud provider API + fleet reads happen once per tick, not
+	// once per replica. Lease acquisition is a single atomic upsert; a failure here (DB blip) simply
+	// skips the tick — the next tick (or the current leader) covers it, so the fleet still converges.
+	if (!(await tryBecomeFleetLeader(LEADER_ID, LEADER_TTL_SECONDS))) {
+		return;
+	}
 	const projects = await loadFleetPools();
 	await reconcileAll(projects, getFleetProvider(), makeDbDeps(), surplus);
 	// Reap soft-deleted pools whose VMs have fully drained (and their runners retired). Runs AFTER
