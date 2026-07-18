@@ -250,18 +250,6 @@ export const fleetActionType = pgEnum("fleet_action_type", [
 	"noop",
 ]);
 
-// The Hetzner Cloud locations a warm pool may spread across (lowercase datacenter codes as the
-// hcloud API expects them). This is the full current set; adding a Hetzner location later needs an
-// enum migration before a pool can target it.
-export const hetznerLocation = pgEnum("hetzner_location", [
-	"fsn1",
-	"nbg1",
-	"hel1",
-	"ash",
-	"hil",
-	"sin",
-]);
-
 export const connectorCategory = pgEnum("connector_category", [
 	"git",
 	"cloud",
@@ -425,7 +413,6 @@ export type RunnerOperator = (typeof runnerOperator.enumValues)[number];
 export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];
 export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
 export type FleetActionType = (typeof fleetActionType.enumValues)[number];
-export type HetznerLocation = (typeof hetznerLocation.enumValues)[number];
 export type ProjectStatus = (typeof projectStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type AddonMode = (typeof addonMode.enumValues)[number];

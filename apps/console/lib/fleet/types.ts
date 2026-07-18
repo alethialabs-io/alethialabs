@@ -6,7 +6,7 @@
 // placement — by the pure planner (plan.ts), over immutable VMs driven through the
 // FleetProvider primitives.
 
-import type { CloudProvider, HetznerLocation } from "@/lib/db/schema";
+import type { CloudProvider } from "@/lib/db/schema";
 
 /** Declarative desired state for one managed warm pool. */
 export interface FleetTarget {
@@ -18,8 +18,8 @@ export interface FleetTarget {
 	max: number;
 	/** Concurrent jobs one runner handles; divides backlog into runner demand. */
 	slotsPerRunner: number;
-	/** Locations to spread across (≥1); e.g. ["fsn1","nbg1"]. */
-	locations: HetznerLocation[];
+	/** Locations to spread across (≥1); e.g. ["fsn1","nbg1"]. Provider-specific free-text codes. */
+	locations: string[];
 	/** Minimum healthy instances to keep in each listed location. */
 	minPerLocation: number;
 	/** Max extra instances allowed above the floor during a rollout (maxSurge). */

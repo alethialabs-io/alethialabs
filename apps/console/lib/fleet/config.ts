@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { cloudProvider, hetznerLocation } from "@/lib/db/schema";
+import { cloudProvider } from "@/lib/db/schema";
 import type { FleetTarget } from "@/lib/fleet/types";
 import { log } from "@/lib/observability/log";
 import { z } from "zod";
@@ -17,7 +17,7 @@ export const poolSchema = z.object({
 	warmMin: z.number().int().min(0).default(1),
 	max: z.number().int().min(0).default(10),
 	slotsPerRunner: z.number().int().min(1).default(1),
-	locations: z.array(z.enum(hetznerLocation.enumValues)).min(1).default(["fsn1"]),
+	locations: z.array(z.string().min(1)).min(1).default(["fsn1"]),
 	minPerLocation: z.number().int().min(0).default(0),
 	surge: z.number().int().min(1).default(1),
 	buffer: z.number().int().min(0).default(1),
