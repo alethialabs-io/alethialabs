@@ -11,7 +11,8 @@
 import { create } from "zustand";
 
 /** The three stacked sections, matching their anchor `id`s on the page. */
-export type AlertsSection = "policies" | "channels" | "activity";
+export const ALERTS_SECTIONS = ["policies", "channels", "activity"] as const;
+export type AlertsSection = (typeof ALERTS_SECTIONS)[number];
 
 interface AlertsSectionStore {
 	active: AlertsSection;

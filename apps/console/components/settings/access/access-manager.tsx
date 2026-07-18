@@ -22,6 +22,7 @@ import {
 	listAccessGrants,
 	revokeGrant,
 } from "@/app/server/actions/grants";
+import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
@@ -430,13 +431,10 @@ function GrantBuilder({
 		value: p.key,
 		label: p.key,
 	}));
-	const resourceOpts =
-		scopeType !== "org" && scopeType in options.resources
-			? options.resources[scopeType as keyof GrantOptions["resources"]].map((r) => ({
-					value: r.id,
-					label: r.label,
-				}))
-			: [];
+	const resourceOpts = (lookup(options.resources, scopeType) ?? []).map((r) => ({
+		value: r.id,
+		label: r.label,
+	}));
 
 	const what = mode === "role" ? roleId : permissionKey;
 	const valid = Boolean(principalId && what && (scopeType === "org" || resourceId));

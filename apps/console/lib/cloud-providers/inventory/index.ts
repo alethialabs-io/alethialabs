@@ -114,7 +114,7 @@ export async function gcRemovedInventory(retentionDays: number): Promise<number>
 	for (const table of INVENTORY_TABLES) {
 		const res = await db
 			.delete(table)
-			.where(lt(table.removed_at, cutoff as never));
+			.where(sql`${table.removed_at} < ${cutoff}`);
 		purged += numOr(asRecord(res).rowCount, 0);
 	}
 	return purged;
