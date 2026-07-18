@@ -73,8 +73,49 @@ async function fetchPostHogIssues() {
 	return out;
 }
 
-/** Occurrences for an issue, trying the field names PostHog has used across versions. */
+/**
+ * Enrich each issue with its occurrence count + a sample route from the events query — the issues LIST
+ * endpoint omits volume, so without this every count is 0 and the threshold files nothing. Sets
+ * `__occ` + `__path` on each issue. Best-effort: a query failure logs and leaves counts at 0 (files
+ * nothing) rather than throwing.
+ */
+async function enrichWithCounts(issues) {
+	const hql =
+		`select properties.$exception_issue_id as iid, count() as c, any(properties.$pathname) as path ` +
+		`from events where event = '$exception' and timestamp > now() - interval ${LOOKBACK_DAYS} day ` +
+		`group by iid`;
+	let rows;
+	try {
+		const res = await fetch(`${HOST}/api/projects/${PROJECT_ID}/query/`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${PH_KEY}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ query: { kind: "HogQLQuery", query: hql } }),
+		});
+		if (!res.ok) {
+			console.error(`enrich counts: query ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+			return;
+		}
+		rows = (await res.json()).results || [];
+	} catch (e) {
+		console.error(`enrich counts: ${e instanceof Error ? e.message : String(e)}`);
+		return;
+	}
+	const byId = new Map();
+	for (const row of rows) {
+		if (Array.isArray(row)) byId.set(row[0], { c: Number(row[1]) || 0, path: row[2] || "" });
+	}
+	for (const issue of issues) {
+		const m = byId.get(issue.id);
+		if (m) {
+			issue.__occ = m.c;
+			issue.__path = m.path;
+		}
+	}
+}
+
+/** Occurrences for an issue — the events-query enrichment (__occ) first, then any list-response field. */
 function occurrencesOf(issue) {
+	if (typeof issue.__occ === "number") return issue.__occ;
 	return (
 		firstNumber(issue, [
 			"occurrences",
@@ -96,7 +137,11 @@ function renderIssue(issue) {
 	const users = firstNumber(issue, ["users", "aggregations.users"]);
 	const firstSeen = issue.first_seen || issue.firstSeen || "";
 	const lastSeen = issue.last_seen || issue.lastSeen || "";
-	const title = `[error] ${name}`.slice(0, 240);
+	// PostHog's `name` is often the generic exception class ("Error"); prefer the message so the GitHub
+	// issue title is meaningful (e.g. "[error] Unauthorized" not "[error] Error").
+	const generic = name === "Error" || name === "";
+	const label = generic && description ? String(description).split("\n")[0].slice(0, 120) : name;
+	const title = `[error] ${label}`.slice(0, 240);
 	const body = [
 		`**PostHog error issue** — auto-filed because it recurs (${occ} occurrences in the last ${LOOKBACK_DAYS}d).`,
 		"",
@@ -105,6 +150,7 @@ function renderIssue(issue) {
 		`- **Occurrences:** ${occ}${sessions != null ? ` · sessions: ${sessions}` : ""}${users != null ? ` · users: ${users}` : ""}`,
 		firstSeen ? `- **First seen:** ${firstSeen}` : "",
 		lastSeen ? `- **Last seen:** ${lastSeen}` : "",
+		issue.__path ? `- **Route:** \`${issue.__path}\`` : "",
 		`- **PostHog:** ${posthogIssueUrl(id)}`,
 		"",
 		"### How to work this",
@@ -149,6 +195,8 @@ async function main() {
 	if (!DRY_RUN && (!GH_TOKEN || !REPO)) die("GITHUB_TOKEN and GITHUB_REPOSITORY are required (unless --dry-run).");
 
 	const issues = await fetchPostHogIssues();
+	// The list endpoint omits occurrence counts; enrich from the events query so the threshold works.
+	await enrichWithCounts(issues);
 	console.log(`Fetched ${issues.length} active PostHog issue(s) (lookback ${LOOKBACK_DAYS}d).`);
 	if (DRY_RUN && issues[0]) {
 		// Surface the raw shape once so the count/field mapping can be confirmed against the live API.
