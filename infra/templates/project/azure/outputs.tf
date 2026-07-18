@@ -37,6 +37,19 @@ output "azure_db_fqdn" {
   value       = var.create_azure_db ? module.azure_db[0].server_fqdn : null
 }
 
+# Keyless DB auth (#722): the app's Entra login identity + the UAMI client id the generated KSA is
+# annotated with. Null unless Entra auth is enabled. A binding's `username` facet resolves from
+# azure_db_aad_user; the manifest lane annotates the app KSA with azure_db_client_id.
+output "azure_db_aad_user" {
+  description = "Keyless app database username — the Entra (UAMI) principal name (#722)"
+  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.app_db[0].name : null
+}
+
+output "azure_db_client_id" {
+  description = "Client id of the app Entra Workload-Identity UAMI — annotated onto the generated app KSA (#722)"
+  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.app_db[0].client_id : null
+}
+
 #########################################################################
 ##                     ACR Outputs                                     ##
 #########################################################################
