@@ -50,7 +50,14 @@ Matches by project name, cluster name, or id.`,
 			return
 		}
 
-		if err := renderCluster(os.Stdout, outputFormat(cmd), c); err != nil {
+		// Best-effort GitOps posture — legibility, not fail-closed: if the detail read
+		// fails we still render the cluster (without the GitOps line).
+		var gitops *api.ClusterGitops
+		if detail, derr := apiClient.GetCluster(c.ID); derr == nil && detail != nil {
+			gitops = detail.Gitops
+		}
+
+		if err := renderCluster(os.Stdout, outputFormat(cmd), c, gitops); err != nil {
 			fail(err)
 		}
 	},
@@ -77,17 +84,25 @@ func findCluster(clusters []api.ClusterSummary, query string) *api.ClusterSummar
 
 // renderCluster writes a single cluster to out: a bordered KV card for table format,
 // the typed object for json, Field/Value rows for csv.
-func renderCluster(out io.Writer, format string, c *api.ClusterSummary) error {
+func renderCluster(out io.Writer, format string, c *api.ClusterSummary, g *api.ClusterGitops) error {
 	title := c.ProjectName
 	if c.Environment != "" {
 		title += " (" + c.Environment + ")"
 	}
-	return ui.RenderCard(out, format, title, clusterFieldRows(c), c)
+	// json/csv emit the cluster fields inline plus the gitops object; table gets the card.
+	record := any(c)
+	if g != nil {
+		record = struct {
+			*api.ClusterSummary
+			Gitops *api.ClusterGitops `json:"gitops"`
+		}{c, g}
+	}
+	return ui.RenderCard(out, format, title, clusterFieldRows(c, g), record)
 }
 
 // clusterFieldRows returns the present-only key/value fields of a cluster, ending with
-// the ArgoCD access block when the cluster is provisioned.
-func clusterFieldRows(c *api.ClusterSummary) [][]string {
+// the ArgoCD access block + GitOps posture when the cluster is provisioned.
+func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops) [][]string {
 	rows := [][]string{
 		{"Status", fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status))},
 	}
@@ -118,6 +133,38 @@ func clusterFieldRows(c *api.ClusterSummary) [][]string {
 			rows = append(rows, []string{"ArgoCD", "installed — port-forward (no managed ingress on this cloud yet)"})
 		}
 		rows = append(rows, []string{"ArgoCD admin", argocdAdminPasswordCmd})
+		if g != nil {
+			rows = append(rows, gitopsRows(g)...)
+		}
+	}
+	return rows
+}
+
+// gitopsRows renders the compact GitOps posture: a failure banner, an "unknown" note when
+// no trustworthy snapshot exists, or a synced/healthy summary with the deployed revision.
+func gitopsRows(g *api.ClusterGitops) [][]string {
+	var line string
+	switch {
+	case g.LastDeployFailed && g.FailedStep != nil && *g.FailedStep != "":
+		line = "failed at " + *g.FailedStep
+		if g.FailureMessage != nil && *g.FailureMessage != "" {
+			line += " — " + *g.FailureMessage
+		}
+	case !g.StatusAvailable:
+		line = "unknown (no snapshot yet)"
+	default:
+		line = fmt.Sprintf("%d/%d synced · %d/%d healthy", g.Synced, g.Total, g.Healthy, g.Total)
+		if g.Revision != nil && *g.Revision != "" {
+			rev := *g.Revision
+			if len(rev) > 7 {
+				rev = rev[:7]
+			}
+			line += " · rev " + rev
+		}
+	}
+	rows := [][]string{{"GitOps", line}}
+	if g.AppsRepo != nil && *g.AppsRepo != "" {
+		rows = append(rows, []string{"Apps repo", *g.AppsRepo})
 	}
 	return rows
 }

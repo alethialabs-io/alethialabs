@@ -130,6 +130,28 @@ type ClusterSummary struct {
 	Region               string   `json:"region"`
 }
 
+// ClusterGitops is the compact ArgoCD/GitOps posture for a cluster's default environment,
+// derived from the console Deploy-tab read model. Mirrors clusterGitops in cli-contract.ts.
+type ClusterGitops struct {
+	Mode             string  `json:"mode"`
+	AppsRepo         *string `json:"apps_repo"`
+	Revision         *string `json:"revision"`
+	Total            int     `json:"total"`
+	Synced           int     `json:"synced"`
+	Healthy          int     `json:"healthy"`
+	StatusAvailable  bool    `json:"status_available"`
+	LastDeployFailed bool    `json:"last_deploy_failed"`
+	FailedStep       *string `json:"failed_step"`
+	FailureMessage   *string `json:"failure_message"`
+}
+
+// ClusterDetail is a single cluster plus its GitOps posture (GET /api/cli/clusters/:id).
+// Mirrors cliClusterDetailResponse in cli-contract.ts.
+type ClusterDetail struct {
+	Cluster ClusterSummary `json:"cluster"`
+	Gitops  *ClusterGitops `json:"gitops"`
+}
+
 type CloudIdentity struct {
 	ID        string `json:"id"`
 	Provider  string `json:"provider"`
@@ -521,6 +543,16 @@ func (c *Client) GetClusters() ([]ClusterSummary, error) {
 		return nil, fmt.Errorf("failed to get clusters: %w", err)
 	}
 	return successResp.Clusters, nil
+}
+
+// GetCluster fetches a single cluster by its id, plus its compact ArgoCD/GitOps posture.
+func (c *Client) GetCluster(id string) (*ClusterDetail, error) {
+	endpoint := fmt.Sprintf("%s/cli/clusters/%s", c.baseURL, id)
+	var detail ClusterDetail
+	if err := c.doGet(endpoint, &detail); err != nil {
+		return nil, fmt.Errorf("failed to get cluster: %w", err)
+	}
+	return &detail, nil
 }
 
 // --- Legacy (used by core/utils) ---

@@ -1,0 +1,34 @@
+{
+	"cluster": {
+		"id": "00000000-0000-4000-8000-000000000000",
+		"cluster_name": "string",
+		"cluster_version": "string",
+		"instance_types": [
+			"string"
+		],
+		"node_min_size": 0,
+		"node_max_size": 0,
+		"node_desired_size": 0,
+		"status": "PENDING",
+		"status_message": "string",
+		"argocd_url": "string",
+		"estimated_monthly_cost": 0,
+		"created_at": "2026-01-01T00:00:00.000Z",
+		"updated_at": "2026-01-01T00:00:00.000Z",
+		"project_name": "string",
+		"environment": "string",
+		"region": "string"
+	},
+	"gitops": {
+		"mode": "gitops",
+		"apps_repo": "string",
+		"revision": "string",
+		"total": 0,
+		"synced": 0,
+		"healthy": 0,
+		"status_available": false,
+		"last_deploy_failed": false,
+		"failed_step": "string",
+		"failure_message": "string"
+	}
+}
