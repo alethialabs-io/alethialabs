@@ -8,6 +8,7 @@ import { authorize } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { getServiceDb, type Tx, withOwnerScope, withScope } from "@/lib/db";
+import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	type EnvTransitionContext,
 	transitionEnv,
@@ -299,10 +300,21 @@ async function writeComponents(
 		await tx
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
-	if (data.services?.length)
-		await tx
+	if (data.services?.length) {
+		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
+		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).
+		const insertedServices = await tx
 			.insert(projectServices)
-			.values(data.services.map((s) => ({ ...base, ...s })));
+			.values(data.services.map((s) => ({ ...base, ...s })))
+			.returning({ id: projectServices.id, name: projectServices.name });
+		const svcIdByName = new Map(insertedServices.map((r) => [r.name, r.id]));
+		for (const s of data.services) {
+			const serviceId = svcIdByName.get(s.name);
+			if (serviceId && s.bindings?.length) {
+				await insertServiceBindings(tx, { service_id: serviceId }, s.bindings);
+			}
+		}
+	}
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas

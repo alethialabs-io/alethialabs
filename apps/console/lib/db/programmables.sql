@@ -1002,6 +1002,51 @@ CREATE POLICY owner_all ON public.cluster_admins FOR ALL
          WHERE p.user_id = current_setting('app.current_owner', true)::uuid
             OR p.org_id = current_setting('app.current_org', true)::uuid));
 
+-- service_bindings: a binding belongs to a service XOR a chart workload, so its tenancy is a 2-path
+-- join-through — visible when EITHER owner resolves to the org's project. service_binding_injections
+-- inherit tenancy through their parent binding (the same predicate, one hop further).
+ALTER TABLE public.service_bindings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.service_bindings;
+CREATE POLICY owner_all ON public.service_bindings FOR ALL
+  USING (service_id IN (SELECT s.id FROM public.project_services s
+             JOIN public.projects p ON p.id = s.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid)
+      OR chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+             JOIN public.projects p ON p.id = w.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid))
+  WITH CHECK (service_id IN (SELECT s.id FROM public.project_services s
+             JOIN public.projects p ON p.id = s.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid)
+      OR chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+             JOIN public.projects p ON p.id = w.project_id
+             WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                OR p.org_id = current_setting('app.current_org', true)::uuid));
+
+ALTER TABLE public.service_binding_injections ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.service_binding_injections;
+CREATE POLICY owner_all ON public.service_binding_injections FOR ALL
+  USING (binding_id IN (SELECT b.id FROM public.service_bindings b
+         WHERE b.service_id IN (SELECT s.id FROM public.project_services s
+               JOIN public.projects p ON p.id = s.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)
+            OR b.chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+               JOIN public.projects p ON p.id = w.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)))
+  WITH CHECK (binding_id IN (SELECT b.id FROM public.service_bindings b
+         WHERE b.service_id IN (SELECT s.id FROM public.project_services s
+               JOIN public.projects p ON p.id = s.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)
+            OR b.chart_workload_id IN (SELECT w.id FROM public.project_chart_workloads w
+               JOIN public.projects p ON p.id = w.project_id
+               WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+                  OR p.org_id = current_setting('app.current_org', true)::uuid)));
+
 -- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
 -- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;

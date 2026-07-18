@@ -28,6 +28,7 @@ import { inferValuePaths } from "@/lib/addons/chart-overlay";
 import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
+import { replaceServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	chartWorkloadBindingsSchema,
 	chartWorkloadConfigSchema,
@@ -407,6 +408,13 @@ export async function setChartWorkloadBindings(input: {
 					eq(projectChartWorkloads.project_id, input.projectId),
 				),
 			);
+		// Dual-write: keep the normalized service_bindings in step with the JSONB overlay. This is a
+		// granular UPDATE (not delete-all-reinsert), so replace this workload's binding rows.
+		await replaceServiceBindings(
+			tx,
+			{ chart_workload_id: input.workloadId },
+			bindings,
+		);
 	});
 	return { ok: true };
 }
