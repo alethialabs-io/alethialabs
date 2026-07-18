@@ -58,7 +58,7 @@ import {
 } from "@repo/ui/table";
 import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
 import { authClient } from "@/lib/auth/client";
-import { track } from "@/lib/analytics/track";
+import { track, captureException } from "@/lib/analytics/track";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import {
 	BookOpen,
@@ -73,6 +73,23 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+
+/**
+ * Extracts a human-readable detail from an auth/link failure (a Better Auth `{status,code,message}`
+ * object OR a thrown Error), so connect failures show the REAL cause instead of a generic toast.
+ * Cast-free: reads known fields via `in`/typeof narrowing.
+ */
+function describeAuthError(e: unknown): string {
+	const parts: (string | number)[] = [];
+	if (e && typeof e === "object") {
+		if ("status" in e && typeof e.status === "number") parts.push(e.status);
+		if ("code" in e && typeof e.code === "string" && e.code) parts.push(e.code);
+		if ("message" in e && typeof e.message === "string" && e.message) parts.push(e.message);
+	} else if (typeof e === "string" && e) {
+		parts.push(e);
+	}
+	return parts.length ? parts.join(" ") : "unknown error";
+}
 
 interface ConnectorsPageProps {
 	orgSlug: string;
@@ -230,10 +247,17 @@ export function ConnectorsPage({
 									providerId: provider,
 									callbackURL,
 								});
-					if (error) throw new Error(error.message);
+					// A successful link auto-redirects (Better Auth's redirect plugin), so reaching here
+					// with an `error` — or a thrown exception — is always a failure. Hand the FULL error
+					// object to the catch so we surface + capture its real status/code/message.
+					if (error) throw error;
 				} catch (err) {
-					console.error(`Error linking ${slug}:`, err);
-					toast.error(`Failed to connect ${integration.name}`);
+					const detail = describeAuthError(err);
+					// Report it: connector link failures were previously swallowed (generic toast only,
+					// no capture), so they never reached PostHog and couldn't be diagnosed.
+					captureException(err, { area: "connectors", provider: slug });
+					console.error(`Error connecting ${slug}:`, err);
+					toast.error(`Failed to connect ${integration.name}: ${detail}`);
 				} finally {
 					setConnectingSlug(null);
 				}
