@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { currentActor } from "@/lib/authz/guard";
+import { signedJob } from "@/lib/db/signed-job";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
@@ -28,13 +29,13 @@ export async function queueAudit(
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				...(projectId ? { project_id: projectId } : {}),
 				job_type: "AUDIT",
 				status: "QUEUED",
 				config_snapshot: { audit_kind: kind, audit_input: trimmed },
-			})
+			}))
 			.returning({ id: jobs.id });
 		return job.id;
 	});

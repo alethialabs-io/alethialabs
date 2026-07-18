@@ -17,6 +17,7 @@
 // internal errors throw.
 
 import { and, eq } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import type { BreakglassActionInput } from "@/types/jsonb.types";
 import { getServiceDb } from "@/lib/db";
 import { setEnvStatus } from "@/lib/db/env-status";
@@ -251,7 +252,7 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 
 	const [created] = await db
 		.insert(jobs)
-		.values({
+		.values(signedJob({
 			user_id: orig.user_id,
 			org_id: orig.org_id,
 			job_type: orig.job_type,
@@ -261,7 +262,7 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 			environment_id: orig.environment_id,
 			status: "QUEUED",
 			traceparent: newTraceparent(),
-		})
+		}))
 		.returning({ id: jobs.id });
 	wakeFleetScaler();
 	return { ok: true, detail: `re-enqueued as job ${created.id}`, data: { jobId: created.id } };
@@ -416,7 +417,7 @@ async function enqueueStateSurgery(
 
 	const [created] = await db
 		.insert(jobs)
-		.values({
+		.values(signedJob({
 			user_id: operator.userId,
 			org_id: project.org_id,
 			project_id: projectId,
@@ -429,7 +430,7 @@ async function enqueueStateSurgery(
 			},
 			status: "QUEUED",
 			traceparent: newTraceparent(),
-		})
+		}))
 		.returning({ id: jobs.id });
 	wakeFleetScaler();
 	return {

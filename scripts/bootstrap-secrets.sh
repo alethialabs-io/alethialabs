@@ -53,6 +53,7 @@ rsa_b64() { openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/
 gen_if_absent BETTER_AUTH_SECRET "$(b64)"
 gen_if_absent CLI_JWT_SECRET "$(hex)"
 gen_if_absent ALETHIA_CRED_ENCRYPTION_KEY "$(b64)"   # base64, decodes to 32 bytes
+gen_if_absent ALETHIA_SNAPSHOT_HMAC_KEY "$(b64)"     # config_snapshot HMAC (lib/runners/snapshot-sig.ts)
 gen_if_absent ALETHIA_DB_PASSWORD "$(hex)"
 gen_if_absent ALETHIA_APP_DB_PASSWORD "$(hex)"
 gen_if_absent OPENFGA_DB_PASSWORD "$(hex)"

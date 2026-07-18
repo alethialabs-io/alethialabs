@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { createHash } from "crypto";
+import { signedJob } from "@/lib/db/signed-job";
 import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import {
@@ -125,7 +126,7 @@ export async function POST(req: Request) {
 
 			const [job] = await db
 				.insert(jobs)
-				.values({
+				.values(signedJob({
 					user_id: userId,
 					environment_id: null,
 					cloud_identity_id: cloud_identity_id || null,
@@ -136,7 +137,7 @@ export async function POST(req: Request) {
 					status: "QUEUED",
 					assigned_runner_id: assigned_runner_id || null,
 					plan_job_id: plan_job_id || null,
-				})
+				}))
 				.returning();
 
 			notifyScaler();

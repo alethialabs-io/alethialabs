@@ -16,6 +16,7 @@
 //     no way to say "audit what I have".
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -133,7 +134,7 @@ export async function queueClusterProbe(
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: src.user_id,
 				project_id: projectId,
 				environment_id: environmentId,
@@ -141,7 +142,7 @@ export async function queueClusterProbe(
 				job_type: "PROBE_CLUSTER",
 				config_snapshot: src.config_snapshot,
 				status: "QUEUED",
-			})
+			}))
 			.returning({ id: jobs.id });
 		return job.id;
 	});
@@ -193,7 +194,7 @@ export async function queueEnvironmentAudit(
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				project_id: projectId,
 				environment_id: environmentId,
@@ -206,7 +207,7 @@ export async function queueEnvironmentAudit(
 							? planResult
 							: JSON.stringify(planResult),
 				},
-			})
+			}))
 			.returning({ id: jobs.id });
 		return job.id;
 	});
