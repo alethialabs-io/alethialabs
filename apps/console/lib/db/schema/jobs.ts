@@ -59,6 +59,10 @@ export const jobs = pgTable(
 			.default({})
 			.notNull(),
 		configuration_hash: text(),
+		// HMAC-SHA256 of the canonical config_snapshot, stamped at enqueue and re-verified at claim
+		// (lib/runners/snapshot-sig.ts). Authenticity — a tampered snapshot row can't be re-signed
+		// without the app key. NULL on legacy rows / when signing is off (verify then no-ops).
+		config_snapshot_sig: text(),
 		status: provisionJobStatus().default("QUEUED").notNull(),
 		// Scheduler claim order (higher first): plan band + job-type bump, derived at
 		// insert by the jobs_set_scheduling trigger. See programmables.sql.

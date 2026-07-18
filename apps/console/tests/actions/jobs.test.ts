@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the jobs actions: stub the authz guard, the usage guard, the scaler,
-// and a thenable drizzle chain run via withOwnerScope (each await pulls the next seeded result set).
+// and a thenable drizzle chain run via withScope (each await pulls the next seeded result set).
 // We assert the read shapes + join-null fallbacks, the rerun insert payload + scaler notify, and the
 // cancel state machine (cancellable vs terminal statuses) and not-found throws.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withScope: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/runners/cancel-signal", () => ({
@@ -27,7 +27,7 @@ import {
 } from "@/app/server/actions/jobs";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { withOwnerScope } from "@/lib/db";
+import { withScope } from "@/lib/db";
 import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
 import { notifyScaler } from "@/lib/scaler";
 
@@ -69,9 +69,9 @@ function mockDb(resultSets: unknown[][]) {
 			return resolve(r);
 		},
 	});
-	// withOwnerScope(owner, cb) → invoke cb with our chain.
-	vi.mocked(withOwnerScope).mockImplementation(
-		((_owner: unknown, cb: (tx: unknown) => unknown) => cb(db)) as never,
+	// withScope({ownerId, orgId}, cb) → invoke cb with our chain.
+	vi.mocked(withScope).mockImplementation(
+		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(db)) as never,
 	);
 	return { setSpy, valuesSpy, whereSpy };
 }
@@ -96,7 +96,7 @@ describe("getJobStatus", () => {
 	it("propagates an authorization failure (unauthorized)", async () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("Forbidden"));
 		await expect(getJobStatus("job-1")).rejects.toThrow(/Forbidden/);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withScope).not.toHaveBeenCalled();
 	});
 });
 
@@ -197,6 +197,9 @@ describe("rerunJob", () => {
 		expect(valuesSpy).toHaveBeenCalledWith(
 			expect.objectContaining({
 				user_id: "user-1",
+				// Stamped to the active org (not left to the set_org_id trigger's user_id default),
+				// so the job carries the org that its logs route + scheduler authorize against.
+				org_id: "org-1",
 				job_type: "PLAN",
 				config_snapshot: { foo: "bar" },
 				cloud_identity_id: "ci-1",
@@ -219,7 +222,7 @@ describe("rerunJob", () => {
 		mockDb([[{ job_type: "PLAN" }]]);
 		vi.mocked(assertUsageAllowed).mockRejectedValueOnce(new Error("Usage limit reached"));
 		await expect(rerunJob("job-1")).rejects.toThrow(/Usage limit reached/);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withScope).not.toHaveBeenCalled();
 	});
 });
 

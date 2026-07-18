@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
+import { signedJob } from "@/lib/db/signed-job";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { getServiceDb, type Tx, withOwnerScope, withScope } from "@/lib/db";
+import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	type EnvTransitionContext,
 	transitionEnv,
@@ -299,10 +301,21 @@ async function writeComponents(
 		await tx
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
-	if (data.services?.length)
-		await tx
+	if (data.services?.length) {
+		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
+		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).
+		const insertedServices = await tx
 			.insert(projectServices)
-			.values(data.services.map((s) => ({ ...base, ...s })));
+			.values(data.services.map((s) => ({ ...base, ...s })))
+			.returning({ id: projectServices.id, name: projectServices.name });
+		const svcIdByName = new Map(insertedServices.map((r) => [r.name, r.id]));
+		for (const s of data.services) {
+			const serviceId = svcIdByName.get(s.name);
+			if (serviceId && s.bindings?.length) {
+				await insertServiceBindings(tx, { service_id: serviceId }, s.bindings);
+			}
+		}
+	}
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas
@@ -1310,8 +1323,9 @@ export async function planProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1321,7 +1335,7 @@ export async function planProject(
 				// New trace root for this provisioning operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
@@ -1382,8 +1396,9 @@ export async function buildProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1393,7 +1408,7 @@ export async function buildProject(
 				// New trace root for this build operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1445,8 +1460,9 @@ export async function provisionProject(
 		const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 			const [job] = await tx
 				.insert(jobs)
-				.values({
+				.values(signedJob({
 					user_id: owner,
+					org_id: actor.orgId,
 					project_id: projectId,
 					environment_id: environment.id,
 					cloud_identity_id: identity.id,
@@ -1455,7 +1471,7 @@ export async function provisionProject(
 					status: "QUEUED",
 					traceparent: newTraceparent(),
 					...(runnerId ? { assigned_runner_id: runnerId } : {}),
-				})
+				}))
 				.returning({ id: jobs.id });
 
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1480,8 +1496,9 @@ export async function provisionProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1492,7 +1509,7 @@ export async function provisionProject(
 				traceparent: newTraceparent(),
 				...(planJobId ? { plan_job_id: planJobId } : {}),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1540,8 +1557,9 @@ export async function queueDriftDetection(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1551,7 +1569,7 @@ export async function queueDriftDetection(
 				// New trace root for this drift-detection operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 		return { jobId: job.id };
 	});
@@ -1584,8 +1602,9 @@ export async function destroyProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1595,7 +1614,7 @@ export async function destroyProject(
 				// New trace root for this teardown operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
@@ -1645,8 +1664,9 @@ export async function detectDrift(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1656,7 +1676,7 @@ export async function detectDrift(
 				// New trace root for this drift-detection operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 		return { jobId: job.id };
 	});

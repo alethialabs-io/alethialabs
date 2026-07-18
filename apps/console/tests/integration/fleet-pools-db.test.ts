@@ -31,7 +31,7 @@ const seed: NewFleetPool[] = [
 		warm_min: 2,
 		max: 12,
 		slots_per_runner: 3,
-		locations: ["lon1", "nyc1"],
+		locations: ["fsn1", "nbg1"],
 		min_per_location: 1,
 		surge: 2,
 		buffer: 2,
@@ -47,7 +47,7 @@ const seed: NewFleetPool[] = [
 		warm_min: 3,
 		max: 20,
 		slots_per_runner: 4,
-		locations: ["fra1", "ams3"],
+		locations: ["hel1", "ash"],
 		min_per_location: 2,
 		surge: 3,
 		buffer: 1,
@@ -97,7 +97,7 @@ describeIfDb("fleet pools DB config", () => {
 			warmMin: 2,
 			max: 12,
 			slotsPerRunner: 3,
-			locations: ["lon1", "nyc1"],
+			locations: ["fsn1", "nbg1"],
 			minPerLocation: 1,
 			surge: 2,
 			buffer: 2,
@@ -112,7 +112,7 @@ describeIfDb("fleet pools DB config", () => {
 		const ali = all.find((p) => p.provider === ENABLED_B);
 		expect(ali?.targetVersion).toBeNull();
 		expect(ali?.channel).toBe("beta");
-		expect(ali?.locations).toEqual(["fra1", "ams3"]);
+		expect(ali?.locations).toEqual(["hel1", "ash"]);
 	});
 
 	it("flips a live enabled-toggle to the teardown flag on the next load (pause = drain, not drop)", async () => {

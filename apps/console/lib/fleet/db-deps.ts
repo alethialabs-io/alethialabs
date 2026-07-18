@@ -8,6 +8,8 @@ import type { ControllerDeps } from "@/lib/fleet/controller";
 import {
 	backlogByProvider,
 	countInflightForProvider,
+	countLiveManagedInstances,
+	dispatchableBacklogByProvider,
 	insertFleetAction,
 	latestReleaseVersion,
 	managedRunnersByInstance,
@@ -21,12 +23,23 @@ import { mintBootstrapToken } from "@/lib/runners/bootstrap-token";
 const BOOT_GRACE_SECONDS =
 	Number.parseInt(process.env.FLEET_BOOT_GRACE_SECONDS ?? "180", 10) || 180;
 
+/** Global fleet instance ceiling (max total managed VMs across all pools) from the environment;
+ *  null (unset / non-positive) = no ceiling. A COGS backstop above each pool's `max`. */
+function fleetInstanceCeiling(): number | null {
+	const raw = Number.parseInt(process.env.FLEET_MAX_TOTAL_INSTANCES ?? "", 10);
+	return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
 /** The live (Postgres-backed) controller deps. */
 export function makeDbDeps(): ControllerDeps {
 	return {
 		runnerMap: (provider) => managedRunnersByInstance(provider),
 		backlog: async (provider) => (await backlogByProvider()).get(provider) ?? 0,
+		dispatchableBacklog: async (provider) =>
+			(await dispatchableBacklogByProvider()).get(provider) ?? 0,
 		recentPeak: (provider) => countInflightForProvider(provider),
+		globalInstanceCeiling: () => fleetInstanceCeiling(),
+		liveManagedInstances: () => countLiveManagedInstances(),
 		resolveChannel: () => latestReleaseVersion(),
 		drain: (runnerId) => markRunnerDraining(runnerId),
 		retire: (runnerId) => retireRunner(runnerId),

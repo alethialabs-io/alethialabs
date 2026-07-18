@@ -1,0 +1,77 @@
+{
+  "variant": "3min",
+  "poster": "03-canvas",
+  "loop": "03-canvas",
+  "segments": [
+    {
+      "id": "01-open",
+      "still": "03-canvas",
+      "kb": { "s0": 1.18, "s1": 1.0, "fx": 0.5, "fy": 0.45 },
+      "caption": "Your repo → an owned, proven, running cluster",
+      "narration": "Your infrastructure should be something you own — running in your own cloud, and proven at every step. Alethia takes your repository to a running, configured Kubernetes cluster. Keyless. And it proves what it did."
+    },
+    {
+      "id": "02-canvas",
+      "still": "03-canvas",
+      "kb": { "s0": 1.0, "s1": 1.26, "fx": 0.42, "fy": 0.52 },
+      "caption": "Every service and dependency, on one canvas",
+      "narration": "Every service and every dependency lives on one canvas you can see and configure — network, cluster, database, cache, DNS, storage — all compiled to OpenTofu. No YAML, no hidden state."
+    },
+    {
+      "id": "03-cluster",
+      "still": "04-inspector",
+      "kb": { "s0": 1.08, "s1": 1.32, "fx": 0.27, "fy": 0.52 },
+      "caption": "Shape it. Live cost as you design.",
+      "narration": "Shape each resource directly — the cluster, its nodes, its version — with a live cost estimate that updates as you design. Six hundred and twelve dollars a month, before you ever apply."
+    },
+    {
+      "id": "04-keyless",
+      "still": "01-overview",
+      "kb": { "s0": 1.02, "s1": 1.22, "fx": 0.72, "fy": 0.22 },
+      "caption": "Multi-cloud. Keyless. Zero stored credentials.",
+      "narration": "Connect AWS, Google Cloud, or Hetzner through short-lived federated identity. Alethia holds zero static keys. Your projects run across clouds, in accounts you own."
+    },
+    {
+      "id": "05-elench",
+      "still": "11-elench",
+      "kb": { "s0": 1.0, "s1": 1.14, "fx": 0.82, "fy": 0.5 },
+      "caption": "Elench — the agent that understands your infrastructure",
+      "narration": "And there's Elench — the agent that understands your infrastructure. Ask it anything: are my connectors healthy, what's my spend, is anything drifting. Or have it propose an operation. But it never provisions on its own."
+    },
+    {
+      "id": "06-prove",
+      "still": "03-canvas",
+      "kb": { "s0": 1.06, "s1": 1.3, "fx": 0.79, "fy": 0.46 },
+      "caption": "The LLM proposes. The gate disposes.",
+      "narration": "Before anything runs, a deterministic gate verifies the plan — keyless, least-privilege, fail-closed. Every apply reconciles through GitOps, and carries a signed, ed25519 evidence receipt. Prove it once. Then keep proving it."
+    },
+    {
+      "id": "07-day2",
+      "still": "03-canvas",
+      "kb": { "s0": 1.05, "s1": 1.34, "fx": 0.1, "fy": 0.17 },
+      "caption": "Day-two is the product",
+      "narration": "This is day-two operations — plan, apply, audit, drift detection — every action a streamed, audited job."
+    },
+    {
+      "id": "08-fleet",
+      "still": "10-runners",
+      "kb": { "s0": 1.0, "s1": 1.18, "fx": 0.58, "fy": 0.32 },
+      "caption": "A self-healing runner fleet",
+      "narration": "A self-healing fleet of runners executes it all — sized to demand, healing and rolling itself to new versions with zero downtime."
+    },
+    {
+      "id": "09-own",
+      "still": "01-overview",
+      "kb": { "s0": 1.12, "s1": 1.0, "fx": 0.5, "fy": 0.4 },
+      "caption": "Own it. Keyless. Proven.",
+      "narration": "Alethia is open source — self-host the whole control plane in your own cloud. Verified, evidence-backed, keyless delivery, that you own."
+    },
+    {
+      "id": "10-cta",
+      "still": "03-canvas",
+      "kb": { "s0": 1.14, "s1": 1.3, "fx": 0.45, "fy": 0.5 },
+      "caption": "Start today · alethialabs.io",
+      "narration": "Create an account, or book a demo, at alethia labs dot I O."
+    }
+  ]
+}

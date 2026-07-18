@@ -13,6 +13,7 @@
 import { sql } from "drizzle-orm";
 import {
 	boolean,
+	check,
 	index,
 	integer,
 	jsonb,
@@ -40,7 +41,9 @@ export const fleetPools = pgTable(
 		max: integer().default(10).notNull(),
 		// Concurrent jobs one runner handles; divides backlog into runner demand.
 		slots_per_runner: integer().default(1).notNull(),
-		// Locations to spread across (≥1), e.g. ["fsn1","nbg1"].
+		// Substrate locations to spread runner VMs across (≥1), e.g. ["fsn1","nbg1"] on Hetzner.
+		// Codes are provider-specific (the fleet substrate is pluggable) so this stays free text,
+		// validated per-provider in app code — not a DB enum.
 		locations: text().array().default(["fsn1"]).notNull(),
 		// Minimum healthy instances to keep in each listed location.
 		min_per_location: integer().default(0).notNull(),
@@ -124,3 +127,27 @@ export const fleetActions = pgTable(
 // in lib/fleet/types.ts — this is the persisted ledger row, that is the in-memory decision.
 export type FleetActionRow = typeof fleetActions.$inferSelect;
 export type NewFleetActionRow = typeof fleetActions.$inferInsert;
+
+// Single-row leader LEASE for the fleet controller. Every console replica runs the 60s scaler tick,
+// but only the lease holder actually reconciles — so at scale N replicas don't each hit the cloud
+// provider API + DB reads every tick (and can't plan off divergent snapshots). A time-bounded lease
+// (not a held advisory-lock transaction) means no connection sits idle-in-transaction across the
+// tick's slow cloud calls, and a dead leader is automatically superseded once its lease expires. The
+// per-provider apply lock (tryFleetScaleLock) stays as inner defense-in-depth. Global platform table
+// (no org_id / no RLS); all access via getServiceDb(). The CHECK + boolean PK pin it to one row.
+export const fleetLeader = pgTable(
+	"fleet_leader",
+	{
+		// Constant true → exactly one lease row (enforced by the PK + the singleton CHECK).
+		singleton: boolean().primaryKey().default(true).notNull(),
+		// The console replica currently holding the lease (a per-process id, regenerated on restart).
+		holder: uuid().notNull(),
+		// Lease expiry: any replica may seize the lease once now() passes this (leader died mid-tick
+		// without renewing). Held > the tick interval so the holder renews each tick it wins.
+		expires_at: timestamp({ withTimezone: true }).notNull(),
+		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [check("fleet_leader_singleton", sql`${t.singleton}`)],
+);
+
+export type FleetLeaderRow = typeof fleetLeader.$inferSelect;

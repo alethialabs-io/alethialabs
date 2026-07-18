@@ -10,6 +10,26 @@ import (
 	"testing"
 )
 
+func TestIsOperatorNotReady(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"crd not registered", `error: resource mapping not found for name: "secretstore-azure": no matches for kind "ClusterSecretStore" in version "external-secrets.io/v1beta1"`, true},
+		{"no matches for kind", `unable to recognize "x.yaml": no matches for kind "SecretStore"`, true},
+		{"webhook no endpoints", `Error from server (InternalError): failed calling webhook "validate.clustersecretstore.external-secrets.io": failed to call webhook: Post "https://...": no endpoints available for service "external-secrets-operator-webhook"`, true},
+		{"real auth failure not retried", `error: unable to apply: forbidden: user cannot patch`, false},
+		{"validation error not retried", `error validating data: unknown field "spec.bogus"`, false},
+		{"empty output", "", false},
+	}
+	for _, c := range cases {
+		if got := isOperatorNotReady(c.output); got != c.want {
+			t.Errorf("%s: isOperatorNotReady=%v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestExternalDNSSecretManifest(t *testing.T) {
 	m := externalDNSSecretManifest("external-dns-cloudflare", "apiToken", "s3cret")
 	if !strings.Contains(m, "kind: Namespace") || !strings.Contains(m, "name: external-dns") {

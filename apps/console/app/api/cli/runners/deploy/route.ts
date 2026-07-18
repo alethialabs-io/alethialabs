@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { signedJob } from "@/lib/db/signed-job";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
@@ -110,14 +111,14 @@ export async function POST(req: Request) {
 
 		const [job] = await db
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				cloud_identity_id,
 				job_type: "DEPLOY_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: assigned_runner_id || null,
-			})
+			}))
 			.returning({
 				id: jobs.id,
 				status: jobs.status,

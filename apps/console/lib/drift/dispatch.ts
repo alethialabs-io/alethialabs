@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema/jobs";
 import { projectEnvironments } from "@/lib/db/schema/project-environments";
@@ -105,7 +106,7 @@ export async function sweepDriftSchedule(
 		// only the rows that actually landed (a dropped conflict returns none).
 		const inserted = await db
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: src.user_id,
 				project_id: src.project_id,
 				environment_id: c.environmentId,
@@ -113,7 +114,7 @@ export async function sweepDriftSchedule(
 				job_type: "DETECT_DRIFT",
 				config_snapshot: src.config_snapshot,
 				status: "QUEUED",
-			})
+			}))
 			.onConflictDoNothing({
 				target: jobs.environment_id,
 				where: sql`job_type = 'DETECT_DRIFT' AND status IN ('QUEUED', 'CLAIMED', 'PROCESSING')`,

@@ -199,24 +199,48 @@ describe("plan — idle surplus scale-down", () => {
 
 describe("plan — placement + capacity-cap edges (mutation hardening)", () => {
 	it("distributes creates round-robin to the least-loaded location", () => {
-		// 3 creates over 2 locations, min 0 (skips the below-min path) → a, b, a (least-loaded each time).
+		// 3 creates over 2 locations, min 0 (skips the below-min path) → fsn1, nbg1, fsn1 (least-loaded each time).
 		const a = plan(
-			project({ minPerLocation: 0, locations: ["a", "b"], warmMin: 3, buffer: 0, max: 10 }),
+			project({ minPerLocation: 0, locations: ["fsn1", "nbg1"], warmMin: 3, buffer: 0, max: 10 }),
 			obs([]),
 		);
 		const locs = creates(a).map((c) => c.type === "create" && c.location);
 		expect(locs).toHaveLength(3);
-		expect(locs.filter((l) => l === "a")).toHaveLength(2);
-		expect(locs.filter((l) => l === "b")).toHaveLength(1);
+		expect(locs.filter((l) => l === "fsn1")).toHaveLength(2);
+		expect(locs.filter((l) => l === "nbg1")).toHaveLength(1);
 	});
 
 	it("never creates beyond max + surge, even to satisfy per-location minimums", () => {
 		// target 0, but minPerLocation 2 × 2 locations = 4 wanted; max 2 + surge 1 = 3 hard cap.
 		const a = plan(
-			project({ max: 2, surge: 1, warmMin: 0, buffer: 0, minPerLocation: 2, locations: ["a", "b"] }),
+			project({ max: 2, surge: 1, warmMin: 0, buffer: 0, minPerLocation: 2, locations: ["fsn1", "nbg1"] }),
 			obs([]),
 		);
 		expect(creates(a)).toHaveLength(3);
+	});
+
+	it("caps creates at the global maxCreates budget (fleet-wide ceiling)", () => {
+		// The pool wants 5 (warmMin 5) from empty, but the fleet ceiling leaves only 2 of headroom.
+		const a = plan(project({ warmMin: 5, buffer: 0, max: 10 }), obs([], { maxCreates: 2 }));
+		expect(creates(a)).toHaveLength(2);
+		// min-per-location creates also respect the budget: 0 headroom ⇒ no VMs even below the floor.
+		const b = plan(
+			project({ warmMin: 0, buffer: 0, minPerLocation: 2, locations: ["fsn1"] }),
+			obs([], { maxCreates: 0 }),
+		);
+		expect(creates(b)).toHaveLength(0);
+	});
+
+	it("the global budget limits ONLY creates — scale-down still proceeds at zero headroom", () => {
+		// 3 idle online at target version, target 1 (warmMin 1), grace elapsed: 2 surplus are destroyed
+		// even though the fleet ceiling forbids any new VM this tick (maxCreates 0).
+		const online3 = [inst(), inst(), inst()];
+		const a = plan(
+			project({ warmMin: 1, buffer: 0, minPerLocation: 0, scaleDownGraceTicks: 0, locations: ["fsn1"] }),
+			obs(online3, { maxCreates: 0, surplusTicks: 9 }),
+		);
+		expect(creates(a)).toHaveLength(0);
+		expect(destroys(a)).toHaveLength(2);
 	});
 
 	it("scales surplus down from the most-loaded location, never below a location minimum", () => {

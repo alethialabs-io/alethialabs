@@ -18,7 +18,7 @@ export interface FleetTarget {
 	max: number;
 	/** Concurrent jobs one runner handles; divides backlog into runner demand. */
 	slotsPerRunner: number;
-	/** Locations to spread across (≥1); e.g. ["fsn1","nbg1"]. */
+	/** Locations to spread across (≥1); e.g. ["fsn1","nbg1"]. Provider-specific free-text codes. */
 	locations: string[];
 	/** Minimum healthy instances to keep in each listed location. */
 	minPerLocation: number;
@@ -64,7 +64,9 @@ export interface ObservedInstance extends ProviderInstance {
 /** Everything the planner needs to decide the next safe step for a pool. */
 export interface Observed {
 	instances: ObservedInstance[];
-	/** QUEUED jobs targeting this provider. */
+	/** Demand-driving backlog for this provider: the DISPATCHABLE (cap-aware) QUEUED count — jobs a
+	 *  runner could claim now given per-org plan caps — so the planner never sizes to work the caps
+	 *  block. (The controller passes raw queue depth only to the ledger/telemetry, not here.) */
 	backlog: number;
 	/** Recent peak concurrent demand (drives auto-grow of the warm floor). */
 	recentPeak: number;
@@ -72,6 +74,10 @@ export interface Observed {
 	bootGraceSeconds: number;
 	/** Consecutive ticks the pool has been over target — gates idle scale-down (hysteresis). */
 	surplusTicks: number;
+	/** Max NEW VMs this pool may create this tick, given the fleet-wide global ceiling headroom the
+	 *  controller threads in (undefined = uncapped). A COGS backstop above the per-pool `max`; only
+	 *  create actions are limited — scale-down/drain/destroy always proceed. */
+	maxCreates?: number;
 }
 
 /** Why the planner emitted an action — recorded verbatim onto the fleet_actions ledger so an
