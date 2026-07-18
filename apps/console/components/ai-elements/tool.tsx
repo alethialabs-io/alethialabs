@@ -143,7 +143,16 @@ export const ToolOutput = ({
     return null;
   }
 
-  let Output = <div>{output as ReactNode}</div>;
+  let Output = (
+    <div>
+      {isValidElement(output) ||
+      typeof output === "string" ||
+      typeof output === "number" ||
+      typeof output === "boolean"
+        ? output
+        : null}
+    </div>
+  );
 
   if (typeof output === "object" && !isValidElement(output)) {
     Output = (

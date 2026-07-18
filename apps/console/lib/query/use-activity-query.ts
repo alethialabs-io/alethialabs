@@ -51,6 +51,8 @@ export function useActivityQuery(query: ActivityQuery) {
 		queryKey: qk.activity(org, query),
 		queryFn: ({ pageParam }) =>
 			getActivityLog(pageParam == null ? query : { ...query, cursor: pageParam }),
+		// TanStack resolves the page-param type from this literal's inline annotation; a separate
+		// typed const breaks the overload inference, so the assertion stays here.
 		initialPageParam: null as number | null,
 		getNextPageParam: (last) => last.nextCursor,
 		placeholderData: keepPreviousData,
