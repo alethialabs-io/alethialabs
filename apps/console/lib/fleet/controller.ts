@@ -38,6 +38,7 @@ import {
 	recordQueueDepth,
 	recordScalerAction,
 } from "@/lib/observability/metrics";
+import { captureServerException } from "@/lib/analytics/server";
 
 const flog = log.child({ component: "fleet" });
 
@@ -214,11 +215,44 @@ export async function reconcilePool(
 				// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
 				// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.
 				const bootstrapToken = await deps.mintBootstrapToken();
-				await provider.create(resolved, {
-					location: a.location,
-					version: a.version,
-					bootstrapToken,
-				});
+				try {
+					await provider.create(resolved, {
+						location: a.location,
+						version: a.version,
+						bootstrapToken,
+					});
+				} catch (err) {
+					// "Why couldn't the fleet place a VM?" — a create rejection (quota, an exhausted
+					// SKU/arch: the Hetzner 412 that stalled prod for days) is the exact signal that
+					// used to be invisible: it aborted the tick and surfaced only as a generic
+					// "reconcile failed". Count it, surface it with the full decision context, and do
+					// NOT let one bad VM abort the pool's other convergence (drains/reaps that free
+					// capacity) — continue; the next tick re-plans and retries the create.
+					recordScalerAction(project.provider, "create-failed");
+					flog.error("fleet provision failed — could not place a VM", {
+						provider: project.provider,
+						location: a.location,
+						version: a.version,
+						reason: a.reason,
+						queue_depth: backlog,
+						pool_size: onlineNow,
+						err,
+					});
+					// Best-effort PostHog Error-tracking event; no-ops without the analytics key and
+					// never throws. Carries only low-sensitivity placement context (no token/secret).
+					void captureServerException(err, {
+						props: {
+							area: "fleet",
+							provider: project.provider,
+							location: a.location,
+							version: a.version ?? undefined,
+							reason: a.reason,
+							queue_depth: backlog,
+							pool_size: onlineNow,
+						},
+					});
+					continue;
+				}
 				await record(a, null, { location: a.location, version: a.version });
 			} else if (a.type === "drain") {
 				await deps.drain(a.runnerId);

@@ -27,6 +27,7 @@ import {
 	recordAddonHealth,
 	recordSecurityPosture,
 } from "@/lib/addons/inspection-persistence";
+import { captureServer } from "@/lib/analytics/server";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
@@ -139,6 +140,7 @@ export async function PUT(
 					project_id: jobs.project_id,
 					environment_id: jobs.environment_id,
 					org_id: jobs.org_id,
+					user_id: jobs.user_id,
 					cloud_identity_id: jobs.cloud_identity_id,
 					execution_metadata: jobs.execution_metadata,
 					provider: jobs.provider,
@@ -235,6 +237,20 @@ export async function PUT(
 					job_type: job.job_type,
 					project_id: job.project_id ?? undefined,
 				};
+				// PostHog product event: the terminal DEPLOY outcome (the actual value moment) keyed by
+				// job_id so a red deploy is one query away, segmented by provider/plan. Best-effort;
+				// captureServer no-ops without the analytics key and never throws. Intentionally carries
+				// NO error_message — the raw runner error can echo provisioning values and stays in the
+				// tenant-scoped in-app alert (system.job.failed) + the job row, never in 3rd-party
+				// telemetry. distinct_id = the job's owner so it stitches to their client timeline.
+				if (job.job_type === "DEPLOY") {
+					void captureServer(
+						job.user_id ?? job.org_id,
+						status === "SUCCESS" ? "deploy_succeeded" : "deploy_failed",
+						job.org_id,
+						{ job_id: jobId, provider: job.provider ?? undefined },
+					);
+				}
 				if (status === "FAILED") {
 					emitAlertEventSafe(job.org_id, "system.job.failed", {
 						title: `Job failed: ${job.job_type}`,
