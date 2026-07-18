@@ -40,6 +40,7 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 	projects,
+	topicSubscriptions,
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
@@ -245,10 +246,27 @@ async function writeComponents(
 		await tx
 			.insert(projectQueues)
 			.values(data.queues.map((q) => ({ ...base, ...q })));
-	if (data.topics?.length)
-		await tx
+	if (data.topics?.length) {
+		// Dual-write: the topic row still carries `subscriptions` JSONB (the rollback net, dropped in a
+		// follow-up), AND each subscription is normalized into topic_subscriptions (enum protocol + FK).
+		// `ordinal` preserves author order so the config-snapshot array stays byte-identical.
+		const insertedTopics = await tx
 			.insert(projectTopics)
-			.values(data.topics.map((t) => ({ ...base, ...t })));
+			.values(data.topics.map((t) => ({ ...base, ...t })))
+			.returning({ id: projectTopics.id, name: projectTopics.name });
+		const topicIdByName = new Map(insertedTopics.map((r) => [r.name, r.id]));
+		const subRows = data.topics.flatMap((t) => {
+			const topicId = topicIdByName.get(t.name);
+			if (!topicId) return [];
+			return (t.subscriptions ?? []).map((s, i) => ({
+				topic_id: topicId,
+				protocol: s.protocol,
+				endpoint: s.endpoint,
+				ordinal: i,
+			}));
+		});
+		if (subRows.length) await tx.insert(topicSubscriptions).values(subRows);
+	}
 	if (data.nosql_tables?.length)
 		await tx
 			.insert(projectNosqlTables)
