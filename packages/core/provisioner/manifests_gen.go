@@ -44,10 +44,18 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 			strOutputs[k] = s
 		}
 	}
+	// Keyless per-cloud DB auth (#722) is dark by default: only when ALETHIA_KEYLESS_DB_AUTH_ENABLED
+	// is set does a service→database binding to an iam_auth database use the local auth-proxy sidecar
+	// (holding no password) instead of the ExternalSecret path. Off → every credential facet keeps
+	// the existing password path unchanged.
+	keylessOn := os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
 	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
-		Domain:   vc.DNS.DomainName,
-		Outputs:  strOutputs,
-		Provider: string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
+		Domain:        vc.DNS.DomainName,
+		Outputs:       strOutputs,
+		Provider:      string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
+		KeylessDBAuth: keylessOn,
+		Databases:     vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
+		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"), // the Azure db-token refresher sidecar image
 	})
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
@@ -82,7 +90,7 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 	// ClusterSecretStore) materializes the k8s Secret the workload's secretKeyRef reads. The Secret
 	// name matches BindingSecretName(s.Name, target) — exactly the secretKeyRef.name the renderer
 	// emitted for this service (per-service, so no two ExternalSecrets fight over one Secret).
-	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, stdout)
+	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, stdout)
 	if err != nil {
 		return warnings, err
 	}
@@ -129,12 +137,19 @@ func credentialSecretOutputKey(kind string) string {
 // Unsatisfiable facets (no store for the cloud, no provisioned secret, a facet the secret lacks)
 // are reported to stdout AND returned as `skips`, never dropped silently. Returns those skip reasons
 // + the count written. The skip reasons carry no secret values (facet/kind/provider names only).
-func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, stdout io.Writer) (skips []string, count int, err error) {
+func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, keylessOn bool, stdout io.Writer) (skips []string, count int, err error) {
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
 			facets := manifests.CredentialFacetNames(b)
 			if len(facets) == 0 {
 				continue // endpoint/port-only binding needs no Secret
+			}
+			// Keyless DB bindings (#722) hold no password — the renderer wired an auth-proxy sidecar
+			// instead of a secretKeyRef, so there is no Secret to materialize here. Skip in lock-step
+			// with FromServices' keyless decision (same KeylessDBTarget predicate) so the two lanes
+			// never disagree about which bindings are keyless.
+			if keylessOn && manifests.KeylessDBTarget(string(vc.Provider), b.Target, vc.Databases) {
+				continue
 			}
 			yaml, skipped, renderErr := manifests.RenderExternalSecret(manifests.ExternalSecretParams{
 				ServiceName: s.Name,
