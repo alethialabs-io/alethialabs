@@ -29,6 +29,11 @@ vi.mock("@/lib/billing/meter", () => ({
 	reportJobUsageOnce: vi.fn().mockResolvedValue(undefined),
 }));
 
+const captureServer = vi.fn();
+vi.mock("@/lib/analytics/server", () => ({
+	captureServer: (...args: unknown[]) => captureServer(...args),
+}));
+
 /**
  * Builds a drizzle-ish stub: `execute()` resolves the update_job_status RPC row, and the
  * select chain resolves the re-SELECTed job row the route reads execution_metadata from.
@@ -81,6 +86,7 @@ function deployJob(
 		project_id: "proj-1",
 		environment_id: null,
 		org_id: "org-1",
+		user_id: "user-1",
 		cloud_identity_id: null,
 		execution_metadata,
 		provider: "aws",
@@ -147,6 +153,31 @@ describe("PUT /api/jobs/[id]/status — orphan_risk on interrupted apply", () =>
 		const types = emitAlertEventSafe.mock.calls.map((c) => c[1]);
 		expect(types).toContain("system.job.failed");
 		expect(types).not.toContain("system.project.orphan_risk");
+	});
+
+	it("emits the deploy_failed PostHog event keyed by job id, owner-attributed, with NO raw error", async () => {
+		mockDb(true, deployJob(null));
+		await put("job-2", { status: "FAILED", error_message: "boom: secret=abc" });
+		expect(captureServer).toHaveBeenCalledWith(
+			"user-1", // distinct_id = the job owner (stitches to their client timeline)
+			"deploy_failed",
+			"org-1",
+			{ job_id: "job-2", provider: "aws" },
+		);
+		// The raw runner error can echo provisioning values → it must NOT reach 3rd-party telemetry.
+		const props = captureServer.mock.calls[0][3] as Record<string, unknown>;
+		expect(JSON.stringify(props)).not.toContain("secret");
+	});
+
+	it("emits deploy_succeeded on a successful DEPLOY", async () => {
+		mockDb(true, deployJob(null));
+		await put("job-3", { status: "SUCCESS" });
+		expect(captureServer).toHaveBeenCalledWith(
+			"user-1",
+			"deploy_succeeded",
+			"org-1",
+			{ job_id: "job-3", provider: "aws" },
+		);
 	});
 
 	it("skips all side-effects when the RPC was a no-op (job already terminal)", async () => {

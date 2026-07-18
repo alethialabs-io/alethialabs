@@ -15,8 +15,9 @@ import type { ProvisionJobType } from "@/lib/db/schema/enums";
 /** The provisioning outcome dimension — a fixed, low-cardinality set. */
 export type ProvisionOutcome = "success" | "fail" | "cancel";
 
-/** A fleet scaler action — a fixed, low-cardinality set. */
-export type ScalerAction = "create" | "drain" | "destroy";
+/** A fleet scaler action — a fixed, low-cardinality set. `create-failed` marks a create that
+ *  the provider rejected (quota / exhausted SKU / API error) so a failed placement is countable. */
+export type ScalerAction = "create" | "drain" | "destroy" | "create-failed";
 
 /**
  * Lazily-built instrument set. Built on first use — AFTER startOtel has registered the
