@@ -49,9 +49,9 @@ export async function GET(
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
-	// authz-scope-ok: mirrors the jobs owner_all RLS predicate (user_id OR org_id) on a no-RLS
-	// service-DB read; the PDP (authorizeUserId, above) already gated view authority.
-	if (!job || (job.user_id !== actor.userId && job.org_id !== actor.orgId)) {
+	// Re-apply the owner_all RLS predicate on this no-RLS read; the PDP (authorizeUserId) gated above.
+	const owns = !!job && (job.user_id === actor.userId || job.org_id === actor.orgId); // authz-scope-ok
+	if (!owns) {
 		return new Response("Not found", { status: 404 });
 	}
 
