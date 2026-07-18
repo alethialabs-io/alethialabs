@@ -49,14 +49,16 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 	// (holding no password) instead of the ExternalSecret path. Off → every credential facet keeps
 	// the existing password path unchanged.
 	keylessOn := os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
-	apps, skipped := manifests.FromServices(vc.Services, manifests.Options{
+	mopts := manifests.Options{
+		Namespace:     appNamespace,
 		Domain:        vc.DNS.DomainName,
 		Outputs:       strOutputs,
 		Provider:      string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
 		KeylessDBAuth: keylessOn,
 		Databases:     vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
-		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"), // the Azure db-token refresher sidecar image
-	})
+		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
+	}
+	apps, skipped := manifests.FromServices(vc.Services, mopts)
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
 	}
@@ -95,14 +97,23 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 		return warnings, err
 	}
 	warnings = append(warnings, esSkips...)
+	// Keyless least-priv bootstrap (#722 R5): for each keyless database, write the one-shot ArgoCD
+	// PreSync Job that creates/scopes the app's DB role as admin (+ its admin ExternalSecret on
+	// AWS/GCP). Without it a keyless app has an identity but no role to log in as. A Job that can't be
+	// rendered (a missing admin output) is REPORTED, not fatal — consistent with the binding lane.
+	jobSkips, jobCount, err := writeBootstrapJobs(dir, vc, mopts, stdout)
+	if err != nil {
+		return warnings, err
+	}
+	warnings = append(warnings, jobSkips...)
 	if err := repo.AddAndCommit("chore: scaffold app manifests (alethia)"); err != nil {
 		return warnings, fmt.Errorf("commit generated manifests: %w", err)
 	}
 	if err := repo.Push(); err != nil {
 		return warnings, fmt.Errorf("push generated manifests: %w", err)
 	}
-	fmt.Fprintf(stdout, "Scaffolded %d app manifest(s)%s into the GitOps repo: %s\n",
-		len(written), esCountSuffix(esCount), strings.Join(written, ", "))
+	fmt.Fprintf(stdout, "Scaffolded %d app manifest(s)%s%s into the GitOps repo: %s\n",
+		len(written), esCountSuffix(esCount), jobCountSuffix(jobCount), strings.Join(written, ", "))
 	return warnings, nil
 }
 
@@ -117,6 +128,58 @@ func esCountSuffix(n int) string {
 		return ""
 	}
 	return fmt.Sprintf(" + %d ExternalSecret(s)", n)
+}
+
+// jobCountSuffix renders the keyless bootstrap-Job count for the summary line (nothing when zero).
+func jobCountSuffix(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" + %d keyless bootstrap Job(s)", n)
+}
+
+// writeBootstrapJobs renders the keyless least-priv DB bootstrap Job (#722 R5) for each keyless
+// database bound by a service, writing the Job (and its admin ExternalSecret on AWS/GCP) into dir for
+// ArgoCD to run as a PreSync hook. Deduped per (kind, name) so multiple services binding the same
+// database share ONE Job. No-op when keyless is off (mopts.KeylessDBAuth). A Job that can't be
+// rendered (a missing admin tofu output) is REPORTED to stdout AND returned as `skips`, never fatal —
+// the app still deploys (its keyless binding fail-closes in lock-step), and the reason surfaces on the
+// Deploy tab. The skip reasons carry no secret values (kind/name/output names only).
+func writeBootstrapJobs(dir string, vc *types.ProjectConfig, mopts manifests.Options, stdout io.Writer) (skips []string, count int, err error) {
+	if !mopts.KeylessDBAuth {
+		return nil, 0, nil
+	}
+	seen := map[string]bool{}
+	for _, s := range vc.Services {
+		for _, b := range s.Bindings {
+			if !manifests.KeylessDBTarget(mopts.Provider, b.Target, vc.Databases) {
+				continue
+			}
+			key := string(b.Target.Kind) + "/" + b.Target.Name
+			if seen[key] {
+				continue // one bootstrap Job per keyless database, not per binding
+			}
+			seen[key] = true
+
+			res, renderErr := manifests.RenderBootstrapJob(mopts, b.Target)
+			if renderErr != nil {
+				msg := fmt.Sprintf("keyless bootstrap Job for %s/%s: %v — app role not provisioned (fail-closed)", b.Target.Kind, b.Target.Name, renderErr)
+				fmt.Fprintln(stdout, "Bootstrap Job skipped "+msg)
+				skips = append(skips, msg)
+				continue
+			}
+			if writeErr := os.WriteFile(filepath.Join(dir, res.Name+".yaml"), []byte(res.JobYAML), 0o644); writeErr != nil {
+				return skips, count, writeErr
+			}
+			if res.AdminSecretYAML != "" {
+				if writeErr := os.WriteFile(filepath.Join(dir, res.Name+"-admin-externalsecret.yaml"), []byte(res.AdminSecretYAML), 0o644); writeErr != nil {
+					return skips, count, writeErr
+				}
+			}
+			count++
+		}
+	}
+	return skips, count, nil
 }
 
 // credentialSecretOutputKey maps a binding kind to the tofu output holding the resource's

@@ -61,9 +61,26 @@ talks to `127.0.0.1`.
     PostgreSQL Flexible Server with **Microsoft Entra** authentication. A refresher sidecar mints an
     Entra token from the pod's **federated Workload Identity** and keeps it fresh on a shared file; a
     local PgBouncer serves the app on `127.0.0.1`. Alethia provisions a managed identity for the app,
-    federates it to the app's Kubernetes service account, and registers it on the server.
+    federates it to the app's Kubernetes service account, and gives it a scoped database role (see
+    below). The app identity is **not** a database administrator.
   </Tab>
 </Tabs>
+
+## The app gets a scoped role, never admin
+
+The app's cloud identity logs in, but it maps to a **least-privilege Postgres role** — granted only
+`CONNECT` on its database and `USAGE`/`CREATE` on the `public` schema, never superuser. That role is
+created by a one-shot **bootstrap Job** Alethia adds to your GitOps repo: it runs as an ArgoCD
+**PreSync hook** (so it finishes before the app deploys), connects as the database administrator, runs
+the grants, and deletes itself on success.
+
+The Job's *own* admin credential is keyless where the cloud allows it:
+
+- **Azure** — a **dedicated admin managed identity** (separate from the app) mints an Entra admin
+  token; no password exists. The app identity holds zero admin rights.
+- **AWS / GCP** — the existing database administrator (RDS master / Cloud SQL built-in user) is fetched
+  **ephemerally** by the External Secrets Operator (via its own cloud identity — no static key stored)
+  and used only by that one-shot Job. The app itself remains fully keyless.
 
 ### Where it doesn't apply
 
@@ -81,11 +98,10 @@ runner enables it with `ALETHIA_KEYLESS_DB_AUTH_ENABLED=true` (the Azure path al
 `ALETHIA_RUNNER_IMAGE` set to the runner image that carries the token refresher). With the flag off,
 an IAM-auth database binding uses the normal password path unchanged.
 
-The Azure path is the newer of the two: the app identity is currently registered as the server's
-Entra administrator (functional but broader than ideal) — a scoped per-database role is a tracked
-follow-up. If a keyless binding can't be fully wired at deploy time (a missing identity, for
-example), it **fails closed**: the binding is omitted and the reason is surfaced on the deployment's
-**Deploy** tab rather than shipping a workload pointed at nothing.
+If a keyless binding can't be fully wired at deploy time (a missing identity, for example), it
+**fails closed**: the binding is omitted and the reason is surfaced on the deployment's **Deploy** tab
+rather than shipping a workload pointed at nothing. The same holds for the bootstrap Job — if its
+admin credential can't be resolved, the Job is skipped and reported instead of wedging the sync.
 </Callout>
 
 ## See also
