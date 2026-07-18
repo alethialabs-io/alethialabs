@@ -38,6 +38,7 @@ import {
 	recordQueueDepth,
 	recordScalerAction,
 } from "@/lib/observability/metrics";
+import { captureServerException } from "@/lib/analytics/server";
 
 const flog = log.child({ component: "fleet" });
 
@@ -61,6 +62,12 @@ export interface ControllerDeps {
 	dispatchableBacklog?(provider: string): Promise<number>;
 	/** Current in-flight (CLAIMED/PROCESSING) jobs — drives auto-grow of the warm floor. */
 	recentPeak(provider: string): Promise<number>;
+	/** Global fleet instance ceiling (max total managed VMs across ALL pools), or null for no ceiling.
+	 *  A COGS backstop above each pool's `max`. Optional → unset means uncapped (pre-ceiling behaviour). */
+	globalInstanceCeiling?(): number | null;
+	/** Approx current live managed VMs fleet-wide (registered runners not OFFLINE) — the ceiling's
+	 *  headroom = ceiling − this. Only consulted when a ceiling is set. */
+	liveManagedInstances?(): Promise<number>;
 	/** Newest released version for a channel (or null if none). */
 	resolveChannel(channel: string): Promise<string | null>;
 	/** Mark a runner DRAINING (stops it claiming → goes idle → reaped). */
@@ -105,6 +112,10 @@ export async function reconcilePool(
 	provider: FleetProvider,
 	deps: ControllerDeps,
 	surplus: SurplusState,
+	// Shared fleet-wide create budget for this tick (a COGS backstop above per-pool `max`). Mutated:
+	// this pool's creates are subtracted so later pools in the tick see the reduced headroom. Default
+	// unlimited (no global ceiling / direct test calls) → behaviour identical to pre-budget.
+	budget: { remaining: number } = { remaining: Number.POSITIVE_INFINITY },
 ): Promise<number> {
 	// Resolve channel → target version (a pin wins; set on the project the planner sees).
 	let targetVersion = project.targetVersion;
@@ -174,7 +185,22 @@ export async function reconcilePool(
 		recentPeak,
 		bootGraceSeconds: deps.bootGraceSeconds,
 		surplusTicks,
+		maxCreates: budget.remaining,
 	});
+
+	// Subtract this pool's creates from the shared fleet budget so later pools in the tick can't push
+	// the fleet past the global ceiling. Log when the budget actually bit (clamped a wanted create).
+	const createsPlanned = actions.filter((a) => a.type === "create").length;
+	if (Number.isFinite(budget.remaining)) {
+		if (createsPlanned >= budget.remaining && target > onlineNow) {
+			flog.warn("global fleet ceiling reached — capping creates this tick", {
+				provider: project.provider,
+				budget_remaining: budget.remaining,
+				creates_planned: createsPlanned,
+			});
+		}
+		budget.remaining = Math.max(0, budget.remaining - createsPlanned);
+	}
 
 	const byInstance = new Map(observedInstances.map((i) => [i.instanceId, i]));
 
@@ -214,11 +240,44 @@ export async function reconcilePool(
 				// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
 				// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.
 				const bootstrapToken = await deps.mintBootstrapToken();
-				await provider.create(resolved, {
-					location: a.location,
-					version: a.version,
-					bootstrapToken,
-				});
+				try {
+					await provider.create(resolved, {
+						location: a.location,
+						version: a.version,
+						bootstrapToken,
+					});
+				} catch (err) {
+					// "Why couldn't the fleet place a VM?" — a create rejection (quota, an exhausted
+					// SKU/arch: the Hetzner 412 that stalled prod for days) is the exact signal that
+					// used to be invisible: it aborted the tick and surfaced only as a generic
+					// "reconcile failed". Count it, surface it with the full decision context, and do
+					// NOT let one bad VM abort the pool's other convergence (drains/reaps that free
+					// capacity) — continue; the next tick re-plans and retries the create.
+					recordScalerAction(project.provider, "create-failed");
+					flog.error("fleet provision failed — could not place a VM", {
+						provider: project.provider,
+						location: a.location,
+						version: a.version,
+						reason: a.reason,
+						queue_depth: backlog,
+						pool_size: onlineNow,
+						err,
+					});
+					// Best-effort PostHog Error-tracking event; no-ops without the analytics key and
+					// never throws. Carries only low-sensitivity placement context (no token/secret).
+					void captureServerException(err, {
+						props: {
+							area: "fleet",
+							provider: project.provider,
+							location: a.location,
+							version: a.version ?? undefined,
+							reason: a.reason,
+							queue_depth: backlog,
+							pool_size: onlineNow,
+						},
+					});
+					continue;
+				}
 				await record(a, null, { location: a.location, version: a.version });
 			} else if (a.type === "drain") {
 				await deps.drain(a.runnerId);
@@ -247,16 +306,35 @@ export async function reconcilePool(
 	return actions.length;
 }
 
-/** Reconcile every configured pool (one controller tick). */
+/** Reconcile every configured pool (one controller tick). A fleet-wide create budget (the global
+ *  instance ceiling minus current live managed VMs) is shared across pools so the whole fleet — not
+ *  just each pool — is bounded; pools reconcile in order, each consuming from the remaining headroom. */
 export async function reconcileAll(
 	projects: FleetTarget[],
 	provider: FleetProvider,
 	deps: ControllerDeps,
 	surplus: SurplusState,
 ): Promise<void> {
+	// Seed the shared per-tick create budget from the global ceiling (unset dep / no ceiling →
+	// unlimited, identical to pre-ceiling). liveNow is an approximation (registered managed VMs; a
+	// just-booting VM without a runner row yet isn't counted) — fine for a COGS backstop that
+	// self-corrects next tick, and the per-pool `max` remains the primary bound.
+	const ceiling = deps.globalInstanceCeiling?.() ?? null;
+	let remaining = Number.POSITIVE_INFINITY;
+	if (ceiling !== null && deps.liveManagedInstances) {
+		const liveNow = await deps.liveManagedInstances();
+		remaining = Math.max(0, ceiling - liveNow);
+		if (remaining === 0) {
+			flog.warn("global fleet ceiling already met — no new VMs this tick", {
+				ceiling,
+				live: liveNow,
+			});
+		}
+	}
+	const budget = { remaining };
 	for (const project of projects) {
 		try {
-			await reconcilePool(project, provider, deps, surplus);
+			await reconcilePool(project, provider, deps, surplus, budget);
 		} catch (err) {
 			flog.error("reconcile failed", { provider: project.provider, err });
 		}

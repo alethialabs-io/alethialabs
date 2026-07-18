@@ -47,7 +47,15 @@ import {
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
-import { Activity, Boxes, ClipboardList, Layers, Users, Wrench } from "lucide-react";
+import {
+	Activity,
+	Boxes,
+	ClipboardList,
+	Layers,
+	SearchX,
+	Users,
+	Wrench,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -164,7 +172,21 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		router.push(`/${orgSlug}/~/jobs/${job.id}`);
 	};
 
+	// `total` is the count over the UNFILTERED universe, so total === 0 means the org has
+	// no jobs at all (onboarding). When jobs exist but the current filters exclude every
+	// row, that's a distinct "no match" state — never the same copy as onboarding.
 	const total = page.data?.total ?? 0;
+	const noMatch = !page.isPending && total > 0 && rows.length === 0;
+
+	/** Reset every filter surface — the store filters AND the local date range. */
+	const clearAll = () => {
+		reset();
+		setRange(presetRange(JOBS_DEFAULT_PRESET));
+		setRangeLabel(
+			RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
+				"Last 12 months",
+		);
+	};
 
 	return (
 		<div className="space-y-6">
@@ -281,25 +303,45 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 						/>
 					</FilterBar>
 
-					<TooltipProvider delayDuration={300}>
-						{/* keepPreviousData: the previous rows stay visible, dimmed, while a
-						    filter change refetches (the standard's isPlaceholderData rule). */}
-						<div
-							className={cn(
-								"transition-opacity",
-								page.isPlaceholderData && "opacity-60",
-							)}
-						>
-							<DataTable
-								columns={columns}
-								data={rows}
-								onRowClick={handleRowClick}
-								pageIndex={pageIndex}
-								onPageIndexChange={setPageIndex}
-								scrollHeight="h-[70vh]"
-							/>
-						</div>
-					</TooltipProvider>
+					{noMatch ? (
+						<Empty className="min-h-[50vh]">
+							<EmptyHeader>
+								<EmptyMedia variant="icon">
+									<SearchX />
+								</EmptyMedia>
+								<EmptyTitle>No jobs match these filters</EmptyTitle>
+								<EmptyDescription>
+									Every job is excluded by the current range, author, environment,
+									status, or type selection.
+								</EmptyDescription>
+							</EmptyHeader>
+							<EmptyContent>
+								<Button variant="outline" size="sm" onClick={clearAll}>
+									Clear filters
+								</Button>
+							</EmptyContent>
+						</Empty>
+					) : (
+						<TooltipProvider delayDuration={300}>
+							{/* keepPreviousData: the previous rows stay visible, dimmed, while a
+							    filter change refetches (the standard's isPlaceholderData rule). */}
+							<div
+								className={cn(
+									"transition-opacity",
+									page.isPlaceholderData && "opacity-60",
+								)}
+							>
+								<DataTable
+									columns={columns}
+									data={rows}
+									onRowClick={handleRowClick}
+									pageIndex={pageIndex}
+									onPageIndexChange={setPageIndex}
+									scrollHeight="h-[70vh]"
+								/>
+							</div>
+						</TooltipProvider>
+					)}
 				</>
 			)}
 		</div>

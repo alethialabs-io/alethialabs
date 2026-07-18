@@ -88,6 +88,12 @@ func TestContract_Clusters(t *testing.T) {
 	strictDecode(t, "clusters.json", &resp)
 }
 
+func TestContract_ClusterDetail(t *testing.T) {
+	var resp ClusterDetail
+	strictDecode(t, "cluster_detail.json", &resp)
+	assertNoExtraStructKeys(t, "cluster_detail.json", &resp)
+}
+
 func TestContract_CloudIdentities(t *testing.T) {
 	var resp struct {
 		CloudIdentities []CloudIdentity `json:"cloud_identities"`

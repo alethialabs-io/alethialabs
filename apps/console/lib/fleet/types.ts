@@ -74,6 +74,10 @@ export interface Observed {
 	bootGraceSeconds: number;
 	/** Consecutive ticks the pool has been over target — gates idle scale-down (hysteresis). */
 	surplusTicks: number;
+	/** Max NEW VMs this pool may create this tick, given the fleet-wide global ceiling headroom the
+	 *  controller threads in (undefined = uncapped). A COGS backstop above the per-pool `max`; only
+	 *  create actions are limited — scale-down/drain/destroy always proceed. */
+	maxCreates?: number;
 }
 
 /** Why the planner emitted an action — recorded verbatim onto the fleet_actions ledger so an

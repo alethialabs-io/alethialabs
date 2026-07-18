@@ -55,6 +55,39 @@ describe("add-on field descriptors are consistent with their Zod configSchema", 
 	});
 });
 
+// #7 / #640 leak-class guard. A knob whose KEY names a credential VALUE (a password, token, API/access
+// key, or credential blob) MUST be `type: "secret"` so it is encrypted at rest and diverted to the
+// runner-seeded k8s Secret at execution time (#640) — never rendered into config_snapshot, the ArgoCD
+// Application manifest, or the customer's gitops repo. This locks the invariant across the WHOLE
+// catalog so a future add-on cannot silently reintroduce the plaintext-credential leak by mislabelling
+// a field. Deliberately excludes bare "secret" (matches reference keys like `existingSecret`/
+// `secretName`, which name a Secret, not a value).
+describe("#640 leak-class guard: credential-shaped knobs are write-only secret fields", () => {
+	const CREDENTIAL_KEY =
+		/pass(word|phrase|wd)|token|api[_-]?key|access[_-]?key|secret[_-]?key|credential/i;
+	for (const def of ADDON_CATALOG) {
+		for (const field of def.fields) {
+			// A nested field's own value isn't a credential; its scalar children are checked as fields.
+			if (field.type === "nested") continue;
+			if (!CREDENTIAL_KEY.test(field.key)) continue;
+			it(`${def.id}.${field.key} is a write-only secret field`, () => {
+				expect(field.type).toBe("secret");
+				expect(field.secret).toBe(true);
+				// Write-only: a default would bake a plaintext credential into the catalog + the client form.
+				expect(field.default).toBeUndefined();
+			});
+		}
+	}
+
+	it("the secure secret pipeline is actually exercised by the catalog", () => {
+		const withSecret = ADDON_CATALOG.filter((d) =>
+			d.fields.some((f) => f.type === "secret"),
+		);
+		// kube-prometheus-stack, velero, minio, harbor, external-dns wire secret knobs today.
+		expect(withSecret.length).toBeGreaterThanOrEqual(5);
+	});
+});
+
 describe("addOnFieldSchema", () => {
 	it("accepts enum / secret / nested / number / boolean descriptors", () => {
 		const valid = [

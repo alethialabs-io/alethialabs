@@ -12,6 +12,9 @@ import { targetCount } from "@/lib/fleet/plan";
 import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/analytics/server", () => ({ captureServerException: vi.fn() }));
+import { captureServerException } from "@/lib/analytics/server";
+
 function project(over: Partial<FleetTarget> = {}): FleetTarget {
 	return {
 		provider: "aws",
@@ -308,5 +311,39 @@ describe("reconcilePool — fleet_actions ledger recording", () => {
 		const acted = await reconcilePool(project({ warmMin: 1, minPerLocation: 0, locations: ["fsn1"], buffer: 0 }), fake, deps, new Map());
 		expect(acted).toBe(1);
 		expect(fake.all()).toHaveLength(1); // the VM was created
+	});
+});
+
+describe("reconcilePool — create failure is non-fatal + observable", () => {
+	it("continues past a provider.create rejection: no ledger row, emits the failure event", async () => {
+		vi.mocked(captureServerException).mockClear();
+		const boom = new Error("412 no ARM capacity in fsn1");
+		const prov: FleetProvider = {
+			list: async () => [],
+			create: vi.fn(async () => {
+				throw boom;
+			}),
+			destroy: vi.fn(async () => {}),
+		};
+		const deps = mkDeps();
+		// A create is planned (empty pool, warm floor of 1) and the provider rejects it. Previously the
+		// throw aborted the tick; now reconcile completes and the failure is surfaced.
+		await expect(
+			reconcilePool(solo({ warmMin: 1, minPerLocation: 1 }), prov, deps, new Map()),
+		).resolves.toBeDefined();
+		expect(prov.create).toHaveBeenCalledTimes(1);
+		// A failed create is NOT written to the fleet_actions ledger (rows = actions that happened).
+		expect(deps.recordAction).not.toHaveBeenCalled();
+		// The failure is a first-class, queryable event carrying the placement decision context.
+		expect(captureServerException).toHaveBeenCalledWith(
+			boom,
+			expect.objectContaining({
+				props: expect.objectContaining({
+					area: "fleet",
+					provider: "aws",
+					location: "fsn1",
+				}),
+			}),
+		);
 	});
 });

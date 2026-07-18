@@ -74,6 +74,11 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 	const actions: FleetAction[] = [];
 	const target = targetCount(project, o.backlog, o.recentPeak);
 	const maxInstances = project.max + project.surge;
+	// Global fleet-wide create budget for THIS pool this tick (undefined = uncapped). Bounds total
+	// managed VMs across all pools (a COGS backstop above the per-pool `max`); the controller threads
+	// the remaining fleet headroom in here. Scale-DOWN/drain/destroy are never budget-limited.
+	const maxCreates = o.maxCreates ?? Number.POSITIVE_INFINITY;
+	let created = 0;
 
 	const online: ObservedInstance[] = [];
 	const draining: ObservedInstance[] = [];
@@ -115,11 +120,12 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 		return best;
 	}
 	function create(version: string | null, reason: FleetActionReason): boolean {
-		if (live >= maxInstances) return false;
+		if (live >= maxInstances || created >= maxCreates) return false;
 		const loc = pickLocation();
 		actions.push({ type: "create", location: loc, version, reason });
 		liveByLoc.set(loc, (liveByLoc.get(loc) ?? 0) + 1);
 		live += 1;
+		created += 1;
 		return true;
 	}
 
@@ -127,10 +133,15 @@ export function plan(project: FleetTarget, o: Observed): FleetAction[] {
 	// remaining per-location minimums. New capacity is always created at the target version.
 	while (live < target) if (!create(project.targetVersion, "scale-up-demand")) break;
 	for (const loc of project.locations) {
-		while ((liveByLoc.get(loc) ?? 0) < project.minPerLocation && live < maxInstances) {
+		while (
+			(liveByLoc.get(loc) ?? 0) < project.minPerLocation &&
+			live < maxInstances &&
+			created < maxCreates
+		) {
 			actions.push({ type: "create", location: loc, version: project.targetVersion, reason: "min-per-location" });
 			liveByLoc.set(loc, (liveByLoc.get(loc) ?? 0) + 1);
 			live += 1;
+			created += 1;
 		}
 	}
 

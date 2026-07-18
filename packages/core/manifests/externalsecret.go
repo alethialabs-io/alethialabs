@@ -107,15 +107,22 @@ type ExternalSecretParams struct {
 	Provider    string
 	RemoteKey   string
 	Facets      []string
+	// Labels are extra metadata labels to stamp on the ExternalSecret (beyond the always-present
+	// name + managed-by:alethia). Empty by default — the caller (e.g. the BYO-chart binding lane)
+	// sets a marker label so it can prune its own runner-applied ExternalSecrets later.
+	Labels map[string]string
 }
 
 type esDatum struct{ SecretKey, RemoteKey, Property string }
 
+type esLabel struct{ Key, Value string }
+
 type esTemplateData struct {
-	Name      string
-	Namespace string
-	StoreName string
-	Data      []esDatum
+	Name        string
+	Namespace   string
+	StoreName   string
+	Data        []esDatum
+	ExtraLabels []esLabel
 	// Annotations, when set, render onto the ExternalSecret's metadata. Binding-credential secrets
 	// (#618) pass none (output byte-identical); the keyless bootstrap Job's ADMIN secret (#722 R5)
 	// passes ArgoCD hook annotations so it (and, via ownerRef, the materialized admin Secret) is
@@ -133,6 +140,9 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Name }}
     app.kubernetes.io/managed-by: alethia
+{{- range .ExtraLabels }}
+    {{ .Key }}: {{ .Value }}
+{{- end }}
   {{- if .Annotations }}
   annotations:
     {{- range $k, $v := .Annotations }}
@@ -193,12 +203,19 @@ func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
 	if ns == "" {
 		ns = "default"
 	}
+	var extraLabels []esLabel
+	for k, v := range p.Labels {
+		extraLabels = append(extraLabels, esLabel{Key: k, Value: v})
+	}
+	sort.Slice(extraLabels, func(i, j int) bool { return extraLabels[i].Key < extraLabels[j].Key })
+
 	var buf bytes.Buffer
 	if err := externalSecretTmpl.Execute(&buf, esTemplateData{
-		Name:      secretName,
-		Namespace: ns,
-		StoreName: store,
-		Data:      data,
+		Name:        secretName,
+		Namespace:   ns,
+		StoreName:   store,
+		Data:        data,
+		ExtraLabels: extraLabels,
 	}); err != nil {
 		return "", skipped, fmt.Errorf("render external secret %s: %w", secretName, err)
 	}
