@@ -168,6 +168,28 @@ export const projectCluster = pgTable(
 	],
 );
 
+// A cluster's day-2 admins, normalized out of project_cluster.cluster_admins JSONB. `groups` is a
+// real text[] column; `ordinal` preserves author order so buildConfigSnapshot re-embeds a
+// byte-identical array. Tenancy flows through the parent cluster → project (join-through RLS in
+// programmables.sql). ON DELETE CASCADE: clearing the cluster drops its admins.
+export const clusterAdmins = pgTable(
+	"cluster_admins",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		cluster_id: uuid()
+			.notNull()
+			.references(() => projectCluster.id, { onDelete: "cascade" }),
+		username: text().notNull(),
+		groups: text()
+			.array()
+			.notNull()
+			.default(sql`'{}'::text[]`),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [index("cluster_admins_cluster_id_idx").on(t.cluster_id)],
+);
+
 export const projectDns = pgTable(
 	"project_dns",
 	{
