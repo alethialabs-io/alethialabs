@@ -199,21 +199,21 @@ describe("plan — idle surplus scale-down", () => {
 
 describe("plan — placement + capacity-cap edges (mutation hardening)", () => {
 	it("distributes creates round-robin to the least-loaded location", () => {
-		// 3 creates over 2 locations, min 0 (skips the below-min path) → a, b, a (least-loaded each time).
+		// 3 creates over 2 locations, min 0 (skips the below-min path) → fsn1, nbg1, fsn1 (least-loaded each time).
 		const a = plan(
-			project({ minPerLocation: 0, locations: ["a", "b"], warmMin: 3, buffer: 0, max: 10 }),
+			project({ minPerLocation: 0, locations: ["fsn1", "nbg1"], warmMin: 3, buffer: 0, max: 10 }),
 			obs([]),
 		);
 		const locs = creates(a).map((c) => c.type === "create" && c.location);
 		expect(locs).toHaveLength(3);
-		expect(locs.filter((l) => l === "a")).toHaveLength(2);
-		expect(locs.filter((l) => l === "b")).toHaveLength(1);
+		expect(locs.filter((l) => l === "fsn1")).toHaveLength(2);
+		expect(locs.filter((l) => l === "nbg1")).toHaveLength(1);
 	});
 
 	it("never creates beyond max + surge, even to satisfy per-location minimums", () => {
 		// target 0, but minPerLocation 2 × 2 locations = 4 wanted; max 2 + surge 1 = 3 hard cap.
 		const a = plan(
-			project({ max: 2, surge: 1, warmMin: 0, buffer: 0, minPerLocation: 2, locations: ["a", "b"] }),
+			project({ max: 2, surge: 1, warmMin: 0, buffer: 0, minPerLocation: 2, locations: ["fsn1", "nbg1"] }),
 			obs([]),
 		);
 		expect(creates(a)).toHaveLength(3);
