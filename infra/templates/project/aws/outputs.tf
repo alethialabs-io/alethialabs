@@ -45,6 +45,12 @@ output "rds_iam_auth_irsa_arn" {
   value = length(module.rds_iam_auth) > 0 ? module.rds_iam_auth[0].iam_role_arn : null
 }
 
+# Keyless DB auth (#722): the region the RDS auth-token refresher signs tokens for.
+output "aws_region" {
+  description = "AWS region (used by the keyless RDS auth-token refresher sidecar)"
+  value       = var.region
+}
+
 output "node_iam_role_name" {
   value = module.eks[0].node_iam_role_name
 }
