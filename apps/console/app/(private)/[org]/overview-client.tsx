@@ -144,8 +144,11 @@ export function OverviewClient({
 											<TableHead>Cloud</TableHead>
 											<TableHead>Region</TableHead>
 											<TableHead>Status</TableHead>
+											<TableHead>Envs</TableHead>
+											<TableHead>Add-ons</TableHead>
 											<TableHead className="text-right">Cost</TableHead>
-											<TableHead className="text-right">Updated</TableHead>
+											<TableHead className="text-right">Last deploy</TableHead>
+											<TableHead className="w-8" />
 										</TableRow>
 									</TableHeader>
 									<TableBody>
@@ -155,6 +158,7 @@ export function OverviewClient({
 												project={project}
 												orgSlug={orgSlug}
 												isFavorite={favoriteProjectIds.includes(project.id)}
+												onToggleFavorite={() => toggleFavorite(project.id)}
 											/>
 										))}
 									</TableBody>

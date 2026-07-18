@@ -2328,9 +2328,19 @@ export interface ProjectRepoRef {
 	label: string;
 }
 
-/** A project list row enriched with its distinct source repositories (for the repo facet). */
+/** A project list row enriched with its distinct source repositories (for the repo facet) plus the
+ * default-environment rollup the overview card reads: configured services / add-ons, environment
+ * count, and last-deploy time. */
 export type ProjectListItem = ProjectWithProvider & {
 	repositories: ProjectRepoRef[];
+	/** Configured services in the default environment. */
+	services_count: number;
+	/** Installed add-ons in the default environment. */
+	addons_count: number;
+	/** Total environments on the project (default + others). */
+	environments_count: number;
+	/** When the default environment was last deployed (null = never provisioned). */
+	last_deployed_at: Date | null;
 };
 
 /** Server-side query for the overview grid. All fields optional; empty = no filter. */
@@ -2408,9 +2418,65 @@ export async function queryProjects(
 			list.push({ url: r.repo_url, label: repoLabel(r.repo_url) });
 			repoMap.set(r.project_id, list);
 		}
+		// Default-environment rollup for the card: environment count + last-deploy time (all envs),
+		// and the configured services / installed add-ons of the DEFAULT env only. All counted in
+		// memory (mirrors the repo attach above) — the project set is already fully loaded.
+		const defaultEnvIds = base
+			.map((p) => p.default_environment_id)
+			.filter((id): id is string => Boolean(id));
+
+		const envRows = ids.length
+			? await tx
+					.select({
+						project_id: projectEnvironments.project_id,
+						last_deployed_at: projectEnvironments.last_deployed_at,
+					})
+					.from(projectEnvironments)
+					.where(inArray(projectEnvironments.project_id, ids))
+			: [];
+		const envCount = new Map<string, number>();
+		const lastDeployed = new Map<string, Date>();
+		for (const r of envRows) {
+			if (!r.project_id) continue;
+			envCount.set(r.project_id, (envCount.get(r.project_id) ?? 0) + 1);
+			if (r.last_deployed_at) {
+				const cur = lastDeployed.get(r.project_id);
+				if (!cur || r.last_deployed_at > cur)
+					lastDeployed.set(r.project_id, r.last_deployed_at);
+			}
+		}
+
+		const serviceRows = defaultEnvIds.length
+			? await tx
+					.select({ project_id: projectServices.project_id })
+					.from(projectServices)
+					.where(inArray(projectServices.environment_id, defaultEnvIds))
+			: [];
+		const serviceCount = new Map<string, number>();
+		for (const r of serviceRows) {
+			if (!r.project_id) continue;
+			serviceCount.set(r.project_id, (serviceCount.get(r.project_id) ?? 0) + 1);
+		}
+
+		const addonRows = defaultEnvIds.length
+			? await tx
+					.select({ project_id: projectAddons.project_id })
+					.from(projectAddons)
+					.where(inArray(projectAddons.environment_id, defaultEnvIds))
+			: [];
+		const addonCount = new Map<string, number>();
+		for (const r of addonRows) {
+			if (!r.project_id) continue;
+			addonCount.set(r.project_id, (addonCount.get(r.project_id) ?? 0) + 1);
+		}
+
 		const items: ProjectListItem[] = base.map((p) => ({
 			...p,
 			repositories: repoMap.get(p.id) ?? [],
+			services_count: serviceCount.get(p.id) ?? 0,
+			addons_count: addonCount.get(p.id) ?? 0,
+			environments_count: envCount.get(p.id) ?? 0,
+			last_deployed_at: lastDeployed.get(p.id) ?? null,
 		}));
 
 		// Facets: the full universe of clouds + repos across the org (never narrowed by
