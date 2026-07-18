@@ -229,3 +229,59 @@ var AllCacheEngines = []CacheEngine{
 	CacheEngineRedis,
 	CacheEngineValkey,
 }
+
+// ServiceBindingKind mirrors the service_binding_kind enum (lib/db/schema/enums.ts).
+type ServiceBindingKind string
+
+const (
+	ServiceBindingKindDatabase ServiceBindingKind = "database"
+	ServiceBindingKindCache    ServiceBindingKind = "cache"
+	ServiceBindingKindQueue    ServiceBindingKind = "queue"
+	ServiceBindingKindSecret   ServiceBindingKind = "secret"
+)
+
+// AllServiceBindingKinds is every service_binding_kind value, in schema order.
+var AllServiceBindingKinds = []ServiceBindingKind{
+	ServiceBindingKindDatabase,
+	ServiceBindingKindCache,
+	ServiceBindingKindQueue,
+	ServiceBindingKindSecret,
+}
+
+// ServiceBindingFacet mirrors the service_binding_facet enum (lib/db/schema/enums.ts).
+type ServiceBindingFacet string
+
+const (
+	ServiceBindingFacetEndpoint         ServiceBindingFacet = "endpoint"
+	ServiceBindingFacetPort             ServiceBindingFacet = "port"
+	ServiceBindingFacetUsername         ServiceBindingFacet = "username"
+	ServiceBindingFacetPassword         ServiceBindingFacet = "password"
+	ServiceBindingFacetConnectionString ServiceBindingFacet = "connection_string"
+)
+
+// AllServiceBindingFacets is every service_binding_facet value, in schema order.
+var AllServiceBindingFacets = []ServiceBindingFacet{
+	ServiceBindingFacetEndpoint,
+	ServiceBindingFacetPort,
+	ServiceBindingFacetUsername,
+	ServiceBindingFacetPassword,
+	ServiceBindingFacetConnectionString,
+}
+
+// TopicSubscriptionProtocol mirrors the topic_subscription_protocol enum (lib/db/schema/enums.ts).
+type TopicSubscriptionProtocol string
+
+const (
+	TopicSubscriptionProtocolHttps  TopicSubscriptionProtocol = "https"
+	TopicSubscriptionProtocolSqs    TopicSubscriptionProtocol = "sqs"
+	TopicSubscriptionProtocolEmail  TopicSubscriptionProtocol = "email"
+	TopicSubscriptionProtocolLambda TopicSubscriptionProtocol = "lambda"
+)
+
+// AllTopicSubscriptionProtocols is every topic_subscription_protocol value, in schema order.
+var AllTopicSubscriptionProtocols = []TopicSubscriptionProtocol{
+	TopicSubscriptionProtocolHttps,
+	TopicSubscriptionProtocolSqs,
+	TopicSubscriptionProtocolEmail,
+	TopicSubscriptionProtocolLambda,
+}

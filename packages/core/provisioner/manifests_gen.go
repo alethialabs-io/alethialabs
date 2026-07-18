@@ -141,7 +141,7 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 				Namespace:   appNamespace,
 				Target:      b.Target,
 				Provider:    string(vc.Provider),
-				RemoteKey:   outputs[credentialSecretOutputKey(b.Target.Kind)],
+				RemoteKey:   outputs[credentialSecretOutputKey(string(b.Target.Kind))],
 				Facets:      facets,
 			})
 			if renderErr != nil {
