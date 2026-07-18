@@ -107,15 +107,22 @@ type ExternalSecretParams struct {
 	Provider    string
 	RemoteKey   string
 	Facets      []string
+	// Labels are extra metadata labels to stamp on the ExternalSecret (beyond the always-present
+	// name + managed-by:alethia). Empty by default — the caller (e.g. the BYO-chart binding lane)
+	// sets a marker label so it can prune its own runner-applied ExternalSecrets later.
+	Labels map[string]string
 }
 
 type esDatum struct{ SecretKey, RemoteKey, Property string }
 
+type esLabel struct{ Key, Value string }
+
 type esTemplateData struct {
-	Name      string
-	Namespace string
-	StoreName string
-	Data      []esDatum
+	Name        string
+	Namespace   string
+	StoreName   string
+	Data        []esDatum
+	ExtraLabels []esLabel
 }
 
 // v1beta1 to match the deployed ESO chart (0.9.12) + the ClusterSecretStore definitions in
@@ -128,6 +135,9 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Name }}
     app.kubernetes.io/managed-by: alethia
+{{- range .ExtraLabels }}
+    {{ .Key }}: {{ .Value }}
+{{- end }}
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -182,12 +192,19 @@ func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
 	if ns == "" {
 		ns = "default"
 	}
+	var extraLabels []esLabel
+	for k, v := range p.Labels {
+		extraLabels = append(extraLabels, esLabel{Key: k, Value: v})
+	}
+	sort.Slice(extraLabels, func(i, j int) bool { return extraLabels[i].Key < extraLabels[j].Key })
+
 	var buf bytes.Buffer
 	if err := externalSecretTmpl.Execute(&buf, esTemplateData{
-		Name:      secretName,
-		Namespace: ns,
-		StoreName: store,
-		Data:      data,
+		Name:        secretName,
+		Namespace:   ns,
+		StoreName:   store,
+		Data:        data,
+		ExtraLabels: extraLabels,
 	}); err != nil {
 		return "", skipped, fmt.Errorf("render external secret %s: %w", secretName, err)
 	}
