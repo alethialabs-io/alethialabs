@@ -76,13 +76,17 @@ async function apiAuthWithOrg(
 		data: { name: "E2E Billing Org", slug: orgSlug },
 	});
 	expect(createRes.ok()).toBeTruthy();
-	const org = (await createRes.json()) as { id: string };
+	const created: unknown = await createRes.json();
+	const orgId =
+		typeof created === "object" && created !== null && "id" in created && typeof created.id === "string"
+			? created.id
+			: "";
 	const activeRes = await page.request.post("/api/auth/organization/set-active", {
 		headers,
-		data: { organizationId: org.id },
+		data: { organizationId: orgId },
 	});
 	expect(activeRes.ok()).toBeTruthy();
-	return { orgId: org.id, orgSlug };
+	return { orgId, orgSlug };
 }
 
 /** Upserts the org's billing row to a chosen state (a stripe_customer_id makes the invoices
