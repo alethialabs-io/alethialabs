@@ -9,6 +9,8 @@
  * Keeping the prompt + scoping pure makes the executor testable without a model.
  */
 
+import type { ToolSet } from "ai";
+
 /** The minimal agent identity this module needs (a row from agent_identities). */
 export interface AgentPersona {
 	persona: string;
@@ -39,17 +41,14 @@ export function buildAgentSystemPrompt(
  * (the agent inherits the surface it was built with); otherwise only listed tools
  * pass — least privilege per agent (deployer / auditor / cost-optimizer roles).
  */
-export function scopeToolsToAgent<T extends Record<string, unknown>>(
-	tools: T,
-	toolScope: string[],
-): Partial<T> {
+export function scopeToolsToAgent(tools: ToolSet, toolScope: string[]): ToolSet {
 	if (!toolScope || toolScope.length === 0) return { ...tools };
 	const allow = new Set(toolScope);
-	const out: Partial<T> = {};
-	// Writing Partial<T> by a keyof-index needs the string-narrowed key here (TS2862 on a
-	// generic write); Object.keys is string[] by spec, so this narrow can't be expressed cast-free.
-	for (const name of Object.keys(tools) as (keyof T & string)[]) {
-		if (allow.has(name)) out[name] = tools[name];
+	// ToolSet is a concrete Record<string, Tool>, so a string-keyed write is allowed (no generic
+	// TS2862) and entries carry the value type — the scoping stays cast-free.
+	const out: ToolSet = {};
+	for (const [name, tool] of Object.entries(tools)) {
+		if (allow.has(name)) out[name] = tool;
 	}
 	return out;
 }

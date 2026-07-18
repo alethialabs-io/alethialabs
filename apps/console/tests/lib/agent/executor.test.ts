@@ -2,11 +2,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "vitest";
+import { tool } from "ai";
+import { z } from "zod";
 import {
 	type AgentPersona,
 	buildAgentSystemPrompt,
 	scopeToolsToAgent,
 } from "@/lib/agent/executor";
+
+/** A minimal real AI-SDK tool — the scoping is value-agnostic, so one stub covers every slot. */
+const stubTool = tool({
+	description: "stub",
+	inputSchema: z.object({}),
+	execute: async () => ({}),
+});
 
 const persona: AgentPersona = {
 	persona: "You are the prod auditor for acme.",
@@ -33,7 +42,11 @@ describe("buildAgentSystemPrompt", () => {
 });
 
 describe("scopeToolsToAgent", () => {
-	const tools = { list_projects: 1, get_project: 2, propose_operation: 3 };
+	const tools = {
+		list_projects: stubTool,
+		get_project: stubTool,
+		propose_operation: stubTool,
+	};
 
 	it("narrows to the agent's allowed tools", () => {
 		const scoped = scopeToolsToAgent(tools, ["list_projects", "get_project"]);

@@ -7,6 +7,8 @@
 // entry here (+ its registry row) — no new inspector components. Dynamic, provider-specific option
 // lists / bounds are expressed as functions of the field context.
 
+import { z } from "zod";
+import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
@@ -461,7 +463,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						description:
 							"Connect this service to a resource on the canvas. Alethia injects its endpoint and credentials at deploy — keyless.",
 						get: (c) => c.bindings,
-						set: (v) => ({ bindings: v as NodeConfigMap["service"]["bindings"] }),
+						set: (v) => ({ bindings: z.array(serviceBindingSchema).catch([]).parse(v) }),
 					},
 				],
 			},

@@ -105,10 +105,7 @@ export async function POST(
 	try {
 		const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
 		const model = getAiModel();
-		const tools = scopeToolsToAgent(
-			buildAgentTools({ mode }),
-			agent.tool_scope,
-		) as ToolSet;
+		const tools = scopeToolsToAgent(buildAgentTools({ mode }), agent.tool_scope);
 		// LLM-observability enrichment (PostHog): the thread is the "session", the prompt is the input,
 		// and the scoped tool set is what powers the Tools view. Latency is wall-clock around the stream.
 		const sessionId = threadId ?? agentId;
