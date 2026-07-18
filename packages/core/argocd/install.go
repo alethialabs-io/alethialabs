@@ -53,10 +53,10 @@ func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 // validation/authz/config error is NOT retried.
 func isOperatorNotReady(kubectlOutput string) bool {
 	for _, marker := range []string{
-		"no matches for kind",          // the CRD isn't registered yet
-		"resource mapping not found",   // ditto (RESTMapper hasn't seen the CRD)
-		"failed calling webhook",       // the admission webhook backend isn't reachable yet
-		"no endpoints available",       // the webhook Service has no ready pods yet
+		"no matches for kind",        // the CRD isn't registered yet
+		"resource mapping not found", // ditto (RESTMapper hasn't seen the CRD)
+		"failed calling webhook",     // the admission webhook backend isn't reachable yet
+		"no endpoints available",     // the webhook Service has no ready pods yet
 	} {
 		if strings.Contains(kubectlOutput, marker) {
 			return true
