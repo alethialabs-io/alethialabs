@@ -67,7 +67,10 @@ import {
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
+	serviceBindingFacet,
+	serviceBindingKind,
 	serviceWorkloadType,
+	topicSubscriptionProtocol,
 } from "./enums";
 import { cloudIdentities } from "./identities";
 import { projectEnvironments } from "./project-environments";
@@ -165,6 +168,28 @@ export const projectCluster = pgTable(
 			t.environment_id,
 		),
 	],
+);
+
+// A cluster's day-2 admins, normalized out of project_cluster.cluster_admins JSONB. `groups` is a
+// real text[] column; `ordinal` preserves author order so buildConfigSnapshot re-embeds a
+// byte-identical array. Tenancy flows through the parent cluster → project (join-through RLS in
+// programmables.sql). ON DELETE CASCADE: clearing the cluster drops its admins.
+export const clusterAdmins = pgTable(
+	"cluster_admins",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		cluster_id: uuid()
+			.notNull()
+			.references(() => projectCluster.id, { onDelete: "cascade" }),
+		username: text().notNull(),
+		groups: text()
+			.array()
+			.notNull()
+			.default(sql`'{}'::text[]`),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [index("cluster_admins_cluster_id_idx").on(t.cluster_id)],
 );
 
 export const projectDns = pgTable(
@@ -561,6 +586,26 @@ export const projectTopics = pgTable(
 	],
 );
 
+// A topic's delivery subscriptions, normalized out of project_topics.subscriptions JSONB (the
+// finite `protocol` is a real enum column + `topic_id` gives FK integrity). `ordinal` preserves the
+// author-order the JSONB array had, so buildConfigSnapshot re-embeds a byte-identical array.
+// Tenancy flows through the parent topic → project (join-through RLS in programmables.sql, like the
+// support-case child tables). ON DELETE CASCADE: clearing a topic drops its subscriptions.
+export const topicSubscriptions = pgTable(
+	"topic_subscriptions",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		topic_id: uuid()
+			.notNull()
+			.references(() => projectTopics.id, { onDelete: "cascade" }),
+		protocol: topicSubscriptionProtocol().notNull(),
+		endpoint: text().notNull(),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [index("topic_subscriptions_topic_id_idx").on(t.topic_id)],
+);
+
 export const projectNosqlTables = pgTable(
 	"project_nosql_tables",
 	{
@@ -789,6 +834,54 @@ export const projectChartWorkloads = pgTable(
 			t.name,
 		),
 	],
+);
+
+// W3 service→backing-resource bindings, normalized out of the JSONB `bindings` on BOTH
+// project_services and project_chart_workloads. Polymorphic owner via two nullable FKs + an
+// exactly-one CHECK (both ON DELETE CASCADE). `target_kind` is a real enum; `ordinal` preserves
+// author order so buildConfigSnapshot re-embeds a byte-identical array. Tenancy flows through the
+// owner → project (2-path join-through RLS in programmables.sql).
+export const serviceBindings = pgTable(
+	"service_bindings",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		service_id: uuid().references(() => projectServices.id, {
+			onDelete: "cascade",
+		}),
+		chart_workload_id: uuid().references(() => projectChartWorkloads.id, {
+			onDelete: "cascade",
+		}),
+		target_kind: serviceBindingKind().notNull(),
+		target_name: text().notNull(),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [
+		// Exactly one owner: a binding belongs to a service XOR a chart workload.
+		check(
+			"service_bindings_one_owner_ck",
+			sql`(${t.service_id} IS NOT NULL) <> (${t.chart_workload_id} IS NOT NULL)`,
+		),
+		index("service_bindings_service_id_idx").on(t.service_id),
+		index("service_bindings_chart_workload_id_idx").on(t.chart_workload_id),
+	],
+);
+
+// The env vars one binding injects — one row per {env ← facet of the bound resource}. `from_facet`
+// is a real enum (endpoint/port are non-secret templated; the rest inject keylessly via ESO).
+export const serviceBindingInjections = pgTable(
+	"service_binding_injections",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		binding_id: uuid()
+			.notNull()
+			.references(() => serviceBindings.id, { onDelete: "cascade" }),
+		env: text().notNull(),
+		from_facet: serviceBindingFacet().notNull(),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [index("service_binding_injections_binding_id_idx").on(t.binding_id)],
 );
 
 export const projectGitCredentials = pgTable(

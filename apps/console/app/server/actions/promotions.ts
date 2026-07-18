@@ -9,6 +9,7 @@
 // See lib/promotions/{diff,gates}.ts for the pure engines.
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { arrayIncludes } from "@/lib/type-guards";
 import { authorize } from "@/lib/authz/guard";
 import { getPreviousEnvironmentCost } from "@/app/server/actions/cost";
@@ -696,7 +697,7 @@ async function applyGateDecision(
 		// Reuse the plan job's frozen snapshot for an idempotent DEPLOY of the candidate.
 		const [job] = await db
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: promotion.user_id,
 				org_id: promotion.org_id ?? undefined,
 				project_id: promotion.project_id,
@@ -706,7 +707,7 @@ async function applyGateDecision(
 				config_snapshot: planJob.config_snapshot,
 				plan_job_id: planJob.id,
 				status: "QUEUED",
-			})
+			}))
 			.returning({ id: jobs.id });
 		await db
 			.update(environmentPromotions)

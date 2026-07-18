@@ -148,15 +148,22 @@ resource "azurerm_role_definition" "alethia_provisioner" {
   assignable_scopes = [data.azurerm_subscription.current.id]
 }
 
-# DNS Zone Contributor built-in role — the only role the provisioner may assign (external-dns).
+# Built-in, least-privilege roles the Alethia project templates assign — the ONLY roles the provisioner
+# may create/delete assignments for. Owner / Contributor / User Access Administrator are deliberately
+# excluded, so there is no self-escalation path. A real apply proved the earlier DNS-only set too narrow
+# (Key Vault + AKS assignments 403'd — #776).
 locals {
-  dns_zone_contributor_role_id = "befefa01-2a29-4197-83a8-272ff33ce314"
+  provisioner_assignable_role_ids = join(", ", [
+    "befefa01-2a29-4197-83a8-272ff33ce314", # DNS Zone Contributor (external-dns)
+    "4633458b-17de-408a-b874-0445c86b69e6", # Key Vault Secrets User (external-secrets workload id)
+    "b86a8fe4-44ce-4948-aee5-eccb2c155cd7", # Key Vault Secrets Officer (provisioner seeds secrets)
+    "b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b", # Azure Kubernetes Service RBAC Cluster Admin
+  ])
 }
 
-# Assign the custom role to the managed identity, with an ABAC condition constraining
-# roleAssignments write/delete to the single DNS Zone Contributor role. The connector can create the
-# external-dns assignment the templates need — and nothing else (no self-grant of Owner). This is the
-# escalation control.
+# Assign the custom role to the managed identity, with an ABAC condition constraining roleAssignments
+# write/delete to ONLY the least-privilege role set above. The connector can create the assignments the
+# templates need — and nothing else (no self-grant of Owner). This is the escalation control.
 resource "azurerm_role_assignment" "alethia_provisioner" {
   scope              = data.azurerm_subscription.current.id
   role_definition_id = azurerm_role_definition.alethia_provisioner.role_definition_resource_id
@@ -170,7 +177,7 @@ resource "azurerm_role_assignment" "alethia_provisioner" {
      )
      OR
      (
-      @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.dns_zone_contributor_role_id}}
+      @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.provisioner_assignable_role_ids}}
      )
     )
     AND
@@ -180,7 +187,7 @@ resource "azurerm_role_assignment" "alethia_provisioner" {
      )
      OR
      (
-      @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.dns_zone_contributor_role_id}}
+      @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${local.provisioner_assignable_role_ids}}
      )
     )
   EOT

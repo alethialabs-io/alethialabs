@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorize } from "@/lib/authz/guard";
+import { signedJob } from "@/lib/db/signed-job";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb, withOwnerScope, type Tx } from "@/lib/db";
@@ -281,14 +282,14 @@ export async function deployRunner(params: {
 
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
 				cloud_identity_id: params.cloudIdentityId,
 				job_type: "DEPLOY_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: params.assignedRunnerId ?? null,
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		return { runnerId: runner.id, jobId: job.id };
@@ -420,14 +421,14 @@ export async function destroyRunner(
 
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
 				cloud_identity_id: runner.cloud_identity_id!,
 				job_type: "DESTROY_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: assignedRunnerId ?? null,
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		return { jobId: job.id };
@@ -474,13 +475,13 @@ export async function updateRunner(runnerId: string) {
 
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
 				cloud_identity_id: runner.cloud_identity_id!,
 				job_type: "UPDATE_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		return { jobId: job.id };

@@ -108,6 +108,8 @@ export const jobWire = createSelectSchema(jobs, {
 	attempts: true,
 	max_attempts: true,
 	progress_at: true,
+	// Internal config_snapshot authenticity HMAC — verified server-side at claim, never on the CLI wire.
+	config_snapshot_sig: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */

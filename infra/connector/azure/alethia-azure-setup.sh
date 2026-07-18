@@ -146,30 +146,42 @@ echo "==> Waiting for the managed identity to propagate in Entra ID..."
 sleep 15
 
 echo ""
-echo "==> Assigning it (constrained: may only grant DNS Zone Contributor, no self-escalation)..."
-# ABAC condition: the identity can create/delete role assignments ONLY for DNS Zone Contributor
-# (befefa01-2a29-4197-83a8-272ff33ce314) — the external-dns identity the templates create —
-# and nothing else (no path to Owner).
+echo "==> Assigning it (constrained: may only grant the templates' least-priv roles, no self-escalation)..."
+# ABAC condition: the identity may create/delete role assignments ONLY for the built-in, least-privilege
+# roles the Alethia project templates actually assign — and nothing else. Owner / Contributor / User
+# Access Administrator are deliberately NOT in this set, so there is no self-escalation path.
+#   - DNS Zone Contributor (external-dns)                       — workload-identity.tf
+#   - Key Vault Secrets User (external-secrets workload id)     — workload-identity.tf
+#   - Key Vault Secrets Officer (provisioner seeds secrets)     — modules/key-vault
+#   - Azure Kubernetes Service RBAC Cluster Admin               — modules/aks
+# (A real apply proved the DNS-only condition too narrow: KV/AKS assignments 403'd — see #776.)
 DNS_ZONE_CONTRIB="befefa01-2a29-4197-83a8-272ff33ce314"
-CONDITION="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${DNS_ZONE_CONTRIB}})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${DNS_ZONE_CONTRIB}}))"
+KV_SECRETS_USER="4633458b-17de-408a-b874-0445c86b69e6"
+KV_SECRETS_OFFICER="b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+AKS_RBAC_ADMIN="b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b"
+ASSIGNABLE_ROLES="${DNS_ZONE_CONTRIB}, ${KV_SECRETS_USER}, ${KV_SECRETS_OFFICER}, ${AKS_RBAC_ADMIN}"
+CONDITION="((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${ASSIGNABLE_ROLES}})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${ASSIGNABLE_ROLES}}))"
 EXISTING_ROLE=$(az role assignment list \
   --assignee "${PRINCIPAL_ID}" \
   --role "${ROLE_NAME}" \
   --scope "/subscriptions/${SUBSCRIPTION_ID}" \
   --query "[0].id" -o tsv 2>/dev/null || true)
 if [ -n "${EXISTING_ROLE}" ]; then
-  echo "    Role assignment already exists, skipping."
-else
-  az role assignment create \
-    --assignee-object-id "${PRINCIPAL_ID}" \
-    --assignee-principal-type ServicePrincipal \
-    --role "${ROLE_NAME}" \
-    --scope "/subscriptions/${SUBSCRIPTION_ID}" \
-    --condition "${CONDITION}" \
-    --condition-version "2.0" \
-    -o none
-  echo "    Least-privilege role assigned."
+  # Re-apply idempotently: DELETE + recreate so an updated ABAC condition (e.g. the expanded
+  # least-privilege role set) actually takes effect — Azure can't update an assignment's condition
+  # in place, and a plain "skip if exists" would strand the old (too-narrow) condition on re-run.
+  echo "    Existing assignment found — re-applying (the least-priv condition may have changed)..."
+  az role assignment delete --ids "${EXISTING_ROLE}" -o none || true
 fi
+az role assignment create \
+  --assignee-object-id "${PRINCIPAL_ID}" \
+  --assignee-principal-type ServicePrincipal \
+  --role "${ROLE_NAME}" \
+  --scope "/subscriptions/${SUBSCRIPTION_ID}" \
+  --condition "${CONDITION}" \
+  --condition-version "2.0" \
+  -o none
+echo "    Least-privilege role assigned (condition applied)."
 
 echo ""
 echo "============================================================"

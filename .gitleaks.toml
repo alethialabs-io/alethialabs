@@ -28,6 +28,12 @@ regexes = [
   # secret. generic-api-key flags idioms like `minio_password = var.hetzner_s3_secret_key`
   # in the templates; a `var.` value is safe by construction.
   '''var\.[A-Za-z0-9_]+''',
+  # Azure BUILT-IN role definition IDs — public, well-known constants (not secrets). Used in the
+  # connector's ABAC condition to scope roleAssignments/write to the templates' least-privilege roles.
+  '''befefa01-2a29-4197-83a8-272ff33ce314''', # DNS Zone Contributor
+  '''4633458b-17de-408a-b874-0445c86b69e6''', # Key Vault Secrets User
+  '''b86a8fe4-44ce-4948-aee5-eccb2c155cd7''', # Key Vault Secrets Officer
+  '''b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b''', # AKS RBAC Cluster Admin
 ]
 paths = [
   '''(^|/).*_test\.go$''',

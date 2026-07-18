@@ -475,6 +475,8 @@ jobs:
             # Emit so the disable path actually reaches the console.
             emit ALETHIA_AUTH_RATE_LIMIT
             emit ALETHIA_CRED_ENCRYPTION_KEY
+            # config_snapshot authenticity HMAC (lib/runners/snapshot-sig.ts). Absent → signing off.
+            emit ALETHIA_SNAPSHOT_HMAC_KEY
             # Credential-encryption key id (keyring) for ONLINE key rotation. Defaults to "1" if the
             # vault key is absent (secrets.ts falls back), so this emit is safe even when unset.
             emit ALETHIA_CRED_ENCRYPTION_KID

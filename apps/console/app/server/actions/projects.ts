@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
+import { signedJob } from "@/lib/db/signed-job";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { getServiceDb, type Tx, withOwnerScope, withScope } from "@/lib/db";
+import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	type EnvTransitionContext,
 	transitionEnv,
@@ -40,6 +42,8 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 	projects,
+	clusterAdmins,
+	topicSubscriptions,
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
@@ -226,7 +230,22 @@ async function writeComponents(
 ) {
 	const base = { project_id: projectId, environment_id: environmentId };
 	await tx.insert(projectNetwork).values({ ...base, ...data.network });
-	await tx.insert(projectCluster).values({ ...base, ...data.cluster });
+	// Dual-write the cluster's admins: the row keeps its cluster_admins JSONB (rollback net, dropped
+	// in a follow-up) AND each admin is normalized into cluster_admins (username + text[] groups + FK).
+	const [insertedCluster] = await tx
+		.insert(projectCluster)
+		.values({ ...base, ...data.cluster })
+		.returning({ id: projectCluster.id });
+	if (insertedCluster && data.cluster?.cluster_admins?.length) {
+		await tx.insert(clusterAdmins).values(
+			data.cluster.cluster_admins.map((a, i) => ({
+				cluster_id: insertedCluster.id,
+				username: a.username,
+				groups: a.groups,
+				ordinal: i,
+			})),
+		);
+	}
 	await tx.insert(projectDns).values({ ...base, ...data.dns });
 	await tx.insert(projectRepositories).values({ ...base, ...data.repositories });
 	if (data.source_repos?.length)
@@ -245,10 +264,27 @@ async function writeComponents(
 		await tx
 			.insert(projectQueues)
 			.values(data.queues.map((q) => ({ ...base, ...q })));
-	if (data.topics?.length)
-		await tx
+	if (data.topics?.length) {
+		// Dual-write: the topic row still carries `subscriptions` JSONB (the rollback net, dropped in a
+		// follow-up), AND each subscription is normalized into topic_subscriptions (enum protocol + FK).
+		// `ordinal` preserves author order so the config-snapshot array stays byte-identical.
+		const insertedTopics = await tx
 			.insert(projectTopics)
-			.values(data.topics.map((t) => ({ ...base, ...t })));
+			.values(data.topics.map((t) => ({ ...base, ...t })))
+			.returning({ id: projectTopics.id, name: projectTopics.name });
+		const topicIdByName = new Map(insertedTopics.map((r) => [r.name, r.id]));
+		const subRows = data.topics.flatMap((t) => {
+			const topicId = topicIdByName.get(t.name);
+			if (!topicId) return [];
+			return (t.subscriptions ?? []).map((s, i) => ({
+				topic_id: topicId,
+				protocol: s.protocol,
+				endpoint: s.endpoint,
+				ordinal: i,
+			}));
+		});
+		if (subRows.length) await tx.insert(topicSubscriptions).values(subRows);
+	}
 	if (data.nosql_tables?.length)
 		await tx
 			.insert(projectNosqlTables)
@@ -265,10 +301,21 @@ async function writeComponents(
 		await tx
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
-	if (data.services?.length)
-		await tx
+	if (data.services?.length) {
+		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
+		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).
+		const insertedServices = await tx
 			.insert(projectServices)
-			.values(data.services.map((s) => ({ ...base, ...s })));
+			.values(data.services.map((s) => ({ ...base, ...s })))
+			.returning({ id: projectServices.id, name: projectServices.name });
+		const svcIdByName = new Map(insertedServices.map((r) => [r.name, r.id]));
+		for (const s of data.services) {
+			const serviceId = svcIdByName.get(s.name);
+			if (serviceId && s.bindings?.length) {
+				await insertServiceBindings(tx, { service_id: serviceId }, s.bindings);
+			}
+		}
+	}
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas
@@ -1276,8 +1323,9 @@ export async function planProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1287,7 +1335,7 @@ export async function planProject(
 				// New trace root for this provisioning operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
@@ -1348,8 +1396,9 @@ export async function buildProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1359,7 +1408,7 @@ export async function buildProject(
 				// New trace root for this build operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1411,8 +1460,9 @@ export async function provisionProject(
 		const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 			const [job] = await tx
 				.insert(jobs)
-				.values({
+				.values(signedJob({
 					user_id: owner,
+					org_id: actor.orgId,
 					project_id: projectId,
 					environment_id: environment.id,
 					cloud_identity_id: identity.id,
@@ -1421,7 +1471,7 @@ export async function provisionProject(
 					status: "QUEUED",
 					traceparent: newTraceparent(),
 					...(runnerId ? { assigned_runner_id: runnerId } : {}),
-				})
+				}))
 				.returning({ id: jobs.id });
 
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1446,8 +1496,9 @@ export async function provisionProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1458,7 +1509,7 @@ export async function provisionProject(
 				traceparent: newTraceparent(),
 				...(planJobId ? { plan_job_id: planJobId } : {}),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1506,8 +1557,9 @@ export async function queueDriftDetection(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1517,7 +1569,7 @@ export async function queueDriftDetection(
 				// New trace root for this drift-detection operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 		return { jobId: job.id };
 	});
@@ -1550,8 +1602,9 @@ export async function destroyProject(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1561,7 +1614,7 @@ export async function destroyProject(
 				// New trace root for this teardown operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 
 		await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
@@ -1611,8 +1664,9 @@ export async function detectDrift(
 	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: owner,
+				org_id: actor.orgId,
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
@@ -1622,7 +1676,7 @@ export async function detectDrift(
 				// New trace root for this drift-detection operation (enqueue → claim → runner).
 				traceparent: newTraceparent(),
 				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			})
+			}))
 			.returning({ id: jobs.id });
 		return { jobId: job.id };
 	});

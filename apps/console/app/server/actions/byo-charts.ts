@@ -13,6 +13,7 @@
 // namespace-PSA + admission-controller (Kyverno/Gatekeeper) gate — see the plan's E2 section.
 
 import { and, eq, notInArray } from "drizzle-orm";
+import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
@@ -28,6 +29,7 @@ import { inferValuePaths } from "@/lib/addons/chart-overlay";
 import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
+import { replaceServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	chartWorkloadBindingsSchema,
 	chartWorkloadConfigSchema,
@@ -407,6 +409,13 @@ export async function setChartWorkloadBindings(input: {
 					eq(projectChartWorkloads.project_id, input.projectId),
 				),
 			);
+		// Dual-write: keep the normalized service_bindings in step with the JSONB overlay. This is a
+		// granular UPDATE (not delete-all-reinsert), so replace this workload's binding rows.
+		await replaceServiceBindings(
+			tx,
+			{ chart_workload_id: input.workloadId },
+			bindings,
+		);
 	});
 	return { ok: true };
 }
@@ -446,7 +455,7 @@ export async function scanByoChart(input: {
 		}
 		const [job] = await tx
 			.insert(jobs)
-			.values({
+			.values(signedJob({
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "CHART_SCAN",
@@ -462,7 +471,7 @@ export async function scanByoChart(input: {
 					environment_id: envId,
 					addon_id: id,
 				},
-			})
+			}))
 			.returning({ id: jobs.id });
 		await tx
 			.update(projectAddons)
