@@ -8,6 +8,7 @@
 // session's active organization so the rest of the request is scoped to the URL org.
 
 import { and, eq } from "drizzle-orm";
+import { notFound } from "next/navigation";
 import { getOwnerScope } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
@@ -53,7 +54,10 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
 		.where(eq(organization.slug, orgSlug))
 		.limit(1);
 
-	if (!org) throw new Error("Organization not found");
+	// A URL slug that doesn't resolve to a member org is a 404, not a bug — render the not-found page
+	// (notFound() throws NEXT_NOT_FOUND, which the onRequestError filter treats as expected) rather
+	// than a raw Error that floods error tracking with stale-link/crawler hits.
+	if (!org) notFound();
 
 	if (activeOrgId !== org.id) {
 		await setActiveOrganization(org.id);
@@ -71,7 +75,8 @@ export async function resolveProjectId(projectSlug: string): Promise<string> {
 			.from(projects)
 			.where(eq(projects.slug, projectSlug))
 			.limit(1);
-		if (!project) throw new Error("Project not found");
+		// Unresolvable slug = a 404 (stale link / crawler), not a bug — see resolveOrgScope above.
+		if (!project) notFound();
 		return project.id;
 	});
 }

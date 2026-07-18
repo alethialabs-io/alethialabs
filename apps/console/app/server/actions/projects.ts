@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { notFound } from "next/navigation";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { signedJob } from "@/lib/db/signed-job";
 import { requireOwner } from "@/lib/auth/owner";
@@ -522,7 +523,9 @@ export async function getProject(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!project) throw new Error("Project not found");
+		// A stale/deleted project id (e.g. after resolveProjectId, or a crawler) is a 404, not a bug —
+		// notFound() renders the not-found page and the onRequestError filter treats it as expected.
+		if (!project) notFound();
 
 		// M1: the project's environments (default first). The active env (the given one, else the
 		// default) surfaces as `project.environment_stage` / `project.status` and scopes the
@@ -2227,7 +2230,7 @@ export async function getProjectGeneral(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!row) throw new Error("Project not found");
+		if (!row) notFound(); // render loader: stale/deleted id → 404, not a captured error
 		return row;
 	});
 }
