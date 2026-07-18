@@ -68,6 +68,7 @@ import {
 	nosqlKeyType,
 	nosqlTableType,
 	serviceWorkloadType,
+	topicSubscriptionProtocol,
 } from "./enums";
 import { cloudIdentities } from "./identities";
 import { projectEnvironments } from "./project-environments";
@@ -559,6 +560,26 @@ export const projectTopics = pgTable(
 			t.name,
 		),
 	],
+);
+
+// A topic's delivery subscriptions, normalized out of project_topics.subscriptions JSONB (the
+// finite `protocol` is a real enum column + `topic_id` gives FK integrity). `ordinal` preserves the
+// author-order the JSONB array had, so buildConfigSnapshot re-embeds a byte-identical array.
+// Tenancy flows through the parent topic → project (join-through RLS in programmables.sql, like the
+// support-case child tables). ON DELETE CASCADE: clearing a topic drops its subscriptions.
+export const topicSubscriptions = pgTable(
+	"topic_subscriptions",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		topic_id: uuid()
+			.notNull()
+			.references(() => projectTopics.id, { onDelete: "cascade" }),
+		protocol: topicSubscriptionProtocol().notNull(),
+		endpoint: text().notNull(),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [index("topic_subscriptions_topic_id_idx").on(t.topic_id)],
 );
 
 export const projectNosqlTables = pgTable(

@@ -973,6 +973,21 @@ BEGIN
   END LOOP;
 END $$;
 
+-- topic_subscriptions: normalized child of project_topics (no direct project_id), so tenancy flows
+-- through the parent topic → project — the same join-through shape as the support-case child tables.
+-- FOR ALL because the app delete+reinserts these on every save (RLS is the tenancy wall).
+ALTER TABLE public.topic_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.topic_subscriptions;
+CREATE POLICY owner_all ON public.topic_subscriptions FOR ALL
+  USING (topic_id IN (SELECT t.id FROM public.project_topics t
+         JOIN public.projects p ON p.id = t.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid))
+  WITH CHECK (topic_id IN (SELECT t.id FROM public.project_topics t
+         JOIN public.projects p ON p.id = t.project_id
+         WHERE p.user_id = current_setting('app.current_owner', true)::uuid
+            OR p.org_id = current_setting('app.current_org', true)::uuid));
+
 -- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
 -- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;
