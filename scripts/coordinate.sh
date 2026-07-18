@@ -44,7 +44,7 @@ if [ "$MODE" = "init" ]; then
   for w in 1 2 3 4 5 6 7; do mklabel "wave:W$w" "1d76db" "north-star wave $w"; done
   mklabel "wave:hygiene" "0e8a16" "launch-hygiene track (parallel)"
   for l in schema server runner core canvas tests docs; do mklabel "lane:$l" "5319e7" "file-ownership lane: $l"; done
-  mklabel "class:backend" "0e8a16" "autonomous: claim→PR→self-merge on green"
+  mklabel "class:backend" "0e8a16" "autonomous: claim→PR→enqueue on green (merge queue)"
   mklabel "class:ui"      "d93f0b" "human-in-loop: design-spec → Claude Design → gated merge"
   mklabel "claimed"       "fbca04" "held by an instance (carries a lease comment)"
   mklabel "blocked"       "b60205" "a blocked-by dependency is still open (coordinate-maintained)"
