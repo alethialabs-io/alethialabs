@@ -42,6 +42,16 @@ func main() {
 		return
 	}
 
+	// Keyless DB least-privilege bootstrap (#722): a one-shot Job runs this as the DB admin to create
+	// the scoped app role (the alternative to handing the app superuser/AAD-admin). Emits the SQL.
+	if len(os.Args) > 1 && os.Args[1] == "db-bootstrap" {
+		if err := agent.RunDBBootstrap(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "db-bootstrap error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container-sandbox child mode: this process was re-exec'd INSIDE a per-job sandbox
 	// container to run one untrusted stage. It has an allowlisted env only (no runner
 	// token / storage keys / bootstrap token), so it must run the stage and exit BEFORE
