@@ -10,6 +10,11 @@ locals {
   # are derived from environment + project_name (with separators stripped). Assert the alphanumeric
   # stem fits inside 24 chars so the derived account name cannot overflow.
   azure_storage_name_stem_len = length(replace(lower("${var.environment}${var.project_name}"), "/[^a-z0-9]/", ""))
+
+  # Azure Key Vault names are 3-24 chars (alphanumeric + dashes, dashes DO count — unlike the storage
+  # stem). modules/key-vault derives "<project_name>-<environment>-kv"; assert its length here.
+  azure_key_vault_name     = "${var.project_name}-${var.environment}-kv"
+  azure_key_vault_name_len = length(local.azure_key_vault_name)
 }
 
 # project_name is the root of every naming convention and must be non-empty.
@@ -25,6 +30,15 @@ check "storage_account_name_within_limit" {
   assert {
     condition     = local.azure_storage_name_stem_len <= 24
     error_message = "environment+project_name alphanumeric stem exceeds the Azure Storage Account 24-character limit; shorten environment/project_name."
+  }
+}
+
+# The Key Vault name "<project_name>-<environment>-kv" must fit Azure's 24-char limit — fail fast with a
+# clear message instead of the cryptic azurerm "name may only contain ... 3-24 chars" plan error.
+check "key_vault_name_within_limit" {
+  assert {
+    condition     = local.azure_key_vault_name_len <= 24
+    error_message = "Key Vault name '${local.azure_key_vault_name}' is ${local.azure_key_vault_name_len} chars, over Azure's 24-character limit; shorten project_name/environment (e.g. environment 'dev' not 'development')."
   }
 }
 
