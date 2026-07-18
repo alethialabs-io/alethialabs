@@ -10,6 +10,7 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
+import { jobInitiator } from "./enums";
 
 // Append-only AI usage ledger — one row per metered AI action (a repo scan or an
 // agent/Ask AI message), carrying the credits it cost and whether they came from the
@@ -32,6 +33,10 @@ export const aiUsageLedger = pgTable(
 		credits: integer().default(0).notNull(),
 		// "included" | "purchased" — which budget it drew from.
 		source: text().default("included").notNull(),
+		// Origin of the metered action, mirroring jobs.initiated_by for a consistent actor lexicon
+		// across the two usage ledgers. Metered AI actions (scan/agent/support) are user-driven, so
+		// this defaults to `user`; a background/system-initiated AI call stamps `system`.
+		initiated_by: jobInitiator().notNull().default("user"),
 		// jobId (scan) / threadId (agent), for traceability.
 		ref_id: text(),
 		// Canonical provider/native-id key that served the action (e.g. "anthropic/claude-sonnet-4-6").

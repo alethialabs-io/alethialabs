@@ -256,6 +256,7 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 			user_id: orig.user_id,
 			org_id: orig.org_id,
 			job_type: orig.job_type,
+			initiated_by: "operator",
 			config_snapshot: orig.config_snapshot,
 			cloud_identity_id: orig.cloud_identity_id,
 			project_id: orig.project_id,
@@ -423,6 +424,7 @@ async function enqueueStateSurgery(
 			project_id: projectId,
 			environment_id: environmentId,
 			job_type: "STATE_SURGERY",
+			initiated_by: "operator",
 			config_snapshot: {
 				state_key: stateKey,
 				note: input?.surgeryNote ?? null,

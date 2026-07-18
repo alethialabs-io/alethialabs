@@ -17,6 +17,7 @@ export function makeJob(overrides: Partial<JobWithMeta> = {}): JobWithMeta {
 		environment_id: "env-1",
 		cloud_identity_id: null,
 		job_type: "DEPLOY",
+		initiated_by: "user",
 		config_snapshot: {},
 		configuration_hash: null,
 		config_snapshot_sig: null,

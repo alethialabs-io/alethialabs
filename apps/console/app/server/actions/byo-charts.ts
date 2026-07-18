@@ -14,6 +14,7 @@
 
 import { and, eq, notInArray } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
@@ -437,6 +438,7 @@ export async function scanByoChart(input: {
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 	const id = chartSlug(input.id);
 
+	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [row] = await tx
 			.select()
@@ -459,6 +461,7 @@ export async function scanByoChart(input: {
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "CHART_SCAN",
+				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: {
 					// repo_url (not chart_repo) so the runner's FetchGitToken route resolves a token.

@@ -12,6 +12,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { arrayIncludes } from "@/lib/type-guards";
 import { authorize } from "@/lib/authz/guard";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getPreviousEnvironmentCost } from "@/app/server/actions/cost";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
@@ -694,6 +695,7 @@ async function applyGateDecision(
 			{ orgId: promotion.org_id, projectId: promotion.project_id },
 		);
 		if (!moved) return;
+		await assertJobQuotaAllowed(promotion.org_id ?? promotion.user_id);
 		// Reuse the plan job's frozen snapshot for an idempotent DEPLOY of the candidate.
 		const [job] = await db
 			.insert(jobs)
@@ -704,6 +706,7 @@ async function applyGateDecision(
 				environment_id: promotion.target_environment_id,
 				cloud_identity_id: planJob.cloud_identity_id,
 				job_type: "DEPLOY",
+				initiated_by: "user",
 				config_snapshot: planJob.config_snapshot,
 				plan_job_id: planJob.id,
 				status: "QUEUED",
