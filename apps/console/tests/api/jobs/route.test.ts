@@ -17,7 +17,7 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
 }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), getServiceDb: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
@@ -33,7 +33,7 @@ import { ForbiddenError } from "@/lib/authz/types";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -119,6 +119,9 @@ function setupTx(cfg: {
 
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
+	);
+	vi.mocked(withScope).mockImplementation(
+		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	return { valuesSpy, setSpy, executeSpy };
 }

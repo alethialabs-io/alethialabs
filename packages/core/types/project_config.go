@@ -233,8 +233,8 @@ type ProjectTopicConfig struct {
 }
 
 type TopicSubscription struct {
-	Protocol string `json:"protocol"`
-	Endpoint string `json:"endpoint"`
+	Protocol TopicSubscriptionProtocol `json:"protocol"`
+	Endpoint string                    `json:"endpoint"`
 }
 
 type ProjectNosqlConfig struct {
@@ -335,14 +335,14 @@ type ServiceBinding struct {
 
 // ServiceBindingTarget references the backing resource by kind + name.
 type ServiceBindingTarget struct {
-	Kind string `json:"kind"` // database | cache | queue | secret
-	Name string `json:"name"`
+	Kind ServiceBindingKind `json:"kind"`
+	Name string             `json:"name"`
 }
 
 // ServiceBindingInjection maps one workload env var to one facet of the bound resource.
 type ServiceBindingInjection struct {
-	Env  string `json:"env"`
-	From string `json:"from"` // endpoint | port | username | password | connection_string
+	Env  string              `json:"env"`
+	From ServiceBindingFacet `json:"from"`
 }
 
 // ServicePort is a container port the workload exposes.

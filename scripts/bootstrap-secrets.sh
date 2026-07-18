@@ -80,6 +80,12 @@ if [ -f "$EXT_FILE" ]; then
     case "$line" in ''|'#'*) continue;; esac
     key="$(printf '%s' "${line%%=*}" | tr -d '[:space:]')"
     val="${line#*=}"
+    # Strip a dotenv-style inline comment and surrounding whitespace: a '#' PRECEDED BY WHITESPACE
+    # (` # note`) is a comment and is dropped; a '#' with no leading space is kept (it may be part of
+    # the value, e.g. a password `p#ss`). Also trims leading/trailing whitespace. Without this, a
+    # commented value line like `HCLOUD_TOKEN=abc   # runtime token` carried the comment verbatim into
+    # the vault, which then broke the token (401) and HCLOUD_SSH_KEYS (404) on the box.
+    val="$(printf '%s' "$val" | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
     [ -z "$key" ] && continue
     merged="$(printf '%s' "$merged" | jq --arg k "$key" --arg v "$val" '.[$k]=$v')"
     echo "= external $key"
