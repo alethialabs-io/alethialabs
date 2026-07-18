@@ -127,8 +127,8 @@ func TestKeyless_Azure_TokenRefresherAndBouncer(t *testing.T) {
 	if v, _ := envValue(a.Env, "DATABASE_HOST"); v != "127.0.0.1" {
 		t.Errorf("endpoint = %q, want 127.0.0.1 (local pgbouncer)", v)
 	}
-	if v, _ := envValue(a.Env, "DATABASE_USER"); v != "orders-app" {
-		t.Errorf("username = %q, want the AAD identity output", v)
+	if v, _ := envValue(a.Env, "DATABASE_USER"); v != "alethia_app" {
+		t.Errorf("username = %q, want the least-priv bootstrap role alethia_app", v)
 	}
 	if len(a.SecretEnv) != 0 {
 		t.Errorf("keyless must emit no secretKeyRef, got %+v", a.SecretEnv)
@@ -136,8 +136,8 @@ func TestKeyless_Azure_TokenRefresherAndBouncer(t *testing.T) {
 	if len(a.Sidecars) != 2 {
 		t.Fatalf("want refresher + pgbouncer, got %+v", a.Sidecars)
 	}
-	if len(a.Volumes) != 1 || a.Volumes[0].Name != "azure-db-token" {
-		t.Fatalf("want one shared azure-db-token volume, got %+v", a.Volumes)
+	if len(a.Volumes) != 1 || a.Volumes[0].Name != "db-token" {
+		t.Fatalf("want one shared db-token volume, got %+v", a.Volumes)
 	}
 	// The refresher runs the runner image's db-token subcommand.
 	if a.Sidecars[0].Image != "ghcr.io/alethialabs-io/runner:1.2.3" ||
@@ -187,18 +187,65 @@ func TestKeyless_IamAuthFalse_KeepsPasswordPath(t *testing.T) {
 	}
 }
 
-// TestKeyless_AWSNotEligible: keyless is gcp/azure only — an iam_auth db on AWS keeps the password
-// path here (AWS RDS IAM auth is a separate follow-up).
-func TestKeyless_AWSNotEligible(t *testing.T) {
-	apps, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+// TestKeyless_AWS_RDSIAMRefresher locks the AWS keyless path (#722 parity): RDS IAM auth uses the
+// same token-refresher + pgbouncer mechanism as Azure, with an IRSA-annotated KSA.
+func TestKeyless_AWS_RDSIAMRefresher(t *testing.T) {
+	apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "aws",
 		KeylessDBAuth: true,
+		RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
 		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-		Outputs:       map[string]string{"rds_cluster_endpoint": "orders.rds.amazonaws.com"},
+		Outputs: map[string]string{
+			"rds_cluster_endpoint":  "orders.abc.rds.amazonaws.com",
+			"aws_region":            "eu-central-1",
+			"rds_iam_auth_irsa_arn": "arn:aws:iam::123456789012:role/rds-iam-auth-eks",
+		},
+	})
+	if len(skipped) != 0 {
+		t.Fatalf("nothing should skip, got %v", skipped)
+	}
+	a := apps[0]
+	if v, _ := envValue(a.Env, "DATABASE_HOST"); v != "127.0.0.1" {
+		t.Errorf("endpoint = %q, want 127.0.0.1 (local pgbouncer)", v)
+	}
+	if v, _ := envValue(a.Env, "DATABASE_USER"); v != "alethia_app" {
+		t.Errorf("username = %q, want the least-priv bootstrap role alethia_app", v)
+	}
+	if _, ok := envValue(a.Env, "DATABASE_PASSWORD"); ok {
+		t.Error("keyless must NOT inject a password env")
+	}
+	if len(a.SecretEnv) != 0 {
+		t.Errorf("keyless must emit no secretKeyRef, got %+v", a.SecretEnv)
+	}
+	if len(a.Sidecars) != 2 || a.Sidecars[0].Name != "db-token" {
+		t.Fatalf("want db-token refresher + pgbouncer, got %+v", a.Sidecars)
+	}
+	// The refresher mints an RDS auth token for the real endpoint/region/user.
+	args := strings.Join(a.Sidecars[0].Args, " ")
+	for _, want := range []string{"--provider aws", "orders.abc.rds.amazonaws.com", "eu-central-1", "--user alethia_app"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("refresher args missing %q: %v", want, a.Sidecars[0].Args)
+		}
+	}
+	// The pod runs as the IRSA-annotated KSA.
+	if a.ServiceAccount != "alethia-app" ||
+		a.ServiceAccountAnnotations["eks.amazonaws.com/role-arn"] != "arn:aws:iam::123456789012:role/rds-iam-auth-eks" {
+		t.Errorf("AWS IRSA KSA wiring wrong: sa=%q annotations=%+v", a.ServiceAccount, a.ServiceAccountAnnotations)
+	}
+}
+
+// TestKeyless_AlibabaExcluded: Alibaba ApsaraDB RDS has no token-based DB login → documented
+// exclusion. An iam_auth db on Alibaba keeps the password path even with the flag on.
+func TestKeyless_AlibabaExcluded(t *testing.T) {
+	apps, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+		Provider:      "alibaba",
+		KeylessDBAuth: true,
+		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Outputs:       map[string]string{},
 	})
 	a := apps[0]
 	if len(a.Sidecars) != 0 || len(a.SecretEnv) != 2 {
-		t.Errorf("aws → password path; sidecars=%+v secretEnv=%+v", a.Sidecars, a.SecretEnv)
+		t.Errorf("alibaba → password path (documented exclusion); sidecars=%+v secretEnv=%+v", a.Sidecars, a.SecretEnv)
 	}
 }
 

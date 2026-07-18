@@ -508,11 +508,11 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					// identity; `password`/`connection_string` are intentionally dropped (there is
 					// no secret — the proxy authenticates upstream).
 					if inj.From == "username" {
-						user := opts.Outputs[credentialIdentityOutputKey(opts.Provider, string(b.Target.Kind))]
-						if user == "" {
+						user, uerr := keylessDBUsername(opts.Provider, opts.Outputs)
+						if uerr != nil {
 							r.unresolved = append(r.unresolved, fmt.Sprintf(
-								"keyless binding facet %q (env %s) for %s→%s/%s: no IAM identity output — env omitted",
-								inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name))
+								"keyless binding facet %q (env %s) for %s→%s/%s: %v — env omitted",
+								inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name, uerr))
 							continue
 						}
 						r.env = append(r.env, types.ServiceEnvVar{Name: inj.Env, Value: user})

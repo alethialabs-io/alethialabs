@@ -77,10 +77,15 @@ func TestRunDBTokenLoop_OnceWritesAndReturns(t *testing.T) {
 }
 
 func TestRunDBToken_RejectsUnknownProviderAndMissingOut(t *testing.T) {
+	// gcp uses the native Cloud SQL Auth Proxy, not this refresher → unsupported here.
 	if err := RunDBToken(context.Background(), []string{"--provider", "gcp", "--out", "/tmp/x"}); err == nil {
 		t.Error("expected error for unsupported provider gcp")
 	}
 	if err := RunDBToken(context.Background(), []string{"--provider", "azure"}); err == nil {
 		t.Error("expected error when --out is missing")
+	}
+	// aws needs host/region/user to sign the token.
+	if err := RunDBToken(context.Background(), []string{"--provider", "aws", "--out", "/tmp/x"}); err == nil {
+		t.Error("expected error when aws --host/--region/--user are missing")
 	}
 }

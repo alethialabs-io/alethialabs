@@ -7,12 +7,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	rdsauth "github.com/aws/aws-sdk-go-v2/feature/rds/auth"
 )
 
 // db-token is the KEYLESS database-auth refresher sidecar (#722). It runs alongside a workload whose
@@ -32,6 +35,9 @@ const (
 	tokenRefreshLead = 5 * time.Minute
 	// tokenRefreshFloor bounds the loop so a short/zero TTL can't busy-spin.
 	tokenRefreshFloor = 1 * time.Minute
+	// awsRDSTokenTTL is how long an RDS IAM auth token is valid (AWS fixes this at 15 minutes); the
+	// SDK doesn't return the expiry, so we derive it.
+	awsRDSTokenTTL = 15 * time.Minute
 )
 
 // dbTokenMinter mints a DB access token + its expiry. Swappable in tests (the real Azure minter
@@ -42,9 +48,13 @@ type dbTokenMinter func(ctx context.Context) (token string, exp time.Time, err e
 // Invoked as a one-shot subcommand from main (a sidecar container's entrypoint).
 func RunDBToken(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("db-token", flag.ContinueOnError)
-	provider := fs.String("provider", "", "cloud provider (azure)")
+	provider := fs.String("provider", "", "cloud provider (aws|azure)")
 	out := fs.String("out", "", "path to write the token file (mode 0600)")
 	once := fs.Bool("once", false, "write one token and exit (no refresh loop)")
+	host := fs.String("host", "", "database host (AWS RDS: the endpoint the token is signed for)")
+	port := fs.String("port", "5432", "database port (AWS)")
+	region := fs.String("region", "", "cloud region (AWS)")
+	user := fs.String("user", "", "database user the token authenticates as (AWS)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -55,8 +65,16 @@ func RunDBToken(ctx context.Context, args []string) error {
 	switch *provider {
 	case "azure":
 		mint = mintAzureDBToken
+	case "aws":
+		if *host == "" || *region == "" || *user == "" {
+			return fmt.Errorf("db-token aws: --host, --region and --user are required")
+		}
+		endpoint := net.JoinHostPort(*host, *port)
+		mint = func(ctx context.Context) (string, time.Time, error) {
+			return mintAWSDBToken(ctx, endpoint, *region, *user)
+		}
 	default:
-		return fmt.Errorf("db-token: unsupported provider %q (want azure)", *provider)
+		return fmt.Errorf("db-token: unsupported provider %q (want aws|azure)", *provider)
 	}
 	return runDBTokenLoop(ctx, mint, *out, *once)
 }
@@ -126,6 +144,22 @@ func writeTokenFile(path, token string) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// mintAWSDBToken mints an RDS IAM auth token for `user` at `endpoint` (host:port) — a presigned STS
+// request the RDS engine accepts as the password, generated in-process from the pod's IRSA role (no
+// stored secret). AWS fixes the validity at 15 minutes; the SDK doesn't return the expiry, so we
+// derive it from awsRDSTokenTTL.
+func mintAWSDBToken(ctx context.Context, endpoint, region, user string) (string, time.Time, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("load AWS config: %w", err)
+	}
+	tok, err := rdsauth.BuildAuthToken(ctx, endpoint, region, user, cfg.Credentials)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("build RDS auth token: %w", err)
+	}
+	return tok, time.Now().Add(awsRDSTokenTTL), nil
 }
 
 // mintAzureDBToken mints an Entra access token for Azure Postgres via the pod's federated workload
