@@ -67,6 +67,8 @@ import {
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
+	serviceBindingFacet,
+	serviceBindingKind,
 	serviceWorkloadType,
 	topicSubscriptionProtocol,
 } from "./enums";
@@ -832,6 +834,54 @@ export const projectChartWorkloads = pgTable(
 			t.name,
 		),
 	],
+);
+
+// W3 service→backing-resource bindings, normalized out of the JSONB `bindings` on BOTH
+// project_services and project_chart_workloads. Polymorphic owner via two nullable FKs + an
+// exactly-one CHECK (both ON DELETE CASCADE). `target_kind` is a real enum; `ordinal` preserves
+// author order so buildConfigSnapshot re-embeds a byte-identical array. Tenancy flows through the
+// owner → project (2-path join-through RLS in programmables.sql).
+export const serviceBindings = pgTable(
+	"service_bindings",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		service_id: uuid().references(() => projectServices.id, {
+			onDelete: "cascade",
+		}),
+		chart_workload_id: uuid().references(() => projectChartWorkloads.id, {
+			onDelete: "cascade",
+		}),
+		target_kind: serviceBindingKind().notNull(),
+		target_name: text().notNull(),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [
+		// Exactly one owner: a binding belongs to a service XOR a chart workload.
+		check(
+			"service_bindings_one_owner_ck",
+			sql`(${t.service_id} IS NOT NULL) <> (${t.chart_workload_id} IS NOT NULL)`,
+		),
+		index("service_bindings_service_id_idx").on(t.service_id),
+		index("service_bindings_chart_workload_id_idx").on(t.chart_workload_id),
+	],
+);
+
+// The env vars one binding injects — one row per {env ← facet of the bound resource}. `from_facet`
+// is a real enum (endpoint/port are non-secret templated; the rest inject keylessly via ESO).
+export const serviceBindingInjections = pgTable(
+	"service_binding_injections",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		binding_id: uuid()
+			.notNull()
+			.references(() => serviceBindings.id, { onDelete: "cascade" }),
+		env: text().notNull(),
+		from_facet: serviceBindingFacet().notNull(),
+		ordinal: integer().notNull(),
+		created_at: ts(),
+	},
+	(t) => [index("service_binding_injections_binding_id_idx").on(t.binding_id)],
 );
 
 export const projectGitCredentials = pgTable(
