@@ -5,7 +5,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { environmentDrift, projects } from "@/lib/db/schema";
+import { environmentDrift, fabricDrift, projects } from "@/lib/db/schema";
 import type { DriftDetail } from "@/types/jsonb.types";
 
 /** The day-2 drift posture of a project environment (the read shape). */
@@ -92,6 +92,84 @@ export async function recordDriftPosture(input: {
 		})
 		.onConflictDoUpdate({
 			target: [environmentDrift.project_id, environmentDrift.environment_id],
+			set: {
+				in_sync: input.inSync,
+				drifted: input.drifted,
+				details: input.details,
+				scanned_at: new Date(input.scannedAt),
+				updated_at: new Date(),
+			},
+		});
+}
+
+/**
+ * Latest INFRA drift posture for a Fabric (#841). Infra drift is per-Fabric: the Fabric owns the
+ * tofu state (#838), so its refresh-only divergence belongs here, not to a delivery Environment.
+ * PDP-gated (view); tenancy is walled by the parent-project org join exactly like
+ * `getLatestDriftPosture` (`fabric_drift` is RLS-less). Returns null when no DETECT_DRIFT has run.
+ */
+export async function getLatestFabricDrift(
+	projectId: string,
+	fabricId: string,
+): Promise<DriftPosture | null> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	const db = getServiceDb();
+	const rows = await db
+		.select({
+			in_sync: fabricDrift.in_sync,
+			drifted: fabricDrift.drifted,
+			details: fabricDrift.details,
+			scanned_at: fabricDrift.scanned_at,
+		})
+		.from(fabricDrift)
+		.innerJoin(projects, eq(fabricDrift.project_id, projects.id))
+		.where(
+			and(
+				eq(fabricDrift.project_id, projectId),
+				eq(fabricDrift.fabric_id, fabricId),
+				eq(projects.org_id, actor.orgId),
+			),
+		)
+		.orderBy(desc(fabricDrift.scanned_at))
+		.limit(1);
+	const r = rows[0];
+	if (!r) return null;
+	return {
+		inSync: r.in_sync,
+		drifted: r.drifted,
+		details: r.details ?? [],
+		scannedAt: r.scanned_at.toISOString(),
+	};
+}
+
+/**
+ * Upsert a Fabric's INFRA drift posture (#841). Called by the job-status route (service role) after a
+ * DETECT_DRIFT job whose snapshot carries a `fabric_id` runs its refresh-only plan. Latest-wins per
+ * (project, fabric). For a `dedicated` placement (env owns its Fabric 1:1) this mirrors the
+ * `environment_drift` row; for a shared placement it is the single per-Fabric infra truth.
+ */
+export async function recordFabricDriftPosture(input: {
+	projectId: string;
+	fabricId: string;
+	inSync: boolean;
+	drifted: number;
+	details: DriftDetail[];
+	scannedAt: string;
+}): Promise<void> {
+	const db = getServiceDb();
+	await db
+		.insert(fabricDrift)
+		.values({
+			project_id: input.projectId,
+			fabric_id: input.fabricId,
+			in_sync: input.inSync,
+			drifted: input.drifted,
+			details: input.details,
+			scanned_at: new Date(input.scannedAt),
+			updated_at: new Date(),
+		})
+		.onConflictDoUpdate({
+			target: [fabricDrift.project_id, fabricDrift.fabric_id],
 			set: {
 				in_sync: input.inSync,
 				drifted: input.drifted,
