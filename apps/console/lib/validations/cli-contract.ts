@@ -528,6 +528,46 @@ export const cliComponentsResponse = z.object({
 });
 /** POST /api/cli/projects/:id/components/:kind result. */
 export const cliComponentResponse = z.object({ component: componentWire });
+
+/** A single drifted resource (mirrors DriftDetail). */
+export const driftDetailWire = z.object({
+	address: z.string(),
+	type: z.string(),
+	kind: z.string(),
+});
+/**
+ * GET /api/cli/projects/:id/drift result. `evaluated` is false when no DETECT_DRIFT job has
+ * run yet — an honest "not proven" rather than a misleading in-sync=true.
+ */
+export const cliDriftResponse = z.object({
+	evaluated: z.boolean(),
+	in_sync: z.boolean(),
+	drifted: z.number().int(),
+	scanned_at: isoNullable,
+	environment: z.string().nullable(),
+	details: z.array(driftDetailWire),
+});
+
+/** A priced resource line (mirrors CostResourceLine). */
+export const costResourceWire = z.object({
+	address: z.string(),
+	resource_type: z.string(),
+	monthly_cost: z.number(),
+});
+/**
+ * GET /api/cli/projects/:id/cost result. `priced` is false when no plan has ever priced the
+ * environment — an honest "we don't know yet" rather than a fabricated zero.
+ */
+export const cliCostResponse = z.object({
+	priced: z.boolean(),
+	total_monthly: z.number().nullable(),
+	currency: z.string(),
+	captured_at: isoNullable,
+	plan_job_id: z.string().nullable(),
+	environment: z.string().nullable(),
+	resources: z.array(costResourceWire),
+});
+
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
@@ -575,6 +615,8 @@ export const cliContract = {
 	EnvironmentResponse: cliEnvironmentResponse,
 	ComponentsResponse: cliComponentsResponse,
 	ComponentResponse: cliComponentResponse,
+	DriftResponse: cliDriftResponse,
+	CostResponse: cliCostResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;

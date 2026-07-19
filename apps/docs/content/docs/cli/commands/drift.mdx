@@ -1,0 +1,51 @@
+---
+title: Drift Commands
+description: Inspect a project's day-2 drift posture — which managed resources have diverged from their provisioned state.
+---
+
+# Drift Commands
+
+The `drift` group reads the **day-2 drift posture** of a project — the "keep proving it" half of
+Alethia. A `DETECT_DRIFT` job runs a refresh-only plan and records which managed resources have
+diverged from their provisioned state; this command shows the latest result.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `drift show` calls `/cli/projects/<project>/drift`
+with your [CLI token](/cli/authentication) and operates on the **active organization**
+(`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## `alethia drift show`
+
+Show the latest drift posture for a project, optionally scoped to one environment.
+
+```bash
+alethia drift show --project my-project
+alethia drift show -p my-project -e production
+alethia drift show -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the latest posture across the project. |
+
+The command prints a one-line headline — **in sync**, **N resource(s) drifted**, or **not
+evaluated** when no drift scan has ever run (an honest "not proven", never a false in-sync) —
+followed by a table of the drifted resources:
+
+```
+Drift [production]: 2 resource(s) drifted (scanned 2026-01-01T00:00:00.000Z)
+Address                Type              Change
+aws_db_instance.main   aws_db_instance   modified
+aws_s3_bucket.logs     aws_s3_bucket     deleted
+```
+
+Add `-o json` for the full posture object (`evaluated`, `in_sync`, `drifted`, `scanned_at`,
+`environment`, `details[]`); `-o csv` emits the drifted-resource rows. Backing call:
+`GET /cli/projects/<project>/drift?env=<env>`.
+
+## See also
+
+- [Cost Commands](/cli/commands/cost) — the environment's priced infrastructure breakdown.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

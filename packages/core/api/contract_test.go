@@ -387,6 +387,24 @@ func TestContract_Component(t *testing.T) {
 	assertNoExtraStructKeys(t, "component.json", resp)
 }
 
+func TestContract_Drift(t *testing.T) {
+	var resp DriftPosture
+	strictDecode(t, "drift.json", &resp)
+	if len(resp.Details) != 1 {
+		t.Fatalf("expected 1 drift detail, got %d", len(resp.Details))
+	}
+	assertNoExtraStructKeys(t, "drift.json", resp)
+}
+
+func TestContract_Cost(t *testing.T) {
+	var resp EnvironmentCost
+	strictDecode(t, "cost.json", &resp)
+	if len(resp.Resources) != 1 {
+		t.Fatalf("expected 1 cost resource, got %d", len(resp.Resources))
+	}
+	assertNoExtraStructKeys(t, "cost.json", resp)
+}
+
 func TestContract_ClassificationDimensions(t *testing.T) {
 	var resp struct {
 		Dimensions []ClassificationDimension `json:"dimensions"`

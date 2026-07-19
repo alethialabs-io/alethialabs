@@ -8,6 +8,8 @@
     "repositories",
     "project",
     "plan-and-apply",
+    "drift",
+    "cost",
     "jobs",
     "runners",
     "clusters",

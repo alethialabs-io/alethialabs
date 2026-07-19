@@ -1,0 +1,51 @@
+---
+title: Cost Commands
+description: Inspect a project environment's infrastructure cost — the latest Infracost breakdown a plan captured.
+---
+
+# Cost Commands
+
+The `cost` group reads a project environment's **infrastructure cost**. Every PLAN runs Infracost
+over the terraform plan and records the priced breakdown per environment; this command shows the
+latest one.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `cost show` calls `/cli/projects/<project>/cost` with
+your [CLI token](/cli/authentication) and operates on the **active organization**
+(`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## `alethia cost show`
+
+Show the latest cost for a project environment.
+
+```bash
+alethia cost show --project my-project
+alethia cost show -p my-project -e staging
+alethia cost show -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the project's default environment. |
+
+The command prints a one-line headline — the total monthly cost, or **not priced** when no plan has
+ever costed the environment (an honest "we don't know yet", never a fabricated zero) — followed by a
+table of the priced resources:
+
+```
+Cost [staging]: $123.45/mo USD (captured 2026-01-01T00:00:00.000Z)
+Address                Type              Monthly
+aws_db_instance.main   aws_db_instance   $100.00
+aws_s3_bucket.logs     aws_s3_bucket     $23.45
+```
+
+Add `-o json` for the full cost object (`priced`, `total_monthly`, `currency`, `captured_at`,
+`plan_job_id`, `environment`, `resources[]`); `-o csv` emits the priced-resource rows. Backing call:
+`GET /cli/projects/<project>/cost?env=<env>`.
+
+## See also
+
+- [Drift Commands](/cli/commands/drift) — which managed resources have diverged from their state.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

@@ -59,6 +59,8 @@ type apiClient interface {
 	ListComponents(project, kind, env string) ([]api.Component, error)
 	AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error)
 	RemoveComponent(project, kind, name string) error
+	GetProjectDrift(project, env string) (*api.DriftPosture, error)
+	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.

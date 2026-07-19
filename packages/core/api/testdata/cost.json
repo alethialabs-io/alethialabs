@@ -1,0 +1,15 @@
+{
+	"priced": false,
+	"total_monthly": 0,
+	"currency": "string",
+	"captured_at": "2026-01-01T00:00:00.000Z",
+	"plan_job_id": "string",
+	"environment": "string",
+	"resources": [
+		{
+			"address": "string",
+			"resource_type": "string",
+			"monthly_cost": 0
+		}
+	]
+}
