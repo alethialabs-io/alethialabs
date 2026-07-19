@@ -957,3 +957,75 @@ func TestGetProjectIacSource_None(t *testing.T) {
 		t.Errorf("expected nil source, got %+v", src)
 	}
 }
+
+func TestGetProjectPromotions_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/promotions" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"promotions": []map[string]any{
+				{"id": "p1", "source": "staging", "target": "production", "status": "DEPLOYED", "error_message": nil, "created_at": "2026-01-01T00:00:00.000Z", "completed_at": nil},
+			},
+		})
+	}))
+
+	promos, err := client.GetProjectPromotions("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(promos) != 1 || promos[0].Target != "production" {
+		t.Errorf("unexpected promotions: %+v", promos)
+	}
+}
+
+func TestGetPromotion_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/promotions/p1" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"promotion": map[string]any{
+				"id": "p1", "source": "staging", "target": "production", "status": "PENDING_APPROVAL",
+				"initiator": "Ivo", "error_message": nil, "approved": 1, "required": 2,
+				"approvals": []map[string]any{
+					{"id": "a1", "status": "approved", "name": "Ivo", "required_role": "admin", "comment": nil, "decided_at": "2026-01-01T01:00:00.000Z"},
+				},
+				"created_at": "2026-01-01T00:00:00.000Z", "completed_at": nil,
+			},
+		})
+	}))
+
+	p, err := client.GetPromotion("my-proj", "p1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Approved != 1 || p.Required != 2 || len(p.Approvals) != 1 {
+		t.Errorf("unexpected promotion detail: %+v", p)
+	}
+}
+
+func TestGetProjectStagedChanges_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/staged" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"environment": "production",
+			"changes": []map[string]any{
+				{"component_type": "database", "op": "create", "component_id": nil, "created_at": "2026-01-01T00:00:00.000Z"},
+			},
+		})
+	}))
+
+	view, err := client.GetProjectStagedChanges("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view.Environment != "production" || len(view.Changes) != 1 || view.Changes[0].Op != "create" {
+		t.Errorf("unexpected staged changes: %+v", view)
+	}
+}

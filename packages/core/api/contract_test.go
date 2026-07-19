@@ -456,6 +456,37 @@ func TestContract_IacSource(t *testing.T) {
 	assertNoExtraStructKeys(t, "iac_source.json", resp)
 }
 
+func TestContract_Promotions(t *testing.T) {
+	var resp struct {
+		Promotions []Promotion `json:"promotions"`
+	}
+	strictDecode(t, "promotions.json", &resp)
+	if len(resp.Promotions) != 1 {
+		t.Fatalf("expected 1 promotion, got %d", len(resp.Promotions))
+	}
+	assertNoExtraStructKeys(t, "promotions.json", resp)
+}
+
+func TestContract_Promotion(t *testing.T) {
+	var resp struct {
+		Promotion PromotionDetail `json:"promotion"`
+	}
+	strictDecode(t, "promotion.json", &resp)
+	if len(resp.Promotion.Approvals) != 1 {
+		t.Fatalf("expected 1 approval slot, got %d", len(resp.Promotion.Approvals))
+	}
+	assertNoExtraStructKeys(t, "promotion.json", resp)
+}
+
+func TestContract_StagedChanges(t *testing.T) {
+	var resp StagedChanges
+	strictDecode(t, "staged_changes.json", &resp)
+	if len(resp.Changes) != 1 {
+		t.Fatalf("expected 1 staged change, got %d", len(resp.Changes))
+	}
+	assertNoExtraStructKeys(t, "staged_changes.json", resp)
+}
+
 func TestContract_ClassificationDimensions(t *testing.T) {
 	var resp struct {
 		Dimensions []ClassificationDimension `json:"dimensions"`

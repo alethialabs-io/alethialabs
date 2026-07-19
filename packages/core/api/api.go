@@ -1845,6 +1845,106 @@ func (c *Client) GetProjectIacSource(project, env string) (*IacSource, error) {
 	return resp.Source, nil
 }
 
+// --- Promotions ---
+
+// Promotion is one environment promotion (source → target), as listed.
+type Promotion struct {
+	ID           string  `json:"id"`
+	Source       string  `json:"source"`
+	Target       string  `json:"target"`
+	Status       string  `json:"status"`
+	ErrorMessage *string `json:"error_message"`
+	CreatedAt    string  `json:"created_at"`
+	CompletedAt  *string `json:"completed_at"`
+}
+
+// GetProjectPromotions returns a project's promotions, optionally scoped to one target
+// environment (by name, stage, or id).
+func (c *Client) GetProjectPromotions(project, env string) ([]Promotion, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/promotions", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp struct {
+		Promotions []Promotion `json:"promotions"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get promotions: %w", err)
+	}
+	return resp.Promotions, nil
+}
+
+// PromotionApproval is one approval slot on a promotion.
+type PromotionApproval struct {
+	ID           string  `json:"id"`
+	Status       string  `json:"status"`
+	Name         *string `json:"name"`
+	RequiredRole *string `json:"required_role"`
+	Comment      *string `json:"comment"`
+	DecidedAt    *string `json:"decided_at"`
+}
+
+// PromotionDetail is a promotion with its approval slots (gate detail + config diff are
+// console-only).
+type PromotionDetail struct {
+	ID           string              `json:"id"`
+	Source       string              `json:"source"`
+	Target       string              `json:"target"`
+	Status       string              `json:"status"`
+	Initiator    *string             `json:"initiator"`
+	ErrorMessage *string             `json:"error_message"`
+	Approved     int                 `json:"approved"`
+	Required     int                 `json:"required"`
+	Approvals    []PromotionApproval `json:"approvals"`
+	CreatedAt    string              `json:"created_at"`
+	CompletedAt  *string             `json:"completed_at"`
+}
+
+// GetPromotion returns one promotion (scoped to the project) with its approval slots.
+func (c *Client) GetPromotion(project, promotionID string) (*PromotionDetail, error) {
+	endpoint := fmt.Sprintf(
+		"%s/cli/projects/%s/promotions/%s",
+		c.baseURL, url.PathEscape(project), url.PathEscape(promotionID),
+	)
+	var resp struct {
+		Promotion PromotionDetail `json:"promotion"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get promotion: %w", err)
+	}
+	return &resp.Promotion, nil
+}
+
+// --- Staged changes ---
+
+// StagedChange is one pending canvas change on an environment.
+type StagedChange struct {
+	ComponentType string  `json:"component_type"`
+	Op            string  `json:"op"`
+	ComponentID   *string `json:"component_id"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+// StagedChanges is an environment's durable staged (pending) canvas changes.
+type StagedChanges struct {
+	Environment string         `json:"environment"`
+	Changes     []StagedChange `json:"changes"`
+}
+
+// GetProjectStagedChanges returns an environment's staged changes (the default environment when
+// env is empty; otherwise the environment addressed by name, stage, or id).
+func (c *Client) GetProjectStagedChanges(project, env string) (*StagedChanges, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/staged", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp StagedChanges
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get staged changes: %w", err)
+	}
+	return &resp, nil
+}
+
 // --- Break-glass (privileged incident recovery) ---
 //
 // These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +

@@ -1,0 +1,24 @@
+{
+	"promotion": {
+		"id": "string",
+		"source": "string",
+		"target": "string",
+		"status": "string",
+		"initiator": "string",
+		"error_message": "string",
+		"approved": 0,
+		"required": 0,
+		"approvals": [
+			{
+				"id": "string",
+				"status": "string",
+				"name": "string",
+				"required_role": "string",
+				"comment": "string",
+				"decided_at": "2026-01-01T00:00:00.000Z"
+			}
+		],
+		"created_at": "2026-01-01T00:00:00.000Z",
+		"completed_at": "2026-01-01T00:00:00.000Z"
+	}
+}

@@ -1,0 +1,58 @@
+---
+title: Promotion Commands
+description: Inspect environment promotions — status, approval tally, and approval slots.
+---
+
+# Promotion Commands
+
+The `promotion` group (aliases `promotions`, `promo`) reads a project's **environment promotions** —
+moving a source environment's proven design into a target environment, gated by that environment's
+[protection rules](/cli/commands/protection).
+
+<Callout type="info">
+The CLI is a client of the same Console API. These subcommands call
+`/cli/projects/<project>/promotions[/…]` with your [CLI token](/cli/authentication) and operate on
+the **active organization**. Approving, rejecting, or cancelling a promotion stays in the console.
+</Callout>
+
+## `alethia promotion list`
+
+List a project's promotions, newest first.
+
+```bash
+alethia promotion list --project my-project
+alethia promotion list -p my-project -e production   # filter by target environment
+alethia promotion list -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Filter to promotions targeting this environment (name, stage, or id). |
+
+Columns: **ID**, **Source**, **Target**, **Status**, **Created**. Backing call:
+`GET /cli/projects/<project>/promotions`.
+
+## `alethia promotion get`
+
+Show one promotion's status, approval tally, and approval slots.
+
+```bash
+alethia promotion get <promotion-id> --project my-project
+```
+
+| Argument / Flag | Required | Description |
+|-----------------|----------|-------------|
+| `<promotion-id>` | Yes | The promotion id (from `promotion list`). |
+| `--project`, `-p` | Yes | Project name or id. |
+
+Renders a summary card (source → target, status, **approvals** `N/M`, initiator, created, any
+error) followed by the approval slots (status, approver, required role, decided-at). The per-gate
+evaluation detail and full config diff stay in the console. Add `-o json` for the full object.
+Backing call: `GET /cli/projects/<project>/promotions/<promotion-id>`.
+
+## See also
+
+- [Protection Commands](/cli/commands/protection) — the gates a promotion must pass.
+- [Staged Commands](/cli/commands/staged) — an environment's pending canvas changes.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

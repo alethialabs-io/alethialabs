@@ -1,0 +1,41 @@
+---
+title: Staged Change Commands
+description: Inspect an environment's staged (pending) canvas changes — the diff an apply would push.
+---
+
+# Staged Change Commands
+
+The `staged` group reads an environment's **staged (pending) canvas changes** — the durable diff
+between the edited canvas and the environment's live config, i.e. the Pending Changes an apply would
+push.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `staged list` calls `/cli/projects/<project>/staged`
+with your [CLI token](/cli/authentication) and operates on the **active organization**. Staging,
+discarding, or applying changes stays in the console/canvas.
+</Callout>
+
+## `alethia staged list`
+
+List an environment's staged changes.
+
+```bash
+alethia staged list --project my-project
+alethia staged list -p my-project -e staging
+alethia staged list -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the project's default environment. |
+
+Columns: **Op** (`create` | `update` | `delete`), **Component** (the canvas node kind), **Component
+ID** (the target row for update/delete; `—` for create), **Created**. The per-change payload delta
+stays console-only. Prints `No staged changes.` when the environment is in sync. Backing call:
+`GET /cli/projects/<project>/staged`.
+
+## See also
+
+- [Promotion Commands](/cli/commands/promotions) — moving a proven design between environments.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

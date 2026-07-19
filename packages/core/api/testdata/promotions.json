@@ -1,0 +1,13 @@
+{
+	"promotions": [
+		{
+			"id": "string",
+			"source": "string",
+			"target": "string",
+			"status": "string",
+			"error_message": "string",
+			"created_at": "2026-01-01T00:00:00.000Z",
+			"completed_at": "2026-01-01T00:00:00.000Z"
+		}
+	]
+}

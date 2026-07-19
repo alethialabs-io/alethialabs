@@ -656,6 +656,64 @@ export const cliIacSourceResponse = z.object({
 	source: iacSourceWire.nullable(),
 });
 
+/** One environment promotion (source → target), as listed. */
+export const promotionWire = z.object({
+	id: z.string(),
+	source: z.string(),
+	target: z.string(),
+	status: z.string(),
+	error_message: z.string().nullable(),
+	created_at: iso,
+	completed_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/promotions result. */
+export const cliPromotionsResponse = z.object({
+	promotions: z.array(promotionWire),
+});
+
+/** One approval slot on a promotion. */
+export const promotionApprovalWire = z.object({
+	id: z.string(),
+	status: z.string(),
+	name: z.string().nullable(),
+	required_role: z.string().nullable(),
+	comment: z.string().nullable(),
+	decided_at: isoNullable,
+});
+/**
+ * GET /api/cli/projects/:id/promotions/:pid result — a promotion with its approval slots. The
+ * per-gate evaluation detail and the full config diff stay console-only; the CLI shows status,
+ * the approval tally, and the approval slots.
+ */
+export const cliPromotionResponse = z.object({
+	promotion: z.object({
+		id: z.string(),
+		source: z.string(),
+		target: z.string(),
+		status: z.string(),
+		initiator: z.string().nullable(),
+		error_message: z.string().nullable(),
+		approved: z.number().int(),
+		required: z.number().int(),
+		approvals: z.array(promotionApprovalWire),
+		created_at: iso,
+		completed_at: isoNullable,
+	}),
+});
+
+/** One staged (pending) change on an environment's canvas. */
+export const stagedChangeWire = z.object({
+	component_type: z.string(),
+	op: z.string(),
+	component_id: z.string().nullable(),
+	created_at: iso,
+});
+/** GET /api/cli/projects/:id/staged result. */
+export const cliStagedChangesResponse = z.object({
+	environment: z.string(),
+	changes: z.array(stagedChangeWire),
+});
+
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
@@ -710,6 +768,9 @@ export const cliContract = {
 	AddonsResponse: cliAddonsResponse,
 	ByoChartsResponse: cliByoChartsResponse,
 	IacSourceResponse: cliIacSourceResponse,
+	PromotionsResponse: cliPromotionsResponse,
+	PromotionResponse: cliPromotionResponse,
+	StagedChangesResponse: cliStagedChangesResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;
