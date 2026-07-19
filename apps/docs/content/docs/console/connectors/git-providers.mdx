@@ -13,7 +13,7 @@ Git provider integrations enable repository access for GitOps workflows. Three p
 |----------|-----------|---------------|
 | GitHub | OAuth 2.0 | Automatic via refresh token |
 | GitLab | OAuth 2.0 | Automatic via refresh token |
-| Bitbucket | OAuth 2.0 (Basic Auth for refresh) | Automatic via refresh token |
+| Bitbucket | OAuth 2.0 | Automatic via refresh token |
 
 ## Connection Flow
 
@@ -29,22 +29,17 @@ You're redirected to the provider's authorization page. Grant the application ac
 The provider redirects back to Alethia with an authorization code. Better Auth exchanges it for access and refresh tokens.
 
 ### Token Storage
-Better Auth stores the provider tokens in the `provider_tokens` table. All tokens are encrypted at rest.
+Better Auth stores the provider tokens in its `account` table — one row per linked account.
 
 </Steps>
 
 ## Token Refresh
 
-Git tokens have limited lifetimes. The `getValidProviderToken()` server action handles refresh automatically:
+Git tokens have limited lifetimes. The `getValidProviderToken()` server action wraps Better Auth's `getAccessToken`, which handles refresh transparently:
 
-1. Reads the token from `provider_tokens`
-2. Checks `expires_at` — if in the past, initiates refresh
-3. Calls the provider's token refresh endpoint:
-   - GitHub: `POST github.com/login/oauth/access_token`
-   - GitLab: `POST gitlab.com/oauth/token`
-   - Bitbucket: `POST bitbucket.org/site/oauth2/access_token`
-4. Updates the token in the database
-5. Returns the valid access token
+1. Better Auth reads the linked account from the `account` table
+2. If the access token has expired, it refreshes using the stored refresh token against the provider's token endpoint
+3. It returns a valid access token and persists the refreshed one
 
 This happens transparently whenever a Git operation is needed.
 
@@ -58,9 +53,8 @@ This happens transparently whenever a Git operation is needed.
 
 Disconnecting a Git provider:
 
-1. Deletes the `provider_tokens` record
-2. Revokes the OAuth grant via Better Auth / the provider
-3. Existing ArgoCD installations that use this token will lose repository access
+1. Calls `deleteProviderToken()`, which unlinks the account via Better Auth (`unlinkAccount`) — deleting its `account` row
+2. Existing ArgoCD installations that use this token will lose repository access
 
 <Callout type="warn">
 Disconnecting a Git provider affects all projects that use repositories from that provider. ArgoCD will show "sync failed" until a new token is provided.

@@ -53,8 +53,9 @@ docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -
 
 | Service | Role |
 |---|---|
-| `app` | Console (Next.js control plane) + the marketing site |
+| `app` | Console (Next.js control plane) |
 | `docs` | This documentation, served at `/docs` |
+| `blog` | Blog (Next.js), served at `/blog` |
 | `postgres` | Application database (Drizzle) |
 | `seaweedfs` | S3-compatible object storage (OpenTofu state + plan artifacts) |
 | `runner` | Executes provisioning jobs (OpenTofu) — runs as a self-operated runner |

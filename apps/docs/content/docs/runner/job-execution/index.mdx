@@ -10,9 +10,10 @@ execute. For the queue mechanics, see [Job Queue Pattern](/concepts/job-queue).
 
 ## Claiming
 
-Every 10 seconds the runner calls `POST /api/jobs/claim`. The server runs `claim_next_job()` — a
-PostgreSQL function using `FOR UPDATE SKIP LOCKED` for atomic, exactly-once claiming. Job status
-walks `QUEUED → CLAIMED → PROCESSING → SUCCESS | FAILED | CANCELLED`.
+A push wake stream (SSE) signals when a job is claimable; the runner then calls
+`POST /api/jobs/claim` (a 30-second safety poll is the fallback if the stream drops). The server
+runs `claim_next_job()` — a PostgreSQL function using `FOR UPDATE SKIP LOCKED` for atomic,
+exactly-once claiming. Job status walks `QUEUED → CLAIMED → PROCESSING → SUCCESS | FAILED | CANCELLED`.
 
 When a job is returned, the runner:
 1. Sets status to `PROCESSING`.
@@ -36,7 +37,9 @@ The dispatch switch routes each of these `provisionJobType` values:
 | `AUDIT` | `executeAudit` | Run the Elench verify engine over a bring-your-own plan or k8s manifests → post `verify_result`. Provisions nothing. |
 | `CHART_SCAN` | `executeChartScan` | Render a BYO Helm chart to manifests + scan it (zero secrets, deny-all egress) — always sandboxed. |
 | `IAC_SCAN` | `executeIacScan` | Static scan of bring-your-own IaC. |
-| `STATE_SURGERY` | `executeStateSurgery` | Operator-driven tofu state repair. |
+| `STATE_SURGERY` | `executeStateSurgery` | Operator-driven tofu state repair (ships **inert** / fail-closed). |
+| `PROBE_CLUSTER` | `executeProbeCluster` | Live cluster-alive probe → writes `environment_probes`. |
+| `BUILD` | `executeBuild` | Image build & push — schedules kaniko Jobs in the customer's cluster; reports the per-service digest map on `execution_metadata.build_result`. |
 
 <Cards>
   <Card title="Plan Jobs" href="/runner/job-execution/plan-jobs">

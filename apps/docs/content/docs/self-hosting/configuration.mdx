@@ -24,7 +24,7 @@ URLs (Postgres, SeaweedFS) are wired by compose — you don't set those.
 | `CLI_JWT_SECRET` | `openssl rand -hex 32` — signs CLI/runner tokens (shared with the runner). |
 | `BETTER_AUTH_SECRET` | `openssl rand -hex 32` — signs sessions/cookies. |
 | `ALETHIA_DB_PASSWORD` / `ALETHIA_APP_DB_PASSWORD` | strong random — bundled Postgres roles. |
-| `ALETHIA_CRED_ENCRYPTION_KEY` | `openssl rand -base64 32` — AES-256-GCM key encrypting api-key [connector](/console/connectors/pluggable) secrets (Cloudflare/Vault/Docker Hub/…). Required to connect pluggable connectors. |
+| `ALETHIA_CRED_ENCRYPTION_KEY` | `openssl rand -base64 32` — AES-256-GCM key encrypting api-key [connector](/console/connectors/pluggable) secrets (Cloudflare/Vault/Docker Hub/…). Required to connect pluggable connectors. The installer does not generate this one — set it yourself. |
 
 ## Database & storage
 
@@ -61,7 +61,9 @@ Only the providers you configure appear on the sign-in screen.
 | `GITLAB_APPLICATION_ID` / `GITLAB_SECRET` |
 | `BITBUCKET_KEY` / `BITBUCKET_SECRET` |
 
-Set each provider's callback to `https://<your-domain>/api/auth/callback/<provider>`.
+Set each provider's callback URL. GitHub and Google are native social providers and use
+`https://<your-domain>/api/auth/callback/<provider>`. GitLab and Bitbucket are registered
+through the generic OAuth plugin and use `https://<your-domain>/api/auth/oauth2/callback/<provider>`.
 
 ## Cloud connectors (optional)
 

@@ -5,36 +5,35 @@ description: Real-time log streaming, status polling, and job actions.
 
 # Job Detail & Logs
 
-The job detail page (`/dashboard/jobs/{id}`) shows the full execution state of a job with real-time log streaming. For the underlying streaming architecture, see [Real-time Architecture](/concepts/realtime).
+The job detail page (`/{org}/~/jobs/{id}`) shows the full execution state of a job with real-time log streaming. For the underlying streaming architecture, see [Real-time Architecture](/concepts/realtime).
 
 ## Layout
 
 ### Header
 - Job type icon and label
-- Status badge (animated for PROCESSING)
-- Duration (elapsed time, updates live)
-- Job ID (first 8 chars, copyable)
-- Assigned Runner name
-- Created timestamp
+- Status badge
+- Duration (elapsed or final run time)
+- Job ID (first 8 chars)
+- Runner ID (first 8 chars) — the runner that claimed the job (shown once a runner has claimed it)
+- Created time (relative)
 - Action buttons
 
 ### Log Viewer
 
-A full-height, monospace, auto-scrolling log area showing the runner's `tofu` (OpenTofu) output in real-time:
+A full-height, monospace, auto-scrolling log area showing the runner's `tofu` (OpenTofu) output in real-time. Each log row carries a `stream_type` of `STDOUT`, `STDERR`, or `SYSTEM`:
 
-- **STDOUT** — normal output (white/light gray)
-- **STDERR** — errors and warnings (red)
-- **SYSTEM** — platform messages like "Assuming IAM role..." (blue)
+- **STDERR** — rendered in the destructive (error) style
+- **STDOUT** and **SYSTEM** — rendered in the normal foreground style
 
-Logs are streamed via a Postgres LISTEN/NOTIFY → SSE subscription on `provision_job_logs` INSERT events, filtered by `job_id`. New chunks appear within ~2–3 seconds of the Runner writing them.
+Logs are streamed via a Postgres LISTEN/NOTIFY → SSE subscription (`/api/stream/jobs/{id}`) over the `job_logs` table, filtered by `job_id`. The server sends the backlog on connect, then pushes new rows in near-real-time as the Runner writes them.
 
-Auto-scroll pins to the bottom as new logs arrive. Scrolling up manually disables auto-scroll until the user scrolls back to the bottom.
+Auto-scroll pins to the bottom as new logs arrive.
 
 ### Collapsible Details
 
 Three expandable sections below the logs:
 
-- **Job Details** — full metadata (ID, type, status, runner, all timestamps)
+- **Job Details** — full metadata (ID, type, runner, project, and the created/started/completed timestamps)
 - **Config Snapshot** — the project configuration at time of job creation (JSON)
 - **Execution Metadata** — OpenTofu outputs, cost data, cluster info, and the **`verify_result`** report (JSON)
 
@@ -44,18 +43,18 @@ For PLAN and DEPLOY jobs, `execution_metadata["verify_result"]` carries the [ver
 
 | Button | When Visible | Effect |
 |--------|-------------|--------|
-| **Cancel** | QUEUED or PROCESSING | Sets status to CANCELLED, Runner terminates gracefully |
+| **Cancel** | QUEUED, CLAIMED, or PROCESSING | Sets status to CANCELLED, Runner terminates gracefully |
 | **Apply** | PLAN job with SUCCESS status | Opens Runner Select Popover → creates DEPLOY job |
 | **Re-run** | Any terminal status (SUCCESS, FAILED, CANCELLED) | Creates a new job with the same configuration |
 
 ## Status Polling
 
-The page polls `getJobStatus(jobId)` every 3 seconds until the job reaches a terminal state. This is a lightweight query that returns only `status` and `error_message` — the full log streaming happens via the Realtime subscription.
+The page polls `getJob(jobId)` every 3 seconds while the job is in-flight (QUEUED, CLAIMED, or PROCESSING), then idles once it reaches a terminal state. This query drives the header status and any error message — the full log streaming happens via the Realtime subscription.
 
 ## Status Banner
 
 When the job reaches a terminal state, a banner appears:
 
-- **SUCCESS** — green banner with checkmark
-- **FAILED** — red banner with error message
-- **CANCELLED** — gray banner with "Cancelled by user"
+- **SUCCESS** — neutral banner with a checkmark ("Job completed successfully.")
+- **FAILED** — destructive banner with the error message ("Job failed")
+- **CANCELLED** — muted banner ("Job cancelled")

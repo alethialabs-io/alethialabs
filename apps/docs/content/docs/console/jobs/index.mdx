@@ -9,42 +9,43 @@ Every infrastructure operation is modeled as a **job**. The Jobs page shows all 
 
 ## Job List Page
 
-Located at `/dashboard/jobs`, the page shows:
+Located at `/{org}/~/jobs`, the page shows:
 
 ### Filters
 
-**Status filters** (button group):
-- All, QUEUED, PROCESSING, SUCCESS, FAILED, CANCELLED
+The page follows the console filter standard — one filter bar backed by server-side filtering and facet counts. Each control is a multi-select popover, the counts come from the unfiltered facet universe, and every selection syncs to the URL:
 
-**Type filters** (button group):
-- All Types, DEPLOY, PLAN, DESTROY, DEPLOY_RUNNER, UPDATE_RUNNER, DESTROY_RUNNER, DETECT_DRIFT
-
-**Search** — filter by job ID, Runner name, or project name.
+- **Search** — free-text match over project name and slug, environment name, Runner name, and the error message.
+- **Date range** — a quick-range preset picker (default: last 12 months) plus a custom range.
+- **Authors** — the org member who initiated each job.
+- **Environments** — the job's target environment.
+- **Projects** — the target project (hidden when the list is scoped to a single project).
+- **Statuses** — QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED.
+- **Types** — PLAN, DEPLOY, DESTROY plus the Runner-lifecycle and scan/utility job types; each option shows its live count.
 
 ### Data Table
 
 | Column | Description |
 |--------|-------------|
-| Type | Job type with icon |
-| Status | Color-coded badge |
-| Project | Target project name |
-| Runner | Assigned Runner name |
-| Started | Timestamp |
-| Completed | Timestamp |
-| Duration | Elapsed time |
+| Type | Job type with icon and description |
+| Status | Grayscale status badge with inline run duration |
+| Project | Target project name with its cloud provider icon (hidden in a project-scoped view) |
+| Runner | Name (or short ID) of the runner that claimed the job |
+| Environment | Target environment name and stage |
+| Initiated | Relative time plus the initiating member's avatar |
 
 Click any row to navigate to the [job detail page](/console/jobs/job-detail).
 
-### Real-time Updates
+### Live Updates
 
-The jobs store receives real-time events from the dashboard layout's LISTEN/NOTIFY → SSE subscription. New jobs appear automatically, and status changes update badges in-place without page refresh. See [Real-time Architecture](/concepts/realtime).
+The list stays current through TanStack Query polling: it refetches every 5 seconds while any visible job is in-flight (QUEUED, CLAIMED, or PROCESSING) and every 30 seconds otherwise, so new rows and status changes appear without a page refresh. (Per-job log streaming on the detail page uses a Postgres LISTEN/NOTIFY → SSE subscription — see [Real-time Architecture](/concepts/realtime).)
 
 ## Runner Select Popover
 
 When triggering Plan, Apply, or Destroy from a project, the **Runner Select Popover** appears:
 
-- Lists all registered Runners with status indicators (green = ONLINE, yellow = DRAINING, red = OFFLINE)
+- Lists all registered Runners with a grayscale status dot (state is shown by the dot, never color)
 - "Any available" option for automatic assignment
-- Only ONLINE Runners can accept new jobs
+- Only ONLINE Runners can be selected; DRAINING and OFFLINE Runners are disabled
 
 The selected Runner's ID is stored as `assigned_runner_id` on the job.

@@ -86,3 +86,5 @@ Jobs are the unit of work a runner claims. The full set (see [Job Queue](/concep
 | `CHART_SCAN` | Render + scan a bring-your-own Helm chart (zero secrets, deny-all egress) |
 | `IAC_SCAN` | Scan a bring-your-own IaC module; gates the environment's PLAN/DEPLOY/DESTROY |
 | `STATE_SURGERY` | Two-person-approved, audited repair of a corrupt tofu state (ships inert / fail-closed) |
+| `PROBE_CLUSTER` | Dial the environment's cluster API server and write one honest probe row (unreachable is a successful probe with `reachable=false`) |
+| `BUILD` | Build + push each repo-sourced service's image via an in-cluster kaniko Job; reports a per-service digest map |
