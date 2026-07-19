@@ -688,20 +688,26 @@ jobs:
   docs-prose:
     name: Docs prose (Vale · Diátaxis + plain-language)
     needs: detect-changes
-    # Path-gated: only when a docs PR touched apps/docs (content OR the Vale config/style).
-    if: needs.detect-changes.outputs.docs == 'true'
+    # This job ALWAYS runs so it always reports its status check — that is what makes it safe to
+    # mark REQUIRED (infra/github). A job whose steps all skip still reports success, so on a
+    # non-docs PR / promotion / merge_group it passes green without spinning up Vale. The real work
+    # is gated per-step on the `docs` filter; the final step is the explicit no-op pass.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        if: needs.detect-changes.outputs.docs == 'true'
       - uses: actions/setup-node@v4
+        if: needs.detect-changes.outputs.docs == 'true'
         with:
           node-version: 22
       # Vale shells out to `mdx2vast` to parse .mdx (prose only — it drops fenced code,
       # code spans, URLs, JSX/ESM); it must be on $PATH.
       - name: Install the MDX preprocessor
+        if: needs.detect-changes.outputs.docs == 'true'
         run: npm i -g mdx2vast
       # Vale is a single Go binary — install the pinned release, mirroring the gitleaks job.
       - name: Install Vale
+        if: needs.detect-changes.outputs.docs == 'true'
         run: |
           curl -sSfL https://github.com/errata-ai/vale/releases/download/v3.15.1/vale_3.15.1_Linux_64-bit.tar.gz \
             | sudo tar -xz -C /usr/local/bin vale
@@ -709,11 +715,18 @@ jobs:
       # Downloads the Google style package into styles/ (gitignored); the Alethia style + vocab
       # are vendored in the repo.
       - name: Sync Vale packages
+        if: needs.detect-changes.outputs.docs == 'true'
         working-directory: apps/docs
         run: vale sync
       # `vale` exits non-zero ONLY on error-level alerts (the Alethia.Terminology rule). Warnings
       # (plain-language swaps, long sentences) and suggestions print for visibility but never red
       # the build — matches the green-CI / self-merge flow.
       - name: Lint docs prose
+        if: needs.detect-changes.outputs.docs == 'true'
         working-directory: apps/docs
         run: vale content
+      # No apps/docs changes — nothing to lint, but the job still reports success so the required
+      # check is satisfied on non-docs PRs and promotions.
+      - name: No docs changes
+        if: needs.detect-changes.outputs.docs != 'true'
+        run: echo "No apps/docs changes in this PR — prose lint not required."
