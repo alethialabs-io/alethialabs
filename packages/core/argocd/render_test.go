@@ -175,6 +175,46 @@ func TestRender_AWSUnchanged(t *testing.T) {
 	}
 }
 
+// The apps-overlays ApplicationSet (decoupled env-model, #838) renders one Application per
+// overlays/<env> directory in the apps repo — the enterprise-demo layout. It must carry the git
+// directories generator over overlays/*, emit ArgoCD's own path placeholders LITERALLY (so ArgoCD,
+// not Alethia, resolves them), run under the "apps" AppProject, and propagate the sweep labels.
+func TestRender_AppsOverlaysApplicationSet(t *testing.T) {
+	vc := cfg("aws")
+	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/demo"
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, vc))
+
+	as, ok := files["user-apps-overlays.yaml"]
+	if !ok {
+		t.Fatalf("apps-overlays ApplicationSet should render when AppsDestinationRepo is set")
+	}
+	for _, want := range []string{
+		"kind: ApplicationSet",
+		"repoURL: https://github.com/acme/demo",
+		"path: overlays/*",
+		"name: 'apps-{{ .path.basename }}'", // literal ArgoCD placeholder, not Alethia-resolved
+		"path: '{{ .path.path }}'",
+		"project: apps",
+		"CreateNamespace=true",
+	} {
+		if !strings.Contains(as, want) {
+			t.Errorf("apps-overlays ApplicationSet missing %q:\n%s", want, as)
+		}
+	}
+	// The ArgoCD path placeholders must NOT have been resolved by Alethia's Go template.
+	if strings.Contains(as, "<no value>") || strings.Contains(as, "apps-eks-demo") {
+		t.Errorf("ArgoCD path placeholders were wrongly resolved at Alethia render time:\n%s", as)
+	}
+
+	// Flat / no apps repo → the ApplicationSet is gated out entirely (no empty Application deployed).
+	noRepo := cfg("aws")
+	noRepo.Repositories.AppsDestinationRepo = ""
+	flat := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, noRepo))
+	if _, present := flat["user-apps-overlays.yaml"]; present {
+		t.Errorf("apps-overlays ApplicationSet must not render without an apps repo")
+	}
+}
+
 func TestRender_GCPWorkloadIdentity(t *testing.T) {
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
 		"gke_cluster_name":             "gke-demo",
