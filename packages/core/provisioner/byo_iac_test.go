@@ -72,6 +72,7 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 		ProjectName:      "acme",
 		EnvironmentStage: "prod",
 		Region:           "eu-central-1",
+		FabricID:         "fab-1", // #839: BYO-IaC attaches at the Fabric — exposed in the TF_VAR contract.
 		IacSource: &types.ProjectIacSourceConfig{
 			RepoURL:   "file://" + repo,
 			Ref:       branch,
@@ -131,6 +132,7 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 		"TF_VAR_alethia_region":         "eu-central-1",
 		"TF_VAR_alethia_project_id":     "cfg-123",
 		"TF_VAR_alethia_environment_id": "cfg-123",
+		"TF_VAR_alethia_fabric_id":      "fab-1",
 	} {
 		if got := os.Getenv(k); got != want {
 			t.Fatalf("%s = %q, want %q", k, got, want)

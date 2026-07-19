@@ -13,9 +13,11 @@ Runner is a single Go binary with a straightforward architecture: a main poll lo
 flowchart TD
   Start([runner start]) --> Reg[Register with Alethia API]
   Reg --> HB[Start heartbeat goroutine · every 30s]
-  Reg --> Poll{Poll loop · every 10s<br/>POST /api/jobs/claim}
-  Poll -->|no job| Sleep[sleep 10s]
-  Sleep --> Poll
+  Reg --> Wake[Start wake-stream goroutine · SSE /api/runners/wake]
+  Reg --> Poll{Claim loop · on wake or 30s safety poll<br/>POST /api/jobs/claim}
+  Wake -->|wake| Poll
+  Poll -->|no job| Wait[await next wake / safety tick]
+  Wait --> Poll
   Poll -->|job claimed| Mint[Mint per-job cloud creds · keyless OIDC]
   Mint --> Exec[Execute via sandbox seam · tofu, ArgoCD]
   Exec --> Logs[Stream logs]
@@ -23,8 +25,8 @@ flowchart TD
   Report --> Poll
 `} />
 
-The poll loop runs on the main goroutine; the heartbeat runs as a background goroutine. Both share
-the runner configuration.
+The claim loop runs on the main goroutine; the wake-stream listener and the heartbeat each run as a
+background goroutine. All share the runner configuration.
 
 Provisioning work runs through the **sandbox seam** (`packages/core/sandbox`), not by invoking the provisioner
 directly. For trusted Alethia templates the default `Passthrough` backend runs it in-process; on the managed
@@ -43,7 +45,11 @@ The dispatch switch (`internal/agent/runner.go`) routes each claimed job to its 
 | `ANALYZE_REPO` | `executeAnalyzeRepo` | Clone + statically scan a repo into a `RepoDigest`. |
 | `DETECT_DRIFT` | `executeDriftDetection` | `tofu plan -refresh-only` → `drift.Analyze` → post a `Posture`. |
 | `AUDIT` | `executeAudit` | Run the elench verify engine over a **bring-your-own** plan or k8s manifests → post `verify_result`. Provisions nothing. |
-| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | Provision, update, or tear down a self-operated runner. |
+| `IAC_SCAN` | `executeIacScan` | Static scan of bring-your-own IaC — always sandboxed. |
+| `STATE_SURGERY` | `executeStateSurgery` | Operator-driven tofu state repair (ships **inert** / fail-closed). |
+| `PROBE_CLUSTER` | `executeProbeCluster` | Live cluster-alive probe → writes `environment_probes`. |
+| `BUILD` | `executeBuild` | Image build & push — schedules kaniko Jobs in the customer's cluster → `execution_metadata.build_result`. |
+| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | Provision, update, or tear down a self-deployed runner. |
 
 ## Configuration
 
@@ -65,11 +71,14 @@ credential.
 
 ## Heartbeat Mechanism
 
-The heartbeat goroutine sends `POST /api/runners/heartbeat` every 30 seconds with:
+The heartbeat goroutine sends `POST /api/runners/heartbeat` every 30 seconds. The payload carries:
 
-- Runner ID
-- Current status (ONLINE or DRAINING)
-- Currently executing job ID (if any)
+- The runner version
+- The cloud providers this runner can claim (per-cloud routing)
+
+The runner's identity travels in the `X-Runner-ID` / `X-Runner-Token` headers, not the body. The
+response returns any server-side-cancelled job IDs (`cancelled_job_ids`) — the fallback cancel path
+when a wake-stream cancel was missed.
 
 Alethia uses the heartbeat to:
 - Mark Runners as ONLINE (heartbeat within 60s) or OFFLINE (heartbeat missed)
@@ -86,11 +95,10 @@ If a Runner crashes mid-job:
 
 When Runner receives SIGINT or SIGTERM:
 
-1. Sets status to **DRAINING** — stops accepting new jobs
-2. Sends a DRAINING heartbeat to Alethia
-3. If a job is in progress, waits for it to complete (up to 10-minute grace period)
-4. Sends final heartbeat with OFFLINE status
-5. Exits
+1. Enters a local **draining** state — stops claiming new jobs
+2. Lets the in-flight job (if any) run to completion, up to a 10-minute grace period, after which the
+   context is cancelled to force shutdown
+3. Exits
 
 In the managed fleet, a warm-pool VM claims jobs until the scaler decides it is surplus. Scale-down
 is a two-step **drain then destroy**: the controller marks the runner `DRAINING` (it stops claiming
@@ -125,10 +133,9 @@ Runner and Alethia CLI both import from `packages/core/`:
 | `cloud/aws/` | AWS SDK for provisioning (keyless `AssumeRoleWithWebIdentity`, EKS kubeconfig) |
 | `cloud/` (`http_backend.go`) | The console HTTP state backend (per-job token via `TF_HTTP_PASSWORD`) — no storage credential on the runner |
 | `sandbox/` | The per-job isolation seam (Passthrough / Container backends) |
-| `cloud/gcp/` | GCP Workload Identity Federation + kubeconfig |
-| `cloud/azure/` | Azure federated auth + kubeconfig |
-| `argocd/` | ArgoCD installation and configuration |
-| `helm/` | Helm chart operations |
+| `cloud/gcp_provider.go` | GCP Workload Identity Federation provider tfvars + kubeconfig |
+| `cloud/azure_provider.go` | Azure federated-auth provider tfvars + kubeconfig |
+| `argocd/` | ArgoCD installation and configuration (App-of-Apps rendering) |
 | `git/` | Git clone, branch, commit, push |
 | `k8s/` | kubectl operations |
 | `infracost/` | Infracost CLI wrapper and output parsing |

@@ -841,10 +841,11 @@ export const NODE_REGISTRY: NodeRegistry = {
 };
 
 /** Kinds offered in the palette (everything except the fixed project root). */
+// W2: `cluster` + `network` are no longer board nodes — one environment IS one cluster (+ its VPC),
+// configured as env SETTINGS (the toolbar "Cluster & network" sheet), not added/removed on the canvas.
+// They remain env-scoped DB singletons and still round-trip through graphToForm as hidden store nodes.
 export const ADDABLE_KINDS: NodeKind[] = [
 	"service",
-	"network",
-	"cluster",
 	"database",
 	"cache",
 	"queue",

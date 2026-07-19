@@ -6,16 +6,14 @@ name: Release CLI
 # version and cuts the cli-v* tag; this workflow snapshots that exact source onto alethia-cli under a
 # clean semver tag (vX.Y.Z) and runs GoReleaser THERE, so every version string is clean semver and
 # users find releases on the CLI repo. See docs/concepts/release-system.mdx.
+#
+# TRIGGERED BY THE TAG, not by release-please's job: release-please creates the cli-v* tag with the
+# GitHub-App token (which DOES trigger workflows), so publishing runs even if a release-please
+# post-step (e.g. commenting on a locked PR) fails. Decoupled on purpose.
 
 on:
-  workflow_call:
-    inputs:
-      version:
-        required: true
-        type: string
-      tag:
-        required: false
-        type: string
+  push:
+    tags: ['cli-v*']
   workflow_dispatch:
     inputs:
       version:
@@ -31,12 +29,22 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
-    env:
-      # The monorepo component tag release-please created (source of the build).
-      CLI_TAG: ${{ inputs.tag != '' && inputs.tag || format('cli-v{0}', inputs.version) }}
-      # The clean-semver tag published on the alethia-cli release home.
-      MIRROR_TAG: v${{ inputs.version }}
     steps:
+      # Derive the version + tags from the trigger: a cli-v* tag push (release-please), or a manual
+      # dispatch with the bare version. CLI_TAG = the monorepo source tag; MIRROR_TAG = the clean
+      # semver tag published on alethia-cli.
+      - name: Resolve version + tags
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ inputs.version }}"
+          else
+            VER="${GITHUB_REF_NAME#cli-v}"
+          fi
+          echo "REL_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "CLI_TAG=cli-v$VER" >> "$GITHUB_ENV"
+          echo "MIRROR_TAG=v$VER" >> "$GITHUB_ENV"
+
       - name: Checkout monorepo @ the release tag
         uses: actions/checkout@v4
         with:
@@ -157,7 +165,10 @@ jobs:
           role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
           aws-region: eu-central-1
 
+      # Best-effort console notification — never fails the release (a duplicate version or a console
+      # blip must not red an otherwise-successful publish).
       - name: Publish release metadata to Alethia
+        continue-on-error: true
         env:
           ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
           GH_TOKEN: ${{ steps.cli_token.outputs.token }}
@@ -170,8 +181,21 @@ jobs:
             -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
-              --arg v "${{ inputs.version }}" \
+              --arg v "${REL_VERSION}" \
               --arg n "$NOTES" \
               --arg u "https://github.com/alethialabs-io/alethia-cli/releases/tag/${MIRROR_TAG}" \
               --arg s "${{ github.sha }}" \
               '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"
+
+      # Single-home: the release + binaries live on alethia-cli, so drop the changelog-only Release
+      # release-please created on the monorepo. Keep the cli-v* TAG (release-please's version anchor)
+      # by NOT passing --cleanup-tag. Best-effort — never fails the release.
+      - name: Single-home — delete the monorepo Release (keep the tag)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete "${CLI_TAG}" --repo ${{ github.repository }} --yes \
+            && echo "Deleted monorepo Release ${CLI_TAG} (tag kept)." \
+            || echo "No monorepo Release ${CLI_TAG} to delete."

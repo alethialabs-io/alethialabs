@@ -11,10 +11,10 @@
 // up the same set afterwards — assertions are scoped to those providers (never raw totals).
 
 import { eq, inArray } from "drizzle-orm";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { type CloudProvider, fleetPools, type NewFleetPool } from "@/lib/db/schema";
-import { loadFleetPools, rowToProject } from "@/lib/fleet/pools-db";
+import { loadFleetPools, rowToProject, upsertFleetPool } from "@/lib/fleet/pools-db";
 import { describeIfDb } from "./db";
 
 // Less-common providers, unlikely to clash with anything a dev/CI box has actually seeded.
@@ -145,5 +145,69 @@ describeIfDb("fleet pools DB config", () => {
 		expect(target.scaleDownGraceTicks).toBe(5);
 		expect(target.targetVersion).toBeNull();
 		expect(target.channel).toBeNull();
+	});
+});
+
+// upsertFleetPool is the pool BIRTH path (the console/CLI `fleet set`): without it an empty
+// fleet_pools table — the state when FLEET_POOLS never seeded — could never gain a pool without a
+// redeploy. Verifies create-with-defaults, partial-field update, and the partial-unique-index
+// handling that lets a fresh pool be born alongside a still-draining one for the same provider.
+describeIfDb("fleet pool upsert (create-or-update via upsertFleetPool)", () => {
+	// Test-owned providers (the suite already treats these as clobberable).
+	const NEW_PROVIDER: CloudProvider = "civo";
+	const EXISTING: CloudProvider = "alibaba";
+	const UP: CloudProvider[] = [NEW_PROVIDER, EXISTING];
+
+	beforeEach(async () => {
+		await getServiceDb().delete(fleetPools).where(inArray(fleetPools.provider, UP));
+	});
+	afterAll(async () => {
+		await getServiceDb().delete(fleetPools).where(inArray(fleetPools.provider, UP));
+	});
+
+	it("CREATES a pool for a provider that has none, applying the passed fields and schema defaults for the rest", async () => {
+		const row = await upsertFleetPool(NEW_PROVIDER, { warm_min: 2, enabled: true });
+		expect(row.provider).toBe(NEW_PROVIDER);
+		expect(row.warm_min).toBe(2); // provided
+		expect(row.max).toBe(10); // schema default
+		expect(row.slots_per_runner).toBe(1); // schema default
+		expect(row.locations).toEqual(["fsn1"]); // schema default
+		expect(row.enabled).toBe(true);
+		expect(row.deleting).toBe(false);
+		// The controller can now see it.
+		const loaded = (await loadFleetPools()).find((p) => p.provider === NEW_PROVIDER);
+		expect(loaded).toBeDefined();
+	});
+
+	it("UPDATES only the provided fields on an existing live pool, leaving the rest intact", async () => {
+		await getServiceDb().insert(fleetPools).values({
+			provider: EXISTING,
+			warm_min: 3,
+			max: 20,
+			slots_per_runner: 4,
+			channel: "beta",
+		});
+		const row = await upsertFleetPool(EXISTING, { max: 25 });
+		expect(row.max).toBe(25); // changed
+		expect(row.warm_min).toBe(3); // untouched
+		expect(row.slots_per_runner).toBe(4); // untouched
+		expect(row.channel).toBe("beta"); // untouched
+	});
+
+	it("is born ALONGSIDE a still-draining pool for the same provider — no ON CONFLICT collision (partial unique index)", async () => {
+		// A pool mid-teardown (deleting = true) sits outside the `deleting = false` partial index…
+		await getServiceDb()
+			.insert(fleetPools)
+			.values({ provider: NEW_PROVIDER, deleting: true, warm_min: 9 });
+		// …so creating a fresh LIVE pool must succeed (not error, not overwrite the draining row).
+		const fresh = await upsertFleetPool(NEW_PROVIDER, { warm_min: 1, enabled: true });
+		expect(fresh.deleting).toBe(false);
+		expect(fresh.warm_min).toBe(1);
+		const rows = await getServiceDb()
+			.select()
+			.from(fleetPools)
+			.where(eq(fleetPools.provider, NEW_PROVIDER));
+		expect(rows.length).toBe(2); // draining + fresh coexist
+		expect(rows.filter((r) => !r.deleting)).toHaveLength(1); // exactly one LIVE pool
 	});
 });

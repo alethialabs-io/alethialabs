@@ -1,0 +1,132 @@
+---
+title: Bring Your Own IaC
+description: Point a project environment at your own OpenTofu root module so Alethia provisions from it instead of the built-in template, behind a static safety scan.
+---
+
+# Bring Your Own IaC
+
+Alethia normally provisions an environment from its built-in per-cloud template. **Bring-your-own IaC**
+lets you point that environment at a git repo holding your **own OpenTofu root module** — Alethia
+plans, scans, and applies *your* module instead. This is a **replace-mode** capability: the module
+takes over the environment, and the built-in template no longer applies.
+
+This guide covers attaching a module, reading its safety scan, and detaching it. For the design behind
+the safety gate and the module contract, see [Bring Your Own IaC (concepts)](/concepts/bring-your-own-iac).
+
+<Callout type="warn">
+Bring-your-own IaC is **opt-in**, enabled per instance with `ALETHIA_BYO_IAC_ENABLED=true`. With the
+flag off, attaching, scanning, and provisioning a module all refuse. Ask your operator whether it's
+enabled on your instance.
+</Callout>
+
+## Before you start
+
+- Link the git provider that hosts your module. The attach dialog reads from your
+  [connected git providers](/console/connectors/git-providers) — if you have none, the repository
+  selector offers a connect step.
+- Use an environment with **no deployed (or in-flight) template infrastructure**. A replace-mode
+  module would orphan existing template state, so attaching is rejected until you destroy that
+  environment first.
+
+## Attach a module
+
+The attach flow is a four-step dialog: **Repository → Path & ref → Variables → Review**.
+
+1. Open the canvas command menu (⌘K) and choose **Bring your own IaC** from the **Sources** group.
+2. **Repository** — select the git repo that holds your module.
+3. **Path & ref** — set the **root-module path** (the directory inside the repo that holds the root
+   `*.tf`; leave blank for the repo root) and, optionally, the **git ref** (a branch, tag, or commit;
+   leave blank for `HEAD`).
+4. **Variables** — add any non-secret tfvars the module needs. Each variable is a name, a type, and a
+   value.
+5. **Review** — confirm the repo, path, ref, and variable count, then select **Attach source**.
+
+Attaching pins a single IaC source on the environment and **queues a safety scan automatically** — you
+don't need to trigger the scan yourself.
+
+### Variables
+
+Variables on the Variables step are **scalar, non-secret tfvars** only:
+
+| Field | Rule |
+|-------|------|
+| **Name** | Letters, digits, and underscores; must start with a letter or underscore. Names must be unique. |
+| **Type** | `string`, `number`, or `bool`. |
+| **Value** | Must parse as the chosen type (`number` must be numeric; `bool` must be `true` or `false`). |
+
+<Callout type="warn">
+Never put secrets here. These values are stored as plain tfvars. Keep credentials in your cloud's
+secret store or your module's own data sources.
+</Callout>
+
+Leave the list empty to run the module with its own defaults.
+
+## Read the safety scan
+
+Once attached, the module appears on the canvas as an **External IaC** card carrying its provenance —
+repo, ref, path, the commit the scan pinned, and a scan-status chip. Select the chip to open the
+**IaC safety scan** sheet.
+
+The scan clones the repo, pins the commit it checked out, inventories the module's providers and module
+sources, and runs `tofu validate` plus the static `iacsafety` checks. The sheet shows:
+
+- A **verdict** — "No blocking issues found", or "Issues found — resolve before deploying".
+- A **`tofu validate`** status pill and a per-severity summary (`critical`, `high`, `medium`, `low`,
+  `info`).
+- **Finding cards**, worst-first — each with a rule id, a `file:line` coordinate, and a detail message.
+- The **providers** and **modules** the scan discovered.
+
+Re-run the scan any time with **Rescan** in the scan sheet (open it from the node's scan-status chip)
+— for example after pushing a fix to the module.
+
+<Callout type="info">
+Only a clean scan pins the commit a deploy will apply. A **not-ok scan clears the deploy pin**, so
+provisioning stays locked until a clean re-scan. This also protects against a swap between scan and
+apply: the pinned commit is exactly what runs.
+</Callout>
+
+## Provision from the module
+
+While an enabled source exists, that environment's plan, deploy, and destroy run **your module**
+instead of the built-in template. The module's resources appear as their own read-only cards on the
+board; the component palette is disabled for a BYO environment, because the module — not the design —
+is the source of truth.
+
+The External IaC card tracks live state: it marks the environment **DEPLOYED** or **NOT DEPLOYED** and
+shows the commit the last deploy applied alongside the pinned commit.
+
+At plan time, the same verify verdict template provisioning gets (keyless / least-privilege / OIDC-sub)
+is attached to each deploy's **Plan** tab.
+
+## Detach a module
+
+To return an environment to the built-in template, open the External IaC card and select the detach
+(**✕**) control.
+
+<Callout type="warn">
+You can only detach a source that has **never deployed**. Once a deploy has applied the module (or the
+environment is in an active or in-flight status), detaching would drop the only handle to that live
+infrastructure — destroy the environment first, then detach.
+</Callout>
+
+## Bring your own Helm chart
+
+Alongside a full OpenTofu module, you can attach a single **Helm chart** from a git repo. Open the
+command menu (⌘K), choose **Bring your own Helm chart** from **Sources**, and step through
+**Repository → Chart path → Ref → Review**:
+
+- **Chart path** — the directory inside the repo that contains `Chart.yaml`.
+- **Ref** — the branch, tag, or commit ArgoCD tracks (blank for `HEAD`).
+- **Review** — set the chart **name**, target **namespace** (defaults to `default`), and optional Helm
+  **values**.
+
+The chart is deployed and governed on the cluster through ArgoCD, and it syncs on the next deploy. For
+scanning the chart, describing the workloads it deploys, and binding them to your infrastructure, see
+[Bring Your Own Helm Charts](/console/design-project/bring-your-own-charts).
+
+## See also
+
+- [Bring Your Own IaC (concepts)](/concepts/bring-your-own-iac) — the safety gate and module contract.
+- [Bring Your Own Helm Charts](/console/design-project/bring-your-own-charts) — the chart workflow.
+- [The Canvas](/console/design-project/the-canvas) — where sources and their cards live.
+- [Git providers](/console/connectors/git-providers) — connecting the repo host.

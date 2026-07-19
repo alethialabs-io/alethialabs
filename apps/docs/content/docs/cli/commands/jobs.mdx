@@ -29,10 +29,10 @@ alethia jobs list [--status <S>] [-n/--limit <N>]
 Output:
 
 ```
-ID            TYPE     STATUS      PROJECT         CREATED
-a1b2...       PLAN     SUCCESS     api-backend     2 min ago
-c3d4...       DEPLOY   PROCESSING  api-backend     30 sec ago
-e5f6...       DESTROY  QUEUED      data-platform   just now
+TYPE     STATUS      PROJECT         RUNNER          CREATED       DURATION
+Plan     SUCCESS     api-backend     fleet-hcloud-1  2 min ago     1m 12s
+Deploy   PROCESSING  api-backend     fleet-hcloud-1  30 sec ago    28s…
+Destroy  QUEUED      data-platform   —               just now      —
 ```
 
 The **TYPE** column is one of the full job-type set the Runner executes — not just the three above:
@@ -47,6 +47,8 @@ The **TYPE** column is one of the full job-type set the Runner executes — not 
 | `DETECT_DRIFT` | `tofu plan -refresh-only` → a per-environment drift posture. |
 | `AUDIT` | Re-run the verify controls against current state for evidence. |
 | `CHART_SCAN` / `IAC_SCAN` | Scan Helm charts / IaC for policy + security findings. |
+| `PROBE_CLUSTER` | Live cluster-alive probe — checks a provisioned cluster's reachability and records its per-environment posture. |
+| `BUILD` | Build and push a service's container image (schedules kaniko Jobs in the customer's cluster; reports the per-service digest map). |
 | `STATE_SURGERY` | Privileged state repair (queued via `alethia ops state-surgery`; ships INERT). |
 
 The **STATUS** lifecycle is `QUEUED → CLAIMED → PROCESSING → SUCCESS | FAILED | CANCELLED`.
@@ -59,7 +61,7 @@ Get detailed information about a specific job. The job ID is a **positional argu
 alethia jobs get <job_id>
 ```
 
-Shows: type, status, assigned Runner, all timestamps, error message (if failed), and execution metadata (OpenTofu outputs, cost data, and the `verify_result` report on PLAN/DEPLOY jobs).
+Shows: type, status, assigned Runner, all timestamps, the elench `verify_result` summary on PLAN/DEPLOY jobs, and the error message (if failed). Add `-o json` for the full execution metadata (OpenTofu outputs, cost data).
 
 ## `alethia jobs logs`
 

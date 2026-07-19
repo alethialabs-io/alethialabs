@@ -14,12 +14,14 @@ import type { ProvisionJobType } from "@/lib/db/schema/enums";
 export const TOFU_STATE_BUCKET =
 	process.env.ALETHIA_STORAGE_STATE_BUCKET || "project-tofu-state";
 
-/** The state object key for a project environment. */
-export function projectStateKey(
-	projectId: string,
-	environmentId: string,
-): string {
-	return `projects/${projectId}/${environmentId}/tofu.tfstate`;
+/**
+ * The state object key for a project's tofu state. `scopeId` is the immutable UUID of the infra
+ * unit that OWNS the state: the environment id for a `dedicated` placement (the env owns its Fabric
+ * 1:1 — the legacy env=cluster path) or the Fabric id for a shared `namespace`/`vcluster` placement
+ * (every env on one Fabric shares a single state object). The path shape is identical either way.
+ */
+export function projectStateKey(projectId: string, scopeId: string): string {
+	return `projects/${projectId}/${scopeId}/tofu.tfstate`;
 }
 
 /**
@@ -45,11 +47,15 @@ const UUID_RE =
  * by the state-token mint route and `resolveStateRequest`, so the token's `key` claim can never drift
  * from the key the state calls re-derive.
  *
- * - Project jobs key by the immutable project/environment UUIDs.
+ * - Project jobs key by the project UUID + the placement's owning infra unit (#838): the Fabric id
+ *   for a shared `namespace`/`vcluster` placement (so every env on one Fabric shares a single state
+ *   object), else the environment id for `dedicated` (the default + every backfilled env → the path
+ *   is byte-identical to the pre-Fabric scheme, so no state object is orphaned).
  * - Runner-lifecycle jobs (which have NULL project/environment) key by `config_snapshot.runner_id`.
- *   That target id is **validated to be a canonical UUID** before it touches the object key — a
- *   non-UUID value could otherwise inject a `../projects/{victim}/…` traversal onto another tenant's
- *   state object.
+ *
+ * Any snapshot-supplied id (`runner_id`, `fabric_id`) is **validated to be a canonical UUID** before
+ * it touches the object key — a non-UUID value could otherwise inject a `../projects/{victim}/…`
+ * traversal onto another tenant's state object.
  */
 export function stateKeyForJob(job: {
 	job_type: ProvisionJobType;
@@ -69,6 +75,20 @@ export function stateKeyForJob(job: {
 	}
 	if (!job.project_id || !job.environment_id) {
 		return { error: "Job has no project environment", status: 400 };
+	}
+	// #838: a shared placement keys the tofu state on its Fabric so co-Fabric environments share one
+	// state object. `dedicated` (and any snapshot predating the Fabric fields) falls through to the
+	// environment-keyed path — byte-identical, no state migration.
+	const placementMode = job.config_snapshot.placement_mode;
+	const fabricId = job.config_snapshot.fabric_id;
+	if (placementMode !== undefined && placementMode !== "dedicated") {
+		if (typeof fabricId !== "string" || !UUID_RE.test(fabricId)) {
+			return {
+				error: "Placement job has no valid fabric id",
+				status: 400,
+			};
+		}
+		return { key: projectStateKey(job.project_id, fabricId) };
 	}
 	return { key: projectStateKey(job.project_id, job.environment_id) };
 }

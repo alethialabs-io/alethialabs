@@ -15,10 +15,18 @@ Alethia never sprinkles `if (licensed)` through the code. Instead, the licensed 
 
 | Entitlement | Unlocks |
 |---|---|
-| `organizations` | Multi-member orgs, members, invitations, the active-org switcher, teams |
+| `organizations` | Multi-member orgs, members, invitations, the active-org switcher |
+| `teams` | Team (access-group) management — create teams and scope grants to them |
 | `sso` | SSO sign-in (OIDC + SAML) |
 | `customRoles` | The custom-role editor + the access portal |
-| `activityExport` | CSV export of the Activity log |
+| `activityExport` | CSV export of the Activity log (viewing is free) |
+| `alerting` | The alerting surface — policies, channels, and the delivery activity log |
+| `advancedAlerting` | Security/governance alert rules sourced from PDP Activity events |
+| `byoRunners` | Bring-your-own runners — deploy into your cloud or register your own |
+| `managedPools` | Managed warm-pool fleet operations (pools, versions, economics) |
+
+A license also carries runner-scheduling `quotas` (max concurrent jobs, priority band, included
+runner-minutes, activity retention).
 
 Without a license, **every entitlement is `false`** and the console shows the open-source experience: a single
 personal organization, the four built-in roles (read-only), and a browsable (non-exportable) Activity log. The

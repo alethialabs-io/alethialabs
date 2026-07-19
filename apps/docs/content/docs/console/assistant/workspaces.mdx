@@ -18,16 +18,19 @@ There are two kinds of workspace:
 
 ## Switching workspace
 
-The rail (in the full-screen view) has a **switcher** at the top showing where you are — `Organization`,
-or a project's name. Open it to step into any project, or back to the organization.
+Your workspace follows **where you open the assistant**. Click **Ask AI** on an org-level page and you
+land in the `Organization` workspace; open it from inside a [project](/console/design-project) — its
+pages or its canvas — and Elench scopes itself to that project. (The panel header's switcher steps
+between the *conversations* in your current scope, not between workspaces.)
 
-Stepping into a workspace does three things at once:
+Each scope keeps three things apart:
 
-- **Re-scopes the chat list** — you see only that workspace's conversations.
-- **Re-scopes the knowledge panel** — you edit *that* workspace's [instructions and
+- **The chat list** — you see only that scope's conversations (org chats are unscoped; a project's chats
+  are keyed to its id).
+- **The knowledge panel** — you edit *that* scope's [instructions and
   knowledge](/console/assistant/knowledge).
-- **Starts a fresh conversation** — so an organization chat's transcript never follows you into a
-  project, and a project's tools never bleed into an org chat.
+- **The conversation** — an organization chat's transcript never follows you into a project, and a
+  project's tools never bleed into an org chat.
 
 <Mermaid chart={`
 flowchart TD
@@ -59,7 +62,7 @@ another project — the same isolation the rest of the platform enforces. The
 [agent runtime](/elench/agent-runtime) covers how that namespacing works underneath.
 
 <Callout type="info">
-  **Chats stay private; knowledge is shared.** The knowledge and instructions you pin to a workspace are
-  org-scoped, so teammates in the same organization see the same grounding. Your individual
-  conversations are yours.
+  **Your workspace is yours.** The chats, pinned knowledge, and instructions in a workspace are
+  owner-scoped — Elench reads and writes only what you own, so a teammate can't see your pinned grounding
+  or your conversations.
 </Callout>

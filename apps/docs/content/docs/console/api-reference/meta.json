@@ -4,6 +4,7 @@
     "index",
     "runner-apis",
     "cli-apis",
-    "auth-apis"
+    "auth-apis",
+    "oidc-apis"
   ]
 }

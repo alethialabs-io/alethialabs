@@ -105,9 +105,11 @@ variable "provision_eks" {
 }
 
 variable "eks_cluster_version" {
-  type        = string
+  type = string
+  # NOTE: the managed path sets this from the catalog SSOT (catalog.json); this default is the
+  # BYO-IaC fallback only. Keep both on the same standard minor.
   description = "Desired Kubernetes cluster version"
-  default     = "1.33"
+  default     = "1.35"
 }
 
 variable "cluster_endpoint_public_access_cidrs" {

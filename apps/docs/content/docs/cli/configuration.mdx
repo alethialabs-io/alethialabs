@@ -5,9 +5,10 @@ description: CLI configuration files, environment variables, and credential stor
 
 # Configuration
 
-alethia stores configuration and credentials in the user's config directory (`~/.config/alethia`
-on Linux/macOS — exact location follows the OS user-config dir). Inspect the resolved values and
-on-disk paths at any time with [`alethia config`](#alethia-config).
+alethia stores configuration and credentials under the OS user-config directory (`~/.config/alethia`
+on Linux, `~/Library/Application Support/alethia` on macOS — the location follows Go's
+`os.UserConfigDir`). Inspect the resolved values and on-disk paths at any time with
+[`alethia config`](#alethia-config).
 
 ## File Locations
 
@@ -56,11 +57,11 @@ alethia config
 
 ```
 Field          Value
-web origin     https://app.alethialabs.io
+web origin     https://app.alethialabs.io (config)
 active org     Acme
 active org id  org_123
-credentials    /Users/you/.config/alethia/credentials.json
-config         /Users/you/.config/alethia/config.json
+credentials    /Users/you/Library/Application Support/alethia/credentials.json
+config         /Users/you/Library/Application Support/alethia/config.json
 ```
 
 `alethia config clear-context` clears the active organization context. `alethia config -o json`
@@ -103,7 +104,7 @@ then set `ALETHIA_RUNNER_ID` and `ALETHIA_RUNNER_TOKEN` on the host. See
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build time) | Override the Alethia API base URL |
+| `ALETHIA_WEB_ORIGIN` | `https://alethialabs.io` (compiled-in default) | Override the Alethia API base URL |
 
 This is the only environment variable alethia uses. All other configuration comes from the JSON files above or command-line flags.
 
@@ -118,9 +119,13 @@ Two persistent flags are available on every command:
 
 See [Identity & Global Options](/cli/identity) for output-format examples and scripting tips.
 
-## Build-Time Configuration
+## Control-Plane URL Resolution
 
-The GoReleaser build injects `ALETHIA_WEB_ORIGIN` as an `ldflags` variable. The production build points to the production Alethia URL. For development, override with the environment variable:
+The control-plane URL resolves in precedence order: the `ALETHIA_WEB_ORIGIN` environment
+variable, then the persisted config (`alethia config set web-origin <url>`), then a compiled-in
+default (`https://alethialabs.io`). The hosted default is a constant baked into the binary, so the
+production build needs no configuration (GoReleaser's `ldflags` inject only the CLI version, not the
+URL). For development or a self-hosted control plane, override it with the environment variable:
 
 ```bash
 export ALETHIA_WEB_ORIGIN=http://localhost:3000

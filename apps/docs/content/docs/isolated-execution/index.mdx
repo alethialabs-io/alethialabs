@@ -45,7 +45,7 @@ For an untrusted job on the managed fleet:
 | **No cross-job state** | OpenTofu state goes through a console **state proxy** with a per-job, key-scoped token — one job's token can only touch its own state. The runner holds no object-storage credential. |
 | **No cloud metadata** | The child has no network route of its own; it reaches only a domain-allowlist forward proxy, so `169.254.169.254` (which serves the VM's boot config) is unreachable by construction. |
 | **No open egress** | Only the registries, Git hosts, and the target cloud's API are reachable — everything else is default-denied. |
-| **No host reach** | Its own PID namespace, dropped capabilities, no-new-privileges, read-only root, resource limits. |
+| **No host reach** | Its own PID namespace, dropped capabilities, no-new-privileges, resource limits. |
 
 ## Why it matters
 

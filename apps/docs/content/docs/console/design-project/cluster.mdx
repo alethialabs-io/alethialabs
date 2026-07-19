@@ -12,11 +12,11 @@ The cluster section configures the Kubernetes control plane and worker nodes.
 | Field | Type | Description |
 |-------|------|-------------|
 | **Kubernetes Version** | Select | Provider-specific versions (e.g., 1.32 for EKS, 1.31 for GKE/AKS) |
-| **Instance Types** | Multi-select badges | Up to 5 types, with hourly cost shown per type |
+| **Instance Type** | Select | A single instance/machine type; the option label shows vCPU and memory per node |
 | **Min Nodes** | Number | Minimum node count (default: 2) |
-| **Desired Nodes** | Number | Target node count (default: 3) |
+| **Desired Nodes** | Number | Target node count (default: 2) |
 | **Max Nodes** | Number | Maximum node count for autoscaling (default: 5) |
-| **Autoscaler** | Toggle | Provider-specific autoscaler (Karpenter/Autopilot/Cluster Autoscaler) |
+| **Autoscaler** | Provider default | Provider-specific autoscaler (Karpenter on AWS, Autopilot on GKE, Cluster Autoscaler on AKS), enabled at cluster creation |
 | **Cluster Admins** | Array | IAM users/emails with admin access |
 
 ## Kubernetes Service
@@ -24,20 +24,20 @@ The cluster section configures the Kubernetes control plane and worker nodes.
 <Tabs items={["AWS (EKS)", "GCP (GKE)", "Azure (AKS)"]}>
   <Tab value="AWS (EKS)">
     - **Elastic Kubernetes Service** with managed node groups
-    - Versions: 1.31, 1.32
+    - Versions: 1.29–1.32
     - Autoscaler: **Karpenter** — just-in-time node provisioning based on pod requirements
     - IRSA (IAM Roles for Service Accounts) configured automatically
     - OIDC provider created for workload identity
   </Tab>
   <Tab value="GCP (GKE)">
     - **Google Kubernetes Engine** with node pools
-    - Versions: 1.30, 1.31
+    - Versions: 1.28–1.31
     - Autoscaler: **GKE Autopilot** — fully managed node provisioning
     - Workload Identity enabled by default
   </Tab>
   <Tab value="Azure (AKS)">
     - **Azure Kubernetes Service** with node pools
-    - Versions: 1.30, 1.31
+    - Versions: 1.28–1.31
     - Autoscaler: **Cluster Autoscaler** — scales node count based on pending pods
     - Azure AD integration for RBAC
   </Tab>
@@ -45,16 +45,16 @@ The cluster section configures the Kubernetes control plane and worker nodes.
 
 ## Instance Types
 
-Instance types are selected as badges with pricing shown. Up to 5 types can be selected — when using Karpenter (AWS), multiple types allow the autoscaler to choose the best fit for each workload.
+A single instance type is selected from a dropdown, with each option's label showing the node's vCPU and memory. On any cloud you can instead size the node group portably (vCPU and memory per node) and the runner maps that capability to the nearest instance type at provision time.
 
 | Category | AWS | GCP | Azure |
 |----------|-----|-----|-------|
-| General | t3.medium, t3.large | e2-medium, e2-standard-2 | Standard_B2s, Standard_D2s_v5 |
+| General | t3.medium, t3.large | e2-medium, e2-standard-2 | Standard_D2s_v5, Standard_D4s_v5 |
 | Compute | c5.large, c5.xlarge | c2-standard-4 | Standard_F2s_v2 |
-| Memory | r5.large, r5.xlarge | n2-highmem-2 | Standard_E2s_v5 |
-| GPU | g4dn.xlarge | a2-highgpu-1g | NC4as_T4_v3 |
+| Memory | r5.large | n2-highmem-2 | Standard_E2s_v5 |
+| GPU | g4dn.xlarge | a2-highgpu-1g | Standard_NC4as_T4_v3 |
 
-Pricing is fetched from the AWS Pricing API (or equivalent) and shown per hour next to each badge. See [Cost Estimation](/concepts/cost-estimation).
+The environment's real monthly cost comes from Infracost when you run a plan, shown in the cost chip on the canvas. See [Cost Estimation](/concepts/cost-estimation).
 
 ## Node Scaling
 
@@ -64,7 +64,7 @@ Three numbers control the node group size:
 - **Desired**: Initial node count at creation
 - **Max**: Ceiling for the autoscaler (nodes will never scale above this)
 
-Validation: min ≤ desired ≤ max.
+Each value is bounded individually (1–100); the form does not enforce a min ≤ desired ≤ max ordering.
 
 ## Cluster Admins
 
@@ -72,7 +72,7 @@ An array of identities with admin access to the cluster:
 
 <Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
-    IAM user ARNs or IAM user names. The form can look up IAM users from the cached resources (discovered via resource refresh). Admins are added as EKS access entries with `AmazonEKSClusterAdminPolicy`.
+    IAM user or role ARNs (or IAM user names), entered as a free-text list. Admins are bound to the cluster-admin `system:masters` group at cluster creation.
   </Tab>
   <Tab value="GCP">
     Google email addresses granted `roles/container.admin`.

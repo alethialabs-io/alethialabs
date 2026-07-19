@@ -2,7 +2,9 @@
   "title": "Jobs",
   "pages": [
     "index",
+    "job-types",
     "job-detail",
-    "plan-and-apply"
+    "plan-and-apply",
+    "verify-override"
   ]
 }

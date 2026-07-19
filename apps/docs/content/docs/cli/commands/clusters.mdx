@@ -21,16 +21,21 @@ alethia clusters list
 Output:
 
 ```
-NAME                    PROVIDER  REGION      ENDPOINT                                          ARGOCD
-api-backend-production  aws       eu-west-1   https://ABC123.gr7.eu-west-1.eks.amazonaws.com    https://argocd.example.com
-data-pipeline-staging   gcp       us-east4    https://34.123.45.67                              https://argocd-staging.example.com
+PROJECT               CLUSTER                 VERSION  STATUS     ARGOCD    NODES  REGION      COST
+api-backend (prod)    api-backend-production  1.30     ● active   exposed   1/3/5  eu-west-1   $210/mo
+data-pipeline (stg)   data-pipeline-staging   1.29     ● active   port-fwd  1/2/3  us-east4    $95/mo
 ```
 
-Shows clusters from all active Projects with:
-- Cluster name and cloud provider
+Shows clusters across your projects with:
+- Project (with its environment) and cluster name
+- Kubernetes version
+- Status — the status message is shown inline when a cluster is degraded or failed
+- ArgoCD access — `exposed` (a managed-ingress URL exists) or `port-fwd`
+- Node count (min/desired/max)
 - Region
-- Kubernetes API endpoint
-- ArgoCD dashboard URL (if installed)
+- Estimated monthly cost
+
+Pass `-o json` for the full records (including each cluster's ArgoCD URL, instance types, and node sizes).
 
 ## Accessing a Cluster
 

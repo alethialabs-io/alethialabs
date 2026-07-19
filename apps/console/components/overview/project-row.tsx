@@ -33,28 +33,37 @@ export function ProjectRow({
 	orgSlug,
 	isFavorite,
 	onToggleFavorite,
+	connectedProviders,
 }: {
 	project: ProjectListItem;
 	orgSlug: string;
 	isFavorite: boolean;
 	onToggleFavorite: () => void;
+	/** Cloud provider slugs with a live connection — the logo is full color when connected. */
+	connectedProviders: string[];
 }) {
 	const href = project.slug
 		? projectHref(orgSlug, project.slug)
 		: orgHref(orgSlug);
 	const provider = project.cloud_provider;
+	const providerConnected = provider
+		? connectedProviders.includes(provider)
+		: false;
 
 	return (
 		<TableRow className="group/row">
 			<TableCell>
 				<Link href={href} className="flex items-center gap-2.5">
-					<span className="grid size-6 shrink-0 place-items-center rounded-sm border bg-muted/40 text-muted-foreground">
-						{provider ? (
-							<ProviderIcon provider={provider} size={13} mono={false} />
-						) : (
-							<Box className="h-3 w-3" />
-						)}
-					</span>
+					{provider ? (
+						<ProviderIcon
+							provider={provider}
+							size={18}
+							mono={!providerConnected}
+							className="shrink-0"
+						/>
+					) : (
+						<Box className="size-4 shrink-0 text-muted-foreground" />
+					)}
 					<span className="truncate font-display text-[13px] font-medium text-foreground group-hover/row:underline">
 						{project.project_name}
 					</span>

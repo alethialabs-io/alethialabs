@@ -75,6 +75,7 @@ server-side [asset inventory](/console/connectors/health-and-inventory).
   - GCP → `gcloud` (used to drive Google Cloud Shell)
   - AWS → `aws`
   - Azure → `az`
+  - Alibaba → `aliyun`
 - The `--manual` flows require **none** of the above — you run a one-liner in the provider's
   browser shell and paste the result back.
 
@@ -85,11 +86,12 @@ server-side [asset inventory](/console/connectors/health-and-inventory).
 | GCP | Runs the installer inside your **Google Cloud Shell** (via local `gcloud`) | Cloud Shell is already authenticated to your GCP org and has every tool preinstalled |
 | AWS | Deploys CloudFormation with the **local `aws` CLI** | AWS CloudShell is browser-only — there is no remote-exec CLI |
 | Azure | Runs the setup script with the **local `az` CLI** | Azure Cloud Shell is browser-only — there is no remote-exec CLI |
-| Alibaba | Writes an IaC module you **apply yourself**, then paste the RAM role ARN | Alibaba has no browser one-liner installer — the flow is apply-then-paste (no `--manual` variant) |
+| Alibaba | Runs the setup script with the **local `aliyun` CLI** | Alibaba Cloud Shell is browser-only — there is no remote-exec CLI (as with AWS and Azure) |
 
-AWS, GCP, and Azure also support `--manual`, which prints a link + command to run in the browser
-shell and prompts you to paste the result. Use it when you cannot or prefer not to install the local
-CLI. Alibaba is always apply-then-paste (see [`alethia connector alibaba`](#alethia-connector-alibaba)).
+All four providers support `--manual`, which prints a link + command to run in the browser shell and
+prompts you to paste the result. Use it when you cannot or prefer not to install the local CLI.
+Alibaba additionally supports `--terraform`, which writes an OpenTofu module you apply yourself (see
+[`alethia connector alibaba`](#alethia-connector-alibaba)).
 
 ## `alethia connector gcp`
 
@@ -105,8 +107,9 @@ alethia connector gcp --project my-gcp-project
 | `--manual` | No | Run the installer in the browser Cloud Shell and paste the result instead of using local `gcloud`. |
 
 By default, the CLI runs an installer **inside your Google Cloud Shell**. Cloud Shell is
-authenticated as you, so the service account, workload identity pool, and AWS provider are created
-directly in your project — and the CLI captures the generated WIF credential config automatically.
+authenticated as you, so the provisioner service account and a workload identity pool that trusts
+Alethia are created directly in your project — and the CLI captures the generated WIF credential
+config automatically. No service account keys are ever created.
 
 <Steps>
 
@@ -125,7 +128,7 @@ The captured WIF config is submitted, verified instantly server-side, and the id
 Sample run:
 
 ```
-◈ Project ── ◇ Cloud Shell setup ── ◇ Connection test
+◆ Project ── ◇ Cloud Shell setup ── ◇ Connection test
 
 Running installer via gcloud Cloud Shell (the first run can take a minute)...
 ✔ Cloud Shell ready.
@@ -184,6 +187,7 @@ alethia connector aws
 | `--region` | No | AWS region for the CloudFormation stack. |
 | `--role-name` | No | Name for the IAM role. Defaults to `AlethiaProvisionerRole`. |
 | `--manual` | No | Deploy from the AWS console and paste the role ARN instead of using local `aws`. |
+| `--script` | No | Use the `aws`-CLI setup script instead of the CloudFormation stack. |
 
 <Tabs items={["Local aws CLI (default)", "Manual (console)"]}>
   <Tab value="Local aws CLI (default)">
@@ -246,17 +250,18 @@ alethia connector azure --subscription <subscription-id>
 <Tabs items={["Local az CLI (default)", "Manual (Cloud Shell)"]}>
   <Tab value="Local az CLI (default)">
 
-The CLI runs the setup script with your local `az` login. It creates an app registration, a
-federated credential trusting the Alethia AWS runners, and a Contributor role assignment, then
-captures the tenant, client, and subscription IDs automatically.
+The CLI runs the setup script with your local `az` login. It creates a user-assigned managed
+identity (a plain ARM resource — no app registration, no client secret), a federated credential
+trusting Alethia's OIDC issuer, and a least-privilege role assignment, then captures the tenant,
+client, and subscription IDs automatically.
 
 <Steps>
 
 ### Enter the subscription
 Provide `--subscription`, or type it at the prompt.
 
-### Create the app registration
-The CLI runs the setup script via `az`, creating the app registration, federated credential, and
+### Create the managed identity
+The CLI runs the setup script via `az`, creating the managed identity, federated credential, and
 role assignment.
 
 ### Connection test
@@ -287,9 +292,11 @@ alethia connector azure --subscription <subscription-id> --manual
 
 ## `alethia connector alibaba`
 
-Connect an Alibaba Cloud account using keyless `AssumeRoleWithOIDC`. Alibaba has no browser
-one-liner installer, so the flow is **apply-then-paste**: the CLI writes a small IaC module locally,
-you apply it in your Alibaba account, then paste back the resulting RAM role ARN.
+Connect an Alibaba Cloud account using keyless `AssumeRoleWithOIDC`. By default the CLI runs a setup
+script with your local `aliyun` CLI: it creates a RAM OIDC provider trusting the Alethia issuer plus
+a RAM role, and captures the resulting role ARN automatically. Use `--manual` to run the same script
+in the Alibaba Cloud Shell, or `--terraform` to apply an OpenTofu module instead. Alethia stores
+nothing but the role ARN — no AccessKey.
 
 ```bash
 alethia connector alibaba
@@ -298,35 +305,38 @@ alethia connector alibaba
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--region` | No | Alibaba region for the RAM provider. Defaults to `cn-hangzhou`. |
-| `--dir` | No | Directory to write the connector module into. Defaults to `./alethia-alibaba-connector`. |
+| `--manual` | No | Run the setup script in the Alibaba Cloud Shell and paste the role ARN. |
+| `--terraform` | No | Apply the OpenTofu module instead of running the setup script. |
+| `--dir` | No | Directory to write the OpenTofu module into (with `--terraform`). Defaults to `./alethia-alibaba-connector`. |
 
 <Steps>
 
 ### Initialize
 Alethia creates a pending [cloud identity](/concepts/glossary) for the connection.
 
-### Apply the connector module
-The CLI writes `main.tf` into the target directory. It creates a RAM OIDC provider trusting the
-Alethia issuer (`<control-plane>/api/oidc`) plus a RAM role. Authenticate to Alibaba (the `aliyun`
-CLI, or `ALICLOUD_ACCESS_KEY` / `ALICLOUD_SECRET_KEY`) and apply it:
+### Create the RAM role
+The CLI runs the setup script with your local `aliyun` CLI, creating a RAM OIDC provider trusting the
+Alethia issuer (`<control-plane>/api/oidc`) plus a RAM role, and captures the role ARN from its
+output. With `--manual`, run the same script in the Alibaba Cloud Shell and paste the ARN back.
+
+### Connection test
+The role ARN is submitted, verified instantly server-side, and the identity is marked Connected (or
+Degraded/Disconnected). Alethia stores nothing but the role ARN — no AccessKey.
+
+</Steps>
+
+### OpenTofu module (`--terraform`)
+
+With `--terraform`, the CLI writes `main.tf` into the target directory (`--dir`) instead of running
+the setup script. It provisions the same RAM OIDC provider + role. Authenticate to Alibaba (the
+`aliyun` CLI, or `ALICLOUD_ACCESS_KEY` / `ALICLOUD_SECRET_KEY`), apply it, then paste the `role_arn`
+output at the prompt:
 
 ```bash
 cd alethia-alibaba-connector
 tofu init
 tofu apply -var "region=cn-hangzhou" -var "alethia_issuer_url=https://alethialabs.io/api/oidc"
 ```
-
-<Callout type="info">
-The module is plain HCL — the CLI's printed hint says `terraform init` / `terraform apply`, but
-`tofu` runs it identically. Copy the `role_arn` output when the apply finishes.
-</Callout>
-
-### Connection test
-Paste the RAM role ARN (`acs:ram::…:role/…`) at the prompt. It is submitted, verified instantly
-server-side, and the identity is marked Connected (or Degraded/Disconnected). Alethia stores nothing
-but the role ARN — no AccessKey.
-
-</Steps>
 
 ## `alethia connector list`
 
@@ -377,5 +387,5 @@ reconnect the same provider later.
 | `aws CLI not found on PATH` / `az CLI not found on PATH` | Install the provider CLI, or use `--manual` to set the connection up from the browser. |
 | `could not find WIF config in installer output` | The Cloud Shell installer did not finish. Re-run, or use `--manual` and paste the config yourself. |
 | `Captured WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
-| Connection test reaches `FAILED` | Alethia could not assume the credentials. Confirm the role trust policy pins the Alethia issuer + sub/aud (AWS), the workload identity binding (GCP), or the federated credential + Contributor role (Azure). Inspect with `alethia jobs logs <job-id>`. |
+| Connection test fails | Alethia could not assume the credentials. Confirm the role trust policy pins the Alethia issuer + sub/aud (AWS), the workload identity binding (GCP), or the federated credential + least-privilege role (Azure). The verify runs inline server-side and returns the reason with the result — re-run the connector command to see it. |
 | `Invalid format. Expected: arn:aws:iam::…` | The pasted role ARN is malformed — copy the exact `RoleArn` from the stack Outputs. |

@@ -12,12 +12,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/ai/org-agent-context-flag", () => ({ orgAgentContextEnabled: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), currentActor: vi.fn() }));
+vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withActorScope: vi.fn() }));
 
-import { upsertAgentContext } from "@/app/server/actions/agent-context";
+import {
+	canEditAgentContext,
+	upsertAgentContext,
+} from "@/app/server/actions/agent-context";
 import { orgAgentContextEnabled } from "@/lib/ai/org-agent-context-flag";
 import { requireOwner } from "@/lib/auth/owner";
-import { authorize } from "@/lib/authz/guard";
+import { getPdp } from "@/lib/authz";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { withActorScope, withOwnerScope } from "@/lib/db";
 
 // Captures the object passed to `.values()` on the insert chain.
@@ -95,5 +100,63 @@ describe("upsertAgentContext — flag ON (org-shared, PDP-gated)", () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("Forbidden"));
 		await expect(upsertAgentContext({ ...INPUT, projectId: null })).rejects.toThrow(/Forbidden/);
 		expect(withActorScope).not.toHaveBeenCalled();
+	});
+});
+
+describe("canEditAgentContext — the read-only-panel gate", () => {
+	/** Stub getPdp().can to a fixed decision (or a thrown error). */
+	function mockCan(decision: { allowed: boolean } | Error) {
+		vi.mocked(getPdp).mockReturnValue({
+			can: vi.fn(() =>
+				decision instanceof Error
+					? Promise.reject(decision)
+					: Promise.resolve(decision),
+			),
+		} as never);
+		vi.mocked(currentActor).mockResolvedValue({
+			userId: "user-1",
+			orgId: "org-1",
+		} as never);
+	}
+
+	it("flag OFF → always editable, without touching the PDP", async () => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(false);
+		vi.mocked(getPdp).mockReturnValue({ can: vi.fn() } as never);
+		expect(await canEditAgentContext(null)).toBe(true);
+		expect(getPdp).not.toHaveBeenCalled();
+	});
+
+	it("flag ON, org row → checks org:edit and returns the decision", async () => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(true);
+		mockCan({ allowed: true });
+		expect(await canEditAgentContext(null)).toBe(true);
+		expect(vi.mocked(getPdp).mock.results[0].value.can).toHaveBeenCalledWith(
+			expect.anything(),
+			"edit",
+			{ type: "org" },
+		);
+	});
+
+	it("flag ON, project row → checks project:edit for that project", async () => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(true);
+		mockCan({ allowed: true });
+		expect(await canEditAgentContext(PROJECT)).toBe(true);
+		expect(vi.mocked(getPdp).mock.results[0].value.can).toHaveBeenCalledWith(
+			expect.anything(),
+			"edit",
+			{ type: "project", id: PROJECT },
+		);
+	});
+
+	it("flag ON + PDP deny → NOT editable", async () => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(true);
+		mockCan({ allowed: false });
+		expect(await canEditAgentContext(null)).toBe(false);
+	});
+
+	it("flag ON + PDP throws → fail-closed (not editable)", async () => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(true);
+		mockCan(new Error("pdp down"));
+		expect(await canEditAgentContext(null)).toBe(false);
 	});
 });

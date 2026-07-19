@@ -1,0 +1,76 @@
+---
+title: Scaling out
+description: Run the console across multiple replicas — realtime SSE fan-out already works without a shared broker, and an optional Redis service backs the enterprise fan-out.
+---
+
+# Scaling out
+
+One console container handles most self-host workloads. When you need more
+throughput or redundancy, run several console replicas behind the ingress. This
+page shows how, and explains what does and doesn't need a shared service.
+
+## Why replicas work without a shared broker
+
+The console streams realtime updates to the browser over Server-Sent Events (SSE)
+— job logs, support messages, and runner wake/cancel. In the open-source build,
+that fan-out rides on **Postgres `LISTEN`/`NOTIFY`**, not a message broker.
+
+A Postgres trigger runs `pg_notify('<channel>', json)` on insert; each console
+instance holds one dedicated `LISTEN` connection per channel and dispatches to its
+own SSE subscribers. Because every replica listens independently, **the fan-out
+scales to multiple instances with no Redis** — a `NOTIFY` from any writer reaches
+the subscribers on every replica.
+
+The channels wired today are `job_logs`, `support_messages`, `runner_wake`, and
+`runner_cancel`.
+
+## Run more than one replica
+
+The `app` service binds no host port of its own — Caddy fronts it at `app:3000`
+— and sets no fixed container name, so Compose can run several copies. Scale it up:
+
+```bash
+docker compose up -d --scale app=3
+```
+
+Each replica connects to the same bundled Postgres and object storage, so the
+replicas are interchangeable for stored state.
+
+> **Rate limiting is per-instance.** The console's built-in sliding-window rate
+> limiter keeps its counters in memory on each instance, with no cross-replica
+> coordination. It still blunts accidental double-submits per replica, but a limit
+> is not shared across the fleet.
+
+## The optional Redis service
+
+The Compose stack ships a Redis service dedicated to scale-out SSE fan-out:
+
+```yaml
+# docker-compose.yml
+redis:
+  image: redis:7-alpine
+  profiles: ["scale-out"]
+  volumes:
+    - redis-data:/data
+  restart: unless-stopped
+```
+
+It sits behind the `scale-out` [Compose profile](https://docs.docker.com/compose/how-tos/profiles/),
+so it **never starts in the default bring-up**. The enterprise tier swaps a
+Redis-backed fan-out implementation in behind the same realtime interfaces; the
+open-source `LISTEN`/`NOTIFY` transport above needs no Redis.
+
+To start the profiled service:
+
+```bash
+docker compose --profile scale-out up -d redis
+```
+
+> The open-source build does not require Redis to run multiple replicas. Enable the
+> `scale-out` profile only for the enterprise Redis-backed fan-out.
+
+## Next
+
+- **[Configuration](/self-hosting/configuration)** — every `.env` key for the bundle.
+- **[Helm chart](/self-hosting/helm)** — run the same bundle on Kubernetes instead of a single VM.
+- **[Upgrading & backups](/self-hosting/upgrading)** — updates, Postgres dumps, volume snapshots.

@@ -9,35 +9,41 @@ Runners are the execution agents that run OpenTofu (the `tofu` binary) on behalf
 
 ## Runners Page
 
-Located at `/dashboard/runners`, showing:
+A two-column layout: the left column stacks the warm **Pools** (managed-fleet, self-managed operators only) and the **Versions** changelog; the right column is a filterable, paginated grid of runner cards.
 
-### Status Filters
-- All, ONLINE, OFFLINE, DRAINING
+### Filter Bar
 
-### Search
-Filter by Runner name.
+Follows the console filter standard: a name search plus chip and facet filters.
 
-### Data Table
+- **Search** — filter by Runner name
+- **Cloud** — supported providers (or "Any")
+- **Status** chips — Online, Offline, Draining
+- **Operator** chips — Managed, Self · Deployed, Self · Registered
+- **Region** and **Version** facet popovers
 
-| Column | Description |
-|--------|-------------|
-| Name | Runner identifier |
-| Operator | `managed` (Alethia-operated fleet) or `self` — self runners also show provisioning: `self · deployed` or `self · registered` |
-| Region | Deployment region/location (managed & self·deployed runners) |
-| Status | Badge: ONLINE (green), DRAINING (yellow), OFFLINE (red) |
-| Version | Runner release version |
-| Created | Registration timestamp |
-| Actions | Deploy, update, remove buttons |
+### Runner Cards
 
-### Active Jobs Section
-A separate table showing jobs currently assigned to Runners (QUEUED, CLAIMED, or PROCESSING).
+Each runner renders as a card (grayscale — status reads through a badge dot + mono label, never colour):
 
-### Update Alert
-If outdated Runners are detected (version < latest release), an alert appears with an **"Update All"** button that queues `UPDATE_RUNNER` jobs for each outdated Runner.
+| Field | Description |
+|-------|-------------|
+| Name | Runner name, with a star if it's the default runner |
+| Status | Badge: ONLINE, OFFLINE, DRAINING — plus in-flight lifecycle states PROVISIONING, UPDATING, DESTROYING while a job acts on the runner |
+| Operator | Badge: `Managed`, `Self · Deployed`, or `Self · Registered` |
+| Cloud | Supported provider icons (or "Any") |
+| Region | Deployment location — shown for **managed** runners |
+| Version | Runner release version (click to view release notes; an "update available" badge appears when outdated) |
+| Provisioned / Last seen | Managed runners show provisioned hours; self runners show time since last heartbeat |
+| Active job | The in-flight job (if any), linking to the job detail — QUEUED, CLAIMED, or PROCESSING |
+| Actions | Default-runner star toggle; **Destroy** (self · deployed with cloud resources) or **Remove** (registered runners) |
+
+### Versions Panel & Updates
+
+The **Versions** panel (left column) shows the latest release, a changelog of recent releases, and — when runners are behind the latest version — an **"Update all"** button that queues `UPDATE_RUNNER` jobs for the runners it can roll in place (deployed runners with a stored token). Runners it can't roll are flagged as needing a re-deploy.
 
 ## Adding a Runner
 
-Click **"Add Runner"** to open the registration sheet with two tabs:
+Click **Add runner** to open a sheet that chooses between two paths — **Deploy to a cloud** or **Register your own**:
 
 <Tabs items={["Deploy (Self · Deployed)", "Register (Self · Registered)"]}>
   <Tab value="Deploy (Self · Deployed)">
@@ -76,19 +82,19 @@ Status is determined by heartbeat recency:
 
 | Status | Meaning | Heartbeat |
 |--------|---------|-----------|
-| **ONLINE** | Ready to accept jobs | Within last 60 seconds |
+| **ONLINE** | Ready to accept jobs | Seen within the last 45 seconds (runners heartbeat ~every 10s) |
 | **DRAINING** | Finishing current job, not accepting new ones | Sent with DRAINING flag |
-| **OFFLINE** | Missed heartbeat, jobs will be requeued | > 60 seconds ago |
+| **OFFLINE** | Missed heartbeat, jobs will be requeued | No heartbeat for > 45 seconds (the sweep flips stale ONLINE or DRAINING runners to OFFLINE) |
 
-## Real-time Updates
+## Live Updates
 
-The Runners page subscribes to `runners` table changes and `jobs` changes via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
+The Runners page polls every 10 seconds while the tab is focused (TanStack Query pauses the interval in the background), so heartbeat-driven ONLINE/OFFLINE changes, new registrations, and job assignments surface on the next poll.
 
 ## Version Tracking
 
 Each Runner reports its version on heartbeat. The page shows:
 - Current version per Runner
-- Latest available version (from `runner_releases` table)
-- **Release Notes** dialog showing the changelog for each version
+- Latest available version (from the `runner_releases` table)
+- A **Release Notes** popover showing the changelog for each version
 
 When a new Runner release is published via the CI pipeline, existing runners are rolled onto the new image via `UPDATE_RUNNER` jobs — ECS force-new-deployment for self·deployed AWS runners; VM replacement for the managed Hetzner fleet.

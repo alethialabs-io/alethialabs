@@ -152,8 +152,27 @@ describe("attachIacSource", () => {
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
-	it("rejects a second attach on the same environment (v1 single source)", async () => {
-		setupDb({ select: new Map([[projectIacSources, [{ id: "iac-existing" }]]]) });
+	it("rejects a second attach on the same Fabric (per-Fabric single source)", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+				[projectIacSources, [{ id: "iac-existing" }]],
+			]),
+		});
+		await expect(attachIacSource(input)).rejects.toThrow(/already has an IaC source/);
+	});
+
+	// #839: the ceiling is per-Fabric — a DIFFERENT env that resolves to a Fabric already holding a
+	// source is rejected too (co-Fabric envs share the single source).
+	it("rejects an attach via a different env that maps to a Fabric already holding a source", async () => {
+		vi.mocked(resolveActiveEnvironmentId).mockResolvedValue("env-2" as never);
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				// env-2 is placed on the SAME Fabric fab-1.
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+				[projectIacSources, [{ id: "iac-on-fab-1" }]],
+			]),
+		});
 		await expect(attachIacSource(input)).rejects.toThrow(/already has an IaC source/);
 	});
 
@@ -169,7 +188,7 @@ describe("attachIacSource", () => {
 			setupDb({
 				select: new Map<unknown, RowsResolver>([
 					[projectIacSources, []],
-					[projectEnvironments, [{ status }]],
+					[projectEnvironments, [{ fabric_id: "fab-1", status }]],
 				]),
 			});
 			await expect(attachIacSource(input)).rejects.toThrow(/destroy the environment first/);
@@ -186,7 +205,7 @@ describe("attachIacSource", () => {
 			select: new Map<unknown, RowsResolver>([
 				// 1st query = the uniqueness pre-check (none), later = the scan's row lookup.
 				[projectIacSources, seq([], [IAC_ROW])],
-				[projectEnvironments, [{ status: "DRAFT" }]],
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
 			]),
 			insert: new Map<unknown, RowsResolver>([
 				[projectIacSources, [{ id: "iac-1" }]],
@@ -199,7 +218,9 @@ describe("attachIacSource", () => {
 		expect(authorize).toHaveBeenCalledWith("edit", { type: "project", id: "p1" });
 		expect(valuesFor(valuesSpy, projectIacSources)).toMatchObject({
 			project_id: "p1",
+			// #839: keyed on the Fabric; environment_id kept as the attaching env (informational).
 			environment_id: "env-1",
+			fabric_id: "fab-1",
 			repo_url: "https://github.com/acme/infra.git",
 			ref: "main",
 			path: "stacks/prod",
@@ -215,7 +236,7 @@ describe("attachIacSource", () => {
 			// The scan's row lookup finds nothing → scanIacSource throws → swallowed.
 			select: new Map<unknown, RowsResolver>([
 				[projectIacSources, []],
-				[projectEnvironments, [{ status: "DRAFT" }]],
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
 			]),
 			insert: new Map<unknown, RowsResolver>([[projectIacSources, [{ id: "iac-1" }]]]),
 		});
@@ -229,7 +250,7 @@ describe("detachIacSource", () => {
 		const { deleteSpy } = setupDb({
 			select: new Map<unknown, RowsResolver>([
 				[projectIacSources, [{ deployed_commit_sha: null }]],
-				[projectEnvironments, [{ status: "DRAFT" }]],
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
 			]),
 		});
 		await expect(detachIacSource({ projectId: "p1" })).resolves.toEqual({ ok: true });
@@ -240,7 +261,7 @@ describe("detachIacSource", () => {
 		const { deleteSpy } = setupDb({
 			select: new Map<unknown, RowsResolver>([
 				[projectIacSources, [{ deployed_commit_sha: "cafed00d" }]],
-				[projectEnvironments, [{ status: "ACTIVE" }]],
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "ACTIVE" }]],
 			]),
 		});
 		await expect(detachIacSource({ projectId: "p1" })).rejects.toThrow(
@@ -253,7 +274,7 @@ describe("detachIacSource", () => {
 		const { deleteSpy } = setupDb({
 			select: new Map<unknown, RowsResolver>([
 				[projectIacSources, [{ deployed_commit_sha: null }]],
-				[projectEnvironments, [{ status: "PROVISIONING" }]],
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "PROVISIONING" }]],
 			]),
 		});
 		await expect(detachIacSource({ projectId: "p1" })).rejects.toThrow(
@@ -263,7 +284,11 @@ describe("detachIacSource", () => {
 	});
 
 	it("is an idempotent no-op when nothing is attached", async () => {
-		const { deleteSpy } = setupDb({});
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+			]),
+		});
 		await expect(detachIacSource({ projectId: "p1" })).resolves.toEqual({ ok: true });
 		expect(deleteSpy).not.toHaveBeenCalled();
 	});
@@ -271,7 +296,12 @@ describe("detachIacSource", () => {
 
 describe("getIacSource", () => {
 	it("maps the row into the UI shape", async () => {
-		setupDb({ select: new Map([[projectIacSources, [{ ...IAC_ROW, commit_sha: "deadbeef" }]]]) });
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+				[projectIacSources, [{ ...IAC_ROW, commit_sha: "deadbeef" }]],
+			]),
+		});
 		const r = await getIacSource("p1");
 		expect(r).toMatchObject({
 			id: "iac-1",
@@ -282,8 +312,12 @@ describe("getIacSource", () => {
 		});
 	});
 
-	it("returns null when the environment has no source", async () => {
-		setupDb({});
+	it("returns null when the Fabric has no source", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+			]),
+		});
 		await expect(getIacSource("p1")).resolves.toBeNull();
 	});
 });
@@ -297,7 +331,10 @@ describe("scanIacSource", () => {
 
 	it("queues an IAC_SCAN job with the repo coords + row identity, marks the row scanning, and notifies the scaler", async () => {
 		const { valuesSpy, setSpy } = setupDb({
-			select: new Map([[projectIacSources, [IAC_ROW]]]),
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+				[projectIacSources, [IAC_ROW]],
+			]),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
 
@@ -314,6 +351,7 @@ describe("scanIacSource", () => {
 				path: "stacks/prod",
 				project_id: "p1",
 				environment_id: "env-1",
+				fabric_id: "fab-1",
 				iac_source_id: "iac-1",
 			},
 		});
@@ -323,7 +361,11 @@ describe("scanIacSource", () => {
 	});
 
 	it("throws when no source is attached (no job, no scaler)", async () => {
-		setupDb({});
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+			]),
+		});
 		await expect(scanIacSource({ projectId: "p1" })).rejects.toThrow(/attach it before scanning/);
 		expect(notifyScaler).not.toHaveBeenCalled();
 	});

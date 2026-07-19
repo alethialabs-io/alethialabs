@@ -1,5 +1,5 @@
 {
   "title": "Assistant",
   "icon": "Sparkles",
-  "pages": ["index", "workspaces", "knowledge", "dashboards", "artifacts"]
+  "pages": ["index", "workspaces", "knowledge", "mcp", "dashboards", "artifacts"]
 }

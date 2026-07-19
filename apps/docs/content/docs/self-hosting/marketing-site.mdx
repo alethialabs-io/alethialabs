@@ -1,0 +1,117 @@
+---
+title: Marketing Site
+description: Serve the public marketing site (landing, pricing, legal pages) from your own compose stack with the opt-in marketing profile and Caddy import.
+---
+
+# Self-hosting the marketing site
+
+The open-source build ships **no marketing site** — a fresh self-host redirects
+`/` to sign-in, and the hosted `alethialabs.io` site runs on Vercel. Serving the
+public marketing app (landing, `/pricing`, `/enterprise`, `/contact`, and the
+legal pages) from your own stack is an **opt-in** path with two parts: a
+`marketing` compose service and a Caddy import that routes the marketing-owned
+paths to it.
+
+Turn on **both**, or the site stays dark: the compose `marketing` profile is
+inactive by default, and the Caddy `import marketing*.caddy` line is commented
+out.
+
+## What the marketing service owns
+
+The `marketing` service runs the `apps/marketing` image and listens on port
+`3000`, alongside the console (`app`). Caddy splits traffic by path — the
+console owns the `/{org}` wildcard and everything else; marketing owns a curated
+set of root paths:
+
+| Path | Served by |
+| --- | --- |
+| `/` (anonymous) | `marketing` — the landing page |
+| `/` (signed-in) | `app` — a Better Auth session cookie hands off to the console, which resolves the active org |
+| `/pricing`, `/enterprise`, `/open-source` | `marketing` |
+| `/contact`, `/contact/*` | `marketing` |
+| `/terms`, `/privacy`, `/cookies`, `/acceptable-use` | `marketing` |
+| `/mkt-assets/*` | `marketing` — its asset prefix (avoids `/_next/*` collisions with the console) |
+| `/robots.txt`, `/sitemap.xml` | `marketing` |
+
+This mirrors `apps/console/marketing-zones.json`, the microfrontends path map the
+hosted Vercel split is derived from (and the source `RESERVED_SLUGS` is computed
+from). Keep the Caddy file and that config in sync.
+
+## Enable it locally
+
+The local base bundle (`docker-compose.yml`) builds the marketing image from
+`apps/marketing/Dockerfile`. Bring the stack up with the `marketing` profile:
+
+```bash
+pnpm compose:up:site
+```
+
+This runs `caddy app docs blog marketing` under `COMPOSE_PROFILES=marketing`.
+The equivalent with plain Docker Compose:
+
+```bash
+COMPOSE_PROFILES=marketing docker compose up -d
+```
+
+Then wire Caddy (see [Route the paths in Caddy](#route-the-paths-in-caddy)).
+
+## Enable it in production
+
+The production overlay (`deploy/prod/docker-compose.prod.yml`) runs the marketing
+service from the prebuilt public image
+`ghcr.io/alethialabs-io/marketing:${ALETHIA_IMAGE_TAG:-latest}` instead of building
+on the box. Layer it on top of the base bundle with the profile set:
+
+```bash
+COMPOSE_PROFILES=marketing docker compose \
+  -f docker-compose.yml \
+  -f deploy/prod/docker-compose.prod.yml \
+  up -d
+```
+
+## Route the paths in Caddy
+
+The service alone does nothing until Caddy routes the marketing paths to it. The
+route map ships as a template, `deploy/caddy/marketing.caddy.example`.
+
+1. Copy the template next to the active Caddyfile as `marketing.caddy`:
+
+   ```bash
+   cp deploy/caddy/marketing.caddy.example deploy/caddy/marketing.caddy
+   ```
+
+   For the production overlay, place it beside `deploy/prod/Caddyfile` instead.
+
+2. Uncomment the `import marketing*.caddy` line in that Caddyfile. It sits just
+   before the catch-all `handle { reverse_proxy app:3000 }` block, and **must
+   stay before it** so the marketing paths match first.
+
+3. Restart Caddy to reload the ingress:
+
+   ```bash
+   docker compose up -d caddy
+   ```
+
+## Configure the site
+
+The marketing service reads the root `.env`. These keys are optional — set them
+when self-hosting the site behind your own domain:
+
+| Key | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | Canonical origin for the site's `robots.txt` / `sitemap.xml` absolute URLs. Defaults to `https://alethialabs.io`. |
+| `NEXT_PUBLIC_LEGAL_URL` | Base URL the console's legal links (Terms / Privacy) point at. Set to `""` for same-origin `/terms` when you run marketing behind your console domain. Defaults to `https://alethialabs.io`. |
+
+The `/pricing` page reads live prices from Stripe when `STRIPE_SECRET_KEY` and
+`STRIPE_PRICE_TEAM` are set; otherwise it falls back to the static plan catalog
+label. See [Configuration](/self-hosting/configuration) for the full `.env`
+reference.
+
+## Verify
+
+1. Open your domain's `/pricing` while signed out — the marketing page loads.
+2. Open `/` signed out — the landing page loads; signed in, the same path hands
+   off to the console and resolves your org.
+
+If a marketing path returns the console instead, the `import marketing*.caddy`
+line is still commented out or is placed after the catch-all block.

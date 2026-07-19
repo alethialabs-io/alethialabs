@@ -52,6 +52,21 @@ func resolveCacheNodeType(provider string, c types.ProjectCacheConfig) string {
 	return c.NodeType
 }
 
+// resolveK8sVersion returns the cluster's Kubernetes version: the caller's explicit value
+// when set, otherwise the catalog's per-provider default. Keeping this in the catalog SSOT
+// (rather than an inline literal per provider) is why the managed-cloud defaults no longer
+// drift — bump packages/core/catalog/catalog.json to change them. Returns "" only when the
+// provider has no catalog default (e.g. Hetzner, whose version is picked by Talos).
+func resolveK8sVersion(provider, configVersion string) string {
+	if configVersion != "" {
+		return configVersion
+	}
+	if v, ok := catalog.MustLoad().DefaultK8sVersion(provider); ok {
+		return v
+	}
+	return ""
+}
+
 // resolveInstanceTypes returns the concrete provider instance type list for the cluster.
 // Prefers explicit InstanceTypes; otherwise resolves NodeSize to the nearest catalog SKU.
 func resolveInstanceTypes(provider string, cl types.ProjectClusterConfig) []string {

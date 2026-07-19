@@ -44,7 +44,7 @@ func TestGCPProvider_ProviderTfvars_Defaults(t *testing.T) {
 		"project_id":                    "proj-1",
 		"region":                        "us-central1",
 		"network_cidr":                  "10.0.0.0/16", // orDefault fallback
-		"gke_cluster_version":           "1.31",        // orDefault fallback
+		"gke_cluster_version":           "1.35",        // catalog SSOT default (resolveK8sVersion)
 		"provision_gke":                 true,
 		"gke_enable_autopilot":          false,
 		"cloud_armor_enabled":           false,

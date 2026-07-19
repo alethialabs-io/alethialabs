@@ -1,0 +1,143 @@
+---
+title: Environment Promotion
+description: How Alethia carries a source environment's structural design onto a higher-stage environment through a gated, two-phase plan-then-deploy state machine.
+---
+
+# Environment Promotion
+
+Each environment in a project owns a full design — the same shape the canvas reads and writes. **Promotion** is how a change proven in one environment moves up to another: it carries the *source* environment's structural design onto a *target* environment, runs a plan, evaluates the target's protection gates, and then deploys (or waits for a human).
+
+Promotion is a first-class subsystem with its own table, status enum, gate engine, and approval flow. It does not add a new job type — it reuses the existing `PLAN` then `DEPLOY` jobs.
+
+## Structural vs. environment-tunable
+
+A promotion changes *what a resource is*, not *how much of it there is* or *where it lives*.
+
+- **Structural** — engine, version, topology, presence, and similar identity fields. These are what promotion carries. The exact structural field set per component lives in `lib/promotions/diff.ts` (for example a database promotes `engine`, `engine_version`, `port`, and `iam_auth`).
+- **Environment-tunable** — sizing, capacity, node counts, retention, and env-specific domains or repos. A field that is not in a component's structural list is never overwritten by a promotion.
+
+This is why promoting an "add redis" change from development up to production keeps production's own cluster size and retention: the merge (`mergeChangeset`) applies only structural fields onto the target and preserves everything else.
+
+<Callout type="info">
+  The **diff** and **merge** engines are pure and deterministic — no database, no I/O. The diff produces a machine-readable `changes` list plus a human `summary`, and is also available as a side-effect-free `previewPromotion` for the promote dialog.
+</Callout>
+
+## Stage order
+
+A promotion may only move to an **equal or higher** stage. The stage rank is:
+
+| Stage | Rank |
+|-------|------|
+| `development` | 0 |
+| `staging` | 1 |
+| `production` | 2 |
+
+Promoting a target whose stage rank is lower than the source's is rejected before any work is done.
+
+## The two phases
+
+Promotion is a two-phase flow: **write the candidate and plan it**, then **evaluate gates and deploy**.
+
+<Steps>
+
+### Compute the diff and candidate
+`promoteEnvironment` authorizes the caller for `deploy` on the project, confirms both environments belong to it, checks the stage order, and confirms the target is not currently `QUEUED`, `PROVISIONING`, `DESTROYING`, or `DESTROYED`. It then diffs the two designs. An empty diff (nothing structural to carry) is rejected.
+
+### Record the promotion
+A row is inserted with status `PENDING_PLAN`, the computed `diff_summary`, and a `candidate_hash` — a structural fingerprint of the source design. A partial unique index rejects a second in-flight promotion into the same target here, before the target design is touched.
+
+### Write the candidate and queue the plan
+The merged candidate design is written into the target environment, and a `PLAN` job is queued for it. The `plan_job_id` is recorded on the promotion. `promoteEnvironment` returns the promotion id and the plan job id.
+
+### Evaluate gates on plan success
+When the `PLAN` job succeeds, `advancePromotionOnPlan` assembles the gate context (predecessor state, verify outcome, cost delta, approvals) and evaluates every gate. The result decides what happens next — deploy, wait for approval, or block.
+
+### Deploy
+If every gate passes, the target environment is moved to a deployable state and a `DEPLOY` job is enqueued, reusing the plan job's frozen config snapshot so the deploy is idempotent. The promotion moves to `DEPLOYING`. When that deploy job succeeds, `finalizePromotionOnDeploy` marks the promotion `SUCCEEDED`.
+
+</Steps>
+
+If the `PLAN` or `DEPLOY` job fails, the promotion is marked `FAILED`.
+
+See [Provisioning Pipeline](/concepts/provisioning-pipeline) for how `PLAN` and `DEPLOY` jobs run, and [Cost Estimation](/concepts/cost-estimation) for how the plan's cost is produced.
+
+## Status state machine
+
+The `promotion_status` enum drives the lifecycle:
+
+| Status | Meaning |
+|--------|---------|
+| `PENDING_PLAN` | Candidate written; the `PLAN` job is queued to produce verify + cost. |
+| `PENDING_APPROVAL` | Gates need a human — manual approval, or cost over the threshold. |
+| `APPROVED` | Approvals satisfied; the deploy is about to enqueue. |
+| `DEPLOYING` | The `DEPLOY` job is queued or running. |
+| `SUCCEEDED` | The deploy job succeeded. |
+| `FAILED` | The plan or deploy job failed. |
+| `BLOCKED` | A hard gate failed (for example the predecessor is unhealthy or verify hard-failed). |
+| `CANCELLED` | The promotion was rejected or cancelled. |
+
+<Mermaid chart={`
+stateDiagram-v2
+  [*] --> PENDING_PLAN
+  PENDING_PLAN --> DEPLOYING: all gates pass
+  PENDING_PLAN --> PENDING_APPROVAL: a gate needs a human
+  PENDING_PLAN --> BLOCKED: a hard gate failed
+  PENDING_APPROVAL --> DEPLOYING: approvals satisfied
+  PENDING_APPROVAL --> CANCELLED: rejected
+  DEPLOYING --> SUCCEEDED: deploy job succeeds
+  PENDING_PLAN --> FAILED: plan job fails
+  DEPLOYING --> FAILED: deploy job fails
+`} />
+
+## Protection gates
+
+After the candidate plan completes, the pure gate engine (`lib/promotions/gates.ts`) evaluates five gates against the target environment's protection rules. Each rule is individually toggleable; a rule that is off (or whose threshold is `NULL`) is **skipped**.
+
+| Gate | Turned on by | Passes when |
+|------|-------------|-------------|
+| **Predecessor healthy** | `require_predecessor` | The predecessor environment exists, is in sync (no drift), and has already deployed *this* design (its deployed hash matches the candidate hash). |
+| **Verify** | `require_verify_pass` | The plan's elench verify report has no unwaived hard control failures. A missing report leaves the gate **pending**. |
+| **Soak timer** | `soak_minutes` | At least that many minutes have elapsed since the predecessor's last deploy. Before then the gate is **pending**; if there is no predecessor deploy to soak from, it **fails** (blocks). |
+| **Cost delta** | `cost_delta_threshold` | The candidate plan's monthly cost minus the target's prior cost does not exceed the threshold. If there is no prior cost to compare, the gate is **skipped**. |
+| **Manual approval** | `require_approval` | The recorded approvals reach the required count. Otherwise the gate is **pending**. |
+
+The per-gate verdicts fold into one overall decision:
+
+- Any gate **fails** → the promotion is `BLOCKED`.
+- Otherwise any gate is **pending** → the promotion moves to `PENDING_APPROVAL`.
+- Otherwise → all gates **pass** and the deploy is enqueued.
+
+<Callout type="info">
+  A cost delta over the threshold does not fail the promotion — it makes the cost gate **pending**, which moves the promotion to `PENDING_APPROVAL` rather than `BLOCKED`. Approval slots, however, are materialized only for the manual-approval gate: a cost-delta overage holds the promotion for review but is not itself signed off through the approval flow.
+</Callout>
+
+## Protection rules
+
+Protection rules live one-per-environment in `environment_protection_rules`. Defaults are fully permissive: an environment with no rule row (or with every toggle off) promotes freely. The columns map directly to the gates:
+
+| Column | Effect |
+|--------|--------|
+| `require_predecessor` | Enables the predecessor-healthy gate. |
+| `require_verify_pass` | Enables the verify gate. |
+| `require_approval` | Requires manual approval before deploy. |
+| `approvers` | Who may approve, and how many are required (`user_ids`, `role`, `min_count`). |
+| `soak_minutes` | Minutes to soak since the predecessor deploy. `NULL` = off. |
+| `cost_delta_threshold` | Cost delta (USD/mo) above which approval is required. `NULL` = off. |
+
+### Classification can force gates on
+
+A classification value assigned to the target environment can force gates on top of the environment's own rules — the label is the policy. An enforcing value can OR the approval or verify gate on, and can raise the required approval count. The effective required approvals is the strictest of the environment's own `min_count` and every enforcing value's minimum, with a floor of 1 when approval is required at all. The gate detail records which value labels drove the requirement.
+
+## Approvals
+
+When a promotion enters `PENDING_APPROVAL` because of the manual-approval gate, Alethia materializes one approval slot per required decision. The slot count is the effective minimum described above.
+
+- **Approve** — `approvePromotion` claims one slot through a race-safe per-slot check, then re-runs the exact same gate evaluation the plan step runs. Once every gate clears, the deploy is enqueued; if approvals still remain, the promotion re-parks.
+- **Reject** — `rejectPromotion` records the decision and moves the promotion to `CANCELLED`.
+- **Cancel** — `cancelPromotion` cancels an in-flight promotion. The candidate design already written into the target is left in place.
+
+An approver is eligible when the environment's `approvers` spec lists their user id, or names a role they hold. Organization `owner` and `admin` roles always satisfy a role requirement. When no spec is set, any user authorized to `deploy` may approve.
+
+## Concurrency
+
+A partial unique index (`env_promotions_one_active_per_target`) permits **at most one in-flight promotion per target environment** — one whose status is `PENDING_PLAN`, `PENDING_APPROVAL`, `APPROVED`, or `DEPLOYING`. A second `promoteEnvironment` into the same target is rejected at insert time, before the target's design is modified.

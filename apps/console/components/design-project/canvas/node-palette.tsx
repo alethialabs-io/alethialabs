@@ -34,6 +34,9 @@ interface NodePaletteProps {
 	 * Picking one opens its config sheet (add-ons live on the canvas, not as graph nodes). */
 	addonItems?: AddonMarketItem[];
 	onConfigureAddon?: (item: AddonMarketItem) => void;
+	/** W5 click-to-place — where a newly-added node lands (viewport centre). Supplied by the canvas
+	 * (which owns the React Flow context); omitted (e.g. in a unit test) → the store's cascade fallback. */
+	dropPosition?: () => { x: number; y: number };
 }
 
 /** One selectable service in the Add palette. `kind` is the canvas node; entries with
@@ -94,6 +97,7 @@ export function NodePalette({
 	identities,
 	addonItems,
 	onConfigureAddon,
+	dropPosition,
 }: NodePaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
@@ -118,14 +122,14 @@ export function NodePalette({
 			setVariantKind(entry.kind);
 			return;
 		}
-		addNode(entry.kind);
+		addNode(entry.kind, dropPosition?.());
 		handleOpenChange(false);
 	};
 
 	/** Commit a variant choice: add the node pre-filled for it, then open its sheet. */
 	const pickVariant = (kind: NodeKind, value: string) => {
 		const { key } = NODE_REGISTRY[kind].variants ?? { key: "" };
-		addNodeWithConfig(kind, { [key]: value });
+		addNodeWithConfig(kind, { [key]: value }, null, dropPosition?.());
 		handleOpenChange(false);
 	};
 

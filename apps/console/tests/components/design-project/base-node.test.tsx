@@ -9,7 +9,18 @@
 
 import { render, screen } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The dense tier is driven by zoom (useCanvasLod) since W2 removed the container regions that used to
+// force it via a prop. Mock the LOD so a test can exercise the "compact" (dense) render directly.
+const lodState = vi.hoisted(() => ({
+	current: "full" as "glyph" | "compact" | "full",
+}));
+vi.mock("@/lib/canvas/use-canvas-lod", () => ({
+	useCanvasLod: () => lodState.current,
+	LOD_THRESHOLD: { glyph: 0.5, compact: 0.85 },
+}));
+
 import { BaseNode } from "@/components/design-project/canvas/nodes/base-node";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import type {
@@ -66,11 +77,11 @@ function seedCanvas<K extends NodeKind>(
  * `env` seeds the environment's SERVER truth; omitted, the node falls back to design readiness —
  * which is exactly what happens in the create flow and before the first status fetch lands.
  */
-function renderCard(id: string, env?: Partial<EnvironmentStatus>, dense?: boolean) {
+function renderCard(id: string, env?: Partial<EnvironmentStatus>) {
 	return render(
 		<ReactFlowProvider>
 			<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...env }}>
-				<BaseNode id={id} dense={dense} />
+				<BaseNode id={id} />
 			</EnvironmentStatusProvider>
 		</ReactFlowProvider>,
 	);
@@ -86,6 +97,7 @@ function serverStatus(
 
 beforeEach(() => {
 	useCanvasStore.getState().reset();
+	lodState.current = "full";
 });
 
 describe("the canvas card renders its kind's facts", () => {
@@ -140,20 +152,17 @@ describe("the dense tier — a card inside a container", () => {
 			max_capacity: 4,
 			backup_retention_days: 7,
 		});
-		renderCard(
-			"node-under-test",
-			{
-				components: {
-					"database:orders": serverStatus("ACTIVE", {
-						monthlyCost: 61.32,
-						drift: [
-							{ address: "aws_db_instance.orders", type: "aws_db_instance", kind: "modified" },
-						],
-					}),
-				},
+		lodState.current = "compact"; // zoomed out → the dense tier
+		renderCard("node-under-test", {
+			components: {
+				"database:orders": serverStatus("ACTIVE", {
+					monthlyCost: 61.32,
+					drift: [
+						{ address: "aws_db_instance.orders", type: "aws_db_instance", kind: "modified" },
+					],
+				}),
 			},
-			true,
-		);
+		});
 
 		expect(screen.getByText("orders")).toBeInTheDocument();
 		expect(screen.getByText("$61.32/mo")).toBeInTheDocument();
@@ -170,7 +179,8 @@ describe("the dense tier — a card inside a container", () => {
 			engine_family: "postgres",
 			engine_version: "16",
 		});
-		renderCard("node-under-test", {}, true);
+		lodState.current = "compact"; // zoomed out → the dense tier
+		renderCard("node-under-test", {});
 
 		expect(screen.getByText("PostgreSQL 16")).toBeInTheDocument();
 		expect(screen.queryByText(/\/mo/)).not.toBeInTheDocument();

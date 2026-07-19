@@ -27,16 +27,22 @@ export function ProjectCard({
 	orgSlug,
 	isFavorite,
 	onToggleFavorite,
+	connectedProviders,
 }: {
 	project: ProjectListItem;
 	orgSlug: string;
 	isFavorite: boolean;
 	onToggleFavorite: () => void;
+	/** Cloud provider slugs with a live connection — the logo is full color when connected. */
+	connectedProviders: string[];
 }) {
 	const href = project.slug
 		? projectHref(orgSlug, project.slug)
 		: orgHref(orgSlug);
 	const provider = project.cloud_provider;
+	const providerConnected = provider
+		? connectedProviders.includes(provider)
+		: false;
 	const repo = project.repositories[0];
 	const deployed = project.last_deployed_at
 		? `Deployed ${formatDistanceToNow(new Date(project.last_deployed_at), { addSuffix: true })}`
@@ -53,13 +59,16 @@ export function ProjectCard({
 
 			<div className="pointer-events-none relative z-10">
 				<div className="flex items-center gap-2.5">
-					<span className="grid size-7 shrink-0 place-items-center rounded-sm border bg-muted/40 text-muted-foreground">
-						{provider ? (
-							<ProviderIcon provider={provider} size={15} mono={false} />
-						) : (
-							<Box className="h-3.5 w-3.5" />
-						)}
-					</span>
+					{provider ? (
+						<ProviderIcon
+							provider={provider}
+							size={28}
+							mono={!providerConnected}
+							className="shrink-0"
+						/>
+					) : (
+						<Box className="size-6 shrink-0 text-muted-foreground" />
+					)}
 					<div className="min-w-0 flex-1">
 						<div className="truncate font-display text-[13.5px] font-semibold text-foreground">
 							{project.project_name}

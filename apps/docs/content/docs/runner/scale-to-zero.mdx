@@ -128,9 +128,9 @@ a real DB advisory lock lands.
 When the pool scales `0 → 1` for a fresh backlog:
 
 1. **Hetzner VM boot + image pull** — cloud-init pulls `runner-<provider>` from GHCR
-2. **Runner boot + self-register** — a few seconds (`POST /api/runners/register` with the bootstrap token)
+2. **Runner boot + self-register** — a few seconds (`POST /api/runners/bootstrap` with the bootstrap token)
 3. **First heartbeat** — `POST /api/runners/heartbeat` (30s cadence)
-4. **First job claim** — next poll cycle (`POST /api/jobs/claim`, ≤ 10s)
+4. **First job claim** — the runner drains the backlog on startup (`POST /api/jobs/claim`), then reacts to push wakes
 
 During this window the job stays `QUEUED`. The `wakeFleetScaler()` on enqueue is what starts the
 VM immediately rather than waiting for the next 60s tick.

@@ -1,35 +1,40 @@
 ---
 title: Project Basics
-description: Project name, environment stage, and OpenTofu (iac_version) version.
+description: Project name, environment stage, and the OpenTofu (iac_version) default — the Project node's basics.
 ---
 
 # Project Basics
 
-The first section of the Design a Project form establishes the project identity and its default target environment. A project owns **N environments** (`project_environments`); this form seeds the default one.
+The Project node — the root of the design canvas — establishes the project identity and its default target environment. A project owns **N environments** (`project_environments`); creating a project seeds the default one.
 
 ## Fields
 
+The Project node's inspector has two sections — **General** (name, environment) and **Placement** (region).
+
 | Field | Type | Validation | Description |
 |-------|------|-----------|-------------|
-| **Project Name** | Text input | Required, lowercase, a-z0-9 + hyphens, max 25 chars | Used in resource naming and OpenTofu state paths |
-| **Environment Stage** | Select | Required | `development`, `staging`, or `production` — the environment's `stage` |
-| **OpenTofu Version** | Select | Required | The `iac_version` field — default: 1.11.4. Also available: 1.10.5, 1.9.8 |
+| **Project Name** | Text input | Required, max 50 chars — free-text display name | The URL slug is derived from it via `slugify`; also drives resource naming and OpenTofu state paths |
+| **Environment** | Radio cards | Required | `development`, `staging`, or `production` — seeds the default environment's `stage` |
+| **Region** | Region picker | Required | The cloud region, grouped by geography and keyed to the project's cloud account |
+
+The cloud account is chosen once when the project is created, not per node. OpenTofu itself is pinned to `1.11.4` (the `iac_version` field); the canvas does not expose a version picker.
 
 ## Project Name
 
-The project name is used extensively:
-- Resource naming in OpenTofu (e.g., `{project}-{env}-eks-cluster`)
+The project name is a free-text display name. Alethia derives a URL slug from it (lowercasing and replacing spaces and punctuation with hyphens) via `slugify`. The derived slug is used for:
+- Resource naming in OpenTofu (e.g., `{slug}-{env}-eks-cluster`)
 - State file path (see [OpenTofu State](/concepts/terraform-state))
-- Display in the UI (project cards, job listings)
+
+The display name appears in the UI (project cards, job listings).
 
 <Callout type="info">
-Names are enforced lowercase with only letters, numbers, and hyphens. This ensures compatibility with cloud resource naming constraints across all three providers.
+You can type any display name — Alethia slugifies it so the identifier is always safe for cloud resource naming constraints across every provider. The name must contain at least one letter or number.
 </Callout>
 
 ## Environment Stage
 
 `stage` is a property of the **environment**, not the project. A project can own several environments
-(dev / staging / prod), each independently provisionable with its own `stage`. The form's three options:
+(dev / staging / prod), each independently provisionable with its own `stage`. The three options:
 
 | Stage | Purpose | Naming Convention |
 |-------|---------|------------------|
