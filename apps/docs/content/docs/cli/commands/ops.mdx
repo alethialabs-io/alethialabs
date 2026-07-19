@@ -1,0 +1,240 @@
+---
+title: Ops Commands
+description: Break-glass incident-recovery verbs — audited, reason-gated, cross-tenant actions for on-call operators.
+---
+
+# Ops Commands
+
+The `ops` group is the terminal-first **break-glass** surface: privileged incident-recovery
+actions for on-call operators. Every verb hits the same audited `/api/breakglass/*` endpoints as
+the operator UI, with the same bearer [CLI token](/cli/authentication) and the same append-only
+audit trail.
+
+<Callout type="warn">
+The entire surface is gated behind the `ALETHIA_BREAKGLASS_ENABLED` flag **and** the
+`BREAKGLASS_OPERATORS` server-side allowlist. A non-operator — or a deployment that has not enabled
+break-glass — is refused with a 403/404. Membership in an organization is **not** the wall: these
+endpoints are cross-tenant and bypass row-level security, so the operator allowlist is the only gate.
+</Callout>
+
+## The break-glass model
+
+Three rules hold for every action, enforced server-side:
+
+- **Audited.** An append-only audit record is written *before* the act. Every verb requires
+  `--reason`, which is recorded in the immutable audit.
+- **Typed-confirm.** A mutating action must echo the exact resource id back to the server; a
+  mismatch is refused. The CLI sends this confirmation for you.
+- **Two-person approval for high-blast actions.** `force-release-lock`, `state-surgery`, and
+  `orphan-clean` require an `--approval` token minted by a **different** operator via
+  [`alethia ops approve`](#alethia-ops-approve). The server enforces that the approver and the actor
+  are different people.
+
+Each action opens a fresh time-boxed break-glass session before it runs, records the reason, then
+executes against the single audited execute endpoint.
+
+## Blast radius
+
+Each verb is labelled with its blast radius in its help text.
+
+| Blast | Verbs |
+|-------|-------|
+| none (read-only) | `inspect-job`, `orphan-detect` |
+| low | `retry-job`, `cancel-job`, `drain-runner`, `replay-webhook` |
+| medium | `unstick-env`, `restart-runner` |
+| HIGH (two-person) | `force-release-lock`, `state-surgery`, `orphan-clean` |
+
+## `alethia ops session`
+
+Open a standalone time-boxed break-glass session. The action verbs open their own session; this is
+for inspecting or warming a session, or for scripts that reuse one.
+
+```bash
+alethia ops session --reason "incident-1234 triage"
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+Prints the session id, the resolved operator, and the session's expiry.
+
+## `alethia ops approve`
+
+Mint a single-use, TTL'd, two-person approval bound to a high-blast action and resource. Run this as
+the **second** operator; the acting operator then passes the printed id as `--approval`.
+
+```bash
+alethia ops approve <action> <resource_id> --reason "incident-1234 sign-off"
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<action>` | Yes | The action to approve: `force_release_state_lock`, `state_surgery`, or `orphan_clean`. |
+| `<resource_id>` | Yes | The resource the approval is bound to. |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+Prints the approval id, its expiry, and a note.
+
+## `alethia ops inspect-job`
+
+Read a job's full row cross-tenant. Read-only (blast: none).
+
+```bash
+alethia ops inspect-job <job_id> --reason "why did DEPLOY hang"
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<job_id>` | Yes | Job id (positional). |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+## `alethia ops retry-job`
+
+Re-enqueue a fresh job from a stuck or failed one (blast: low).
+
+```bash
+alethia ops retry-job <job_id> --reason "runner crash, safe to retry"
+```
+
+## `alethia ops cancel-job`
+
+Cancel a job and signal its Runner to stop mid-flight (blast: low).
+
+```bash
+alethia ops cancel-job <job_id> --reason "wrong project targeted"
+```
+
+## `alethia ops unstick-env`
+
+Move a stuck environment to a target status through the `set_env_status` compare-and-swap primitive —
+never a raw `UPDATE` (blast: medium). You must pass the explicit expected-from set and the target; a
+CAS miss is refused.
+
+```bash
+alethia ops unstick-env <environment_id> \
+  --from PROVISIONING,DEPLOYING --to READY \
+  --reason "stuck after runner crash"
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<environment_id>` | Yes | Environment id (positional). |
+| `--from` | Yes | Comma-separated expected current statuses (the CAS precondition). |
+| `--to` | Yes | Target status to move the environment to. |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+## `alethia ops drain-runner`
+
+Mark an online Runner `DRAINING` so it stops claiming jobs (blast: low).
+
+```bash
+alethia ops drain-runner <runner_id> --reason "node degraded"
+```
+
+## `alethia ops restart-runner`
+
+Drain a Runner and wake the scaler to roll a replacement (blast: medium).
+
+```bash
+alethia ops restart-runner <runner_id> --reason "wedged runner"
+```
+
+## `alethia ops force-release-lock`
+
+Force-release a stranded [OpenTofu](/concepts/glossary) state lock (blast: HIGH, two-person). It
+rotates the fencing token and bumps the generation — never a naive delete — so a zombie writer is
+fenced out.
+
+```bash
+alethia ops force-release-lock <state_key> \
+  --approval <approval_id> \
+  --reason "runner died holding the lock"
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<state_key>` | Yes | State key of the locked object (positional). |
+| `--approval` | Yes | Two-person approval token id (mint one with `alethia ops approve`). |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+## `alethia ops state-surgery`
+
+Queue a privileged `STATE_SURGERY` job through the normal Runner/state pipeline, with fencing intact
+(blast: HIGH, two-person).
+
+```bash
+alethia ops state-surgery <state_key> \
+  --approval <approval_id> \
+  --note "import orphaned RDS instance" \
+  --reason "failed apply orphaned a resource"
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<state_key>` | Yes | State key to operate on (positional). |
+| `--approval` | Yes | Two-person approval token id. |
+| `--note` | No | Free-form description of the intended repair (audit only). |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+<Callout type="info">
+The runner-side executor ships **inert** (fail-closed): the queued job fails cleanly without
+mutating state. See the `STATE_SURGERY` job type in [Job Commands](/cli/commands/jobs).
+</Callout>
+
+## `alethia ops orphan-detect`
+
+List orphan candidates for a single project. Read-only and run-scoped — never account-wide
+(blast: none).
+
+```bash
+alethia ops orphan-detect --project <project_id> --reason "post-incident sweep"
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project` | Yes | Project id to scope the scan to. |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+## `alethia ops orphan-clean`
+
+Force-destroy detected orphans across clouds (blast: HIGH, two-person) — the most dangerous action.
+
+```bash
+alethia ops orphan-clean \
+  --project <project_id> \
+  --approval <approval_id> \
+  --reason "cleanup approved"
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project` | Yes | Project id to scope the clean to. |
+| `--approval` | Yes | Two-person approval token id. |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+<Callout type="warn">
+`orphan-clean` ships **inert**. It refuses unless the deployment is separately armed with
+`ALETHIA_BREAKGLASS_ORPHAN_CLEAN_ENABLED`, and even when armed it is unimplemented rather than
+performing an unscoped delete.
+</Callout>
+
+## `alethia ops replay-webhook`
+
+Re-dispatch a stored Stripe webhook event through the same idempotent handler the live webhook uses
+(blast: low).
+
+```bash
+alethia ops replay-webhook <stripe_event_id> --reason "missed invoice.paid"
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<stripe_event_id>` | Yes | Stripe event id (positional). |
+| `--send-emails` | No | Re-send the branded emails on replay. Suppressed by default — the emails are the one non-idempotent side effect. |
+| `--reason` | Yes | Reason recorded in the immutable audit. |
+
+## See also
+
+- [Job Commands](/cli/commands/jobs) — the `STATE_SURGERY` job type and the job lifecycle.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

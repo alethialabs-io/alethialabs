@@ -1,0 +1,82 @@
+---
+title: Verify Override
+description: Waive specific failing verify controls on a queued DEPLOY job so a fail-closed apply can proceed deliberately.
+---
+
+# Verify Override
+
+The [verify gate](/console/jobs/plan-and-apply#verify-gate) is **fail-closed**: a hard control
+failure blocks before `tofu apply`. A verify override is the deliberate, accountable exception —
+it waives **specific** failing control IDs on one DEPLOY job so the apply can proceed, without ever
+disabling the gate wholesale.
+
+An override is time-boxed and stamped with the actor who authorized it, so the waiver stays auditable
+and the runner seals it into the apply's evidence receipt as a recorded exception.
+
+## Before you start
+
+- The failing controls must come from the [verify report](/console/jobs/plan-and-apply#verify-gate).
+  Read `execution_metadata["verify_result"]` on the PLAN job (the **Verify Report** in the Plan tab,
+  or **Execution Metadata** on the [job detail page](/console/jobs/job-detail)) to get the exact
+  control IDs that failed — for example `LEASTPRIV-001` or `AZURE-FED-001`. See the
+  [control catalog](/elench/control-catalog) for what each ID checks.
+- You need **edit** authority on the job.
+- The DEPLOY job must be **QUEUED** — set the override after clicking **Apply** but before a runner
+  claims and processes the job. An override cannot be set once the job leaves the QUEUED state.
+
+<Callout type="warn">
+An override waives a security control on a single apply. Only the control IDs you list are waived;
+every other control still evaluates fail-closed.
+</Callout>
+
+## Record the override
+
+The override is recorded by the `recordVerifyOverride` server action:
+
+```ts
+recordVerifyOverride(jobId, controls, reason, ttlHours);
+```
+
+<Steps>
+
+### Collect the failing control IDs
+List the exact IDs from the verify report as `controls`. The array must contain at least one ID.
+
+### Write a reason
+Provide a non-empty `reason` explaining why the waiver is justified. It is stored with the override.
+
+### Set an expiry (optional)
+Pass `ttlHours` to bound how long the waiver is valid. It defaults to **24** hours. The action
+computes `expiry` as the current time plus `ttlHours`, stored as an RFC3339 timestamp.
+
+### Submit
+The action verifies your edit authority, confirms the job is QUEUED, and writes the waiver to
+`jobs.verify_override`.
+
+</Steps>
+
+## What gets stored
+
+The action writes a JSONB `verify_override` value on the job:
+
+| Field | Source |
+|-------|--------|
+| `controls` | The control IDs you passed |
+| `reason` | Your reason (trimmed) |
+| `by` | Stamped server-side to the authorizing actor — you cannot set it |
+| `expiry` | Now + `ttlHours` (default 24), as an RFC3339 timestamp |
+
+## What the runner does
+
+When a runner claims the DEPLOY job, it reads `jobs.verify_override` and passes it to the fail-closed
+gate. The gate applies the waiver only to the listed controls, lets the apply proceed, and records the
+waiver as an exception in the signed [evidence receipt](/elench/engine-internals) for the apply.
+
+## Errors
+
+The action rejects an override that cannot be honored:
+
+- **No control IDs** — the `controls` array is empty.
+- **No reason** — `reason` is blank.
+- **Job not found** — no job matches the ID in your scope.
+- **Job is not QUEUED** — the job has already been claimed or has reached a terminal state.

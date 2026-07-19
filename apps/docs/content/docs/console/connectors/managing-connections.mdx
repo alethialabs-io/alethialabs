@@ -1,0 +1,101 @@
+---
+title: Managing Connections
+description: Add a second account to a cloud provider, re-verify a connection, rename an account, and disconnect one — all from the connector detail sheet.
+---
+
+# Managing Connections
+
+Every account you connect becomes a **cloud identity** (`cloud_identities`). A single provider can hold
+**more than one** connected account — each verified account is a distinct identity row. Cloud connections
+are **org-scoped**: every member of the org sees them (subject to their role), and mutating a connection
+requires the `manage_identities` permission.
+
+This page covers the day-2 actions on the connector detail sheet: adding another account, re-verifying,
+renaming, and disconnecting. To connect an account for the first time, see the per-provider guides linked
+from [Connectors Overview](/console/connectors).
+
+<Callout type="info">
+  These actions are managed **entirely server-side in the console** — no [Runner](/runner) and no job. A
+  re-verify is a direct API call — a live probe against the provider, not a queued job. See
+  [Connection Health & Inventory](/console/connectors/health-and-inventory).
+</Callout>
+
+## Open the connector detail sheet
+
+Every action below starts from the same place.
+
+1. Open the **Connectors** page.
+2. Select the provider card.
+
+The detail sheet lists each connected account for that provider, with its status and per-account actions.
+If you don't have the `manage_identities` permission, the mutating actions are hidden.
+
+## Add another account
+
+Connect a second account to a provider that already has one — for example a second AWS account or a second
+GCP project.
+
+1. Open the provider's detail sheet.
+2. Select **Add another account**.
+3. Complete the provider's connect flow.
+
+Each **Connect** starts a fresh pending identity, so verifying it adds a new account row rather than
+replacing the existing one. The provider's own guide describes the credential steps (for example
+[AWS](/console/connectors/aws) or [GCP](/console/connectors/gcp)).
+
+## Re-verify a connection
+
+Re-check an account's health without re-entering its credentials — use this when an account shows
+**Limited permissions** or **Verification failed**, for example after you widen a role or policy to
+clear a permissions gap. The per-account **Re-verify** action is shown only for those two states.
+
+1. Open the provider's detail sheet.
+2. Find the account.
+3. Select **Re-verify**.
+
+Alethia flips the account to `testing`, re-runs the auth and provisioning-permission probe against the
+stored credentials, and updates the status to one of:
+
+| Status | Meaning |
+|--------|---------|
+| **Connected** | Authenticated and the capability probe passed. |
+| **Limited permissions** | Authenticated, but some provisioning permissions look missing. The missing permissions are listed. |
+| **Verification failed** | Authentication failed. |
+
+## Rename an account
+
+Give an account a recognizable label instead of its default (for example `AWS Account (123456789012)`).
+
+1. Open the provider's detail sheet.
+2. Find the account.
+3. Select **Rename**.
+4. Enter a new name and confirm.
+
+The name is trimmed and stored per account. Renaming does not change the account's credentials or status.
+
+## Disconnect an account
+
+Remove Alethia's access to a single account.
+
+1. Open the provider's detail sheet.
+2. Find the account.
+3. Select the account's disconnect action.
+
+Disconnecting resets the account to its pending state and:
+
+- **clears all stored credentials** for that identity,
+- **unlinks any projects** that referenced it (`projects.cloud_identity_id` is set to `null`), so those
+  projects can no longer provision against it,
+- **purges the account's asset inventory** — Alethia keeps no projection of a cloud it can no longer
+  access.
+
+<Callout type="warn">
+  Disconnect targets a **single account**. Other accounts connected to the same provider are untouched.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Connectors Overview" href="/console/connectors">The connector catalog and how cloud identities are authenticated.</Card>
+  <Card title="Connection Health & Inventory" href="/console/connectors/health-and-inventory">How Alethia verifies connections and keeps their asset inventory fresh.</Card>
+</Cards>
