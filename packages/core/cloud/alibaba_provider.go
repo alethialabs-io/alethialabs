@@ -58,7 +58,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 
 		// ACK (managed Kubernetes)
 		"provision_ack":       true,
-		"ack_cluster_version": config.Cluster.ClusterVersion,
+		"ack_cluster_version": resolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
 
 		// DNS (Alibaba Cloud DNS) + WAF
 		"alidns_enabled":             config.DNS.Enabled,

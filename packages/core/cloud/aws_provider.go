@@ -70,7 +70,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"vpc_single_nat_gateway": config.Network.SingleNatGateway,
 
 		// EKS
-		"eks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.32"),
+		"eks_cluster_version": resolveK8sVersion("aws", config.Cluster.ClusterVersion),
 		"enable_karpenter":    enableKarpenter,
 		"eks_cluster_admins":  ensureSlice(config.Cluster.ClusterAdmins),
 

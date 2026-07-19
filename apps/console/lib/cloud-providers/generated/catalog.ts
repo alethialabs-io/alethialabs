@@ -323,12 +323,11 @@ export const CATALOG: Catalog = {
 		"compute": {
 			"aws": {
 				"default_instance": "t3.medium",
-				"default_k8s_version": "1.32",
+				"default_k8s_version": "1.35",
 				"k8s_versions": [
-					"1.32",
-					"1.31",
-					"1.30",
-					"1.29"
+					"1.35",
+					"1.34",
+					"1.33"
 				],
 				"autoscaler_key": "enable_karpenter",
 				"instances": [
@@ -408,12 +407,11 @@ export const CATALOG: Catalog = {
 			},
 			"gcp": {
 				"default_instance": "e2-medium",
-				"default_k8s_version": "1.31",
+				"default_k8s_version": "1.35",
 				"k8s_versions": [
-					"1.31",
-					"1.30",
-					"1.29",
-					"1.28"
+					"1.35",
+					"1.34",
+					"1.33"
 				],
 				"autoscaler_key": "enable_autopilot",
 				"instances": [
@@ -493,12 +491,11 @@ export const CATALOG: Catalog = {
 			},
 			"azure": {
 				"default_instance": "Standard_D2s_v5",
-				"default_k8s_version": "1.31",
+				"default_k8s_version": "1.35",
 				"k8s_versions": [
-					"1.31",
-					"1.30",
-					"1.29",
-					"1.28"
+					"1.35",
+					"1.34",
+					"1.33"
 				],
 				"autoscaler_key": "enable_cluster_autoscaler",
 				"instances": [
@@ -622,11 +619,11 @@ export const CATALOG: Catalog = {
 			},
 			"alibaba": {
 				"default_instance": "ecs.g6.large",
-				"default_k8s_version": "1.30",
+				"default_k8s_version": "1.35",
 				"k8s_versions": [
-					"1.31",
-					"1.30",
-					"1.28"
+					"1.35",
+					"1.34",
+					"1.33"
 				],
 				"autoscaler_key": "enable_cluster_autoscaler",
 				"instances": [
