@@ -1,0 +1,65 @@
+---
+title: Job Types
+description: Reference for every provisioning job type Alethia runs, with its Console label and what it does.
+---
+
+# Job Types
+
+Every infrastructure operation is modeled as a [job](/console/jobs). Each job has a **type** drawn from the `provision_job_type` enum. The Console renders each type with a label, an icon, and a short description from a single catalog (`lib/jobs/format.ts`), shared by the jobs data table and the overview's recent-jobs card.
+
+The table below lists every job type.
+
+| Type | Label | Description |
+|------|-------|-------------|
+| `PLAN` | Plan | Dry-run infrastructure plan |
+| `DEPLOY` | Deploy | Provision infrastructure from config |
+| `DESTROY` | Destroy | Tear down infrastructure |
+| `DEPLOY_RUNNER` | Deploy Runner | Provision a runner into your cloud account |
+| `UPDATE_RUNNER` | Update Runner | Update a runner to a newer version |
+| `DESTROY_RUNNER` | Destroy Runner | Tear down a provisioned runner |
+| `ANALYZE_REPO` | Analyze Repo | Scan a repository for infrastructure config |
+| `DETECT_DRIFT` | Detect Drift | Refresh-only check for drift between state and live cloud |
+| `AUDIT` | Audit | Audit bring-your-own IaC (terraform plan or k8s manifests) with elench |
+| `CHART_SCAN` | Chart Scan | Scan a bring-your-own Helm chart for security issues (elench verify) |
+| `IAC_SCAN` | IaC Scan | Validate a bring-your-own IaC module and pin the commit it deploys from |
+| `STATE_SURGERY` | State Surgery | Break-glass privileged tofu-state repair (executor ships inert / fail-closed) |
+| `PROBE_CLUSTER` | Probe Cluster | Live cluster-alive probe — dials the cluster API server to record reachability |
+| `BUILD` | Build | Build & push service images in-cluster (kaniko → registry, keyless) |
+
+## Infrastructure jobs
+
+`PLAN`, `DEPLOY`, and `DESTROY` run OpenTofu against a project's configuration.
+
+- `PLAN` is a dry run. It produces a plan and the fail-closed [verify gate](/console/jobs/plan-and-apply#verify-gate) report, which the runner forwards on `execution_metadata["verify_result"]`.
+- `DEPLOY` provisions the infrastructure. An **Apply** action on a successful `PLAN` job creates a `DEPLOY` job; see [Job Detail & Logs](/console/jobs/job-detail#actions).
+- `DESTROY` tears the infrastructure down.
+
+An environment promotion does not add a new type — it reuses `PLAN`, then `DEPLOY`.
+
+## Runner jobs
+
+`DEPLOY_RUNNER`, `UPDATE_RUNNER`, and `DESTROY_RUNNER` manage the lifecycle of a runner provisioned into your cloud account.
+
+## Scan jobs
+
+These jobs inspect code or configuration before it is deployed.
+
+- `ANALYZE_REPO` scans a repository for infrastructure config.
+- `CHART_SCAN` clones a bring-your-own Helm chart, runs `helm template`, and evaluates the rendered manifests with elench verify.
+- `IAC_SCAN` scans a bring-your-own IaC module: it clones the repo, pins the commit, inventories providers and modules, and runs `tofu validate`. Its result gates the environment's `PLAN` and `DEPLOY` jobs (both require a fresh scan that pinned the commit to apply). `DESTROY` is not gated on the scan — it gates on the commit that created the deployed state, so a failed re-scan never traps live infrastructure.
+- `AUDIT` audits bring-your-own IaC (an OpenTofu plan or Kubernetes manifests) with elench.
+
+## Reconciliation jobs
+
+- `DETECT_DRIFT` runs a refresh-only check for drift between the recorded state and the live cloud.
+- `PROBE_CLUSTER` dials the cluster's Kubernetes API server and records reachability. An unreachable cluster is a **successful** probe with `reachable=false`; the job only fails when the probe itself could not run.
+
+## Build jobs
+
+`BUILD` builds and pushes service images in-cluster. For each service whose source is a repository, it schedules an in-cluster kaniko Job that builds from the git context and Dockerfile and pushes to the provisioned registry, then reports a per-service image digest map in `execution_metadata.build_result`.
+
+## Break-glass jobs
+
+<Callout type="warn">
+`STATE_SURGERY` is an operator-initiated, two-person-approved, fully-audited repair of a corrupt or stranded OpenTofu state. It is queued as a normal job so it flows through the same claim and state-lock path as any other job. The runner-side executor ships **inert** and fail-closed: it refuses to run unless the runner explicitly opts in via `ALETHIA_BREAKGLASS_STATE_SURGERY_ENABLED`.
+</Callout>

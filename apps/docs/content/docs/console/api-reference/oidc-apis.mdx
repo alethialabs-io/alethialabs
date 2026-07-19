@@ -1,0 +1,111 @@
+---
+title: OIDC APIs
+description: The public, unauthenticated discovery and JWKS endpoints of the Alethia workload-identity OIDC issuer.
+---
+
+# OIDC APIs
+
+Alethia is its own OpenID Connect identity provider for cloud workload-identity federation. It mints a short-lived, signed JWT so managed cloud connectors can federate **keylessly** — the private signing key never leaves the vault, and a customer's cloud verifies the token against Alethia's published public keys.
+
+This surface is deliberately minimal. It has no interactive or user-facing endpoints — it is not a general OAuth server. Only two routes are public: the discovery document and the JWKS. Both serve static signed material.
+
+## Base URL
+
+The issuer is served under `/api/oidc` on the app origin. The full issuer URL is:
+
+```text
+${APP_URL}/api/oidc
+```
+
+This value is the token `iss` claim and the URL a customer's cloud is configured to trust.
+
+## Authentication
+
+Both endpoints are **public, unauthenticated, and `GET`-only**. Anyone can fetch them. Only public key material is served — no private key fields are ever exposed.
+
+Responses are cacheable:
+
+```text
+Cache-Control: public, max-age=300
+```
+
+## Availability
+
+The issuer is enabled only when the instance has a signing key configured (the `ALETHIA_OIDC_SIGNING_KEY` environment variable). When the issuer is not configured, both endpoints return `404`:
+
+```json
+{
+  "error": "OIDC issuer not enabled"
+}
+```
+
+## Discovery Document
+
+### `GET /api/oidc/.well-known/openid-configuration`
+
+Returns the OIDC discovery document. A customer's cloud fetches this to locate the JWKS before verifying a minted token.
+
+**Response:**
+
+```json
+{
+  "issuer": "https://app.example.com/api/oidc",
+  "jwks_uri": "https://app.example.com/api/oidc/jwks",
+  "response_types_supported": ["id_token"],
+  "subject_types_supported": ["public"],
+  "id_token_signing_alg_values_supported": ["RS256"],
+  "scopes_supported": ["openid"],
+  "claims_supported": ["iss", "sub", "aud", "iat", "exp"]
+}
+```
+
+Only `issuer` and `jwks_uri` are load-bearing for federation. The remaining fields satisfy the validators that fetch discovery.
+
+## JWKS
+
+### `GET /api/oidc/jwks`
+
+Returns the public JSON Web Key Set used to verify a minted token's signature. The `jwks_uri` in the discovery document points here.
+
+**Response:**
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "n": "...",
+      "e": "AQAB",
+      "kid": "...",
+      "alg": "RS256",
+      "use": "sig"
+    }
+  ]
+}
+```
+
+Each key's `kid` is the JWK thumbprint. A token's `kid` header selects the matching key.
+
+During a key rotation the JWKS carries **both** the new key and the outgoing key, so tokens signed with either key verify through the overlap window. Clouds cache the JWKS (Azure for roughly 24 hours), so a new key is published and trusted before Alethia signs with it, and the old key keeps verifying in-flight tokens after Alethia stops signing with it.
+
+## Minted Token
+
+The issuer mints tokens server-side for a cloud's token exchange; there is no public token endpoint. The token is an RS256-signed JWT with these characteristics:
+
+| Field | Value |
+|-------|-------|
+| `alg` (header) | `RS256` |
+| `kid` (header) | Thumbprint of the signing key |
+| `typ` (header) | `JWT` |
+| `iss` | The issuer URL (`${APP_URL}/api/oidc`) |
+| `sub` | `alethia-connector` — a single stable, non-secret workload subject, never per-customer |
+| `aud` | The cloud's expected audience (for example `api://AzureADTokenExchange`, or the Alibaba OIDC client id) |
+| `iat` | Issued-at timestamp |
+| `exp` | Expiry — a maximum lifetime of 600 seconds |
+
+The `sub` claim must match the Azure federated-credential subject and the Alibaba RAM-role OIDC condition. The `aud` claim scopes the token to one cloud so it cannot be replayed at a different cloud.
+
+## Related
+
+- [Auth APIs](/console/api-reference/auth-apis) — device code flow for CLI authentication.
+- [Runner APIs](/console/api-reference/runner-apis) — endpoints used by Runner agents.

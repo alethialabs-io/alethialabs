@@ -11,6 +11,7 @@
     "connectors",
     "jobs",
     "runners",
+    "fleet-pools",
     "clusters",
     "alerts",
     "classification",

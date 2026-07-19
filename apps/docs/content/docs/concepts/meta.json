@@ -15,12 +15,14 @@
     "cloud-abstraction",
     "connectors",
     "provisioning-pipeline",
+    "drift",
     "realtime",
     "cost-estimation",
     "authentication",
     "multi-cloud-conversion",
     "terraform-state",
     "gitops-argocd",
-    "bring-your-own-iac"
+    "bring-your-own-iac",
+    "promotions"
   ]
 }

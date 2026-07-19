@@ -19,6 +19,7 @@
     "staged",
     "jobs",
     "runners",
+    "ops",
     "clusters",
     "cloud",
     "organizations",

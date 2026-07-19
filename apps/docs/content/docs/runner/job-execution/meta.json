@@ -3,8 +3,10 @@
   "pages": [
     "index",
     "plan-jobs",
+    "build-jobs",
     "deploy-jobs",
     "destroy-jobs",
+    "probe-jobs",
     "runner-jobs"
   ]
 }

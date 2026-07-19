@@ -1,0 +1,127 @@
+---
+title: Services
+description: A service is a first-class canvas node for your own code — built from a repo or a prebuilt image, run as a Kubernetes workload with validated ports, environment, resources, health, and bindings.
+---
+
+# Services
+
+A **service** is the customer's own application code on the cluster. Unlike the infrastructure kinds (databases, caches, secrets), a service is built from your source and run as a Kubernetes workload. The runner turns each service into Kubernetes manifests at deploy time.
+
+A service is a first-class node kind on the [canvas](/console/design-project/the-canvas): it carries its own validated configuration and it binds to the backing infrastructure it depends on.
+
+## Adding a service
+
+Services lead the Add palette in the **Workloads** group. Selecting **Service** drops a node on the canvas and opens its config sheet.
+
+## Identity
+
+| Field | Type | Notes |
+|-------|------|-------|
+| **Name** | Text | Required. Unique per project and environment. |
+| **Type** | Choice | The Kubernetes workload kind. Defaults to **Deployment**. |
+
+The workload type is one of:
+
+| Type | Description |
+|------|-------------|
+| **Deployment** | Long-running, load-balanced. |
+| **Job** | Runs once to completion. |
+| **CronJob** | Runs on a schedule. |
+| **StatefulSet** | Stable identity and storage. |
+
+## Source
+
+A service's image comes from one of two sources:
+
+| Source | Fields |
+|--------|--------|
+| **Repository** | `Repository URL` (required) and an optional `Path` (subdirectory to build from). Alethia builds and pushes the image. |
+| **Prebuilt image** | `Image` (required) — a pushed image reference deployed as-is, e.g. `ghcr.io/org/api:1.4.0`. |
+
+## Build
+
+The build fields apply only when the source is a **Repository**. Both are optional:
+
+| Field | Description |
+|-------|-------------|
+| **Dockerfile** | Path to the Dockerfile. |
+| **Context** | Build context directory. |
+
+For a prebuilt image, the Build section does not apply.
+
+## Networking
+
+Add the container ports the workload exposes. Each port has:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| **Container port** | Number | Required. 1–65535. |
+| **Protocol** | Choice | `TCP` or `UDP`. Optional. |
+| **Name** | Text | Optional. |
+
+## Environment
+
+Add plain environment variables as `name` / `value` pairs.
+
+<Callout type="info">
+Environment variables added here are plain values. To inject a resource's endpoint or credentials,
+use a **binding** (below) — Alethia delivers credentials as a Kubernetes `secretKeyRef`, never as a
+plain value in the manifest.
+</Callout>
+
+## Bindings
+
+A binding connects the service to a backing resource on the canvas and declares which environment variables that connection injects. Alethia resolves each binding at deploy time — keyless.
+
+A binding targets one resource kind:
+
+| Target kind |
+|-------------|
+| Database |
+| Cache |
+| Queue |
+| Secret |
+
+Each binding declares any number of injected variables. Each maps an environment variable name to a **facet** of the connection:
+
+| Facet | Delivered as |
+|-------|--------------|
+| `endpoint` | Templated value in the manifest |
+| `port` | Templated value in the manifest |
+| `username` | Kubernetes `secretKeyRef` |
+| `password` | Kubernetes `secretKeyRef` |
+| `connection string` | Kubernetes `secretKeyRef` |
+
+The non-secret facets (`endpoint`, `port`) are written into the manifest as templated values; the credential facets (`username`, `password`, `connection string`) are delivered as a `secretKeyRef` and never written into the manifest.
+
+A binding can also target a [bring-your-own IaC](/console/design-project/bring-your-own-charts) resource by its Terraform address, in which case the facets resolve against the customer module's declared output names.
+
+## Runtime
+
+| Field | Type | Notes |
+|-------|------|-------|
+| **Replicas** | Number | Defaults to `2`. The inspector accepts 1–5. |
+| **CPU request** | Text | Kubernetes quantity string, e.g. `100m`. |
+| **Memory request** | Text | Kubernetes quantity string, e.g. `128Mi`. |
+| **CPU limit** | Text | Kubernetes quantity string, e.g. `500m`. |
+| **Memory limit** | Text | Kubernetes quantity string, e.g. `512Mi`. |
+
+Resource requests and limits are optional. When they are left unset, the runner's template defaults apply.
+
+## Health
+
+A service can gate its rollout on a probe. When the health check is enabled:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| **Probe type** | Choice | `HTTP` (check an HTTP endpoint) or `TCP` (open a TCP connection). |
+| **Path** | Text | HTTP probes only, e.g. `/healthz`. |
+| **Port** | Number | 1–65535. |
+
+When the health check is disabled, no probe is configured.
+
+## Related
+
+- [The canvas](/console/design-project/the-canvas) — how nodes and edges model your project.
+- [Databases](/console/design-project/databases) — a common binding target; see also [keyless database auth](/console/design-project/keyless-database-auth).
+- [Secrets](/console/design-project/secrets) — bind a service to a managed secret.
