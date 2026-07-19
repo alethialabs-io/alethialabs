@@ -3,15 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Overview project row — the table-view counterpart to `ProjectCard`. One project per row:
-// provider glyph + name, cloud, region, status, estimated cost, and last-activity time.
+// provider glyph + name, cloud, region, status, environment count, add-ons, estimated cost,
+// last-deploy time, and the shared actions menu.
 
 import { formatDistanceToNow } from "date-fns";
-import { Box, Star } from "lucide-react";
+import { Box } from "lucide-react";
 import Link from "next/link";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { TableCell, TableRow } from "@repo/ui/table";
 import type { ProjectListItem } from "@/app/server/actions/projects";
+import { ProjectActionsMenu } from "@/components/overview/project-actions-menu";
 import { orgHref, projectHref } from "@/lib/routing";
 
 /** Human label for a cloud provider slug (falls back to uppercase). */
@@ -30,10 +32,12 @@ export function ProjectRow({
 	project,
 	orgSlug,
 	isFavorite,
+	onToggleFavorite,
 }: {
 	project: ProjectListItem;
 	orgSlug: string;
 	isFavorite: boolean;
+	onToggleFavorite: () => void;
 }) {
 	const href = project.slug
 		? projectHref(orgSlug, project.slug)
@@ -46,11 +50,7 @@ export function ProjectRow({
 				<Link href={href} className="flex items-center gap-2.5">
 					<span className="grid size-6 shrink-0 place-items-center rounded-sm border bg-muted/40 text-muted-foreground">
 						{provider ? (
-							<ProviderIcon
-								provider={provider}
-								size={13}
-								className="opacity-90 grayscale"
-							/>
+							<ProviderIcon provider={provider} size={13} mono={false} />
 						) : (
 							<Box className="h-3 w-3" />
 						)}
@@ -58,9 +58,6 @@ export function ProjectRow({
 					<span className="truncate font-display text-[13px] font-medium text-foreground group-hover/row:underline">
 						{project.project_name}
 					</span>
-					{isFavorite && (
-						<Star className="h-3 w-3 shrink-0 fill-current text-muted-foreground" />
-					)}
 				</Link>
 			</TableCell>
 			<TableCell className="text-muted-foreground">
@@ -72,13 +69,32 @@ export function ProjectRow({
 			<TableCell>
 				<StatusBadge status={project.status} />
 			</TableCell>
+			<TableCell className="font-mono text-[11px] text-muted-foreground">
+				{project.environments_count}
+			</TableCell>
+			<TableCell className="font-mono text-[11px] text-muted-foreground">
+				{project.addons_count}
+			</TableCell>
 			<TableCell className="text-right font-mono text-[11px] text-muted-foreground">
 				{project.estimated_monthly_cost
 					? `$${project.estimated_monthly_cost.toFixed(2)}`
 					: "—"}
 			</TableCell>
 			<TableCell className="text-right font-mono text-[11px] text-muted-foreground">
-				{formatDistanceToNow(new Date(project.updated_at), { addSuffix: true })}
+				{project.last_deployed_at
+					? formatDistanceToNow(new Date(project.last_deployed_at), {
+							addSuffix: true,
+						})
+					: "Never"}
+			</TableCell>
+			<TableCell className="text-right">
+				<ProjectActionsMenu
+					project={project}
+					orgSlug={orgSlug}
+					isFavorite={isFavorite}
+					onToggleFavorite={onToggleFavorite}
+					triggerClassName="ml-auto opacity-0 focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/row:opacity-100"
+				/>
 			</TableCell>
 		</TableRow>
 	);
