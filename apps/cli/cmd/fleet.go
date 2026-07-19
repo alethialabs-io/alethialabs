@@ -111,10 +111,12 @@ var (
 
 var fleetSetCmd = &cobra.Command{
 	Use:   "set <provider>",
-	Short: "Update a managed-fleet warm pool",
-	Long: `Update the warm pool for a provider (aws, gcp, azure). Only the flags you pass
-are changed; the rest keep their stored value. A pinned --version and a release --channel
-are mutually exclusive (a version pin clears the channel).`,
+	Short: "Create or update a managed-fleet warm pool",
+	Long: `Create or update the warm pool for a provider (aws, gcp, azure, hetzner, alibaba).
+For an existing pool only the flags you pass are changed; the rest keep their stored value.
+For a provider with no pool yet this creates one — the flags you pass are applied and every
+other setting takes its default (warm-min 1, max 10, slots 1, enabled). A pinned --version
+and a release --channel are mutually exclusive (a version pin clears the channel).`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
