@@ -66,7 +66,8 @@ describe("NodePalette — per-provider kind filtering", () => {
 		expect(screen.getByText("Database")).toBeInTheDocument();
 		expect(screen.getByText("Cache")).toBeInTheDocument();
 		expect(screen.getByText("Queue")).toBeInTheDocument();
-		expect(screen.getByText("Cluster")).toBeInTheDocument();
+		// W2 — cluster (+ network) are env settings now, not addable board cards.
+		expect(screen.queryByText("Cluster")).not.toBeInTheDocument();
 	});
 
 	it("shows the full catalog (groups + roadmap rows) on an AWS project", () => {
@@ -76,18 +77,19 @@ describe("NodePalette — per-provider kind filtering", () => {
 		expect(screen.getByText("Topic")).toBeInTheDocument();
 		expect(screen.getByText("NoSQL table")).toBeInTheDocument();
 
-		// Every group heading renders in the registry-declared order.
+		// Every group heading renders in the registry-declared order. W2 dropped "Compute" — its only
+		// kind was the cluster, now an env setting; "Networking" survives on `dns`.
 		for (const heading of [
 			"Data",
 			"Storage",
 			"Messaging",
 			"Security",
 			"Networking",
-			"Compute",
 			"DevOps",
 		]) {
 			expect(screen.getByText(heading)).toBeInTheDocument();
 		}
+		expect(screen.queryByText("Compute")).not.toBeInTheDocument();
 
 		// Bucket + Container registry are now real addable kinds (not roadmap rows).
 		expect(screen.getByText("Bucket")).toBeInTheDocument();

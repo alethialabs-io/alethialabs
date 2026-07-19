@@ -80,16 +80,18 @@ describe("deriveEdges — service binding edges", () => {
 		expect(deriveEdges(nodes).some((e) => e.type === "binding")).toBe(false);
 	});
 
-	it("still runs the service ON the cluster (cluster→service dependency edge)", () => {
+	it("draws NO cluster/network substrate spine (W2 — the cluster is implicit, only bindings)", () => {
 		const nodes = graphFor("primary");
 		const cluster = nodes.find((n) => n.data.kind === "cluster");
-		const svc = idOfKind(nodes, "service");
-		if (cluster) {
+		const network = nodes.find((n) => n.data.kind === "network");
+		// The old network→cluster→every-leaf dependency spine is gone: one env IS one cluster, so the
+		// substrate is implicit and the only edges are the service→resource bindings.
+		const edges = deriveEdges(nodes);
+		for (const anchor of [cluster, network]) {
+			if (!anchor) continue;
 			expect(
-				deriveEdges(nodes).some(
-					(e) => e.source === cluster.id && e.target === svc && e.type !== "binding",
-				),
-			).toBe(true);
+				edges.some((e) => e.source === anchor.id || e.target === anchor.id),
+			).toBe(false);
 		}
 	});
 });

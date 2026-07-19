@@ -88,6 +88,9 @@ interface CanvasCommandPaletteProps {
 	/** When an IaC source governs the env (replace mode), component-add is meaningless — hide the
 	 * Core/Periphery service groups. */
 	disableComponentAdd?: boolean;
+	/** W5 click-to-place — where a newly-added node lands (viewport centre). Supplied by the canvas
+	 * (which owns the React Flow context); omitted (e.g. a unit test) → the store's cascade fallback. */
+	dropPosition?: () => { x: number; y: number };
 }
 
 /** ⌘K command menu: search services by name, jump to nodes, run actions. */
@@ -101,6 +104,7 @@ export function CanvasCommandPalette({
 	onAttachChart,
 	onAttachIac,
 	disableComponentAdd,
+	dropPosition,
 }: CanvasCommandPaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const openInspector = useCanvasStore((s) => s.openInspector);
@@ -126,7 +130,7 @@ export function CanvasCommandPalette({
 				key={kind}
 				value={`add-${kind}`}
 				keywords={keywordsFor(kind)}
-				onSelect={() => run(() => addNode(kind))}
+				onSelect={() => run(() => addNode(kind, dropPosition?.()))}
 			>
 				<Icon className="h-4 w-4" />
 				<span>Add {def.label}</span>

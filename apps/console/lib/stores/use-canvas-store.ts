@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
-import { applyNodeChanges, type NodeChange } from "@xyflow/react";
+import {
+	applyNodeChanges,
+	type NodeChange,
+	type XYPosition,
+} from "@xyflow/react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
@@ -49,46 +53,12 @@ function effectiveIdentity(node: CanvasNode, core: string | null): string | null
  * different cloud identities is a hot cross-cloud edge → typed "gated".
  */
 export function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
-	const core = coreIdentity(nodes);
 	const byKind = (kind: NodeKind) => nodes.filter((n) => n.data.kind === kind);
-	const cluster = byKind("cluster")[0];
-	const network = byKind("network")[0];
 	const edges: CanvasEdge[] = [];
 
-	const link = (source: CanvasNode, target: CanvasNode) => {
-		const sourceCore = NODE_REGISTRY[source.data.kind].classification === "core";
-		const targetCore = NODE_REGISTRY[target.data.kind].classification === "core";
-		const gated =
-			sourceCore &&
-			targetCore &&
-			effectiveIdentity(source, core) !== effectiveIdentity(target, core);
-		edges.push({
-			id: `${source.id}->${target.id}`,
-			source: source.id,
-			target: target.id,
-			type: gated ? "gated" : "dependency",
-		});
-	};
-
-	if (network && cluster) link(network, cluster);
-	if (cluster) {
-		const leafKinds: NodeKind[] = [
-			"service",
-			"database",
-			"cache",
-			"queue",
-			"topic",
-			"nosql",
-			"dns",
-			"secret",
-			"bucket",
-			"registry",
-			"repositories",
-		];
-		for (const kind of leafKinds) {
-			for (const leaf of byKind(kind)) link(cluster, leaf);
-		}
-	}
+	// W2 — the board draws NO substrate spine. The old network→cluster→every-leaf dependency edges
+	// existed only to say "this all runs on the cluster"; the cluster/network are env settings now
+	// (implicit substrate), so the only edges are the derived service→resource bindings below.
 
 	// W3: a service's declared bindings become service→resource edges — derived from the model like
 	// every other edge (the binding lives on the service's config). A binding whose target isn't
@@ -379,11 +349,12 @@ interface CanvasStore {
 		}[],
 	) => void;
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
-	/** Add a node with an explicit config + placement (used by Ask AI proposals). */
+	/** Add a node with an explicit config + placement (used by Ask AI proposals + palette variants). */
 	addNodeWithConfig: (
 		kind: NodeKind,
 		config?: Record<string, unknown>,
 		cloudIdentityId?: string | null,
+		position?: { x: number; y: number },
 	) => void;
 	updateNodeConfig: (id: string, patch: Record<string, unknown>) => void;
 	setNodeIdentity: (
@@ -427,6 +398,9 @@ interface CanvasStore {
 	/** Non-destructive tidy actions for the canvas-settings popover. */
 	repairOverlaps: () => void;
 	relayout: () => void;
+	/** W3 — apply computed auto-layout positions (elkjs, async in the caller) onto the nodes, and
+	 * re-anchor the collapsed collection cards so a "tidy" lays the whole board out at once. */
+	arrange: (positions: Record<string, XYPosition>) => void;
 
 	getNode: (id: string) => CanvasNode | undefined;
 	getCoreIdentity: () => string | null;
@@ -707,7 +681,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				});
 			},
 
-			addNodeWithConfig: (kind, config, cloudIdentityId) => {
+			addNodeWithConfig: (kind, config, cloudIdentityId, position) => {
 				const { nodes, identities } = get();
 				if (SINGLETON_KINDS.includes(kind)) {
 					const existing = nodes.find((n) => n.data.kind === kind);
@@ -741,7 +715,8 @@ export const useCanvasStore = create<CanvasStore>()(
 				const node: CanvasNode = {
 					id: newId(kind),
 					type: kind,
-					position: { x: 120 + count * 48, y: 180 + count * 36 },
+					// W5 click-to-place: drop at the given position (viewport centre) or the cascade fallback.
+					position: position ?? { x: 120 + count * 48, y: 180 + count * 36 },
 					data: buildNodeData(kind, merged, cloudIdentityId ?? null, ownProvider),
 				};
 				const next = [...nodes, node];
@@ -953,6 +928,18 @@ export const useCanvasStore = create<CanvasStore>()(
 				// re-anchors the vaults + re-fits every region on their freshly-laid-out members instead of
 				// stranding them where they were dragged.
 				set({ nodes: next, collectionPositions: {}, containerGeometry: {}, dirty: true });
+			},
+
+			arrange: (positions) => {
+				get().commit();
+				set((s) => ({
+					nodes: s.nodes.map((n) =>
+						positions[n.id] ? { ...n, position: positions[n.id] } : n,
+					),
+					// A tidy re-anchors the collapsed vault cards on their freshly-laid-out members.
+					collectionPositions: {},
+					dirty: true,
+				}));
 			},
 
 			getNode: (id) => get().nodes.find((n) => n.id === id),
