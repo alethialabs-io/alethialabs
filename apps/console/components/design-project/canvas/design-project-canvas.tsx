@@ -55,7 +55,7 @@ import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
-import { CanvasFlow } from "./canvas-flow";
+import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
@@ -108,6 +108,15 @@ function CanvasInner({
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cmdOpen, setCmdOpen] = useState(false);
+	// Traversal mode (Excalidraw/Miro): the sticky hand tool (toolbar / `H`) and the transient
+	// Space-to-pan. Held here — the top of the canvas tree — and shared with the board + controls via
+	// CanvasInteractionContext (not the canvas store: this is view interaction, not design state).
+	const [handTool, setHandTool] = useState(false);
+	const [spaceHeld, setSpaceHeld] = useState(false);
+	const interaction = useMemo(
+		() => ({ handTool, setHandTool, spaceHeld }),
+		[handTool, spaceHeld],
+	);
 	// Cluster add-ons for this environment (edit mode only) — browsed from the Add palette,
 	// configured in a sheet. Add-ons live on the canvas now (the standalone page was retired).
 	const addonsQuery = useAddonsQuery(projectId, environmentId);
@@ -385,6 +394,17 @@ function CanvasInner({
 					t.tagName === "TEXTAREA" ||
 					t.isContentEditable);
 			if (typing) return;
+			if (e.key === " ") {
+				// Space-to-pan (Excalidraw/Figma). preventDefault stops the page from scrolling.
+				e.preventDefault();
+				setSpaceHeld(true);
+				return;
+			}
+			if (e.key.toLowerCase() === "h") {
+				// Toggle the sticky hand (pan) tool.
+				setHandTool((v) => !v);
+				return;
+			}
 			if (e.key === "a") {
 				// No component-add while an IaC source governs the env (replace mode).
 				if (!iacGoverned) setPaletteOpen(true);
@@ -397,8 +417,19 @@ function CanvasInner({
 			if (e.key === "Enter" && selectedIds[0])
 				openInspectorExclusive(selectedIds[0]);
 		};
+		const onKeyUp = (e: KeyboardEvent) => {
+			if (e.key === " ") setSpaceHeld(false);
+		};
+		// If the window loses focus mid-hold, keyup never fires — reset so pan can't stick on.
+		const onBlur = () => setSpaceHeld(false);
 		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		window.addEventListener("keyup", onKeyUp);
+		window.addEventListener("blur", onBlur);
+		return () => {
+			window.removeEventListener("keydown", onKey);
+			window.removeEventListener("keyup", onKeyUp);
+			window.removeEventListener("blur", onBlur);
+		};
 	}, [
 		handleSave,
 		selectedIds,
@@ -412,7 +443,7 @@ function CanvasInner({
 	]);
 
 	const boardContent = (
-		<>
+		<CanvasInteractionContext.Provider value={interaction}>
 			{/* Keyed by the active environment so switching envs (picker / Shift+Tab) crossfades
 			    the canvas instead of snapping to the new env's design. */}
 			<motion.div
@@ -567,7 +598,7 @@ function CanvasInner({
 					</div>
 				</DialogContent>
 			</Dialog>
-		</>
+		</CanvasInteractionContext.Provider>
 	);
 
 	// Chart + IaC nodes (rendered propless: chart nodes by React Flow, the IaC overlay by the board)
@@ -621,6 +652,8 @@ function buildShortcuts(isMac: boolean): { label: string; keys: string }[] {
 	return [
 		{ label: "Command palette", keys: `${mod}${j}K` },
 		{ label: "Add component", keys: "A" },
+		{ label: "Pan the canvas", keys: "Space-drag" },
+		{ label: "Hand tool (pan)", keys: "H" },
 		{ label: "Ask AI", keys: `${mod}${j}I` },
 		{ label: "Open inspector", keys: "Enter" },
 		{ label: "Duplicate selection", keys: `${mod}${j}D` },

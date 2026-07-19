@@ -4,6 +4,7 @@
 
 import { useReactFlow } from "@xyflow/react";
 import {
+	Hand,
 	Layers,
 	Maximize,
 	Redo2,
@@ -12,6 +13,8 @@ import {
 	ZoomIn,
 	ZoomOut,
 } from "lucide-react";
+import { useContext } from "react";
+import { CanvasInteractionContext } from "./canvas-flow";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
@@ -23,16 +26,18 @@ import {
 	NODE_REGISTRY,
 } from "./graph/node-registry";
 
-/** A square ghost icon button sized for the controls bar. */
+/** A square ghost icon button sized for the controls bar. `active` marks a toggled-on tool. */
 function CtrlButton({
 	label,
 	onClick,
 	disabled,
+	active,
 	children,
 }: {
 	label: string;
 	onClick: () => void;
 	disabled?: boolean;
+	active?: boolean;
 	children: React.ReactNode;
 }) {
 	return (
@@ -40,7 +45,11 @@ function CtrlButton({
 			type="button"
 			variant="ghost"
 			size="icon"
-			className="h-8 w-8 rounded-none"
+			className={cn(
+				"h-8 w-8 rounded-none",
+				active && "bg-muted text-foreground",
+			)}
+			aria-pressed={active}
 			onClick={onClick}
 			disabled={disabled}
 			aria-label={label}
@@ -71,6 +80,7 @@ export function CanvasControls() {
 	);
 	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
 	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
+	const { handTool, setHandTool } = useContext(CanvasInteractionContext);
 
 	return (
 		<div className="absolute bottom-3 left-3 z-10 flex items-center border border-border bg-background/90 backdrop-blur">
@@ -113,6 +123,16 @@ export function CanvasControls() {
 					</button>
 				</PopoverContent>
 			</Popover>
+
+			<Separator orientation="vertical" className="h-5" />
+
+			<CtrlButton
+				label="Hand tool — pan (H, or hold Space)"
+				active={handTool}
+				onClick={() => setHandTool(!handTool)}
+			>
+				<Hand className="h-3.5 w-3.5" />
+			</CtrlButton>
 
 			<Separator orientation="vertical" className="h-5" />
 
