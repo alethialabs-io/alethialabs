@@ -52,6 +52,8 @@ type fakeClient struct {
 	verifyResult *api.ConnectIdentityResponse
 	drift        *api.DriftPosture
 	cost         *api.EnvironmentCost
+	protection   []api.ProtectionRule
+	probes       []api.ProbeState
 
 	// recorded classification calls
 	assignedKind    string
@@ -362,6 +364,14 @@ func (f *fakeClient) GetProjectDrift(project, env string) (*api.DriftPosture, er
 
 func (f *fakeClient) GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error) {
 	return f.cost, f.err
+}
+
+func (f *fakeClient) GetProjectProtection(project string) ([]api.ProtectionRule, error) {
+	return f.protection, f.err
+}
+
+func (f *fakeClient) GetProjectProbes(project string) ([]api.ProbeState, error) {
+	return f.probes, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)

@@ -1,0 +1,48 @@
+---
+title: Probe Commands
+description: Inspect a project's cluster-alive probes — the "is it still up?" day-2 signal per environment.
+---
+
+# Probe Commands
+
+The `probes` group (alias `probe`) lists the latest **cluster-alive probe** per environment — the
+"is it still up?" half of day-2, alongside [drift](/cli/commands/drift)'s "has it diverged?". A
+`PROBE_CLUSTER` job dials each environment's cluster API server; this shows the most recent result.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `probes list` calls `/cli/projects/<project>/probes`
+with your [CLI token](/cli/authentication) and operates on the **active organization**
+(`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## `alethia probes list`
+
+List a project's latest per-environment cluster probes.
+
+```bash
+alethia probes list --project my-project
+alethia probes list -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+
+Columns: **Environment**, **Reachable** (`● up`, `○ down`, or `— never probed`), **Message** (why
+unreachable, when down), **Probed** (when the last probe ran). Every environment is listed; one
+that has never been probed shows `never probed` rather than being hidden.
+
+```
+Environment  Reachable        Message             Probed
+production   ● up             —                   2026-01-01T00:00:00.000Z
+staging      ○ down           dial tcp: timeout   2026-01-01T00:00:00.000Z
+dev          — never probed   —                   —
+```
+
+Add `-o json` for the raw probe objects; `-o csv` for the rows. Backing call:
+`GET /cli/projects/<project>/probes`.
+
+## See also
+
+- [Drift Commands](/cli/commands/drift) — the divergence half of day-2.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

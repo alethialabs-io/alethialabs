@@ -10,6 +10,8 @@
     "plan-and-apply",
     "drift",
     "cost",
+    "protection",
+    "probes",
     "jobs",
     "runners",
     "clusters",

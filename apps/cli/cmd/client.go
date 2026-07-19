@@ -61,6 +61,8 @@ type apiClient interface {
 	RemoveComponent(project, kind, name string) error
 	GetProjectDrift(project, env string) (*api.DriftPosture, error)
 	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
+	GetProjectProtection(project string) ([]api.ProtectionRule, error)
+	GetProjectProbes(project string) ([]api.ProbeState, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.

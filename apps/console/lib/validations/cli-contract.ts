@@ -568,6 +568,36 @@ export const cliCostResponse = z.object({
 	resources: z.array(costResourceWire),
 });
 
+/** One environment's promotion protection rules (mirrors ProtectionSummary). */
+export const protectionRuleWire = z.object({
+	environment_id: z.string(),
+	environment: z.string(),
+	require_predecessor: z.boolean(),
+	require_verify_pass: z.boolean(),
+	require_approval: z.boolean(),
+	min_count: z.number().int().nullable(),
+	soak_minutes: z.number().int().nullable(),
+	cost_delta_threshold: z.number().nullable(),
+});
+/** GET /api/cli/projects/:id/protection result. */
+export const cliProtectionResponse = z.object({
+	rules: z.array(protectionRuleWire),
+});
+
+/** One environment's latest cluster-alive probe state (mirrors ProbeState). */
+export const probeStateWire = z.object({
+	environment_id: z.string(),
+	environment: z.string(),
+	// null = never probed; true = reachable; false = unreachable.
+	reachable: z.boolean().nullable(),
+	message: z.string().nullable(),
+	probed_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/probes result. */
+export const cliProbesResponse = z.object({
+	probes: z.array(probeStateWire),
+});
+
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
@@ -617,6 +647,8 @@ export const cliContract = {
 	ComponentResponse: cliComponentResponse,
 	DriftResponse: cliDriftResponse,
 	CostResponse: cliCostResponse,
+	ProtectionResponse: cliProtectionResponse,
+	ProbesResponse: cliProbesResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;
