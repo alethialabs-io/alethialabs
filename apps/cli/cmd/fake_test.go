@@ -60,6 +60,10 @@ type fakeClient struct {
 	promotions   []api.Promotion
 	promotion    *api.PromotionDetail
 	staged       *api.StagedChanges
+	cloudInv     *api.CloudInventory
+	orgSettings  *api.OrgSettings
+	agents       []api.Agent
+	agent        *api.Agent
 
 	// recorded classification calls
 	assignedKind    string
@@ -402,6 +406,22 @@ func (f *fakeClient) GetPromotion(project, promotionID string) (*api.PromotionDe
 
 func (f *fakeClient) GetProjectStagedChanges(project, env string) (*api.StagedChanges, error) {
 	return f.staged, f.err
+}
+
+func (f *fakeClient) GetCloudInventory(cloudIdentityID string) (*api.CloudInventory, error) {
+	return f.cloudInv, f.err
+}
+
+func (f *fakeClient) GetOrgSettings() (*api.OrgSettings, error) {
+	return f.orgSettings, f.err
+}
+
+func (f *fakeClient) ListAgents() ([]api.Agent, error) {
+	return f.agents, f.err
+}
+
+func (f *fakeClient) GetAgent(id string) (*api.Agent, error) {
+	return f.agent, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)

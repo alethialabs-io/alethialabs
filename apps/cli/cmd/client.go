@@ -69,6 +69,10 @@ type apiClient interface {
 	GetProjectPromotions(project, env string) ([]api.Promotion, error)
 	GetPromotion(project, promotionID string) (*api.PromotionDetail, error)
 	GetProjectStagedChanges(project, env string) (*api.StagedChanges, error)
+	GetCloudInventory(cloudIdentityID string) (*api.CloudInventory, error)
+	GetOrgSettings() (*api.OrgSettings, error)
+	ListAgents() ([]api.Agent, error)
+	GetAgent(id string) (*api.Agent, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.

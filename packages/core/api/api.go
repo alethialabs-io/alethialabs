@@ -1945,6 +1945,109 @@ func (c *Client) GetProjectStagedChanges(project, env string) (*StagedChanges, e
 	return &resp, nil
 }
 
+// --- Cloud inventory ---
+
+// CloudNetwork is one discovered network in a cloud identity's inventory.
+type CloudNetwork struct {
+	NativeID  string  `json:"native_id"`
+	Name      *string `json:"name"`
+	Region    *string `json:"region"`
+	Provider  string  `json:"provider"`
+	CidrBlock *string `json:"cidr_block"`
+	IsDefault bool    `json:"is_default"`
+}
+
+// CloudSubnet is one discovered subnet in a cloud identity's inventory.
+type CloudSubnet struct {
+	NativeID         string  `json:"native_id"`
+	Name             *string `json:"name"`
+	Region           *string `json:"region"`
+	AvailabilityZone *string `json:"availability_zone"`
+	CidrBlock        *string `json:"cidr_block"`
+	IsPublic         bool    `json:"is_public"`
+}
+
+// CloudInventory is the discovered networking + regions for a cloud identity.
+type CloudInventory struct {
+	Networks []CloudNetwork `json:"networks"`
+	Subnets  []CloudSubnet  `json:"subnets"`
+	Regions  []string       `json:"regions"`
+}
+
+// GetCloudInventory returns the discovered networking inventory for a connected cloud identity.
+func (c *Client) GetCloudInventory(cloudIdentityID string) (*CloudInventory, error) {
+	endpoint := fmt.Sprintf("%s/cli/cloud-identities/%s/inventory", c.baseURL, url.PathEscape(cloudIdentityID))
+	var resp CloudInventory
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get cloud inventory: %w", err)
+	}
+	return &resp, nil
+}
+
+// --- Org settings ---
+
+// OrgSettings is the active organization's general settings.
+type OrgSettings struct {
+	Name             string  `json:"name"`
+	Slug             string  `json:"slug"`
+	Description      string  `json:"description"`
+	Logo             *string `json:"logo"`
+	Region           string  `json:"region"`
+	DefaultEnv       string  `json:"default_env"`
+	TerraformVersion string  `json:"terraform_version"`
+}
+
+// GetOrgSettings returns the active org's general settings, or nil in community (personal) mode.
+func (c *Client) GetOrgSettings() (*OrgSettings, error) {
+	endpoint := fmt.Sprintf("%s/cli/org-settings", c.baseURL)
+	var resp struct {
+		Settings *OrgSettings `json:"settings"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get org settings: %w", err)
+	}
+	return resp.Settings, nil
+}
+
+// --- Agents ---
+
+// Agent is a machine/agent identity (persona) the caller owns.
+type Agent struct {
+	ID              string   `json:"id"`
+	Persona         string   `json:"persona"`
+	Mission         string   `json:"mission"`
+	ToolScope       []string `json:"tool_scope"`
+	MemoryNamespace string   `json:"memory_namespace"`
+	ProjectID       *string  `json:"project_id"`
+	Version         int      `json:"version"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
+}
+
+// ListAgents returns the caller's agent identities.
+func (c *Client) ListAgents() ([]Agent, error) {
+	endpoint := fmt.Sprintf("%s/cli/agents", c.baseURL)
+	var resp struct {
+		Agents []Agent `json:"agents"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list agents: %w", err)
+	}
+	return resp.Agents, nil
+}
+
+// GetAgent returns one agent identity by id, scoped to the caller's tenancy.
+func (c *Client) GetAgent(id string) (*Agent, error) {
+	endpoint := fmt.Sprintf("%s/cli/agents/%s", c.baseURL, url.PathEscape(id))
+	var resp struct {
+		Agent Agent `json:"agent"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get agent: %w", err)
+	}
+	return &resp.Agent, nil
+}
+
 // --- Break-glass (privileged incident recovery) ---
 //
 // These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +

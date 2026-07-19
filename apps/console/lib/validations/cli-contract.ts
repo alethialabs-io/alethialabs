@@ -714,6 +714,63 @@ export const cliStagedChangesResponse = z.object({
 	changes: z.array(stagedChangeWire),
 });
 
+/** One discovered network in a cloud identity's inventory. */
+export const cloudNetworkWire = z.object({
+	native_id: z.string(),
+	name: z.string().nullable(),
+	region: z.string().nullable(),
+	provider: z.string(),
+	cidr_block: z.string().nullable(),
+	is_default: z.boolean(),
+});
+/** One discovered subnet in a cloud identity's inventory. */
+export const cloudSubnetWire = z.object({
+	native_id: z.string(),
+	name: z.string().nullable(),
+	region: z.string().nullable(),
+	availability_zone: z.string().nullable(),
+	cidr_block: z.string().nullable(),
+	is_public: z.boolean(),
+});
+/** GET /api/cli/cloud-identities/:id/inventory result (discovered networking + regions). */
+export const cliCloudInventoryResponse = z.object({
+	networks: z.array(cloudNetworkWire),
+	subnets: z.array(cloudSubnetWire),
+	regions: z.array(z.string()),
+});
+
+/** GET /api/cli/org-settings result. null when the caller is in community (personal) mode. */
+export const cliOrgSettingsResponse = z.object({
+	settings: z
+		.object({
+			name: z.string(),
+			slug: z.string(),
+			description: z.string(),
+			logo: z.string().nullable(),
+			region: z.string(),
+			default_env: z.string(),
+			terraform_version: z.string(),
+		})
+		.nullable(),
+});
+
+/** One agent identity (a machine/agent persona), as read by the CLI. */
+export const agentWire = z.object({
+	id: z.string(),
+	persona: z.string(),
+	mission: z.string(),
+	tool_scope: z.array(z.string()),
+	memory_namespace: z.string(),
+	project_id: z.string().nullable(),
+	version: z.number().int(),
+	created_at: iso,
+	updated_at: iso,
+});
+/** GET /api/cli/agents result. */
+export const cliAgentsResponse = z.object({ agents: z.array(agentWire) });
+/** GET /api/cli/agents/:id result. */
+export const cliAgentResponse = z.object({ agent: agentWire });
+
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
@@ -771,6 +828,10 @@ export const cliContract = {
 	PromotionsResponse: cliPromotionsResponse,
 	PromotionResponse: cliPromotionResponse,
 	StagedChangesResponse: cliStagedChangesResponse,
+	CloudInventoryResponse: cliCloudInventoryResponse,
+	OrgSettingsResponse: cliOrgSettingsResponse,
+	AgentsResponse: cliAgentsResponse,
+	AgentResponse: cliAgentResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;

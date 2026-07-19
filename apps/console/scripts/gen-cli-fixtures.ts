@@ -142,6 +142,10 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	PromotionsResponse: "promotions.json",
 	PromotionResponse: "promotion.json",
 	StagedChangesResponse: "staged_changes.json",
+	CloudInventoryResponse: "cloud_inventory.json",
+	OrgSettingsResponse: "org_settings.json",
+	AgentsResponse: "agents.json",
+	AgentResponse: "agent.json",
 	ClassificationDimensionsResponse: "classification_dimensions.json",
 	ClassificationAssignmentsResponse: "classification_assignments.json",
 };

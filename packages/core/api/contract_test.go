@@ -487,6 +487,45 @@ func TestContract_StagedChanges(t *testing.T) {
 	assertNoExtraStructKeys(t, "staged_changes.json", resp)
 }
 
+func TestContract_CloudInventory(t *testing.T) {
+	var resp CloudInventory
+	strictDecode(t, "cloud_inventory.json", &resp)
+	if len(resp.Networks) != 1 || len(resp.Subnets) != 1 {
+		t.Fatalf("expected 1 network + 1 subnet, got %d/%d", len(resp.Networks), len(resp.Subnets))
+	}
+	assertNoExtraStructKeys(t, "cloud_inventory.json", resp)
+}
+
+func TestContract_OrgSettings(t *testing.T) {
+	var resp struct {
+		Settings *OrgSettings `json:"settings"`
+	}
+	strictDecode(t, "org_settings.json", &resp)
+	if resp.Settings == nil {
+		t.Fatal("expected non-null settings in the fixture")
+	}
+	assertNoExtraStructKeys(t, "org_settings.json", resp)
+}
+
+func TestContract_Agents(t *testing.T) {
+	var resp struct {
+		Agents []Agent `json:"agents"`
+	}
+	strictDecode(t, "agents.json", &resp)
+	if len(resp.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(resp.Agents))
+	}
+	assertNoExtraStructKeys(t, "agents.json", resp)
+}
+
+func TestContract_Agent(t *testing.T) {
+	var resp struct {
+		Agent Agent `json:"agent"`
+	}
+	strictDecode(t, "agent.json", &resp)
+	assertNoExtraStructKeys(t, "agent.json", resp)
+}
+
 func TestContract_ClassificationDimensions(t *testing.T) {
 	var resp struct {
 		Dimensions []ClassificationDimension `json:"dimensions"`
