@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
-import { applyNodeChanges, type NodeChange } from "@xyflow/react";
+import {
+	applyNodeChanges,
+	type NodeChange,
+	type XYPosition,
+} from "@xyflow/react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
@@ -393,6 +397,9 @@ interface CanvasStore {
 	/** Non-destructive tidy actions for the canvas-settings popover. */
 	repairOverlaps: () => void;
 	relayout: () => void;
+	/** W3 — apply computed auto-layout positions (elkjs, async in the caller) onto the nodes, and
+	 * re-anchor the collapsed collection cards so a "tidy" lays the whole board out at once. */
+	arrange: (positions: Record<string, XYPosition>) => void;
 
 	getNode: (id: string) => CanvasNode | undefined;
 	getCoreIdentity: () => string | null;
@@ -919,6 +926,18 @@ export const useCanvasStore = create<CanvasStore>()(
 				// re-anchors the vaults + re-fits every region on their freshly-laid-out members instead of
 				// stranding them where they were dragged.
 				set({ nodes: next, collectionPositions: {}, containerGeometry: {}, dirty: true });
+			},
+
+			arrange: (positions) => {
+				get().commit();
+				set((s) => ({
+					nodes: s.nodes.map((n) =>
+						positions[n.id] ? { ...n, position: positions[n.id] } : n,
+					),
+					// A tidy re-anchors the collapsed vault cards on their freshly-laid-out members.
+					collectionPositions: {},
+					dirty: true,
+				}));
 			},
 
 			getNode: (id) => get().nodes.find((n) => n.id === id),

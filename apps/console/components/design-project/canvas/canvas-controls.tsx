@@ -6,6 +6,7 @@ import { useReactFlow } from "@xyflow/react";
 import {
 	Hand,
 	Layers,
+	LayoutGrid,
 	Maximize,
 	Redo2,
 	Settings2,
@@ -13,7 +14,8 @@ import {
 	ZoomIn,
 	ZoomOut,
 } from "lucide-react";
-import { useContext } from "react";
+import { useCallback, useContext } from "react";
+import { elkLayout } from "@/lib/canvas/auto-layout";
 import { CanvasInteractionContext } from "./canvas-flow";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
@@ -74,13 +76,31 @@ export function CanvasControls() {
 	const showConnections = useCanvasStore((s) => s.showConnections);
 	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
 	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
-	const relayout = useCanvasStore((s) => s.relayout);
 	const coreProvider = useCanvasStore((s) =>
 		s.getEffectiveProvider(PROJECT_NODE_ID),
 	);
 	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
 	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
 	const { handTool, setHandTool } = useContext(CanvasInteractionContext);
+
+	// W3 — auto-arrange (elkjs). Lay out the design nodes (the hidden project/cluster/network are the
+	// implicit substrate, not part of the graph), then commit the positions; the fit follows so the
+	// tidied board is framed. A manual drag afterwards overrides until the next arrange.
+	const handleArrange = useCallback(async () => {
+		const s = useCanvasStore.getState();
+		const layoutNodes = s.nodes.filter(
+			(n) =>
+				n.data.kind !== "project" &&
+				n.data.kind !== "cluster" &&
+				n.data.kind !== "network",
+		);
+		const positions = await elkLayout(
+			layoutNodes.map((n) => ({ id: n.id, width: n.width, height: n.height })),
+			s.edges,
+		);
+		s.arrange(positions);
+		requestAnimationFrame(() => fitView({ padding: 0.3, duration: 300 }));
+	}, [fitView]);
 
 	return (
 		<div className="absolute bottom-3 left-3 z-10 flex items-center border border-border bg-background/90 backdrop-blur">
@@ -116,13 +136,19 @@ export function CanvasControls() {
 					</button>
 					<button
 						type="button"
-						onClick={() => relayout()}
+						onClick={() => void handleArrange()}
 						className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted"
 					>
-						Reset canvas
+						Auto-arrange
 					</button>
 				</PopoverContent>
 			</Popover>
+
+			<Separator orientation="vertical" className="h-5" />
+
+			<CtrlButton label="Auto-arrange (elkjs)" onClick={() => void handleArrange()}>
+				<LayoutGrid className="h-3.5 w-3.5" />
+			</CtrlButton>
 
 			<Separator orientation="vertical" className="h-5" />
 
