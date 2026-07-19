@@ -17,13 +17,42 @@ import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withActorScope } from "@/lib/db";
+import { getServiceDb, type Tx, withActorScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { iacSourceAttachSchema } from "@/lib/validations/byo-iac";
 import { notifyScaler } from "@/lib/scaler";
 import type { IacScanReport, IacVarValues } from "@/types/jsonb.types";
+
+/**
+ * Resolves the Fabric a BYO-IaC source attaches to: the env's `fabric_id`. #839 moved the attach
+ * point + the single-stack ceiling from Environment to Fabric (one source per Fabric, shared by
+ * every env placed on it). Throws if the env has no Fabric — should not happen post-#836, whose
+ * backfill gives every environment a 1:1 Fabric.
+ */
+async function resolveFabricId(
+	tx: Tx,
+	projectId: string,
+	environmentId: string,
+): Promise<string> {
+	const [env] = await tx
+		.select({ fabric_id: projectEnvironments.fabric_id })
+		.from(projectEnvironments)
+		.where(
+			and(
+				eq(projectEnvironments.id, environmentId),
+				eq(projectEnvironments.project_id, projectId),
+			),
+		)
+		.limit(1);
+	if (!env?.fabric_id) {
+		throw new Error(
+			"This environment is not linked to a Fabric — cannot attach BYO-IaC.",
+		);
+	}
+	return env.fabric_id;
+}
 
 /** Throws if the feature is disabled — every mutating BYO-IaC action calls this first. */
 function assertByoIacEnabled(): void {
@@ -98,21 +127,23 @@ export async function attachIacSource(input: {
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 
 	const id = await withActorScope(actor, async (tx) => {
-		// v1 single source per environment — reject a second attach instead of upserting, so a
-		// repo swap is an explicit detach + re-attach (which also resets the scan pin).
+		// #839: the single-stack ceiling is per-Fabric — reject a second attach onto the same Fabric
+		// (a repo swap is an explicit detach + re-attach, which also resets the scan pin). For a
+		// `dedicated` env this is the old per-env behaviour; on a shared Fabric, co-Fabric envs share it.
+		const fabricId = await resolveFabricId(tx, input.projectId, envId);
 		const [existing] = await tx
 			.select({ id: projectIacSources.id })
 			.from(projectIacSources)
 			.where(
 				and(
 					eq(projectIacSources.project_id, input.projectId),
-					eq(projectIacSources.environment_id, envId),
+					eq(projectIacSources.fabric_id, fabricId),
 				),
 			)
 			.limit(1);
 		if (existing) {
 			throw new Error(
-				"This environment already has an IaC source attached — detach it before attaching another.",
+				"This Fabric already has an IaC source attached — detach it before attaching another.",
 			);
 		}
 
@@ -133,7 +164,9 @@ export async function attachIacSource(input: {
 			.insert(projectIacSources)
 			.values({
 				project_id: input.projectId,
+				// The attaching env (informational); ownership + the ceiling are on fabric_id.
 				environment_id: envId,
+				fabric_id: fabricId,
 				repo_url: parsed.repo_url,
 				ref: parsed.ref ?? null,
 				path: parsed.path ?? "",
@@ -174,13 +207,14 @@ export async function detachIacSource(input: {
 	const actor = await authorize("edit", { type: "project", id: input.projectId });
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 	await withActorScope(actor, async (tx) => {
+		const fabricId = await resolveFabricId(tx, input.projectId, envId);
 		const [source] = await tx
 			.select({ deployed_commit_sha: projectIacSources.deployed_commit_sha })
 			.from(projectIacSources)
 			.where(
 				and(
 					eq(projectIacSources.project_id, input.projectId),
-					eq(projectIacSources.environment_id, envId),
+					eq(projectIacSources.fabric_id, fabricId),
 				),
 			)
 			.limit(1);
@@ -206,7 +240,7 @@ export async function detachIacSource(input: {
 			.where(
 				and(
 					eq(projectIacSources.project_id, input.projectId),
-					eq(projectIacSources.environment_id, envId),
+					eq(projectIacSources.fabric_id, fabricId),
 				),
 			);
 	});
@@ -220,18 +254,19 @@ export async function getIacSource(
 ): Promise<IacSourceState | null> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const [row] = await withActorScope(actor, async (tx) =>
-		tx
+	const [row] = await withActorScope(actor, async (tx) => {
+		const fabricId = await resolveFabricId(tx, projectId, envId);
+		return tx
 			.select()
 			.from(projectIacSources)
 			.where(
 				and(
 					eq(projectIacSources.project_id, projectId),
-					eq(projectIacSources.environment_id, envId),
+					eq(projectIacSources.fabric_id, fabricId),
 				),
 			)
-			.limit(1),
-	);
+			.limit(1);
+	});
 	if (!row) return null;
 	return {
 		id: row.id,
@@ -271,13 +306,14 @@ export async function scanIacSource(input: {
 
 	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withActorScope(actor, async (tx) => {
+		const fabricId = await resolveFabricId(tx, input.projectId, envId);
 		const [row] = await tx
 			.select()
 			.from(projectIacSources)
 			.where(
 				and(
 					eq(projectIacSources.project_id, input.projectId),
-					eq(projectIacSources.environment_id, envId),
+					eq(projectIacSources.fabric_id, fabricId),
 				),
 			)
 			.limit(1);
@@ -301,6 +337,7 @@ export async function scanIacSource(input: {
 					// Row identity for finalizeIacScan → the result maps back to this source.
 					project_id: input.projectId,
 					environment_id: envId,
+					fabric_id: fabricId,
 					iac_source_id: row.id,
 				},
 			}))
