@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { getOwner } from "@/lib/auth/owner";
-import { withOwnerScope } from "@/lib/db";
+import { currentActor } from "@/lib/authz/guard";
+import { withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
 	projectCaches,
@@ -54,10 +54,13 @@ export interface ClusterData {
 
 /** Fetches all active projects with their cluster, database, cache, and DNS data. */
 export async function getClusters(): Promise<ClusterData[]> {
-	const owner = await getOwner();
-	if (!owner) return [];
+	// Actor scope (not owner scope): clusters are org-shared, so RLS must carry the real
+	// active org — withOwnerScope would collapse app.current_org to the user id and hide
+	// every cluster the current member didn't personally create in a Teams org.
+	const actor = await currentActor().catch(() => null);
+	if (!actor) return [];
 
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// Project + to-one relations (cloud identity, cluster, dns) in one pass.
 		const baseRows = await tx
 			.select({

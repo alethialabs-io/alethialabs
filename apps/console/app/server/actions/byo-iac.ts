@@ -17,7 +17,7 @@ import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
@@ -97,7 +97,7 @@ export async function attachIacSource(input: {
 
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 
-	const id = await withOwnerScope(actor.userId, async (tx) => {
+	const id = await withActorScope(actor, async (tx) => {
 		// v1 single source per environment — reject a second attach instead of upserting, so a
 		// repo swap is an explicit detach + re-attach (which also resets the scan pin).
 		const [existing] = await tx
@@ -173,7 +173,7 @@ export async function detachIacSource(input: {
 }): Promise<{ ok: true }> {
 	const actor = await authorize("edit", { type: "project", id: input.projectId });
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		const [source] = await tx
 			.select({ deployed_commit_sha: projectIacSources.deployed_commit_sha })
 			.from(projectIacSources)
@@ -220,7 +220,7 @@ export async function getIacSource(
 ): Promise<IacSourceState | null> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const [row] = await withOwnerScope(actor.userId, async (tx) =>
+	const [row] = await withActorScope(actor, async (tx) =>
 		tx
 			.select()
 			.from(projectIacSources)
@@ -270,7 +270,7 @@ export async function scanIacSource(input: {
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 
 	await assertJobQuotaAllowed(actor.orgId);
-	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+	const jobId = await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select()
 			.from(projectIacSources)

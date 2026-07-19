@@ -462,6 +462,9 @@ async function getIacEnvironment(
 		groups,
 		// Filled by attributeToIacGroups, which already walks the cost lines.
 		costByAddress: {},
+		// Root output names ride the same env round-trip as groups (flag-independent), so the bind
+		// sheet's facet→output picker has choices even when the BYO-IaC fetch flag is off (#823).
+		outputs: row.scan_report?.outputs ?? [],
 	};
 }
 

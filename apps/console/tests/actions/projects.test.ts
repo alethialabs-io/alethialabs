@@ -4,16 +4,16 @@
 // Mocked-boundary tests for the project CRUD/provision actions. We stub ONLY the seams:
 // the PDP guard (authorize), the owner resolver (requireOwner), the usage gate, the scaler
 // notifier, the authz hierarchy mirror, and a table-aware thenable drizzle chain wired through
-// withOwnerScope. The pure helpers stay REAL — routing (slugify/pickFreeSlug + reserved slugs)
+// withActorScope. The pure helpers stay REAL — routing (slugify/pickFreeSlug + reserved slugs)
 // and the cloud-provider converter (convertProjectConfig) — so the slug-collision logic and the
 // provider-mapping warnings are genuinely exercised, not re-implemented here. Each test asserts
 // the persisted .values()/.set() payloads, derived return shapes, and the branch outcomes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), currentActor: vi.fn() }));
 vi.mock("@/lib/db", () => ({
-	withOwnerScope: vi.fn(),
+	withActorScope: vi.fn(),
 	withScope: vi.fn(),
 	getServiceDb: vi.fn(),
 }));
@@ -38,10 +38,10 @@ import {
 	provisionProject,
 } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -52,6 +52,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectFabrics,
 	projectIacSources,
 	projectNetwork,
 	projectNosqlTables,
@@ -92,7 +93,7 @@ type Rows = unknown[];
 type RowsResolver = Rows | (() => Rows);
 
 /**
- * Builds a table-aware, thenable drizzle-ish tx and wires it through withOwnerScope.
+ * Builds a table-aware, thenable drizzle-ish tx and wires it through withActorScope.
  * Every builder returns the chain; awaiting a SELECT resolves to `cfg.select.get(table)`
  * and a returning INSERT to `cfg.insert.get(table)` (a function value is called fresh each
  * time, which lets a single table answer differently across sequential queries). Records the
@@ -176,7 +177,7 @@ function setupDb(cfg: {
 		},
 	};
 
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	// createProject scopes to the ACTIVE ORG via withScope({ownerId, orgId}); wire it the same way.
@@ -196,6 +197,7 @@ function valuesFor(spy: ReturnType<typeof vi.fn>, table: unknown): Record<string
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+	vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 	// Default: any client-supplied assigned runner belongs to the caller's org.
@@ -336,7 +338,7 @@ describe("createProject", () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("forbidden"));
 		setupDb({});
 		await expect(createProject(baseInput as never)).rejects.toThrow(/forbidden/);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 });
 
@@ -582,6 +584,156 @@ function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 	if (overrides) for (const [k, v] of overrides) m.set(k, v);
 	return m;
 }
+
+// #837: placement-aware dispatch — buildConfigSnapshot carries the Fabric + placement destination
+// so the #838 provisioner can route (per-Fabric tofu state + ArgoCD Application destination).
+describe("placement-aware dispatch (#837)", () => {
+	it("a dedicated env carries its Fabric identity + a null namespace, keeping the state path byte-identical", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-1",
+								name: "production",
+								stage: "production",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: "fab-1",
+								placement_mode: "dedicated",
+								namespace: null,
+							},
+						],
+					],
+					[projectFabrics, [{ id: "fab-1", project_id: "p1", name: "production" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({
+			fabric_id: "fab-1",
+			// A backfilled dedicated env: fabric name == env name, so `fabric_name` (the per-Fabric
+			// state key #838 re-keys onto) and `environment_stage` agree → state path is unchanged.
+			fabric_name: "production",
+			environment_stage: "production",
+			placement_mode: "dedicated",
+			namespace: null,
+		});
+	});
+
+	it("a namespace-placed env routes onto its shared Fabric and derives the destination namespace from the env name", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-9",
+								name: "PR 123 Preview",
+								stage: "development",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: "fab-shared",
+								placement_mode: "namespace",
+								namespace: null,
+							},
+						],
+					],
+					[projectFabrics, [{ id: "fab-shared", project_id: "p1", name: "shared-dev" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({
+			fabric_id: "fab-shared",
+			// On a SHARED Fabric the tofu state keys on the Fabric, not the env → fabric_name != env name.
+			fabric_name: "shared-dev",
+			placement_mode: "namespace",
+			// The ArgoCD destination namespace, derived as an RFC-1123 slug of the env name.
+			namespace: "pr-123-preview",
+		});
+	});
+
+	it("an explicit env namespace overrides the derived one", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-9",
+								name: "staging",
+								stage: "staging",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: "fab-shared",
+								placement_mode: "vcluster",
+								namespace: "team-a",
+							},
+						],
+					],
+					[projectFabrics, [{ id: "fab-shared", project_id: "p1", name: "shared-dev" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({ placement_mode: "vcluster", namespace: "team-a" });
+	});
+
+	it("falls back to the env identity when the Fabric link is not backfilled yet (back-compat)", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-1",
+								name: "production",
+								stage: "production",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: null,
+								placement_mode: "dedicated",
+								namespace: null,
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({
+			fabric_id: null,
+			fabric_name: "production",
+			namespace: null,
+		});
+	});
+});
 
 describe("planProject", () => {
 	it("freezes a config snapshot, queues a PLAN job, flips the env to QUEUED, and notifies the scaler", async () => {
@@ -1457,7 +1609,7 @@ describe("addEnvironment", () => {
 		await expect(addEnvironment("p1", { name: "!!!", stage: "staging" })).rejects.toThrow(
 			/name is required/,
 		);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
 	it("throws when the project is not found", async () => {

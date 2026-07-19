@@ -15,6 +15,7 @@ var (
 	projectApplyProjectID string
 	projectApplyRunnerID  string
 	projectApplyPlanJobID string
+	projectApplyEnv       string
 	projectApplyWait      bool
 )
 
@@ -44,9 +45,15 @@ var projectApplyCmd = &cobra.Command{
 
 		apiClient := api.NewClient(token)
 
+		envID, err := resolveEnvironmentID(apiClient, projectApplyProjectID, projectApplyEnv)
+		if err != nil {
+			fail(err)
+		}
+
 		params := api.QueueJobParams{
 			JobType:         "DEPLOY",
 			ConfigurationID: projectApplyProjectID,
+			EnvironmentID:   envID,
 		}
 		if projectApplyRunnerID != "" {
 			params.AssignedRunnerID = projectApplyRunnerID
@@ -76,5 +83,6 @@ func init() {
 	projectApplyCmd.Flags().StringVar(&projectApplyProjectID, "project-id", "", "ID of the project to deploy")
 	projectApplyCmd.Flags().StringVar(&projectApplyRunnerID, "runner-id", "", "Assign to a specific runner")
 	projectApplyCmd.Flags().StringVar(&projectApplyPlanJobID, "plan-job-id", "", "Reference a prior PLAN job")
+	projectApplyCmd.Flags().StringVar(&projectApplyEnv, "env", "", "Target environment name (default: the project's default environment)")
 	projectApplyCmd.Flags().BoolVarP(&projectApplyWait, "wait", "w", false, "Wait for job completion")
 }

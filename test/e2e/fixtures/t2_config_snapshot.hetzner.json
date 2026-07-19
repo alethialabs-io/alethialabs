@@ -9,6 +9,10 @@
 	"iac_version": "1.0.0",
 	"environment_stage": "fixture",
 	"environment_id": "env-1",
+	"fabric_id": "fab-1",
+	"fabric_name": "fixture",
+	"placement_mode": "dedicated",
+	"namespace": null,
 	"provider": "hetzner",
 	"classification": {},
 	"network": {

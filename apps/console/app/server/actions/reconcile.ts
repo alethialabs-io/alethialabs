@@ -12,7 +12,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
 import { environmentDrift, jobs, projectEnvironments } from "@/lib/db/schema";
 import { newTraceparent } from "@/lib/observability/trace";
@@ -150,7 +150,7 @@ export async function getEnvReconcileStates(
 	projectId: string,
 ): Promise<EnvReconcileState[]> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const envs = await withOwnerScope(actor.userId, (tx) =>
+	const envs = await withActorScope(actor, (tx) =>
 		tx
 			.select()
 			.from(projectEnvironments)

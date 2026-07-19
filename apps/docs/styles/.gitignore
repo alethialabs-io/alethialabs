@@ -1,0 +1,7 @@
+# Vale packages fetched by `vale sync` (e.g. Google/) are NOT vendored — only our
+# own Alethia style and vocab config are committed. Leading-slash anchors match ONLY
+# the top-level dirs of styles/ (a bare `*/` is recursive and would also re-ignore
+# nested config/ subdirs, which git then can't re-include).
+/*/
+!/Alethia/
+!/config/

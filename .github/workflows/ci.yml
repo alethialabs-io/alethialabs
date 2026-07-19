@@ -40,6 +40,7 @@ jobs:
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
       console: ${{ steps.filter.outputs.console }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,7 +49,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "agent=false" >> "$GITHUB_OUTPUT"
-            echo "console=false" >> "$GITHUB_OUTPUT"; exit 0
+            echo "console=false" >> "$GITHUB_OUTPUT"
+            echo "docs=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # THREE-dot (merge-base): the PR's OWN changes only. Two-dot (`git diff base head`)
           # false-positives every filter the moment this branch falls behind base — it then lists
@@ -71,6 +73,13 @@ jobs:
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
+          fi
+          # `docs` — the Vale prose lint. Gate on the whole docs app so a change to the
+          # .vale.ini / Alethia style / vocab re-runs the lint too, not just content edits.
+          if echo "$changed" | grep -qE '^apps/docs/'; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
           fi
 
   typescript:
@@ -461,6 +470,17 @@ jobs:
           go build ./...
           go vet ./...
           go test -coverprofile=cover.out ./...
+      # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
+      # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
+      # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
+      - name: go.mod tidy guard (standalone — GOWORK=off)
+        working-directory: ${{ matrix.module }}
+        run: |
+          GOWORK=off go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::${{ matrix.module }}/go.mod or go.sum is not tidy standalone — run 'cd ${{ matrix.module }} && GOWORK=off go mod tidy' and commit." >&2
+            exit 1
+          fi
       # Compile-check the docker-gated e2e_local keystone (it's excluded from the default
       # build tags, so a break in deploy_e2e_test.go would otherwise escape all of CI).
       - name: Vet e2e_local keystone (compile check)
@@ -664,3 +684,49 @@ jobs:
             echo "base commit unavailable — scanning latest commit only"
             gitleaks git . --redact --log-opts="-1"
           fi
+
+  docs-prose:
+    name: Docs prose (Vale · Diátaxis + plain-language)
+    needs: detect-changes
+    # This job ALWAYS runs so it always reports its status check — that is what makes it safe to
+    # mark REQUIRED (infra/github). A job whose steps all skip still reports success, so on a
+    # non-docs PR / promotion / merge_group it passes green without spinning up Vale. The real work
+    # is gated per-step on the `docs` filter; the final step is the explicit no-op pass.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        if: needs.detect-changes.outputs.docs == 'true'
+      - uses: actions/setup-node@v4
+        if: needs.detect-changes.outputs.docs == 'true'
+        with:
+          node-version: 22
+      # Vale shells out to `mdx2vast` to parse .mdx (prose only — it drops fenced code,
+      # code spans, URLs, JSX/ESM); it must be on $PATH.
+      - name: Install the MDX preprocessor
+        if: needs.detect-changes.outputs.docs == 'true'
+        run: npm i -g mdx2vast
+      # Vale is a single Go binary — install the pinned release, mirroring the gitleaks job.
+      - name: Install Vale
+        if: needs.detect-changes.outputs.docs == 'true'
+        run: |
+          curl -sSfL https://github.com/errata-ai/vale/releases/download/v3.15.1/vale_3.15.1_Linux_64-bit.tar.gz \
+            | sudo tar -xz -C /usr/local/bin vale
+          vale --version
+      # Downloads the Google style package into styles/ (gitignored); the Alethia style + vocab
+      # are vendored in the repo.
+      - name: Sync Vale packages
+        if: needs.detect-changes.outputs.docs == 'true'
+        working-directory: apps/docs
+        run: vale sync
+      # `vale` exits non-zero ONLY on error-level alerts (the Alethia.Terminology rule). Warnings
+      # (plain-language swaps, long sentences) and suggestions print for visibility but never red
+      # the build — matches the green-CI / self-merge flow.
+      - name: Lint docs prose
+        if: needs.detect-changes.outputs.docs == 'true'
+        working-directory: apps/docs
+        run: vale content
+      # No apps/docs changes — nothing to lint, but the job still reports success so the required
+      # check is satisfied on non-docs PRs and promotions.
+      - name: No docs changes
+        if: needs.detect-changes.outputs.docs != 'true'
+        run: echo "No apps/docs changes in this PR — prose lint not required."

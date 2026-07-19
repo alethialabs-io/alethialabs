@@ -14,7 +14,7 @@
 main() {
 	set -eu
 
-	REPO="alethialabs-io/alethialabs"
+	REPO="alethialabs-io/alethia-cli"
 	BIN="alethia"
 	GH="https://github.com/${REPO}"
 	API="https://api.github.com/repos/${REPO}"
@@ -58,28 +58,28 @@ main() {
 	esac
 	ASSET="${BIN}_${OS}_${ARCH}.tar.gz"
 
-	# --- resolve version (pinned env, else latest cli-vX.Y.Z release) ---
+	# --- resolve version (pinned env, else latest vX.Y.Z release on alethia-cli) ---
 	VERSION="${ALETHIA_VERSION:-}"
 	if [ -n "$VERSION" ]; then
 		case "$VERSION" in
-			cli-v*) TAG="$VERSION" ;;
-			v*) TAG="cli-$VERSION" ;;
-			*) TAG="cli-v$VERSION" ;;
+			cli-v*) TAG="v${VERSION#cli-v}" ;;
+			v*) TAG="$VERSION" ;;
+			*) TAG="v$VERSION" ;;
 		esac
 	else
 		printf 'Resolving latest alethia release...\n' >&2
-		# CLI binary releases are tagged cli-vX.Y.Z (release-please monorepo scheme).
+		# CLI releases live on alethia-cli under clean semver tags vX.Y.Z.
 		_ver="$(
 			fetch "${API}/releases?per_page=100" - \
 			| grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
 			| sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"//; s/"$//' \
-			| grep -E '^cli-v[0-9]+\.[0-9]+\.[0-9]+$' \
-			| sed 's/^cli-v//' \
+			| grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+			| sed 's/^v//' \
 			| sort -t. -k1,1n -k2,2n -k3,3n \
 			| tail -n1
 		)"
 		[ -n "$_ver" ] || err "could not resolve the latest release (GitHub API rate-limited? set GITHUB_TOKEN). You can also pin ALETHIA_VERSION=vX.Y.Z"
-		TAG="cli-v$_ver"
+		TAG="v$_ver"
 	fi
 
 	BASE="${GH}/releases/download/${TAG}"

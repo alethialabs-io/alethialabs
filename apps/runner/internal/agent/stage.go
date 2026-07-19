@@ -305,10 +305,11 @@ func runIacScanStage(ctx context.Context, p stageIacScanPayload, workDir string,
 		Providers: nonNilStrings(rep.Providers),
 		Modules:   nonNilStrings(rep.Modules),
 		Resources: toIacResources(rep.Resources),
+		Outputs:   nonNilStrings(rep.Outputs),
 		CommitSHA: p.CommitSHA,
 	}
-	fmt.Fprintf(stdout, "Static gate: ok=%v (providers=%v, %d module(s), %d resource(s), %d finding(s))\n",
-		rep.OK, report.Providers, len(report.Modules), len(report.Resources), len(report.Findings))
+	fmt.Fprintf(stdout, "Static gate: ok=%v (providers=%v, %d module(s), %d resource(s), %d output(s), %d finding(s))\n",
+		rep.OK, report.Providers, len(report.Modules), len(report.Resources), len(report.Outputs), len(report.Findings))
 
 	// Only run tofu (which executes provider plugins) on a module the static gate cleared.
 	if rep.OK {

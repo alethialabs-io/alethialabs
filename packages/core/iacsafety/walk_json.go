@@ -43,6 +43,7 @@ var jsonTopSchema = &hcl.BodySchema{
 		{Type: "ephemeral", LabelNames: []string{"type", "name"}},
 		{Type: "data", LabelNames: []string{"type", "name"}},
 		{Type: "module", LabelNames: []string{"name"}},
+		{Type: "output", LabelNames: []string{"name"}},
 		{Type: "provider", LabelNames: []string{"name"}},
 		{Type: "check", LabelNames: []string{"name"}},
 		{Type: "import"},
@@ -113,6 +114,12 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 				}
 			case "module":
 				s.walkJSONModuleBlock(blk, rel, moduleDir)
+			case "output":
+				// Root-module output names for the BYO-IaC binding picker (#687);
+				// recordOutput ignores child-module outputs. Value never read.
+				if len(blk.Labels) > 0 {
+					s.recordOutput(blk.Labels[0], moduleDir)
+				}
 			case "provider":
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)

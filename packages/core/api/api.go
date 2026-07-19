@@ -178,7 +178,11 @@ type QueueJobParams struct {
 	CloudIdentityID  string
 	AssignedRunnerID string
 	PlanJobID        string
-	ConfigSnapshot   map[string]interface{}
+	// EnvironmentID targets a specific environment of the project (the decoupled env-model,
+	// #843). Empty → the server resolves the project's default environment (back-compat). The
+	// server (#837) routes it through planProject/provisionProject/destroyProject.
+	EnvironmentID  string
+	ConfigSnapshot map[string]interface{}
 }
 
 // --- Helpers ---
@@ -428,6 +432,9 @@ func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error
 	}
 	if params.PlanJobID != "" {
 		payload["plan_job_id"] = params.PlanJobID
+	}
+	if params.EnvironmentID != "" {
+		payload["environment_id"] = params.EnvironmentID
 	}
 	if params.ConfigSnapshot != nil {
 		payload["config_snapshot"] = params.ConfigSnapshot

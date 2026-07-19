@@ -5,13 +5,12 @@
 import { eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { requireOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { inferStack } from "@/lib/scanner/infer";
@@ -48,7 +47,7 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 	});
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+	const jobId = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({
@@ -81,8 +80,8 @@ export async function getScanDigest(jobId: string): Promise<{
 	digest: RepoDigest | null;
 	error: string | null;
 }> {
-	const owner = await requireOwner();
-	return withOwnerScope(owner, async (tx) => {
+	const actor = await currentActor();
+	return withActorScope(actor, async (tx) => {
 		const [job] = await tx
 			.select({
 				status: jobs.status,
@@ -114,8 +113,8 @@ export async function getScanProposal(jobId: string): Promise<
 	| { status: "NEEDS_SETUP"; needsIdentity: boolean }
 	| { status: "READY"; proposal: ScanProposal }
 > {
-	const owner = await requireOwner();
-	const job = await withOwnerScope(owner, async (tx) => {
+	const scanActor = await currentActor();
+	const job = await withActorScope(scanActor, async (tx) => {
 		const [j] = await tx
 			.select({
 				status: jobs.status,
@@ -143,7 +142,6 @@ export async function getScanProposal(jobId: string): Promise<
 	const stack = inferred.stack;
 	// Record the inference's real token cost (credits were already charged at queue
 	// time in scanRepo; this 0-credit row carries cost-of-serve only).
-	const scanActor = await currentActor();
 	void recordAiUsage({
 		orgId: scanActor.orgId,
 		userId: scanActor.userId,
@@ -190,13 +188,12 @@ export async function getMergedScanProposal(jobIds: string[]): Promise<
 	| { status: "NEEDS_SETUP"; needsIdentity: boolean }
 	| { status: "READY"; proposal: ScanProposal }
 > {
-	const owner = await requireOwner();
 	if (jobIds.length === 0) return { status: "NOT_FOUND" };
 	const scanActor = await currentActor();
 
 	const inputs: ScanInput[] = [];
 	for (const jobId of jobIds) {
-		const job = await withOwnerScope(owner, async (tx) => {
+		const job = await withActorScope(scanActor, async (tx) => {
 			const [j] = await tx
 				.select({
 					status: jobs.status,

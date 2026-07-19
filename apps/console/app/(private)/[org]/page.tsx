@@ -9,7 +9,6 @@ import {
 } from "@/app/server/actions/projects";
 import { getQueryClient } from "@/lib/query/client";
 import { pageMetadata } from "@/lib/seo/page-metadata";
-import { seedClassificationAssignments } from "@/lib/query/prefetch-classification";
 import { qk } from "@/lib/query/keys";
 import type { ViewMode } from "@repo/ui/view-toggle";
 import { OverviewClient, type OverviewState } from "./overview-client";
@@ -69,12 +68,6 @@ export default async function OrgOverviewRoute({
 	]);
 	// Keep the shared (unfiltered) projects cache warm for the switcher / palette / breadcrumbs.
 	queryClient.setQueryData(qk.projects(org), allProjects);
-	// Batch-seed each visible card's classification chips (one round-trip, no per-card fetch).
-	await seedClassificationAssignments(
-		queryClient,
-		"project",
-		projects.map((p) => p.id),
-	);
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>

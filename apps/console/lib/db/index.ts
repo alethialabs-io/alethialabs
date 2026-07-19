@@ -82,12 +82,32 @@ export async function withScope<T>(
 }
 
 /**
- * Convenience wrapper for the per-owner path: scopes to the owner's personal org
- * (`orgId === ownerId`). Existing call sites pass just the owner id unchanged.
+ * Personal-scope wrapper: scopes to the owner's *personal* org (`orgId === ownerId`).
+ *
+ * ⚠️ This forces `app.current_org = ownerId` (the user id), NOT the actor's real active
+ * org — so in a Teams/enterprise org (`actor.orgId !== actor.userId`) it sees only rows
+ * the current user personally created and is BLIND to org-shared rows. Use it ONLY for
+ * genuinely user-private data. For any org-shared resource (projects, jobs, clusters,
+ * runners, …) use {@link withActorScope} so RLS carries the real active org.
  */
 export async function withOwnerScope<T>(
 	ownerId: string,
 	fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
 	return withScope({ ownerId, orgId: ownerId }, fn);
+}
+
+/**
+ * Actor-scope wrapper — the standard for org-shared reads/writes. Scopes to the actor's
+ * userId (owner var) AND real active orgId (org var), so the coarse-org RLS wall
+ * (`org_id = app.current_org`) resolves to the true organization. In community/personal
+ * scope `actor.orgId === actor.userId`, so this is identical to {@link withOwnerScope}.
+ * Accepts a structural `{ userId, orgId }` (usually the {@link Actor} from currentActor())
+ * to keep this low-level module dependency-free.
+ */
+export async function withActorScope<T>(
+	actor: { userId: string; orgId: string },
+	fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, fn);
 }

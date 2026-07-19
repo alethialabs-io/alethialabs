@@ -23,6 +23,13 @@ jobs:
           HEAD: ${{ github.head_ref }}
         run: |
           set -euo pipefail
+          # release-please opens its release PRs directly against main/staging
+          # (release-please--branches--<base>--…) by design — they only bump the manifest + changelog
+          # and cut the tag, so they're exempt from the promotion-source rule. Without this the guard
+          # (a required check on protect-main) would make every release PR un-mergeable.
+          case "$HEAD" in
+            release-please--*) echo "OK: release-please PR '$HEAD' → '$BASE' (exempt)."; exit 0 ;;
+          esac
           case "$BASE" in
             main)    allowed="staging" ;;
             staging) allowed="dev" ;;

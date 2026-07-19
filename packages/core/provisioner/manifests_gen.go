@@ -194,6 +194,19 @@ func credentialSecretOutputKey(kind string) string {
 	}
 }
 
+// credentialRemoteOutputKey returns the tofu output NAME holding a target's master-credentials
+// secret (the ExternalSecret RemoteKey source). A BYO-IaC target (Address != "") uses the customer
+// module's declared output (manifests.ByoCredentialOutputKey — "" when the module exported none, so
+// RenderExternalSecret reports it unsatisfiable); a first-class target uses the platform template
+// key. This branches identically to resolveBindings' credential gate, so the secretKeyRef the
+// workload reads and the ExternalSecret this lane writes stay in lock-step.
+func credentialRemoteOutputKey(t types.ServiceBindingTarget) string {
+	if t.Address != "" {
+		return manifests.ByoCredentialOutputKey(t)
+	}
+	return credentialSecretOutputKey(string(t.Kind))
+}
+
 // writeBindingExternalSecrets renders an ExternalSecret per service credential-facet binding and
 // writes it into dir (alongside the app manifests) for ArgoCD to apply. It passes ServiceName:
 // s.Name so the materialized Secret's name equals the renderer's per-service secretKeyRef target.
@@ -219,7 +232,7 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 				Namespace:   appNamespace,
 				Target:      b.Target,
 				Provider:    string(vc.Provider),
-				RemoteKey:   outputs[credentialSecretOutputKey(string(b.Target.Kind))],
+				RemoteKey:   outputs[credentialRemoteOutputKey(b.Target)],
 				Facets:      facets,
 			})
 			if renderErr != nil {

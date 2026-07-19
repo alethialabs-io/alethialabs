@@ -114,4 +114,46 @@ describe("bindableComponents", () => {
 			{ kind: "secret", name: "api-key" },
 		]);
 	});
+
+	it("surfaces BYO-IaC db/cache/queue resources as targets with address + outputs (#687)", () => {
+		const out = bindableComponents({
+			databases: [{ name: "first-class-db" }],
+			iacOutputs: ["db_endpoint", "db_master_secret"],
+			iacGroups: [
+				{
+					key: "database|module.db",
+					kind: "database",
+					module: "module.db",
+					source: "scan",
+					members: [
+						{
+							address: "module.db.aws_db_instance.main",
+							type: "aws_db_instance",
+							name: "main",
+							module: "module.db",
+						},
+					],
+				},
+				{
+					// A non-bindable kind (network) is skipped — not a backing resource.
+					key: "network|",
+					kind: "network",
+					module: "",
+					source: "scan",
+					members: [
+						{ address: "aws_vpc.main", type: "aws_vpc", name: "main", module: "" },
+					],
+				},
+			],
+		});
+		expect(out).toEqual([
+			{ kind: "database", name: "first-class-db" },
+			{
+				kind: "database",
+				name: "main",
+				address: "module.db.aws_db_instance.main",
+				outputs: ["db_endpoint", "db_master_secret"],
+			},
+		]);
+	});
 });

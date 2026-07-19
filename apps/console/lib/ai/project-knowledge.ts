@@ -9,10 +9,14 @@
 //
 // The formatting half is pure (and unit-tested); the DB half is a thin owner-scoped read.
 
-import { desc, eq, isNull } from "drizzle-orm";
-import { withOwnerScope } from "@/lib/db";
+import { desc, eq, isNull, sql } from "drizzle-orm";
+import { type Tx, withActorScope, withOwnerScope } from "@/lib/db";
 import { agentContext, jobs, projectEnvironments, projects } from "@/lib/db/schema";
 import type { AgentContext } from "@/lib/db/schema";
+import { orgAgentContextEnabled } from "./org-agent-context-flag";
+
+/** Actor scope for the agent-context reads — the real `{ userId, orgId }` (community: equal). */
+type ReadActor = { userId: string; orgId: string };
 
 // Re-exported for server callers; the constant itself lives in a client-safe module so a client
 // component can read it without dragging this (DB-bound) module into the browser bundle.
@@ -116,24 +120,44 @@ export function formatContextBlock(
 /**
  * Read the pinned context row for a scope (project_id NULL = the org-level row).
  *
- * `ownerUserId` MUST be the **user id** (`requireOwner()` / `actor.userId`) — never `actor.orgId`.
- * `withOwnerScope` sets both `current_owner` and `current_org` to whatever it's given, and these
- * rows are written through `requireOwner()`, so reading under a different scope silently returns
- * nothing (community hides it, since there orgId === userId; an enterprise org would not).
+ * Scope depends on {@link orgAgentContextEnabled}:
+ * - OFF (default): per-user — `withOwnerScope(actor.userId)`, byte-identical to before. Each member
+ *   only ever sees their own row (written stamping `org_id = user_id`).
+ * - ON: org-shared — `withActorScope`. During the transition a member may see BOTH the shared org
+ *   row (`org_id = actor.orgId`) and their own legacy personal row (`user_id = actor.userId`) via
+ *   the `owner_all` RLS `user_id OR org_id` predicate, so we PREFER the org row (then most-recently-
+ *   updated). That makes the read deterministic with no backfill: once an admin sets the org row
+ *   everyone reads it; until then each member falls back to their own legacy row.
  */
 export async function readAgentContext(
-	ownerUserId: string,
+	actor: ReadActor,
 	projectId: string | null,
 ): Promise<AgentContext | null> {
-	return withOwnerScope(ownerUserId, async (tx) => {
+	// project_id IS NULL = the org-level row.
+	const scopeWhere = projectId
+		? eq(agentContext.project_id, projectId)
+		: isNull(agentContext.project_id);
+
+	if (!orgAgentContextEnabled()) {
+		return withOwnerScope(actor.userId, async (tx) => {
+			const [row] = await tx
+				.select()
+				.from(agentContext)
+				.where(scopeWhere)
+				.limit(1);
+			return row ?? null;
+		});
+	}
+
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select()
 			.from(agentContext)
-			.where(
-				projectId
-					? eq(agentContext.project_id, projectId)
-					: // project_id IS NULL = the org-level row.
-						isNull(agentContext.project_id),
+			.where(scopeWhere)
+			// Prefer the shared org row over a lingering legacy personal row, then newest.
+			.orderBy(
+				desc(sql`${agentContext.org_id} = ${actor.orgId}`),
+				desc(agentContext.updated_at),
 			)
 			.limit(1);
 		return row ?? null;
@@ -141,15 +165,16 @@ export async function readAgentContext(
 }
 
 /**
- * Assemble the derived project-knowledge block from live state. Owner-scoped (RLS), so it can
- * only ever read the caller's own project. Returns "" if the project isn't visible.
- * `ownerUserId` is the user id — see {@link readAgentContext} for why it must not be an org id.
+ * Assemble the derived project-knowledge block from live state. Returns "" if the project isn't
+ * visible in scope. Scope depends on {@link orgAgentContextEnabled}: OFF → `withOwnerScope`
+ * (per-user, byte-identical to before); ON → `withActorScope`, so a teammate resolves an org
+ * project's knowledge (projects are org-shared).
  */
 export async function buildProjectKnowledge(
-	ownerUserId: string,
+	actor: ReadActor,
 	projectId: string,
 ): Promise<string> {
-	const facts = await withOwnerScope(ownerUserId, async (tx): Promise<ProjectFacts | null> => {
+	const read = async (tx: Tx): Promise<ProjectFacts | null> => {
 		const [p] = await tx
 			.select()
 			.from(projects)
@@ -187,7 +212,11 @@ export async function buildProjectKnowledge(
 			environments: envs,
 			recentJobs: recent,
 		};
-	});
+	};
+
+	const facts = orgAgentContextEnabled()
+		? await withActorScope(actor, read)
+		: await withOwnerScope(actor.userId, read);
 
 	return facts ? formatProjectKnowledge(facts) : "";
 }

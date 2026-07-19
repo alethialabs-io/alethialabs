@@ -69,6 +69,10 @@ export async function POST(req: Request) {
 			config_snapshot,
 			assigned_runner_id,
 			plan_job_id,
+			// #837: optional per-environment target. When omitted the server actions fall back to
+			// the project's default environment (unchanged back-compat). The CLI wire that sends
+			// this is #843; here we only accept + thread it into the placement-aware dispatch.
+			environment_id,
 		} = body;
 
 		if (!job_type) {
@@ -164,15 +168,24 @@ export async function POST(req: Request) {
 			const result = await runWithActor(actor, async () => {
 				switch (jobType) {
 					case "PLAN":
-						return planProject(configuration_id, assigned_runner_id || null);
+						return planProject(
+							configuration_id,
+							assigned_runner_id || null,
+							environment_id || null,
+						);
 					case "DEPLOY":
 						return provisionProject(
 							configuration_id,
 							plan_job_id || undefined,
 							assigned_runner_id || null,
+							environment_id || null,
 						);
 					case "DESTROY":
-						return destroyProject(configuration_id, null, assigned_runner_id || null);
+						return destroyProject(
+							configuration_id,
+							environment_id || null,
+							assigned_runner_id || null,
+						);
 				}
 			});
 			jobId = result.jobId;

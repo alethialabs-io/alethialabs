@@ -1,0 +1,10 @@
+extends: occurrence
+message: "This sentence is long (over 30 words) — consider splitting it."
+# STE keeps procedural sentences ≤20 words and descriptive ≤25; 30 is a lenient
+# dev-docs ceiling. Suggestion-level: pure advice — hidden at the default `warning`
+# floor so it never clutters CI, surfaced with `vale --minAlertLevel=suggestion`.
+level: suggestion
+scope: sentence
+# Count word tokens per sentence; flag when more than `max`.
+token: \b(\w+)\b
+max: 30

@@ -38,7 +38,7 @@ If no mapping exists, the target provider's default region is used, and a warnin
 ### Cluster
 
 - **Instance types**: Mapped via `INSTANCE_TYPE_MAP` (e.g., `t3.medium` → `e2-medium` → `Standard_B2s`). Unmapped types generate a warning.
-- **K8s version**: Reset to the target provider's default (versions differ across providers)
+- **Kubernetes version**: Reset to the target provider's default (versions differ across providers)
 - **Autoscaler**: Key name converted in `provider_config` (`enable_karpenter` → `enable_autopilot` → `enable_cluster_autoscaler`)
 
 ### Databases

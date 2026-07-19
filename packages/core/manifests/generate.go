@@ -440,6 +440,54 @@ func defaultPort(kind string) string {
 	}
 }
 
+// byoEndpointKey returns a BYO-IaC target's declared endpoint output name — the customer module
+// output holding the resource's connection endpoint (#687). "" when the target is not BYO-IaC or
+// declared no endpoint output, in which case the endpoint facet resolves fail-closed.
+func byoEndpointKey(t types.ServiceBindingTarget) string {
+	if t.Address == "" || t.OutputKeys == nil {
+		return ""
+	}
+	return t.OutputKeys.Endpoint
+}
+
+// byoPortKey returns a BYO-IaC target's declared port output name, or "" (then defaultPort applies,
+// as for a first-class target).
+func byoPortKey(t types.ServiceBindingTarget) string {
+	if t.Address == "" || t.OutputKeys == nil {
+		return ""
+	}
+	return t.OutputKeys.Port
+}
+
+// ByoCredentialOutputKey returns a BYO-IaC target's declared master-credentials-secret output name
+// — the ExternalSecret RemoteKey source (#687). "" when the target is not BYO-IaC or declared no
+// credential-secret output. Shared by the render-bindings credential gate (resolveBindings) and the
+// ExternalSecret RemoteKey (provisioner.writeBindingExternalSecrets) so the two lanes never disagree
+// about whether a BYO-IaC credential facet is materializable.
+func ByoCredentialOutputKey(t types.ServiceBindingTarget) string {
+	if t.Address == "" || t.OutputKeys == nil {
+		return ""
+	}
+	return t.OutputKeys.CredentialSecret
+}
+
+// byoCredentialSatisfiable reports whether a BYO-IaC target's credential facet can be materialized:
+// the module exported a master-secret output that RESOLVES to a value in the deploy outputs, the
+// cloud has an ESO ClusterSecretStore, and the facet maps to a property in that secret. It mirrors
+// RenderExternalSecret's skip conditions exactly, so resolveBindings only emits a credential
+// secretKeyRef when the ExternalSecret lane will actually materialize the Secret it points at.
+func byoCredentialSatisfiable(opts Options, t types.ServiceBindingTarget, facet string) bool {
+	key := ByoCredentialOutputKey(t)
+	if key == "" || opts.Outputs[key] == "" {
+		return false
+	}
+	if StoreNameFor(opts.Provider) == "" {
+		return false
+	}
+	_, ok := facetProperty(opts.Provider, facet)
+	return ok
+}
+
 // resolveBindings turns a service's W3 bindings into container env: non-secret facets
 // (endpoint/port) as plain values resolved from the provision's tofu outputs, credential facets as
 // secretKeyRef into the Secret the ExternalSecret lane materializes. It shares IsCredentialFacet +
@@ -519,6 +567,18 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					}
 					continue
 				}
+				// BYO-IaC credential facets are fail-closed: emit the secretKeyRef ONLY when the
+				// customer module exports a master-credentials secret this cloud's ESO store can
+				// materialize for this facet — the SAME predicate RenderExternalSecret uses, so the
+				// workload never references a Secret the ExternalSecret lane won't create (mirrors
+				// #686). First-class targets keep the existing always-emit path (their platform
+				// master secret always exists), so their output is byte-identical.
+				if b.Target.Address != "" && !byoCredentialSatisfiable(opts, b.Target, string(inj.From)) {
+					r.unresolved = append(r.unresolved, fmt.Sprintf(
+						"binding credential facet %q (env %s) for %s→%s/%s: BYO-IaC module exports no usable credential secret — env omitted (fail-closed)",
+						inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name))
+					continue
+				}
 				r.secretEnv = append(r.secretEnv, AppSecretEnv{
 					Env:        inj.Env,
 					SecretName: BindingSecretName(serviceName, b.Target),
@@ -529,13 +589,23 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 			var value string
 			switch string(inj.From) {
 			case "endpoint":
-				if keyless {
+				switch {
+				case keyless:
 					value = "127.0.0.1" // the local auth proxy sidecar
-				} else {
+				case b.Target.Address != "":
+					// BYO-IaC: the customer module's own output, not the platform template key.
+					value = opts.Outputs[byoEndpointKey(b.Target)]
+				default:
 					value = opts.Outputs[endpointOutputKey(opts.Provider, string(b.Target.Kind))]
 				}
 			case "port":
-				value = defaultPort(string(b.Target.Kind))
+				// BYO-IaC may export a port output; otherwise (and for first-class) use the
+				// conventional default for the kind.
+				if k := byoPortKey(b.Target); k != "" {
+					value = opts.Outputs[k]
+				} else {
+					value = defaultPort(string(b.Target.Kind))
+				}
 			}
 			if value == "" {
 				r.unresolved = append(r.unresolved, fmt.Sprintf(
