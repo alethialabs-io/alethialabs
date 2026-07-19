@@ -48,6 +48,20 @@ alethia org switch
 The selection is persisted locally and sent as `X-Alethia-Org` on subsequent commands. Clear it with
 [`alethia config clear-context`](/cli/configuration#alethia-config).
 
+## `alethia org settings`
+
+Show the active organization's general settings.
+
+```bash
+alethia org settings
+alethia org settings -o json
+```
+
+Renders a field/value card: **name**, **slug**, **description**, **region** (the org's default
+provisioning region), **default env**, and **terraform** (the default OpenTofu version). Prints
+`Not in an organization (community mode).` when the caller has no real org (personal scope). Backing
+call: `GET /cli/org-settings`.
+
 ## `alethia members`
 
 Manage members of the active organization. Alias: `member`.

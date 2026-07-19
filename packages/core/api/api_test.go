@@ -1029,3 +1029,99 @@ func TestGetProjectStagedChanges_Success(t *testing.T) {
 		t.Errorf("unexpected staged changes: %+v", view)
 	}
 }
+
+func TestGetCloudInventory_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/cloud-identities/id-1/inventory" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"networks": []map[string]any{{"native_id": "vpc-1", "name": "main", "region": "eu-west-1", "provider": "aws", "cidr_block": "10.0.0.0/16", "is_default": true}},
+			"subnets":  []map[string]any{{"native_id": "subnet-1", "name": nil, "region": "eu-west-1", "availability_zone": "eu-west-1a", "cidr_block": "10.0.1.0/24", "is_public": true}},
+			"regions":  []string{"eu-west-1"},
+		})
+	}))
+
+	inv, err := client.GetCloudInventory("id-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inv.Networks) != 1 || inv.Networks[0].NativeID != "vpc-1" || len(inv.Subnets) != 1 || len(inv.Regions) != 1 {
+		t.Errorf("unexpected inventory: %+v", inv)
+	}
+}
+
+func TestGetOrgSettings_Present(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/org-settings" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"settings": map[string]any{"name": "Acme", "slug": "acme", "description": "", "logo": nil, "region": "eu-west-1", "default_env": "staging", "terraform_version": "1.9.5"},
+		})
+	}))
+
+	s, err := client.GetOrgSettings()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s == nil || s.Name != "Acme" {
+		t.Errorf("unexpected settings: %+v", s)
+	}
+}
+
+func TestGetOrgSettings_Community(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"settings": nil})
+	}))
+
+	s, err := client.GetOrgSettings()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s != nil {
+		t.Errorf("expected nil settings in community mode, got %+v", s)
+	}
+}
+
+func TestListAgents_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/agents" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"agents": []map[string]any{{"id": "ag-1", "persona": "provisioner", "mission": "m", "tool_scope": []string{"plan"}, "memory_namespace": "ns", "project_id": nil, "version": 1, "created_at": "2026-01-01T00:00:00.000Z", "updated_at": "2026-01-01T00:00:00.000Z"}},
+		})
+	}))
+
+	agents, err := client.ListAgents()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(agents) != 1 || agents[0].Persona != "provisioner" {
+		t.Errorf("unexpected agents: %+v", agents)
+	}
+}
+
+func TestGetAgent_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/agents/ag-1" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"agent": map[string]any{"id": "ag-1", "persona": "provisioner", "mission": "m", "tool_scope": []string{"plan", "apply"}, "memory_namespace": "ns", "project_id": nil, "version": 2, "created_at": "2026-01-01T00:00:00.000Z", "updated_at": "2026-01-01T00:00:00.000Z"},
+		})
+	}))
+
+	a, err := client.GetAgent("ag-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.Version != 2 || len(a.ToolScope) != 2 {
+		t.Errorf("unexpected agent: %+v", a)
+	}
+}

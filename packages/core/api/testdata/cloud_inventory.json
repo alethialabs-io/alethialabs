@@ -1,0 +1,25 @@
+{
+	"networks": [
+		{
+			"native_id": "string",
+			"name": "string",
+			"region": "string",
+			"provider": "string",
+			"cidr_block": "string",
+			"is_default": false
+		}
+	],
+	"subnets": [
+		{
+			"native_id": "string",
+			"name": "string",
+			"region": "string",
+			"availability_zone": "string",
+			"cidr_block": "string",
+			"is_public": false
+		}
+	],
+	"regions": [
+		"string"
+	]
+}
