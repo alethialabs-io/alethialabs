@@ -46,6 +46,18 @@ export const environmentLifecycle = pgEnum("environment_lifecycle", [
 	"ephemeral",
 ]);
 
+// How a delivery Environment is PLACED onto its Fabric (the infra unit). The decoupled
+// env-model differentiator (spec management/spec/features/environments-fabric-placement.md):
+// `namespace` = a namespace on a shared Fabric (cheapest; dev/preview); `vcluster` = a virtual
+// cluster on a shared Fabric (own control plane/CRDs/version — the middle tier neither Porter
+// nor Qovery offers); `dedicated` = the env owns its Fabric 1:1 (prod/hard-isolation; ≈ the
+// legacy env=cluster behaviour, so it is the back-compat default).
+export const placementMode = pgEnum("placement_mode", [
+	"namespace",
+	"vcluster",
+	"dedicated",
+]);
+
 export const componentStatus = pgEnum("component_status", [
 	"PENDING",
 	"CREATING",

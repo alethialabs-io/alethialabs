@@ -31,7 +31,7 @@ DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'projects', 'project_environments', 'project_network', 'project_cluster', 'project_dns',
+    'projects', 'project_environments', 'project_fabrics', 'project_network', 'project_cluster', 'project_dns',
     'project_repositories', 'project_databases', 'project_caches', 'project_queues', 'project_topics',
     'project_nosql_tables', 'project_container_registries', 'project_secrets',
     'project_storage_buckets', 'project_chart_workloads', 'jobs',
@@ -741,6 +741,35 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ── Fabric backfill (decoupled env-model, #836) ──────────────────────────────────────
+-- Environment is now a delivery target PLACED onto a Fabric (the infra unit). Existing rows
+-- predate the split: env = its own cluster. Map each to the `dedicated` placement (the column
+-- default) by creating a 1:1 Fabric per environment and linking the env + its cluster to it —
+-- byte-behaviour preserved. Idempotent: only envs whose fabric_id is still NULL are touched.
+DO $$
+BEGIN
+  -- One Fabric per existing environment (name/region/status/tenancy carried from the env).
+  WITH new_fabrics AS (
+    INSERT INTO public.project_fabrics (project_id, user_id, org_id, name, region, status)
+    SELECT e.project_id, e.user_id, e.org_id, e.name, e.region, e.status
+      FROM public.project_environments e
+     WHERE e.fabric_id IS NULL
+    RETURNING id, project_id, name
+  )
+  UPDATE public.project_environments e
+     SET fabric_id = f.id
+    FROM new_fabrics f
+   WHERE e.project_id = f.project_id AND e.name = f.name AND e.fabric_id IS NULL;
+
+  -- Link each existing cluster to the Fabric created for its environment.
+  UPDATE public.project_cluster c
+     SET fabric_id = e.fabric_id
+    FROM public.project_environments e
+   WHERE c.environment_id = e.id
+     AND c.fabric_id IS NULL
+     AND e.fabric_id IS NOT NULL;
+END $$;
+
 -- ── project_full: denormalized read model for the CLI config + job-create endpoints.
 -- OUTPUT column names match the ProjectConfig wire contract (create_vpc, …);
 -- sources the renamed project_* tables. Numerics are cast to float8 so the JSON carries
@@ -954,7 +983,7 @@ DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'project_environments', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
+    'project_environments', 'project_fabrics', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
     'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
     'project_container_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets',
     'project_changes', 'project_chart_workloads',

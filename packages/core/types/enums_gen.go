@@ -134,6 +134,22 @@ var AllProjectStatuses = []ProjectStatus{
 	ProjectStatusDestroyed,
 }
 
+// PlacementMode mirrors the placement_mode enum (lib/db/schema/enums.ts).
+type PlacementMode string
+
+const (
+	PlacementModeNamespace PlacementMode = "namespace"
+	PlacementModeVcluster  PlacementMode = "vcluster"
+	PlacementModeDedicated PlacementMode = "dedicated"
+)
+
+// AllPlacementModes is every placement_mode value, in schema order.
+var AllPlacementModes = []PlacementMode{
+	PlacementModeNamespace,
+	PlacementModeVcluster,
+	PlacementModeDedicated,
+}
+
 // ServiceWorkloadType mirrors the service_workload_type enum (lib/db/schema/enums.ts).
 type ServiceWorkloadType string
 
