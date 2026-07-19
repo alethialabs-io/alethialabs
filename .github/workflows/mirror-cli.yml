@@ -52,6 +52,11 @@ jobs:
           mkdir -p "$STAGE/apps/cli" "$STAGE/packages/core"
           rsync -a --delete apps/cli/ "$STAGE/apps/cli/"
           rsync -a --delete packages/core/ "$STAGE/packages/core/"
+          # The mirror has no go.work, so apps/cli builds as a standalone module — tidy it (and core)
+          # so its go.mod/go.sum are self-sufficient and the Sanity build below passes. The monorepo
+          # keeps these tidy via the CI "go.mod tidy guard (standalone)"; this is belt-and-suspenders.
+          (cd "$STAGE/packages/core" && GOWORK=off go mod tidy)
+          (cd "$STAGE/apps/cli" && GOWORK=off go mod tidy)
           cp .github/mirror/README.md "$STAGE/README.md"
           cp .github/mirror/CONTRIBUTING.md "$STAGE/CONTRIBUTING.md"
           cp LICENSE "$STAGE/LICENSE"

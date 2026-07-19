@@ -470,6 +470,17 @@ jobs:
           go build ./...
           go vet ./...
           go test -coverprofile=cover.out ./...
+      # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
+      # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
+      # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
+      - name: go.mod tidy guard (standalone — GOWORK=off)
+        working-directory: ${{ matrix.module }}
+        run: |
+          GOWORK=off go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::${{ matrix.module }}/go.mod or go.sum is not tidy standalone — run 'cd ${{ matrix.module }} && GOWORK=off go mod tidy' and commit." >&2
+            exit 1
+          fi
       # Compile-check the docker-gated e2e_local keystone (it's excluded from the default
       # build tags, so a break in deploy_e2e_test.go would otherwise escape all of CI).
       - name: Vet e2e_local keystone (compile check)
