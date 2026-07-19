@@ -118,8 +118,24 @@ export async function POST(
 				body: { providerId: gitProvider, userId: job.user_id },
 				headers: new Headers(),
 			});
+			// A null token is the silent killer of a GitOps deploy (deploy.go's git-token gate) — so
+			// say WHY out loud instead of returning an unexplained null. The commonest cause is the
+			// job owner having no valid `${gitProvider}` account link (or one whose token can't be
+			// refreshed): the runner then can't clone a PRIVATE apps repo. (A PUBLIC repo no longer
+			// needs this — ArgoCD clones it anonymously.)
+			if (!res.accessToken) {
+				console.warn(
+					`git-token: no ${gitProvider} access token for job owner ${job.user_id} (repo ${repoUrl}) — the owner has no valid ${gitProvider} link or its token could not be refreshed`,
+				);
+			}
 			return NextResponse.json({ token: res.accessToken ?? null });
-		} catch {
+		} catch (err: unknown) {
+			// getAccessToken threw (provider not configured, no account row, refresh failed, …).
+			// Surface the reason — the swallowed catch here is what made this un-diagnosable.
+			console.error(
+				`git-token: getAccessToken failed for job owner ${job.user_id} provider ${gitProvider} (repo ${repoUrl}):`,
+				err instanceof Error ? err.message : err,
+			);
 			return NextResponse.json({ token: null });
 		}
 	} catch (err: unknown) {

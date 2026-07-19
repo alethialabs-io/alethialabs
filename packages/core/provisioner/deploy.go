@@ -758,14 +758,23 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 
 		if gitopsRequested {
-			if params.GitAccessToken == "" {
-				err := fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this project", vc.Repositories.AppsDestinationRepo)
+			switch {
+			case params.GitAccessToken != "":
+				// Private or public: register the token so ArgoCD authenticates its clones.
+				if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
+					result.GitopsStatus = gitopsFailed(argocd.GitopsStepRepoCredentials, err)
+					return &result, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
+				}
+			case argocd.IsRepoAnonymouslyCloneable(ctx, vc.Repositories.AppsDestinationRepo):
+				// A PUBLIC apps repo needs no credential — ArgoCD clones it anonymously, exactly as
+				// the probe just did. This keeps the keyless promise honest for public GitOps repos
+				// (the enterprise-demo) without weakening anything: a private repo cannot answer the
+				// anonymous ref-advertisement 200, so it still falls through to the error below.
+				fmt.Fprintf(stdout, "Apps repo %s is publicly cloneable — ArgoCD will clone it anonymously; no git token required.\n", vc.Repositories.AppsDestinationRepo)
+			default:
+				err := fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available and the repo is not anonymously cloneable — connect the git provider for the job owner, or make the repo public", vc.Repositories.AppsDestinationRepo)
 				result.GitopsStatus = gitopsFailed(argocd.GitopsStepGitToken, err)
 				return &result, err
-			}
-			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
-				result.GitopsStatus = gitopsFailed(argocd.GitopsStepRepoCredentials, err)
-				return &result, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 			}
 		}
 
