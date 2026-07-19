@@ -762,6 +762,20 @@ func (c *Client) GetProviderStatus(provider string) (*ProviderStatus, error) {
 	return &resp, nil
 }
 
+// VerifyProviderIdentity re-runs the server-side health probe against a saved
+// cloud identity (auth + provisioning-capability check) and returns the verdict.
+// The server verifies INLINE — there is no job to poll. The identityID is the
+// connected identity (see GetProviderStatus.IdentityID).
+func (c *Client) VerifyProviderIdentity(provider, identityID string) (*ConnectIdentityResponse, error) {
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/verify", c.baseURL, provider)
+	payload := map[string]interface{}{"identity_id": identityID}
+	var resp ConnectIdentityResponse
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to verify %s connection: %w", provider, err)
+	}
+	return &resp, nil
+}
+
 // --- Identity & Organizations ---
 //
 // These mirror the wire contract in apps/console/lib/validations/cli-contract.ts

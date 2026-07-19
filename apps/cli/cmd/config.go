@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -73,6 +74,64 @@ var configClearContextCmd = &cobra.Command{
 		}
 		ui.Success("Active organization context cleared.")
 	},
+}
+
+var configExportCmd = &cobra.Command{
+	Use:   "export [project]",
+	Short: "Export a project's configuration to stdout or a file",
+	Long: `Export a project's resolved configuration. By default the configuration
+content is written to stdout; pass --out to write it to a file, or -o json to get
+the export envelope (content + filename + format).`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		token, err := getAuthToken()
+		if err != nil {
+			fail(err)
+		}
+		project := ""
+		if len(args) > 0 {
+			project = args[0]
+		} else {
+			project, err = selectProject(token)
+			if err != nil {
+				fail(err)
+			}
+		}
+		contentFormat, _ := cmd.Flags().GetString("format")
+		outFile, _ := cmd.Flags().GetString("out")
+		if err := runConfigExport(
+			api.NewClient(token), os.Stdout, outputFormat(cmd), project, contentFormat, outFile,
+		); err != nil {
+			failf("Failed to export configuration: %v", err)
+		}
+	},
+}
+
+// runConfigExport exports a project's configuration. It writes the raw content to
+// a file (--out), emits the full export envelope as json (-o json), or prints the
+// raw content to out (the default).
+func runConfigExport(c apiClient, out io.Writer, displayFormat, projectName, contentFormat, outFile string) error {
+	export, err := c.ExportConfiguration(projectName, contentFormat)
+	if err != nil {
+		return err
+	}
+	if outFile != "" {
+		if err := os.WriteFile(outFile, []byte(export.Content), 0o644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", outFile, err)
+		}
+		fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Wrote %s (%s)", outFile, export.Format)))
+		return nil
+	}
+	if displayFormat == ui.FormatJSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(export)
+	}
+	fmt.Fprint(out, export.Content)
+	if !strings.HasSuffix(export.Content, "\n") {
+		fmt.Fprintln(out)
+	}
+	return nil
 }
 
 // configView is the json projection of the CLI config.
@@ -174,8 +233,11 @@ func saveActiveOrg(o api.OrgSummary) error {
 }
 
 func init() {
+	configExportCmd.Flags().String("format", "legacy-yaml", "Configuration content format")
+	configExportCmd.Flags().String("out", "", "Write the configuration to this file instead of stdout")
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configClearContextCmd)
+	configCmd.AddCommand(configExportCmd)
 	rootCmd.AddCommand(configCmd)
 }

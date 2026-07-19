@@ -66,6 +66,31 @@ config         /Users/you/.config/alethia/config.json
 `alethia config clear-context` clears the active organization context. `alethia config -o json`
 emits the same values as a JSON object.
 
+## `alethia config export`
+
+Export a project's resolved configuration. By default the configuration **content** is written to
+stdout; pass `--out` to write it to a file, or `-o json` to get the export envelope (content +
+filename + format).
+
+```bash
+# Print a project's configuration to stdout
+alethia config export my-project
+
+# Write it to a file
+alethia config export my-project --out my-project.yaml
+
+# Get the export envelope (content, filename, format) as JSON
+alethia config export my-project -o json
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `legacy-yaml` | The configuration **content** format to request. |
+| `--out` | _(stdout)_ | Write the content to this file instead of stdout. |
+
+The project name is optional — omit it in an interactive terminal to pick one from a list. Backing
+call: `GET /cli/configurations/by-project-name/<name>/export`.
+
 ## Runner Credentials
 
 The `alethia` CLI does not store Runner credentials. A self-operated Runner is a

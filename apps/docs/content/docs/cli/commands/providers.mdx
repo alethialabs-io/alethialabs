@@ -1,0 +1,68 @@
+---
+title: Provider Commands
+description: Inspect and re-verify connected cloud provider identities from the terminal.
+---
+
+# Provider Commands
+
+The `provider` group (alias `providers`) reads and re-verifies an existing **cloud provider
+connection**. Use [`alethia connector`](/cli/commands/connector) to create or change a connection;
+these commands only inspect and re-probe one.
+
+<Callout type="info">
+The CLI is a client of the same Console API. These subcommands call `/cli/providers/<provider>/*`
+with your [CLI token](/cli/authentication) and operate on the **active organization**
+(`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## `alethia provider status`
+
+Show the connection status of a cloud provider identity.
+
+```bash
+alethia provider status aws
+alethia provider status gcp -o json
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<provider>` | Yes | `aws`, `gcp`, `azure`, or `alibaba`. |
+
+Renders a field/value card: **status** (`connected` | `disconnected`), the **identity** id, and the
+provider-specific identity fields that are set (AWS account id / role arn, GCP project id / service
+account, Azure tenant / client / subscription). Add `-o json` for the raw `ProviderStatus`.
+
+Backing call: `GET /cli/providers/<provider>/status`.
+
+## `alethia provider verify`
+
+Re-run the server-side health probe (auth + provisioning-capability check) against the connected
+identity for a provider. The server verifies **inline** — there is no job to poll.
+
+```bash
+alethia provider verify aws
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<provider>` | Yes | `aws`, `gcp`, `azure`, or `alibaba`. |
+
+The command resolves the connected identity via `status`, then re-verifies it and renders the
+verdict: **identity**, **status**, **verified**, and — when degraded — the **missing permissions**.
+It exits non-zero when there is no connected identity to verify or the probe reports the identity is
+not connected, so it is safe to use in a script or CI gate.
+
+```
+Field     Value
+identity  id-1
+status    connected
+verified  true
+```
+
+Backing call: `POST /cli/providers/<provider>/verify` with `{ identity_id }`.
+
+## See also
+
+- [Connector Commands](/cli/commands/connector) — connect or change a cloud provider account.
+- [Identity](/cli/identity) — how connections and keyless credentials work.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

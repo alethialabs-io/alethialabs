@@ -4,6 +4,8 @@
     "index",
     "init",
     "connector",
+    "providers",
+    "repositories",
     "project",
     "plan-and-apply",
     "jobs",

@@ -662,6 +662,78 @@ func TestGetProviderStatus_Success(t *testing.T) {
 	}
 }
 
+func TestVerifyProviderIdentity_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/providers/aws/verify" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		var body struct {
+			IdentityID string `json:"identity_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		if body.IdentityID != "id-123" {
+			t.Errorf("expected identity_id id-123, got %s", body.IdentityID)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"identity_id":         "id-123",
+			"verified":            true,
+			"status":              "connected",
+			"error":               nil,
+			"missing_permissions": []string{},
+		})
+	}))
+
+	resp, err := client.VerifyProviderIdentity("aws", "id-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.Verified || resp.Status != "connected" {
+		t.Errorf("expected verified connected, got verified=%v status=%s", resp.Verified, resp.Status)
+	}
+}
+
+func TestVerifyProviderIdentity_ErrorPropagates(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "identity not found"})
+	}))
+
+	if _, err := client.VerifyProviderIdentity("aws", "missing"); err == nil {
+		t.Error("expected error to propagate")
+	}
+}
+
+func TestGetRepositories_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/repositories/github" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"repositories": []map[string]any{
+				{"id": "1", "name": "app", "full_name": "acme/app", "url": "u", "private": true, "default_branch": "main", "provider": "github"},
+			},
+		})
+	}))
+
+	repos, err := client.GetRepositories("github")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 || repos[0].FullName != "acme/app" {
+		t.Errorf("unexpected repos: %+v", repos)
+	}
+}
+
 func TestConnectProviderIdentity_ErrorPropagates(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

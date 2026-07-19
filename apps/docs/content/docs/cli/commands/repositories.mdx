@@ -1,0 +1,49 @@
+---
+title: Repository Commands
+description: Browse the git repositories Alethia can see through a connected git provider.
+---
+
+# Repository Commands
+
+The `repo` group (aliases `repos`, `repositories`) lists the repositories reachable through a
+connected **git provider** — GitHub, GitLab, or Bitbucket. These are the repositories you can point
+a project at when authoring its infrastructure.
+
+<Callout type="info">
+The CLI is a client of the same Console API — it authors nothing locally. `repo list` calls
+`/cli/repositories/<provider>` with your [CLI token](/cli/authentication) and the git connection on
+your **active organization** (`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## `alethia repo list`
+
+List repositories for a connected git provider.
+
+```bash
+alethia repo list                      # defaults to --provider github
+alethia repo list --provider gitlab
+alethia repo list --provider bitbucket -o json
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--provider` | `github` | Git provider to list from (`github`, `gitlab`, `bitbucket`). |
+
+Columns: **Name** (the repo's full `owner/name`, falling back to its short name), **Visibility**
+(`public` | `private`), **Default branch**, **URL**. In an interactive TTY this renders as a
+navigable [TUI table](/cli/tui); otherwise it prints a plain table. Add `-o json` for the raw
+`Repository` objects (id, name, full_name, url, private, default_branch, provider).
+
+```
+Name        Visibility  Default branch  URL
+acme/app    private     main            https://github.com/acme/app
+acme/site   public      trunk           https://github.com/acme/site
+```
+
+Backing call: `GET /cli/repositories/<provider>`.
+
+## See also
+
+- [Connector Commands](/cli/commands/connector) — connect a cloud provider account.
+- [Authentication](/cli/authentication) — how the CLI obtains the token these commands use.
+- [Command Reference](/cli/commands) — the full command tree and global flags.
