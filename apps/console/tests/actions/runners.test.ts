@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the runner server actions: stub authorize + a thenable drizzle chain
-// (withOwnerScope invokes the callback with a shared queue-backed `tx`, so sequential awaits inside
+// (withActorScope invokes the callback with a shared queue-backed `tx`, so sequential awaits inside
 // one action resolve to the right rows), and assert the guard paths, returned shapes, the inserted
 // values (operator/provisioning/job_type/config_snapshot), the hosted-vs-self-managed branches, the
 // duplicate-destroy guard, and that notifyScaler fires after queueing jobs.
@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/billing/config", () => ({ deploymentMode: vi.fn() }));
-vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withOwnerScope: vi.fn() }));
+vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withActorScope: vi.fn() }));
 vi.mock("@/lib/queries/runner-usage", () => ({ queryProvisionedHours: vi.fn() }));
 vi.mock("@/lib/runners/auth", () => ({ generateRunnerToken: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
@@ -34,7 +34,7 @@ import {
 } from "@/app/server/actions/runners";
 import { authorize } from "@/lib/authz/guard";
 import { deploymentMode } from "@/lib/billing/config";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { generateRunnerToken } from "@/lib/runners/auth";
 import { notifyScaler } from "@/lib/scaler";
@@ -91,8 +91,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mock = makeDb();
 	vi.mocked(authorize).mockResolvedValue({ userId: "user-1" } as never);
-	// withOwnerScope just runs the callback against our shared chain.
-	vi.mocked(withOwnerScope).mockImplementation(
+	// withActorScope just runs the callback against our shared chain.
+	vi.mocked(withActorScope).mockImplementation(
 		(_owner: string, fn: (tx: never) => unknown) => fn(mock.db as never) as never,
 	);
 	vi.mocked(getServiceDb).mockReturnValue(mock.db as never);

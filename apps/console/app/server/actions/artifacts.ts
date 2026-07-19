@@ -13,7 +13,12 @@ import type { ArtifactSpec } from "@/types/jsonb.types";
 const nameSchema = z.string().min(1).max(80);
 const kindSchema = z.enum(["widget", "dashboard"]);
 
-/** Save a new named, org-scoped artifact (fails on a duplicate name in the org). */
+/**
+ * Save a new named artifact, PRIVATE to its creator (fails on a duplicate name for this owner).
+ * Artifacts are private-by-default and shared out ONLY via the explicit `agent_artifact_shares`
+ * ACL (shareArtifact) — never org-wide. Keep this on withOwnerScope; broadening to withActorScope
+ * would bypass the shares ACL and leak every member's private artifacts across the org.
+ */
 export async function saveArtifact(
 	name: string,
 	kind: "widget" | "dashboard",
@@ -38,7 +43,8 @@ export async function saveArtifact(
 	});
 }
 
-/** List the org's artifacts, alphabetical. */
+/** List the caller's OWN artifacts, alphabetical. Shared-in artifacts arrive separately via
+ *  listSharedArtifacts(); do NOT broaden this to org scope — it would bypass the shares ACL. */
 export async function listArtifacts(): Promise<AgentArtifact[]> {
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) =>
@@ -46,7 +52,8 @@ export async function listArtifacts(): Promise<AgentArtifact[]> {
 	);
 }
 
-/** Load one artifact by id or exact name (RLS scopes to the org). */
+/** Load one of the caller's OWN artifacts by id or exact name (owner-scoped; shared-in access
+ *  goes through the agent_artifact_shares ACL, not this read). */
 export async function getArtifact(idOrName: string): Promise<AgentArtifact | null> {
 	const owner = await requireOwner();
 	const isUuid = z.string().uuid().safeParse(idOrName).success;

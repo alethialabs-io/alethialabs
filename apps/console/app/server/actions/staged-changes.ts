@@ -5,7 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { asRecord } from "@/lib/records";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { projectChanges } from "@/lib/db/schema";
 import type { StagedChangePayload } from "@/types/jsonb.types";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
@@ -116,7 +116,7 @@ export async function listStagedChanges(
 	environmentId: string,
 ) {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, (tx) =>
+	return withActorScope(actor, (tx) =>
 		tx
 			.select()
 			.from(projectChanges)
@@ -140,7 +140,7 @@ export async function stageChanges(
 		.then((r) => r.formData)
 		.catch(() => null);
 	const rows = diffConfig(live, data);
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		await tx.delete(projectChanges).where(changeScope(projectId, environmentId));
 		if (rows.length)
 			await tx.insert(projectChanges).values(
@@ -161,7 +161,7 @@ export async function discardStagedChanges(
 	environmentId: string,
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		await tx.delete(projectChanges).where(changeScope(projectId, environmentId));
 		return { success: true };
 	});
@@ -179,7 +179,7 @@ export async function applyStagedChanges(
 ) {
 	await updateProjectDesign(projectId, environmentId, data);
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		await tx.delete(projectChanges).where(changeScope(projectId, environmentId));
 	});
 	return { success: true };

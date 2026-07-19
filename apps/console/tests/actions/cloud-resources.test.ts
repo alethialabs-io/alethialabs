@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the cloud-resources action: stub the PDP guard + a thenable drizzle-chain
-// tx (passed through withOwnerScope). Asserts the authorize args and the normalized inventory shape
+// tx (passed through withActorScope). Asserts the authorize args and the normalized inventory shape
 // (networks + subnets + regions) returned by getCloudIdentityInventory. The legacy cached_resources /
 // FETCH_RESOURCES helpers were removed (inventory is now server-side), so their tests went with them.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withActorScope: vi.fn() }));
 
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { authorize } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 
 /** A thenable drizzle-ish tx: builders return the chain; awaiting resolves to `rows`. */
 function mockTx(rows: unknown[]) {
@@ -26,7 +26,7 @@ function mockTx(rows: unknown[]) {
 		limit: () => tx,
 		then: (resolve: (v: unknown) => void) => resolve(rows),
 	});
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_userId: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	return { tx };
@@ -34,7 +34,7 @@ function mockTx(rows: unknown[]) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(authorize).mockResolvedValue({ userId: "user-1" } as never);
+	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 });
 
 describe("getCloudIdentityInventory", () => {
@@ -60,6 +60,6 @@ describe("getCloudIdentityInventory", () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("forbidden"));
 		mockTx([]);
 		await expect(getCloudIdentityInventory("ci-1")).rejects.toThrow(/forbidden/);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 });

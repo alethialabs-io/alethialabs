@@ -16,7 +16,7 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	type ChartWorkloadKind,
 	type ComponentStatus,
@@ -130,7 +130,7 @@ export async function attachByoChart(input: {
 	const namespace = input.namespace?.trim() || "default";
 	const values = input.values ?? {};
 
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		await tx
 			.insert(projectAddons)
 			.values({
@@ -187,7 +187,7 @@ export async function detachByoChart(input: {
 	assertByoHelmEnabled();
 	const actor = await authorize("edit", { type: "project", id: input.projectId });
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		await tx
 			.delete(projectAddons)
 			.where(
@@ -209,7 +209,7 @@ export async function getProjectByoCharts(
 ): Promise<{ environmentId: string; charts: ByoChartState[] }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const rows = await withOwnerScope(actor.userId, async (tx) =>
+	const rows = await withActorScope(actor, async (tx) =>
 		tx
 			.select()
 			.from(projectAddons)
@@ -267,7 +267,7 @@ export async function getProjectChartWorkloads(
 ): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const rows = await withOwnerScope(actor.userId, async (tx) =>
+	const rows = await withActorScope(actor, async (tx) =>
 		tx
 			.select({
 				id: projectChartWorkloads.id,
@@ -318,7 +318,7 @@ async function updateChartWorkloadOverlay(
 ): Promise<void> {
 	assertByoHelmEnabled();
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.update(projectChartWorkloads)
 			.set({ ...patch, updated_at: new Date() })
@@ -379,7 +379,7 @@ export async function setChartWorkloadBindings(input: {
 		id: input.projectId,
 	});
 	const bindings = chartWorkloadBindingsSchema.parse(input.bindings);
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({
 				rendered: projectChartWorkloads.rendered,
@@ -439,7 +439,7 @@ export async function scanByoChart(input: {
 	const id = chartSlug(input.id);
 
 	await assertJobQuotaAllowed(actor.orgId);
-	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+	const jobId = await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select()
 			.from(projectAddons)

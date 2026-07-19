@@ -6,6 +6,13 @@
 // that ride every chat in that scope (the Claude-Projects model). `projectId` null/undefined
 // addresses the ORG-level row; a project id addresses that infra project's row. Owner-scoped
 // (RLS), so a caller can only ever touch their own.
+//
+// DELIBERATELY NOT migrated to withActorScope in the org-scope fix (PR #832 line). The schema
+// intent is org-shared (uq_agent_context_scope is one row per org per project; the org-level
+// custom instructions are a shared asset), but making it org-visible is NOT a read-only wrapper
+// flip: it needs the writes migrated too, a backfill re-stamping legacy org_id (= user_id) to the
+// real org, AND admin-only write-authz (else any member could rewrite the whole org's agent
+// behavior). That's a product decision + a follow-up wave — keep withOwnerScope until then.
 
 import { z } from "zod";
 import { requireOwner } from "@/lib/auth/owner";

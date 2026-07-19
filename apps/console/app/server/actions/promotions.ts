@@ -14,7 +14,7 @@ import { arrayIncludes } from "@/lib/type-guards";
 import { authorize } from "@/lib/authz/guard";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getPreviousEnvironmentCost } from "@/app/server/actions/cost";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
 import {
 	environmentCost,
@@ -127,7 +127,7 @@ export async function promoteEnvironment(
 		throw new Error("Source and target environments must differ");
 
 	// Validate both environments belong to the project + check stage order and target state.
-	const { source, target } = await withOwnerScope(owner, async (tx) => {
+	const { source, target } = await withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select()
 			.from(projectEnvironments)
@@ -163,7 +163,7 @@ export async function promoteEnvironment(
 	// promotion here, BEFORE we mutate the target design.
 	let promotion: PromotionRow;
 	try {
-		promotion = await withOwnerScope(owner, async (tx) => {
+		promotion = await withActorScope(actor, async (tx) => {
 			const [row] = await tx
 				.insert(environmentPromotions)
 				.values({
@@ -188,7 +188,7 @@ export async function promoteEnvironment(
 	// Write the candidate design into the target env, then queue the PLAN for it.
 	await reconcileEnvironmentComponents(projectId, targetEnvId, merged);
 	const { jobId } = await planProject(projectId, opts?.runnerId ?? null, targetEnvId);
-	await withOwnerScope(owner, (tx) =>
+	await withActorScope(actor, (tx) =>
 		tx
 			.update(environmentPromotions)
 			.set({ plan_job_id: jobId, updated_at: new Date() })
@@ -378,7 +378,7 @@ export async function cancelPromotion(promotionId: string): Promise<void> {
 /** Lists a project's promotions (optionally scoped to a target env), newest first. */
 export async function listPromotions(projectId: string, envId?: string | null) {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, (tx) =>
+	return withActorScope(actor, (tx) =>
 		tx
 			.select()
 			.from(environmentPromotions)
