@@ -7,6 +7,7 @@ import {
 	ChevronDown,
 	FileText,
 	Loader2,
+	Lock,
 	Pencil,
 	Plus,
 	Trash2,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+	canEditAgentContext,
 	getAgentContext,
 	getProjectKnowledgePreview,
 	upsertAgentContext,
@@ -96,6 +98,10 @@ export function AgentKnowledgePanel({
 	const [derived, setDerived] = useState("");
 	const [derivedOpen, setDerivedOpen] = useState(false);
 	const [loading, setLoading] = useState(true);
+	// Whether the caller may edit this scope's knowledge (org:edit / project:edit when the
+	// org-shared flag is on; always true otherwise). Non-editors get a read-only panel instead of
+	// a silent 403 on auto-save. Defaults true so the editable UI never flashes for an editor.
+	const [canEdit, setCanEdit] = useState(true);
 	const [editing, setEditing] = useState<KnowledgeDoc | null>(null);
 	const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
 		"idle",
@@ -106,16 +112,18 @@ export function AgentKnowledgePanel({
 		let cancelled = false;
 		setLoading(true);
 		void (async () => {
-			const [ctx, preview] = await Promise.all([
+			const [ctx, preview, editable] = await Promise.all([
 				getAgentContext(projectId).catch(() => null),
 				projectId
 					? getProjectKnowledgePreview(projectId).catch(() => "")
 					: Promise.resolve(""),
+				canEditAgentContext(projectId).catch(() => false),
 			]);
 			if (cancelled) return;
 			setInstructions(ctx?.instructions ?? "");
 			setDocs(ctx?.documents ?? []);
 			setDerived(preview);
+			setCanEdit(editable);
 			setLoading(false);
 		})();
 		return () => {
@@ -132,6 +140,7 @@ export function AgentKnowledgePanel({
 	/** Persist instructions + the whole document set (one row, one write). */
 	const save = useCallback(
 		async (nextDocs: KnowledgeDoc[], nextInstructions: string) => {
+			if (!canEdit) return; // read-only caller — the affordances are hidden; guard the seam too
 			setState("saving");
 			setError(null);
 			try {
@@ -147,7 +156,7 @@ export function AgentKnowledgePanel({
 				setError(e instanceof Error ? e.message : "Save failed.");
 			}
 		},
-		[projectId],
+		[projectId, canEdit],
 	);
 
 	/** Commit the open editor into the document set, then persist. */
@@ -187,13 +196,20 @@ export function AgentKnowledgePanel({
 					{scope} knowledge
 				</div>
 				<div className="ml-auto flex items-center gap-2">
-					<span className="text-[11px] text-muted-foreground">
-						{state === "saving"
-							? "Saving…"
-							: state === "saved"
-								? "Saved."
-								: (error ?? "")}
-					</span>
+					{!loading && !canEdit ? (
+						<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+							<Lock className="h-3 w-3" />
+							Read-only
+						</span>
+					) : (
+						<span className="text-[11px] text-muted-foreground">
+							{state === "saving"
+								? "Saving…"
+								: state === "saved"
+									? "Saved."
+									: (error ?? "")}
+						</span>
+					)}
 					<button
 						type="button"
 						aria-label="Close knowledge"
@@ -213,6 +229,18 @@ export function AgentKnowledgePanel({
 						</div>
 					) : (
 						<>
+							{/* Read-only notice: this member can't edit the shared knowledge. */}
+							{!canEdit && (
+								<p
+									data-testid="knowledge-readonly-notice"
+									className="flex items-center gap-1.5 border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+								>
+									<Lock className="h-3.5 w-3.5 flex-none" />
+									Only members with edit access can change the{" "}
+									{projectId ? "project" : "organization"} knowledge.
+								</p>
+							)}
+
 							{/* ── Instructions ──────────────────────────────────────── */}
 							<section className="space-y-2">
 								<div className="vx-eyebrow text-[9px]">Instructions</div>
@@ -223,11 +251,19 @@ export function AgentKnowledgePanel({
 								<Textarea
 									data-testid="knowledge-instructions"
 									value={instructions}
+									readOnly={!canEdit}
 									onChange={(e) => setInstructions(e.target.value)}
 									onBlur={() => void save(docs, instructions)}
 									rows={4}
-									placeholder="e.g. This is production — always require approval before an apply, and never propose destroy."
-									className="rounded-none text-sm"
+									placeholder={
+										canEdit
+											? "e.g. This is production — always require approval before an apply, and never propose destroy."
+											: "No instructions set."
+									}
+									className={cn(
+										"rounded-none text-sm",
+										!canEdit && "cursor-default bg-muted/20",
+									)}
 								/>
 							</section>
 
@@ -267,12 +303,16 @@ export function AgentKnowledgePanel({
 									<div className="flex flex-col items-center gap-2 border border-dashed border-border py-10 text-center">
 										<FileText className="h-4 w-4 text-muted-foreground" />
 										<div className="text-[13px] text-foreground">
-											No knowledge yet.
+											{canEdit
+												? "No knowledge yet."
+												: `No knowledge set for this ${projectId ? "project" : "organization"}.`}
 										</div>
-										<p className="max-w-[320px] text-xs text-muted-foreground">
-											Add what Elench should always know. It can already read
-											your live infrastructure on its own.
-										</p>
+										{canEdit && (
+											<p className="max-w-[320px] text-xs text-muted-foreground">
+												Add what Elench should always know. It can already read
+												your live infrastructure on its own.
+											</p>
+										)}
 									</div>
 								)}
 
@@ -296,24 +336,26 @@ export function AgentKnowledgePanel({
 														{size(d.content.length)} · {relTime(d.updated_at)}
 													</span>
 												</span>
-												<span className="flex flex-none items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/doc:opacity-100">
-													<button
-														type="button"
-														aria-label={`Edit ${d.title}`}
-														onClick={() => setEditing(d)}
-														className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
-													>
-														<Pencil className="h-3.5 w-3.5" />
-													</button>
-													<button
-														type="button"
-														aria-label={`Delete ${d.title}`}
-														onClick={() => removeDoc(d.id)}
-														className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
-													>
-														<Trash2 className="h-3.5 w-3.5" />
-													</button>
-												</span>
+												{canEdit && (
+													<span className="flex flex-none items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/doc:opacity-100">
+														<button
+															type="button"
+															aria-label={`Edit ${d.title}`}
+															onClick={() => setEditing(d)}
+															className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
+														>
+															<Pencil className="h-3.5 w-3.5" />
+														</button>
+														<button
+															type="button"
+															aria-label={`Delete ${d.title}`}
+															onClick={() => removeDoc(d.id)}
+															className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
+														>
+															<Trash2 className="h-3.5 w-3.5" />
+														</button>
+													</span>
+												)}
 											</div>
 										))}
 									</div>
@@ -369,7 +411,7 @@ export function AgentKnowledgePanel({
 											</span>
 										</div>
 									</div>
-								) : (
+								) : canEdit ? (
 									<Button
 										size="sm"
 										variant="outline"
@@ -380,7 +422,7 @@ export function AgentKnowledgePanel({
 										<Plus className="h-3.5 w-3.5" />
 										Add knowledge
 									</Button>
-								)}
+								) : null}
 							</section>
 
 							{/* ── Already known (auto-derived) ──────────────────────── */}
