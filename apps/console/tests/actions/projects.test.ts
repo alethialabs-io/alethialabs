@@ -52,6 +52,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectFabrics,
 	projectIacSources,
 	projectNetwork,
 	projectNosqlTables,
@@ -582,6 +583,156 @@ function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 	if (overrides) for (const [k, v] of overrides) m.set(k, v);
 	return m;
 }
+
+// #837: placement-aware dispatch — buildConfigSnapshot carries the Fabric + placement destination
+// so the #838 provisioner can route (per-Fabric tofu state + ArgoCD Application destination).
+describe("placement-aware dispatch (#837)", () => {
+	it("a dedicated env carries its Fabric identity + a null namespace, keeping the state path byte-identical", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-1",
+								name: "production",
+								stage: "production",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: "fab-1",
+								placement_mode: "dedicated",
+								namespace: null,
+							},
+						],
+					],
+					[projectFabrics, [{ id: "fab-1", project_id: "p1", name: "production" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({
+			fabric_id: "fab-1",
+			// A backfilled dedicated env: fabric name == env name, so `fabric_name` (the per-Fabric
+			// state key #838 re-keys onto) and `environment_stage` agree → state path is unchanged.
+			fabric_name: "production",
+			environment_stage: "production",
+			placement_mode: "dedicated",
+			namespace: null,
+		});
+	});
+
+	it("a namespace-placed env routes onto its shared Fabric and derives the destination namespace from the env name", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-9",
+								name: "PR 123 Preview",
+								stage: "development",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: "fab-shared",
+								placement_mode: "namespace",
+								namespace: null,
+							},
+						],
+					],
+					[projectFabrics, [{ id: "fab-shared", project_id: "p1", name: "shared-dev" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({
+			fabric_id: "fab-shared",
+			// On a SHARED Fabric the tofu state keys on the Fabric, not the env → fabric_name != env name.
+			fabric_name: "shared-dev",
+			placement_mode: "namespace",
+			// The ArgoCD destination namespace, derived as an RFC-1123 slug of the env name.
+			namespace: "pr-123-preview",
+		});
+	});
+
+	it("an explicit env namespace overrides the derived one", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-9",
+								name: "staging",
+								stage: "staging",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: "fab-shared",
+								placement_mode: "vcluster",
+								namespace: "team-a",
+							},
+						],
+					],
+					[projectFabrics, [{ id: "fab-shared", project_id: "p1", name: "shared-dev" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({ placement_mode: "vcluster", namespace: "team-a" });
+	});
+
+	it("falls back to the env identity when the Fabric link is not backfilled yet (back-compat)", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-1",
+								name: "production",
+								stage: "production",
+								status: "DRAFT",
+								is_default: true,
+								region: null,
+								fabric_id: null,
+								placement_mode: "dedicated",
+								namespace: null,
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot).toMatchObject({
+			fabric_id: null,
+			fabric_name: "production",
+			namespace: null,
+		});
+	});
+});
 
 describe("planProject", () => {
 	it("freezes a config snapshot, queues a PLAN job, flips the env to QUEUED, and notifies the scaler", async () => {
