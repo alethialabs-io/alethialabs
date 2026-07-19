@@ -742,7 +742,8 @@ func addressesOf(r *Report) []string {
 //
 // The contract this locks down:
 //   - `resource` blocks are inventoried; `data`, `provider`, `output` and `variable` are NOT
-//     (they provision nothing).
+//     (they provision nothing). Output NAMES are captured separately in `Report.Outputs`
+//     for the BYO-IaC binding picker — see TestScanOutputInventory — never in `Resources`.
 //   - child modules are inventoried under their Terraform module path (`module.<call>.…`),
 //     including a module CALLED from JSON config, so the address matches what a plan emits.
 //   - the inventory is sorted by address (the report is persisted and diffed).
@@ -786,6 +787,27 @@ func TestScanResourceInventory(t *testing.T) {
 				t.Errorf("inventory is not sorted by address: %v", addressesOf(rep))
 			}
 		})
+	}
+}
+
+// TestScanOutputInventory pins Report.Outputs — the ROOT module's declared `output` block
+// names the console offers as binding targets when a service binds to a BYO-IaC resource
+// (#687). The contract:
+//   - root outputs are captured from BOTH `.tf` (native walk) and `.tf.json` (JSON walk);
+//   - a CHILD module's output is EXCLUDED (`tofu output` returns only root outputs, so a
+//     binding could never resolve against a child's name — surfacing it would be a lie);
+//   - the list is sorted (the report is persisted and diffed).
+func TestScanOutputInventory(t *testing.T) {
+	rep, err := Scan(filepath.Join("testdata", "outputs"), nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	want := []string{"db_endpoint", "db_secret_name", "json_out"} // child "internal" excluded
+	if !reflect.DeepEqual(rep.Outputs, want) {
+		t.Errorf("outputs = %v, want %v", rep.Outputs, want)
+	}
+	if !sort.StringsAreSorted(rep.Outputs) {
+		t.Errorf("outputs not sorted: %v", rep.Outputs)
 	}
 }
 

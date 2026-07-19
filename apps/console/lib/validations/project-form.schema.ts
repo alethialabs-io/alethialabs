@@ -119,6 +119,17 @@ export const serviceBindingSchema = z.object({
 	target: z.object({
 		kind: z.enum(["database", "cache", "queue", "secret"]),
 		name: z.string().min(1, "Binding target is required"),
+		// BYO-IaC target only: its Terraform address + the customer module's output names the
+		// facets resolve against (#687). Absent for a first-class component; wire keys mirror the
+		// Go `ServiceBindingTarget` json tags.
+		address: z.string().optional(),
+		output_keys: z
+			.object({
+				endpoint: z.string().optional(),
+				port: z.string().optional(),
+				credential_secret: z.string().optional(),
+			})
+			.optional(),
 	}),
 	inject: z.array(
 		z.object({

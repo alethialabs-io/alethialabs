@@ -35,6 +35,13 @@ type IacScanReport struct {
 	// treats this as a pre-plan skeleton and lets a real plan's `resource_changes`
 	// supersede it (lib/canvas/iac-inventory.ts). Never null (serialize as []).
 	Resources []IacResource `json:"resources"`
+	// Outputs are the ROOT module's declared `output` block NAMES (sorted). Only root
+	// outputs: `tofu output` returns exactly the root module's outputs, and those names are
+	// the keys of the deploy-time outputs map a W3 binding resolves against
+	// (packages/core/manifests). When a service binds to a BYO-IaC resource, the console
+	// offers these as the endpoint / credential-secret output to map the binding to (#687).
+	// Declared, not evaluated — the value is unknown until a real apply. Never null ([]).
+	Outputs []string `json:"outputs"`
 	// CommitSHA is the exact commit the scan checked out — the deploy pins to it so it
 	// applies precisely the bytes the gate vetted (TOCTOU protection). Omitted when unknown.
 	CommitSHA string `json:"commit_sha,omitempty"`
