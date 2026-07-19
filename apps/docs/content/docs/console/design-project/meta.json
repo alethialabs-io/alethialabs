@@ -3,13 +3,16 @@
   "pages": [
     "index",
     "the-canvas",
+    "node-inspector",
     "project-basics",
     "network",
     "cluster",
+    "services",
     "databases",
     "keyless-database-auth",
     "caches",
     "nosql",
+    "storage",
     "messaging",
     "dns",
     "secrets",
@@ -17,6 +20,7 @@
     "observability",
     "repositories",
     "bring-your-own-charts",
+    "bring-your-own-iac",
     "cost-sidebar"
   ]
 }

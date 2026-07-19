@@ -1,0 +1,129 @@
+---
+title: Build Jobs
+description: How the runner executes BUILD jobs — kaniko image builds scheduled in the customer's own cluster, pushed to ECR, reported as a per-service digest map.
+---
+
+# Build Jobs
+
+`BUILD` jobs turn a project's repo-sourced services into real, pushed container images. For each
+service whose source is a repository, the runner schedules a [kaniko](https://github.com/GoogleContainerTools/kaniko)
+build **inside the customer's own provisioned cluster**, waits for it to finish, captures the pushed
+image digest, and reports a per-service digest map. `BUILD` is a first-class job type (`JobType =
+"BUILD"`), dispatched to `executeBuild` alongside `PLAN`, `DEPLOY`, and the others.
+
+<Callout type="info">
+  **Where the build runs.** The customer's Dockerfile executes in **their own cluster**, never on the
+  runner. Runner-side work is limited to rendering the Job manifest, running `kubectl` against the
+  cluster's API server, and a commit-pinning clone that only fetches data. Because nothing from the
+  repository executes on the runner, no BYO sandbox is required for a `BUILD`.
+</Callout>
+
+## What gets built
+
+The runner builds every service whose `source.kind == "repo"`. Prebuilt-image services
+(`source.kind == "image"`) are not buildable and are skipped. If the environment has no repo-sourced
+services, the job posts an empty result map and finishes with nothing to do.
+
+## Execution flow
+
+<Steps>
+
+### Read environment outputs
+The runner reads the environment's OpenTofu outputs through the per-job
+[state proxy](/concepts/terraform-state). Two outputs drive the build:
+
+- `ecr_repository_urls_map` — the per-service registry destination map (service name → repository URL).
+- `ecr_build_service_account` — the build identity as `namespace:serviceaccount`.
+
+If `ecr_repository_urls_map` is missing, the job fails: the ECR wiring has not been provisioned, so
+there is nowhere to push. Provision the infrastructure before running a `BUILD`. When the
+service-account output is absent, the runner falls back to the fixed defaults `alethia-build` /
+`kaniko-builder`.
+
+### Configure cluster access (keyless)
+The runner builds an exec-plugin kubeconfig from the already-active federated cloud credentials — the
+same CLI-free `runner kube-token` mechanism used by [Deploy Jobs](/runner/job-execution/deploy-jobs).
+A `BUILD` needs the cluster, so a kubeconfig failure fails the job.
+
+### Ensure the build namespace
+The runner applies the build namespace (idempotently) so the kaniko Jobs have somewhere to land. The
+namespace is labelled `app.kubernetes.io/managed-by: alethia`.
+
+### Pin the commit
+For each service, the runner shallow-clones the repository runner-side and resolves `HEAD`, pinning
+the exact commit the image is built from. When the repository is private, the job's git token is used
+for this clone only — it never reaches the in-cluster Job spec or `execution_metadata`.
+
+### Render and apply the kaniko Job
+The runner renders a kaniko build Job (`imagebuild.RenderBuildJob`) named `build-<service>` and applies
+it. The image is tagged with the resolved commit SHA (immutable and reproducible). Any prior build Job
+for the same service is deleted first, so a re-run is idempotent.
+
+### Watch to completion
+The runner polls the Job's conditions until it reports `Complete`, `Failed`, or the per-build deadline
+passes. A build has a 30-minute ceiling and is polled every 10 seconds. If the Job fails, the runner
+surfaces the last 50 lines of the kaniko log so the Console shows why the Dockerfile build failed.
+
+### Capture the digest
+On success the runner captures the pushed image's digest, in priority order:
+
+1. The build pod's **termination message** — kaniko writes `<destination>@sha256:…` to
+   `/dev/termination-log`, so the digest is readable after completion without depending on log retention.
+2. The digest line from the kaniko **log** (`sha256:` followed by 64 hex characters).
+3. As a loud fallback, the **immutable git-SHA tag** (`<destination>:<sha>`) — still a pinned reference.
+
+### Report results
+Job status → `PROCESSING`/final with `execution_metadata.build_result`: a map of
+`service_name → image_digest_uri`. The Console persists each entry into
+`project_services.resolved_image`, so the workload no longer runs a placeholder image.
+
+</Steps>
+
+## Fail-closed behavior
+
+A `BUILD` never lets the Console treat an unbuilt service as built. The whole job fails when:
+
+- a service has no provisioned ECR destination (infra not provisioned),
+- a service's build Job fails, or
+- a digest cannot be captured.
+
+Digests captured **before** the failure are still posted — a completed, pushed image is real and
+persisting it is idempotent.
+
+## The kaniko build Job
+
+The build uses kaniko because it runs rootless, needs no Docker daemon, and pushes to the registry via
+the pod ServiceAccount's IRSA. The renderer is pure and deterministic (a fixed service + options
+produces the same YAML). Key facts of the rendered Job:
+
+| Field | Value |
+| --- | --- |
+| Executor image | `gcr.io/kaniko-project/executor:v1.23.2` (pinned; overridable) |
+| Namespace | `alethia-build` (default) |
+| Dockerfile | the service's `build.dockerfile`, else `Dockerfile` |
+| Build context sub-path | the service's `build.context`, else its `source.path` |
+| Destination tag | the resolved commit SHA |
+| `backoffLimit` | `1` (default) |
+| `ttlSecondsAfterFinished` | `3600` |
+| Resource requests | `cpu: 500m`, `memory: 1Gi` |
+
+The kaniko executor image bundles the Amazon ECR credential helper and auto-detects
+`*.dkr.ecr.*.amazonaws.com` destinations; IRSA is picked up through the default AWS credential chain
+because the container sets `AWS_SDK_LOAD_CONFIG=true`.
+
+When the repository is private, its git token never enters the rendered manifest: it is used only for
+the runner-side commit-pinning clone (`resolveHeadSHA`) and is not passed to the in-cluster kaniko
+build. No secret material is ever inlined into the rendered manifest.
+
+## Secret boundary
+
+Registry credentials never enter `execution_metadata`: the build authenticates in-cluster via IRSA,
+the runner holds no registry credential at all, and the digest URI is non-secret. The git token used
+for commit pinning stays runner-side and is never written into the Job spec or job metadata.
+
+## See also
+
+- [Deploy Jobs](/runner/job-execution/deploy-jobs) — provisions the cluster and the ECR wiring a
+  `BUILD` depends on.
+- [Cloud Credentials](/runner/cloud-credentials) — the keyless per-job credential minting.
+- [OpenTofu state](/concepts/terraform-state) — the per-job state proxy the runner reads outputs from.

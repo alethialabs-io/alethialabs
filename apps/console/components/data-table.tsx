@@ -58,6 +58,12 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	scrollHeight?: string;
 	/** Message shown in the empty-state row when `data` is empty (default "No results."). */
 	emptyMessage?: string;
+	/**
+	 * Opt into a "Show more" footer (like the Activity log) instead of page-number controls. The
+	 * caller grows the visible window itself — pass `pageSize` as the current visible count and
+	 * `onLoadMore` to extend it. Pagination is pinned to the first page (page 0) in this mode.
+	 */
+	loadMore?: { hasMore: boolean; onLoadMore: () => void };
 }
 
 export function DataTable<TData extends { id?: string }, TValue>({
@@ -72,11 +78,16 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	onPageIndexChange,
 	scrollHeight,
 	emptyMessage = "No results.",
+	loadMore,
 }: DataTableProps<TData, TValue>) {
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
 		externalFilters ?? [],
 	);
+
+	// In "Show more" mode the visible window is `pageSize` rows of page 0 (the caller grows
+	// `pageSize`); otherwise honor the external page index.
+	const effectivePageIndex = loadMore ? 0 : externalPageIndex;
 
 	const table = useReactTable({
 		data,
@@ -90,8 +101,8 @@ export function DataTable<TData extends { id?: string }, TValue>({
 		state: {
 			sorting,
 			columnFilters: externalFilters ?? columnFilters,
-			...(externalPageIndex !== undefined && {
-				pagination: { pageIndex: externalPageIndex, pageSize },
+			...(effectivePageIndex !== undefined && {
+				pagination: { pageIndex: effectivePageIndex, pageSize },
 			}),
 		},
 		...(onPageIndexChange && {
@@ -183,54 +194,73 @@ export function DataTable<TData extends { id?: string }, TValue>({
 				)}
 			</div>
 
-			{table.getPageCount() > 1 && (
-				<div className="flex items-center justify-between px-1">
-					<p className="text-xs text-muted-foreground">
-						{table.getFilteredRowModel().rows.length} total
-					</p>
-					<div className="flex items-center gap-4">
-						<div className="flex items-center gap-2">
-							<p className="text-xs text-muted-foreground">Rows</p>
-							<Select
-								value={String(table.getState().pagination.pageSize)}
-								onValueChange={(value) => table.setPageSize(Number(value))}
-							>
-								<SelectTrigger className="h-7 w-16 text-xs">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="10">10</SelectItem>
-									<SelectItem value="20">20</SelectItem>
-									<SelectItem value="50">50</SelectItem>
-								</SelectContent>
-							</Select>
+			{loadMore
+				? (table.getFilteredRowModel().rows.length > 0 && (
+						<div className="flex flex-col items-center gap-2 px-1">
+							<p className="text-xs text-muted-foreground tabular-nums">
+								Showing {table.getRowModel().rows.length} of{" "}
+								{table.getFilteredRowModel().rows.length}
+							</p>
+							{loadMore.hasMore && (
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={loadMore.onLoadMore}
+								>
+									Show more
+								</Button>
+							)}
 						</div>
-						<p className="text-xs text-muted-foreground tabular-nums">
-							Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
-						</p>
-						<div className="flex items-center gap-1">
-							<Button
-								variant="outline"
-								size="icon"
-								className="h-7 w-7"
-								onClick={() => table.previousPage()}
-								disabled={!table.getCanPreviousPage()}
-							>
-								<ChevronLeft className="h-3.5 w-3.5" />
-							</Button>
-							<Button
-								variant="outline"
-								size="icon"
-								className="h-7 w-7"
-								onClick={() => table.nextPage()}
-								disabled={!table.getCanNextPage()}
-							>
-								<ChevronRight className="h-3.5 w-3.5" />
-							</Button>
+					))
+				: table.getPageCount() > 1 && (
+						<div className="flex items-center justify-between px-1">
+							<p className="text-xs text-muted-foreground">
+								{table.getFilteredRowModel().rows.length} total
+							</p>
+							<div className="flex items-center gap-4">
+								<div className="flex items-center gap-2">
+									<p className="text-xs text-muted-foreground">Rows</p>
+									<Select
+										value={String(table.getState().pagination.pageSize)}
+										onValueChange={(value) => table.setPageSize(Number(value))}
+									>
+										<SelectTrigger className="h-7 w-16 text-xs">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="10">10</SelectItem>
+											<SelectItem value="20">20</SelectItem>
+											<SelectItem value="50">50</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+								<p className="text-xs text-muted-foreground tabular-nums">
+									Page {table.getState().pagination.pageIndex + 1} of{" "}
+									{table.getPageCount()}
+								</p>
+								<div className="flex items-center gap-1">
+									<Button
+										variant="outline"
+										size="icon"
+										className="h-7 w-7"
+										onClick={() => table.previousPage()}
+										disabled={!table.getCanPreviousPage()}
+									>
+										<ChevronLeft className="h-3.5 w-3.5" />
+									</Button>
+									<Button
+										variant="outline"
+										size="icon"
+										className="h-7 w-7"
+										onClick={() => table.nextPage()}
+										disabled={!table.getCanNextPage()}
+									>
+										<ChevronRight className="h-3.5 w-3.5" />
+									</Button>
+								</div>
+							</div>
 						</div>
-					</div>
-				</div>
-			)}
+					)}
 		</div>
 	);
 }

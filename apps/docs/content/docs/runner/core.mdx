@@ -14,14 +14,13 @@ verify/drift engines — so both callers use identical logic.
 | Package | Purpose |
 |---------|---------|
 | `api/` | HTTP client for the Alethia control plane (runner + Bearer auth) |
-| `provisioner/` | Orchestrates deploy, destroy, and bootstrap workflows (`RunDeployV2`, `RunDestroy`, `RunBootstrap`) |
+| `provisioner/` | Orchestrates deploy, destroy, drift, import, and probe workflows (`RunDeployV2`, `RunDestroy`, `RunDriftDetection`, `RunStateImport`, `RunProbe`) |
 | `tofu/` | Wrapper around the `tofu` binary via `hashicorp/terraform-exec` |
 | `cloud/` | `CloudProvider` interface + per-cloud implementations, the HTTP state backend, and kubeconfig writing |
 | `verify/` | The deterministic, fail-closed Elench policy gate over the plan JSON (+ ed25519 evidence receipt) |
 | `drift/` | Turns `tofu plan -refresh-only -json` into a per-environment drift `Posture` |
 | `sandbox/` | The per-job isolation seam (Passthrough / Container backends) |
 | `argocd/` | ArgoCD install, manifest rendering, infra facts |
-| `helm/` | Helm chart operations with retry logic |
 | `k8s/` | kubeconfig management |
 | `git/` | Git clone, checkout, commit, push |
 | `infracost/` | Infracost CLI wrapper and JSON output parser |
@@ -55,7 +54,8 @@ flowchart TD
 
 `RunDeployV2` is the fail-closed spine: it evaluates the plan JSON with `verify.Evaluate`, refuses
 the apply if a hard control is failing and unwaived (`gateRequiresReport` + `Report.Unwaived`), and
-seals a `verify.SignedReceipt`. Also exposes `RunDestroy()` and `RunBootstrap()`. Brownfield attach
+seals a `verify.SignedReceipt`. Also exposes `RunDestroy()`, `RunDriftDetection()`, `RunStateImport()`,
+and `RunProbe()`. Brownfield attach
 is handled here: a component marked "existing" injects the resource id (`vpc_id` / `network_id` /
 `vnet_id`) as a tfvar instead of creating one.
 
@@ -83,16 +83,17 @@ Defines the `CloudProvider` interface:
 type CloudProvider interface {
     Name() string
     RequiredCLIs() []string
-    ProviderTfvars(config ProjectConfig) map[string]interface{}
-    ConfigureKubeconfig(clusterName, region string) error
+    ProviderTfvars(config *types.ProjectConfig) map[string]interface{}
+    ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error
 }
 ```
 
 Implementations are provisioning-only — the runner no longer lists cloud resources; the Console
 maintains the [asset inventory](/console/connectors/health-and-inventory) server-side:
 
-- `aws_provider.go` — AWS SDK: keyless `AssumeRoleWithWebIdentity`, EKS kubeconfig, Access Analyzer,
-  EC2 subnet lookup for reusing an existing VPC
+- `aws_provider.go` — AWS EKS kubeconfig (describe-cluster → exec-credential kubeconfig that invokes
+  `runner kube-token`). Keyless `AssumeRoleWithWebIdentity` lives in the runner agent, Access Analyzer
+  in `accessanalyzer/`, and EC2 subnet lookup in `cloud/aws/` — not this file
 - `gcp_provider.go` — GCP Workload Identity Federation + kubeconfig
 - `azure_provider.go` — Azure federated identity + kubeconfig (`azidentity`)
 - `alibaba_provider.go` — Alibaba RAM `AssumeRoleWithOIDC`
@@ -111,15 +112,17 @@ controls, honest `not_evaluable`, ed25519 receipt). `drift` turns a refresh-only
 
 - `CheckToken()` — validates the API key
 - `ensureBinary()` — downloads infracost if missing
-- `Run()` — executes `infracost breakdown` on the plan JSON
-- `parse.go` / `types.go` — parses into `CostBreakdown` / `ResourceCost`
+- `RunInfracost()` — executes `infracost breakdown` on the plan JSON
+- `parse.go` / `types.go` — parses into `CostBreakdown` / `CostResource`
 
-### argocd/ & helm/
+### argocd/
 
-- `argocd/install.go` — deploys ArgoCD via Helm, waits for Ready
+- `argocd/install.go` — applies rendered Application manifests, external-DNS secret, repo credentials
 - `argocd/render.go` — renders Application manifests from templates with infra facts
 - `argocd/infra_facts.go` — extracts cluster info, DB/cache endpoints from tofu outputs
-- `helm/` — `UpgradeInstall()` (`helm upgrade --install`, server-side dry-run), 3× retry with backoff
+
+ArgoCD itself is installed by the provisioner (`installArgoCD` in `provisioner/deploy.go`) via a
+`helm upgrade --install argo-cd` shell command — there is no standalone `helm/` Go package.
 
 ### assets/
 
@@ -128,5 +131,5 @@ Uses Go's `embed` directive to ship templates inside the binary — the runner i
 ```go
 //go:embed all:tofu/seed
 //go:embed all:helm/runner
-var embedded embed.FS
+var Assets embed.FS
 ```

@@ -15,6 +15,7 @@
 //   run under `withActorScope` and stamp `org_id = actor.orgId` (the org's single row per scope).
 
 import { z } from "zod";
+import { getPdp } from "@/lib/authz";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { withActorScope, withOwnerScope } from "@/lib/db";
@@ -126,4 +127,26 @@ export async function getProjectKnowledgePreview(
 	const id = z.string().uuid().parse(projectId);
 	const actor = await currentActor();
 	return buildProjectKnowledge(actor, id);
+}
+
+/**
+ * Whether the caller may EDIT this scope's agent context — so the Knowledge panel can render
+ * read-only instead of letting a non-editor's auto-save 403. Non-throwing (mirrors the
+ * `getRolesBootstrap` canManage check). Flag OFF → always true (legacy: each member edits their
+ * own row). Flag ON → the PDP `edit` capability for the scope: `org:edit` for the org-level row
+ * (projectId null), `project:edit` for a project row. Fail-closed on any PDP error.
+ */
+export async function canEditAgentContext(
+	projectId?: string | null,
+): Promise<boolean> {
+	const scope = scopeSchema.parse(projectId) ?? null;
+	if (!orgAgentContextEnabled()) return true;
+	const actor = await currentActor();
+	const ref = scope
+		? ({ type: "project", id: scope } as const)
+		: ({ type: "org" } as const);
+	return getPdp()
+		.can(actor, "edit", ref)
+		.then((d) => d.allowed)
+		.catch(() => false);
 }

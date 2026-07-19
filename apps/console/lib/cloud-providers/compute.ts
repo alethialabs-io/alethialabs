@@ -63,13 +63,17 @@ export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = {
 	],
 };
 
-/** Supported Kubernetes versions per provider (latest first). */
+/**
+ * Supported Kubernetes versions per provider (latest first). Mirrors the catalog SSOT
+ * (packages/core/catalog/catalog.json → k8s_versions); keep in lockstep — bump there.
+ * Hetzner stays behind (version coupled to the pinned Talos release; see #775).
+ */
 export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
-	aws: ["1.32", "1.31", "1.30", "1.29"],
-	gcp: ["1.31", "1.30", "1.29", "1.28"],
-	azure: ["1.31", "1.30", "1.29", "1.28"],
+	aws: ["1.35", "1.34", "1.33"],
+	gcp: ["1.35", "1.34", "1.33"],
+	azure: ["1.35", "1.34", "1.33"],
 	hetzner: ["1.32", "1.31", "1.30"],
-	alibaba: ["1.31", "1.30", "1.28"],
+	alibaba: ["1.35", "1.34", "1.33"],
 };
 
 interface AutoscalerMeta {
@@ -116,13 +120,18 @@ export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
 	alibaba: "ecs.g6.large",
 };
 
-/** Default K8s version per provider. */
+/**
+ * Default K8s version per provider (new-project form seed). Source of truth is the catalog
+ * (packages/core/catalog/catalog.json → default_k8s_version); the provisioning path resolves
+ * from it directly (resolveK8sVersion). Keep these in lockstep with the catalog — bump there.
+ * Hetzner stays behind (its version is coupled to the pinned Talos release; see #775).
+ */
 export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = {
-	aws: "1.32",
-	gcp: "1.31",
-	azure: "1.31",
+	aws: "1.35",
+	gcp: "1.35",
+	azure: "1.35",
 	hetzner: "1.32",
-	alibaba: "1.30",
+	alibaba: "1.35",
 };
 
 /** Cross-provider instance type mapping for project conversion. */

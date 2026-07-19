@@ -34,6 +34,19 @@ vi.mock("@/lib/analytics/server", () => ({
 	captureServer: (...args: unknown[]) => captureServer(...args),
 }));
 
+// #841 split drift: mock the drift-storage + heal seams so the DETECT_DRIFT branch can be asserted
+// without a real DB insert (the mockDb stub has no `insert`). Best-effort callers are `.catch()`ed.
+const recordDriftPosture = vi.fn().mockResolvedValue(undefined);
+const recordFabricDriftPosture = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/app/server/actions/drift", () => ({
+	recordDriftPosture: (...a: unknown[]) => recordDriftPosture(...a),
+	recordFabricDriftPosture: (...a: unknown[]) => recordFabricDriftPosture(...a),
+}));
+const maybeAutoHeal = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/app/server/actions/reconcile", () => ({
+	maybeAutoHeal: (...a: unknown[]) => maybeAutoHeal(...a),
+}));
+
 /**
  * Builds a drizzle-ish stub: `execute()` resolves the update_job_status RPC row, and the
  * select chain resolves the re-SELECTed job row the route reads execution_metadata from.
@@ -249,5 +262,96 @@ describe("PUT /api/jobs/[id]/status — ingest-side secret scrub", () => {
 		// The raw plan's attribute key named `password` survives inside plan_result — the
 		// opaque-subtree exemption keeps the Plan tab rendering intact.
 		expect(persistedSurface(executeCalls)).toContain("password");
+	});
+});
+
+// #841 split drift: a DETECT_DRIFT job's execution_metadata carries BOTH the infra drift posture
+// (tofu refresh-only) and the delivery status (ArgoCD gitops_status). The route records infra drift
+// per-Fabric AND self-heals on EITHER infra drift OR delivery OutOfSync (the shared re-deploy healer).
+describe("PUT /api/jobs/[id]/status — #841 split drift", () => {
+	const FABRIC_ID = "b2c3d4e5-f6a7-4901-bcde-f23456789012";
+
+	/** A DETECT_DRIFT SUCCESS job for env `env-1`, snapshot placed on a Fabric. */
+	function driftJob(
+		execution_metadata: Record<string, unknown>,
+		snapshot: Record<string, unknown> = { fabric_id: FABRIC_ID },
+	): Record<string, unknown> {
+		return {
+			job_type: "DETECT_DRIFT",
+			project_id: "proj-1",
+			environment_id: "env-1",
+			org_id: "org-1",
+			user_id: "user-1",
+			cloud_identity_id: "ci-1",
+			config_snapshot: snapshot,
+			execution_metadata,
+			provider: "aws",
+			traceparent: null,
+			created_at: new Date(),
+			claimed_at: new Date(),
+		};
+	}
+
+	it("records infra drift per-Fabric and self-heals on infra drift", async () => {
+		mockDb(true, driftJob({ drift_posture: { in_sync: false, drifted: 2, details: [] } }));
+
+		const res = await put("job-1", { status: "SUCCESS" });
+		expect(res.status).toBe(200);
+
+		// per-environment record (unchanged) AND the new per-Fabric record.
+		expect(recordDriftPosture).toHaveBeenCalledTimes(1);
+		expect(recordFabricDriftPosture).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", fabricId: FABRIC_ID, inSync: false }),
+		);
+		// infra drift → self-heal.
+		expect(maybeAutoHeal).toHaveBeenCalledWith("proj-1", "env-1");
+	});
+
+	it("self-heals on DELIVERY drift (ArgoCD OutOfSync) even when infra is in sync", async () => {
+		mockDb(
+			true,
+			driftJob({
+				drift_posture: { in_sync: true, drifted: 0, details: [] },
+				gitops_status: {
+					mode: "gitops",
+					app_health: { health: "Degraded", sync: "OutOfSync" },
+				},
+			}),
+		);
+
+		const res = await put("job-1", { status: "SUCCESS" });
+		expect(res.status).toBe(200);
+		expect(maybeAutoHeal).toHaveBeenCalledWith("proj-1", "env-1");
+	});
+
+	it("does NOT self-heal when infra is in sync AND delivery is Synced", async () => {
+		mockDb(
+			true,
+			driftJob({
+				drift_posture: { in_sync: true, drifted: 0, details: [] },
+				gitops_status: {
+					mode: "gitops",
+					app_health: { health: "Healthy", sync: "Synced" },
+				},
+			}),
+		);
+
+		const res = await put("job-1", { status: "SUCCESS" });
+		expect(res.status).toBe(200);
+		expect(maybeAutoHeal).not.toHaveBeenCalled();
+	});
+
+	it("skips the per-Fabric record when the snapshot carries no fabric_id (back-compat)", async () => {
+		mockDb(
+			true,
+			driftJob({ drift_posture: { in_sync: false, drifted: 1, details: [] } }, {}),
+		);
+
+		const res = await put("job-1", { status: "SUCCESS" });
+		expect(res.status).toBe(200);
+		expect(recordDriftPosture).toHaveBeenCalledTimes(1);
+		expect(recordFabricDriftPosture).not.toHaveBeenCalled();
+		// infra drift still self-heals.
+		expect(maybeAutoHeal).toHaveBeenCalledWith("proj-1", "env-1");
 	});
 });

@@ -106,7 +106,9 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
 			"Last 12 months",
 	);
-	const [pageIndex, setPageIndex] = useState(0);
+	// "Show more" window — grows client-side over the already server-filtered rows (like the
+	// Activity log), instead of page-number pagination.
+	const [visibleCount, setVisibleCount] = useState(20);
 
 	// Search stays responsive (bound to filters.search) but only re-keys the query after a
 	// 300ms pause — the input recomputes the memo on every keystroke, yet the normalized
@@ -158,14 +160,14 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		[facets, memberById],
 	);
 
-	// Reset to the first page whenever the filters change (the set may shrink).
+	// Reset the visible window whenever the filters change (the set may shrink).
 	useEffect(() => {
-		setPageIndex(0);
+		setVisibleCount(20);
 	}, [query]);
 
 	const columns = useMemo(
-		() => buildJobColumns({ showProject: !projectId, authorById }),
-		[projectId, authorById],
+		() => buildJobColumns({ showProject: !projectId, authorById, orgSlug }),
+		[projectId, authorById, orgSlug],
 	);
 
 	const handleRowClick = (job: JobWithMeta) => {
@@ -335,8 +337,11 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 									columns={columns}
 									data={rows}
 									onRowClick={handleRowClick}
-									pageIndex={pageIndex}
-									onPageIndexChange={setPageIndex}
+									pageSize={visibleCount}
+									loadMore={{
+										hasMore: rows.length > visibleCount,
+										onLoadMore: () => setVisibleCount((c) => c + 20),
+									}}
 									scrollHeight="h-[70vh]"
 								/>
 							</div>

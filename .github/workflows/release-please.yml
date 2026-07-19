@@ -21,9 +21,6 @@ jobs:
       runner-released: ${{ steps.release.outputs['apps/runner--release_created'] }}
       runner-version: ${{ steps.release.outputs['apps/runner--version'] }}
       runner-tag: ${{ steps.release.outputs['apps/runner--tag_name'] }}
-      cli-released: ${{ steps.release.outputs['apps/cli--release_created'] }}
-      cli-version: ${{ steps.release.outputs['apps/cli--version'] }}
-      cli-tag: ${{ steps.release.outputs['apps/cli--tag_name'] }}
     steps:
       # Create the release PRs with a GitHub App token, NOT the default GITHUB_TOKEN. PRs opened by
       # GITHUB_TOKEN do NOT trigger other workflows, so the protect-main required checks (CI +
@@ -54,11 +51,6 @@ jobs:
       version: ${{ needs.release-please.outputs.runner-version }}
     secrets: inherit
 
-  release-cli:
-    needs: release-please
-    if: needs.release-please.outputs.cli-released == 'true'
-    uses: ./.github/workflows/release-cli.yml
-    with:
-      version: ${{ needs.release-please.outputs.cli-version }}
-      tag: ${{ needs.release-please.outputs.cli-tag }}
-    secrets: inherit
+  # NOTE: the CLI release is NOT a downstream job here. release-please creates the cli-v* tag (with
+  # the App token, which triggers workflows), and .github/workflows/release-cli.yml runs on that tag
+  # push — so publishing survives a release-please post-step failure (e.g. commenting on a locked PR).

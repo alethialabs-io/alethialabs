@@ -6,12 +6,17 @@
 // (env) is deprecated — kept only as a one-time seed for existing deployments.
 
 import { getServiceDb } from "@/lib/db";
-import { fleetPools, type FleetPool, type NewFleetPool } from "@/lib/db/schema";
+import {
+	type CloudProvider,
+	fleetPools,
+	type FleetPool,
+	type NewFleetPool,
+} from "@/lib/db/schema";
 import { getFleetPools } from "@/lib/fleet/config";
 import { managedRunnersByInstance } from "@/lib/fleet/queue";
 import type { FleetProvider, FleetTarget } from "@/lib/fleet/types";
 import { log } from "@/lib/observability/log";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const flog = log.child({ component: "fleet" });
 
@@ -71,6 +76,35 @@ export async function reapDeletedPools(provider: FleetProvider): Promise<void> {
 		await getServiceDb().delete(fleetPools).where(eq(fleetPools.id, row.id));
 		flog.info("removed torn-down pool", { pool_id: row.id, provider: row.provider });
 	}
+}
+
+/** Create-or-update the LIVE warm pool for `provider` (backs the console/CLI `fleet set`). This
+ *  is the ONLY birth path for a pool once the DB is live: `FLEET_POOLS` only seeds an EMPTY table
+ *  on boot (seedFleetPoolsFromEnv), so a provider that was never seeded could otherwise never be
+ *  enabled without a redeploy. Upserts against the PARTIAL unique index (`provider WHERE deleting =
+ *  false`, schema/fleet.ts): an existing live pool keeps every stored field except those in
+ *  `patch`; a provider with no live pool gets a fresh row where `patch` is applied and everything
+ *  else takes its schema default (warm_min 1, max 10, enabled true, …). The ON CONFLICT MUST carry
+ *  the same `deleting = false` predicate as the index (`targetWhere`) or Postgres rejects it ("no
+ *  unique or exclusion constraint matching the ON CONFLICT specification") — the same partial-index
+ *  gotcha seedFleetPoolsFromEnv documents. Because that predicate scopes the conflict to the LIVE
+ *  row, a fresh pool is born ALONGSIDE any still-draining (`deleting = true`) pool for the same
+ *  provider rather than colliding with it. Atomic, so concurrent creates can't both insert and
+ *  break uniqueness. Returns the stored row. */
+export async function upsertFleetPool(
+	provider: CloudProvider,
+	patch: Partial<NewFleetPool>,
+): Promise<FleetPool> {
+	const [row] = await getServiceDb()
+		.insert(fleetPools)
+		.values({ ...patch, provider })
+		.onConflictDoUpdate({
+			target: fleetPools.provider,
+			targetWhere: sql`deleting = false`,
+			set: { ...patch, updated_at: new Date() },
+		})
+		.returning();
+	return row;
 }
 
 /** Map a FleetTarget back to an insert row (for the env → DB seed). */

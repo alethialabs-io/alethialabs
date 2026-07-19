@@ -61,7 +61,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 		// GKE
 		"provision_gke":        true,
-		"gke_cluster_version":  orDefault(config.Cluster.ClusterVersion, "1.31"),
+		"gke_cluster_version":  resolveK8sVersion("gcp", config.Cluster.ClusterVersion),
 		"gke_enable_autopilot": enableAutopilot,
 
 		// DNS

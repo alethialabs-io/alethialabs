@@ -139,7 +139,7 @@ describe("convertProjectConfig — cluster instance types", () => {
 			"aws",
 			"gcp",
 		);
-		expect(data.cluster.cluster_version).toBe("1.31"); // DEFAULT_K8S_VERSION.gcp
+		expect(data.cluster.cluster_version).toBe("1.35"); // DEFAULT_K8S_VERSION.gcp
 		const info = byComponent(warnings, "Cluster").find(
 			(w) => w.message.includes("Kubernetes version"),
 		);

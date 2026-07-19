@@ -24,13 +24,15 @@ command needs a resource you didn't specify on the command line and prompting is
 ### Project Selector
 
 ```
-? Select a Project:
-  > production / eu-west-1 (ACTIVE)
-    staging / eu-west-1 (DRAFT)
-    development / us-east-1 (PROVISIONING)
+Select Project
+Which project to operate on
+
+> api-backend (production)
+  web-frontend (staging)
+  data-pipeline (development)
 ```
 
-Each Project shows its environment stage, region, and current status.
+Each option shows the project name and its environment stage.
 
 <Callout type="info">
 With `--no-input` (or when stdin is not a TTY — e.g. in CI or a pipe), the selectors are disabled.
@@ -40,36 +42,32 @@ fails with a clear "interactive input required" error instead of hanging.
 
 ## Progress Stepper
 
-The visual progress stepper shows deployment phase progress using diamond icons:
+The `connector` commands print a horizontal progress stepper that tracks the three stages of a
+connection flow, joined by ` ── `:
 
 ```
-◆ Authentication     ← completed
-◆ Configuration      ← completed
-◈ OpenTofu Plan      ← current (running)
-◇ Cost Analysis      ← pending
-◇ Reporting          ← pending
+◆ Initialize ── ◇ Create IAM role ── ◇ Connection test
 ```
 
-- `◆` (filled diamond) — completed step
-- `◈` (diamond with dot) — currently executing
-- `◇` (empty diamond) — pending
+- `◆` (solid diamond) — a completed or currently-running step (the current step is drawn in stronger ink)
+- `◇` (hollow diamond) — a pending step
+
+Progress reads from the glyph fill and ink weight, not from color.
 
 ## Login Spinner
 
 The `alethia login` command uses a Bubble Tea model for the authentication flow:
 
 ```
-🔐 Waiting for browser authentication...
+Please open the following URL in your browser to log in:
+https://alethia.example.com/cli/login?device_code=abc123
 
-  Visit: https://alethia.example.com/cli/login?device_code=abc123
-  Enter the verification code shown in your browser:
-
-  > _
-
-  ⠋ Waiting for approval...
+⠋ Waiting for authentication in the browser...
 ```
 
-The spinner animates while polling the exchange endpoint every 2 seconds.
+The device-code flow opens the browser automatically; you approve the login there — there is no code
+to type back. The spinner animates while polling the exchange endpoint (`/api/auth/cli/exchange`)
+every 2 seconds, then prints a welcome message on success.
 
 ## Config Printer
 

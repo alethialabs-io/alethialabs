@@ -1,0 +1,96 @@
+---
+title: MCP server (external agents)
+description: Connect an external agent — Claude or a claude.ai connector — to Alethia over MCP so it can read your infrastructure with the same tools Elench uses, read-only.
+---
+
+# MCP server
+
+Elench's read tools are re-exposed as an [MCP](https://modelcontextprotocol.io) server so an agent
+*outside* the Console — Claude, or a claude.ai connector — can read your real infrastructure without
+you copying anything in by hand. It calls the **same PDP-gated, org-scoped tools** the in-console
+assistant uses, so it can only see what you can see.
+
+The external surface is **read-only by design**. It exposes just the read tools; the assistant's
+proposal, canvas, and job-queuing tools (including repo scans) are excluded. An external agent can
+read your projects, clusters, jobs, and drift — it can never queue an apply.
+
+<Callout type="info">
+  The connector requires AI to be enabled for your organization. On self-host it is always enabled
+  (no hosted billing). On hosted Alethia every org has at least the free AI tier, which is enabled,
+  so the endpoint is available by default — it returns a `403` only if AI is explicitly disabled for
+  the org. See [Assistant](/console/assistant).
+</Callout>
+
+## Before you start
+
+- Your Alethia Console origin, e.g. `https://app.alethialabs.io`. The MCP endpoint is that origin
+  plus `/api/mcp`.
+- An MCP client that speaks remote MCP over Streamable HTTP with OAuth — for example Claude or a
+  claude.ai connector.
+
+## Connect a client
+
+The endpoint authenticates with OAuth 2.1. Clients register themselves (dynamic client
+registration), so there is no key to paste — you sign in to Alethia and approve access.
+
+<Steps>
+
+### Add the connector
+
+In your MCP client, add a custom / remote MCP server pointing at your endpoint:
+
+```text
+https://<your-console-origin>/api/mcp
+```
+
+### Sign in to Alethia
+
+The client discovers Alethia's authorization server and sends you to the Console sign-in page. Sign
+in as you normally would.
+
+### Approve access
+
+If the client requests consent, approve it. The token issued is bound to **your** user — the tools
+run as you, under your organization's grants, with no new authority.
+
+### Use the tools
+
+The connector now lists Alethia's read tools. Ask the external agent about your infrastructure and
+it calls them on your behalf.
+
+</Steps>
+
+## What the agent can read
+
+The external projection is the read-only subset of Elench's tools:
+
+| Area | What the agent can do |
+| --- | --- |
+| Projects | List projects and read one project's full configuration (components + sizes). |
+| Jobs | List recent provisioning jobs; read a job's status and error; read a plan/deploy result, including the elench verification verdict. |
+| Runtime | List clusters (endpoints, databases, caches — no secrets), runners, connectors, and verified cloud accounts; read a cloud account's live inventory. |
+| Drift | Read a project's latest day-2 drift posture. |
+| Catalog | Browse the provider-neutral service catalog and its options; compute a CIDR for a host count. |
+| Docs | Search the Alethia documentation. |
+| Scans | Read a completed repo-scan result and compare its estimated cost across providers. |
+| Usage | Read the org's managed-runner usage, standalone AI standing, and billing summary. |
+
+Returns are trimmed and secret-free — never ArgoCD passwords, tokens, or credentials.
+
+## What it can't do
+
+The connector deliberately excludes every write and every stateful, UI-bound tool:
+
+- It cannot **queue a repo scan or an audit** — those start a runner job. Start them from the
+  [assistant](/console/assistant) instead.
+- It cannot **propose a plan or deploy**. A real apply stays human-gated behind the
+  [verification engine](/elench).
+- It cannot open Console UI, build dashboards, pin widgets, or read and write
+  [artifacts](/console/assistant/artifacts).
+
+<Callout type="warn">
+  The read-only boundary is enforced at the source: only tools classified as externally safe are
+  ever projected onto the MCP endpoint, and a tool with no explicit classification is excluded. The
+  same server actions still re-check their own permission on every call, so the agent can never read
+  across tenants.
+</Callout>

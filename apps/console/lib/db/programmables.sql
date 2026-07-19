@@ -770,6 +770,18 @@ BEGIN
      AND e.fabric_id IS NOT NULL;
 END $$;
 
+-- ── BYO-IaC attach point → Fabric backfill (decoupled env-model, #839) ────────────────
+-- BYO-IaC (customer OpenTofu) now attaches at the Fabric, not the Environment: the single-stack
+-- ceiling is UNIQUE(project_id, fabric_id). Existing rows are env-keyed; map each onto the Fabric
+-- of its attaching environment (every env has one from the #836 backfill above, so this must run
+-- AFTER it). Idempotent: only sources whose fabric_id is still NULL are touched.
+UPDATE public.project_iac_sources s
+   SET fabric_id = e.fabric_id
+  FROM public.project_environments e
+ WHERE s.environment_id = e.id
+   AND s.fabric_id IS NULL
+   AND e.fabric_id IS NOT NULL;
+
 -- ── project_full: denormalized read model for the CLI config + job-create endpoints.
 -- OUTPUT column names match the ProjectConfig wire contract (create_vpc, …);
 -- sources the renamed project_* tables. Numerics are cast to float8 so the JSON carries

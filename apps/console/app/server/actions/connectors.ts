@@ -369,6 +369,19 @@ export async function getConnectorsWithStatus(): Promise<
 	});
 }
 
+/**
+ * The cloud provider slugs (aws/gcp/azure/hetzner/…) the current tenant has a live connection for
+ * — i.e. at least one connected or degraded cloud account. Used to render provider logos in full
+ * color when connected and grayscale when not (mirrors the connectors page treatment). Reuses
+ * `getConnectorsWithStatus` so the placeholder/degraded rules stay in one place.
+ */
+export async function getConnectedCloudProviders(): Promise<string[]> {
+	const connectors = await getConnectorsWithStatus();
+	return connectors
+		.filter((c) => c.category === "cloud" && c.connected)
+		.map((c) => c.slug);
+}
+
 export type ConnectorCredentialResult =
 	| { ok: true; verified: boolean; message?: string }
 	| { ok: false; error: string };

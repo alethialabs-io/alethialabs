@@ -1,0 +1,147 @@
+---
+title: The node inspector
+description: Open a resource's docked side panel to rename it, read its status, cost and activity, edit its configuration, and remove it — all without leaving the canvas.
+---
+
+# The node inspector
+
+The node inspector is the docked side panel that opens beside the [canvas](/console/design-project/the-canvas)
+when you select a resource. It replaces the old full-page configuration form: everything you used to
+edit in a form, you now edit here, on the same board you designed. The panel is split into
+**Overview**, **Cost**, **Activity** and **Settings** tabs (the cluster adds a **Deploy** tab), with an
+editable header and a status strip above them.
+
+<Callout>
+The inspector is the **Architecture view** only. It appears when a node is selected and slides away
+when nothing is.
+</Callout>
+
+## Open the inspector
+
+1. Open a project's **Architecture** view.
+2. Click a resource card.
+
+The panel docks on the right. Clicking a different card swaps the panel to that resource; clicking an
+empty area of the board, or the **✕** in the panel header, closes it.
+
+Some cards open a purpose-built panel instead of the generic inspector:
+
+- A **Secrets vault** (or any collapsed collection) opens its member list — see [Secrets](/console/design-project/secrets).
+- An **external** card from a bring-your-own IaC module opens a read-only resource list — see
+  [Bring your own charts](/console/design-project/bring-your-own-charts).
+- A described **chart workload** opens its own describe-and-bind panel.
+
+## Rename a resource
+
+The resource name lives in the panel header, next to the type badge.
+
+1. Click the name field in the header.
+2. Type the new name.
+
+Only resources that carry an editable name show an input here — the **project** (its project name) and
+the array-style resources you can add many of (databases, caches, secrets, …). For array resources the
+name is forced to lowercase as you type, to match cloud naming rules. Resources with no name of their
+own show a fixed label instead.
+
+<Callout>
+The cloud account is **not** set in the inspector. It is chosen once, at project creation, so there is
+no per-node cloud selector.
+</Callout>
+
+## Read the status strip
+
+Under the header, a strip shows the resource's **resolved status** — a grayscale dot and a mono label —
+followed by the most actionable line for that state (a config issue, a failure message, or a probe
+reason). If the real cloud has diverged from what Alethia recorded, a `N drifted` chip rides alongside
+the state; hover it to see the Terraform addresses that diverged.
+
+Status merges the design's readiness with the environment's server truth, and picks one state to show.
+See [The canvas → Status without colour](/console/design-project/the-canvas) for the full vocabulary and
+precedence order.
+
+## Check what a resource produced and costs (Overview)
+
+The **Overview** tab is a read-only summary of the selected resource:
+
+| Section | Shows |
+| --- | --- |
+| **Type / Status** | The resource kind and its resolved status label (with the status message, if any) |
+| **Environment** | For the project only — the real environment's name, stage, and provisioning status |
+| **Endpoints** | What the deploy produced (for example a database hostname or ArgoCD URL), each with a copy button |
+| **Cost** | The resource's estimated monthly cost from the last plan |
+| **Recent activity** | The environment's latest jobs, condensed to the most recent few |
+| **Drift** | Each drifted Terraform address, listed on its own |
+| **Configuration** | The resource's scalar configuration values |
+
+Sections that have nothing to show are omitted — Endpoints appears only once the resource is deployed,
+and Cost appears only once the resource has been priced.
+
+## Break down cost by resource (Cost)
+
+The **Cost** tab shows the resource's monthly spend, itemised by Terraform address.
+
+1. Open the **Cost** tab.
+2. Read the **Monthly** rollup at the top.
+3. Read the **Breakdown** — one line per Terraform address, sorted from most to least expensive.
+
+The rollup and the per-line detail both come from the last plan's Infracost breakdown, and the tab
+notes when that plan ran.
+
+<Callout>
+A resource that has never been priced says **"Not priced yet"** rather than showing `$0` — run a plan
+and its estimated monthly cost appears here. See [Cost Sidebar](/console/design-project/cost-sidebar) for
+the pre-plan estimate.
+</Callout>
+
+## Review recent jobs (Activity)
+
+The **Activity** tab lists the environment's recent job history. Activity is scoped to the
+**environment**, not the single resource — a deploy provisions the whole board, so a node has no jobs of
+its own. Each row shows the job type, its status dot, and how long ago it ran. An environment with no
+jobs yet reads **"No activity yet for this environment."**
+
+## Edit configuration (Settings)
+
+The **Settings** tab is where you change the resource. Its fields are built from the resource's own
+config schema, so each kind shows only the knobs that apply to it.
+
+1. Open the **Settings** tab.
+2. Expand a section to reveal its fields.
+3. Edit a field — changes apply to the design immediately.
+
+Portable fields sit in the top sections, which open by default. **Advanced**, cloud-specific sections
+are collapsed by default and badged with the provider they belong to (for example `AWS only`), so you
+open the door to non-portable ground deliberately. A section whose fields don't apply to your project's
+cloud is not shown at all.
+
+For the **project** panel on a provisioned environment, Settings also shows the environment's name and
+stage read-only — the stage is a fact of the environment you're viewing, not a field you pick on the
+board.
+
+<Callout type="warn">
+A **core** resource placed on a different cloud than the project is **gated**: Settings shows a notice
+that it can be drawn but the project will not provision until the resource is colocated.
+</Callout>
+
+## Duplicate or delete a resource
+
+Structural actions live in the collapsed **Danger zone** at the bottom of the **Settings** tab.
+
+- **Duplicate resource** — create a copy with the same configuration. Available for the array-style
+  resources you can have many of.
+- **Delete resource** — remove the resource from the canvas. You can undo this with **⌘Z**.
+
+The Danger zone is hidden for the project root (which can't be deleted) and for out-of-band resources
+such as marketplace add-ons and bring-your-own charts, which are managed where they were installed.
+
+## Destroy an environment
+
+When you inspect the **project** in an editable environment, the Settings tab also carries a separate
+**Destroy environment** action.
+
+1. Open the project's **Settings** tab.
+2. Click **Destroy**.
+3. Confirm in the dialog.
+
+This queues a `DESTROY` job that tears down the environment's provisioned cloud infrastructure. It
+cannot be undone.

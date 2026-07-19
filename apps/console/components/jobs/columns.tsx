@@ -4,8 +4,13 @@
 
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
-import { ProviderIcon } from "@repo/ui/provider-icon";
-import { cn } from "@repo/ui/utils";
+import {
+	HoverCard,
+	HoverCardContent,
+	HoverCardTrigger,
+} from "@repo/ui/hover-card";
+import { PROVIDER_LABELS, ProviderIcon } from "@repo/ui/provider-icon";
+import { lookup } from "@/lib/typed-object";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
 import type {
 	ProvisionJobStatus,
@@ -13,21 +18,18 @@ import type {
 } from "@/lib/db/schema";
 import { JOB_TYPES, formatDuration } from "@/lib/jobs/format";
 import { JobAuthor, type JobAuthorInfo } from "@/components/jobs/job-author";
+import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
+import { projectHref } from "@/lib/routing";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
-import { Layers, Server } from "lucide-react";
+import { ArrowRight, Layers, Server } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 export { JOB_TYPES };
 
 /** A job row enriched with joined project/runner/provider/environment data from getJobs(). */
 type JobRow = JobWithMeta;
-
-const STAGE_LABEL: Record<string, string> = {
-	development: "dev",
-	staging: "staging",
-	production: "prod",
-};
 
 const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
 
@@ -70,15 +72,159 @@ function JobStatus({
 }
 
 /**
+ * The Project cell — the provider logo (full color when the job's cloud identity is connected,
+ * grayscale otherwise) + a truncating project name, wrapped in a HoverCard that surfaces the
+ * provider and a link to open the project. Rows are clickable, so the trigger stops propagation.
+ */
+function ProjectCell({
+	orgSlug,
+	projectName,
+	projectSlug,
+	provider,
+	connected,
+}: {
+	orgSlug: string;
+	projectName: string | null;
+	projectSlug: string | null;
+	provider: string | null;
+	connected: boolean;
+}) {
+	const icon = provider ? (
+		<ProviderIcon
+			provider={provider}
+			size={18}
+			mono={!connected}
+			className="shrink-0"
+		/>
+	) : null;
+
+	// No project (e.g. an org-level job) — nothing to link to, so skip the hover card.
+	if (!projectName) {
+		return (
+			<div className="flex items-center gap-1.5">
+				{icon}
+				<span className="text-xs text-muted-foreground">—</span>
+			</div>
+		);
+	}
+
+	const label = provider ? (lookup(PROVIDER_LABELS, provider) ?? provider) : null;
+
+	return (
+		<HoverCard openDelay={150} closeDelay={80}>
+			<HoverCardTrigger asChild>
+				<button
+					type="button"
+					onClick={(e) => e.stopPropagation()}
+					className="flex min-w-0 max-w-[220px] items-center gap-1.5 text-left"
+				>
+					{icon}
+					<span className="truncate text-xs font-medium text-foreground">
+						{projectName}
+					</span>
+				</button>
+			</HoverCardTrigger>
+			<HoverCardContent align="start" className="w-64 p-3">
+				<div className="flex items-center gap-2">
+					{provider && (
+						<ProviderIcon
+							provider={provider}
+							size={22}
+							mono={!connected}
+							className="shrink-0"
+						/>
+					)}
+					<div className="min-w-0">
+						<p className="truncate text-sm font-medium text-foreground">
+							{projectName}
+						</p>
+						{label && (
+							<p className="text-[11px] text-muted-foreground">{label}</p>
+						)}
+					</div>
+				</div>
+				{projectSlug && (
+					<Link
+						href={projectHref(orgSlug, projectSlug)}
+						onClick={(e) => e.stopPropagation()}
+						className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline"
+					>
+						Open project
+						<ArrowRight className="size-3" />
+					</Link>
+				)}
+			</HoverCardContent>
+		</HoverCard>
+	);
+}
+
+/**
+ * The Runner cell — the runner name; for a real release version (not `dev`), it's a button that
+ * opens the release-notes / changelog popover (the same one the runners table uses). Stops row
+ * propagation so opening the popover doesn't navigate to the job.
+ */
+function RunnerCell({
+	runnerId,
+	runnerName,
+	runnerVersion,
+}: {
+	runnerId: string | null;
+	runnerName: string | null;
+	runnerVersion: string | null;
+}) {
+	if (!runnerId && !runnerName)
+		return <span className="text-xs text-muted-foreground">—</span>;
+
+	const name = runnerName ?? runnerId?.slice(0, 8);
+	const isRelease = Boolean(runnerVersion) && runnerVersion !== "dev";
+
+	if (!isRelease) {
+		return (
+			<div className="flex items-center gap-1.5">
+				<Server className="size-3.5 shrink-0 text-muted-foreground" />
+				<span className="text-xs text-foreground">{name}</span>
+				{runnerVersion && (
+					<span className="font-mono text-[10px] text-muted-foreground">
+						{runnerVersion}
+					</span>
+				)}
+			</div>
+		);
+	}
+
+	return (
+		<span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+			<ReleaseNotesPopover version={runnerVersion}>
+				<button
+					type="button"
+					className="flex items-center gap-1.5 text-left"
+				>
+					<Server className="size-3.5 shrink-0 text-muted-foreground" />
+					<span className="text-xs text-foreground hover:underline">
+						{name}
+					</span>
+					<span className="font-mono text-[10px] text-muted-foreground">
+						v{runnerVersion}
+					</span>
+				</button>
+			</ReleaseNotesPopover>
+		</span>
+	);
+}
+
+/**
  * The jobs table columns. `showProject` is false in a project-scoped context (the project is
  * implied). `authorById` resolves each job's initiator to the org-member identity for the avatar.
+ * `orgSlug` builds the project link in the Project cell's hover card.
  */
 export function buildJobColumns({
 	showProject = true,
 	authorById,
+	orgSlug,
 }: {
 	showProject?: boolean;
 	authorById: Map<string, JobAuthorInfo>;
+	orgSlug: string;
 }): ColumnDef<JobRow>[] {
 	const columns: ColumnDef<JobRow>[] = [
 		{
@@ -135,27 +281,25 @@ export function buildJobColumns({
 			header: "Project",
 			enableSorting: false,
 			cell: ({ row }) => {
-				const { project_name, cloud_provider } = row.original;
+				const {
+					project_name,
+					project_slug,
+					cloud_provider,
+					cloud_identity_status,
+				} = row.original;
+				// A degraded identity authenticated fine (it just lacks some provisioning
+				// permissions) — it still counts as connected for the color treatment.
+				const connected =
+					cloud_identity_status === "connected" ||
+					cloud_identity_status === "degraded";
 				return (
-					<div className="flex items-center gap-1.5">
-						{cloud_provider && (
-							<ProviderIcon
-								provider={cloud_provider}
-								size={14}
-								className="shrink-0"
-							/>
-						)}
-						<span
-							className={cn(
-								"text-xs",
-								project_name
-									? "font-medium text-foreground"
-									: "text-muted-foreground",
-							)}
-						>
-							{project_name ?? "—"}
-						</span>
-					</div>
+					<ProjectCell
+						orgSlug={orgSlug}
+						projectName={project_name}
+						projectSlug={project_slug}
+						provider={cloud_provider}
+						connected={connected}
+					/>
 				);
 			},
 		});
@@ -167,16 +311,13 @@ export function buildJobColumns({
 			header: "Runner",
 			enableSorting: false,
 			cell: ({ row }) => {
-				const { runner_id, runner_name } = row.original;
-				if (!runner_id && !runner_name)
-					return <span className="text-xs text-muted-foreground">—</span>;
+				const { runner_id, runner_name, runner_version } = row.original;
 				return (
-					<div className="flex items-center gap-1.5">
-						<Server className="size-3.5 shrink-0 text-muted-foreground" />
-						<span className="text-xs text-foreground">
-							{runner_name ?? runner_id?.slice(0, 8)}
-						</span>
-					</div>
+					<RunnerCell
+						runnerId={runner_id}
+						runnerName={runner_name}
+						runnerVersion={runner_version}
+					/>
 				);
 			},
 		},
@@ -185,18 +326,13 @@ export function buildJobColumns({
 			header: "Environment",
 			enableSorting: false,
 			cell: ({ row }) => {
-				const { environment_name, environment_stage } = row.original;
+				const { environment_name } = row.original;
 				if (!environment_name)
 					return <span className="text-xs text-muted-foreground">—</span>;
 				return (
 					<div className="flex items-center gap-1.5">
 						<Layers className="size-3.5 shrink-0 text-muted-foreground" />
 						<span className="text-xs text-foreground">{environment_name}</span>
-						{environment_stage && (
-							<span className="text-[10px] text-muted-foreground">
-								{STAGE_LABEL[environment_stage] ?? environment_stage}
-							</span>
-						)}
 					</div>
 				);
 			},

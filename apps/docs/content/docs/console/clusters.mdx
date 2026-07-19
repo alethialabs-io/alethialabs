@@ -13,15 +13,16 @@ Each cluster displays:
 
 | Field | Description |
 |-------|-------------|
-| **Project Name** | The project's name + "Active" badge |
-| **Provider** | AWS/GCP/Azure icon with region and environment |
-| **Kubernetes Version** | Kubernetes version (e.g., 1.32) |
+| **Project Name** | The project's name + a **derived** status badge (Active / Reconciling / Degraded / Provisioning) — rolled up from the cluster and every data service, never hardcoded to "Active" |
+| **Provider** | Provider icon with region, environment, and Kubernetes version (e.g., `K8s 1.32`) |
 | **Cluster Endpoint** | API server URL (copy button) |
-| **kubeconfig Command** | Provider-specific command to configure kubectl (copy button) |
-| **ArgoCD URL** | External link to the ArgoCD dashboard |
-| **Services** | Databases and caches with their endpoints (copy buttons) |
+| **kubeconfig Command** | Configure kubectl (copy button) — shown for **AWS** clusters; GCP/Azure users run their own CLI (see below) |
+| **ArgoCD URL** | External link to the ArgoCD dashboard, plus a command to retrieve the admin password |
+| **Components** | Control plane, databases, caches, and DNS — each with its endpoint (copy buttons) and its own derived status |
 
 ### kubeconfig Commands
+
+The Console generates the ready-to-copy command for **AWS** clusters. For GCP and Azure, use the equivalent CLI command below:
 
 <Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
@@ -55,9 +56,9 @@ Every cluster comes with these components installed via ArgoCD (see [GitOps & Ar
 | **Metrics Server** | CPU/memory metrics for HPA |
 | **Storage Class** | GP3 EBS / Persistent Disk / Managed Disk |
 
-## Real-time Updates
+## Live Updates
 
-The Clusters page subscribes to `projects` table UPDATE events. When a project's status changes to ACTIVE (deploy completes), the clusters list refreshes automatically to show the new cluster.
+The Clusters page polls every 5 seconds while the tab is focused (TanStack Query pauses the interval in the background) — the interim reconciliation cadence. When a project's default environment reaches `ACTIVE` (deploy completes), the next poll surfaces the new cluster.
 
 ## Data Source
 

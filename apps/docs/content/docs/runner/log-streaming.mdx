@@ -16,7 +16,7 @@ flowchart TD
   Tofu --> Err[JobLogger STDERR]
   Out --> Buf[Buffer]
   Err --> Buf
-  Buf -->|POST /api/jobs/id/logs| Tbl[(provision_job_logs)]
+  Buf -->|POST /api/jobs/id/logs| Tbl[(job_logs)]
   Tbl -->|NOTIFY on INSERT| Listen[Console LISTEN]
   Listen -->|SSE stream| Browser[Browser EventSource]
 `} />
@@ -31,7 +31,7 @@ Alethia API periodically.
 - **STDERR logger** — captures errors and warnings
 
 **Buffer flush triggers:**
-- Every **2 seconds** (ticker-based flush)
+- Within ~100ms of a write (a coalescing wake), backed by a **1-second** ticker as a backstop
 - When the buffer exceeds **10 KB** (size-based flush)
 - On job completion (final flush)
 
@@ -49,24 +49,24 @@ Content-Type: application/json
 }
 ```
 
-The Alethia API inserts the chunk into `provision_job_logs`:
+The Alethia API inserts the chunk into `job_logs` (via the `insert_job_log` RPC):
 
 ```sql
-INSERT INTO provision_job_logs (job_id, log_chunk, stream_type, created_at)
-VALUES ($1, $2, $3, now());
+INSERT INTO job_logs (job_id, log_chunk, stream_type, traceparent)
+VALUES ($1, $2, $3, $4);
 ```
 
 ## LISTEN/NOTIFY → SSE
 
-An `AFTER INSERT` trigger on `provision_job_logs` fires a Postgres `NOTIFY` carrying the new chunk. The console holds a single `LISTEN` connection per app instance, receives the notification, and relays it to the browser over an SSE stream scoped to the `job_id`. The browser consumes that stream with an `EventSource`:
+The `insert_job_log` RPC fires a Postgres `NOTIFY` on the `job_logs` channel carrying only `{jobId, logId}` (an 8 KB payload cap rules out the chunk itself). The console holds a single `LISTEN` connection per app instance, and on each notification fetches the new rows since its last seen id and relays them to the browser over an SSE stream scoped to the `job_id`. The browser consumes that stream with an `EventSource`:
 
 ```typescript
-const events = new EventSource(`/api/jobs/${jobId}/logs/stream`);
+const events = new EventSource(`/api/stream/jobs/${jobId}`);
 
-events.addEventListener('log', (event) => {
+events.onmessage = (event) => {
   const { log_chunk, stream_type } = JSON.parse(event.data);
   appendLogChunk(log_chunk, stream_type);
-});
+};
 ```
 
 Each new batch appears in the log viewer within milliseconds of being written by the Runner. (For multi-instance deployments, an optional Redis transport relays notifications between console instances — enterprise.)
@@ -92,8 +92,8 @@ for a registered runner. This provides a secondary log source for debugging.
 | Event | Latency |
 |-------|---------|
 | tofu writes to stdout | 0ms (piped to JobLogger) |
-| JobLogger buffer flush | ≤ 2 seconds (ticker interval) |
+| JobLogger buffer flush | ~100ms (coalescing wake; 1s backstop ticker) |
 | API POST to Alethia | ~50ms (network) |
 | Database INSERT | ~5ms |
 | NOTIFY → SSE delivery | ~50ms (server-sent event) |
-| **Total: tofu output → browser** | **~2-3 seconds** |
+| **Total: tofu output → browser** | **~200ms** |

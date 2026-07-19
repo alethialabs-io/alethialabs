@@ -1,0 +1,71 @@
+---
+title: Object Storage
+description: Object storage buckets are a first-class canvas node with their own fields, S3-safe naming rules, and per-provider backing services.
+---
+
+# Object Storage
+
+A **bucket** is a first-class node on the [architecture canvas](/console/design-project/the-canvas) — the same standing as a database, cache, or container registry. Add one from the palette's **Storage** group to provision object storage for files and assets. Multiple buckets can be added per project.
+
+Each bucket is scoped to the project's cloud account and environment. Its name is unique per project, per environment.
+
+## Fields Per Bucket
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| **Name** | Text input | `assets` | Bucket name (S3-safe — see [Naming rules](#naming-rules)) |
+| **Versioning** | Toggle | Off | Keep every version of an object; restore or roll back at any time |
+| **Encryption at rest** | Toggle | On | Server-side encryption with the cloud's managed keys |
+| **Public access** | Toggle | Off (private) | Allow unauthenticated reads (static assets); off keeps the bucket private |
+| **CORS origins** | Text | Empty | Comma-separated origins allowed to read from the browser |
+
+The name, versioning, and encryption fields are grouped under **General**; public access and CORS origins are grouped under **Access**.
+
+## Naming rules
+
+Bucket names use the strictest cloud rules, so one name works on every provider:
+
+- 3–63 characters.
+- Lowercase letters, digits, and hyphens only.
+- Must start and end with a letter or digit (no leading or trailing hyphen).
+
+The name field lowercases input and strips disallowed characters as you type; the full rule is validated on save.
+
+<Callout type="info">
+A single S3-safe name is portable across AWS, GCP, Azure, Alibaba Cloud, and Hetzner, so a bucket you design on one provider provisions unchanged on another.
+</Callout>
+
+## Backing service by provider
+
+Buckets are supported on every provider. The name and toggles map to each cloud's object-storage service:
+
+| Provider | Service |
+|----------|---------|
+| **AWS** | S3 |
+| **GCP** | Cloud Storage |
+| **Azure** | Blob Storage |
+| **Alibaba Cloud** | OSS |
+| **Hetzner** | MinIO (Object Storage) |
+
+### Hetzner
+
+Compute-only Hetzner projects provision buckets natively via Object Storage (the `aminueza/minio` OpenTofu provider). Two fields differ on Hetzner:
+
+- **Encryption at rest** is not shown — Hetzner Object Storage always encrypts at rest, so there is no per-bucket toggle.
+- **CORS origins** is not shown — the provider does not apply CORS to Hetzner's S3 backend.
+
+## Cloud placement
+
+A bucket inherits the project's cloud account and region. When left unset, its per-resource cloud identity and region fall back to the project's own — so a bucket lands in the same account and region as the rest of the project unless it is placed on another connected account.
+
+## On the canvas
+
+The bucket card summarizes its configuration without opening the inspector:
+
+- **Access** — `public` or `private`.
+- **Versioning** — `on` or `off`.
+- **CORS** — the number of allowed origins, or `none`.
+
+## After provisioning
+
+Each bucket carries a lifecycle status — `PENDING`, `CREATING`, `ACTIVE`, `UPDATING`, `FAILED`, `DESTROYING`, or `DESTROYED` — and an estimated monthly cost that rolls up into the [cost sidebar](/console/design-project/cost-sidebar).

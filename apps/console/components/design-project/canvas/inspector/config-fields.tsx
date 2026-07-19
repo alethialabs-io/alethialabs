@@ -4,7 +4,9 @@
 
 import { toNum, toStr, toStrArray } from "@/lib/coerce";
 import { ChevronDown } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import type { NodeKind } from "../graph/types";
+import { validateNodeConfig } from "./node-validation";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -259,10 +261,13 @@ function FieldRow({
 	field,
 	ctx,
 	onChange,
+	error,
 }: {
 	field: FieldDef;
 	ctx: FieldCtx;
 	onChange: (patch: Config) => void;
+	/** W4 — the inline zod validation message for this field, if it's currently invalid. */
+	error?: string;
 }) {
 	const fieldId = useId();
 	const raw = field.get ? field.get(ctx.config) : ctx.config[field.key];
@@ -284,6 +289,9 @@ function FieldRow({
 					checked={raw !== false}
 					onCheckedChange={(v) => onChange({ [field.key]: v })}
 				/>
+				{error && (
+					<p className="col-span-full text-xs font-medium text-foreground">{error}</p>
+				)}
 			</div>
 		);
 	}
@@ -316,8 +324,15 @@ function FieldRow({
 				onChange={onChange}
 				id={composite ? undefined : fieldId}
 			/>
-			{field.description && field.type !== "radio-card" && (
-				<p className="text-xs text-muted-foreground">{field.description}</p>
+			{error ? (
+				// The inline zod error replaces the description while the field is invalid (W4). Grayscale
+				// per the design system — emphasis reads through weight, not hue.
+				<p className="text-xs font-medium text-foreground">{error}</p>
+			) : (
+				field.description &&
+				field.type !== "radio-card" && (
+					<p className="text-xs text-muted-foreground">{field.description}</p>
+				)
 			)}
 		</div>
 	);
@@ -362,19 +377,24 @@ function Section({
 	section,
 	ctx,
 	onChange,
+	errors,
 }: {
 	section: SectionDef;
 	ctx: FieldCtx;
 	onChange: (patch: Config) => void;
+	errors: Record<string, string>;
 }) {
 	const advanced = section.tier === "advanced";
+	const fields = section.fields.filter(
+		(f) => !f.visibleWhen || f.visibleWhen(ctx.config, ctx),
+	);
+	// A collapsed section hiding an invalid field would hide the error, so open it when one of its
+	// fields is failing (W4).
+	const hasError = fields.some((f) => errors[f.key]);
 	// Advanced = provider-specific knobs. Collapsed by default, so the portable fields stay the
 	// thing you see first; you have to deliberately open the door to leave cloud-indifferent ground.
 	const [open, setOpen] = useState(section.defaultOpen ?? false);
 	const summary = sectionSummary(section, ctx);
-	const fields = section.fields.filter(
-		(f) => !f.visibleWhen || f.visibleWhen(ctx.config, ctx),
-	);
 
 	// A section scoped to clouds this project isn't on doesn't exist for it.
 	if (
@@ -389,11 +409,12 @@ function Section({
 
 	return (
 		<Collapsible
-			open={open}
+			open={open || hasError}
 			onOpenChange={setOpen}
 			className={cn(
 				"rounded-none border border-border",
 				advanced && "bg-surface-sunken/40",
+				hasError && "border-foreground/40",
 			)}
 		>
 			<CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
@@ -428,6 +449,7 @@ function Section({
 						field={field}
 						ctx={ctx}
 						onChange={onChange}
+						error={errors[field.key]}
 					/>
 				))}
 			</CollapsibleContent>
@@ -441,13 +463,23 @@ export function ConfigFields({
 	config,
 	provider,
 	onChange,
+	kind,
 }: {
 	schema: KindConfig;
 	config: Config;
 	provider: CloudProviderSlug | null;
 	onChange: (patch: Config) => void;
+	/** When set, each field is validated inline against this kind's zod item schema (W4). Omit for
+	 * surfaces that don't want inline errors. */
+	kind?: NodeKind;
 }) {
 	const ctx: FieldCtx = { provider, config };
+	// W4 — validate against the DB-derived per-node schema so what the form accepts conforms to what
+	// the DB stores. Draft→Save is unchanged; this only surfaces per-field errors as you edit.
+	const errors = useMemo(
+		() => (kind ? validateNodeConfig(kind, config) : {}),
+		[kind, config],
+	);
 	return (
 		<div className="space-y-3">
 			{schema.sections.map((section) => (
@@ -456,6 +488,7 @@ export function ConfigFields({
 					section={section}
 					ctx={ctx}
 					onChange={onChange}
+					errors={errors}
 				/>
 			))}
 		</div>

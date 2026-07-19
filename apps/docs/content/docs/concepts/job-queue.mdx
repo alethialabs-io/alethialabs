@@ -24,8 +24,9 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 ## Job Types
 
 The common provisioning jobs are below; the full `provision_job_type` catalog (including
-`ANALYZE_REPO`, `DETECT_DRIFT`, `AUDIT`, `CHART_SCAN`, `IAC_SCAN`, and `STATE_SURGERY`) is documented
-in the [Domain Model](/concepts/domain-model#job-types) and the [Glossary](/concepts/glossary#job-types-at-a-glance).
+`ANALYZE_REPO`, `DETECT_DRIFT`, `AUDIT`, `CHART_SCAN`, `IAC_SCAN`, `STATE_SURGERY`, `PROBE_CLUSTER`,
+and `BUILD`) is documented in the [Domain Model](/concepts/domain-model#job-types) and the
+[Glossary](/concepts/glossary#job-types-at-a-glance).
 
 | Type | Purpose | Triggered By |
 |------|---------|-------------|
@@ -63,7 +64,7 @@ stateDiagram-v2
 
 ## Atomic Job Claiming
 
-The critical invariant: **exactly one Runner executes each job**. This is enforced by PostgreSQL's `FOR UPDATE SKIP LOCKED`:
+The critical invariant: **exactly one Runner executes each job**. This is enforced by PostgreSQL's `FOR UPDATE SKIP LOCKED`. The body below is **simplified** — the real `claim_next_job` also takes the runner's token hash and cloud identity, orders by `priority DESC, created_at ASC` (not pure FIFO), and applies per-org fairness and concurrency caps for managed runners:
 
 ```sql
 CREATE OR REPLACE FUNCTION claim_next_job(p_runner_id uuid)
@@ -99,7 +100,7 @@ $$ LANGUAGE plpgsql;
 
 When a job is created, the current Project configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Project after queuing.
 
-For DEPLOY jobs, a **plan hash** is validated: if the Project config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
+When a signing key is configured, the config_snapshot is also signed (HMAC-SHA256, stored as `config_snapshot_sig`) and the signature is re-verified when a Runner claims the job — if the snapshot was altered after it was enqueued, the job is failed as tampered rather than executed. A DEPLOY reuses its `PLAN` job's saved plan by reference via `plan_job_id`.
 
 ## Job Execution Flow
 
@@ -130,11 +131,11 @@ For DEPLOY jobs, the Console calls `finalizeDeployment()` to extract cluster met
 
 When a Runner dies mid-job:
 
-1. Heartbeat stops → Console marks Runner OFFLINE after 60 seconds
-2. Job stays in PROCESSING with no new log updates
-3. After 5 minutes of no log activity, Console marks the job FAILED
-4. User can **retry** the job — creates a new job with the same config
-5. OpenTofu state is preserved in S3-compatible storage, so the retry continues from the last successful state
+1. Heartbeat stops → Console marks the Runner OFFLINE once its last heartbeat is older than 45 seconds (the SSE wake connection refreshes it every ~10 seconds, so a 45-second gap means the runner is genuinely gone)
+2. Job stays in `CLAIMED`/`PROCESSING` with no new log updates
+3. A background sweep (`recover_stale_jobs`) **requeues** the job automatically once it is stale — a dead runner (claimed over 15 minutes ago with no heartbeat in the last 5 minutes) or a live-but-stalled runner (no forward progress for 30 minutes)
+4. Each recovery increments `attempts`; below `max_attempts` (5) the job is requeued (back to `QUEUED`, runner cleared) so another Runner picks it up — at the cap it is failed **terminally** to protect the queue
+5. OpenTofu state is preserved in S3-compatible storage, so the requeued run continues from the last successful state
 
 ## Real-time Status Updates
 

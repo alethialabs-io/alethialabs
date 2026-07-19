@@ -81,8 +81,10 @@ variable "provision_ack" {
 }
 
 variable "ack_cluster_version" {
-  type        = string
-  default     = "1.30"
+  type = string
+  # NOTE: the managed path sets this from the catalog SSOT (catalog.json); this default is the
+  # BYO-IaC fallback only. Keep both on the same standard minor.
+  default     = "1.35"
   description = "Kubernetes version for the ACK cluster"
 }
 

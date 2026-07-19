@@ -20,7 +20,7 @@ it bundles no `aws`/`gcloud`/`az`, and mints cluster tokens in-process via `runn
 | Base image | Alpine 3.21, non-root `runner` user |
 | Registries | GitHub Container Registry (`ghcr.io/alethialabs-io/runner*`) |
 | Versioning | release-please (`runner-v*` tags). See [Release System](/concepts/release-system). |
-| Poll interval | 10 seconds (`POST /api/jobs/claim`) |
+| Job dispatch | Push wake stream (SSE `GET /api/runners/wake`) + 30-second safety poll (`POST /api/jobs/claim`) |
 | Heartbeat interval | 30 seconds (`POST /api/runners/heartbeat`) |
 | tofu state | Console HTTP state proxy — no object-storage credential on the runner |
 | Cloud auth | Keyless OIDC per job (no static keys) |
@@ -64,8 +64,10 @@ canonical.
 
 <Steps>
 
-### Polls for jobs
-Every 10 seconds, calls `POST /api/jobs/claim`. See [Job Queue Pattern](/concepts/job-queue).
+### Picks up jobs
+A push wake stream (SSE) signals when a job is claimable; the runner calls `POST /api/jobs/claim` on
+each wake, with a 30-second safety poll as the fallback if the stream drops. See
+[Job Queue Pattern](/concepts/job-queue).
 
 ### Claims atomically
 PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-execution.
@@ -86,7 +88,8 @@ the config marks a component "existing" (brownfield — e.g. an existing VPC/VNe
 Helm chart deployment with the App-of-Apps pattern. See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
 ### Streams logs
-Batched POST every 2 seconds → Postgres `LISTEN/NOTIFY` → SSE → browser. See
+Batched POST (notify-driven, flushed on write with a ~1-second backstop) → Postgres `LISTEN/NOTIFY`
+→ SSE → browser. See
 [Log Streaming](/runner/log-streaming).
 
 ### Reports results

@@ -45,7 +45,7 @@ The org/team/SSO/authz tables ship as ordinary migrations (inert in Community �
 plugins). Apply them:
 
 ```bash
-pnpm -F console db:migrate   # applies migrations 0001–0018 + programmables (RLS, triggers)
+pnpm -F console db:migrate   # applies all pending migrations + programmables (RLS, triggers)
 ```
 
 Then reconcile the Better Auth org/team/SSO tables against the plugin's expected shape:
@@ -79,15 +79,24 @@ existing grants and hierarchy. Leaving `OPENFGA_*` unset keeps `PostgresRbacPDP`
 <Step>
 ### Activate the license
 
-Provide the license so the entitlements (`organizations`, `sso`, `customRoles`, `activityExport`) resolve to
-`true`:
+Install the signed license so the Enterprise entitlements resolve to `true`. The license is a compact
+EdDSA (ed25519) JWT that Alethia Labs mints offline; the console verifies it **offline** against the
+issuer public key you bake in — no phone-home:
 
 ```bash
-ALETHIA_LICENSE_ACTIVE=true   # see your license materials for the exact variable/key
+ALETHIA_LICENSE_KEY=<the signed license JWT Alethia Labs issued you>
+ALETHIA_LICENSE_PUBLIC_KEY=<base64(SPKI PEM) ed25519 public key it verifies against>
 ```
 
 Restart the console. The org switcher, Members, Teams, Roles (custom), Access, SSO, and activity export now light
 up.
+
+<Callout type="info">
+  `ALETHIA_LICENSE_ACTIVE=true` is a **non-production dev bypass only** — it is ignored in production,
+  where a signed `ALETHIA_LICENSE_KEY` is required. Verification is fail-closed: a missing, expired, or
+  forged license leaves the instance unlicensed and degrades to per-org billing (Community), never a boot
+  crash.
+</Callout>
 </Step>
 
 <Step>

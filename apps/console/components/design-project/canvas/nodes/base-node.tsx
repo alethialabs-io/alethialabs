@@ -33,12 +33,6 @@ const RULE_CLASS: Record<string, string> = {
 interface BaseNodeProps {
 	id: string;
 	selected?: boolean;
-	/**
-	 * Render the dense treatment — a card inside a container region. Set by canvas-flow via the render
-	 * node's `insideContainer` flag. The compact zoom tier also renders dense. Default (isolated card,
-	 * e.g. a unit test) is the full card.
-	 */
-	dense?: boolean;
 }
 
 /** Leaves are targets only; the registry overrides this for the network / cluster / project. */
@@ -54,7 +48,7 @@ const DEFAULT_HANDLES: { source?: boolean; target?: boolean } = { target: true }
  * status from dot fill/shape. Detail is shed by zoom (`useCanvasLod`) so a large architecture
  * stays legible.
  */
-export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
+export function BaseNode({ id, selected }: BaseNodeProps) {
 	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
 	// `provider` (the effective cloud) still drives the fact grid + zones; the visible cloud-account
 	// chip is gone — the cloud is chosen once, at project creation, so repeating it on every card is
@@ -146,7 +140,9 @@ export function BaseNode({ id, selected, dense: denseProp }: BaseNodeProps) {
 	// A card is DENSE when it sits inside a container region (the At-Scale treatment) or when the board
 	// is zoomed to the compact tier: a tight 158px node whose facts collapse to one footer line. The
 	// full fact grid is one click away in the definition panel.
-	const dense = denseProp || lod === "compact";
+	// Dense is purely a zoom tier now — W2 removed the container regions that used to force it, so a
+	// card always renders its full treatment at normal zoom and collapses only when you zoom out.
+	const dense = lod === "compact";
 	const primaryFact = facts.find((f) => f.value)?.value ?? facts[0]?.value ?? "";
 
 	// ── dense tier — the density the canvas runs at inside its containers ────

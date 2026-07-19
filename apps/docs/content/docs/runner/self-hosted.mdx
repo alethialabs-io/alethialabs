@@ -30,8 +30,8 @@ The runner is a single Go binary and is **CLI-free** — it does **not** need `a
 | Tool | Purpose | Minimum version |
 |------|---------|-----------------|
 | OpenTofu (`tofu`) | Infrastructure provisioning | 1.9+ |
-| kubectl | Kubernetes cluster access | 1.28+ |
-| Helm | Chart installation (ArgoCD, components) | 3.12+ |
+| kubectl | Kubernetes cluster access | — (unpinned; matched to the target cluster) |
+| Helm | Chart installation (ArgoCD, components) | — (unpinned) |
 
 The official runner image bundles all three (plus the `tofu` provider cache). When running the
 binary directly you install them yourself; the container path needs nothing extra.
@@ -66,7 +66,7 @@ export INFRACOST_API_KEY=<key>
 The runner will:
 1. Register / confirm with the Console.
 2. Start the heartbeat goroutine (30s).
-3. Begin polling for jobs (10s) and execute them keylessly.
+3. React to push wakes (sub-second pickup) with a 30s safety poll as a fallback, and execute claimed jobs keylessly.
 
 ## Environment variables
 
@@ -75,7 +75,7 @@ The runner will:
 | `ALETHIA_WEB_ORIGIN` | Yes | Alethia control-plane base URL |
 | `ALETHIA_RUNNER_ID` | Yes | Assigned runner ID |
 | `ALETHIA_RUNNER_TOKEN` | Yes | Authentication token |
-| `ALETHIA_RUNNER_OPERATOR` | Yes | Must be `self` (legacy `ALETHIA_RUNNER_MODE=self-hosted` still works) |
+| `ALETHIA_RUNNER_OPERATOR` | No | Defaults to `self` when unset; set it explicitly to `self` for clarity (legacy `ALETHIA_RUNNER_MODE=self-hosted` still works) |
 | `ALETHIA_RUNNER_PROVIDERS` | No | Comma-separated clouds this runner serves (e.g. `aws`); unset = any |
 | `ALETHIA_RUNNER_SLOTS` | No | Concurrent jobs per runner (default `1`). Above `1`, the runner supervises N isolated worker subprocesses — run the container with an init (`docker --init` / compose `init: true`) so orphaned tools are reaped |
 | `ALETHIA_RUNNER_INSTANCE_ID` | No | Distinct self-registration id when several runners share a host |

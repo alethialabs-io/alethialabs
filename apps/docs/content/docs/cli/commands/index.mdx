@@ -7,7 +7,8 @@ description: Complete reference for all alethia CLI commands organized by group.
 
 alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
 `org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`,
-`classification`, `ops`) plus top-level auth (`login`/`logout`/`init`), identity
+`classification`, `ops`), a set of read-only inspection groups (`repo`, `cloud`, `agent`, `addon`,
+`chart`, `iac`, `cost`, `drift`, `probes`), plus top-level auth (`login`/`logout`/`init`), identity
 (`whoami`/`config`/`open`), `billing`, `usage`, `activity`, and utility commands. All commands
 communicate with the Alethia [Console](/concepts/glossary) API — they never run
 [OpenTofu](/concepts/glossary) (the `tofu` binary) locally. Provisioning (`tofu plan`/`apply`/
@@ -26,7 +27,8 @@ alethia
 ├── config                            # show resolved config + file paths + web-origin source
 │   ├── set <key> <value>            # key: web-origin
 │   ├── get [web-origin|active-org]
-│   └── clear-context                 # clear the active org
+│   ├── clear-context                 # clear the active org
+│   └── export [project] [--format <f>] [--out <file>]  # export a project's resolved config
 ├── version
 ├── open [console|docs]               # aliases: docs, dashboard
 ├── completion [bash|zsh|fish|powershell]
@@ -74,6 +76,25 @@ alethia
 │   ├── logs <job_id> [-f/--follow]
 │   └── cancel <job_id>
 ├── cluster                           # alias: clusters
+│   └── list
+├── repo                              # aliases: repos, repositories — browse connected git repos
+│   └── list [--provider github]      # provider: github, gitlab, bitbucket
+├── cloud                             # inspect discovered cloud resources
+│   └── inventory <cloud_identity_id>
+├── agent                             # alias: agents — inspect agent identities
+│   ├── list
+│   └── get <agent_id>
+├── addon                             # alias: addons — installed add-ons (-p/--project · -e/--env)
+│   └── list
+├── chart                             # alias: charts — BYO Helm charts (-p/--project · -e/--env)
+│   └── list
+├── iac                               # BYO Terraform/OpenTofu source (-p/--project · -e/--env)
+│   └── show
+├── cost                              # infrastructure cost (-p/--project · -e/--env)
+│   └── show
+├── drift                             # day-2 drift posture (-p/--project · -e/--env)
+│   └── show
+├── probes                            # alias: probe — cluster-alive probes (-p/--project)
 │   └── list
 ├── channels                          # alias: channel
 │   ├── list

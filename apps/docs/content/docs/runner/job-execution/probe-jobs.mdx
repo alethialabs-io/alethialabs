@@ -1,0 +1,112 @@
+---
+title: Probe Jobs
+description: How the runner executes PROBE_CLUSTER jobs — a bounded, read-only liveness dial of the cluster API server that mutates nothing.
+---
+
+# Probe Jobs
+
+`PROBE_CLUSTER` jobs answer one question: **is the environment's cluster reachable right now?**
+This is the live half of day-2 monitoring, alongside `DETECT_DRIFT`. A probe reads the
+environment's OpenTofu outputs in-process, acquires the cluster kubeconfig, and dials the
+Kubernetes API server's `/readyz` endpoint. It provisions nothing and mutates nothing.
+
+## Execution flow
+
+<Steps>
+
+### Mint cloud credentials
+Keyless per job, the same as other job types. Credentials are activated by the runner before the
+handler runs. See [Cloud Credentials](/runner/cloud-credentials).
+
+### Read environment outputs from the state proxy
+The runner runs `tofu output -json` against a throwaway workspace whose config is **only** a
+`backend "http" {}` block, initialized against the [Console state proxy](/concepts/terraform-state)
+(per-job `TF_HTTP_PASSWORD`). No module is cloned and no template is copied — outputs live in state,
+so no providers or resources are needed.
+
+Output values stay **in-process only**. The sensitive `kubeconfig` output (used by Hetzner and
+Alibaba) is never written to the workdir, logged, or persisted.
+
+### Acquire the cluster kubeconfig
+The provider configures a private kubeconfig from the outputs:
+
+- **Hetzner / Alibaba** read the sensitive `kubeconfig` output from state.
+- **AWS / GCP / Azure** synthesize an exec-plugin kubeconfig from the cluster name.
+
+### Dial the API server
+```bash
+kubectl get --raw=/readyz
+```
+The dial is bounded by both a `kubectl --request-timeout` and a context deadline (default 30s), so a
+dead endpoint fails fast instead of hanging the job. The cluster is **reachable** only when
+`/readyz` returns exactly `ok`.
+
+### Enrich a reachable result (best-effort)
+When the API server answers, the probe additionally reads the Kubernetes server version and node
+readiness (`total` / `ready`). A failure here does **not** flip the result to unreachable — the API
+server already answered.
+
+### Report the result
+The runner posts the result on `execution_metadata.probe_result` and the job ends `SUCCESS`.
+
+</Steps>
+
+## Reachable is a fact, not a job outcome
+
+<Callout type="info">
+An unreachable cluster is a **successful** probe carrying `reachable: false`. That is the whole
+point of the job — the honest "it's down" signal, not a job failure.
+</Callout>
+
+The handler returns an error only when the probe cannot **run** — an unreadable state proxy or an
+unknown provider. That is an operational failure, distinct from an honest "the cluster is down".
+
+## What the probe reports
+
+The result carries a non-secret `ProbeResult` — no kubeconfig, token, or certificate:
+
+| Field | Meaning |
+|-------|---------|
+| `reachable` | `true` when the API server answered `/readyz` with `ok`. |
+| `message` | Short human-readable summary (especially why a cluster is unreachable). |
+| `detail.endpoint` | The API-server endpoint that was dialed (a public control-plane address). |
+| `detail.method` | The liveness mechanism — `apiserver-readyz`. |
+| `detail.statusCode` | The HTTP status the health endpoint returned (`200` on `ok`). |
+| `detail.serverVersion` | The Kubernetes server version (reachable clusters only). |
+| `detail.nodeCount` / `detail.readyNodeCount` | Nodes seen and Ready (best-effort). |
+| `detail.latencyMs` | Round-trip latency of the liveness check, in milliseconds. |
+| `detail.error` | The failure reason when unreachable (dial / TLS / timeout) — a message, never a secret. |
+
+## No sandbox gate
+
+Unlike `DETECT_DRIFT`, a probe carries **no** BYO-managed sandbox gate. It never executes the
+customer's module: reading state outputs runs OpenTofu against a backend-only workspace, and the
+reachability dial is Alethia's own code. There is no untrusted plugin execution to contain, so a
+safe, read-only probe runs on a managed runner without the gate.
+
+## How probes are dispatched
+
+The Console enqueues `PROBE_CLUSTER` jobs two ways:
+
+- **On a schedule.** A sweeper on the reconcile loop enqueues a probe for every `ACTIVE`
+  environment whose last probe is older than its tier cadence: production every 10 minutes, staging
+  every hour, development every 6 hours. An environment with a probe already in flight
+  (`QUEUED` / `CLAIMED` / `PROCESSING`) is skipped, so a slow runner cannot pile up duplicates.
+- **On demand.** The canvas **Run** menu queues a single probe for one environment. Only one probe
+  runs per environment at a time.
+
+Both paths reuse the config snapshot from the environment's latest successful `DEPLOY`, so the
+runner reads the exact provisioned state.
+
+## What the Console does with the result
+
+On a `SUCCESS`, the Console appends the result as an `environment_probes` history row. When a probe
+records a **true → false** transition — a cluster that was reachable and now is not — it raises a
+`system.project.cluster_unreachable` alert once. A first-ever probe that is already unreachable does
+not alert, and a cluster that is still down does not re-alert.
+
+## Related
+
+- [Job Execution Overview](/runner/job-execution) — every job type and the dispatch switch.
+- [tofu state](/concepts/terraform-state) — the Console HTTP state proxy the probe reads.
+- [Cloud Credentials](/runner/cloud-credentials) — keyless per-job minting.

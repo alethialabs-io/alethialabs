@@ -1,0 +1,103 @@
+---
+title: Configuration
+description: The ALETHIA_SANDBOX_* runner environment variables that select the isolation backend and set its runtime, image, network, egress, memory, and cancellation grace.
+---
+
+# Configuration
+
+The per-job container sandbox is configured entirely through `ALETHIA_SANDBOX_*` environment
+variables read by the **runner**. This page is the reference for those variables — what each one
+selects, its default, and the accepted values.
+
+<Callout type="info">
+  These variables are read on the runner, and the container backend applies only to **untrusted
+  bring-your-own** work on the managed fleet. The default backend (`Passthrough`) ignores most of
+  them. For the enabling sequence on the fleet, see the
+  [managed provisioning runbook](/self-hosting/managed-provisioning).
+</Callout>
+
+## Backend selection
+
+`ALETHIA_SANDBOX_BACKEND` picks the isolation backend:
+
+- `container` selects the per-job `Container` backend.
+- Any other value (including unset) selects the in-process `Passthrough` backend — no isolation.
+
+When `ALETHIA_SANDBOX_BACKEND=container` is set but the container backend fails to initialize on a
+runner whose operator is not `self`, selection is **fail-closed**: the runner falls back to a
+`Passthrough` that refuses every job rather than silently running untrusted work unsandboxed.
+
+## The container variables
+
+These variables configure the `Container` backend. They are parsed by `NewContainerFromEnv`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALETHIA_SANDBOX_RUNTIME` | `docker` | The container CLI to invoke (`docker` for local dev, `podman` for the fleet). The value must resolve on `PATH`, or the backend fails to initialize. |
+| `ALETHIA_SANDBOX_IMAGE` | the runner's own image ref (`ALETHIA_RUNNER_IMAGE`) | The image the per-job container runs. If both this and `ALETHIA_RUNNER_IMAGE` are empty, the backend returns an error — an image is required. |
+| `ALETHIA_SANDBOX_NETWORK` | runtime default | The container `--network` value. Empty uses the runtime's default network. |
+| `ALETHIA_SANDBOX_EGRESS_ENFORCED` | unset (false) | Confirms that the runtime constrains egress. The managed fail-closed gate requires it (see below). |
+| `ALETHIA_SANDBOX_MEMORY` | `2g` | The container `--memory` limit. |
+
+<Callout type="info">
+  The per-job container pid limit is fixed at 512 and is not configurable through an environment
+  variable.
+</Callout>
+
+## Cancellation grace
+
+`ALETHIA_CANCEL_GRACE_SECONDS` sets the `SIGINT`→`SIGKILL` grace window applied when a running job
+is cancelled mid-flight. The value is an integer number of seconds:
+
+- Unset defaults to 120 seconds.
+- A value of `0` sends `SIGKILL` immediately after `SIGINT`.
+
+The grace window lets a foreground container runtime forward the interrupt to OpenTofu, so the
+in-flight resource finishes, state is written, and the state lock is released before the process
+exits.
+
+## Enforcing isolation on the default backend
+
+`ALETHIA_SANDBOX_ENFORCE_MANAGED` is the kill-switch for the default (`Passthrough`) path. When it
+is set, a `Passthrough` backend **refuses** to run on any runner whose operator is not `self`,
+instead of silently running unsandboxed. It never refuses a `self` operator, and when it is unset
+(the default) the `Passthrough` backend never refuses at all.
+
+## Truthy values
+
+`ALETHIA_SANDBOX_EGRESS_ENFORCED` and `ALETHIA_SANDBOX_ENFORCE_MANAGED` are boolean flags. They are
+read as true for any of these values (case-insensitive):
+
+```text
+1
+true
+yes
+on
+```
+
+Any other value — including unset — is read as false.
+
+## Fail-closed behavior
+
+Two gates depend on the variables above:
+
+- **Managed egress gate.** On an `operator=managed` runner, the container backend refuses to run an
+  egress-permitted stage unless `ALETHIA_SANDBOX_EGRESS_ENFORCED` is true. A no-egress stage (such
+  as `chart_scan`, which runs with `--network none`) is exempt.
+- **Backend fallback.** Requesting `ALETHIA_SANDBOX_BACKEND=container` on a non-`self` runner where
+  the backend cannot initialize yields a refusing `Passthrough`, never an unsandboxed run.
+
+## Where to go next
+
+<Cards>
+  <Card title="Architecture" href="/isolated-execution/architecture">
+    How the per-job container, the environment allowlist, PID/network isolation, and the egress
+    proxy fit together.
+  </Card>
+  <Card title="Isolated Execution — overview" href="/isolated-execution">
+    The trust model, the guarantees, and availability.
+  </Card>
+  <Card title="Managed provisioning runbook" href="/self-hosting/managed-provisioning">
+    Enabling the container sandbox on the managed fleet.
+  </Card>
+</Cards>

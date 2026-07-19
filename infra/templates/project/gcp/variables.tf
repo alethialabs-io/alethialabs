@@ -108,7 +108,9 @@ variable "gke_cluster_version" {
   type = string
   # 1.31 is GONE from GKE — a fresh apply fails with `No valid versions with the prefix "1.31"
   # found` (verified on real GKE: only 1.33/1.34/1.35/1.36 remain). Pin a currently-served minor.
-  default     = "1.33"
+  # NOTE: the managed path sets this from the catalog SSOT (catalog.json); this default is the
+  # BYO-IaC fallback only. Keep both on the same standard minor.
+  default     = "1.35"
   description = "Desired Kubernetes master version (must be a minor GKE still serves)"
 }
 

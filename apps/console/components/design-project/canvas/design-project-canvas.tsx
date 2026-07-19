@@ -56,6 +56,8 @@ import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
+import { EnvSettingsSheet } from "./env-settings-sheet";
+import { useDropPosition } from "./use-drop-position";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
@@ -106,6 +108,9 @@ function CanvasInner({
 	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
+	// W5 click-to-place — computed here (inside the ReactFlowProvider) and handed to the palettes so
+	// they don't each need the React Flow context (and stay testable without a provider).
+	const dropPosition = useDropPosition();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cmdOpen, setCmdOpen] = useState(false);
 	// Traversal mode (Excalidraw/Miro): the sticky hand tool (toolbar / `H`) and the transient
@@ -500,6 +505,9 @@ function CanvasInner({
 						}}
 					/>
 				)}
+				{/* Cluster + network are env settings now (W2), not board cards — one env is one cluster.
+				    Meaningless while a BYO-IaC source governs the env (the module owns the substrate). */}
+				{!iacGoverned && <EnvSettingsSheet />}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
 					<Button
@@ -530,6 +538,7 @@ function CanvasInner({
 				identities={cloudIdentities}
 				addonItems={addonsQuery.data?.items}
 				onConfigureAddon={projectId ? openConfigureAddon : undefined}
+				dropPosition={dropPosition}
 			/>
 			{projectId && (
 				<AddonConfigSheet
@@ -549,6 +558,7 @@ function CanvasInner({
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
 				onAskAi={openAssistantExclusive}
+				dropPosition={dropPosition}
 					onAttachChart={
 						byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
 					}

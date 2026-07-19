@@ -67,7 +67,7 @@ Roles are bundles of permissions. There are four built-in templates:
     Everything **except billing**. Can manage members, identities, integrations, and all infrastructure — but not the subscription.
   </Card>
   <Card title="operator">
-    Operate infrastructure: `view` / `create` / `edit` / `plan` / `deploy` / `destroy` on projects, runners, and jobs, plus `view` on the org and connectors and read access to alerts (`view_alerts`). **Cannot** manage cloud identities, members, billing, the managed fleet, or the Activity log.
+    Operate infrastructure: full control of projects (`view` / `create` / `edit` / `plan` / `deploy` / `destroy`), runners (the same minus `plan`, which runners don't have), and jobs (`view` / `create` / `edit`), plus `view` / `edit` on the org, `view` on connectors, and read access to alerts (`view_alerts`). **Cannot** manage cloud identities, members, billing, the managed fleet, or the Activity log.
   </Card>
   <Card title="viewer">
     Read-only. Can `view` everything (including alert config) but change nothing — plus open/reply to their own support cases.

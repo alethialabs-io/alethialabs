@@ -382,7 +382,14 @@ export const projectIacSources = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		// The environment the source was attached THROUGH (informational). Ownership moved to the
+		// Fabric in #839 — the single-stack ceiling + snapshot resolution key on `fabric_id`, not this.
 		environment_id: envRef(),
+		// #839: the Fabric (infra unit) this BYO-IaC module belongs to — the single-stack ceiling is
+		// per-Fabric (one source per Fabric, shared by every env placed on it). NULLABLE during the
+		// transition: the programmables.sql backfill sets it from the env's `fabric_id` (every env has
+		// one post-#836) and the app sets it on every attach going forward.
+		fabric_id: uuid().references(() => projectFabrics.id, { onDelete: "cascade" }),
 		// Stack name — reserved for future multi-stack support; v1 always 'default'.
 		name: text().default("default").notNull(),
 		repo_url: text().notNull(),
@@ -417,9 +424,13 @@ export const projectIacSources = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
-		unique("project_iac_sources_project_id_environment_id_key").on(
+		// #839: the single-stack ceiling is now per-Fabric (one BYO-IaC source per Fabric). For a
+		// `dedicated` placement (env owns its Fabric 1:1) this is equivalent to the old per-env ceiling;
+		// for a shared placement, co-Fabric envs share the one source. Nullable fabric_id → NULLs are
+		// distinct in the momentary window before the programmables backfill fills them.
+		unique("project_iac_sources_project_id_fabric_id_key").on(
 			t.project_id,
-			t.environment_id,
+			t.fabric_id,
 		),
 	],
 );

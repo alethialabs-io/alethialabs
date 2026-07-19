@@ -18,6 +18,7 @@ export * from "./project-environments";
 export * from "./project-fabrics";
 export * from "./promotions";
 export * from "./drift";
+export * from "./fabric-drift";
 export * from "./probes";
 export * from "./security";
 export * from "./runners";

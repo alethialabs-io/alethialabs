@@ -11,7 +11,7 @@ The Console (`apps/console`) is Alethia's web control plane. It provides a visua
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Next.js 15 (App Router, Server Actions) |
+| Framework | Next.js 16 (App Router, Server Actions) |
 | Database | PostgreSQL + Drizzle ORM with org-scoped Row Level Security |
 | Auth | Better Auth (social OAuth: GitHub, Google native; GitLab, Bitbucket genericOAuth; email 6-digit OTP) |
 | Realtime | Postgres LISTEN/NOTIFY → SSE ([how it works](/concepts/realtime)) |
@@ -22,13 +22,13 @@ The Console (`apps/console`) is Alethia's web control plane. It provides a visua
 
 <Cards>
   <Card title="Dashboard" href="/console/dashboard">
-    Overview stats, project management, project detail with services and infrastructure.
+    Project overview grid, plus project detail with services and infrastructure.
   </Card>
   <Card title="Assistant (Elench)" href="/console/assistant">
     The in-console AI — grounded in your real infrastructure, with per-project workspaces, a knowledge base, dashboards, and artifacts.
   </Card>
   <Card title="Design a Project" href="/console/design-project">
-    11-section form for configuring multi-cloud infrastructure with real-time cost estimation.
+    Visual canvas for configuring multi-cloud infrastructure with real-time cost estimation.
   </Card>
   <Card title="Connectors" href="/console/connectors">
     Connect AWS, GCP, Azure, Alibaba, and Hetzner cloud accounts (each a cloud identity) plus GitHub, GitLab, Bitbucket Git providers.
@@ -55,21 +55,24 @@ flowchart TD
   A --> SA[Server Actions<br/>Drizzle · org-scoped RLS]
   A --> API[API Routes<br/>Runner + CLI token auth]
   A --> SSE[LISTEN/NOTIFY → SSE]
-  SSE --> ST[Live updates → browser stores]
+  SSE --> ST[Live job-log & message streams]
 `} />
 
 All database access goes through Drizzle with org-scoped RLS policies enforcing per-org data isolation through a Policy Decision Point (PDP). Server Actions set the current org context (`app.current_org` via `set_config`) automatically.
 
 ## State Management
 
-The Console uses five Zustand stores for client-side state, each with a 30-second stale threshold and real-time event handlers:
+Server data lives in **TanStack Query** (React Query) — projects, jobs, runners, clusters, and cloud inventory are fetched, cached, and revalidated there. Zustand holds only **client-side UI and ephemeral state**: filter selections, and form/canvas working state. Key stores:
 
 | Store | Purpose |
 |-------|---------|
-| `useProjectStore` | Form pricing data during project creation |
-| `useJobsStore` | Job list with filters, pagination, real-time upserts |
-| `useRunnersStore` | Runner list with deploy/update/destroy actions |
-| `useClustersStore` | Active clusters from provisioned projects |
-| `useCloudProviderStore` | Selected provider, identity, cached resources |
+| `useWorkspaceStore` | The active organization the session is scoped to (drives the PDP + RLS) |
+| `useCloudProviderStore` | Selected provider, cloud identity, and cached cloud-resource inventory |
+| `usePricingStore` | Region price data during project creation |
+| `useProjectsStore` | Starred (favorite) projects on the overview |
+| `useJobsFilters` / `useRunnerFilters` | Filter selections for the jobs and runners lists |
+| `useCanvasStore` | The Design-a-Project architecture graph (nodes and edges) |
+| `useElenchStore` | Elench assistant UI state |
+| `useNotificationsStore` | Read-notification ids |
 
-Real-time subscriptions are established on dashboard layout mount and feed updates into these stores. See [Real-time Architecture](/concepts/realtime) for details.
+Real-time job logs and support messages stream over SSE (Postgres LISTEN/NOTIFY). See [Real-time Architecture](/concepts/realtime) for details.

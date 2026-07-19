@@ -26,26 +26,32 @@ Claims the next available job. Uses the `claim_next_job()` PostgreSQL function w
     "provider": "aws",
     "role_arn": "arn:aws:iam::123456789012:role/AlethiaProvisionerRole",
     "external_id": "uuid"
-  }
+  },
+  "connector_credentials": []
 }
 ```
 
-**Response** (no jobs): `204 No Content`
+`connector_credentials` carries decrypted `api_key` credentials for any pluggable providers (DNS, secrets, container registry, observability) the job's config references — attached only at claim time, never stored in the snapshot.
+
+**Response** (no jobs): `200 OK` with `{ "job": null }`
 
 ## Heartbeat
 
 ### `POST /api/runners/heartbeat`
 
-Sent every 30 seconds. Updates `runners.last_heartbeat` and `runners.version`.
+Updates `runners.last_heartbeat`, `runners.version`, and `runners.supported_providers`, and marks the runner ONLINE.
 
 **Body:**
 ```json
 {
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "providers": ["aws"]
 }
 ```
 
-If a heartbeat is not received for 60 seconds, Alethia marks the Runner OFFLINE.
+`providers` lists the clouds the runner's image can execute (validated against the `cloud_provider` enum). Omit it or send `null` for a full "any provider" image, which leaves `supported_providers` unchanged.
+
+If a heartbeat is not received for 45 seconds, Alethia marks the Runner OFFLINE.
 
 ## Job Status
 
@@ -68,7 +74,7 @@ Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
 
 On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract OpenTofu outputs and update project component tables.
 
-On FAILED, the project status is set to FAILED with the error message.
+On FAILED, the targeted environment's status is set to FAILED with the error message.
 
 ## Log Streaming
 
@@ -127,10 +133,6 @@ Also used for initial heartbeat after registration.
 
 ## Runner Metadata
 
-### `GET /api/runners/{id}`
-
-Returns runner metadata including deploy configuration.
-
-### `POST /api/runners/{id}/metadata`
+### `PATCH /api/runners/{id}/metadata`
 
 Updates runner metadata (used for tracking deployment state).

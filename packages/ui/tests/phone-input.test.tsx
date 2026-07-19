@@ -48,7 +48,7 @@ function lastValue(onChange: ReturnType<typeof vi.fn>): string {
 
 describe("PhoneInput", () => {
 	it("forwards a fully composed E.164 value as the national number is typed", async () => {
-		const user = userEvent.setup();
+		const user = userEvent.setup({ delay: null });
 		const { onChange, input } = renderPhone("US");
 
 		await user.type(input, "2025550123");
@@ -62,7 +62,7 @@ describe("PhoneInput", () => {
 	});
 
 	it("emits an empty string (not undefined) when the number is cleared", async () => {
-		const user = userEvent.setup();
+		const user = userEvent.setup({ delay: null });
 		const { onChange, input } = renderPhone("US");
 
 		await user.type(input, "2025550123");
@@ -75,7 +75,7 @@ describe("PhoneInput", () => {
 	});
 
 	it("re-prefixes the dial code when a different country is selected", async () => {
-		const user = userEvent.setup();
+		const user = userEvent.setup({ delay: null });
 		const { onChange, trigger, input } = renderPhone("US");
 
 		// Enter a national number under the default US country first. The final onChange
@@ -105,7 +105,7 @@ describe("PhoneInput", () => {
 	});
 
 	it("opens a searchable list and filters out non-matching countries", async () => {
-		const user = userEvent.setup();
+		const user = userEvent.setup({ delay: null });
 		const { trigger } = renderPhone("US");
 
 		await user.click(trigger);

@@ -181,6 +181,8 @@ runner can claim — not just plan/apply/destroy:
 | `CHART_SCAN` | Render + scan a bring-your-own Helm chart (`helm template` → `verify.EvaluateManifests`); zero secrets, deny-all egress |
 | `IAC_SCAN` | Scan a bring-your-own IaC module (clone → pin commit → inventory providers/modules → `tofu validate`); its result **gates** that environment's `PLAN`/`DEPLOY`/`DESTROY` |
 | `STATE_SURGERY` | Break-glass, two-person-approved, fully-audited repair of a corrupt `tofu` state; ships **inert / fail-closed** (the runner refuses unless explicitly opted in) |
+| `PROBE_CLUSTER` | Live cluster-alive signal (BYOC B2) — reads the env's `tofu` state outputs in-process, dials the cluster API server, and writes one honest `environment_probes` row (unreachable ⇒ a **successful** probe with `reachable=false`) |
+| `BUILD` | W2 image build + push — for each `source.kind == "repo"` service, run an in-cluster kaniko `Job` (git context + Dockerfile → the provisioned registry) and report a per-service `{ service_name → image_digest_uri }` map in `execution_metadata.build_result` |
 
 Promotions (`staging → production`) do **not** add a job type — a promotion reuses `PLAN` then
 `DEPLOY` under a `promotions` row.

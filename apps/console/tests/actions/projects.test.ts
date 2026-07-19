@@ -576,9 +576,14 @@ function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 					status: "DRAFT",
 					is_default: true,
 					region: null,
+					// A backfilled `dedicated` env owns its Fabric 1:1 (#836). BYO-IaC (#839) resolves
+					// its source by this Fabric, so the default fixture carries it.
+					fabric_id: "fab-1",
+					placement_mode: "dedicated",
 				},
 			],
 		],
+		[projectFabrics, [{ id: "fab-1", project_id: "p1", name: "production" }]],
 		[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
 	]);
 	if (overrides) for (const [k, v] of overrides) m.set(k, v);

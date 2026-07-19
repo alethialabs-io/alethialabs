@@ -64,12 +64,13 @@ flowchart LR
 **directly** as an IAM OIDC provider, so the console/runner federate straight in via
 `AssumeRoleWithWebIdentityCommand` (`@aws-sdk/client-sts`) presenting a freshly minted assertion.
 `AssumeRoleWithWebIdentity` is an unauthenticated STS action — **no platform AWS account, no
-`ExternalId`, no stored key**. Session ≈ 1 hour, auto-refreshed.
+`ExternalId`, no stored key**. Session ≈ 1 hour (`DurationSeconds: 3600`); each caller re-assumes the
+role (mints a fresh assertion) when it needs credentials — the session itself is not refreshed in place.
 
 </Tab>
 <Tab value="GCP">
 
-`apps/console/lib/cloud-providers/session/gcp.ts` + `gcp-wif.ts`. A direct-OIDC Workload Identity
+`apps/console/lib/cloud-providers/session/gcp.ts` + `apps/console/lib/cloud-providers/gcp-wif.ts`. A direct-OIDC Workload Identity
 Federation config exchanges the Alethia-minted JWT for a GCP access token. The audience encodes the
 pool/provider:
 `//iam.googleapis.com/projects/<n>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`.
