@@ -56,6 +56,7 @@ import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
+import { EnvSettingsSheet } from "./env-settings-sheet";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
@@ -500,6 +501,9 @@ function CanvasInner({
 						}}
 					/>
 				)}
+				{/* Cluster + network are env settings now (W2), not board cards — one env is one cluster.
+				    Meaningless while a BYO-IaC source governs the env (the module owns the substrate). */}
+				{!iacGoverned && <EnvSettingsSheet />}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
 					<Button

@@ -84,10 +84,10 @@ describe("catalogTools.list_services", () => {
 		expect(svc("topic")?.deployment?.hetzner).toBe("unsupported");
 		expect(svc("nosql")?.deployment?.aws).toBe("managed");
 		// …while supported Hetzner kinds keep their real mode and an empty unsupportedOn there.
+		// (cluster/network are no longer addable services — W2 made them env settings.)
 		expect(svc("database")?.deployment?.hetzner).toBe("in-cluster-helm");
-		expect(svc("cluster")?.deployment?.hetzner).toBe("native");
 		expect(svc("database")?.unsupportedOn).not.toContain("hetzner");
-		expect(svc("cluster")?.unsupportedOn).toEqual([]);
+		expect(svc("cluster")).toBeUndefined();
 	});
 });
 

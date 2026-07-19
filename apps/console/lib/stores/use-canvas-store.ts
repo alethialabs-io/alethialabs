@@ -49,46 +49,12 @@ function effectiveIdentity(node: CanvasNode, core: string | null): string | null
  * different cloud identities is a hot cross-cloud edge → typed "gated".
  */
 export function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
-	const core = coreIdentity(nodes);
 	const byKind = (kind: NodeKind) => nodes.filter((n) => n.data.kind === kind);
-	const cluster = byKind("cluster")[0];
-	const network = byKind("network")[0];
 	const edges: CanvasEdge[] = [];
 
-	const link = (source: CanvasNode, target: CanvasNode) => {
-		const sourceCore = NODE_REGISTRY[source.data.kind].classification === "core";
-		const targetCore = NODE_REGISTRY[target.data.kind].classification === "core";
-		const gated =
-			sourceCore &&
-			targetCore &&
-			effectiveIdentity(source, core) !== effectiveIdentity(target, core);
-		edges.push({
-			id: `${source.id}->${target.id}`,
-			source: source.id,
-			target: target.id,
-			type: gated ? "gated" : "dependency",
-		});
-	};
-
-	if (network && cluster) link(network, cluster);
-	if (cluster) {
-		const leafKinds: NodeKind[] = [
-			"service",
-			"database",
-			"cache",
-			"queue",
-			"topic",
-			"nosql",
-			"dns",
-			"secret",
-			"bucket",
-			"registry",
-			"repositories",
-		];
-		for (const kind of leafKinds) {
-			for (const leaf of byKind(kind)) link(cluster, leaf);
-		}
-	}
+	// W2 — the board draws NO substrate spine. The old network→cluster→every-leaf dependency edges
+	// existed only to say "this all runs on the cluster"; the cluster/network are env settings now
+	// (implicit substrate), so the only edges are the derived service→resource bindings below.
 
 	// W3: a service's declared bindings become service→resource edges — derived from the model like
 	// every other edge (the binding lives on the service's config). A binding whose target isn't
