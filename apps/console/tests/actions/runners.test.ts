@@ -93,7 +93,8 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue({ userId: "user-1" } as never);
 	// withActorScope just runs the callback against our shared chain.
 	vi.mocked(withActorScope).mockImplementation(
-		(_owner: string, fn: (tx: never) => unknown) => fn(mock.db as never) as never,
+		((_actor: { userId: string; orgId: string }, fn: (tx: unknown) => unknown) =>
+			fn(mock.db)) as never,
 	);
 	vi.mocked(getServiceDb).mockReturnValue(mock.db as never);
 	vi.mocked(generateRunnerToken).mockReturnValue({
