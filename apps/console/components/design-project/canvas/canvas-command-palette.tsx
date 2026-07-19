@@ -17,7 +17,6 @@ import {
 	type CloudProviderMeta,
 } from "@/lib/cloud-providers";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { useDropPosition } from "./use-drop-position";
 import {
 	addableKindsFor,
 	NODE_REGISTRY,
@@ -89,6 +88,9 @@ interface CanvasCommandPaletteProps {
 	/** When an IaC source governs the env (replace mode), component-add is meaningless — hide the
 	 * Core/Periphery service groups. */
 	disableComponentAdd?: boolean;
+	/** W5 click-to-place — where a newly-added node lands (viewport centre). Supplied by the canvas
+	 * (which owns the React Flow context); omitted (e.g. a unit test) → the store's cascade fallback. */
+	dropPosition?: () => { x: number; y: number };
 }
 
 /** ⌘K command menu: search services by name, jump to nodes, run actions. */
@@ -102,9 +104,9 @@ export function CanvasCommandPalette({
 	onAttachChart,
 	onAttachIac,
 	disableComponentAdd,
+	dropPosition,
 }: CanvasCommandPaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
-	const dropPosition = useDropPosition();
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
@@ -128,7 +130,7 @@ export function CanvasCommandPalette({
 				key={kind}
 				value={`add-${kind}`}
 				keywords={keywordsFor(kind)}
-				onSelect={() => run(() => addNode(kind, dropPosition()))}
+				onSelect={() => run(() => addNode(kind, dropPosition?.()))}
 			>
 				<Icon className="h-4 w-4" />
 				<span>Add {def.label}</span>
