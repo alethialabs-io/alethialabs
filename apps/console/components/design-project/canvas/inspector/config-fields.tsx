@@ -246,6 +246,9 @@ function FieldControl({
 				<BindingsField
 					value={Array.isArray(raw) ? raw : []}
 					onChange={patch}
+					// The service inspector surfaces BYO-IaC resources as bind targets + the facet→output
+					// picker; the chart-workload lane (its own panel) leaves it off (#823).
+					enableIacTargets
 				/>
 			);
 	}

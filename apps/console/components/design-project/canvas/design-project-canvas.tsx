@@ -137,6 +137,7 @@ function CanvasInner({
 	const setChartWorkloadNodes = useCanvasStore((s) => s.setChartWorkloadNodes);
 	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
 	const setIacNodes = useCanvasStore((s) => s.setIacNodes);
+	const setIacOutputs = useCanvasStore((s) => s.setIacOutputs);
 	// The environment's server truth (provided by the project shell) — it now also carries the BYO
 	// IaC module and the architecture derived from it.
 	const envStatus = useEnvironmentStatus();
@@ -208,7 +209,10 @@ function CanvasInner({
 	// expanded addresses when there is one, else the IAC_SCAN's declared skeleton.)
 	useEffect(() => {
 		setIacNodes(envStatus.iac?.groups ?? []);
-	}, [envStatus.iac, setIacNodes]);
+		// The module's output names ride the same round-trip as its cards, so the bind sheet's
+		// facet→output picker (#823) has choices whenever there are BYO-IaC cards to bind to.
+		setIacOutputs(envStatus.iac?.outputs ?? []);
+	}, [envStatus.iac, setIacNodes, setIacOutputs]);
 
 	// BYO IaC source is single-per-env, loaded out-of-band from getIacSource (and re-loaded after
 	// attach/detach/rescan). Only in edit mode with the feature on.

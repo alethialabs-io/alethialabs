@@ -113,7 +113,7 @@ function envStatus(overrides: Partial<EnvironmentStatus> = {}): EnvironmentStatu
 	return {
 		...EMPTY_ENVIRONMENT_STATUS,
 		components,
-		iac: { source: SOURCE, groups, costByAddress: {} },
+		iac: { source: SOURCE, groups, costByAddress: {}, outputs: [] },
 		...overrides,
 	};
 }
@@ -217,6 +217,7 @@ describe("the card's panel — read-only, and joined by exact address", () => {
 					source: SOURCE,
 					groups,
 					costByAddress: { "module.vpc.aws_vpc.this": 12.4 },
+					outputs: [],
 				},
 			}),
 		);

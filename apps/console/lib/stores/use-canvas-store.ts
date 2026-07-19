@@ -361,6 +361,11 @@ interface CanvasStore {
 	/** Replace the external cards of a BYO IaC module (out-of-band; read-only; not a staged
 	 * change). Built by `buildIacInventory` from the module's scan + last plan. */
 	setIacNodes: (groups: IacGroup[]) => void;
+	/** The BYO-IaC module's ROOT output names (IacScanReport.outputs) — the choices the service
+	 * bind sheet offers when mapping a facet to an output (#823). Rides the same env round-trip as
+	 * the external cards; empty when there is no BYO-IaC source or it exports none. */
+	iacOutputs: string[];
+	setIacOutputs: (outputs: string[]) => void;
 	/** Replace all marketplace add-on nodes (out-of-band; not a staged change). */
 	setAddonNodes: (
 		addons: {
@@ -448,6 +453,7 @@ export const useCanvasStore = create<CanvasStore>()(
 		(set, get) => ({
 			nodes: [makeProjectNode()],
 			edges: [],
+			iacOutputs: [],
 			selectedIds: [],
 			inspectorNodeId: null,
 			dirty: false,
@@ -658,6 +664,8 @@ export const useCanvasStore = create<CanvasStore>()(
 				const next = [...others, ...iacNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
 			},
+
+			setIacOutputs: (outputs) => set({ iacOutputs: outputs }),
 
 			commit: () =>
 				set((s) => ({
