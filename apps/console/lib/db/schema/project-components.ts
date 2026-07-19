@@ -74,6 +74,7 @@ import {
 } from "./enums";
 import { cloudIdentities } from "./identities";
 import { projectEnvironments } from "./project-environments";
+import { projectFabrics } from "./project-fabrics";
 import { projects } from "./projects";
 
 const projectRef = () =>
@@ -131,6 +132,10 @@ export const projectCluster = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
 		environment_id: envRef(),
+		// The Fabric (infra unit) this cluster realizes. Nullable during the transition — the
+		// programmables.sql backfill links each existing cluster to the Fabric created for its env
+		// (#836 seam); #838 re-keys the tofu state onto the Fabric. ON DELETE SET NULL.
+		fabric_id: uuid().references(() => projectFabrics.id, { onDelete: "set null" }),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),

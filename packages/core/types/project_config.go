@@ -18,6 +18,16 @@ type ProjectConfig struct {
 	// guarded sweeper can scope destroys to exactly one environment's cloud resources.
 	EnvironmentID string `json:"environment_id,omitempty"`
 
+	// Placement (decoupled env-model, #836): where this Environment runs on its Fabric.
+	// FabricID = the infra unit (control plane + network + shared add-ons + tofu state) this env
+	// is placed onto; PlacementMode ∈ namespace|vcluster|dedicated; Namespace = the ArgoCD
+	// destination namespace for namespace/vcluster placements (empty → derived from the env name).
+	// The provisioner (#838) keys tofu state per-Fabric and sets the ArgoCD Application
+	// destination from these. Empty PlacementMode is treated as `dedicated` (legacy env=cluster).
+	FabricID      string        `json:"fabric_id,omitempty"`
+	PlacementMode PlacementMode `json:"placement_mode,omitempty"`
+	Namespace     string        `json:"namespace,omitempty"`
+
 	// Classification is the frozen per-dimension classification captured onto the job's
 	// config_snapshot by the console (B1.1): dimension key → sorted value slugs, with the
 	// environment overriding the project per dimension. B1.2 turns it into per-cloud

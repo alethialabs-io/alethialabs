@@ -22,7 +22,13 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import { environmentLifecycle, environmentStage, projectStatus } from "./enums";
+import {
+	environmentLifecycle,
+	environmentStage,
+	placementMode,
+	projectStatus,
+} from "./enums";
+import { projectFabrics } from "./project-fabrics";
 import { projects } from "./projects";
 
 export const projectEnvironments = pgTable(
@@ -45,6 +51,20 @@ export const projectEnvironments = pgTable(
 		is_default: boolean().default(false).notNull(),
 		// NULL inherits projects.region.
 		region: text(),
+		// --- Placement: where this delivery Environment RUNS (decoupled env-model, #836) ---------
+		// The Fabric (infra unit) this env is placed onto. Nullable during the transition — the
+		// programmables.sql backfill creates a 1:1 Fabric per existing env and sets this; the app
+		// always sets it going forward. ON DELETE SET NULL (a Fabric outlives its placements).
+		fabric_id: uuid().references(() => projectFabrics.id, {
+			onDelete: "set null",
+		}),
+		// How the env is placed on its Fabric. Default `dedicated` = the legacy env=cluster
+		// behaviour (env owns its Fabric 1:1), so existing rows keep byte-identical semantics.
+		placement_mode: placementMode().default("dedicated").notNull(),
+		// The k8s namespace this env's workloads deploy into (the ArgoCD Application destination
+		// namespace) — for `namespace`/`vcluster` placements on a shared Fabric. NULL → derived
+		// from the env name at provision time. Ignored for `dedicated` (owns the whole Fabric).
+		namespace: text(),
 		// --- Lifecycle: persistent env vs ephemeral "sandbox" (inert seam, no reaper yet) --------
 		// `persistent` = a normal long-lived environment; `ephemeral` = a disposable, TTL'd one.
 		// The reaper (a drift-style reconciler) + UI build on these later; nothing reads them yet.
