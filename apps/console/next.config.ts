@@ -113,16 +113,22 @@ const nextConfig: NextConfig = {
 // a BuildKit secret), withPostHogConfig injects chunk ids + uploads source maps during `next build` so
 // prod stack traces symbolicate. Gated on the key so OSS/local builds are a plain no-op (never fail).
 // deleteAfterUpload keeps the .map files out of the shipped image. releaseVersion = the deploy SHA
-// (NEXT_PUBLIC_APP_VERSION), matching the `release` the browser tags errors with (analytics-provider).
+// (NEXT_PUBLIC_APP_VERSION), matching the `release` the browser tags errors with (analytics-provider);
+// releaseName is the stable app identifier. posthog-cli requires BOTH release fields (or a git/CI env,
+// neither of which exists inside the Docker build) — omitting releaseName fails `next build` with
+// "Release fields are incomplete". We also gate `enabled` on a real releaseVersion so a build without
+// VERSION (releaseVersion falsy) no-ops the upload instead of erroring — the upload never breaks a deploy.
 const posthogApiKey = process.env.POSTHOG_API_KEY;
+const releaseVersion = process.env.NEXT_PUBLIC_APP_VERSION;
 export default posthogApiKey
 	? withPostHogConfig(nextConfig, {
 			personalApiKey: posthogApiKey,
 			projectId: process.env.POSTHOG_PROJECT_ID,
 			host: process.env.POSTHOG_API_HOST || "https://eu.posthog.com",
 			sourcemaps: {
-				enabled: true,
-				releaseVersion: process.env.NEXT_PUBLIC_APP_VERSION,
+				enabled: Boolean(releaseVersion),
+				releaseName: "console",
+				releaseVersion,
 				deleteAfterUpload: true,
 			},
 		})
