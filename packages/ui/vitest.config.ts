@@ -16,6 +16,11 @@ export default defineConfig({
 		environment: "jsdom",
 		setupFiles: ["./tests/setup.ts"],
 		include: ["./tests/**/*.test.{ts,tsx}"],
+		// The PhoneInput RTL tests drive many userEvent interactions (typing a full number +
+		// a country search); on a loaded CI runner the sequence blew past vitest's 5000ms
+		// default, flaking the required TypeScript job on ~every train. `delay: null` on the
+		// userEvent setups makes the events near-instant; this is the CI-load safety margin.
+		testTimeout: 15000,
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov", "json-summary"],
