@@ -1,0 +1,47 @@
+---
+title: Agent Commands
+description: Inspect agent identities — machine/agent personas scoped to your account or organization.
+---
+
+# Agent Commands
+
+The `agent` group (alias `agents`) reads **agent identities** — machine/agent personas, each with a
+persona, a mission, an allowed tool scope, and a memory namespace, scoped to your account or org.
+
+<Callout type="info">
+The CLI is a client of the same Console API. These subcommands call `/cli/agents[/…]` with your
+[CLI token](/cli/authentication) and resolve within your tenancy — an agent id from another org
+returns not-found, never its persona/mission.
+</Callout>
+
+## `alethia agent list`
+
+List the agent identities you can see.
+
+```bash
+alethia agent list
+alethia agent list -o json
+```
+
+Columns: **ID**, **Persona**, **Tools** (count of allowed tools), **Namespace** (memory
+namespace), **Version**. Add `-o json` for the raw objects. Backing call: `GET /cli/agents`.
+
+## `alethia agent get`
+
+Show one agent identity's persona, mission, and tool scope.
+
+```bash
+alethia agent get <agent-id>
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<agent-id>` | Yes | The agent identity's id (from `agent list`). |
+
+Renders a field/value card: **id**, **persona**, **mission**, **tool scope** (the allowed tools),
+**namespace**, **version**. Add `-o json` for the full object. Backing call:
+`GET /cli/agents/<agent-id>`.
+
+## See also
+
+- [Command Reference](/cli/commands) — the full command tree and global flags.

@@ -1,0 +1,16 @@
+{
+	"environment": "string",
+	"addons": [
+		{
+			"addon_id": "string",
+			"enabled": false,
+			"mode": "string",
+			"version": "string",
+			"namespace": "string",
+			"status": "string",
+			"health": "string",
+			"sync": "string",
+			"last_synced_at": "2026-01-01T00:00:00.000Z"
+		}
+	]
+}

@@ -568,6 +568,209 @@ export const cliCostResponse = z.object({
 	resources: z.array(costResourceWire),
 });
 
+/** One environment's promotion protection rules (mirrors ProtectionSummary). */
+export const protectionRuleWire = z.object({
+	environment_id: z.string(),
+	environment: z.string(),
+	require_predecessor: z.boolean(),
+	require_verify_pass: z.boolean(),
+	require_approval: z.boolean(),
+	min_count: z.number().int().nullable(),
+	soak_minutes: z.number().int().nullable(),
+	cost_delta_threshold: z.number().nullable(),
+});
+/** GET /api/cli/projects/:id/protection result. */
+export const cliProtectionResponse = z.object({
+	rules: z.array(protectionRuleWire),
+});
+
+/** One environment's latest cluster-alive probe state (mirrors ProbeState). */
+export const probeStateWire = z.object({
+	environment_id: z.string(),
+	environment: z.string(),
+	// null = never probed; true = reachable; false = unreachable.
+	reachable: z.boolean().nullable(),
+	message: z.string().nullable(),
+	probed_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/probes result. */
+export const cliProbesResponse = z.object({
+	probes: z.array(probeStateWire),
+});
+
+/** One installed catalog add-on in an environment. */
+export const addonWire = z.object({
+	addon_id: z.string(),
+	enabled: z.boolean(),
+	mode: z.string(),
+	version: z.string().nullable(),
+	namespace: z.string().nullable(),
+	status: z.string(),
+	health: z.string().nullable(),
+	sync: z.string().nullable(),
+	last_synced_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/addons result (installed catalog add-ons for one environment). */
+export const cliAddonsResponse = z.object({
+	environment: z.string(),
+	addons: z.array(addonWire),
+});
+
+/** One attached BYO Helm chart in an environment (scan_report omitted — status only). */
+export const byoChartWire = z.object({
+	id: z.string(),
+	repo_url: z.string(),
+	chart_path: z.string(),
+	ref: z.string(),
+	namespace: z.string(),
+	status: z.string(),
+	health: z.string().nullable(),
+	sync: z.string().nullable(),
+	scan_status: z.string(),
+	scanned_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/byo-charts result. */
+export const cliByoChartsResponse = z.object({
+	environment: z.string(),
+	charts: z.array(byoChartWire),
+});
+
+/** The BYO-IaC source attached to an environment (scan_report omitted — status only). */
+export const iacSourceWire = z.object({
+	id: z.string(),
+	environment: z.string(),
+	name: z.string(),
+	repo_url: z.string(),
+	ref: z.string().nullable(),
+	path: z.string(),
+	commit_sha: z.string().nullable(),
+	deployed_commit_sha: z.string().nullable(),
+	enabled: z.boolean(),
+	scan_status: z.string(),
+	scanned_at: isoNullable,
+	status: z.string(),
+	status_message: z.string().nullable(),
+});
+/** GET /api/cli/projects/:id/byo-iac result. `source` is null when no IaC source is attached. */
+export const cliIacSourceResponse = z.object({
+	source: iacSourceWire.nullable(),
+});
+
+/** One environment promotion (source → target), as listed. */
+export const promotionWire = z.object({
+	id: z.string(),
+	source: z.string(),
+	target: z.string(),
+	status: z.string(),
+	error_message: z.string().nullable(),
+	created_at: iso,
+	completed_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/promotions result. */
+export const cliPromotionsResponse = z.object({
+	promotions: z.array(promotionWire),
+});
+
+/** One approval slot on a promotion. */
+export const promotionApprovalWire = z.object({
+	id: z.string(),
+	status: z.string(),
+	name: z.string().nullable(),
+	required_role: z.string().nullable(),
+	comment: z.string().nullable(),
+	decided_at: isoNullable,
+});
+/**
+ * GET /api/cli/projects/:id/promotions/:pid result — a promotion with its approval slots. The
+ * per-gate evaluation detail and the full config diff stay console-only; the CLI shows status,
+ * the approval tally, and the approval slots.
+ */
+export const cliPromotionResponse = z.object({
+	promotion: z.object({
+		id: z.string(),
+		source: z.string(),
+		target: z.string(),
+		status: z.string(),
+		initiator: z.string().nullable(),
+		error_message: z.string().nullable(),
+		approved: z.number().int(),
+		required: z.number().int(),
+		approvals: z.array(promotionApprovalWire),
+		created_at: iso,
+		completed_at: isoNullable,
+	}),
+});
+
+/** One staged (pending) change on an environment's canvas. */
+export const stagedChangeWire = z.object({
+	component_type: z.string(),
+	op: z.string(),
+	component_id: z.string().nullable(),
+	created_at: iso,
+});
+/** GET /api/cli/projects/:id/staged result. */
+export const cliStagedChangesResponse = z.object({
+	environment: z.string(),
+	changes: z.array(stagedChangeWire),
+});
+
+/** One discovered network in a cloud identity's inventory. */
+export const cloudNetworkWire = z.object({
+	native_id: z.string(),
+	name: z.string().nullable(),
+	region: z.string().nullable(),
+	provider: z.string(),
+	cidr_block: z.string().nullable(),
+	is_default: z.boolean(),
+});
+/** One discovered subnet in a cloud identity's inventory. */
+export const cloudSubnetWire = z.object({
+	native_id: z.string(),
+	name: z.string().nullable(),
+	region: z.string().nullable(),
+	availability_zone: z.string().nullable(),
+	cidr_block: z.string().nullable(),
+	is_public: z.boolean(),
+});
+/** GET /api/cli/cloud-identities/:id/inventory result (discovered networking + regions). */
+export const cliCloudInventoryResponse = z.object({
+	networks: z.array(cloudNetworkWire),
+	subnets: z.array(cloudSubnetWire),
+	regions: z.array(z.string()),
+});
+
+/** GET /api/cli/org-settings result. null when the caller is in community (personal) mode. */
+export const cliOrgSettingsResponse = z.object({
+	settings: z
+		.object({
+			name: z.string(),
+			slug: z.string(),
+			description: z.string(),
+			logo: z.string().nullable(),
+			region: z.string(),
+			default_env: z.string(),
+			terraform_version: z.string(),
+		})
+		.nullable(),
+});
+
+/** One agent identity (a machine/agent persona), as read by the CLI. */
+export const agentWire = z.object({
+	id: z.string(),
+	persona: z.string(),
+	mission: z.string(),
+	tool_scope: z.array(z.string()),
+	memory_namespace: z.string(),
+	project_id: z.string().nullable(),
+	version: z.number().int(),
+	created_at: iso,
+	updated_at: iso,
+});
+/** GET /api/cli/agents result. */
+export const cliAgentsResponse = z.object({ agents: z.array(agentWire) });
+/** GET /api/cli/agents/:id result. */
+export const cliAgentResponse = z.object({ agent: agentWire });
+
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
@@ -617,6 +820,18 @@ export const cliContract = {
 	ComponentResponse: cliComponentResponse,
 	DriftResponse: cliDriftResponse,
 	CostResponse: cliCostResponse,
+	ProtectionResponse: cliProtectionResponse,
+	ProbesResponse: cliProbesResponse,
+	AddonsResponse: cliAddonsResponse,
+	ByoChartsResponse: cliByoChartsResponse,
+	IacSourceResponse: cliIacSourceResponse,
+	PromotionsResponse: cliPromotionsResponse,
+	PromotionResponse: cliPromotionResponse,
+	StagedChangesResponse: cliStagedChangesResponse,
+	CloudInventoryResponse: cliCloudInventoryResponse,
+	OrgSettingsResponse: cliOrgSettingsResponse,
+	AgentsResponse: cliAgentsResponse,
+	AgentResponse: cliAgentResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;

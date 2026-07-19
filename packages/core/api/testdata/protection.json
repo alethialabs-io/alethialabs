@@ -1,0 +1,14 @@
+{
+	"rules": [
+		{
+			"environment_id": "string",
+			"environment": "string",
+			"require_predecessor": false,
+			"require_verify_pass": false,
+			"require_approval": false,
+			"min_count": 0,
+			"soak_minutes": 0,
+			"cost_delta_threshold": 0
+		}
+	]
+}

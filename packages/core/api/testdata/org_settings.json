@@ -1,0 +1,11 @@
+{
+	"settings": {
+		"name": "string",
+		"slug": "string",
+		"description": "string",
+		"logo": "string",
+		"region": "string",
+		"default_env": "string",
+		"terraform_version": "string"
+	}
+}

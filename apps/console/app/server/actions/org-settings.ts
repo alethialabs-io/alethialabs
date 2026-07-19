@@ -61,10 +61,12 @@ function parseMeta(metadata: string | null): OrgMeta {
 }
 
 /** Current General-settings values, or null in the personal scope (no real org). */
-export async function getOrgSettings(): Promise<OrgSettings | null> {
-	const actor = await currentActor();
-	if (actor.orgId === actor.userId) return null;
-
+/**
+ * The General-settings values for a given org id (no session lookup) — the shared read behind
+ * both getOrgSettings (web, session-scoped) and the CLI org-settings route (token-scoped). Returns
+ * null when the org row is missing. Callers are responsible for the community-mode short-circuit.
+ */
+export async function orgSettingsForOrg(orgId: string): Promise<OrgSettings | null> {
 	const [org] = await getServiceDb()
 		.select({
 			name: organization.name,
@@ -73,7 +75,7 @@ export async function getOrgSettings(): Promise<OrgSettings | null> {
 			metadata: organization.metadata,
 		})
 		.from(organization)
-		.where(eq(organization.id, actor.orgId))
+		.where(eq(organization.id, orgId))
 		.limit(1);
 	if (!org) return null;
 
@@ -88,6 +90,12 @@ export async function getOrgSettings(): Promise<OrgSettings | null> {
 		defaultEnv: m.defaultEnv ?? "staging",
 		terraformVersion: m.terraformVersion ?? "1.9.5",
 	};
+}
+
+export async function getOrgSettings(): Promise<OrgSettings | null> {
+	const actor = await currentActor();
+	if (actor.orgId === actor.userId) return null;
+	return orgSettingsForOrg(actor.orgId);
 }
 
 /**

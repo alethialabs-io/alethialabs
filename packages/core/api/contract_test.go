@@ -405,6 +405,127 @@ func TestContract_Cost(t *testing.T) {
 	assertNoExtraStructKeys(t, "cost.json", resp)
 }
 
+func TestContract_Protection(t *testing.T) {
+	var resp struct {
+		Rules []ProtectionRule `json:"rules"`
+	}
+	strictDecode(t, "protection.json", &resp)
+	if len(resp.Rules) != 1 {
+		t.Fatalf("expected 1 protection rule, got %d", len(resp.Rules))
+	}
+	assertNoExtraStructKeys(t, "protection.json", resp)
+}
+
+func TestContract_Probes(t *testing.T) {
+	var resp struct {
+		Probes []ProbeState `json:"probes"`
+	}
+	strictDecode(t, "probes.json", &resp)
+	if len(resp.Probes) != 1 {
+		t.Fatalf("expected 1 probe state, got %d", len(resp.Probes))
+	}
+	assertNoExtraStructKeys(t, "probes.json", resp)
+}
+
+func TestContract_Addons(t *testing.T) {
+	var resp ProjectAddons
+	strictDecode(t, "addons.json", &resp)
+	if len(resp.Addons) != 1 {
+		t.Fatalf("expected 1 add-on, got %d", len(resp.Addons))
+	}
+	assertNoExtraStructKeys(t, "addons.json", resp)
+}
+
+func TestContract_ByoCharts(t *testing.T) {
+	var resp ProjectByoCharts
+	strictDecode(t, "byo_charts.json", &resp)
+	if len(resp.Charts) != 1 {
+		t.Fatalf("expected 1 chart, got %d", len(resp.Charts))
+	}
+	assertNoExtraStructKeys(t, "byo_charts.json", resp)
+}
+
+func TestContract_IacSource(t *testing.T) {
+	var resp struct {
+		Source *IacSource `json:"source"`
+	}
+	strictDecode(t, "iac_source.json", &resp)
+	if resp.Source == nil {
+		t.Fatal("expected a non-null source in the fixture")
+	}
+	assertNoExtraStructKeys(t, "iac_source.json", resp)
+}
+
+func TestContract_Promotions(t *testing.T) {
+	var resp struct {
+		Promotions []Promotion `json:"promotions"`
+	}
+	strictDecode(t, "promotions.json", &resp)
+	if len(resp.Promotions) != 1 {
+		t.Fatalf("expected 1 promotion, got %d", len(resp.Promotions))
+	}
+	assertNoExtraStructKeys(t, "promotions.json", resp)
+}
+
+func TestContract_Promotion(t *testing.T) {
+	var resp struct {
+		Promotion PromotionDetail `json:"promotion"`
+	}
+	strictDecode(t, "promotion.json", &resp)
+	if len(resp.Promotion.Approvals) != 1 {
+		t.Fatalf("expected 1 approval slot, got %d", len(resp.Promotion.Approvals))
+	}
+	assertNoExtraStructKeys(t, "promotion.json", resp)
+}
+
+func TestContract_StagedChanges(t *testing.T) {
+	var resp StagedChanges
+	strictDecode(t, "staged_changes.json", &resp)
+	if len(resp.Changes) != 1 {
+		t.Fatalf("expected 1 staged change, got %d", len(resp.Changes))
+	}
+	assertNoExtraStructKeys(t, "staged_changes.json", resp)
+}
+
+func TestContract_CloudInventory(t *testing.T) {
+	var resp CloudInventory
+	strictDecode(t, "cloud_inventory.json", &resp)
+	if len(resp.Networks) != 1 || len(resp.Subnets) != 1 {
+		t.Fatalf("expected 1 network + 1 subnet, got %d/%d", len(resp.Networks), len(resp.Subnets))
+	}
+	assertNoExtraStructKeys(t, "cloud_inventory.json", resp)
+}
+
+func TestContract_OrgSettings(t *testing.T) {
+	var resp struct {
+		Settings *OrgSettings `json:"settings"`
+	}
+	strictDecode(t, "org_settings.json", &resp)
+	if resp.Settings == nil {
+		t.Fatal("expected non-null settings in the fixture")
+	}
+	assertNoExtraStructKeys(t, "org_settings.json", resp)
+}
+
+func TestContract_Agents(t *testing.T) {
+	var resp struct {
+		Agents []Agent `json:"agents"`
+	}
+	strictDecode(t, "agents.json", &resp)
+	if len(resp.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(resp.Agents))
+	}
+	assertNoExtraStructKeys(t, "agents.json", resp)
+}
+
+func TestContract_Agent(t *testing.T) {
+	var resp struct {
+		Agent Agent `json:"agent"`
+	}
+	strictDecode(t, "agent.json", &resp)
+	assertNoExtraStructKeys(t, "agent.json", resp)
+}
+
 func TestContract_ClassificationDimensions(t *testing.T) {
 	var resp struct {
 		Dimensions []ClassificationDimension `json:"dimensions"`
