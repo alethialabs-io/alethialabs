@@ -63,6 +63,9 @@ type apiClient interface {
 	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
 	GetProjectProtection(project string) ([]api.ProtectionRule, error)
 	GetProjectProbes(project string) ([]api.ProbeState, error)
+	GetProjectAddons(project, env string) (*api.ProjectAddons, error)
+	GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error)
+	GetProjectIacSource(project, env string) (*api.IacSource, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.

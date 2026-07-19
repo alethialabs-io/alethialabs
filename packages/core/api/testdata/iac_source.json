@@ -1,0 +1,17 @@
+{
+	"source": {
+		"id": "string",
+		"environment": "string",
+		"name": "string",
+		"repo_url": "string",
+		"ref": "string",
+		"path": "string",
+		"commit_sha": "string",
+		"deployed_commit_sha": "string",
+		"enabled": false,
+		"scan_status": "string",
+		"scanned_at": "2026-01-01T00:00:00.000Z",
+		"status": "string",
+		"status_message": "string"
+	}
+}

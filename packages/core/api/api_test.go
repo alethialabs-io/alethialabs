@@ -873,3 +873,87 @@ func TestGetProjectProbes_Success(t *testing.T) {
 		t.Errorf("expected dev reachable=nil (never probed), got %+v", probes[1].Reachable)
 	}
 }
+
+func TestGetProjectAddons_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/addons" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"environment": "production",
+			"addons": []map[string]any{
+				{"addon_id": "cnpg", "enabled": true, "mode": "managed", "version": nil, "namespace": "cnpg", "status": "READY", "health": "Healthy", "sync": "Synced", "last_synced_at": nil},
+			},
+		})
+	}))
+
+	view, err := client.GetProjectAddons("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view.Environment != "production" || len(view.Addons) != 1 || view.Addons[0].AddonID != "cnpg" {
+		t.Errorf("unexpected view: %+v", view)
+	}
+}
+
+func TestGetProjectByoCharts_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/byo-charts" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"environment": "production",
+			"charts": []map[string]any{
+				{"id": "payments", "repo_url": "u", "chart_path": "charts/payments", "ref": "main", "namespace": "payments", "status": "READY", "health": nil, "sync": nil, "scan_status": "done", "scanned_at": nil},
+			},
+		})
+	}))
+
+	view, err := client.GetProjectByoCharts("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(view.Charts) != 1 || view.Charts[0].ID != "payments" {
+		t.Errorf("unexpected charts: %+v", view.Charts)
+	}
+}
+
+func TestGetProjectIacSource_Present(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/byo-iac" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"source": map[string]any{
+				"id": "src-1", "environment": "production", "name": "networking", "repo_url": "u",
+				"ref": nil, "path": "envs/prod", "commit_sha": nil, "deployed_commit_sha": nil,
+				"enabled": true, "scan_status": "done", "scanned_at": nil, "status": "READY", "status_message": nil,
+			},
+		})
+	}))
+
+	src, err := client.GetProjectIacSource("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if src == nil || src.Name != "networking" {
+		t.Errorf("unexpected source: %+v", src)
+	}
+}
+
+func TestGetProjectIacSource_None(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"source": nil})
+	}))
+
+	src, err := client.GetProjectIacSource("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if src != nil {
+		t.Errorf("expected nil source, got %+v", src)
+	}
+}

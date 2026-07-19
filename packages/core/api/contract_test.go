@@ -427,6 +427,35 @@ func TestContract_Probes(t *testing.T) {
 	assertNoExtraStructKeys(t, "probes.json", resp)
 }
 
+func TestContract_Addons(t *testing.T) {
+	var resp ProjectAddons
+	strictDecode(t, "addons.json", &resp)
+	if len(resp.Addons) != 1 {
+		t.Fatalf("expected 1 add-on, got %d", len(resp.Addons))
+	}
+	assertNoExtraStructKeys(t, "addons.json", resp)
+}
+
+func TestContract_ByoCharts(t *testing.T) {
+	var resp ProjectByoCharts
+	strictDecode(t, "byo_charts.json", &resp)
+	if len(resp.Charts) != 1 {
+		t.Fatalf("expected 1 chart, got %d", len(resp.Charts))
+	}
+	assertNoExtraStructKeys(t, "byo_charts.json", resp)
+}
+
+func TestContract_IacSource(t *testing.T) {
+	var resp struct {
+		Source *IacSource `json:"source"`
+	}
+	strictDecode(t, "iac_source.json", &resp)
+	if resp.Source == nil {
+		t.Fatal("expected a non-null source in the fixture")
+	}
+	assertNoExtraStructKeys(t, "iac_source.json", resp)
+}
+
 func TestContract_ClassificationDimensions(t *testing.T) {
 	var resp struct {
 		Dimensions []ClassificationDimension `json:"dimensions"`

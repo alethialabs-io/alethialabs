@@ -54,6 +54,9 @@ type fakeClient struct {
 	cost         *api.EnvironmentCost
 	protection   []api.ProtectionRule
 	probes       []api.ProbeState
+	addons       *api.ProjectAddons
+	byoCharts    *api.ProjectByoCharts
+	iacSource    *api.IacSource
 
 	// recorded classification calls
 	assignedKind    string
@@ -372,6 +375,18 @@ func (f *fakeClient) GetProjectProtection(project string) ([]api.ProtectionRule,
 
 func (f *fakeClient) GetProjectProbes(project string) ([]api.ProbeState, error) {
 	return f.probes, f.err
+}
+
+func (f *fakeClient) GetProjectAddons(project, env string) (*api.ProjectAddons, error) {
+	return f.addons, f.err
+}
+
+func (f *fakeClient) GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error) {
+	return f.byoCharts, f.err
+}
+
+func (f *fakeClient) GetProjectIacSource(project, env string) (*api.IacSource, error) {
+	return f.iacSource, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)

@@ -1,0 +1,40 @@
+---
+title: Add-on Commands
+description: Inspect the marketplace add-ons installed in a project environment.
+---
+
+# Add-on Commands
+
+The `addon` group (alias `addons`) lists the **marketplace add-ons** (observability, databases,
+caches, … — OSS Helm charts deployed via ArgoCD) installed in an environment.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `addon list` calls `/cli/projects/<project>/addons`
+with your [CLI token](/cli/authentication) and operates on the **active organization**
+(`alethia org switch`, or `--org <id>` per invocation). Browsing the full marketplace catalog stays
+in the console; the CLI shows what's installed.
+</Callout>
+
+## `alethia addon list`
+
+List the add-ons installed in a project environment.
+
+```bash
+alethia addon list --project my-project
+alethia addon list -p my-project -e staging
+alethia addon list -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the project's default environment. |
+
+Columns: **Add-on** (the catalog id), **Enabled** (✓ / —), **Mode** (`managed` | `gitops`),
+**Version**, **Status**, **Health**. Add `-o json` for the full view; `-o csv` for the rows.
+Backing call: `GET /cli/projects/<project>/addons`.
+
+## See also
+
+- [Chart Commands](/cli/commands/charts) — your own BYO Helm charts.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

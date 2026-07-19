@@ -136,6 +136,9 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	CostResponse: "cost.json",
 	ProtectionResponse: "protection.json",
 	ProbesResponse: "probes.json",
+	AddonsResponse: "addons.json",
+	ByoChartsResponse: "byo_charts.json",
+	IacSourceResponse: "iac_source.json",
 	ClassificationDimensionsResponse: "classification_dimensions.json",
 	ClassificationAssignmentsResponse: "classification_assignments.json",
 };
