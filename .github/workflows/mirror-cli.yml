@@ -1,18 +1,20 @@
 name: Mirror CLI
 
-# Publishes a read-only mirror of the CLI (apps/cli + its shared packages/core) to the public
-# alethialabs-io/alethia-cli repo. Development happens here in the monorepo; the mirror is a browsable
-# front door + focused issue target. Source-only — releases stay on the monorepo (GoReleaser →
-# tap/scoop/packages). See docs/concepts/release-system.mdx and the repo-strategy notes.
+# Continuously publishes a read-only source mirror of the CLI (apps/cli + its shared packages/core)
+# to the public alethialabs-io/alethia-cli repo, so the CLI's own repo is a current, browsable front
+# door + focused issue target. Development happens here in the monorepo.
+#
+# RELEASES are cut by release-cli.yml, which builds + publishes the GitHub Release, binaries, Homebrew
+# formula, Scoop manifest and packages directly on alethia-cli (its own release home). This workflow
+# only keeps the SOURCE current between releases — release-cli owns the release commit + tag.
 #
 # The two dirs keep their monorepo-relative layout, so apps/cli/go.mod's
 # `replace …/packages/core => ../../packages/core` resolves with zero file edits — the mirror is a
-# pure copy, not a transform.
+# pure copy, not a transform (see .github/mirror/build-stage.sh).
 
 on:
   push:
     branches: [main]
-    tags: ['cli-v*']
   workflow_dispatch:
 
 concurrency:
@@ -47,20 +49,8 @@ jobs:
       - name: Build staging tree
         run: |
           set -euo pipefail
-          STAGE="$RUNNER_TEMP/mirror"
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE/apps/cli" "$STAGE/packages/core"
-          rsync -a --delete apps/cli/ "$STAGE/apps/cli/"
-          rsync -a --delete packages/core/ "$STAGE/packages/core/"
-          # The mirror has no go.work, so apps/cli builds as a standalone module — tidy it (and core)
-          # so its go.mod/go.sum are self-sufficient and the Sanity build below passes. The monorepo
-          # keeps these tidy via the CI "go.mod tidy guard (standalone)"; this is belt-and-suspenders.
-          (cd "$STAGE/packages/core" && GOWORK=off go mod tidy)
-          (cd "$STAGE/apps/cli" && GOWORK=off go mod tidy)
-          cp .github/mirror/README.md "$STAGE/README.md"
-          cp .github/mirror/CONTRIBUTING.md "$STAGE/CONTRIBUTING.md"
-          cp LICENSE "$STAGE/LICENSE"
-          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+          bash .github/mirror/build-stage.sh "$RUNNER_TEMP/mirror"
+          echo "STAGE=$RUNNER_TEMP/mirror" >> "$GITHUB_ENV"
 
       - name: Sanity build (the mirror must compile standalone)
         run: |
@@ -87,15 +77,4 @@ jobs:
           else
             git commit -m "Sync from alethialabs-io/alethialabs@${GITHUB_SHA:0:12}"
             git push origin HEAD:main
-          fi
-          # On a cli-v* tag, publish the matching clean vX.Y.Z tag on the mirror.
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            case "${GITHUB_REF_NAME}" in
-              cli-v*)
-                V="${GITHUB_REF_NAME#cli-}"
-                git tag -f "$V"
-                git push -f origin "refs/tags/$V"
-                echo "Tagged mirror $V"
-                ;;
-            esac
           fi

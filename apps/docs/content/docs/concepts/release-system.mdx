@@ -46,27 +46,33 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 
 ## alethia (CLI) Release Pipeline
 
-**Trigger:** `release-please` cuts a `cli-v*` tag; `release-please.yml` then calls the reusable workflow.
+The CLI's **release home is its own public repo, `alethialabs-io/alethia-cli`** — that's where the
+GitHub Release, binaries, and package metadata live. The monorepo stays the **source of truth + the
+version brain**: `release-please` (real conventional-commit history) computes the version and cuts a
+`cli-v*` tag; `release-cli.yml` then snapshots that exact source onto `alethia-cli` under a clean
+semver tag (`vX.Y.Z`) and runs GoReleaser **there**, so every published version string is clean
+semver (`0.3.0`, not `cli-v0.3.0`) and users find releases on the CLI repo.
 
-**Workflow:** `.github/workflows/release-cli.yml`
+**Trigger:** `release-please` cuts a `cli-v*` tag; `release-please.yml` calls the reusable
+`release-cli.yml` (also runnable via `workflow_dispatch` with a `version`).
 
 <Mermaid chart={`
 flowchart TD
-  Tag["tag cli-v0.2.2 (release-please)"] --> Setup["Checkout + Go setup"]
-  Setup --> GR["GoReleaser<br/>(-f apps/cli/.goreleaser.yml, --skip=validate)"]
-  GR --> Build["Build: darwin + linux + windows × amd64/arm64"]
-  GR --> Arch["Archive: tar.gz / zip + checksums"]
-  GR --> Nfpm["nfpm: .deb / .rpm / .apk"]
-  GR --> Rel["GitHub Release: archives + packages + checksums"]
+  RP["release-please (monorepo)<br/>cli-vX.Y.Z tag + changelog"] --> RC["release-cli.yml"]
+  RC --> Sync["Snapshot apps/cli + packages/core → alethia-cli<br/>(tidied, standalone) + tag vX.Y.Z"]
+  Sync --> GR["GoReleaser in the alethia-cli checkout<br/>(-f apps/cli/.goreleaser.yml, clean vX.Y.Z)"]
+  GR --> Rel["GitHub Release on alethia-cli:<br/>archives + .deb/.rpm/.apk + checksums"]
   GR --> Docker["Docker: ghcr.io/alethialabs-io/alethia (amd64+arm64)"]
   GR --> Brew["Homebrew: Formula/alethia.rb → homebrew-tap"]
   GR --> Scoop["Scoop: alethia.json → scoop-bucket"]
 `} />
 
-**GoReleaser config** (`apps/cli/.goreleaser.yml`):
+**GoReleaser config** (`apps/cli/.goreleaser.yml`) runs inside the `alethia-cli` checkout at its clean
+`vX.Y.Z` tag, so `{{ .Version }}` is clean semver (no `--skip=validate` / `trimprefix` needed). It:
 - Builds binaries across macOS/Linux/Windows × amd64/arm64 (`project_name: alethia`)
-- Creates a GitHub Release with archives, `.deb`/`.rpm`/`.apk` packages, and checksums
-- Publishes/updates the Homebrew formula and Scoop manifest automatically
+- Creates the GitHub Release **on alethia-cli** with archives, `.deb`/`.rpm`/`.apk` packages, checksums
+- Publishes/updates the Homebrew formula (`homebrew-tap`) and Scoop manifest (`scoop-bucket`), whose
+  download URLs point at the alethia-cli release
 
 **Distribution channels:**
 - `brew install alethialabs-io/tap/alethia` (macOS/Linux via Homebrew) — or `brew tap alethialabs-io/tap && brew install alethia`
@@ -76,14 +82,20 @@ flowchart TD
 - `docker run --rm ghcr.io/alethialabs-io/alethia --version`
 - Direct binary download from GitHub Releases
 
-### CLI mirror (`alethialabs-io/alethia`)
+### CLI repo (`alethialabs-io/alethia-cli`)
 
-`.github/workflows/mirror-cli.yml` publishes a **read-only mirror** of the CLI — `apps/cli` plus its
-shared `packages/core`, copied verbatim (the relative layout keeps `apps/cli/go.mod`'s `replace`
-valid, so it compiles standalone; the workflow runs `go build` as a gate before pushing) — to the
-public `alethialabs-io/alethia` repo on every `main` push and `cli-v*` tag. It's a browsable front
-door + focused issue target: **releases stay on the monorepo**, and PRs opened on the mirror are
-directed back here (`.github/mirror/` seeds its README + CONTRIBUTING). It uses the same GitHub App.
+`alethia-cli` is the CLI's public home — both the **release/binary home** (above) and a browsable
+source front door + focused issue target. Two workflows keep it current, both building the standalone
+tree via the shared `.github/mirror/build-stage.sh` (`apps/cli` + `packages/core` copied verbatim so
+`apps/cli/go.mod`'s `replace` stays valid + tidied so it compiles without `go.work`):
+
+- **`mirror-cli.yml`** — continuous **source** sync on every `main` push (so the code stays current
+  between releases), gated by a standalone `go build`.
+- **`release-cli.yml`** — at release time, snapshots the exact `cli-v*` source, tags `alethia-cli`
+  `vX.Y.Z`, and publishes the release there (see the pipeline above).
+
+PRs opened on `alethia-cli` are directed back to the monorepo (`.github/mirror/` seeds its README +
+CONTRIBUTING). Both use the same GitHub App.
 
 ### Go-live checklist (maintainer)
 
@@ -104,14 +116,17 @@ downloads work the moment a release exists).
    ```bash
    bash scripts/setup-release-github-app.sh
    ```
-   It creates the App with the right permissions (**Contents: Read and write**, no webhook) via
-   GitHub's manifest flow and sets both secrets automatically. Then click the printed **Install**
-   link → select `homebrew-tap`, `scoop-bucket`, `alethia`.
+   It creates the App with the right permissions (**Contents: Read and write** + **Pull requests:
+   Read and write** so release-please can open its release PRs, no webhook) via GitHub's manifest
+   flow and sets both secrets automatically. Then click the printed **Install** link → select
+   `homebrew-tap`, `scoop-bucket`, `alethia-cli`, **and the monorepo `alethialabs`** (release-please
+   opens its release PRs there as the App so the required checks run).
 
    **Manual path** (fallback): Org → **Settings → Developer settings → GitHub Apps → New GitHub
-   App** → permissions **Contents: Read and write** (+ Metadata: read), uncheck the webhook →
-   **Create** → **Generate a private key** → **Install App** on those three repos → set
-   `TAP_APP_ID` (the App id) and `TAP_APP_PRIVATE_KEY` (the whole `.pem`) as repo secrets.
+   App** → permissions **Contents: Read and write** + **Pull requests: Read and write** (+ Metadata:
+   read), uncheck the webhook → **Create** → **Generate a private key** → **Install App** on
+   `homebrew-tap`, `scoop-bucket`, `alethia-cli`, and `alethialabs` → set `TAP_APP_ID` (the App id)
+   and `TAP_APP_PRIVATE_KEY` (the whole `.pem`) as repo secrets.
 
    *(The App replaces the old `HOMEBREW_TAP_GITHUB_TOKEN` PAT, which can be deleted once the App
    is installed.)*

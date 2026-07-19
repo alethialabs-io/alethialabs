@@ -5,11 +5,10 @@ version: 2
 # Project name for the binary
 project_name: alethia
 
-# The CLI is released on its own component tag (cli-vX.Y.Z, created by
-# release-please). GoReleaser OSS has no tag_prefix stripping, so all
-# user-facing version strings use `{{ trimprefix .Tag "cli-v" }}` to get a
-# clean semver, and the workflow runs with --skip=validate (the cli- prefix
-# is not semver).
+# This runs (via release-cli.yml) inside a checkout of the alethialabs-io/alethia-cli release home,
+# at its clean-semver tag vX.Y.Z — so GoReleaser creates the Release there and `{{ .Version }}` is a
+# clean semver (0.3.0). release-please computes the version in the monorepo (cli-vX.Y.Z) and
+# release-cli snapshots that source onto alethia-cli under the vX.Y.Z tag before this runs.
 
 before:
     hooks:
@@ -21,7 +20,7 @@ builds:
       main: ./
       binary: alethia
       ldflags:
-          - -s -w -X github.com/alethialabs-io/alethialabs/apps/cli/internal/version.Version={{ trimprefix .Tag "cli-v" }}
+          - -s -w -X github.com/alethialabs-io/alethialabs/apps/cli/internal/version.Version={{ .Version }}
       env:
           - CGO_ENABLED=0
       goos:
@@ -81,7 +80,7 @@ brews:
           email: contact@borislav.me
 
       # The project's homepage.
-      homepage: "https://github.com/alethialabs-io/alethialabs"
+      homepage: "https://github.com/alethialabs-io/alethia-cli"
 
       # A brief description of the project.
       description: "Alethia CLI for managing infrastructure configurations."
@@ -130,34 +129,34 @@ nfpms:
 
 dockers:
     - image_templates:
-          - 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}-amd64'
+          - 'ghcr.io/alethialabs-io/alethia:{{ .Version }}-amd64'
       use: buildx
       dockerfile: apps/cli/Dockerfile
       goos: linux
       goarch: amd64
       build_flag_templates:
           - "--platform=linux/amd64"
-          - "--label=org.opencontainers.image.source=https://github.com/alethialabs-io/alethialabs"
-          - '--label=org.opencontainers.image.version={{ trimprefix .Tag "cli-v" }}'
+          - "--label=org.opencontainers.image.source=https://github.com/alethialabs-io/alethia-cli"
+          - '--label=org.opencontainers.image.version={{ .Version }}'
           - "--label=org.opencontainers.image.licenses=AGPL-3.0-only"
     - image_templates:
-          - 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}-arm64'
+          - 'ghcr.io/alethialabs-io/alethia:{{ .Version }}-arm64'
       use: buildx
       dockerfile: apps/cli/Dockerfile
       goos: linux
       goarch: arm64
       build_flag_templates:
           - "--platform=linux/arm64"
-          - "--label=org.opencontainers.image.source=https://github.com/alethialabs-io/alethialabs"
-          - '--label=org.opencontainers.image.version={{ trimprefix .Tag "cli-v" }}'
+          - "--label=org.opencontainers.image.source=https://github.com/alethialabs-io/alethia-cli"
+          - '--label=org.opencontainers.image.version={{ .Version }}'
           - "--label=org.opencontainers.image.licenses=AGPL-3.0-only"
 
 docker_manifests:
-    - name_template: 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}'
+    - name_template: 'ghcr.io/alethialabs-io/alethia:{{ .Version }}'
       image_templates:
-          - 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}-amd64'
-          - 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}-arm64'
+          - 'ghcr.io/alethialabs-io/alethia:{{ .Version }}-amd64'
+          - 'ghcr.io/alethialabs-io/alethia:{{ .Version }}-arm64'
     - name_template: "ghcr.io/alethialabs-io/alethia:latest"
       image_templates:
-          - 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}-amd64'
-          - 'ghcr.io/alethialabs-io/alethia:{{ trimprefix .Tag "cli-v" }}-arm64'
+          - 'ghcr.io/alethialabs-io/alethia:{{ .Version }}-amd64'
+          - 'ghcr.io/alethialabs-io/alethia:{{ .Version }}-arm64'
