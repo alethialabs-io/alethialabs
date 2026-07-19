@@ -11,7 +11,7 @@
 #>
 $ErrorActionPreference = "Stop"
 
-$Repo = "alethialabs-io/alethialabs"
+$Repo = "alethialabs-io/alethia-cli"
 $Bin  = "alethia"
 $Gh   = "https://github.com/$Repo"
 $Api  = "https://api.github.com/repos/$Repo"
@@ -28,19 +28,19 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 }
 $asset = "${Bin}_Windows_${arch}.zip"
 
-# --- resolve version (pinned env, else latest bare vX.Y.Z release) ---
+# --- resolve version (pinned env, else latest vX.Y.Z release on alethia-cli) ---
 if ($env:ALETHIA_VERSION) {
 	$v = $env:ALETHIA_VERSION
-	$tag = if ($v.StartsWith("cli-v")) { $v } elseif ($v.StartsWith("v")) { "cli-$v" } else { "cli-v$v" }
+	$tag = if ($v.StartsWith("cli-v")) { "v" + $v.Substring(5) } elseif ($v.StartsWith("v")) { $v } else { "v$v" }
 } else {
 	Write-Host "Resolving latest alethia release..."
 	$releases = Invoke-RestMethod -Headers $headers -Uri "$Api/releases?per_page=100"
 	$latest = $releases.tag_name |
-		Where-Object { $_ -match '^cli-v\d+\.\d+\.\d+$' } |
-		ForEach-Object { [version]($_ -replace '^cli-v','') } |
+		Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+		ForEach-Object { [version]($_ -replace '^v','') } |
 		Sort-Object | Select-Object -Last 1
 	if (-not $latest) { throw "Could not resolve the latest release (GitHub API rate-limited? set GITHUB_TOKEN, or pin ALETHIA_VERSION)." }
-	$tag = "cli-v$latest"
+	$tag = "v$latest"
 }
 
 $base = "$Gh/releases/download/$tag"

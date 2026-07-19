@@ -13,7 +13,8 @@ import {
 } from "@xyflow/react";
 import { typedKeys } from "@/lib/typed-object";
 import "@xyflow/react/dist/style.css";
-import { useMemo, useState } from "react";
+import { cn } from "@repo/ui/utils";
+import { createContext, useContext, useMemo, useState } from "react";
 import {
 	buildRenderNodes,
 	collectionNodeId,
@@ -69,6 +70,24 @@ const edgeTypes: EdgeTypes = {
 	cw_binding: ChartBindingEdge,
 };
 
+/**
+ * Canvas traversal mode (Excalidraw/Miro model). `handTool` is the toolbar/`H` hand tool (a sticky
+ * pan mode); `spaceHeld` is the transient Space-to-pan. Either makes left-drag pan the pane and
+ * shows a grab cursor; otherwise left-drag marquee-selects. Provided by `DesignProjectCanvas`
+ * (which owns the state + the keyboard listeners) and consumed by the board + the controls — the
+ * canvas store is deliberately not touched (this is view interaction, not design state).
+ */
+export interface CanvasInteraction {
+	handTool: boolean;
+	setHandTool: (next: boolean) => void;
+	spaceHeld: boolean;
+}
+export const CanvasInteractionContext = createContext<CanvasInteraction>({
+	handTool: false,
+	setHandTool: () => {},
+	spaceHeld: false,
+});
+
 /** The React Flow surface, controlled by the canvas store. */
 export function CanvasFlow() {
 	const nodes = useCanvasStore((s) => s.nodes);
@@ -82,6 +101,11 @@ export function CanvasFlow() {
 	const containerGeometry = useCanvasStore((s) => s.containerGeometry);
 	const setContainerGeometry = useCanvasStore((s) => s.setContainerGeometry);
 	const translateContainer = useCanvasStore((s) => s.translateContainer);
+
+	// Traversal mode: the hand tool or a held Space turns left-drag into a pan (Excalidraw/Miro);
+	// otherwise left-drag marquee-selects. Middle/right mouse always pan.
+	const { handTool, spaceHeld } = useContext(CanvasInteractionContext);
+	const panning = handTool || spaceHeld;
 
 	// Which container's resize handles are showing. Controlled here (containers are synthetic — they
 	// have no store row), set on click and cleared when a card or the pane is clicked.
@@ -295,12 +319,23 @@ export function CanvasFlow() {
 				openInspector(null);
 			}}
 			deleteKeyCode={["Backspace", "Delete"]}
+			// ── Excalidraw/Miro traversal ─────────────────────────────────────────────────────────
+			// Left-drag marquee-selects (better click-state handling); Space or the hand tool turns
+			// left-drag into a pan. Middle + right mouse always pan. Scroll pans (trackpad-native);
+			// Ctrl/⌘+scroll and pinch zoom. This replaces the stock default where left-drag panned and
+			// there was no discoverable select.
+			panOnDrag={panning ? true : [1, 2]}
+			selectionOnDrag={!panning}
+			panActivationKeyCode="Space"
+			panOnScroll
+			zoomOnScroll={false}
+			zoomOnPinch
 			fitView
 			fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
 			minZoom={0.2}
 			maxZoom={1.5}
 			proOptions={{ hideAttribution: true }}
-			className="bg-background"
+			className={cn("bg-background", panning && "cursor-grab active:cursor-grabbing")}
 		>
 			<Background
 				variant={BackgroundVariant.Dots}

@@ -194,10 +194,13 @@ export async function POST(
 		// first, project specifics second) — plus a derived block of the project's live state, so
 		// the very first answer is grounded without a tool round-trip. A project's context never
 		// leaks out to org chats.
+		// Pass the actor (not just owner): the agent-context reads are scope-flag-aware — off, they
+		// read under the user id (unchanged); on, org/project rows are org-shared. See
+		// lib/ai/org-agent-context-flag.ts.
 		const [orgCtx, projectCtx, derived] = await Promise.all([
-			readAgentContext(owner, null).catch(() => null),
-			readAgentContext(owner, projectId).catch(() => null),
-			buildProjectKnowledge(owner, projectId).catch(() => ""),
+			readAgentContext(actor, null).catch(() => null),
+			readAgentContext(actor, projectId).catch(() => null),
+			buildProjectKnowledge(actor, projectId).catch(() => ""),
 		]);
 
 		const system = [

@@ -5,7 +5,7 @@
 import { currentActor } from "@/lib/authz/guard";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { signedJob } from "@/lib/db/signed-job";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 
@@ -28,7 +28,7 @@ export async function queueAudit(
 	}
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+	const jobId = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({

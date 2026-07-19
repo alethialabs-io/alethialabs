@@ -55,6 +55,13 @@ export interface IacEnvironment {
 	 * panel says nothing rather than a confident zero.
 	 */
 	costByAddress: Record<string, number>;
+	/**
+	 * The module's ROOT output NAMES (IacScanReport.outputs), the choices the service bind sheet
+	 * offers when a service binds to a BYO-IaC resource (#823) — each facet maps to one of these
+	 * (the deploy-time tofu-output keys). Empty when the module was scanned before output capture
+	 * or exports none — the picker then has no candidates rather than fabricating any.
+	 */
+	outputs: string[];
 }
 
 /**

@@ -5,11 +5,10 @@
 import { notFound } from "next/navigation";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { signedJob } from "@/lib/db/signed-job";
-import { requireOwner } from "@/lib/auth/owner";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { getServiceDb, type Tx, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	type EnvTransitionContext,
@@ -23,6 +22,7 @@ import {
 	resourceHierarchy,
 	type Project,
 	type ProjectEnvironment,
+	type ProjectFabric,
 	projectCaches,
 	projectCluster,
 	projectContainerRegistries,
@@ -30,6 +30,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectFabrics,
 	projectAddons,
 	projectIacSources,
 	projectNetwork,
@@ -206,7 +207,7 @@ export interface CreateProjectInput {
 // ============================================================
 
 /** A withOwnerScope transaction handle (the arg drizzle passes the callback). */
-type ComponentTx = Parameters<Parameters<typeof withOwnerScope>[1]>[0];
+type ComponentTx = Parameters<Parameters<typeof withActorScope>[1]>[0];
 
 /** `project_id = … AND environment_id = …` — component rows are scoped to one environment, so
  * every component read/delete filters on both. */
@@ -456,7 +457,7 @@ export async function updateProjectDesign(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// environment_stage seeds the default env at create time; not a project column.
 		const { environment_stage, ...projectFields } = data.project;
 		void environment_stage;
@@ -485,7 +486,7 @@ export async function updateProjectDesign(
 export async function getProjectsList() {
 	const actor = await authorize("view", { type: "project" });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// M1: surface each project's default-environment name + status (the columns moved
 		// off `projects` into project_environments) so list consumers keep reading them.
 		const rows = await tx
@@ -517,8 +518,7 @@ export async function getProject(
 	environmentId?: string | null,
 ) {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select()
 			.from(projects)
@@ -682,7 +682,7 @@ export async function reconcileEnvironmentComponents(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		await clearComponents(tx, projectId, environmentId);
 		await writeComponents(tx, projectId, environmentId, data);
 		return { success: true };
@@ -715,7 +715,13 @@ async function buildConfigSnapshot(
 		// M1: resolve which environment this job provisions (the given one, else the
 		// project's default). Its `name` feeds the frozen snapshot `environment_stage`
 		// key → the Go provisioner's tofu/S3 state path, unchanged.
-		const environment = await resolveTargetEnvironment(tx, projectId, environmentId);
+		// #837: also resolve the Fabric it is placed onto + the effective destination namespace,
+		// carried into the snapshot below so the #838 provisioner can route by placement.
+		const { environment, fabric, namespace } = await resolveTargetEnvironment(
+			tx,
+			projectId,
+			environmentId,
+		);
 
 		if (!project.cloud_identity_id) {
 			throw new Error(
@@ -1115,6 +1121,16 @@ async function buildConfigSnapshot(
 			// by the runner as the `alethia:environment-id` tag so a guarded sweeper can scope
 			// destroys to exactly one environment's cloud resources.
 			environment_id: environment.id,
+			// #837 (decoupled env-model): the Fabric (infra unit) this env is PLACED onto, and how.
+			// The #838 provisioner re-keys the per-Fabric tofu state onto `fabric_name` and sets the
+			// ArgoCD Application destination from `placement_mode` + `namespace`. For a backfilled
+			// `dedicated` env `fabric_name === environment.name`, so the state path stays
+			// byte-identical (fabric is null only for not-yet-linked transitional rows → fall back
+			// to the env name). `namespace` is null for `dedicated` (owns the whole Fabric).
+			fabric_id: fabric?.id ?? null,
+			fabric_name: fabric?.name ?? environment.name,
+			placement_mode: environment.placement_mode,
+			namespace,
 			region: environment.region ?? project.region,
 			provider: identity.provider,
 			// B1.1: frozen per-dimension classification map ({ dimension_key: value_slug[] }),
@@ -1253,16 +1269,25 @@ function assertIacSourceQueueable(
 }
 
 /**
- * Resolves the environment a provisioning job targets: the explicitly-passed one
- * (verified to belong to the project), else the project's default environment.
+ * Resolves a provisioning job's deploy destination in the decoupled env-model (#837): the target
+ * environment (the explicitly-passed one, verified to belong to the project, else the project's
+ * default), the Fabric (infra unit) it is placed onto, and the effective Kubernetes namespace.
+ * `dedicated` placements own their Fabric 1:1 → `namespace = null` (the legacy env=cluster
+ * behaviour); `namespace`/`vcluster` placements resolve to the env's explicit `namespace`, else a
+ * slug of its name. `fabric` is null only for transitional rows the seam backfill has not linked yet.
  */
 async function resolveTargetEnvironment(
-	tx: Parameters<Parameters<typeof withOwnerScope>[1]>[0],
+	tx: Parameters<Parameters<typeof withActorScope>[1]>[0],
 	projectId: string,
 	environmentId?: string | null,
-): Promise<ProjectEnvironment> {
+): Promise<{
+	environment: ProjectEnvironment;
+	fabric: ProjectFabric | null;
+	namespace: string | null;
+}> {
+	let environment: ProjectEnvironment | undefined;
 	if (environmentId) {
-		const [env] = await tx
+		[environment] = await tx
 			.select()
 			.from(projectEnvironments)
 			.where(
@@ -1272,21 +1297,47 @@ async function resolveTargetEnvironment(
 				),
 			)
 			.limit(1);
-		if (!env) throw new Error("Environment not found for this project");
-		return env;
+		if (!environment) throw new Error("Environment not found for this project");
+	} else {
+		[environment] = await tx
+			.select()
+			.from(projectEnvironments)
+			.where(
+				and(
+					eq(projectEnvironments.project_id, projectId),
+					eq(projectEnvironments.is_default, true),
+				),
+			)
+			.limit(1);
+		if (!environment) throw new Error("Project has no default environment");
 	}
-	const [env] = await tx
-		.select()
-		.from(projectEnvironments)
-		.where(
-			and(
-				eq(projectEnvironments.project_id, projectId),
-				eq(projectEnvironments.is_default, true),
-			),
-		)
-		.limit(1);
-	if (!env) throw new Error("Project has no default environment");
-	return env;
+
+	// The Fabric (infra unit) this env is placed onto. NULL only for transitional rows the seam
+	// backfill has not linked yet — the caller treats that as its own dedicated Fabric (back-compat).
+	let fabric: ProjectFabric | null = null;
+	if (environment.fabric_id) {
+		const [row] = await tx
+			.select()
+			.from(projectFabrics)
+			.where(
+				and(
+					eq(projectFabrics.id, environment.fabric_id),
+					eq(projectFabrics.project_id, projectId),
+				),
+			)
+			.limit(1);
+		fabric = row ?? null;
+	}
+
+	// Effective ArgoCD destination namespace. `dedicated` owns the whole Fabric → no namespace
+	// (legacy behaviour); shared placements use the env's explicit namespace, else an RFC-1123
+	// slug of its name (via slugify, capped at 63 chars — the k8s namespace length limit).
+	const namespace =
+		environment.placement_mode === "dedicated"
+			? null
+			: (environment.namespace ?? slugify(environment.name, 63));
+
+	return { environment, fabric, namespace };
 }
 
 /**
@@ -1718,8 +1769,7 @@ const LIVE_ENV_STATUSES = new Set(["QUEUED", "PROVISIONING", "ACTIVE", "DESTROYI
  */
 export async function deleteProject(projectId: string) {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
 		const envs = await tx
 			.select({ status: projectEnvironments.status })
@@ -1752,8 +1802,8 @@ export async function getProjectAsFormData(
 
 	let provider: CloudProviderSlug = "aws";
 	if (source.project.cloud_identity_id) {
-		const owner = await requireOwner();
-		const ci = await withOwnerScope(owner, async (tx) => {
+		const actor = await currentActor();
+		const ci = await withActorScope(actor, async (tx) => {
 			const [row] = await tx
 				.select({ provider: cloudIdentities.provider })
 				.from(cloudIdentities)
@@ -1925,7 +1975,7 @@ export async function duplicateProjectForProvider(
 	const { formData, provider: sourceProvider } =
 		await getProjectAsFormData(sourceProjectId);
 
-	const targetIdentity = await withOwnerScope(owner, async (tx) => {
+	const targetIdentity = await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({ provider: cloudIdentities.provider })
 			.from(cloudIdentities)
@@ -2000,7 +2050,7 @@ export async function getProjectDuplicateSummary(projectId: string): Promise<{
 export async function getProjectEnvironments(projectId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const environments = await tx
 			.select()
 			.from(projectEnvironments)
@@ -2024,7 +2074,7 @@ export async function addEnvironment(
 	if (!name) throw new Error("Environment name is required");
 	if (RESERVED_PROJECT_CHILD_SLUGS.includes(name))
 		throw new Error(`"${name}" is reserved and can't be used as an environment name`);
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
 			.from(projects)
@@ -2070,7 +2120,7 @@ export async function duplicateEnvironment(
 	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)
 		.then((r) => r.formData)
 		.catch(() => null);
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [base] = await tx
 			.select({
 				org_id: projectEnvironments.org_id,
@@ -2114,7 +2164,7 @@ export async function setAutoHeal(
 	enabled: boolean,
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, (tx) =>
+	return withActorScope(actor, (tx) =>
 		tx
 			.update(projectEnvironments)
 			.set({ auto_heal: enabled, updated_at: new Date() })
@@ -2205,8 +2255,7 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 /** Deletes a non-default environment (the default is the project's anchor). */
 export async function deleteEnvironment(projectId: string, environmentId: string) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [env] = await tx
 			.select()
 			.from(projectEnvironments)
@@ -2234,7 +2283,7 @@ export async function getProjectGeneral(
 	projectId: string,
 ): Promise<{ id: string; project_name: string; slug: string | null }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({
 				id: projects.id,
@@ -2262,7 +2311,7 @@ export async function updateProjectName(
 	if (!project_name) throw new Error("A project name is required");
 	if (project_name.length > 100)
 		throw new Error("Project name must be 100 characters or fewer");
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.update(projects)
 			.set({ project_name, updated_at: new Date() })
@@ -2318,7 +2367,7 @@ function toProject(r: {
 /** All of the active org's projects (projects), newest first, each with its default environment. */
 export async function getProjects(): Promise<ProjectWithProvider[]> {
 	const actor = await authorize("view", { type: "project" });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select(projectSelect())
 			.from(projects)
@@ -2345,9 +2394,19 @@ export interface ProjectRepoRef {
 	label: string;
 }
 
-/** A project list row enriched with its distinct source repositories (for the repo facet). */
+/** A project list row enriched with its distinct source repositories (for the repo facet) plus the
+ * default-environment rollup the overview card reads: configured services / add-ons, environment
+ * count, and last-deploy time. */
 export type ProjectListItem = ProjectWithProvider & {
 	repositories: ProjectRepoRef[];
+	/** Configured services in the default environment. */
+	services_count: number;
+	/** Installed add-ons in the default environment. */
+	addons_count: number;
+	/** Total environments on the project (default + others). */
+	environments_count: number;
+	/** When the default environment was last deployed (null = never provisioned). */
+	last_deployed_at: Date | null;
 };
 
 /** Server-side query for the overview grid. All fields optional; empty = no filter. */
@@ -2391,7 +2450,7 @@ export async function queryProjects(
 	query: ProjectListQuery = {},
 ): Promise<ProjectListResult> {
 	const actor = await authorize("view", { type: "project" });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select(projectSelect())
 			.from(projects)
@@ -2425,9 +2484,65 @@ export async function queryProjects(
 			list.push({ url: r.repo_url, label: repoLabel(r.repo_url) });
 			repoMap.set(r.project_id, list);
 		}
+		// Default-environment rollup for the card: environment count + last-deploy time (all envs),
+		// and the configured services / installed add-ons of the DEFAULT env only. All counted in
+		// memory (mirrors the repo attach above) — the project set is already fully loaded.
+		const defaultEnvIds = base
+			.map((p) => p.default_environment_id)
+			.filter((id): id is string => Boolean(id));
+
+		const envRows = ids.length
+			? await tx
+					.select({
+						project_id: projectEnvironments.project_id,
+						last_deployed_at: projectEnvironments.last_deployed_at,
+					})
+					.from(projectEnvironments)
+					.where(inArray(projectEnvironments.project_id, ids))
+			: [];
+		const envCount = new Map<string, number>();
+		const lastDeployed = new Map<string, Date>();
+		for (const r of envRows) {
+			if (!r.project_id) continue;
+			envCount.set(r.project_id, (envCount.get(r.project_id) ?? 0) + 1);
+			if (r.last_deployed_at) {
+				const cur = lastDeployed.get(r.project_id);
+				if (!cur || r.last_deployed_at > cur)
+					lastDeployed.set(r.project_id, r.last_deployed_at);
+			}
+		}
+
+		const serviceRows = defaultEnvIds.length
+			? await tx
+					.select({ project_id: projectServices.project_id })
+					.from(projectServices)
+					.where(inArray(projectServices.environment_id, defaultEnvIds))
+			: [];
+		const serviceCount = new Map<string, number>();
+		for (const r of serviceRows) {
+			if (!r.project_id) continue;
+			serviceCount.set(r.project_id, (serviceCount.get(r.project_id) ?? 0) + 1);
+		}
+
+		const addonRows = defaultEnvIds.length
+			? await tx
+					.select({ project_id: projectAddons.project_id })
+					.from(projectAddons)
+					.where(inArray(projectAddons.environment_id, defaultEnvIds))
+			: [];
+		const addonCount = new Map<string, number>();
+		for (const r of addonRows) {
+			if (!r.project_id) continue;
+			addonCount.set(r.project_id, (addonCount.get(r.project_id) ?? 0) + 1);
+		}
+
 		const items: ProjectListItem[] = base.map((p) => ({
 			...p,
 			repositories: repoMap.get(p.id) ?? [],
+			services_count: serviceCount.get(p.id) ?? 0,
+			addons_count: addonCount.get(p.id) ?? 0,
+			environments_count: envCount.get(p.id) ?? 0,
+			last_deployed_at: lastDeployed.get(p.id) ?? null,
 		}));
 
 		// Facets: the full universe of clouds + repos across the org (never narrowed by

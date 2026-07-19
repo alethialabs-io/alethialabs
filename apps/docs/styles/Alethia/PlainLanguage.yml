@@ -1,0 +1,20 @@
+extends: substitution
+message: "Prefer '%s' over '%s' for plainer language."
+# STE-informed plain-language swaps that Google's style doesn't already cover.
+# Warning-level: surfaced as a non-blocking annotation, never reds the build.
+level: warning
+ignorecase: true
+action:
+  name: replace
+swap:
+  utilize: use
+  utilise: use
+  leverage: use
+  'in order to': to
+  'a number of': several
+  'is able to': can
+  'are able to': can
+  'has the ability to': can
+  'prior to': before
+  'in the event that': if
+  'at this point in time': now

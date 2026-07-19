@@ -28,7 +28,7 @@ import {
 	type ProvisionJobType,
 } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 
 /** Jobs the environment is still working through. */
 const IN_FLIGHT = ["QUEUED", "CLAIMED", "PROCESSING"] as const;
@@ -133,7 +133,7 @@ export async function queueClusterProbe(
 	}
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+	const jobId = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({
@@ -195,7 +195,7 @@ export async function queueEnvironmentAudit(
 	}
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+	const jobId = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({

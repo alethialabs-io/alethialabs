@@ -26,7 +26,7 @@ The Provider Ribbon sits at the top of the form and controls three things:
 When the Cloud Identity changes (e.g., switching from an AWS account to a GCP project), the entire form adapts. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for how this works.
 
 <Callout type="warn">
-Switching providers resets all provider-specific defaults: instance types, K8s versions, database engines, cache node types, and DNS/WAF options. If you're duplicating a project across providers, the platform converts the config automatically with warnings. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
+Switching providers resets all provider-specific defaults: instance types, Kubernetes versions, database engines, cache node types, and DNS/WAF options. If you're duplicating a project across providers, the platform converts the config automatically with warnings. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
 </Callout>
 
 ## Sections
@@ -34,7 +34,7 @@ Switching providers resets all provider-specific defaults: instance types, K8s v
 <Cards>
   <Card title="Project Basics" href="/console/design-project/project-basics">Name, environment, OpenTofu version</Card>
   <Card title="Network" href="/console/design-project/network">VPC/VNet, CIDR, NAT gateway</Card>
-  <Card title="Cluster" href="/console/design-project/cluster">K8s, instance types, node scaling, Karpenter</Card>
+  <Card title="Cluster" href="/console/design-project/cluster">Kubernetes, instance types, node scaling, Karpenter</Card>
   <Card title="Databases" href="/console/design-project/databases">Aurora, Cloud SQL, Azure Database</Card>
   <Card title="Caches" href="/console/design-project/caches">Redis, Valkey, Memorystore</Card>
   <Card title="NoSQL" href="/console/design-project/nosql">DynamoDB, Firestore, Cosmos DB</Card>

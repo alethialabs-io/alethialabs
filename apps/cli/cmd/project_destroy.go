@@ -14,6 +14,7 @@ import (
 var (
 	projectDestroyProjectID string
 	projectDestroyRunnerID  string
+	projectDestroyEnv       string
 	projectDestroyWait      bool
 )
 
@@ -50,9 +51,15 @@ var projectDestroyCmd = &cobra.Command{
 
 		apiClient := api.NewClient(token)
 
+		envID, err := resolveEnvironmentID(apiClient, projectDestroyProjectID, projectDestroyEnv)
+		if err != nil {
+			fail(err)
+		}
+
 		params := api.QueueJobParams{
 			JobType:         "DESTROY",
 			ConfigurationID: projectDestroyProjectID,
+			EnvironmentID:   envID,
 		}
 		if projectDestroyRunnerID != "" {
 			params.AssignedRunnerID = projectDestroyRunnerID
@@ -78,5 +85,6 @@ func init() {
 	projectCmd.AddCommand(projectDestroyCmd)
 	projectDestroyCmd.Flags().StringVar(&projectDestroyProjectID, "project-id", "", "ID of the project to destroy")
 	projectDestroyCmd.Flags().StringVar(&projectDestroyRunnerID, "runner-id", "", "Assign to a specific runner")
+	projectDestroyCmd.Flags().StringVar(&projectDestroyEnv, "env", "", "Target environment name (default: the project's default environment)")
 	projectDestroyCmd.Flags().BoolVarP(&projectDestroyWait, "wait", "w", false, "Wait for job completion")
 }

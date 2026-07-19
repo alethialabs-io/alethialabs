@@ -10,7 +10,7 @@ import { authorize } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 
 /**
@@ -25,7 +25,7 @@ export async function explainJobFindings(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
 	if (!isAiConfigured()) return [];
 
-	const report = await withOwnerScope(actor.userId, async (tx) => {
+	const report = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
 			.select({ md: jobs.execution_metadata })
 			.from(jobs)

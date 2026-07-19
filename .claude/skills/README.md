@@ -9,7 +9,8 @@ bash scripts/sync-skills.sh          # from alethialabs-io/skills@main
 ```
 
 Synced (from `alethialabs-io/skills`): `grilling`, `grill-me`, `research`, `handoff`, `domain-modeling`,
-`codebase-design`, `alethia-security-review`, `alethia-design` (+ `NOTICE`, the MIT attribution).
+`codebase-design`, `alethia-security-review`, `alethia-design`, `alethia-docs` (+ `NOTICE`, the MIT
+attribution).
 
 App-only (not from the source repo, edit here): `vercel-microfrontends`.
 

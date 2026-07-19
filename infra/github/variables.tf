@@ -45,6 +45,10 @@ variable "required_status_checks" {
     "Go (build · vet · test · lint) (apps/runner)",
     "Authz / open-core guards",
     "Secret scan (gitleaks)",
+    # The docs-prose job ALWAYS runs (steps self-gate on the `docs` path filter), so it reports its
+    # check on every PR — safe to require without wedging non-docs PRs. Blocks only on error-level
+    # Vale alerts (wrong product terminology). See .github/workflows/ci.yml → docs-prose.
+    "Docs prose (Vale · Diátaxis + plain-language)",
     # Enforces feature → dev → staging → main: fails a PR into main/staging from a disallowed source
     # branch → mis-targeted PRs (e.g. feature → main) are un-mergeable. See .github/workflows/branch-flow-guard.yml.
     "branch-flow-guard",

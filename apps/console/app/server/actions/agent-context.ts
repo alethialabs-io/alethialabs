@@ -4,14 +4,23 @@
 
 // Read/write the Elench context row for a scope — the custom instructions + pinned knowledge
 // that ride every chat in that scope (the Claude-Projects model). `projectId` null/undefined
-// addresses the ORG-level row; a project id addresses that infra project's row. Owner-scoped
-// (RLS), so a caller can only ever touch their own.
+// addresses the ORG-level row; a project id addresses that infra project's row.
+//
+// Scope is dark-flagged by {@link orgAgentContextEnabled} (OFF = byte-identical to the original
+// per-user behavior; see the read layer in lib/ai/project-knowledge.ts):
+// - OFF: owner-scoped — `requireOwner()` + `withOwnerScope`, `org_id = user_id`; each member only
+//   ever touches their own row.
+// - ON: ORG-shared. Reads resolve via the actor's org (prefer the org row). Writes are PDP-gated
+//   — the org-level row (project_id NULL) needs `org:edit`, a project row needs `project:edit` —
+//   run under `withActorScope` and stamp `org_id = actor.orgId` (the org's single row per scope).
 
 import { z } from "zod";
 import { requireOwner } from "@/lib/auth/owner";
-import { withOwnerScope } from "@/lib/db";
+import { authorize, currentActor } from "@/lib/authz/guard";
+import { withActorScope, withOwnerScope } from "@/lib/db";
 import { agentContext } from "@/lib/db/schema";
 import type { AgentContext } from "@/lib/db/schema";
+import { orgAgentContextEnabled } from "@/lib/ai/org-agent-context-flag";
 import {
 	buildProjectKnowledge,
 	KNOWLEDGE_LIMIT,
@@ -41,8 +50,10 @@ export async function getAgentContext(
 	projectId?: string | null,
 ): Promise<AgentContext | null> {
 	const scope = scopeSchema.parse(projectId) ?? null;
-	const owner = await requireOwner();
-	return readAgentContext(owner, scope);
+	// currentActor works for both flag paths: flag-off, readAgentContext uses actor.userId (==
+	// requireOwner) under withOwnerScope; flag-on, it scopes to the actor's org. RLS is the wall.
+	const actor = await currentActor();
+	return readAgentContext(actor, scope);
 }
 
 /**
@@ -53,7 +64,6 @@ export async function upsertAgentContext(
 	input: AgentContextInput,
 ): Promise<AgentContext> {
 	const { projectId, instructions, documents } = upsertSchema.parse(input);
-	const owner = await requireOwner();
 	const scope = projectId ?? null;
 
 	// Everything here rides EVERY turn's system prompt, so the total is capped, not just each doc.
@@ -64,12 +74,35 @@ export async function upsertAgentContext(
 		);
 	}
 
-	return withOwnerScope(owner, async (tx) => {
+	if (!orgAgentContextEnabled()) {
+		// Legacy per-user path (byte-identical): no PDP gate, org_id = user_id.
+		const owner = await requireOwner();
+		return withOwnerScope(owner, async (tx) => {
+			const [row] = await tx
+				.insert(agentContext)
+				.values({ user_id: owner, org_id: owner, project_id: scope, instructions, documents })
+				.onConflictDoUpdate({
+					target: [agentContext.org_id, agentContext.project_id],
+					set: { instructions, documents, updated_at: new Date() },
+				})
+				.returning();
+			return row;
+		});
+	}
+
+	// Org-shared: PDP-gate by scope — the org-level row (the whole org's agent) needs `org:edit`;
+	// a project row needs `project:edit`. Stamp org_id = actor.orgId (authoritative for both; a
+	// project belongs to the actor's org), so `onConflict [org_id, project_id]` upserts the org's
+	// single row and the owner_all WITH CHECK passes via the org arm.
+	const actor = scope
+		? await authorize("edit", { type: "project", id: scope })
+		: await authorize("edit", { type: "org" });
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.insert(agentContext)
 			.values({
-				user_id: owner,
-				org_id: owner,
+				user_id: actor.userId,
+				org_id: actor.orgId,
 				project_id: scope,
 				instructions,
 				documents,
@@ -91,6 +124,6 @@ export async function getProjectKnowledgePreview(
 	projectId: string,
 ): Promise<string> {
 	const id = z.string().uuid().parse(projectId);
-	const owner = await requireOwner();
-	return buildProjectKnowledge(owner, id);
+	const actor = await currentActor();
+	return buildProjectKnowledge(actor, id);
 }

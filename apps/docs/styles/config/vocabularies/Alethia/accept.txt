@@ -1,0 +1,44 @@
+# Canonical product / tech terms — accepted spellings, and the case Vale.Terms
+# enforces for consistency. One term (or regex) per line.
+Alethia
+Alethia Labs
+elench
+OpenTofu
+Terraform
+tfvars
+Kubernetes
+kubectl
+Helm
+ArgoCD
+GitOps
+Talos
+Bitnami
+CNPG
+ReBAC
+OpenFGA
+keyless
+OIDC
+WIF
+ed25519
+Fumadocs
+Hetzner
+Postgres
+PostgreSQL
+Drizzle
+SeaweedFS
+Turborepo
+pnpm
+monorepo
+Zustand
+TanStack
+shadcn
+Zod
+Caddy
+Cloudflare
+Stripe
+Vercel
+namespace
+GitHub
+GitLab
+JSONB
+CIDR

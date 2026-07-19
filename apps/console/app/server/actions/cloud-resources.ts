@@ -4,7 +4,7 @@
 
 import { and, eq, isNull } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { openSensitive } from "@/lib/cloud-providers/inventory/upsert";
 import {
 	cloudNetworks,
@@ -24,7 +24,7 @@ export async function getCloudIdentityInventory(cloudIdentityId: string) {
 		type: "cloud_identity",
 		id: cloudIdentityId,
 	});
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const networks = await tx
 			.select()
 			.from(cloudNetworks)

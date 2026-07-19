@@ -1,5 +1,12 @@
 name: Release CLI
 
+# Builds the CLI from the monorepo source (the source of truth) and PUBLISHES the GitHub Release +
+# binaries + Homebrew formula + Scoop manifest + packages + GHCR image on the CLI's own public repo,
+# alethialabs-io/alethia-cli — its release/binary home. release-please (in the monorepo) computes the
+# version and cuts the cli-v* tag; this workflow snapshots that exact source onto alethia-cli under a
+# clean semver tag (vX.Y.Z) and runs GoReleaser THERE, so every version string is clean semver and
+# users find releases on the CLI repo. See docs/concepts/release-system.mdx.
+
 on:
   workflow_call:
     inputs:
@@ -12,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 0.2.0)'
+        description: 'Version to release (e.g. 0.3.0)'
         required: true
         type: string
 
@@ -25,9 +32,12 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     env:
+      # The monorepo component tag release-please created (source of the build).
       CLI_TAG: ${{ inputs.tag != '' && inputs.tag || format('cli-v{0}', inputs.version) }}
+      # The clean-semver tag published on the alethia-cli release home.
+      MIRROR_TAG: v${{ inputs.version }}
     steps:
-      - name: Checkout
+      - name: Checkout monorepo @ the release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -38,6 +48,80 @@ jobs:
         with:
           go-version: '1.25'
           cache-dependency-path: apps/cli/go.sum
+
+      # Token for the alethia-cli release home (release + tag + source push). Separate from the tap
+      # token so each is least-scoped.
+      - name: Mint alethia-cli token (GitHub App)
+        id: cli_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethia-cli
+
+      # Token for the Homebrew tap + Scoop bucket (formula/manifest pushes).
+      - name: Mint tap token (GitHub App)
+        id: tap_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: |
+            homebrew-tap
+            scoop-bucket
+
+      # Snapshot THIS exact source onto alethia-cli (main + a clean vX.Y.Z tag) so GoReleaser below
+      # builds + releases from the CLI repo under clean semver — no race with the continuous mirror.
+      - name: Sync + tag alethia-cli @ the release source
+        env:
+          GH_TOKEN: ${{ steps.cli_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          bash .github/mirror/build-stage.sh "$RUNNER_TEMP/stage"
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/alethialabs-io/alethia-cli.git" "$RUNNER_TEMP/repo"
+          cd "$RUNNER_TEMP/repo"
+          find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
+          cp -a "$RUNNER_TEMP/stage/." .
+          git config user.name "alethialabs-io"
+          git config user.email "contact@borislav.me"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Release ${MIRROR_TAG} — sync from alethialabs-io/alethialabs@${GITHUB_SHA:0:12}"
+            git push origin HEAD:main
+          else
+            echo "alethia-cli source already current."
+          fi
+          git tag -f "${MIRROR_TAG}"
+          git push -f origin "refs/tags/${MIRROR_TAG}"
+
+      - name: Checkout alethia-cli @ the release tag (GoReleaser workdir)
+        env:
+          GH_TOKEN: ${{ steps.cli_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/alethialabs-io/alethia-cli.git" "$RUNNER_TEMP/release"
+          cd "$RUNNER_TEMP/release"
+          git checkout "tags/${MIRROR_TAG}"
+
+      - name: Extract release notes from the changelog
+        run: |
+          set -euo pipefail
+          VER="${MIRROR_TAG#v}"
+          NOTES="$RUNNER_TEMP/notes.md"
+          CL="$RUNNER_TEMP/release/apps/cli/CHANGELOG.md"
+          # Pull the "## [<ver>]" section from the release-please changelog (present on real releases).
+          if [ -f "$CL" ]; then
+            awk -v v="$VER" '
+              $0 ~ "^## \\[" v "\\]" {f=1; next}
+              /^## \[/ {f=0}
+              f {print}
+            ' "$CL" > "$NOTES" || true
+          fi
+          if [ ! -s "$NOTES" ]; then
+            printf 'alethia CLI %s\n' "$VER" > "$NOTES"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -52,32 +136,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mint tap token (GitHub App)
-        id: tap_token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.TAP_APP_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: alethialabs-io
-          # The GitHub App's short-lived token is scoped to just the publish targets.
-          repositories: |
-            homebrew-tap
-            scoop-bucket
-
-      - name: Run GoReleaser
+      - name: Run GoReleaser (publishes to alethia-cli)
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
-          version: latest
-          args: release --clean --skip=validate -f apps/cli/.goreleaser.yml
+          version: '~> v2'
+          workdir: ${{ runner.temp }}/release
+          args: release --clean --release-notes=${{ runner.temp }}/notes.md -f apps/cli/.goreleaser.yml
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GITHUB_TOKEN above only has rights on this monorepo; the cross-repo formula
-          # + scoop pushes use the GitHub App token minted above (see the app setup in
-          # docs/concepts/release-system.mdx · scripts/setup-release-github-app.sh).
+          # The clean vX.Y.Z tag lives on alethia-cli, which is also the git remote of the workdir —
+          # so GoReleaser creates the Release there. GITHUB_TOKEN = the alethia-cli App token.
+          GITHUB_TOKEN: ${{ steps.cli_token.outputs.token }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
           SCOOP_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
-          GORELEASER_CURRENT_TAG: ${{ env.CLI_TAG }}
+          GORELEASER_CURRENT_TAG: ${{ env.MIRROR_TAG }}
 
       - name: Configure AWS credentials (OIDC — read the release bearer)
         uses: aws-actions/configure-aws-credentials@v4
@@ -88,17 +160,18 @@ jobs:
       - name: Publish release metadata to Alethia
         env:
           ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.cli_token.outputs.token }}
         run: |
+          set -euo pipefail
           RELEASE_API_SECRET="$(aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 --query SecretString --output text | jq -r '.RELEASE_API_SECRET // ""')"
           echo "::add-mask::$RELEASE_API_SECRET"
-          NOTES=$(gh release view "${CLI_TAG}" --json body -q .body 2>/dev/null || echo "")
+          NOTES=$(gh release view "${MIRROR_TAG}" --repo alethialabs-io/alethia-cli --json body -q .body 2>/dev/null || echo "")
           curl -sf -X POST "${ALETHIA_URL}/api/releases/cli" \
             -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
               --arg v "${{ inputs.version }}" \
               --arg n "$NOTES" \
-              --arg u "https://github.com/${{ github.repository }}/releases/tag/${CLI_TAG}" \
+              --arg u "https://github.com/alethialabs-io/alethia-cli/releases/tag/${MIRROR_TAG}" \
               --arg s "${{ github.sha }}" \
               '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"
