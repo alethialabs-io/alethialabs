@@ -1,0 +1,110 @@
+---
+title: Keyless Database Auth
+description: Bind a service to a database that authenticates with short-lived cloud IAM tokens instead of a password — no secret in the cluster, nothing to rotate.
+---
+
+# Keyless Database Auth
+
+When you turn on **IAM Auth** on a database, a service bound to it connects using its own **cloud
+identity** and a **short-lived token** — not a stored password. There is no database password in the
+cluster to leak or rotate: the workload proves who it is to the cloud, and the cloud hands the
+database a token that expires in about an hour.
+
+This is the "hold zero keys" principle applied to the last mile — the app→database hop that
+previously still needed a password.
+
+## How a binding decides
+
+You don't declare "keyless" on the binding. It is **derived** from the database it points at:
+
+- The database's **IAM Auth** toggle is on → the binding's credential facets go keyless.
+- The toggle is off → the binding uses the usual provisioned-password path (a Kubernetes Secret
+  synced by the External Secrets Operator).
+
+So the database's own configuration is the single source of truth. Flip the toggle and re-deploy;
+nothing on the service changes.
+
+## What you bind
+
+For a keyless database, wire the binding's facets as usual, but **omit the password**:
+
+- `endpoint` → resolves to `127.0.0.1` (the app talks to a local auth proxy, see below).
+- `port` → the database port (5432 for PostgreSQL).
+- `username` → the workload's cloud login identity (filled in for you from the provision).
+- `password` → **not needed** and ignored — there is no password.
+
+## How it works per cloud
+
+Both clouds converge on the same shape: the app connects to a **local proxy sidecar** on
+`127.0.0.1`, and the sidecar authenticates upstream with the pod's own identity. Your application
+code is unchanged — it just connects to localhost with no password.
+
+There are two mechanisms: GCP has a native auth proxy; AWS and Azure have no proxy, so a small
+refresher sidecar keeps a short-lived token fresh for a local PgBouncer. Either way the app only ever
+talks to `127.0.0.1`.
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    RDS with **IAM database authentication**. A refresher sidecar mints an RDS auth token from the
+    pod's **IRSA** role (`rds-db:connect`, ~15-minute tokens) and keeps it fresh for a local PgBouncer
+    on `127.0.0.1`. Alethia creates a least-privilege IAM role scoped to the app's Kubernetes service
+    account and a database user for it.
+  </Tab>
+  <Tab value="GCP">
+    Cloud SQL with **IAM database authentication**. The pod runs the **Cloud SQL Auth Proxy** as a
+    sidecar (`--auto-iam-authn`), which mints a Cloud SQL IAM token from the pod's **Workload
+    Identity** and proxies the connection. Alethia provisions a dedicated service account for the app
+    (granted only `cloudsql.client` + `cloudsql.instanceUser`), binds it to the app's Kubernetes
+    service account, and registers it as a database user.
+  </Tab>
+  <Tab value="Azure">
+    PostgreSQL Flexible Server with **Microsoft Entra** authentication. A refresher sidecar mints an
+    Entra token from the pod's **federated Workload Identity** and keeps it fresh on a shared file; a
+    local PgBouncer serves the app on `127.0.0.1`. Alethia provisions a managed identity for the app,
+    federates it to the app's Kubernetes service account, and gives it a scoped database role (see
+    below). The app identity is **not** a database administrator.
+  </Tab>
+</Tabs>
+
+## The app gets a scoped role, never admin
+
+The app's cloud identity logs in, but it maps to a **least-privilege Postgres role** — granted only
+`CONNECT` on its database and `USAGE`/`CREATE` on the `public` schema, never superuser. That role is
+created by a one-shot **bootstrap Job** Alethia adds to your GitOps repo: it runs as an ArgoCD
+**PreSync hook** (so it finishes before the app deploys), connects as the database administrator, runs
+the grants, and deletes itself on success.
+
+The Job's *own* admin credential is keyless where the cloud allows it:
+
+- **Azure** — a **dedicated admin managed identity** (separate from the app) mints an Entra admin
+  token; no password exists. The app identity holds zero admin rights.
+- **AWS / GCP** — the existing database administrator (RDS master / Cloud SQL built-in user) is fetched
+  **ephemerally** by the External Secrets Operator (via its own cloud identity — no static key stored)
+  and used only by that one-shot Job. The app itself remains fully keyless.
+
+### Where it doesn't apply
+
+- **Alibaba Cloud (ApsaraDB RDS)** — ApsaraDB has no IAM/RAM token-based database login (its RAM
+  controls the *management* API, not database logins), so an Alibaba database stays on the
+  provisioned-password path even with IAM Auth on.
+- **Hetzner** — Hetzner databases are in-cluster ArgoCD add-ons, not a managed cloud service with an
+  IAM plane, so there is no keyless identity to use; they use the password path.
+
+## Rollout status
+
+<Callout type="warn">
+Keyless database auth is **behind a feature flag** while it completes real-cloud verification. The
+runner enables it with `ALETHIA_KEYLESS_DB_AUTH_ENABLED=true` (the Azure path also needs
+`ALETHIA_RUNNER_IMAGE` set to the runner image that carries the token refresher). With the flag off,
+an IAM-auth database binding uses the normal password path unchanged.
+
+If a keyless binding can't be fully wired at deploy time (a missing identity, for example), it
+**fails closed**: the binding is omitted and the reason is surfaced on the deployment's **Deploy** tab
+rather than shipping a workload pointed at nothing. The same holds for the bootstrap Job — if its
+admin credential can't be resolved, the Job is skipped and reported instead of wedging the sync.
+</Callout>
+
+## See also
+
+- [Databases](/console/design-project/databases) — the IAM Auth toggle.
+- [Security Architecture](/concepts/security) — the keyless / hold-zero-keys model.

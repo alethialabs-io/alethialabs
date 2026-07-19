@@ -40,7 +40,15 @@ export async function POST(
 
 	try {
 		const result = await conn.reverifyConnection(scope, body.identity_id);
-		return NextResponse.json(result);
+		// Emit the snake_case wire the CLI decodes (matches the /connect route +
+		// the Go ConnectIdentityResponse), not the camelCase ConnectionResult.
+		return NextResponse.json({
+			identity_id: result.identityId,
+			verified: result.verified,
+			status: result.status,
+			error: result.error,
+			missing_permissions: result.missingPermissions,
+		});
 	} catch (err) {
 		return errorResponse(err, 400);
 	}

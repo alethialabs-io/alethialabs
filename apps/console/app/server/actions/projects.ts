@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { notFound } from "next/navigation";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { signedJob } from "@/lib/db/signed-job";
 import { requireOwner } from "@/lib/auth/owner";
@@ -63,6 +64,7 @@ import {
 	getProvider,
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
@@ -522,7 +524,9 @@ export async function getProject(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!project) throw new Error("Project not found");
+		// A stale/deleted project id (e.g. after resolveProjectId, or a crawler) is a 404, not a bug —
+		// notFound() renders the not-found page and the onRequestError filter treats it as expected.
+		if (!project) notFound();
 
 		// M1: the project's environments (default first). The active env (the given one, else the
 		// default) surfaces as `project.environment_stage` / `project.status` and scopes the
@@ -1315,6 +1319,7 @@ export async function planProject(
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "plan");
@@ -1329,6 +1334,7 @@ export async function planProject(
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
+				initiated_by: "user",
 				job_type: "PLAN",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
@@ -1375,6 +1381,7 @@ export async function buildProject(
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
@@ -1402,6 +1409,7 @@ export async function buildProject(
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
+				initiated_by: "user",
 				job_type: "BUILD",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
@@ -1441,6 +1449,7 @@ export async function provisionProject(
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "deploy");
@@ -1466,6 +1475,7 @@ export async function provisionProject(
 					project_id: projectId,
 					environment_id: environment.id,
 					cloud_identity_id: identity.id,
+					initiated_by: "user",
 					job_type: "BUILD",
 					config_snapshot: configSnapshot,
 					status: "QUEUED",
@@ -1502,6 +1512,7 @@ export async function provisionProject(
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
+				initiated_by: "user",
 				job_type: "DEPLOY",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
@@ -1546,6 +1557,7 @@ export async function queueDriftDetection(
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
@@ -1563,6 +1575,7 @@ export async function queueDriftDetection(
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
+				initiated_by: "user",
 				job_type: "DETECT_DRIFT",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
@@ -1594,6 +1607,7 @@ export async function destroyProject(
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "destroy");
@@ -1608,6 +1622,7 @@ export async function destroyProject(
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
+				initiated_by: "user",
 				job_type: "DESTROY",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
@@ -1653,6 +1668,7 @@ export async function detectDrift(
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertUsageAllowed(actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		owner,
@@ -1670,6 +1686,7 @@ export async function detectDrift(
 				project_id: projectId,
 				environment_id: environment.id,
 				cloud_identity_id: identity.id,
+				initiated_by: "user",
 				job_type: "DETECT_DRIFT",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
@@ -2227,7 +2244,7 @@ export async function getProjectGeneral(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!row) throw new Error("Project not found");
+		if (!row) notFound(); // render loader: stale/deleted id → 404, not a captured error
 		return row;
 	});
 }

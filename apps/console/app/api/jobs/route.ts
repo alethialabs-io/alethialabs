@@ -16,6 +16,7 @@ import { runWithActor } from "@/lib/authz/actor-context";
 import { ensureCliOrgAccess } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
@@ -124,6 +125,8 @@ export async function POST(req: Request) {
 				}
 			}
 
+			await assertJobQuotaAllowed(userId);
+
 			const [job] = await db
 				.insert(jobs)
 				.values(signedJob({
@@ -131,6 +134,7 @@ export async function POST(req: Request) {
 					environment_id: null,
 					cloud_identity_id: cloud_identity_id || null,
 					job_type: jobType,
+					initiated_by: "user",
 					project_id: null,
 					config_snapshot: config_snapshot || {},
 					configuration_hash: null,

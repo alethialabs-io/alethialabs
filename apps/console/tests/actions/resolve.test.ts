@@ -105,9 +105,9 @@ describe("resolveOrgScope", () => {
 		expect(setActiveOrganization).not.toHaveBeenCalled();
 	});
 
-	it("throws when the slug doesn't resolve to a member org", async () => {
+	it("calls notFound() when the slug doesn't resolve to a member org", async () => {
 		mockServiceDb([]); // no org/membership row
-		await expect(resolveOrgScope("ghost")).rejects.toThrow(/Organization not found/);
+		await expect(resolveOrgScope("ghost")).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 		expect(setActiveOrganization).not.toHaveBeenCalled();
 	});
 });
@@ -119,9 +119,9 @@ describe("resolveProjectId", () => {
 		expect(withOwnerScope).toHaveBeenCalledWith("user-1", expect.any(Function));
 	});
 
-	it("throws when the project slug doesn't resolve", async () => {
+	it("calls notFound() when the project slug doesn't resolve", async () => {
 		mockOwnerScope([]);
-		await expect(resolveProjectId("nope")).rejects.toThrow(/Project not found/);
+		await expect(resolveProjectId("nope")).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 	});
 });
 

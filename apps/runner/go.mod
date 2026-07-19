@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/alethialabs-io/alethialabs/packages/core v0.0.0
-	github.com/aws/aws-sdk-go-v2 v1.42.0 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.42.1 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.4
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.281.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/eks v1.76.4 // indirect
@@ -18,7 +18,7 @@ require (
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
-	github.com/aws/smithy-go v1.27.1
+	github.com/aws/smithy-go v1.27.3
 	github.com/getsentry/sentry-go v0.47.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.44.0
@@ -42,6 +42,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.4 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.16 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.30 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.29 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.29 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.4 // indirect

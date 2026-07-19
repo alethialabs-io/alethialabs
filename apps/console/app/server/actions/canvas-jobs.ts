@@ -16,6 +16,7 @@
 //     no way to say "audit what I have".
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
@@ -130,6 +131,7 @@ export async function queueClusterProbe(
 	if (await hasInFlight(projectId, environmentId, "PROBE_CLUSTER")) {
 		throw new Error("A cluster probe is already running for this environment.");
 	}
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
@@ -140,6 +142,7 @@ export async function queueClusterProbe(
 				environment_id: environmentId,
 				cloud_identity_id: src.cloud_identity_id,
 				job_type: "PROBE_CLUSTER",
+				initiated_by: "user",
 				config_snapshot: src.config_snapshot,
 				status: "QUEUED",
 			}))
@@ -190,6 +193,7 @@ export async function queueEnvironmentAudit(
 	if (await hasInFlight(projectId, environmentId, "AUDIT")) {
 		throw new Error("An audit is already running for this environment.");
 	}
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
@@ -197,6 +201,7 @@ export async function queueEnvironmentAudit(
 			.values(signedJob({
 				user_id: actor.userId,
 				project_id: projectId,
+				initiated_by: "user",
 				environment_id: environmentId,
 				job_type: "AUDIT",
 				status: "QUEUED",

@@ -18,7 +18,7 @@ export interface AnalyticsConfig {
 	 * error tracking + funnels). What alethialabs.io runs in prod; a single project key, no infra.
 	 * `host` defaults to PostHog Cloud EU.
 	 */
-	posthog: { key: string; host: string } | null;
+	posthog: { key: string; host: string; release?: string } | null;
 }
 
 /** Resolves the enabled analytics providers from `NEXT_PUBLIC_*` runtime env. */
@@ -37,7 +37,13 @@ export function analyticsConfig(): AnalyticsConfig {
 				: null,
 		openreplay: orProjectKey ? { projectKey: orProjectKey, ingest: orIngest || undefined } : null,
 		posthog: phKey
-			? { key: phKey, host: (phHost || "https://eu.i.posthog.com").replace(/\/$/, "") }
+			? {
+					key: phKey,
+					host: (phHost || "https://eu.i.posthog.com").replace(/\/$/, ""),
+					// The deploy SHA (inlined at build) — tags every error with the release the uploaded
+					// source maps are keyed to, so a captured stack symbolicates to the exact build.
+					release: env("NEXT_PUBLIC_APP_VERSION") || undefined,
+				}
 			: null,
 	};
 }

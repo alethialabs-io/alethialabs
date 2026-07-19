@@ -662,6 +662,78 @@ func TestGetProviderStatus_Success(t *testing.T) {
 	}
 }
 
+func TestVerifyProviderIdentity_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/providers/aws/verify" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		var body struct {
+			IdentityID string `json:"identity_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		if body.IdentityID != "id-123" {
+			t.Errorf("expected identity_id id-123, got %s", body.IdentityID)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"identity_id":         "id-123",
+			"verified":            true,
+			"status":              "connected",
+			"error":               nil,
+			"missing_permissions": []string{},
+		})
+	}))
+
+	resp, err := client.VerifyProviderIdentity("aws", "id-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.Verified || resp.Status != "connected" {
+		t.Errorf("expected verified connected, got verified=%v status=%s", resp.Verified, resp.Status)
+	}
+}
+
+func TestVerifyProviderIdentity_ErrorPropagates(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "identity not found"})
+	}))
+
+	if _, err := client.VerifyProviderIdentity("aws", "missing"); err == nil {
+		t.Error("expected error to propagate")
+	}
+}
+
+func TestGetRepositories_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/repositories/github" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"repositories": []map[string]any{
+				{"id": "1", "name": "app", "full_name": "acme/app", "url": "u", "private": true, "default_branch": "main", "provider": "github"},
+			},
+		})
+	}))
+
+	repos, err := client.GetRepositories("github")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 || repos[0].FullName != "acme/app" {
+		t.Errorf("unexpected repos: %+v", repos)
+	}
+}
+
 func TestConnectProviderIdentity_ErrorPropagates(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -678,5 +750,65 @@ func TestConnectProviderIdentity_ErrorPropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Invalid format") {
 		t.Errorf("expected error to contain the server message, got %q", err.Error())
+	}
+}
+
+func TestGetProjectDrift_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/drift" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("env") != "production" {
+			t.Errorf("expected env=production, got %q", r.URL.Query().Get("env"))
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"evaluated":   true,
+			"in_sync":     false,
+			"drifted":     1,
+			"scanned_at":  "2026-01-01T00:00:00.000Z",
+			"environment": "production",
+			"details":     []map[string]any{{"address": "aws_s3_bucket.x", "type": "aws_s3_bucket", "kind": "modified"}},
+		})
+	}))
+
+	posture, err := client.GetProjectDrift("my-proj", "production")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !posture.Evaluated || posture.Drifted != 1 || len(posture.Details) != 1 {
+		t.Errorf("unexpected posture: %+v", posture)
+	}
+	if posture.Details[0].Kind != "modified" {
+		t.Errorf("unexpected detail kind: %s", posture.Details[0].Kind)
+	}
+}
+
+func TestGetEnvironmentCost_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/cost" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"priced":        true,
+			"total_monthly": 42.5,
+			"currency":      "USD",
+			"captured_at":   "2026-01-01T00:00:00.000Z",
+			"plan_job_id":   "job-1",
+			"environment":   "staging",
+			"resources":     []map[string]any{{"address": "aws_db_instance.main", "resource_type": "aws_db_instance", "monthly_cost": 42.5}},
+		})
+	}))
+
+	cost, err := client.GetEnvironmentCost("my-proj", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cost.Priced || cost.TotalMonthly == nil || *cost.TotalMonthly != 42.5 {
+		t.Errorf("unexpected cost: %+v", cost)
+	}
+	if len(cost.Resources) != 1 || cost.Resources[0].ResourceType != "aws_db_instance" {
+		t.Errorf("unexpected resources: %+v", cost.Resources)
 	}
 }

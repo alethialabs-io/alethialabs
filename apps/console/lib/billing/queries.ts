@@ -63,6 +63,25 @@ export interface BillingUpsert {
 }
 
 /**
+ * Coerce a period boundary to a valid Date or null. TypeScript's Date|null is erased at runtime, so a
+ * caller can pass "" or an invalid date (seen in prod: a canceled sub upsert with current_period_end="")
+ * — Postgres then rejects it for a timestamptz column and the whole billing upsert fails. Anything not a
+ * finite date becomes null. Cast-free (typeof/instanceof narrowing). Exported for unit tests.
+ */
+export function toValidDate(v: unknown): Date | null {
+	if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+	if (typeof v === "number") {
+		const d = new Date(v);
+		return Number.isNaN(d.getTime()) ? null : d;
+	}
+	if (typeof v === "string" && v.trim()) {
+		const d = new Date(v);
+		return Number.isNaN(d.getTime()) ? null : d;
+	}
+	return null;
+}
+
+/**
  * Upserts an org's billing record (one row per org). The single write path for
  * Stripe webhook events — idempotent on organization_id, so replayed events converge
  * to the same state. Entitlements then resolve from the new plan + status on the next
@@ -77,7 +96,10 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 		stripeCustomerId: input.stripeCustomerId ?? null,
 		stripeSubscriptionId: input.stripeSubscriptionId ?? null,
 		seats: input.seats ?? null,
-		currentPeriodEnd: input.currentPeriodEnd ?? null,
+		// Coerce defensively: the Date|null type is erased at runtime, and a caller (e.g. a
+		// JSON/contract path) can pass "" for a canceled sub — Postgres rejects "" for a timestamptz
+		// ("invalid input syntax"), failing the whole upsert. "" / invalid → null.
+		currentPeriodEnd: toValidDate(input.currentPeriodEnd),
 		updatedAt: now,
 	};
 	await getServiceDb()

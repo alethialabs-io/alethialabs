@@ -196,6 +196,19 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"BUILD",
 ]);
 
+// Who/what enqueued a job (and, for consistency, a metered AI action). `user` = a person's
+// interactive action through an authorized server action / CLI route; `system` = a background
+// sweep with no interactive actor (reconcile / drift / probe / ephemeral-reaper / auto-heal /
+// build-chain); `operator` = a break-glass privileged action. The free-tier daily job quota
+// counts ONLY `user` rows, so system enqueues (auto-reconcile et al.) are never throttled. The
+// column DEFAULTS to `system` on purpose: a forgotten stamp under-counts (fail-open, never
+// wrongly blocks) rather than letting an un-stamped background insert consume a free org's quota.
+export const jobInitiator = pgEnum("job_initiator", [
+	"user",
+	"system",
+	"operator",
+]);
+
 // Break-glass (privileged incident recovery) action catalog + per-action blast-radius label.
 // The catalog metadata (which actions require two-person approval, which are inert) lives in
 // lib/breakglass/catalog.ts; these enums are the durable, immutable audit lexicon so a
@@ -408,6 +421,7 @@ export type CloudProvider = (typeof cloudProvider.enumValues)[number];
 export type GitProvider = (typeof gitProvider.enumValues)[number];
 export type ProvisionJobType = (typeof provisionJobType.enumValues)[number];
 export type ProvisionJobStatus = (typeof provisionJobStatus.enumValues)[number];
+export type JobInitiator = (typeof jobInitiator.enumValues)[number];
 export type RunnerMode = (typeof runnerMode.enumValues)[number];
 export type RunnerOperator = (typeof runnerOperator.enumValues)[number];
 export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];

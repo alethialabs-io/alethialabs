@@ -2,32 +2,117 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
 import type { ClusterData } from "@/app/server/actions/clusters";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import type { AssignedValue } from "@/lib/queries/classification";
+import { getProvider } from "@/lib/cloud-providers";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { Button } from "@repo/ui/button";
-import { StatusBadge } from "@repo/ui/status-badge";
+import { StatusBadge, statusTier, type StatusTier } from "@repo/ui/status-badge";
 import {
+	Boxes,
 	Check,
 	Copy,
 	Database,
 	ExternalLink,
+	Globe,
 	HardDrive,
 	Server,
 	Terminal,
 } from "lucide-react";
 import { useState } from "react";
 
-function CopyButton({ value }: { value: string }) {
+/** The managed-Kubernetes product name per cloud — labels the control-plane row. */
+const K8S_KIND: Record<string, string> = {
+	aws: "EKS",
+	gcp: "GKE",
+	azure: "AKS",
+	alibaba: "ACK",
+	hetzner: "k8s",
+};
+
+/** Title-cases a SCREAMING_CASE component status ("UPDATING" → "Updating"). */
+function humanize(status: string): string {
+	return status.charAt(0) + status.slice(1).toLowerCase();
+}
+
+/** Component-health tally over the cluster + its data services. */
+interface ComponentHealth {
+	total: number;
+	healthy: number;
+	failed: number;
+	pending: number;
+}
+
+/**
+ * Rolls the cluster's own status plus every database/cache status into a single posture.
+ * The badge is DERIVED, never hardcoded — a failed data service reads as degraded, an
+ * in-flight reconcile reads as reconciling, and a project still provisioning (no cluster
+ * row yet) reads from its environment status.
+ */
+function deriveHealth(
+	clusterStatus: string | null,
+	envStatus: string,
+	componentStatuses: string[],
+): {
+	tier: StatusTier;
+	/** Posture shown next to the cluster name (what an operator scans). */
+	name: string;
+	/** Short mono rollup label. */
+	rollup: string;
+	/** Secondary mono detail under the rollup. */
+	detail: string;
+	health: ComponentHealth;
+} {
+	const statuses = [
+		...(clusterStatus ? [clusterStatus] : []),
+		...componentStatuses,
+	];
+	const total = statuses.length;
+	const healthy = statuses.filter((s) => statusTier(s) === "active").length;
+	const failed = statuses.filter((s) => statusTier(s) === "failed").length;
+	const pending = statuses.filter((s) => statusTier(s) === "pending").length;
+	const health: ComponentHealth = { total, healthy, failed, pending };
+
+	// No reconciled components yet — the project is provisioning; read the env status.
+	if (total === 0) {
+		const s = clusterStatus ?? envStatus;
+		return {
+			tier: statusTier(s),
+			name: humanize(s),
+			rollup: "Provisioning",
+			detail: "no endpoint yet",
+			health,
+		};
+	}
+	const detail = `${healthy} / ${total} healthy`;
+	if (failed > 0) {
+		return { tier: "failed", name: "Degraded", rollup: `${failed} failed`, detail, health };
+	}
+	if (pending > 0) {
+		// Surface the control plane's own in-flight verb when it's the one moving.
+		const name =
+			clusterStatus && statusTier(clusterStatus) === "pending"
+				? humanize(clusterStatus)
+				: "Reconciling";
+		return { tier: "pending", name, rollup: "Reconciling", detail, health };
+	}
+	if (healthy === total) {
+		return { tier: "active", name: "Active", rollup: "Healthy", detail, health };
+	}
+	const s = clusterStatus ?? envStatus;
+	return { tier: statusTier(s), name: humanize(s), rollup: humanize(s), detail, health };
+}
+
+/** Copy-to-clipboard button used for endpoints and CLI commands. */
+function CopyButton({ value, label }: { value: string; label: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
 		<Button
 			variant="ghost"
 			size="icon"
-			className="h-6 w-6 shrink-0"
+			className="h-6 w-6 shrink-0 text-text-tertiary"
+			aria-label={label}
 			onClick={async () => {
 				await navigator.clipboard.writeText(value);
 				setCopied(true);
@@ -35,7 +120,7 @@ function CopyButton({ value }: { value: string }) {
 			}}
 		>
 			{copied ? (
-				<Check className="h-3 w-3 text-foreground" />
+				<Check className="h-3 w-3 text-text-primary" />
 			) : (
 				<Copy className="h-3 w-3" />
 			)}
@@ -43,6 +128,50 @@ function CopyButton({ value }: { value: string }) {
 	);
 }
 
+/** A component row: icon + name + engine (+ endpoint) with its OWN derived status dot. */
+function ComponentRow({
+	icon: Icon,
+	name,
+	engine,
+	endpoint,
+	status,
+	label,
+}: {
+	icon: typeof Database;
+	name: string;
+	engine?: string | null;
+	endpoint?: string | null;
+	status: string;
+	/** Overrides the badge label (e.g. DNS "Enabled" instead of the raw status). */
+	label?: string;
+}) {
+	return (
+		<div className="flex items-center gap-2.5 py-2 first:pt-0 last:pb-0">
+			<Icon className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+			<span className="text-[12.5px] text-text-primary">{name}</span>
+			{engine && (
+				<span className="font-mono text-[10.5px] text-text-tertiary">{engine}</span>
+			)}
+			{endpoint && (
+				<div className="ml-auto flex min-w-0 items-center gap-1">
+					<code className="max-w-[160px] truncate font-mono text-[10.5px] text-text-tertiary">
+						{endpoint}
+					</code>
+					<CopyButton value={endpoint} label={`Copy ${name} endpoint`} />
+				</div>
+			)}
+			<div className={endpoint ? "shrink-0" : "ml-auto shrink-0"}>
+				<StatusBadge status={status} label={label ?? humanize(status)} />
+			</div>
+		</div>
+	);
+}
+
+/**
+ * A provisioned cluster and its data services. Status is derived from the real read model:
+ * `project_cluster.status` plus each database/cache `status` roll up into one posture, and
+ * every row carries its own `StatusBadge` — nothing is hardcoded to "Active".
+ */
 export function ClusterCard({
 	data,
 	initialAssignments,
@@ -52,40 +181,46 @@ export function ClusterCard({
 }) {
 	const provider = data.cloud_identities?.provider ?? "aws";
 	const meta = getProvider(provider);
-	const cluster = Array.isArray(data.project_cluster) ? data.project_cluster[0] : data.project_cluster;
+	const cluster = Array.isArray(data.project_cluster)
+		? data.project_cluster[0]
+		: data.project_cluster;
 	const databases = data.project_databases ?? [];
 	const caches = data.project_caches ?? [];
+	const dns = data.project_dns;
 
-	const kubeconfigCmd = cluster?.cluster_name
-		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`
-		: null;
+	const health = deriveHealth(cluster?.status ?? null, data.status, [
+		...databases.map((d) => d.status),
+		...caches.map((c) => c.status),
+	]);
+
+	// kubeconfig is an AWS-specific command; only show it where it's actually correct.
+	const kubeconfigCmd =
+		provider === "aws" && cluster?.cluster_name
+			? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`
+			: null;
 
 	// The ArgoCD admin password is never stored (it would be plaintext in our DB); it is
-	// retrieved on-demand from the cluster's argocd-initial-admin-secret. Show the command.
+	// retrieved on demand from the cluster's argocd-initial-admin-secret. Show the command.
 	const argocdPasswordCmd =
 		"kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d";
 
 	return (
-		<div className="rounded-lg border border-border/50 bg-card p-5 space-y-4">
-			{/* Header */}
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-3">
+		<div className="flex flex-col gap-3.5 rounded-lg border bg-surface p-[18px] shadow-sm">
+			{/* Header: identity + derived posture rollup. */}
+			<div className="flex items-start justify-between gap-3">
+				<div className="flex min-w-0 items-start gap-2.5">
 					<ProviderIcon provider={provider} size={20} />
-					<div>
-						<div className="flex items-center gap-2">
-							<h3 className="text-sm font-semibold">
+					<div className="min-w-0">
+						<div className="flex flex-wrap items-center gap-2">
+							<h3 className="text-sm font-semibold text-text-primary">
 								{data.project_name}
 							</h3>
-							<StatusBadge status="active" label="Active" />
+							<StatusBadge status={health.tier} tier={health.tier} label={health.name} />
 						</div>
-						<p className="text-[11px] text-muted-foreground">
-							{meta.shortName} · {data.region} ·{" "}
-							{data.environment_stage}
-							{cluster?.cluster_version
-								? ` · K8s ${cluster.cluster_version}`
-								: ""}
+						<p className="mt-0.5 font-mono text-[11px] text-text-tertiary">
+							{meta.shortName} · {data.region} · {data.environment_stage}
+							{cluster?.cluster_version ? ` · K8s ${cluster.cluster_version}` : ""}
 						</p>
-						{/* Classification (Workstream B) — chips + a picker for org editors. */}
 						{cluster?.id && (
 							<ClassificationControl
 								kind="project_cluster"
@@ -98,130 +233,115 @@ export function ClusterCard({
 						)}
 					</div>
 				</div>
+				<div className="shrink-0 text-right">
+					<StatusBadge
+						status={health.tier}
+						tier={health.tier}
+						label={health.rollup}
+						className="justify-end"
+					/>
+					<div className="mt-1 font-mono text-[10px] tabular-nums text-text-tertiary">
+						{health.detail}
+					</div>
+				</div>
 			</div>
 
-			{/* Cluster access */}
+			{/* Components — each with its own derived status. */}
+			<div className="flex flex-col border-t pt-1">
+				<ComponentRow
+					icon={Boxes}
+					name="Control plane"
+					engine={K8S_KIND[provider] ?? "k8s"}
+					status={cluster?.status ?? data.status}
+				/>
+				{databases.map((db) => (
+					<ComponentRow
+						key={db.name}
+						icon={Database}
+						name={db.name}
+						engine={db.engine}
+						endpoint={db.endpoint}
+						status={db.status}
+					/>
+				))}
+				{caches.map((cache) => (
+					<ComponentRow
+						key={cache.name}
+						icon={HardDrive}
+						name={cache.name}
+						engine={cache.engine}
+						endpoint={cache.endpoint}
+						status={cache.status}
+					/>
+				))}
+				{dns?.domain_name && (
+					<ComponentRow
+						icon={Globe}
+						name={dns.domain_name}
+						engine="dns"
+						status={dns.enabled ? "active" : "disabled"}
+						label={dns.enabled ? "Enabled" : "Disabled"}
+					/>
+				)}
+			</div>
+
+			{/* Cluster access. */}
 			{cluster?.cluster_endpoint && (
-				<div className="space-y-2">
-					<div className="flex items-center gap-1.5 text-muted-foreground">
+				<div className="flex flex-col gap-1.5 border-t pt-3">
+					<div className="flex items-center gap-1.5 text-text-tertiary">
 						<Terminal className="h-3.5 w-3.5" />
-						<span className="text-[11px] font-medium">
-							Cluster Access
+						<span className="text-[11px] font-medium text-text-secondary">
+							Cluster access
 						</span>
 					</div>
 					<div className="flex items-center gap-2">
-						<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+						<code className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-[11px] text-text-secondary">
 							{cluster.cluster_endpoint}
 						</code>
-						<CopyButton value={cluster.cluster_endpoint} />
+						<CopyButton value={cluster.cluster_endpoint} label="Copy cluster endpoint" />
 					</div>
 					{kubeconfigCmd && (
 						<div className="flex items-center gap-2">
-							<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+							<code className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-[11px] text-text-secondary">
 								{kubeconfigCmd}
 							</code>
-							<CopyButton value={kubeconfigCmd} />
+							<CopyButton value={kubeconfigCmd} label="Copy kubeconfig command" />
 						</div>
 					)}
 				</div>
 			)}
 
-			{/* ArgoCD */}
+			{/* ArgoCD. */}
 			{cluster?.argocd_url && (
-				<div className="space-y-1.5">
-					<div className="flex items-center gap-1.5 text-muted-foreground">
+				<div className="flex flex-col gap-1.5 border-t pt-3">
+					<div className="flex items-center gap-1.5 text-text-tertiary">
 						<Server className="h-3.5 w-3.5" />
-						<span className="text-[11px] font-medium">ArgoCD</span>
+						<span className="text-[11px] font-medium text-text-secondary">ArgoCD</span>
 					</div>
 					<div className="flex items-center gap-2">
-						<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+						<code className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-[11px] text-text-secondary">
 							{cluster.argocd_url}
 						</code>
-						<a
-							href={cluster.argocd_url}
-							target="_blank"
-							rel="noopener noreferrer"
-						>
+						<a href={cluster.argocd_url} target="_blank" rel="noopener noreferrer">
 							<Button
 								variant="ghost"
 								size="icon"
-								className="h-6 w-6 shrink-0"
+								className="h-6 w-6 shrink-0 text-text-tertiary"
+								aria-label="Open ArgoCD"
 							>
 								<ExternalLink className="h-3 w-3" />
 							</Button>
 						</a>
 					</div>
-					{/* Admin password is retrieved on-demand from the cluster, never stored. */}
-					<p className="text-[10px] text-muted-foreground">
+					<p className="text-[10px] text-text-tertiary">
 						Admin password (retrieve from the cluster):
 					</p>
 					<div className="flex items-center gap-2">
-						<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+						<code className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-[11px] text-text-secondary">
 							{argocdPasswordCmd}
 						</code>
-						<CopyButton value={argocdPasswordCmd} />
+						<CopyButton value={argocdPasswordCmd} label="Copy ArgoCD admin password command" />
 					</div>
-					{/* GitOps wiring (#574): the apps repo ArgoCD syncs, or an honest "direct". */}
-					<div className="flex items-center justify-between gap-2 pt-0.5">
-						<span className="text-[10px] text-muted-foreground">GitOps</span>
-						<span className="truncate font-mono text-[11px] text-foreground">
-							{data.apps_destination_repo ?? "Direct apply — no apps repo"}
-						</span>
-					</div>
-				</div>
-			)}
-
-			{/* Services */}
-			{(databases.length > 0 || caches.length > 0) && (
-				<div className="space-y-2 pt-1 border-t border-border/30">
-					{databases.map((db) => (
-						<div
-							key={db.name}
-							className="flex items-center justify-between"
-						>
-							<div className="flex items-center gap-2">
-								<Database className="h-3.5 w-3.5 text-muted-foreground" />
-								<span className="text-xs font-medium">
-									{db.name}
-								</span>
-								<span className="text-[10px] text-muted-foreground">
-									{db.engine}
-								</span>
-							</div>
-							{db.endpoint && (
-								<div className="flex items-center gap-1">
-									<code className="text-[10px] text-muted-foreground font-mono max-w-[200px] truncate">
-										{db.endpoint}
-									</code>
-									<CopyButton value={db.endpoint} />
-								</div>
-							)}
-						</div>
-					))}
-					{caches.map((cache) => (
-						<div
-							key={cache.name}
-							className="flex items-center justify-between"
-						>
-							<div className="flex items-center gap-2">
-								<HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
-								<span className="text-xs font-medium">
-									{cache.name}
-								</span>
-								<span className="text-[10px] text-muted-foreground">
-									{cache.engine}
-								</span>
-							</div>
-							{cache.endpoint && (
-								<div className="flex items-center gap-1">
-									<code className="text-[10px] text-muted-foreground font-mono max-w-[200px] truncate">
-										{cache.endpoint}
-									</code>
-									<CopyButton value={cache.endpoint} />
-								</div>
-							)}
-						</div>
-					))}
 				</div>
 			)}
 		</div>

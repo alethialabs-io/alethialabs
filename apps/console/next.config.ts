@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import path from "node:path";
+import { withPostHogConfig } from "@posthog/nextjs-config";
 import type { NextConfig } from "next";
 
 // Cross-origin dev/proxy origins to allow (the public tunnel — Cloudflare quick tunnel /
@@ -108,4 +109,21 @@ const nextConfig: NextConfig = {
 // marketing-owned root paths are stitched to the marketing app by Caddy at the edge
 // (deploy/prod/Caddyfile.tunnel + deploy/caddy/marketing.caddy), NOT by Next — the path
 // map still lives in microfrontends.json (source for RESERVED_SLUGS + the Caddy mirror).
-export default nextConfig;
+// PostHog source-map upload for Error tracking: when a build-time personal API key is present (CI, via
+// a BuildKit secret), withPostHogConfig injects chunk ids + uploads source maps during `next build` so
+// prod stack traces symbolicate. Gated on the key so OSS/local builds are a plain no-op (never fail).
+// deleteAfterUpload keeps the .map files out of the shipped image. releaseVersion = the deploy SHA
+// (NEXT_PUBLIC_APP_VERSION), matching the `release` the browser tags errors with (analytics-provider).
+const posthogApiKey = process.env.POSTHOG_API_KEY;
+export default posthogApiKey
+	? withPostHogConfig(nextConfig, {
+			personalApiKey: posthogApiKey,
+			projectId: process.env.POSTHOG_PROJECT_ID,
+			host: process.env.POSTHOG_API_HOST || "https://eu.posthog.com",
+			sourcemaps: {
+				enabled: true,
+				releaseVersion: process.env.NEXT_PUBLIC_APP_VERSION,
+				deleteAfterUpload: true,
+			},
+		})
+	: nextConfig;

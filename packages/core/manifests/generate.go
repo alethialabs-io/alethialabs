@@ -47,12 +47,25 @@ type App struct {
 	Host string
 	// Optional ServiceAccount name (e.g. a workload-identity KSA).
 	ServiceAccount string
+	// When set (keyless-DB path, #722), a ServiceAccount object named ServiceAccount is EMITTED with
+	// these annotations/labels — the Workload-Identity binding the pod federates through (GCP
+	// iam.gke.io/gcp-service-account, Azure azure.workload.identity/*). Empty → no SA object is
+	// emitted (ServiceAccount, if set, is assumed to already exist — e.g. a chart-created KSA).
+	ServiceAccountAnnotations map[string]string
+	ServiceAccountLabels      map[string]string
 	// Plain environment variables (values rendered quoted). Includes W3 binding-derived
 	// non-secret facets (a backing resource's endpoint/port, resolved from tofu outputs).
 	Env []types.ServiceEnvVar
 	// SecretEnv are env vars sourced from a k8s Secret via valueFrom.secretKeyRef — W3
 	// binding credential facets, materialized keylessly by an ExternalSecret (#618).
 	SecretEnv []AppSecretEnv
+	// Sidecars are auxiliary containers co-scheduled in the app's pod. Used by the W3 keyless-DB
+	// binding path (#722): a per-cloud auth proxy the workload connects to over 127.0.0.1, so it
+	// holds no database password. Empty → not rendered (output byte-identical to a plain app).
+	Sidecars []Sidecar
+	// Volumes are pod volumes (emptyDir only today) shared between the app's containers — e.g. the
+	// Azure Entra-token file the refresher writes and the proxy reads. Empty → not rendered.
+	Volumes []Volume
 	// Compute requests/limits; nil → the opinionated scaffold defaults.
 	Resources *types.ServiceResources
 	// Readiness/liveness probe; nil → none.
@@ -66,6 +79,32 @@ type AppSecretEnv struct {
 	Env        string // container env var name
 	SecretName string // k8s Secret name (see BindingSecretName)
 	SecretKey  string // key within the Secret (the binding facet: username|password|connection_string)
+}
+
+// Sidecar is an auxiliary container co-scheduled in the app's pod. Used by the W3 keyless-DB binding
+// path (#722): a per-cloud auth proxy the workload reaches over 127.0.0.1 so it holds no database
+// password. Rendered after the main container, with the same hardened securityContext.
+type Sidecar struct {
+	Name   string
+	Image  string
+	Args   []string
+	Env    []types.ServiceEnvVar
+	Ports  []int // containerPorts to expose (e.g. the local proxy listener)
+	Mounts []VolumeMount
+}
+
+// VolumeMount mounts a pod Volume into a container at MountPath.
+type VolumeMount struct {
+	Name      string
+	MountPath string
+	ReadOnly  bool
+}
+
+// Volume is a pod volume. Only emptyDir is supported today — the shared scratch the keyless-DB token
+// refresher + proxy sidecars use; it needs no backing store and works with the app container's
+// readOnlyRootFilesystem.
+type Volume struct {
+	Name string
 }
 
 // normalize fills defaults + sanitizes the name to DNS-1123. The image deliberately has
@@ -98,7 +137,28 @@ func (a App) normalize() App {
 	return a
 }
 
-var tmpl = template.Must(template.New("app").Parse(`apiVersion: apps/v1
+var tmpl = template.Must(template.New("app").Parse(`
+{{- if or .ServiceAccountAnnotations .ServiceAccountLabels -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .ServiceAccount }}
+  namespace: {{ .Namespace }}
+  {{- if .ServiceAccountLabels }}
+  labels:
+    {{- range $k, $v := .ServiceAccountLabels }}
+    {{ $k }}: {{ printf "%q" $v }}
+    {{- end }}
+  {{- end }}
+  {{- if .ServiceAccountAnnotations }}
+  annotations:
+    {{- range $k, $v := .ServiceAccountAnnotations }}
+    {{ $k }}: {{ printf "%q" $v }}
+    {{- end }}
+  {{- end }}
+---
+{{ end -}}
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Name }}
@@ -172,6 +232,53 @@ spec:
             capabilities:
               drop:
                 - ALL
+        {{- range .Sidecars }}
+        - name: {{ .Name }}
+          image: {{ .Image }}
+          {{- if .Args }}
+          args:
+            {{- range .Args }}
+            - {{ printf "%q" . }}
+            {{- end }}
+          {{- end }}
+          {{- if .Env }}
+          env:
+            {{- range .Env }}
+            - name: {{ printf "%q" .Name }}
+              value: {{ printf "%q" .Value }}
+            {{- end }}
+          {{- end }}
+          {{- if .Ports }}
+          ports:
+            {{- range .Ports }}
+            - containerPort: {{ . }}
+            {{- end }}
+          {{- end }}
+          {{- if .Mounts }}
+          volumeMounts:
+            {{- range .Mounts }}
+            - name: {{ .Name }}
+              mountPath: {{ .MountPath }}
+              {{- if .ReadOnly }}
+              readOnly: true
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+        {{- end }}
+      {{- if .Volumes }}
+      volumes:
+        {{- range .Volumes }}
+        - name: {{ .Name }}
+          emptyDir: {}
+        {{- end }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -270,6 +377,17 @@ type Options struct {
 	// the per-cloud tofu endpoint output keys a binding's endpoint facet resolves from. Empty → no
 	// endpoint resolves (every endpoint facet is reported unresolvable, fail-closed).
 	Provider string
+	// Databases are the project's database resources — the lookup source for whether a
+	// service→database binding uses keyless IAM/AAD auth (db.IamAuth) instead of a password secret
+	// (#722). The binding target names the database; matched by Name.
+	Databases []types.ProjectDatabaseConfig
+	// KeylessDBAuth enables the keyless-DB binding path (dark flag ALETHIA_KEYLESS_DB_AUTH_ENABLED,
+	// read by the provisioner). Off → every credential facet keeps the ExternalSecret path unchanged.
+	KeylessDBAuth bool
+	// RunnerImage is the alethia runner image ref (it carries the `db-token` refresher subcommand
+	// the Azure keyless sidecar runs). Empty → Azure keyless fails closed (reported), never a
+	// half-wired pod.
+	RunnerImage string
 }
 
 // endpointOutputKey maps a (provider, backing-kind) to the tofu output holding that resource's
@@ -335,11 +453,73 @@ func defaultPort(kind string) string {
 // `unresolved`
 // and its env var OMITTED, never injected empty. An empty endpoint would boot the workload pointed
 // at nothing (a silent misconfig); an absent required env fails loudly instead.
-func resolveBindings(serviceName, provider string, bindings []types.ServiceBinding, outputs map[string]string) (env []types.ServiceEnvVar, secretEnv []AppSecretEnv, unresolved []string) {
+// bindingResolution is resolveBindings' output: the env a service's bindings inject (plain +
+// secretKeyRef), any keyless-DB auth sidecars/volumes to co-schedule, and the fail-closed
+// `unresolved` report the caller surfaces (Deploy-tab warnings, #718).
+type bindingResolution struct {
+	env           []types.ServiceEnvVar
+	secretEnv     []AppSecretEnv
+	sidecars      []Sidecar
+	volumes       []Volume
+	saName        string            // keyless Workload-Identity KSA the pod must run as (overrides opts.ServiceAccount)
+	saAnnotations map[string]string // rendered onto the emitted KSA (GCP GSA / Azure client-id)
+	saLabels      map[string]string
+	unresolved    []string
+}
+
+func resolveBindings(serviceName string, opts Options, bindings []types.ServiceBinding) bindingResolution {
+	var r bindingResolution
+	proxied := map[string]bool{} // one auth proxy per keyless target (dedup across bindings)
 	for _, b := range bindings {
+		// A binding uses keyless auth when the flag is on AND the bound database has IAM/AAD auth on
+		// a provider that supports it (gcp/azure). Otherwise the existing password/ExternalSecret
+		// path is used, unchanged.
+		keyless := opts.KeylessDBAuth && KeylessDBTarget(opts.Provider, b.Target, opts.Databases)
+		if keyless {
+			// The workload connects to a LOCAL auth proxy sidecar. Build it first: if it can't be
+			// wired (a missing tofu output — connection name / runner image), the whole binding
+			// fails CLOSED (all its facets omitted) rather than rewriting the endpoint to 127.0.0.1
+			// with no proxy behind it. Endpoint rewrite is coupled to a proxy actually being there.
+			key := string(b.Target.Kind) + "/" + b.Target.Name
+			if !proxied[key] {
+				w, err := keylessDBSidecar(opts, b.Target)
+				if err != nil {
+					r.unresolved = append(r.unresolved, fmt.Sprintf(
+						"keyless binding %s→%s/%s: %v — binding omitted (fail-closed)",
+						serviceName, b.Target.Kind, b.Target.Name, err))
+					continue
+				}
+				proxied[key] = true
+				r.sidecars = append(r.sidecars, w.sidecars...)
+				r.volumes = append(r.volumes, w.volumes...)
+				// The keyless pod runs as the Workload-Identity KSA (all keyless bindings on a service
+				// share one identity, so first-writer wins — they're the same GSA/UAMI per project).
+				if r.saName == "" {
+					r.saName = w.saName
+					r.saAnnotations = w.saAnnotations
+					r.saLabels = w.saLabels
+				}
+			}
+		}
 		for _, inj := range b.Inject {
 			if IsCredentialFacet(string(inj.From)) {
-				secretEnv = append(secretEnv, AppSecretEnv{
+				if keyless {
+					// Keyless: the workload holds NO password. `username` resolves to the cloud IAM
+					// identity; `password`/`connection_string` are intentionally dropped (there is
+					// no secret — the proxy authenticates upstream).
+					if inj.From == "username" {
+						user, uerr := keylessDBUsername(opts.Provider, opts.Outputs)
+						if uerr != nil {
+							r.unresolved = append(r.unresolved, fmt.Sprintf(
+								"keyless binding facet %q (env %s) for %s→%s/%s: %v — env omitted",
+								inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name, uerr))
+							continue
+						}
+						r.env = append(r.env, types.ServiceEnvVar{Name: inj.Env, Value: user})
+					}
+					continue
+				}
+				r.secretEnv = append(r.secretEnv, AppSecretEnv{
 					Env:        inj.Env,
 					SecretName: BindingSecretName(serviceName, b.Target),
 					SecretKey:  string(inj.From),
@@ -349,20 +529,24 @@ func resolveBindings(serviceName, provider string, bindings []types.ServiceBindi
 			var value string
 			switch string(inj.From) {
 			case "endpoint":
-				value = outputs[endpointOutputKey(provider, string(b.Target.Kind))]
+				if keyless {
+					value = "127.0.0.1" // the local auth proxy sidecar
+				} else {
+					value = opts.Outputs[endpointOutputKey(opts.Provider, string(b.Target.Kind))]
+				}
 			case "port":
 				value = defaultPort(string(b.Target.Kind))
 			}
 			if value == "" {
-				unresolved = append(unresolved, fmt.Sprintf(
+				r.unresolved = append(r.unresolved, fmt.Sprintf(
 					"binding facet %q (env %s) for %s→%s/%s could not be resolved — env omitted",
 					inj.From, inj.Env, serviceName, b.Target.Kind, b.Target.Name))
 				continue
 			}
-			env = append(env, types.ServiceEnvVar{Name: inj.Env, Value: value})
+			r.env = append(r.env, types.ServiceEnvVar{Name: inj.Env, Value: value})
 		}
 	}
-	return env, secretEnv, unresolved
+	return r
 }
 
 // FromServices builds Apps from the project's FIRST-CLASS services (vc.Services — the W1
@@ -404,21 +588,31 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		// A non-secret facet that can't be resolved is REPORTED (not injected empty) so the caller
 		// surfaces it alongside the skipped-service reasons — the app still renders (a missing
 		// required env fails loudly at boot; an empty one would silently connect to nothing).
-		bindEnv, secretEnv, unresolved := resolveBindings(s.Name, opts.Provider, s.Bindings, opts.Outputs)
-		skipped = append(skipped, unresolved...)
-		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(bindEnv)), s.Env...), bindEnv...)
+		binds := resolveBindings(s.Name, opts, s.Bindings)
+		skipped = append(skipped, binds.unresolved...)
+		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(binds.env)), s.Env...), binds.env...)
+		// A keyless binding overrides the ServiceAccount with the Workload-Identity KSA it emits;
+		// otherwise the app keeps opts.ServiceAccount (a chart-created KSA, assumed to exist).
+		sa := opts.ServiceAccount
+		if binds.saName != "" {
+			sa = binds.saName
+		}
 		apps = append(apps, App{
-			Name:           name,
-			Namespace:      opts.Namespace,
-			Image:          image,
-			Port:           port,
-			Replicas:       s.Replicas,
-			Host:           host,
-			ServiceAccount: opts.ServiceAccount,
-			Env:            env,
-			SecretEnv:      secretEnv,
-			Resources:      s.Resources,
-			Probe:          s.Probe,
+			Name:                      name,
+			Namespace:                 opts.Namespace,
+			Image:                     image,
+			Port:                      port,
+			Replicas:                  s.Replicas,
+			Host:                      host,
+			ServiceAccount:            sa,
+			ServiceAccountAnnotations: binds.saAnnotations,
+			ServiceAccountLabels:      binds.saLabels,
+			Env:                       env,
+			SecretEnv:                 binds.secretEnv,
+			Sidecars:                  binds.sidecars,
+			Volumes:                   binds.volumes,
+			Resources:                 s.Resources,
+			Probe:                     s.Probe,
 		})
 	}
 	return apps, skipped
