@@ -7,6 +7,7 @@ import {
 	queryProjects,
 	type ProjectListQuery,
 } from "@/app/server/actions/projects";
+import { getConnectedCloudProviders } from "@/app/server/actions/connectors";
 import { getQueryClient } from "@/lib/query/client";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 import { qk } from "@/lib/query/keys";
@@ -62,9 +63,10 @@ export default async function OrgOverviewRoute({
 	};
 
 	const queryClient = getQueryClient();
-	const [{ projects, facets }, allProjects] = await Promise.all([
+	const [{ projects, facets }, allProjects, connectedProviders] = await Promise.all([
 		queryProjects({ q: state.q, clouds: state.clouds, repos: state.repos, sort }),
 		getProjects(),
+		getConnectedCloudProviders(),
 	]);
 	// Keep the shared (unfiltered) projects cache warm for the switcher / palette / breadcrumbs.
 	queryClient.setQueryData(qk.projects(org), allProjects);
@@ -77,6 +79,7 @@ export default async function OrgOverviewRoute({
 				facets={facets}
 				state={state}
 				totalCount={allProjects.length}
+				connectedProviders={connectedProviders}
 			/>
 		</HydrationBoundary>
 	);

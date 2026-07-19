@@ -48,12 +48,15 @@ export function OverviewClient({
 	facets,
 	state,
 	totalCount,
+	connectedProviders,
 }: {
 	orgSlug: string;
 	projects: ProjectListItem[];
 	facets: ProjectListResult["facets"];
 	state: OverviewState;
 	totalCount: number;
+	/** Cloud provider slugs with a live connection — drives full-color vs grayscale provider logos. */
+	connectedProviders: string[];
 }) {
 	const router = useRouter();
 	const pathname = usePathname();
@@ -159,6 +162,7 @@ export function OverviewClient({
 												orgSlug={orgSlug}
 												isFavorite={favoriteProjectIds.includes(project.id)}
 												onToggleFavorite={() => toggleFavorite(project.id)}
+												connectedProviders={connectedProviders}
 											/>
 										))}
 									</TableBody>
@@ -173,6 +177,7 @@ export function OverviewClient({
 										orgSlug={orgSlug}
 										isFavorite={favoriteProjectIds.includes(project.id)}
 										onToggleFavorite={() => toggleFavorite(project.id)}
+										connectedProviders={connectedProviders}
 									/>
 								))}
 							</div>
