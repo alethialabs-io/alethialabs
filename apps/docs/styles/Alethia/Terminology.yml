@@ -1,0 +1,21 @@
+extends: substitution
+message: "Use '%s' instead of '%s' (Alethia house terminology)."
+link: https://github.com/alethialabs-io/skills
+# The ONE error-level prose rule: a wrong product name is a real defect, so it
+# blocks CI. Only unambiguous house-canonical forms live here — bare lowercase
+# `argocd`/`terraform`/`postgres` are legitimate literals (CLI names, engine
+# values, paths) and live in code spans Vale already ignores, so they're NOT
+# enforced here. Broader terminology guidance lives in the `alethia-docs` skill.
+level: error
+ignorecase: false
+action:
+  name: replace
+swap:
+  # Capital 'K8s' only — the informal abbreviation, always "Kubernetes" in prose.
+  # Lowercase `k8s` is left alone: it's a real identifier (the elench control set /
+  # provider is literally keyed `k8s`, parallel to `aws`/`gcp`).
+  'K8s': Kubernetes
+  'Argo CD': ArgoCD
+  'Open Tofu': OpenTofu
+  'Github': GitHub
+  'Gitlab': GitLab
