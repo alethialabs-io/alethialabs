@@ -1,15 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for the C2 slug-resolution actions: stub getOwnerScope + a thenable
-// drizzle chain (getServiceDb for org reads, withActorScope for tenant-scoped reads) and the
-// workspace setActiveOrganization side-effect, then assert the personal-scope branch, the
-// membership/404 throws, the active-org sync, and the returned shapes. currentActor() resolves
-// through the mocked getOwnerScope (community getActiveScope is DB-free: orgId === userId).
+// Mocked-boundary tests for the C2 slug-resolution actions: stub getOwnerScope + currentActor +
+// a thenable drizzle chain (getServiceDb for org reads, withActorScope for tenant-scoped reads)
+// and the workspace setActiveOrganization side-effect, then assert the personal-scope branch, the
+// membership/404 throws, the active-org sync, and the returned shapes.
+//
+// currentActor MUST be mocked directly: the org-shared slug resolvers (resolveProjectId /
+// getProjectSlug / getEnvironmentsForSlug) call it, and its real getActiveScope() hits the ee
+// resolver — `core.db.execute(<member lookup>)` — under the enterprise build (CI). With @/lib/db
+// mocked (no `execute`), the real path throws "core.db.execute is not a function"; the community
+// build accidentally hides it (getActiveScope is DB-free there). So stub currentActor at the seam.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth/owner", () => ({ getOwnerScope: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withActorScope: vi.fn() }));
 vi.mock("@/app/server/actions/workspace", () => ({
 	setActiveOrganization: vi.fn(),
@@ -23,6 +29,7 @@ import {
 	resolveProjectId,
 } from "@/app/server/actions/resolve";
 import { getOwnerScope } from "@/lib/auth/owner";
+import { currentActor } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 
@@ -65,6 +72,12 @@ beforeEach(() => {
 	vi.mocked(getOwnerScope).mockResolvedValue({
 		userId: "user-1",
 		activeOrgId: "user-1",
+	} as never);
+	// The slug resolvers scope by currentActor(); stub it directly (its real getActiveScope hits
+	// the ee `core.db.execute` member lookup under the enterprise build — see the file header).
+	vi.mocked(currentActor).mockResolvedValue({
+		userId: "user-1",
+		orgId: "user-1",
 	} as never);
 });
 
