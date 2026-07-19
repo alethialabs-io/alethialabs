@@ -1,0 +1,49 @@
+---
+title: Protection Commands
+description: Inspect a project's promotion protection rules — the gates that guard deploys into each environment.
+---
+
+# Protection Commands
+
+The `protection` group (alias `protect`) lists the **promotion protection rules** configured per
+environment: the gates that must pass before a promotion deploys into that environment.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `protection list` calls
+`/cli/projects/<project>/protection` with your [CLI token](/cli/authentication) and operates on the
+**active organization** (`alethia org switch`, or `--org <id>` per invocation).
+</Callout>
+
+## `alethia protection list`
+
+List a project's per-environment protection rules.
+
+```bash
+alethia protection list --project my-project
+alethia protection list -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+
+Columns: **Environment**, **Predecessor** (predecessor stage must be deployed + in-sync),
+**Verify** (elench verify must pass), **Approval** (a human must approve), **Approvers** (minimum
+approver count), **Soak (min)** (minutes since the predecessor deploy), **Cost Δ** (a plan cost
+delta above this USD/mo flips the promotion to pending-approval). A configured gate renders as a
+check; an unset gate or limit renders as `—`. Only environments with rules configured appear.
+
+```
+Environment  Predecessor  Verify  Approval  Approvers  Soak (min)  Cost Δ
+production   ✓            ✓       ✓         2          30          $100.00
+staging      —            ✓       —         —          —           —
+```
+
+Add `-o json` for the raw rule objects; `-o csv` for the rows. Backing call:
+`GET /cli/projects/<project>/protection`.
+
+## See also
+
+- [Drift Commands](/cli/commands/drift) · [Cost Commands](/cli/commands/cost) — the posture the
+  verify/cost gates act on.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

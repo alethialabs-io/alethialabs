@@ -812,3 +812,64 @@ func TestGetEnvironmentCost_Success(t *testing.T) {
 		t.Errorf("unexpected resources: %+v", cost.Resources)
 	}
 }
+
+func TestGetProjectProtection_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/protection" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"rules": []map[string]any{{
+				"environment_id":       "env-1",
+				"environment":          "production",
+				"require_predecessor":  true,
+				"require_verify_pass":  true,
+				"require_approval":     true,
+				"min_count":            2,
+				"soak_minutes":         30,
+				"cost_delta_threshold": 100.0,
+			}},
+		})
+	}))
+
+	rules, err := client.GetProjectProtection("my-proj")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Environment != "production" || !rules[0].RequireApproval {
+		t.Errorf("unexpected rules: %+v", rules)
+	}
+	if rules[0].MinCount == nil || *rules[0].MinCount != 2 {
+		t.Errorf("unexpected min_count: %+v", rules[0].MinCount)
+	}
+}
+
+func TestGetProjectProbes_Success(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/projects/my-proj/probes" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"probes": []map[string]any{
+				{"environment_id": "env-1", "environment": "production", "reachable": true, "message": nil, "probed_at": "2026-01-01T00:00:00.000Z"},
+				{"environment_id": "env-2", "environment": "dev", "reachable": nil, "message": nil, "probed_at": nil},
+			},
+		})
+	}))
+
+	probes, err := client.GetProjectProbes("my-proj")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(probes) != 2 {
+		t.Fatalf("expected 2 probes, got %d", len(probes))
+	}
+	if probes[0].Reachable == nil || !*probes[0].Reachable {
+		t.Errorf("expected production reachable=true, got %+v", probes[0].Reachable)
+	}
+	if probes[1].Reachable != nil {
+		t.Errorf("expected dev reachable=nil (never probed), got %+v", probes[1].Reachable)
+	}
+}

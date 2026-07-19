@@ -405,6 +405,28 @@ func TestContract_Cost(t *testing.T) {
 	assertNoExtraStructKeys(t, "cost.json", resp)
 }
 
+func TestContract_Protection(t *testing.T) {
+	var resp struct {
+		Rules []ProtectionRule `json:"rules"`
+	}
+	strictDecode(t, "protection.json", &resp)
+	if len(resp.Rules) != 1 {
+		t.Fatalf("expected 1 protection rule, got %d", len(resp.Rules))
+	}
+	assertNoExtraStructKeys(t, "protection.json", resp)
+}
+
+func TestContract_Probes(t *testing.T) {
+	var resp struct {
+		Probes []ProbeState `json:"probes"`
+	}
+	strictDecode(t, "probes.json", &resp)
+	if len(resp.Probes) != 1 {
+		t.Fatalf("expected 1 probe state, got %d", len(resp.Probes))
+	}
+	assertNoExtraStructKeys(t, "probes.json", resp)
+}
+
 func TestContract_ClassificationDimensions(t *testing.T) {
 	var resp struct {
 		Dimensions []ClassificationDimension `json:"dimensions"`

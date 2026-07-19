@@ -1689,6 +1689,56 @@ func (c *Client) GetEnvironmentCost(project, env string) (*EnvironmentCost, erro
 	return &resp, nil
 }
 
+// --- Protection ---
+
+// ProtectionRule is one environment's promotion protection gates (mirrors ProtectionSummary).
+type ProtectionRule struct {
+	EnvironmentID      string   `json:"environment_id"`
+	Environment        string   `json:"environment"`
+	RequirePredecessor bool     `json:"require_predecessor"`
+	RequireVerifyPass  bool     `json:"require_verify_pass"`
+	RequireApproval    bool     `json:"require_approval"`
+	MinCount           *int     `json:"min_count"`
+	SoakMinutes        *int     `json:"soak_minutes"`
+	CostDeltaThreshold *float64 `json:"cost_delta_threshold"`
+}
+
+// GetProjectProtection returns each environment's promotion protection rules for a project.
+func (c *Client) GetProjectProtection(project string) ([]ProtectionRule, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/protection", c.baseURL, url.PathEscape(project))
+	var resp struct {
+		Rules []ProtectionRule `json:"rules"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get protection rules: %w", err)
+	}
+	return resp.Rules, nil
+}
+
+// --- Probes ---
+
+// ProbeState is one environment's latest cluster-alive probe (mirrors the console ProbeState).
+// Reachable is nil when the environment has never been probed.
+type ProbeState struct {
+	EnvironmentID string  `json:"environment_id"`
+	Environment   string  `json:"environment"`
+	Reachable     *bool   `json:"reachable"`
+	Message       *string `json:"message"`
+	ProbedAt      *string `json:"probed_at"`
+}
+
+// GetProjectProbes returns each environment's latest cluster-alive probe state for a project.
+func (c *Client) GetProjectProbes(project string) ([]ProbeState, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/probes", c.baseURL, url.PathEscape(project))
+	var resp struct {
+		Probes []ProbeState `json:"probes"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get probes: %w", err)
+	}
+	return resp.Probes, nil
+}
+
 // --- Break-glass (privileged incident recovery) ---
 //
 // These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +
