@@ -1739,6 +1739,112 @@ func (c *Client) GetProjectProbes(project string) ([]ProbeState, error) {
 	return resp.Probes, nil
 }
 
+// --- Add-ons ---
+
+// Addon is one installed catalog add-on in an environment.
+type Addon struct {
+	AddonID      string  `json:"addon_id"`
+	Enabled      bool    `json:"enabled"`
+	Mode         string  `json:"mode"`
+	Version      *string `json:"version"`
+	Namespace    *string `json:"namespace"`
+	Status       string  `json:"status"`
+	Health       *string `json:"health"`
+	Sync         *string `json:"sync"`
+	LastSyncedAt *string `json:"last_synced_at"`
+}
+
+// ProjectAddons is the installed catalog add-ons for one environment.
+type ProjectAddons struct {
+	Environment string  `json:"environment"`
+	Addons      []Addon `json:"addons"`
+}
+
+// GetProjectAddons returns the catalog add-ons installed in a project environment (the default
+// environment when env is empty; otherwise the environment addressed by name, stage, or id).
+func (c *Client) GetProjectAddons(project, env string) (*ProjectAddons, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp ProjectAddons
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get add-ons: %w", err)
+	}
+	return &resp, nil
+}
+
+// --- BYO charts ---
+
+// ByoChart is one attached BYO Helm chart in an environment (scan status only, not the report).
+type ByoChart struct {
+	ID         string  `json:"id"`
+	RepoURL    string  `json:"repo_url"`
+	ChartPath  string  `json:"chart_path"`
+	Ref        string  `json:"ref"`
+	Namespace  string  `json:"namespace"`
+	Status     string  `json:"status"`
+	Health     *string `json:"health"`
+	Sync       *string `json:"sync"`
+	ScanStatus string  `json:"scan_status"`
+	ScannedAt  *string `json:"scanned_at"`
+}
+
+// ProjectByoCharts is the BYO Helm charts attached to one environment.
+type ProjectByoCharts struct {
+	Environment string     `json:"environment"`
+	Charts      []ByoChart `json:"charts"`
+}
+
+// GetProjectByoCharts returns the BYO Helm charts attached to a project environment.
+func (c *Client) GetProjectByoCharts(project, env string) (*ProjectByoCharts, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp ProjectByoCharts
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get BYO charts: %w", err)
+	}
+	return &resp, nil
+}
+
+// --- BYO IaC ---
+
+// IacSource is the customer's BYO Terraform/OpenTofu source attached to an environment (scan
+// status only, not the report).
+type IacSource struct {
+	ID                string  `json:"id"`
+	Environment       string  `json:"environment"`
+	Name              string  `json:"name"`
+	RepoURL           string  `json:"repo_url"`
+	Ref               *string `json:"ref"`
+	Path              string  `json:"path"`
+	CommitSha         *string `json:"commit_sha"`
+	DeployedCommitSha *string `json:"deployed_commit_sha"`
+	Enabled           bool    `json:"enabled"`
+	ScanStatus        string  `json:"scan_status"`
+	ScannedAt         *string `json:"scanned_at"`
+	Status            string  `json:"status"`
+	StatusMessage     *string `json:"status_message"`
+}
+
+// GetProjectIacSource returns the BYO IaC source attached to a project environment, or nil when
+// none is attached.
+func (c *Client) GetProjectIacSource(project, env string) (*IacSource, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/byo-iac", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp struct {
+		Source *IacSource `json:"source"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get IaC source: %w", err)
+	}
+	return resp.Source, nil
+}
+
 // --- Break-glass (privileged incident recovery) ---
 //
 // These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +

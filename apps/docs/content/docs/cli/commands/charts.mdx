@@ -1,0 +1,40 @@
+---
+title: Chart Commands
+description: Inspect the BYO Helm charts attached to a project environment.
+---
+
+# Chart Commands
+
+The `chart` group (alias `charts`) lists your **BYO Helm charts** — your own charts, pulled from a
+connected git repo and deployed into an environment via ArgoCD alongside the marketplace add-ons.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `chart list` calls `/cli/projects/<project>/byo-charts`
+with your [CLI token](/cli/authentication) and operates on the **active organization**.
+</Callout>
+
+## `alethia chart list`
+
+List the BYO Helm charts attached to a project environment.
+
+```bash
+alethia chart list --project my-project
+alethia chart list -p my-project -e staging
+alethia chart list -p my-project -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the project's default environment. |
+
+Columns: **Chart** (its per-env id/release name), **Repo** (the git URL), **Path** (the chart dir),
+**Ref** (git ref), **Status**, **Scan** (chart-safety scan lifecycle: `unscanned` | `scanning` |
+`done` | `failed`). Add `-o json` for the full view (the elench scan report itself is console-only);
+`-o csv` for the rows. Backing call: `GET /cli/projects/<project>/byo-charts`.
+
+## See also
+
+- [Add-on Commands](/cli/commands/addons) — the marketplace OSS add-ons.
+- [IaC Commands](/cli/commands/iac) — your BYO Terraform/OpenTofu source.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

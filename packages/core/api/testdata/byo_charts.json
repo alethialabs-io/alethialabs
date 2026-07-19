@@ -1,0 +1,17 @@
+{
+	"environment": "string",
+	"charts": [
+		{
+			"id": "string",
+			"repo_url": "string",
+			"chart_path": "string",
+			"ref": "string",
+			"namespace": "string",
+			"status": "string",
+			"health": "string",
+			"sync": "string",
+			"scan_status": "string",
+			"scanned_at": "2026-01-01T00:00:00.000Z"
+		}
+	]
+}

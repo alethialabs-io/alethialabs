@@ -598,6 +598,64 @@ export const cliProbesResponse = z.object({
 	probes: z.array(probeStateWire),
 });
 
+/** One installed catalog add-on in an environment. */
+export const addonWire = z.object({
+	addon_id: z.string(),
+	enabled: z.boolean(),
+	mode: z.string(),
+	version: z.string().nullable(),
+	namespace: z.string().nullable(),
+	status: z.string(),
+	health: z.string().nullable(),
+	sync: z.string().nullable(),
+	last_synced_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/addons result (installed catalog add-ons for one environment). */
+export const cliAddonsResponse = z.object({
+	environment: z.string(),
+	addons: z.array(addonWire),
+});
+
+/** One attached BYO Helm chart in an environment (scan_report omitted — status only). */
+export const byoChartWire = z.object({
+	id: z.string(),
+	repo_url: z.string(),
+	chart_path: z.string(),
+	ref: z.string(),
+	namespace: z.string(),
+	status: z.string(),
+	health: z.string().nullable(),
+	sync: z.string().nullable(),
+	scan_status: z.string(),
+	scanned_at: isoNullable,
+});
+/** GET /api/cli/projects/:id/byo-charts result. */
+export const cliByoChartsResponse = z.object({
+	environment: z.string(),
+	charts: z.array(byoChartWire),
+});
+
+/** The BYO-IaC source attached to an environment (scan_report omitted — status only). */
+export const iacSourceWire = z.object({
+	id: z.string(),
+	environment: z.string(),
+	name: z.string(),
+	repo_url: z.string(),
+	ref: z.string().nullable(),
+	path: z.string(),
+	commit_sha: z.string().nullable(),
+	deployed_commit_sha: z.string().nullable(),
+	enabled: z.boolean(),
+	scan_status: z.string(),
+	scanned_at: isoNullable,
+	status: z.string(),
+	status_message: z.string().nullable(),
+});
+/** GET /api/cli/projects/:id/byo-iac result. `source` is null when no IaC source is attached. */
+export const cliIacSourceResponse = z.object({
+	source: iacSourceWire.nullable(),
+});
+
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
@@ -649,6 +707,9 @@ export const cliContract = {
 	CostResponse: cliCostResponse,
 	ProtectionResponse: cliProtectionResponse,
 	ProbesResponse: cliProbesResponse,
+	AddonsResponse: cliAddonsResponse,
+	ByoChartsResponse: cliByoChartsResponse,
+	IacSourceResponse: cliIacSourceResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
 } as const;
