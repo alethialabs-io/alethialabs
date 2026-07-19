@@ -15,6 +15,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
@@ -268,6 +269,7 @@ export async function scanIacSource(input: {
 	const actor = await authorize("edit", { type: "project", id: input.projectId });
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 
+	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [row] = await tx
 			.select()
@@ -288,6 +290,7 @@ export async function scanIacSource(input: {
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "IAC_SCAN",
+				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: {
 					// Flat repo_url so the runner's FetchGitToken route resolves a token (the same

@@ -9,6 +9,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
@@ -45,6 +46,7 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 		if (e instanceof AiBudgetError) throw new Error(e.message);
 		throw e;
 	});
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
@@ -52,6 +54,7 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 			.values(signedJob({
 				user_id: actor.userId,
 				job_type: "ANALYZE_REPO",
+				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: { repo_url: url, ...(opts?.ref ? { ref: opts.ref } : {}) },
 			}))

@@ -5,6 +5,7 @@ import { authorizeCli } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
@@ -109,12 +110,15 @@ export async function POST(req: Request) {
 				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};
 
+		await assertJobQuotaAllowed(actor.orgId);
+
 		const [job] = await db
 			.insert(jobs)
 			.values(signedJob({
 				user_id: actor.userId,
 				cloud_identity_id,
 				job_type: "DEPLOY_RUNNER",
+				initiated_by: "user",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: assigned_runner_id || null,

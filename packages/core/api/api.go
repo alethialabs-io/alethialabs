@@ -61,6 +61,7 @@ type ProvisionJob struct {
 	UserID            string                  `json:"user_id"`
 	OrgID             string                  `json:"org_id"`
 	JobType           string                  `json:"job_type"`
+	InitiatedBy       string                  `json:"initiated_by"`
 	ProjectID         string                  `json:"project_id"`
 	CloudIdentityID   string                  `json:"cloud_identity_id"`
 	RunnerID          string                  `json:"runner_id"`

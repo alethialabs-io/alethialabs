@@ -6,6 +6,7 @@
 		"project_id": "00000000-0000-4000-8000-000000000000",
 		"cloud_identity_id": "00000000-0000-4000-8000-000000000000",
 		"job_type": "DESTROY_RUNNER",
+		"initiated_by": "user",
 		"config_snapshot": {},
 		"configuration_hash": "string",
 		"status": "QUEUED",

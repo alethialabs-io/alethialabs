@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { currentActor } from "@/lib/authz/guard";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { signedJob } from "@/lib/db/signed-job";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
@@ -25,6 +26,7 @@ export async function queueAudit(
 	if (!trimmed) {
 		throw new Error("Audit input is required (an OpenTofu plan JSON or k8s manifests).");
 	}
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
@@ -33,6 +35,7 @@ export async function queueAudit(
 				user_id: actor.userId,
 				...(projectId ? { project_id: projectId } : {}),
 				job_type: "AUDIT",
+				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: { audit_kind: kind, audit_input: trimmed },
 			}))
