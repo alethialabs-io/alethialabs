@@ -1619,6 +1619,76 @@ func (c *Client) RemoveComponent(project, kind, name string) error {
 	return nil
 }
 
+// --- Drift ---
+
+// DriftDetail is a single drifted resource in a DriftPosture (mirrors the console DriftDetail).
+type DriftDetail struct {
+	Address string `json:"address"`
+	Type    string `json:"type"`
+	Kind    string `json:"kind"`
+}
+
+// DriftPosture is the latest day-2 drift posture of a project environment
+// (GET /api/cli/projects/:id/drift). Evaluated is false when no DETECT_DRIFT job has run yet —
+// an honest "not proven" rather than a false in-sync.
+type DriftPosture struct {
+	Evaluated   bool          `json:"evaluated"`
+	InSync      bool          `json:"in_sync"`
+	Drifted     int           `json:"drifted"`
+	ScannedAt   *string       `json:"scanned_at"`
+	Environment *string       `json:"environment"`
+	Details     []DriftDetail `json:"details"`
+}
+
+// GetProjectDrift returns the latest drift posture for a project, optionally scoped to one
+// environment (by name, stage, or id).
+func (c *Client) GetProjectDrift(project, env string) (*DriftPosture, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/drift", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp DriftPosture
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get drift: %w", err)
+	}
+	return &resp, nil
+}
+
+// --- Cost ---
+
+// CostResourceLine is one priced resource in an EnvironmentCost (mirrors CostResourceLine).
+type CostResourceLine struct {
+	Address      string  `json:"address"`
+	ResourceType string  `json:"resource_type"`
+	MonthlyCost  float64 `json:"monthly_cost"`
+}
+
+// EnvironmentCost is the latest priced picture of a project environment
+// (GET /api/cli/projects/:id/cost). Priced is false when no plan has ever priced it.
+type EnvironmentCost struct {
+	Priced       bool               `json:"priced"`
+	TotalMonthly *float64           `json:"total_monthly"`
+	Currency     string             `json:"currency"`
+	CapturedAt   *string            `json:"captured_at"`
+	PlanJobID    *string            `json:"plan_job_id"`
+	Environment  *string            `json:"environment"`
+	Resources    []CostResourceLine `json:"resources"`
+}
+
+// GetEnvironmentCost returns the latest cost for a project environment (the default environment
+// when env is empty; otherwise the environment addressed by name, stage, or id).
+func (c *Client) GetEnvironmentCost(project, env string) (*EnvironmentCost, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/cost", c.baseURL, url.PathEscape(project))
+	if env != "" {
+		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	}
+	var resp EnvironmentCost
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get cost: %w", err)
+	}
+	return &resp, nil
+}
+
 // --- Break-glass (privileged incident recovery) ---
 //
 // These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +

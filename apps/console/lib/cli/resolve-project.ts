@@ -4,11 +4,20 @@
 import { and, asc, desc, eq, or } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
+import { environmentStage } from "@/lib/db/schema/enums";
 
 /** A v4-ish UUID, to decide whether to match an `[id]` segment against the id column
  * (comparing a non-uuid string to a uuid column would error at the DB). */
 const UUID_RE =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Type guard: narrows an arbitrary string to a valid environment stage so it can
+ * be compared against the pgEnum `stage` column without a cast. */
+function isEnvironmentStage(
+	s: string,
+): s is (typeof environmentStage.enumValues)[number] {
+	return environmentStage.enumValues.some((v) => v === s);
+}
 
 /**
  * Resolves a project the CLI addressed by id, name, OR slug, scoped to the active org.
@@ -48,4 +57,30 @@ export async function resolveDefaultEnvironmentId(
 		.orderBy(desc(projectEnvironments.is_default), asc(projectEnvironments.created_at))
 		.limit(1);
 	return env?.id ?? null;
+}
+
+/**
+ * Resolves an environment within a project addressed by id, name, OR stage. Prefers the
+ * `is_default` environment when a stage matches more than one. Returns the row or null.
+ * Used by env-scoped CLI read routes (drift, cost, status, …) so a caller can pass
+ * `--env production` (name/stage) or an environment id interchangeably.
+ */
+export async function resolveCliEnvironment(projectId: string, idOrName: string) {
+	const matchers = [eq(projectEnvironments.name, idOrName)];
+	if (isEnvironmentStage(idOrName)) {
+		matchers.push(eq(projectEnvironments.stage, idOrName));
+	}
+	if (UUID_RE.test(idOrName)) matchers.unshift(eq(projectEnvironments.id, idOrName));
+
+	const [row] = await getServiceDb()
+		.select({
+			id: projectEnvironments.id,
+			name: projectEnvironments.name,
+			stage: projectEnvironments.stage,
+		})
+		.from(projectEnvironments)
+		.where(and(eq(projectEnvironments.project_id, projectId), or(...matchers)))
+		.orderBy(desc(projectEnvironments.is_default))
+		.limit(1);
+	return row ?? null;
 }

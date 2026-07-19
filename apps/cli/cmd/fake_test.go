@@ -50,6 +50,8 @@ type fakeClient struct {
 	repos        []api.Repository
 	providerStat *api.ProviderStatus
 	verifyResult *api.ConnectIdentityResponse
+	drift        *api.DriftPosture
+	cost         *api.EnvironmentCost
 
 	// recorded classification calls
 	assignedKind    string
@@ -352,6 +354,14 @@ func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]
 func (f *fakeClient) RemoveComponent(project, kind, name string) error {
 	f.rmCompProj, f.rmCompKind, f.rmCompName = project, kind, name
 	return f.err
+}
+
+func (f *fakeClient) GetProjectDrift(project, env string) (*api.DriftPosture, error) {
+	return f.drift, f.err
+}
+
+func (f *fakeClient) GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error) {
+	return f.cost, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)
