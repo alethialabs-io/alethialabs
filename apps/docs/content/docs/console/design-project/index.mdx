@@ -1,38 +1,40 @@
 ---
 title: Design a Project Overview
-description: The multi-section infrastructure configuration form with Provider Ribbon and Cloud Identity.
+description: The infrastructure design canvas — add services as nodes, configure each in its inspector, then Plan and Deploy.
 ---
 
 # Design a Project
 
-The Design a Project form is the primary way to define infrastructure. It has 11 configurable sections, a Provider Ribbon for switching between AWS/GCP/Azure, a Cloud Identity selector, and a real-time cost sidebar.
+The design **canvas** is where you define infrastructure. You add services as nodes, configure each one in its inspector, and Plan then Deploy the environment. The canvas is the sole design surface — the legacy multi-section form has been removed.
 
-## Form Structure
+## The canvas
 
-The form is built with `react-hook-form` + Zod validation, using `useFieldArray` for multi-instance components (databases, caches, etc.). Each section is an independent component that reads and writes to the shared form context.
+Every project opens on its **Architecture** view. The root **Project node** holds the project's basics — name, environment stage, and cloud region — and pins the stack's core cloud account, which is chosen once when the project is created. Every other service you add is a node wired to the graph.
 
-## Provider Ribbon
+Under the hood the canvas persists through an abstract Zod schema and a graph ⇄ form round-trip, so a shared `react-hook-form` context still backs a few inspector fields (repository and region pickers). You interact with nodes and inspectors, not a form.
 
-The Provider Ribbon sits at the top of the form and controls three things:
+## Adding services
 
-1. **Cloud Identity Selector** — dropdown showing connected cloud accounts. Each account displays its provider icon, name, and account identifier (AWS Account ID, GCP Project ID, Azure Subscription).
+Add services from the **Add** palette or the `⌘K` command palette. The **Add** palette groups services by domain (Workloads, Data, Storage, Messaging, Security, Networking, Compute, DevOps) and matches on each entry's label and subtitle. The `⌘K` command palette groups services into **Core** and **Periphery** and searches across every provisionable service by name — its per-cloud service names (e.g. `rds`, `postgres`, `redis`, `s3`) and synonyms. Selecting one drops its node on the canvas and opens its inspector; kinds with variants (for example a database engine) ask you to pick the variant first.
 
-2. **Region Selector** — populated with the selected provider's available regions, grouped by geography (US, Europe, Asia Pacific, etc.).
+The palette is filtered by the project's cloud: a service the target cloud can't provision (Hetzner has no managed pub/sub or NoSQL, for instance) isn't offered, and a singleton already on the canvas is disabled. Services not yet backed by a Terraform module show a `Soon` badge.
 
-3. **Existing resources** — VPCs, subnets, and other resources you can reuse come from Alethia's
-   server-side [asset inventory](/console/connectors/health-and-inventory), which stays current
-   automatically (event-driven + a reconciliation sweep). There's no manual refresh.
+## Configuring a node
 
-When the Cloud Identity changes (e.g., switching from an AWS account to a GCP project), the entire form adapts. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for how this works.
+Each node opens its **inspector** — a set of collapsible config sections. The node's effective provider drives its fields, region choices, and provider-specific advanced knobs. The cloud account is not set per node; it is inherited from the Project root.
 
-<Callout type="warn">
-Switching providers resets all provider-specific defaults: instance types, Kubernetes versions, database engines, cache node types, and DNS/WAF options. If you're duplicating a project across providers, the platform converts the config automatically with warnings. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
+Existing resources you can reuse (VPCs, subnets, and the like) come from Alethia's server-side
+[asset inventory](/console/connectors/health-and-inventory), which stays current automatically
+(event-driven + a reconciliation sweep). There's no manual refresh.
+
+<Callout type="info">
+The cloud account is chosen once, at project creation — there is no in-canvas provider switch. When you duplicate a project onto a different cloud, the platform converts the config and surfaces conversion warnings. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
 </Callout>
 
-## Sections
+## Services
 
 <Cards>
-  <Card title="Project Basics" href="/console/design-project/project-basics">Name, environment, OpenTofu version</Card>
+  <Card title="Project Basics" href="/console/design-project/project-basics">Name, environment, region</Card>
   <Card title="Network" href="/console/design-project/network">VPC/VNet, CIDR, NAT gateway</Card>
   <Card title="Cluster" href="/console/design-project/cluster">Kubernetes, instance types, node scaling, Karpenter</Card>
   <Card title="Databases" href="/console/design-project/databases">Aurora, Cloud SQL, Azure Database</Card>
@@ -43,27 +45,25 @@ Switching providers resets all provider-specific defaults: instance types, Kuber
   <Card title="Secrets" href="/console/design-project/secrets">Password generation, secret stores</Card>
   <Card title="Container Registry" href="/console/design-project/container-registry">ECR, Artifact Registry, ACR</Card>
   <Card title="Repositories" href="/console/design-project/repositories">Git repos for GitOps</Card>
-  <Card title="Cost Sidebar" href="/console/design-project/cost-sidebar">Real-time pricing estimates</Card>
+  <Card title="Cost" href="/console/design-project/cost-sidebar">Monthly cost from the last plan</Card>
 </Cards>
 
-## Review & Submit
+## Save, Plan, Deploy
 
-After filling in sections, the **Review Tab** shows a read-only summary of the entire configuration organized by category. On submit:
+Saving a project writes a `projects` row and its **default environment** (a `project_environments` row with status `DRAFT`), then a component row per node in the relevant tables (`project_network`, `project_cluster`, `project_databases`, and so on). The project then appears in the project listing.
 
-1. A `projects` row is created with status `DRAFT`
-2. Component rows are created in the relevant tables (`project_network`, `project_cluster`, `project_databases`, etc.)
-3. The project appears in the project listing
-4. The user can now run Plan → Apply from the [project detail page](/console/dashboard/project-detail)
+From the Architecture view you drive the environment with the **Run** menu and the staged-changes bar:
 
-## Form Validation
+- **Plan** (`PLAN`) — dry-run the OpenTofu plan and price it with Infracost.
+- **Deploy** — apply the staged changes. **Destroy** lives in Project settings.
+- **Audit**, **Detect drift**, and **Probe cluster** run their respective jobs against the live environment.
 
-Each section has its own Zod schema. Key validations:
+## Validation
 
-- Project name: lowercase, alphanumeric + hyphens, max 25 characters
-- CIDR blocks: regex validation + numeric range check
-- Node sizing: min ≤ desired ≤ max
-- Instance types: max 5 selected
-- Database names: unique per project, lowercase
-- Secret names: alphanumeric + hyphens only
+Each service's config is validated by its own Zod schema (`lib/validations/project-form.schema.ts`). For example:
 
-On submit failure, the form auto-scrolls to the first error field.
+- Project name: free-text display name, max 50 characters; the URL slug is derived via `slugify` (must contain at least one letter or number).
+- Bucket names: 3–63 lowercase letters, digits, or hyphens; must start and end with a letter or digit.
+- Component names (database, cache, queue, topic, table, secret) are required.
+
+A service the target cloud can't provision, or a service binding to a resource that isn't in the environment, is rejected fail-closed at deploy time rather than silently dropped.

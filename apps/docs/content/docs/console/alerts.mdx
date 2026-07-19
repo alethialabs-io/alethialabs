@@ -1,6 +1,6 @@
 ---
 title: Alerts
-description: Route platform events to webhook, Slack, RocketChat, and email channels. Channels authenticate with a pasted incoming-webhook URL — no OAuth.
+description: Route platform events to Slack, Teams, Discord, PagerDuty, webhook, and email channels. Chat channels authenticate with a pasted incoming-webhook URL (PagerDuty with a routing key) — no OAuth.
 ---
 
 # Alerts
@@ -20,15 +20,15 @@ flowchart LR
 
 - **Events** are emitted by the platform as things happen — you don't wire anything up.
 - **Policies** watch a chosen set of events and route matches to channels.
-- **Channels** are destinations (webhook, Slack, RocketChat, email).
+- **Channels** are destinations — Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat, a generic webhook, PagerDuty, or email.
 - **Deliveries** are the audit trail: what fired, where it went, and whether it succeeded.
 
 ## Policies
 
 A policy is a set of events plus the channels they route to. Under **Alerts → Policies**:
 
-1. **Start from a template** — *Prod deploy failures*, *Security & policy denials*, *Access-changes audit*,
-   *Cost guardrails*, *Worker health*, or **Blank** — then tune it. Templates pre-select sensible events.
+1. **Create a policy** — click **New policy** to open the guided form. It starts blank; give it a
+   name and description.
 2. **Pick events** from the catalog, grouped by category (see below). A policy can watch one event or many.
 3. **Set conditions** — an optional **scope** filter, a **minimum severity**, and a **dedup/throttle
    window** (collapse repeats of the same event into one notification for N seconds).
@@ -38,8 +38,8 @@ A policy is a set of events plus the channels they route to. Under **Alerts → 
 
 ## What you can alert on
 
-Events are grouped into categories. ~20 are **live** today; the rest are configurable now but inert until
-their emitter ships (the UI tags these "soon").
+Events are grouped into categories. Most (~35) are **live** today; the rest are configurable now but inert
+until their emitter ships (the UI tags these "soon").
 
 | Category | Example events | Status |
 | --- | --- | --- |
@@ -48,9 +48,11 @@ their emitter ships (the UI tags these "soon").
 | **Access & roles (RBAC)** | grant added / revoked, role created / changed / deleted | Live |
 | **Members** | member invited / joined / removed | Live · suspended *soon* |
 | **Cloud identities** | identity connected / revoked, credential failed | Live · rotation *soon* |
-| **Cost** | budget threshold, spend spike, overage started | *Soon* |
+| **Cost** | budget threshold, spend spike, overage started | Live · spike / overage *soon* |
 | **Workers & runners** | worker unhealthy (runner offline) | Live · stalled / exhausted *soon* |
 | **Authentication** | SSO sign-in failed, new-device sign-in, sign-in blocked | *Soon* |
+| **Platform health** | background loop degraded / recovered | Live |
+| **Support** | case opened / replied / resolved / reopened / closed | Live · assignment *soon* |
 
 ## Free vs Business+
 
@@ -78,8 +80,9 @@ condition drops anything below the chosen level.
 
 ### Prerequisite: the encryption key
 
-Webhook, Slack, and RocketChat channels store a **URL secret** — and that URL *is* the credential (anyone
-holding it can post to your destination), so Alethia encrypts it at rest. That requires an encryption key:
+Every channel except email stores a **secret** — a webhook URL for the chat and generic-webhook transports,
+or a routing key for PagerDuty. That secret *is* the credential (anyone holding it can post to your
+destination), so Alethia encrypts it at rest. That requires an encryption key:
 
 ```bash
 # 32-byte base64 key — set once, keep it stable across restarts
@@ -195,8 +198,9 @@ In the console, open **Alerts → Channels → New channel**, pick a type, and f
 </Tabs>
 
 <Callout type="info">
-  Adding a new transport (PagerDuty, Discord, MS Teams, Opsgenie) is a single sender file behind the same
-  `ChannelSender` interface — no schema change. These are on the roadmap.
+  Alethia ships nine transports — Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat, a
+  generic webhook, PagerDuty, and email. Each is a single sender file behind the same `ChannelSender`
+  interface, so adding another (Opsgenie, …) needs no schema change.
 </Callout>
 
 ## Activity

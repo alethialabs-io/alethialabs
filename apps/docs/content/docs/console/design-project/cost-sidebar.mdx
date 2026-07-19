@@ -1,53 +1,42 @@
 ---
-title: Cost Sidebar
-description: Real-time cost estimation sidebar with AWS Pricing API integration.
+title: Cost
+description: The cost chip — an environment's monthly cost, taken from its last plan's Infracost breakdown.
 ---
 
-# Cost Sidebar
+# Cost
 
-The cost sidebar appears on the right side of the Design a Project form (visible on desktop screens). It shows the estimated monthly infrastructure cost, updating in real-time as you change configuration values.
+The cost chip sits in the top-right of the Architecture canvas. It shows the environment's estimated monthly infrastructure cost, taken from the **last plan** — not a live client-side estimate.
 
 For a deeper technical explanation, see [Cost Estimation](/concepts/cost-estimation).
 
-## How It Works
+## Where the number comes from
 
-1. When a region is selected, pricing data is fetched from the AWS Pricing API via the `fetchPrices(region)` store action
-2. Prices are cached in the Zustand store with a 24-hour TTL
-3. Each form change triggers a recalculation
-4. Fallback hardcoded rates are used if the API call fails
+The runner runs [Infracost](/concepts/cost-estimation) on every **PLAN** and posts the cost breakdown back with the job. The chip reads the resulting monthly total (`monthlyCost`) off the environment's status — so the cost is only ever a real figure the platform computed, never a guess made in the browser.
 
-## Cost Breakdown
+The chip only appears once a project and environment exist (an existing environment on the Architecture route). In the design-only create flow there is nothing planned yet, so there is no chip.
 
-The sidebar shows individual line items:
+## States
 
-| Component | Calculation | Example |
-|-----------|------------|---------|
-| **EKS Control Plane** | Fixed $0.10/hour × 730 | $73/mo |
-| **Compute Nodes** | avg_instance_rate × desired_nodes × 730 | $182/mo (3× t3.large) |
-| **NAT Gateway** | $0.048 × count × 730 | $35/mo (single) |
-| **Database (Aurora)** | min_ACU × $0.14 × 730 per instance | $51/mo (0.5 ACU) |
-| **Cache** | node_rate × count × 730 | $50/mo (1× cache.t3.medium) |
-| **WAF** | $5 per enabled option | $5–$10/mo |
-| **Secrets** | $0.40 per secret | $1.60/mo (4 secrets) |
-| **NoSQL/Queues/Topics** | Usage-based | $0 (not estimable) |
+The chip is honest about what it knows:
 
-**Total** is the sum of all line items.
+| State | When | What it shows |
+|-------|------|---------------|
+| **Not priced** | The environment has never been planned (`monthlyCost` is null) | A dashed chip reading `Not priced`, tooltip "Run a plan to price this environment." |
+| **Priced** | A plan has run | `Monthly $X.XX` (two decimals), tooltip "From the plan on `<timestamp>`" when the capture time is known |
 
-## Pricing Sources
+A never-planned environment shows `Not priced` rather than `$0.00` — a fabricated zero is worse than an admitted unknown, because you would believe it.
 
-| Resource | Source | Fallback |
-|----------|--------|----------|
-| EC2 instances | AWS Pricing API (on-demand, Linux, shared tenancy) | Hardcoded rates per type |
-| EKS control plane | Hardcoded ($0.10/hr) | — |
-| NAT Gateway | AWS Pricing API | Hardcoded ($0.048/hr) |
-| Aurora ACU | AWS Pricing API | Hardcoded ($0.14/ACU-hr) |
-| ElastiCache | AWS Pricing API | Hardcoded rates per type |
-| WAF | Hardcoded ($5/mo) | — |
-| Secrets | Hardcoded ($0.40/secret) | — |
+## The full breakdown
+
+The single headline number is the chip. The **per-resource breakdown** lives in the plan's artifact panel, under the Plan tab. The console parses the Infracost breakdown JSON (`parseCostBreakdown`) into a ranked list of cost-bearing resources:
+
+- Each resource carries its `monthlyCost`, `hourlyCost`, `resourceType`, and any priced sub-resources.
+- Free or cost-unknown resources (monthly cost `0` or absent) are skipped — the list only ranks priced ones.
+- Resources are sorted by monthly cost, most expensive first.
+- The plan also carries `totalMonthlyCost` and `totalHourlyCost`.
 
 ## Limitations
 
-- Pricing is currently **AWS-only** — GCP and Azure sections show approximate costs based on similar resource profiles
-- Data transfer costs are not estimated (highly variable)
-- NoSQL, messaging, and storage costs are usage-based and show $0
-- Infracost provides more accurate post-plan costs — see [Cost Estimation](/concepts/cost-estimation)
+- The figure is only as fresh as the **last plan** — change the design and the number is stale until you plan again.
+- Infracost prices what appears in the OpenTofu plan JSON. Usage-based resources (NoSQL, messaging, object storage) and data-transfer costs are not estimated up front.
+- A malformed or partial breakdown degrades to "unknown cost" rather than surfacing a wrong number.

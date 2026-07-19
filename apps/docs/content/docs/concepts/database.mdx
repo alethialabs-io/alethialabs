@@ -22,11 +22,13 @@ Infrastructure configuration — the central entity.
 | `org_id` | uuid | Coarse tenancy scope for the RLS blast wall (community: `org_id = user_id`) |
 | `cloud_identity_id` | uuid (FK → cloud_identities) | Cloud account to provision in |
 | `project_name` | text | Infrastructure project name |
-| `environment_stage` | environment_stage enum | development / staging / production |
+| `slug` | text | URL slug, unique per org |
 | `region` | text | Cloud region (e.g., eu-west-1) |
 | `iac_version` | text | no default (required) |
-| `status` | project_status enum | DRAFT → ACTIVE → DESTROYED |
 | `estimated_monthly_cost` | numeric | Calculated cost estimate |
+
+A project owns N **environments** (`project_environments`). The environment identity (`name` / `stage`) and the
+per-environment provisioning `status` live on `project_environments`, not on `projects`.
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
 
@@ -38,7 +40,7 @@ Cloud provider connections (AWS, GCP, Azure).
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `user_id` | uuid (FK) | Owner |
-| `provider` | text | aws / gcp / azure |
+| `provider` | cloud_provider enum | aws / azure / gcp / alibaba / digitalocean / hetzner / civo |
 | `name` | text | Display name |
 | `credentials` | jsonb | Provider-specific (role ARN, external ID, WIF config, etc.) |
 | `is_verified` | boolean | Passed connection test |
@@ -51,7 +53,7 @@ Authentication is owned by [Better Auth](/concepts/authentication), which manage
 `account`, and `verification` tables. Git-provider OAuth tokens (`accessToken`, `refreshToken`, `scope`,
 and the expiry columns) live on the **`account`** table — there is no separate `provider_tokens` table.
 
-## Project Component Tables (Singleton — 1:1 per Project)
+## Project Component Tables (Singleton — 1:1 per Project Environment)
 
 ### `project_network`
 
@@ -118,7 +120,7 @@ Application deployment repository reference.
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
 
-## Project Component Tables (Multi-Instance — 1:N per Project)
+## Project Component Tables (Multi-Instance — 1:N per Project Environment)
 
 ### `project_databases`
 
@@ -128,7 +130,7 @@ Aurora / Cloud SQL / Azure Database instances.
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `project_id` | uuid (FK) | |
-| `name` | text | Unique per Project |
+| `name` | text | Unique per project environment |
 | `engine` | text | Provider-specific engine, resolved per cloud (e.g. aurora-postgresql / cloudsql-postgresql) — no default |
 | `engine_version` | text | e.g., 16.4 |
 | `min_capacity` | numeric | Aurora Serverless min ACU |
@@ -141,7 +143,7 @@ Aurora / Cloud SQL / Azure Database instances.
 | `reader_endpoint` | text | Reader endpoint |
 | `provider_outputs` | jsonb | Provider-specific identifiers (`identifier`, `arn`, `secret_ref`, `extra_secret_ref`, `kms_key`) — populated after provisioning |
 
-Constraint: `UNIQUE(project_id, name)`
+Constraint: `UNIQUE(project_id, environment_id, name)`
 
 ### `project_caches`
 
@@ -151,7 +153,7 @@ ElastiCache / Memorystore / Azure Cache instances.
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `project_id` | uuid (FK) | |
-| `name` | text | Unique per Project |
+| `name` | text | Unique per project environment |
 | `engine` | cache_engine enum | redis / valkey |
 | `node_type` | text | e.g., cache.r6g.large |
 | `num_cache_nodes` | integer | |
@@ -290,13 +292,13 @@ Git credentials for the GitOps / app-deployment repos.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | |
+| `id` | bigint (PK, identity) | |
 | `job_id` | uuid (FK → jobs) | |
 | `log_chunk` | text | Log content batch |
 | `stream_type` | log_stream_type enum | STDOUT / STDERR / SYSTEM |
 | `created_at` | timestamptz | |
 
-Live streaming: an `AFTER INSERT` trigger emits Postgres `NOTIFY`; the console relays it to the browser over SSE, filtered by `job_id`.
+Live streaming: the `insert_job_log()` function (the RPC Runners call to write a log line) emits Postgres `NOTIFY` on channel `job_logs` via `pg_notify`; the console relays it to the browser over SSE, filtered by `job_id`.
 
 ## Runner Tables
 
@@ -330,7 +332,7 @@ Ledger of ONLINE→OFFLINE intervals, used to bill **managed** runners by provis
 | `org_id` | uuid | Tenancy / billing scope |
 | `started_at` | timestamptz | When the runner went ONLINE |
 | `ended_at` | timestamptz | When the runner went OFFLINE (null while still online) |
-| `duration_seconds` | integer | Provisioned duration of the interval |
+| `duration_seconds` | bigint | Provisioned duration of the interval (seconds) |
 | `created_at` | timestamptz | |
 
 ### `runner_releases`
@@ -350,10 +352,10 @@ Release catalog for Runner versions.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | |
+| `id` | bigint (PK, identity) | |
 | `project_id` | uuid (FK) | |
 | `user_id` | uuid (FK) | Who performed the action |
-| `action` | audit_action enum | CREATED, UPDATED, DELETED, PROVISIONED, DESTROYED |
+| `action` | audit_action enum | CREATED, UPDATED, DELETED, PROVISIONED, DESTROYED, COMPONENT_ADDED, COMPONENT_UPDATED, COMPONENT_REMOVED, STATUS_CHANGED |
 | `component_type` | text | Which component was affected |
 | `component_id` | uuid | |
 | `changes` | jsonb | Before/after diff |
@@ -401,7 +403,7 @@ An actor (or principal) holding a role or permission, optionally scoped to a res
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `org_id` | uuid | Tenancy scope |
-| `principal_type` | text | user / group / … |
+| `principal_type` | text | user / team |
 | `principal_id` | uuid | |
 | `effect` | text | allow / deny (default allow) |
 | `role_id` | uuid (FK → role) | Role grant (or…) |
@@ -427,7 +429,7 @@ The Activity log — every recorded action and denial.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | |
+| `id` | bigint (PK, identity) | |
 | `org_id` | uuid | |
 | `actor_id` | uuid | Who was checked |
 | `action` | text | Action requested |

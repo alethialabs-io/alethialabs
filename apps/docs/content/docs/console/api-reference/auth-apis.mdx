@@ -23,14 +23,14 @@ Called by the **browser** (authenticated user) to approve a CLI login attempt.
 ```
 
 **Effect:**
-- Creates a `cli_logins` record with the device code, user profile ID, and a 6-character verification code
-- The verification code is displayed in the browser for the user to type into the CLI
+- Upserts a `cli_logins` record keyed by the device code, storing the user's profile ID (which signifies approval) and the user's first linked git provider access token (held in the `verification_code` column for the CLI to pick up on exchange)
+- Returns `{ "success": true }`
 
 ### `POST /api/auth/cli/exchange`
 
-Called by the **CLI** to exchange the device code + verification code for tokens.
+Called by the **CLI** to exchange the approved device code for tokens.
 
-**No authentication required** (the device code + verification code pair is the proof).
+**No authentication required** — the browser must have already approved the device code (its `cli_logins` record must have a `profile_id` set).
 
 **Body:**
 ```json
@@ -82,17 +82,16 @@ Called by the CLI when the access token expires.
 **Response:**
 ```json
 {
-  "access_token": "new-jwt...",
-  "refresh_token": "new-jwt..."
+  "access_token": "new-jwt..."
 }
 ```
 
-Both tokens are rotated on refresh — the old refresh token is invalidated.
+Only a new access token is issued. The refresh token is not rotated or invalidated — the CLI keeps reusing the same one until it expires (90-day TTL).
 
 ## OAuth Callback
 
 ### `GET /api/auth/[...all]`
 
-Handles the OAuth redirect, handled by Better Auth at `/api/auth/[...all]` after provider authentication. Captures the authorization code and provider token, then redirects to the intended page.
+Better Auth's catch-all handler owns the OAuth callback at `/api/auth/[...all]` after provider authentication, along with email-OTP verify, session, account linking, and sign-out.
 
-The middleware intercepts OAuth callbacks to save `provider_token` before the redirect reaches the final destination.
+Better Auth persists the provider's access token to the `account` table. The CLI `generate` endpoint later reads it from there (via `auth.api.getAccessToken`) to hand the git provider token to the CLI.

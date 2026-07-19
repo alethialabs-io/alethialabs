@@ -20,12 +20,12 @@ templates use the in-process `Passthrough` backend; untrusted bring-your-own on 
 
 A container can't run a Go closure, so the runner **serializes** the work and **re-execs itself** inside a
 fresh per-job container. The child reconstructs the exact work from a serialized stage
-(`deploy` / `plan` / `destroy` / `chart_scan`), runs it, and writes its result back into the per-job working
+(`deploy` / `plan` / `destroy` / `drift` / `chart_scan` / `iac_scan`), runs it, and writes its result back into the per-job working
 directory for the parent to read. One job, one container, torn down after — the fleet VM itself is disposable
 (one job per VM).
 
 Hardening on the container: dropped Linux capabilities, no-new-privileges, its own PID namespace (so it
-cannot read the parent runner's `/proc`), a read-only root with a writable per-job workdir, and pid/memory
+cannot read the parent runner's `/proc`), only the per-job workdir mounted writable, and pid/memory
 limits.
 
 ## The environment allowlist (and a fail-closed guard)
