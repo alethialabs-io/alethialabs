@@ -5,12 +5,43 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 )
+
+// envLister is the slice of the API client resolveEnvironmentID needs — kept small so the
+// resolution logic is unit-testable with a fake (the concrete *api.Client satisfies it).
+type envLister interface {
+	ListEnvironments(project string) ([]api.Environment, error)
+}
+
+// resolveEnvironmentID maps an environment NAME to its id within a project, for the `--env`
+// flag on plan/apply/destroy (the decoupled env-model, #843). An empty name returns "" so the
+// server resolves the project's default environment (back-compat). An unknown name is a hard
+// error that lists the available environments, so a typo never silently targets the default.
+func resolveEnvironmentID(client envLister, projectID, envName string) (string, error) {
+	if envName == "" {
+		return "", nil
+	}
+	envs, err := client.ListEnvironments(projectID)
+	if err != nil {
+		return "", fmt.Errorf("resolve --env %q: %w", envName, err)
+	}
+	for _, e := range envs {
+		if e.Name == envName {
+			return e.ID, nil
+		}
+	}
+	names := make([]string, len(envs))
+	for i, e := range envs {
+		names[i] = e.Name
+	}
+	return "", fmt.Errorf("environment %q not found in project (have: %s)", envName, strings.Join(names, ", "))
+}
 
 // runnerOperatorLabel renders a runner's operator/provisioning as a short label:
 // "managed", "self·deployed", or "self·registered".
