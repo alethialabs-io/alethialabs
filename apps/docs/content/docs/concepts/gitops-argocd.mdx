@@ -17,8 +17,8 @@ Every provisioned cluster comes with ArgoCD and a set of supporting components:
 |-----------|---------|
 | **ArgoCD** | GitOps continuous delivery engine |
 | **AWS Load Balancer Controller** | Kubernetes ingress via ALB/NLB (AWS) |
-| **External DNS** | Automatic DNS record management from K8s resources |
-| **External Secrets Operator** | Sync secrets from cloud stores to K8s Secrets |
+| **External DNS** | Automatic DNS record management from Kubernetes resources |
+| **External Secrets Operator** | Sync secrets from cloud stores to Kubernetes Secrets |
 | **Karpenter** | Just-in-time node provisioning (AWS) |
 | **Metrics Server** | Resource metrics for Horizontal Pod Autoscaler |
 | **Storage Class** | EBS / Persistent Disk / Managed Disk provisioner |
@@ -112,7 +112,7 @@ Templates are stored in `infra/templates/argocd/` and staged into the Runner Doc
 |----------|----------------|
 | `aws-load-balancer-controller.yaml` | ALB/NLB ingress controller |
 | `external-dns.yaml` | Route53/Cloud DNS/Azure DNS sync (renders only when DNS is enabled with a domain and the cloud has a supported backend + workload identity) |
-| `external-secrets-operator.yaml` | Secrets Manager → K8s Secrets |
+| `external-secrets-operator.yaml` | Secrets Manager → Kubernetes Secrets |
 | `karpenter.yaml` | Node auto-provisioning |
 | `metrics-server.yaml` | CPU/memory metrics for HPA |
 | `storage-class-gp3.yaml` | GP3 EBS storage class |

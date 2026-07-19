@@ -40,6 +40,7 @@ jobs:
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
       console: ${{ steps.filter.outputs.console }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,7 +49,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "agent=false" >> "$GITHUB_OUTPUT"
-            echo "console=false" >> "$GITHUB_OUTPUT"; exit 0
+            echo "console=false" >> "$GITHUB_OUTPUT"
+            echo "docs=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # THREE-dot (merge-base): the PR's OWN changes only. Two-dot (`git diff base head`)
           # false-positives every filter the moment this branch falls behind base — it then lists
@@ -71,6 +73,13 @@ jobs:
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
+          fi
+          # `docs` — the Vale prose lint. Gate on the whole docs app so a change to the
+          # .vale.ini / Alethia style / vocab re-runs the lint too, not just content edits.
+          if echo "$changed" | grep -qE '^apps/docs/'; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
           fi
 
   typescript:
@@ -664,3 +673,36 @@ jobs:
             echo "base commit unavailable — scanning latest commit only"
             gitleaks git . --redact --log-opts="-1"
           fi
+
+  docs-prose:
+    name: Docs prose (Vale · Diátaxis + plain-language)
+    needs: detect-changes
+    # Path-gated: only when a docs PR touched apps/docs (content OR the Vale config/style).
+    if: needs.detect-changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Vale shells out to `mdx2vast` to parse .mdx (prose only — it drops fenced code,
+      # code spans, URLs, JSX/ESM); it must be on $PATH.
+      - name: Install the MDX preprocessor
+        run: npm i -g mdx2vast
+      # Vale is a single Go binary — install the pinned release, mirroring the gitleaks job.
+      - name: Install Vale
+        run: |
+          curl -sSfL https://github.com/errata-ai/vale/releases/download/v3.15.1/vale_3.15.1_Linux_64-bit.tar.gz \
+            | sudo tar -xz -C /usr/local/bin vale
+          vale --version
+      # Downloads the Google style package into styles/ (gitignored); the Alethia style + vocab
+      # are vendored in the repo.
+      - name: Sync Vale packages
+        working-directory: apps/docs
+        run: vale sync
+      # `vale` exits non-zero ONLY on error-level alerts (the Alethia.Terminology rule). Warnings
+      # (plain-language swaps, long sentences) and suggestions print for visibility but never red
+      # the build — matches the green-CI / self-merge flow.
+      - name: Lint docs prose
+        working-directory: apps/docs
+        run: vale content
