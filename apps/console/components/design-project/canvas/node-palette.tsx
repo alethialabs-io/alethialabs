@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { AddonIcon, AddonStatusBadge } from "@/components/addons/addon-visuals";
+import { useDropPosition } from "./use-drop-position";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -97,6 +98,7 @@ export function NodePalette({
 }: NodePaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
+	const dropPosition = useDropPosition();
 	const nodes = useCanvasStore((s) => s.nodes);
 	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
 	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
@@ -118,14 +120,14 @@ export function NodePalette({
 			setVariantKind(entry.kind);
 			return;
 		}
-		addNode(entry.kind);
+		addNode(entry.kind, dropPosition());
 		handleOpenChange(false);
 	};
 
 	/** Commit a variant choice: add the node pre-filled for it, then open its sheet. */
 	const pickVariant = (kind: NodeKind, value: string) => {
 		const { key } = NODE_REGISTRY[kind].variants ?? { key: "" };
-		addNodeWithConfig(kind, { [key]: value });
+		addNodeWithConfig(kind, { [key]: value }, null, dropPosition());
 		handleOpenChange(false);
 	};
 

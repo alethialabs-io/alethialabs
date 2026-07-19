@@ -349,11 +349,12 @@ interface CanvasStore {
 		}[],
 	) => void;
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
-	/** Add a node with an explicit config + placement (used by Ask AI proposals). */
+	/** Add a node with an explicit config + placement (used by Ask AI proposals + palette variants). */
 	addNodeWithConfig: (
 		kind: NodeKind,
 		config?: Record<string, unknown>,
 		cloudIdentityId?: string | null,
+		position?: { x: number; y: number },
 	) => void;
 	updateNodeConfig: (id: string, patch: Record<string, unknown>) => void;
 	setNodeIdentity: (
@@ -680,7 +681,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				});
 			},
 
-			addNodeWithConfig: (kind, config, cloudIdentityId) => {
+			addNodeWithConfig: (kind, config, cloudIdentityId, position) => {
 				const { nodes, identities } = get();
 				if (SINGLETON_KINDS.includes(kind)) {
 					const existing = nodes.find((n) => n.data.kind === kind);
@@ -714,7 +715,8 @@ export const useCanvasStore = create<CanvasStore>()(
 				const node: CanvasNode = {
 					id: newId(kind),
 					type: kind,
-					position: { x: 120 + count * 48, y: 180 + count * 36 },
+					// W5 click-to-place: drop at the given position (viewport centre) or the cascade fallback.
+					position: position ?? { x: 120 + count * 48, y: 180 + count * 36 },
 					data: buildNodeData(kind, merged, cloudIdentityId ?? null, ownProvider),
 				};
 				const next = [...nodes, node];

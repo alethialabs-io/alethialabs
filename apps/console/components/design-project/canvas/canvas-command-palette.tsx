@@ -17,6 +17,7 @@ import {
 	type CloudProviderMeta,
 } from "@/lib/cloud-providers";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useDropPosition } from "./use-drop-position";
 import {
 	addableKindsFor,
 	NODE_REGISTRY,
@@ -103,6 +104,7 @@ export function CanvasCommandPalette({
 	disableComponentAdd,
 }: CanvasCommandPaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
+	const dropPosition = useDropPosition();
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
@@ -126,7 +128,7 @@ export function CanvasCommandPalette({
 				key={kind}
 				value={`add-${kind}`}
 				keywords={keywordsFor(kind)}
-				onSelect={() => run(() => addNode(kind))}
+				onSelect={() => run(() => addNode(kind, dropPosition()))}
 			>
 				<Icon className="h-4 w-4" />
 				<span>Add {def.label}</span>
