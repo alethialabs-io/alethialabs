@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // C2 slug resolution. The `/{org}/{project}/{env}` route layers resolve each
-// slug → entity id here (tenant-scoped via withOwnerScope / membership checks),
+// slug → entity id here (tenant-scoped via withActorScope / membership checks),
 // then render the existing id-based views. `resolveOrgScope` also syncs the
 // session's active organization so the rest of the request is scoped to the URL org.
 
@@ -11,7 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { getOwnerScope } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { getServiceDb } from "@/lib/db";
 import {
 	member,
@@ -68,8 +68,11 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
 /** Resolves a project (project) slug → project id within the active scope (404 → throws). Projects
  * are unique per org, so the slug resolves directly (RLS scopes to the active org). */
 export async function resolveProjectId(projectSlug: string): Promise<string> {
-	const { userId } = await getOwnerScope();
-	return withOwnerScope(userId, async (tx) => {
+	// Actor scope: a project is org-shared, so RLS must carry the real active org —
+	// withOwnerScope(userId) was personal-scoped, so a teammate couldn't resolve a
+	// project another member owns (matches resolveActiveEnvironmentId's org scoping).
+	const actor = await currentActor();
+	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ id: projects.id })
 			.from(projects)
@@ -163,8 +166,8 @@ export async function getActiveOrgSlug(): Promise<string> {
 
 /** A project (project) slug by project id (within the active scope), or null. */
 export async function getProjectSlug(projectId: string): Promise<string | null> {
-	const { userId } = await getOwnerScope();
-	return withOwnerScope(userId, async (tx) => {
+	const actor = await currentActor();
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({ projectSlug: projects.slug })
 			.from(projects)
@@ -189,8 +192,8 @@ export interface SwitcherEnv {
 export async function getEnvironmentsForSlug(
 	projectSlug: string,
 ): Promise<SwitcherEnv[]> {
-	const { userId } = await getOwnerScope();
-	return withOwnerScope(userId, async (tx) => {
+	const actor = await currentActor();
+	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ id: projects.id })
 			.from(projects)

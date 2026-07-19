@@ -10,7 +10,7 @@
 import { asRecord } from "@/lib/records";
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	type AddonMode,
 	type ComponentStatus,
@@ -83,7 +83,7 @@ export async function getProjectAddons(
 	// on the caller's org (mirrors lib/queries/evidence.ts queryOrgEvidence and drift.ts).
 	// The service db bypasses RLS, so the explicit `projects.org_id = actor.orgId` predicate
 	// is the tenancy wall — a foreign project UUID yields no rows even though the org-blind
-	// PDP grant let authorize() through. Using actor.orgId (not withOwnerScope on
+	// PDP grant let authorize() through. Using actor.orgId (not withActorScope on
 	// actor.userId) keeps it correct for Teams orgs (project owned by another member).
 	const db = getServiceDb();
 	const rows = await db
@@ -197,7 +197,7 @@ export async function enableAddon(input: {
 	);
 	const mode: AddonMode = input.mode ?? "managed";
 
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		// Encrypt secret knobs before they touch the DB (stored as EncryptedSecret, never plaintext —
 		// W4), PRESERVING any secret the user left blank: the row is replaced wholesale, so without
 		// this a reconfigure of other knobs would wipe a set secret. Read the existing envelopes and
@@ -268,7 +268,7 @@ export async function disableAddon(input: {
 		input.projectId,
 		input.environmentId,
 	);
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		await tx
 			.delete(projectAddons)
 			.where(

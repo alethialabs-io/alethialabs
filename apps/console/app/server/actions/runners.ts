@@ -7,7 +7,7 @@ import { signedJob } from "@/lib/db/signed-job";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { deploymentMode } from "@/lib/billing/config";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
-import { getServiceDb, withOwnerScope, type Tx } from "@/lib/db";
+import { getServiceDb, withActorScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { generateRunnerToken } from "@/lib/runners/auth";
@@ -44,13 +44,12 @@ function toReleaseInfo(r: {
 	return { ...r, released_at: r.released_at.toISOString() };
 }
 
-/** The user's own runners (self/BYO), joined with their pinned release, default first. Managed
+/** The org's self/BYO runners, joined with their pinned release, default first. Managed
  *  (platform-fleet) runners are excluded by RLS — they are read separately via
  *  {@link getManagedRunnersWithReleases} on self-managed deployments. */
 export async function getRunnersWithReleases() {
 	const actor = await authorize("view", { type: "runner" });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select({ runner: runners, release: RELEASE_FIELDS })
 			.from(runners)
@@ -111,8 +110,7 @@ export async function getManagedRunnerUsage(): Promise<Record<string, number>> {
 /** The most recent runner release, or null. */
 export async function getLatestRunnerRelease(): Promise<ReleaseInfo | null> {
 	const actor = await authorize("view", { type: "runner" });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [r] = await tx
 			.select(RELEASE_FIELDS)
 			.from(runnerReleases)
@@ -127,8 +125,7 @@ export async function getRecentRunnerReleases(
 	limit = 10,
 ): Promise<ReleaseInfo[]> {
 	const actor = await authorize("view", { type: "runner" });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select(RELEASE_FIELDS)
 			.from(runnerReleases)
@@ -143,8 +140,7 @@ export async function getReleaseNotes(
 	version: string,
 ): Promise<ReleaseInfo | null> {
 	const actor = await authorize("view", { type: "runner" });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [r] = await tx
 			.select(RELEASE_FIELDS)
 			.from(runnerReleases)
@@ -157,8 +153,7 @@ export async function getReleaseNotes(
 /** Count of runners currently ONLINE and visible to the user. */
 export async function getOnlineRunnerCount(): Promise<number> {
 	const actor = await authorize("view", { type: "runner" });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({ value: count() })
 			.from(runners)
@@ -177,7 +172,7 @@ export async function registerRunner(name: string) {
 	const owner = actor.userId;
 	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
-	const runner = await withOwnerScope(owner, async (tx) => {
+	const runner = await withActorScope(actor, async (tx) => {
 		const [r] = await tx
 			.insert(runners)
 			.values({
@@ -216,8 +211,7 @@ export async function setDefaultRunner(runnerId: string | null) {
 /** Returns all runners visible to the current user, default first. */
 export async function getAvailableRunners() {
 	const actor = await authorize("view", { type: "runner" });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) =>
+	return withActorScope(actor, async (tx) =>
 		tx
 			.select({
 				id: runners.id,
@@ -253,7 +247,7 @@ export async function deployRunner(params: {
 
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withActorScope(actor, async (tx) => {
 		const [runner] = await tx
 			.insert(runners)
 			.values({
@@ -304,8 +298,11 @@ export async function deployRunner(params: {
 }
 
 /** Fetches a deployed runner, verifies ownership, and resolves cloud provider. */
-async function fetchDeployedRunner(owner: string, runnerId: string) {
-	return withOwnerScope(owner, async (tx) => {
+async function fetchDeployedRunner(
+	actor: { userId: string; orgId: string },
+	runnerId: string,
+) {
+	return withActorScope(actor, async (tx) => {
 		const [runner] = await tx
 			.select({
 				id: runners.id,
@@ -317,7 +314,7 @@ async function fetchDeployedRunner(owner: string, runnerId: string) {
 			.where(eq(runners.id, runnerId))
 			.limit(1);
 
-		// Ownership: enforced by the caller's authorize() + the withOwnerScope RLS
+		// Ownership: enforced by the caller's authorize() + the withActorScope RLS
 		// (a runner outside the actor's org is simply not returned above).
 		if (!runner) throw new Error("Runner not found");
 		if (!runner.cloud_identity_id)
@@ -409,13 +406,13 @@ export async function destroyRunner(
 		await assertRunnerInOrg(getServiceDb(), assignedRunnerId, actor.orgId);
 	const owner = actor.userId;
 	const { runner, deployConfig, identity } = await fetchDeployedRunner(
-		owner,
+		actor,
 		runnerId,
 	);
 
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
 
 		const configSnapshot = buildRunnerConfigSnapshot(
@@ -450,7 +447,7 @@ export async function updateRunner(runnerId: string) {
 	const actor = await authorize("edit", { type: "runner", id: runnerId });
 	const owner = actor.userId;
 	const { runner, deployConfig, identity } = await fetchDeployedRunner(
-		owner,
+		actor,
 		runnerId,
 	);
 
@@ -461,7 +458,7 @@ export async function updateRunner(runnerId: string) {
 
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const result = await withOwnerScope(owner, async (tx) => {
+	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
 
 		const [latestRelease] = await tx
@@ -504,15 +501,14 @@ export async function updateRunner(runnerId: string) {
 /** Deletes a runner record directly (no cloud resources to tear down). */
 export async function removeRunner(runnerId: string) {
 	const actor = await authorize("destroy", { type: "runner", id: runnerId });
-	const owner = actor.userId;
-	await withOwnerScope(owner, async (tx) => {
+	await withActorScope(actor, async (tx) => {
 		const [runner] = await tx
 			.select({ id: runners.id })
 			.from(runners)
 			.where(eq(runners.id, runnerId))
 			.limit(1);
 
-		// Ownership enforced by authorize() above + withOwnerScope RLS.
+		// Ownership enforced by authorize() above + withActorScope RLS.
 		if (!runner) throw new Error("Runner not found");
 
 		await tx.delete(runners).where(eq(runners.id, runnerId));

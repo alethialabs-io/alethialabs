@@ -5,11 +5,10 @@
 import { notFound } from "next/navigation";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { signedJob } from "@/lib/db/signed-job";
-import { requireOwner } from "@/lib/auth/owner";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { getServiceDb, type Tx, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	type EnvTransitionContext,
@@ -206,7 +205,7 @@ export interface CreateProjectInput {
 // ============================================================
 
 /** A withOwnerScope transaction handle (the arg drizzle passes the callback). */
-type ComponentTx = Parameters<Parameters<typeof withOwnerScope>[1]>[0];
+type ComponentTx = Parameters<Parameters<typeof withActorScope>[1]>[0];
 
 /** `project_id = … AND environment_id = …` — component rows are scoped to one environment, so
  * every component read/delete filters on both. */
@@ -456,7 +455,7 @@ export async function updateProjectDesign(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// environment_stage seeds the default env at create time; not a project column.
 		const { environment_stage, ...projectFields } = data.project;
 		void environment_stage;
@@ -485,7 +484,7 @@ export async function updateProjectDesign(
 export async function getProjectsList() {
 	const actor = await authorize("view", { type: "project" });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// M1: surface each project's default-environment name + status (the columns moved
 		// off `projects` into project_environments) so list consumers keep reading them.
 		const rows = await tx
@@ -517,8 +516,7 @@ export async function getProject(
 	environmentId?: string | null,
 ) {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select()
 			.from(projects)
@@ -682,7 +680,7 @@ export async function reconcileEnvironmentComponents(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		await clearComponents(tx, projectId, environmentId);
 		await writeComponents(tx, projectId, environmentId, data);
 		return { success: true };
@@ -1257,7 +1255,7 @@ function assertIacSourceQueueable(
  * (verified to belong to the project), else the project's default environment.
  */
 async function resolveTargetEnvironment(
-	tx: Parameters<Parameters<typeof withOwnerScope>[1]>[0],
+	tx: Parameters<Parameters<typeof withActorScope>[1]>[0],
 	projectId: string,
 	environmentId?: string | null,
 ): Promise<ProjectEnvironment> {
@@ -1718,8 +1716,7 @@ const LIVE_ENV_STATUSES = new Set(["QUEUED", "PROVISIONING", "ACTIVE", "DESTROYI
  */
 export async function deleteProject(projectId: string) {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
 		const envs = await tx
 			.select({ status: projectEnvironments.status })
@@ -1752,8 +1749,8 @@ export async function getProjectAsFormData(
 
 	let provider: CloudProviderSlug = "aws";
 	if (source.project.cloud_identity_id) {
-		const owner = await requireOwner();
-		const ci = await withOwnerScope(owner, async (tx) => {
+		const actor = await currentActor();
+		const ci = await withActorScope(actor, async (tx) => {
 			const [row] = await tx
 				.select({ provider: cloudIdentities.provider })
 				.from(cloudIdentities)
@@ -1925,7 +1922,7 @@ export async function duplicateProjectForProvider(
 	const { formData, provider: sourceProvider } =
 		await getProjectAsFormData(sourceProjectId);
 
-	const targetIdentity = await withOwnerScope(owner, async (tx) => {
+	const targetIdentity = await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({ provider: cloudIdentities.provider })
 			.from(cloudIdentities)
@@ -2000,7 +1997,7 @@ export async function getProjectDuplicateSummary(projectId: string): Promise<{
 export async function getProjectEnvironments(projectId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const environments = await tx
 			.select()
 			.from(projectEnvironments)
@@ -2024,7 +2021,7 @@ export async function addEnvironment(
 	if (!name) throw new Error("Environment name is required");
 	if (RESERVED_PROJECT_CHILD_SLUGS.includes(name))
 		throw new Error(`"${name}" is reserved and can't be used as an environment name`);
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
 			.from(projects)
@@ -2070,7 +2067,7 @@ export async function duplicateEnvironment(
 	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)
 		.then((r) => r.formData)
 		.catch(() => null);
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [base] = await tx
 			.select({
 				org_id: projectEnvironments.org_id,
@@ -2114,7 +2111,7 @@ export async function setAutoHeal(
 	enabled: boolean,
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, (tx) =>
+	return withActorScope(actor, (tx) =>
 		tx
 			.update(projectEnvironments)
 			.set({ auto_heal: enabled, updated_at: new Date() })
@@ -2205,8 +2202,7 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 /** Deletes a non-default environment (the default is the project's anchor). */
 export async function deleteEnvironment(projectId: string, environmentId: string) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
-	const owner = actor.userId;
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [env] = await tx
 			.select()
 			.from(projectEnvironments)
@@ -2234,7 +2230,7 @@ export async function getProjectGeneral(
 	projectId: string,
 ): Promise<{ id: string; project_name: string; slug: string | null }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({
 				id: projects.id,
@@ -2262,7 +2258,7 @@ export async function updateProjectName(
 	if (!project_name) throw new Error("A project name is required");
 	if (project_name.length > 100)
 		throw new Error("Project name must be 100 characters or fewer");
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.update(projects)
 			.set({ project_name, updated_at: new Date() })
@@ -2318,7 +2314,7 @@ function toProject(r: {
 /** All of the active org's projects (projects), newest first, each with its default environment. */
 export async function getProjects(): Promise<ProjectWithProvider[]> {
 	const actor = await authorize("view", { type: "project" });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select(projectSelect())
 			.from(projects)
@@ -2401,7 +2397,7 @@ export async function queryProjects(
 	query: ProjectListQuery = {},
 ): Promise<ProjectListResult> {
 	const actor = await authorize("view", { type: "project" });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select(projectSelect())
 			.from(projects)

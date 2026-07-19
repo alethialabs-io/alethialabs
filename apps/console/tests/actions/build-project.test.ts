@@ -5,13 +5,13 @@
 // BUILD with the env's frozen snapshot off an ACTIVE environment, and provisionProject
 // reroutes to build-then-deploy exactly when (a) the env is ACTIVE, (b) the snapshot
 // carries a repo-sourced service, and (c) no gated plan is being applied. Same harness
-// shape as projects.test.ts (thenable drizzle chain through withOwnerScope).
+// shape as projects.test.ts (thenable drizzle chain through withActorScope).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({
-	withOwnerScope: vi.fn(),
+	withActorScope: vi.fn(),
 	withScope: vi.fn(),
 	getServiceDb: vi.fn(),
 }));
@@ -24,7 +24,7 @@ import { buildProject, provisionProject } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -37,7 +37,7 @@ import { notifyScaler } from "@/lib/scaler";
 
 type Rows = unknown[];
 
-/** Table-aware thenable drizzle-ish tx wired through withOwnerScope (projects.test.ts shape). */
+/** Table-aware thenable drizzle-ish tx wired through withActorScope (projects.test.ts shape). */
 function setupDb(select: Map<unknown, Rows>, insert: Map<unknown, Rows>) {
 	const valuesSpy = vi.fn<(table: unknown, payload: unknown) => void>();
 	const executeSpy = vi.fn();
@@ -76,10 +76,10 @@ function setupDb(select: Map<unknown, Rows>, insert: Map<unknown, Rows>) {
 			return Promise.resolve([{ updated: true }]);
 		},
 	};
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
-	// Provisioning-queue paths scope by the ACTIVE ORG (withScope), not withOwnerScope.
+	// Provisioning-queue paths scope by the ACTIVE ORG (withScope), not withActorScope.
 	vi.mocked(withScope).mockImplementation(
 		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);

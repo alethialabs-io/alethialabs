@@ -4,16 +4,16 @@
 // Mocked-boundary tests for the project CRUD/provision actions. We stub ONLY the seams:
 // the PDP guard (authorize), the owner resolver (requireOwner), the usage gate, the scaler
 // notifier, the authz hierarchy mirror, and a table-aware thenable drizzle chain wired through
-// withOwnerScope. The pure helpers stay REAL — routing (slugify/pickFreeSlug + reserved slugs)
+// withActorScope. The pure helpers stay REAL — routing (slugify/pickFreeSlug + reserved slugs)
 // and the cloud-provider converter (convertProjectConfig) — so the slug-collision logic and the
 // provider-mapping warnings are genuinely exercised, not re-implemented here. Each test asserts
 // the persisted .values()/.set() payloads, derived return shapes, and the branch outcomes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), currentActor: vi.fn() }));
 vi.mock("@/lib/db", () => ({
-	withOwnerScope: vi.fn(),
+	withActorScope: vi.fn(),
 	withScope: vi.fn(),
 	getServiceDb: vi.fn(),
 }));
@@ -38,10 +38,10 @@ import {
 	provisionProject,
 } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -92,7 +92,7 @@ type Rows = unknown[];
 type RowsResolver = Rows | (() => Rows);
 
 /**
- * Builds a table-aware, thenable drizzle-ish tx and wires it through withOwnerScope.
+ * Builds a table-aware, thenable drizzle-ish tx and wires it through withActorScope.
  * Every builder returns the chain; awaiting a SELECT resolves to `cfg.select.get(table)`
  * and a returning INSERT to `cfg.insert.get(table)` (a function value is called fresh each
  * time, which lets a single table answer differently across sequential queries). Records the
@@ -176,7 +176,7 @@ function setupDb(cfg: {
 		},
 	};
 
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	// createProject scopes to the ACTIVE ORG via withScope({ownerId, orgId}); wire it the same way.
@@ -196,6 +196,7 @@ function valuesFor(spy: ReturnType<typeof vi.fn>, table: unknown): Record<string
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+	vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 	// Default: any client-supplied assigned runner belongs to the caller's org.
@@ -336,7 +337,7 @@ describe("createProject", () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("forbidden"));
 		setupDb({});
 		await expect(createProject(baseInput as never)).rejects.toThrow(/forbidden/);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 });
 
@@ -1457,7 +1458,7 @@ describe("addEnvironment", () => {
 		await expect(addEnvironment("p1", { name: "!!!", stage: "staging" })).rejects.toThrow(
 			/name is required/,
 		);
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
 	it("throws when the project is not found", async () => {

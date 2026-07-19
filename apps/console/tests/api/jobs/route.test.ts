@@ -17,7 +17,7 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
 }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
@@ -33,7 +33,7 @@ import { ForbiddenError } from "@/lib/authz/types";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
@@ -49,7 +49,7 @@ type Rows = unknown[];
 type RowsResolver = Rows | (() => Rows);
 
 /**
- * Builds a table-aware, thenable drizzle-ish tx and wires it through withOwnerScope —
+ * Builds a table-aware, thenable drizzle-ish tx and wires it through withActorScope —
  * the same harness the projects-actions tests use, so the REAL buildConfigSnapshot
  * runs against it. Records `.values()` / `.set()` payloads keyed by table.
  */
@@ -117,7 +117,7 @@ function setupTx(cfg: {
 		},
 	};
 
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	vi.mocked(withScope).mockImplementation(

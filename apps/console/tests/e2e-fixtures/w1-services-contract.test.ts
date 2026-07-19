@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
@@ -36,7 +36,7 @@ import { provisionProject } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	cloudIdentities,
 	jobs,
@@ -144,7 +144,7 @@ const validForm = {
 
 type Rows = unknown[];
 
-/** A table-aware, thenable drizzle-ish tx wired through withOwnerScope — the same seam the
+/** A table-aware, thenable drizzle-ish tx wired through withActorScope — the same seam the
  * project-action tests stub. Awaiting a SELECT resolves to `select.get(table)` (else []); an
  * INSERT ... returning to `insert.get(table)`. Records `.values()` payloads keyed by table. */
 function setupDb(select: Map<unknown, Rows>, insert: Map<unknown, Rows>) {
@@ -180,7 +180,7 @@ function setupDb(select: Map<unknown, Rows>, insert: Map<unknown, Rows>) {
 		delete: () => makeChain("select"),
 		execute: () => Promise.resolve([{ updated: true }]),
 	};
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
 	vi.mocked(withScope).mockImplementation(

@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the bring-your-own IaC (E3) actions: stub the authz guard, the env
-// resolver, the scaler, and a table-aware thenable drizzle chain (withOwnerScope + getServiceDb).
+// resolver, the scaler, and a table-aware thenable drizzle chain (withActorScope + getServiceDb).
 // Covers the flag gate, v1 attach uniqueness, the deployed-template-state rejection, the IAC_SCAN
 // queue shape, and finalizeIacScan's commit pinning (done pins, failed/not-ok clears).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), getServiceDb: vi.fn() }));
+vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveActiveEnvironmentId: vi.fn() }));
 
@@ -22,14 +22,14 @@ import {
 } from "@/app/server/actions/byo-iac";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 
 type Rows = unknown[];
 type RowsResolver = Rows | (() => Rows);
 
-/** Table-aware thenable drizzle-ish tx wired through withOwnerScope AND getServiceDb (the
+/** Table-aware thenable drizzle-ish tx wired through withActorScope AND getServiceDb (the
  * finalize path has no user session). A function resolver is called fresh per query, letting one
  * table answer differently across sequential selects. Records .values()/.set() per table. */
 function setupDb(cfg: {
@@ -81,7 +81,7 @@ function setupDb(cfg: {
 		},
 	};
 
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withActorScope).mockImplementation(
 		((_owner: string, cb: (tx: unknown) => unknown) => cb(db)) as never,
 	);
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
@@ -149,7 +149,7 @@ describe("attachIacSource", () => {
 		setupDb({});
 		await expect(attachIacSource(input)).rejects.toThrow(/not enabled/);
 		expect(authorize).not.toHaveBeenCalled();
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
 	it("rejects a second attach on the same environment (v1 single source)", async () => {

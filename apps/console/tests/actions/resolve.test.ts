@@ -1,15 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for the C2 slug-resolution actions: stub getOwnerScope + a thenable
-// drizzle chain (getServiceDb for org reads, withOwnerScope for tenant-scoped reads) and the
-// workspace setActiveOrganization side-effect, then assert the personal-scope branch, the
+// Mocked-boundary tests for the C2 slug-resolution actions: stub getOwnerScope + currentActor +
+// a thenable drizzle chain (getServiceDb for org reads, withActorScope for tenant-scoped reads)
+// and the workspace setActiveOrganization side-effect, then assert the personal-scope branch, the
 // membership/404 throws, the active-org sync, and the returned shapes.
+//
+// currentActor MUST be mocked directly: the org-shared slug resolvers (resolveProjectId /
+// getProjectSlug / getEnvironmentsForSlug) call it, and its real getActiveScope() hits the ee
+// resolver — `core.db.execute(<member lookup>)` — under the enterprise build (CI). With @/lib/db
+// mocked (no `execute`), the real path throws "core.db.execute is not a function"; the community
+// build accidentally hides it (getActiveScope is DB-free there). So stub currentActor at the seam.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth/owner", () => ({ getOwnerScope: vi.fn() }));
-vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withOwnerScope: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withActorScope: vi.fn() }));
 vi.mock("@/app/server/actions/workspace", () => ({
 	setActiveOrganization: vi.fn(),
 }));
@@ -22,7 +29,8 @@ import {
 	resolveProjectId,
 } from "@/app/server/actions/resolve";
 import { getOwnerScope } from "@/lib/auth/owner";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { currentActor } from "@/lib/authz/guard";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 
 /**
@@ -51,10 +59,10 @@ function mockServiceDb(...results: unknown[][]) {
 	vi.mocked(getServiceDb).mockReturnValue(makeChain(results) as never);
 }
 
-/** Stub withOwnerScope so it invokes its callback with a tx chain seeded with results. */
-function mockOwnerScope(...results: unknown[][]) {
-	vi.mocked(withOwnerScope).mockImplementation(
-		(async (_userId: string, cb: (tx: unknown) => unknown) =>
+/** Stub withActorScope so it invokes its callback with a tx chain seeded with results. */
+function mockActorScope(...results: unknown[][]) {
+	vi.mocked(withActorScope).mockImplementation(
+		(async (_actor: { userId: string; orgId: string }, cb: (tx: unknown) => unknown) =>
 			cb(makeChain(results))) as never,
 	);
 }
@@ -64,6 +72,12 @@ beforeEach(() => {
 	vi.mocked(getOwnerScope).mockResolvedValue({
 		userId: "user-1",
 		activeOrgId: "user-1",
+	} as never);
+	// The slug resolvers scope by currentActor(); stub it directly (its real getActiveScope hits
+	// the ee `core.db.execute` member lookup under the enterprise build — see the file header).
+	vi.mocked(currentActor).mockResolvedValue({
+		userId: "user-1",
+		orgId: "user-1",
 	} as never);
 });
 
@@ -114,13 +128,16 @@ describe("resolveOrgScope", () => {
 
 describe("resolveProjectId", () => {
 	it("returns the project id for a resolvable slug", async () => {
-		mockOwnerScope([{ id: "proj-1" }]);
+		mockActorScope([{ id: "proj-1" }]);
 		await expect(resolveProjectId("api")).resolves.toBe("proj-1");
-		expect(withOwnerScope).toHaveBeenCalledWith("user-1", expect.any(Function));
+		expect(withActorScope).toHaveBeenCalledWith(
+			expect.objectContaining({ userId: "user-1", orgId: "user-1" }),
+			expect.any(Function),
+		);
 	});
 
 	it("calls notFound() when the project slug doesn't resolve", async () => {
-		mockOwnerScope([]);
+		mockActorScope([]);
 		await expect(resolveProjectId("nope")).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 	});
 });
@@ -159,19 +176,19 @@ describe("getActiveOrgSlug", () => {
 
 describe("getProjectSlug", () => {
 	it("returns the slug for a known project id", async () => {
-		mockOwnerScope([{ projectSlug: "api" }]);
+		mockActorScope([{ projectSlug: "api" }]);
 		await expect(getProjectSlug("proj-1")).resolves.toBe("api");
 	});
 
 	it("returns null when the project id isn't in scope", async () => {
-		mockOwnerScope([]);
+		mockActorScope([]);
 		await expect(getProjectSlug("proj-x")).resolves.toBeNull();
 	});
 });
 
 describe("getEnvironmentsForSlug", () => {
 	it("returns [] when the project slug doesn't resolve", async () => {
-		mockOwnerScope([]); // project lookup empty
+		mockActorScope([]); // project lookup empty
 		await expect(getEnvironmentsForSlug("nope")).resolves.toEqual([]);
 	});
 
@@ -181,7 +198,7 @@ describe("getEnvironmentsForSlug", () => {
 			{ id: "env-2", name: "prod", stage: "production", is_default: false },
 		];
 		// First terminal await = project lookup; second = env list.
-		mockOwnerScope([{ id: "proj-1" }], envs);
+		mockActorScope([{ id: "proj-1" }], envs);
 		await expect(getEnvironmentsForSlug("api")).resolves.toEqual(envs);
 	});
 });

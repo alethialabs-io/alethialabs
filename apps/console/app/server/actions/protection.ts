@@ -7,7 +7,7 @@
 
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import { environmentProtectionRules } from "@/lib/db/schema";
 import type { ApproverSpec } from "@/types/jsonb.types";
 
@@ -26,7 +26,7 @@ export interface ProtectionRulesInput {
 /** The target env's protection rules, or null when none are set (fully permissive). */
 export async function getProtectionRules(projectId: string, envId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select()
 			.from(environmentProtectionRules)
@@ -51,7 +51,7 @@ export async function listProtectionRules(
 	projectId: string,
 ): Promise<Record<string, ProtectionSummary>> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select()
 			.from(environmentProtectionRules)
@@ -88,7 +88,7 @@ export async function setProtectionRules(
 		soak_minutes: input.soak_minutes,
 		cost_delta_threshold: input.cost_delta_threshold,
 	};
-	return withOwnerScope(owner, async (tx) => {
+	return withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.insert(environmentProtectionRules)
 			.values({

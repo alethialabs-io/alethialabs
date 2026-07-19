@@ -842,19 +842,57 @@ GRANT SELECT ON public.project_full TO alethia_app;
 
 -- ── org_id coarse-tenancy backfill + trigger. Community: org_id = user_id (the
 -- user's personal org); the ee/ Teams build assigns real organization ids. The
--- trigger keeps org_id populated without any insert call-site changes. ──
+-- trigger keeps org_id populated without any insert call-site changes.
+--
+-- Resolution order (most authoritative first): an explicit stamp on the row wins;
+-- otherwise the active tenancy from the withScope() session GUC (app.current_org);
+-- otherwise the creator's personal org (user_id). The GUC fallback means a row
+-- written under withActorScope()/withScope({orgId}) self-stamps the *real* active
+-- org even when the call-site forgot to pass org_id — the fix for the mis-stamped
+-- org data that made org-scoped reads (usage, clusters) return empty for Teams orgs.
+-- current_setting(...,true) returns NULL when the GUC is unset (service-role paths,
+-- which BYPASSRLS and never call withScope) → falls through to user_id = today's
+-- behavior, so community and service inserts are byte-identical. ──
 CREATE OR REPLACE FUNCTION public.set_org_id()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.org_id IS NULL THEN NEW.org_id = NEW.user_id; END IF;
+  IF NEW.org_id IS NULL THEN
+    NEW.org_id = coalesce(
+      nullif(current_setting('app.current_org', true), '')::uuid,
+      NEW.user_id);
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
+-- jobs carry a project_id, and a job ALWAYS belongs to the org that owns its project.
+-- Deriving org_id from projects.org_id makes it a *structural* invariant of the FK —
+-- drift-proof and independent of session state or a forgotten stamp (projects.org_id
+-- is the authoritative, correctly-stamped source; jobs.org_id is a denormalized cache
+-- that had drifted). The parent lookup is itself RLS-guarded on the app connection: a
+-- cross-org project_id the caller can't see returns no row, so it can never leak another
+-- org's id — it falls through to the session/personal fallback instead. project_id NULL
+-- (runner/scan jobs) also falls through to session → personal.
+CREATE OR REPLACE FUNCTION public.set_org_id_from_project()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.org_id IS NULL AND NEW.project_id IS NOT NULL THEN
+    SELECT org_id INTO NEW.org_id FROM public.projects WHERE id = NEW.project_id;
+  END IF;
+  IF NEW.org_id IS NULL THEN
+    NEW.org_id = coalesce(
+      nullif(current_setting('app.current_org', true), '')::uuid,
+      NEW.user_id);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Non-project-bearing tables use the generic session/personal resolver.
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners', 'support_cases', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'runners', 'support_cases', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -863,6 +901,21 @@ BEGIN
       'UPDATE public.%I SET org_id = user_id WHERE org_id IS NULL AND user_id IS NOT NULL', tbl);
   END LOOP;
 END $$;
+
+-- jobs: parent-derived org_id (the drift-proof path above).
+DROP TRIGGER IF EXISTS jobs_set_org_id ON public.jobs;
+CREATE TRIGGER jobs_set_org_id BEFORE INSERT ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.set_org_id_from_project();
+
+-- Backfill historical jobs whose org_id drifted from their project's org (the root of
+-- the org-usage 0s). Idempotent + self-healing: after the trigger fix, re-runs match
+-- nothing. projects.org_id is authoritative; only project-bearing jobs are correctable
+-- here (project-less jobs keep their existing org_id).
+UPDATE public.jobs j
+   SET org_id = p.org_id
+  FROM public.projects p
+ WHERE j.project_id = p.id
+   AND j.org_id IS DISTINCT FROM p.org_id;
 
 -- ── Tenant RLS backstop. Coarse org-isolation (org_id = app.current_org) OR'd with
 -- the per-owner check (user_id = app.current_owner); both set per-transaction by
