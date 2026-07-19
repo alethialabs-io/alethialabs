@@ -66,6 +66,9 @@ type apiClient interface {
 	GetProjectAddons(project, env string) (*api.ProjectAddons, error)
 	GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error)
 	GetProjectIacSource(project, env string) (*api.IacSource, error)
+	GetProjectPromotions(project, env string) ([]api.Promotion, error)
+	GetPromotion(project, promotionID string) (*api.PromotionDetail, error)
+	GetProjectStagedChanges(project, env string) (*api.StagedChanges, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.

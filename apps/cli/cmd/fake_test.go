@@ -57,6 +57,9 @@ type fakeClient struct {
 	addons       *api.ProjectAddons
 	byoCharts    *api.ProjectByoCharts
 	iacSource    *api.IacSource
+	promotions   []api.Promotion
+	promotion    *api.PromotionDetail
+	staged       *api.StagedChanges
 
 	// recorded classification calls
 	assignedKind    string
@@ -387,6 +390,18 @@ func (f *fakeClient) GetProjectByoCharts(project, env string) (*api.ProjectByoCh
 
 func (f *fakeClient) GetProjectIacSource(project, env string) (*api.IacSource, error) {
 	return f.iacSource, f.err
+}
+
+func (f *fakeClient) GetProjectPromotions(project, env string) ([]api.Promotion, error) {
+	return f.promotions, f.err
+}
+
+func (f *fakeClient) GetPromotion(project, promotionID string) (*api.PromotionDetail, error) {
+	return f.promotion, f.err
+}
+
+func (f *fakeClient) GetProjectStagedChanges(project, env string) (*api.StagedChanges, error) {
+	return f.staged, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)
