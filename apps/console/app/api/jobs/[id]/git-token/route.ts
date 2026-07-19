@@ -111,15 +111,39 @@ export async function POST(
 				: iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
 		const gitProvider: PublicGitProvider = providerFromRepo(repoUrl);
 
-		// Better Auth returns a fresh (auto-refreshed) token from the owner's
-		// linked `account`. No session needed — keyed by the job owner's userId.
+		// Better Auth returns a fresh (auto-refreshed) token from the owner's linked `account`,
+		// keyed by the job owner's userId — this is a server-to-server call with no user session.
+		//
+		// We MUST NOT pass a `headers` object here. Better Auth's resolveUserId does:
+		//   if (!session && (ctx.request || ctx.headers)) throw UNAUTHORIZED;
+		//   const resolvedUserId = session?.user?.id || userId;
+		// An empty `new Headers()` is still truthy, so passing it made resolveUserId throw
+		// UNAUTHORIZED (no session on empty headers) BEFORE it ever fell back to the body `userId`
+		// — the runner then got a null token and every PRIVATE apps-repo GitOps deploy failed with
+		// "no git access token". Omitting headers makes `(ctx.request || ctx.headers)` falsy, so the
+		// explicit `userId` path runs as intended.
 		try {
 			const res = await auth.api.getAccessToken({
 				body: { providerId: gitProvider, userId: job.user_id },
-				headers: new Headers(),
 			});
+			// A null token is the silent killer of a GitOps deploy (deploy.go's git-token gate) — so
+			// say WHY out loud instead of returning an unexplained null. The commonest cause is the
+			// job owner having no valid `${gitProvider}` account link (or one whose token can't be
+			// refreshed): the runner then can't clone a PRIVATE apps repo. (A PUBLIC repo no longer
+			// needs this — ArgoCD clones it anonymously.)
+			if (!res.accessToken) {
+				console.warn(
+					`git-token: no ${gitProvider} access token for job owner ${job.user_id} (repo ${repoUrl}) — the owner has no valid ${gitProvider} link or its token could not be refreshed`,
+				);
+			}
 			return NextResponse.json({ token: res.accessToken ?? null });
-		} catch {
+		} catch (err: unknown) {
+			// getAccessToken threw (provider not configured, no account row, refresh failed, …).
+			// Surface the reason — the swallowed catch here is what made this un-diagnosable.
+			console.error(
+				`git-token: getAccessToken failed for job owner ${job.user_id} provider ${gitProvider} (repo ${repoUrl}):`,
+				err instanceof Error ? err.message : err,
+			);
 			return NextResponse.json({ token: null });
 		}
 	} catch (err: unknown) {
