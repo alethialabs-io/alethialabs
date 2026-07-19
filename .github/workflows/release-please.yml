@@ -25,9 +25,24 @@ jobs:
       cli-version: ${{ steps.release.outputs['apps/cli--version'] }}
       cli-tag: ${{ steps.release.outputs['apps/cli--tag_name'] }}
     steps:
+      # Create the release PRs with a GitHub App token, NOT the default GITHUB_TOKEN. PRs opened by
+      # GITHUB_TOKEN do NOT trigger other workflows, so the protect-main required checks (CI +
+      # branch-flow-guard) never run on a release PR → it's permanently BLOCKED and unmergeable.
+      # An App-installation token makes the PR App-authored, so those checks run (and pass — the
+      # branch-flow-guard exempts release-please--* heads). Prereq: the "Alethia Labs CI" App must be
+      # installed on THIS repo (alethialabs-io/alethialabs) with contents+pull-requests+issues write.
+      - name: Mint release-please token (GitHub App)
+        id: rp_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          token: ${{ steps.rp_token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
