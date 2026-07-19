@@ -62,6 +62,7 @@ import {
 	type CloudProviderSlug,
 	type ConversionWarning,
 	convertProjectConfig,
+	DEFAULT_K8S_VERSION,
 	getProvider,
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
@@ -1838,7 +1839,9 @@ export async function getProjectAsFormData(
 				},
 		cluster: source.components.cluster
 			? {
-					cluster_version: source.components.cluster.cluster_version ?? "1.31",
+					cluster_version:
+						source.components.cluster.cluster_version ??
+						DEFAULT_K8S_VERSION[provider],
 					instance_types: source.components.cluster.instance_types ?? [],
 					node_min_size: source.components.cluster.node_min_size ?? 2,
 					node_max_size: source.components.cluster.node_max_size ?? 5,
@@ -1849,7 +1852,7 @@ export async function getProjectAsFormData(
 					provider_config: source.components.cluster.provider_config ?? {},
 				}
 			: {
-					cluster_version: "1.31",
+					cluster_version: DEFAULT_K8S_VERSION[provider],
 					instance_types: [],
 					node_min_size: 2,
 					node_max_size: 5,

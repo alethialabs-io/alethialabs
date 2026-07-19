@@ -162,6 +162,16 @@ func (c *Catalog) Region(canonicalID, provider string) (string, bool) {
 	return "", false
 }
 
+// DefaultK8sVersion returns the catalog's default Kubernetes minor for a provider's
+// managed cluster (e.g. "1.35"). Returns false when the provider carries no default —
+// callers then fall back to their own passthrough (e.g. Hetzner lets Talos pick).
+func (c *Catalog) DefaultK8sVersion(provider string) (string, bool) {
+	if cp, ok := c.Compute[provider]; ok && cp.DefaultK8sVersion != "" {
+		return cp.DefaultK8sVersion, true
+	}
+	return "", false
+}
+
 // NearestInstance picks the provider machine type closest to the requested
 // capability. It prefers the requested family (general/compute/memory/gpu) when that
 // family has any members, then minimizes capability distance (memory weighted with
