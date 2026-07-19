@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
-import { getServiceDb } from "@/lib/db";
 import { fleetPools } from "@/lib/db/schema";
 import { cloudProvider } from "@/lib/db/schema/enums";
+import { upsertFleetPool } from "@/lib/fleet/pools-db";
 import { wakeFleetScaler } from "@/lib/fleet/scaler";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
@@ -42,11 +41,17 @@ function toUpdatePatch(
 }
 
 /**
- * Updates the managed warm pool for `provider` (resize, pin a version / channel, pause).
- * Gated on `edit` of the global `fleet` resource (owner/admin only — operators/viewers are
- * denied); only reachable on self-managed deployments (the platform fleet is never editable
- * by hosted tenants). 404 when no pool is configured for the provider. Wakes the controller
- * to converge immediately.
+ * Creates or updates (upsert) the managed warm pool for `provider` — resize, pin a
+ * version / channel, pause, or configure a provider that has no pool yet. This is the ONLY
+ * way a pool is born once the DB is live: `FLEET_POOLS` only seeds an EMPTY table on boot,
+ * so without a create path a provider that was never seeded could never be enabled without a
+ * redeploy. On conflict with the live pool (partial unique `provider WHERE deleting = false`)
+ * only the provided fields change; otherwise a new pool is inserted with schema defaults for
+ * everything the caller omitted (`warm_min` 1, `max` 10, `enabled` true, …) — and, per that
+ * partial index, it is born alongside any still-draining pool for the same provider rather
+ * than colliding with it. Gated on `edit` of the global `fleet` resource (owner/admin only —
+ * operators/viewers are denied); only reachable on self-managed deployments (the platform
+ * fleet is never editable by hosted tenants). Wakes the controller to converge immediately.
  */
 export async function PUT(
 	req: Request,
@@ -74,17 +79,10 @@ export async function PUT(
 	}
 
 	try {
-		const [row] = await getServiceDb()
-			.update(fleetPools)
-			.set(toUpdatePatch(parsed.data))
-			.where(eq(fleetPools.provider, providerParsed.data))
-			.returning();
-		if (!row) {
-			return NextResponse.json(
-				{ error: `No fleet pool configured for ${providerParsed.data}.` },
-				{ status: 404 },
-			);
-		}
+		// Upsert: an existing live pool gets only the provided fields; a provider with none yet
+		// gets a fresh pool (provided fields + schema defaults). See upsertFleetPool for the
+		// partial-unique-index handling that lets a create coexist with a still-draining pool.
+		const row = await upsertFleetPool(providerParsed.data, toUpdatePatch(parsed.data));
 		// Converge the live fleet toward the new target on the next controller tick.
 		wakeFleetScaler();
 		return cliJson(cliFleetPoolResponse, { pool: toFleetPoolWire(row) });
