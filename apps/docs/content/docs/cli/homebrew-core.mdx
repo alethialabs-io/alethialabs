@@ -31,27 +31,25 @@ to core once the repo clears the notability bar.
 
 homebrew-core maintainers dislike formulae that download a **large monorepo tarball** and build a
 subdirectory. The clean vehicle is the dedicated public repo
-[`alethialabs-io/alethia`](https://github.com/alethialabs-io/alethia) — it already exists as a
-read-only mirror of the CLI with `vX.Y.Z` tags (see the "read-only mirror" phase in the repo
-strategy). Today it mirrors the `apps/cli/` subdirectory verbatim; the one remaining prep before a
-core submission is to **flatten it to a root-level Go module** (so the formula does a plain
-root-level `go build` on a small tarball). A focused star count on that repo also helps clear the
-notability bar.
+[`alethialabs-io/alethia-cli`](https://github.com/alethialabs-io/alethia-cli) — it's the CLI's
+release home, with real `vX.Y.Z` GitHub Releases (clean semver) and the source mirrored under
+`apps/cli/` + `packages/core/`. The one remaining prep before a core submission is to **flatten it to
+a root-level Go module** (so the formula does a plain root-level `go build` on a small tarball). A
+focused star count on that repo also helps clear the notability bar.
 
 ## The formula (build-from-source)
 
-homebrew-core builds Go formulae from source. A submit-ready `alethia.rb` (monorepo variant —
-drop the `cd` for a dedicated repo):
+homebrew-core builds Go formulae from source. A submit-ready `alethia.rb` (from the `alethia-cli`
+repo, which still nests `apps/cli/` — drop the `cd` once it's flattened to a root module):
 
 ```ruby
 class Alethia < Formula
   desc "CLI for the Alethia multi-cloud Kubernetes control plane"
   homepage "https://alethialabs.io"
-  url "https://github.com/alethialabs-io/alethialabs/archive/refs/tags/cli-v0.3.0.tar.gz"
-  version "0.3.0"
+  url "https://github.com/alethialabs-io/alethia-cli/archive/refs/tags/v0.3.0.tar.gz"
   sha256 "<sha256 of the tag tarball>"
   license "AGPL-3.0-only"
-  head "https://github.com/alethialabs-io/alethialabs.git", branch: "main"
+  head "https://github.com/alethialabs-io/alethia-cli.git", branch: "main"
 
   depends_on "go" => :build
 
@@ -69,8 +67,8 @@ end
 ```
 
 Notes:
-- The `version` string is set explicitly because the `cli-v*` tag prefix isn't semver — Homebrew
-  can't infer it from the URL.
+- Homebrew infers the `version` from the clean `v0.3.0` tag in the URL (the `alethia-cli` release
+  tags are plain semver), so no explicit `version` line is needed.
 - `std_go_args` installs the binary as `alethia` into `bin`; the `ldflags` bake the version, matching
   `apps/cli/.goreleaser.yml`.
 - The from-source build resolves `packages/core` through the `replace` directive in
@@ -78,7 +76,7 @@ Notes:
 
 ## Submission steps
 
-1. Confirm the notability bar is met and there's a stable `cli-v*` (or dedicated-repo `v*`) release.
+1. Confirm the notability bar is met and there's a stable `alethia-cli` `v*` release.
 2. `brew create --go --set-name alethia <tarball-url>` and paste in the formula above.
 3. Validate locally:
    ```bash
