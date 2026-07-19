@@ -1,0 +1,38 @@
+---
+title: Cloud Commands
+description: Inspect the networking and regions Alethia discovered in a connected cloud account.
+---
+
+# Cloud Commands
+
+The `cloud` group reads the **inventory** Alethia discovered in a connected cloud account — the
+networks (VPCs/VNets), subnets, and regions it swept.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `cloud inventory` calls
+`/cli/cloud-identities/<id>/inventory` with your [CLI token](/cli/authentication) and operates on
+the **active organization** — the cloud identity must belong to it.
+</Callout>
+
+## `alethia cloud inventory`
+
+Show the discovered networking + regions for a cloud identity.
+
+```bash
+alethia cloud inventory <cloud-identity-id>
+alethia cloud inventory <cloud-identity-id> -o json
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `<cloud-identity-id>` | Yes | The connected cloud identity's id (from `alethia connector` / the console). |
+
+Renders a **Networks** table (network id, name, region, CIDR, default), a **Subnets** table
+(subnet id, name, region, AZ, CIDR, public), and a **Regions** line. Add `-o json` for the full
+inventory object; `-o csv` emits the networks rows. Prints `No cloud inventory discovered yet.`
+when the account hasn't been swept. Backing call: `GET /cli/cloud-identities/<id>/inventory`.
+
+## See also
+
+- [Connector Commands](/cli/commands/connector) — connect a cloud account.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

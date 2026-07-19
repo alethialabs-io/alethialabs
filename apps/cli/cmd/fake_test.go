@@ -52,6 +52,18 @@ type fakeClient struct {
 	verifyResult *api.ConnectIdentityResponse
 	drift        *api.DriftPosture
 	cost         *api.EnvironmentCost
+	protection   []api.ProtectionRule
+	probes       []api.ProbeState
+	addons       *api.ProjectAddons
+	byoCharts    *api.ProjectByoCharts
+	iacSource    *api.IacSource
+	promotions   []api.Promotion
+	promotion    *api.PromotionDetail
+	staged       *api.StagedChanges
+	cloudInv     *api.CloudInventory
+	orgSettings  *api.OrgSettings
+	agents       []api.Agent
+	agent        *api.Agent
 
 	// recorded classification calls
 	assignedKind    string
@@ -362,6 +374,54 @@ func (f *fakeClient) GetProjectDrift(project, env string) (*api.DriftPosture, er
 
 func (f *fakeClient) GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error) {
 	return f.cost, f.err
+}
+
+func (f *fakeClient) GetProjectProtection(project string) ([]api.ProtectionRule, error) {
+	return f.protection, f.err
+}
+
+func (f *fakeClient) GetProjectProbes(project string) ([]api.ProbeState, error) {
+	return f.probes, f.err
+}
+
+func (f *fakeClient) GetProjectAddons(project, env string) (*api.ProjectAddons, error) {
+	return f.addons, f.err
+}
+
+func (f *fakeClient) GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error) {
+	return f.byoCharts, f.err
+}
+
+func (f *fakeClient) GetProjectIacSource(project, env string) (*api.IacSource, error) {
+	return f.iacSource, f.err
+}
+
+func (f *fakeClient) GetProjectPromotions(project, env string) ([]api.Promotion, error) {
+	return f.promotions, f.err
+}
+
+func (f *fakeClient) GetPromotion(project, promotionID string) (*api.PromotionDetail, error) {
+	return f.promotion, f.err
+}
+
+func (f *fakeClient) GetProjectStagedChanges(project, env string) (*api.StagedChanges, error) {
+	return f.staged, f.err
+}
+
+func (f *fakeClient) GetCloudInventory(cloudIdentityID string) (*api.CloudInventory, error) {
+	return f.cloudInv, f.err
+}
+
+func (f *fakeClient) GetOrgSettings() (*api.OrgSettings, error) {
+	return f.orgSettings, f.err
+}
+
+func (f *fakeClient) ListAgents() ([]api.Agent, error) {
+	return f.agents, f.err
+}
+
+func (f *fakeClient) GetAgent(id string) (*api.Agent, error) {
+	return f.agent, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)

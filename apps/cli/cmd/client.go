@@ -61,6 +61,18 @@ type apiClient interface {
 	RemoveComponent(project, kind, name string) error
 	GetProjectDrift(project, env string) (*api.DriftPosture, error)
 	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
+	GetProjectProtection(project string) ([]api.ProtectionRule, error)
+	GetProjectProbes(project string) ([]api.ProbeState, error)
+	GetProjectAddons(project, env string) (*api.ProjectAddons, error)
+	GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error)
+	GetProjectIacSource(project, env string) (*api.IacSource, error)
+	GetProjectPromotions(project, env string) ([]api.Promotion, error)
+	GetPromotion(project, promotionID string) (*api.PromotionDetail, error)
+	GetProjectStagedChanges(project, env string) (*api.StagedChanges, error)
+	GetCloudInventory(cloudIdentityID string) (*api.CloudInventory, error)
+	GetOrgSettings() (*api.OrgSettings, error)
+	ListAgents() ([]api.Agent, error)
+	GetAgent(id string) (*api.Agent, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.
