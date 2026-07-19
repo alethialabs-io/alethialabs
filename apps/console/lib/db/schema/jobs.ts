@@ -22,6 +22,7 @@ import type {
 } from "@/types/jsonb.types";
 import {
 	cloudProvider,
+	jobInitiator,
 	logStreamType,
 	provisionJobStatus,
 	provisionJobType,
@@ -51,6 +52,12 @@ export const jobs = pgTable(
 			onDelete: "set null",
 		}),
 		job_type: provisionJobType().notNull(),
+		// Who/what enqueued this job. `user` (a person's interactive action) is the ONLY value the
+		// free-tier daily job quota counts; `system` (reconcile/drift/probe/reaper/auto-heal/build-chain)
+		// and `operator` (break-glass) never count. Defaults to `system` so a missed stamp fails open
+		// (under-counts) rather than letting a background insert drain a free org's quota. Stamped
+		// explicitly at every user enqueue site; see lib/billing/job-quota.ts.
+		initiated_by: jobInitiator().notNull().default("system"),
 		// Intentionally polymorphic per job_type: a frozen project_full snapshot for
 		// project jobs, a runner-deploy config for runner-lifecycle jobs, or {} for
 		// connection-test/fetch jobs — so an open JSON record is the correct type.
@@ -112,6 +119,12 @@ export const jobs = pgTable(
 	(t) => [
 		index("idx_jobs_user").on(t.user_id),
 		index("idx_jobs_org").on(t.org_id),
+		// Serves the free-tier daily job quota's trailing-24h COUNT (lib/billing/job-quota.ts):
+		// WHERE org_id=? AND initiated_by='user' AND created_at >= now()-interval '24h'. Partial on
+		// the only value the quota counts, so the index stays small and the count is a single probe.
+		index("idx_jobs_user_initiated")
+			.on(t.org_id, t.created_at)
+			.where(sql`initiated_by = 'user'`),
 		// Claim index — the hot path for claim_next_job: highest priority first, then
 		// oldest. (Cross-org fairness is layered on in the RPC.)
 		index("idx_jobs_queue")

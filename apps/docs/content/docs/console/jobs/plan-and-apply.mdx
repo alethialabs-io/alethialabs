@@ -106,3 +106,16 @@ Destroy follows a simpler flow — no plan step required:
 <Callout type="warn">
 Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.). OpenTofu state is preserved so accidental destroys can be recovered by re-applying, but data in databases will be lost.
 </Callout>
+
+## Free plan limits
+
+Community (free) organizations have two limits on provisioning jobs. Paid plans are unbounded on both.
+
+- **Concurrency** — at most **2 jobs** run at once (enforced when a runner claims a job). Extra jobs wait in the queue rather than being rejected.
+- **Daily volume** — at most **25 provisioning jobs you start** in any rolling 24-hour window. Reaching it blocks the next plan/apply/destroy/scan with an upgrade prompt; the limit clears as older jobs age out of the window.
+
+Only jobs **you** start count toward the daily limit. Background jobs the platform runs on your behalf — drift detection, cluster probes, reconciliation, and ephemeral-environment cleanup — are never counted and never blocked, so day-2 automation keeps running regardless of the cap.
+
+<Callout>
+Upgrading to a paid plan removes both limits. See the [billing commands](/docs/cli/commands/billing) or the **Billing** page in the console.
+</Callout>

@@ -6,6 +6,7 @@ import { authorize } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { deploymentMode } from "@/lib/billing/config";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb, withOwnerScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
@@ -250,6 +251,8 @@ export async function deployRunner(params: {
 	const owner = actor.userId;
 	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
+	await assertJobQuotaAllowed(actor.orgId);
+
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [runner] = await tx
 			.insert(runners)
@@ -286,6 +289,7 @@ export async function deployRunner(params: {
 				user_id: owner,
 				cloud_identity_id: params.cloudIdentityId,
 				job_type: "DEPLOY_RUNNER",
+				initiated_by: "user",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: params.assignedRunnerId ?? null,
@@ -409,6 +413,8 @@ export async function destroyRunner(
 		runnerId,
 	);
 
+	await assertJobQuotaAllowed(actor.orgId);
+
 	const result = await withOwnerScope(owner, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
 
@@ -425,6 +431,7 @@ export async function destroyRunner(
 				user_id: owner,
 				cloud_identity_id: runner.cloud_identity_id!,
 				job_type: "DESTROY_RUNNER",
+				initiated_by: "user",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: assignedRunnerId ?? null,
@@ -451,6 +458,8 @@ export async function updateRunner(runnerId: string) {
 		throw new Error(
 			"Runner is missing deploy token — re-deploy required to enable updates",
 		);
+
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
@@ -479,6 +488,7 @@ export async function updateRunner(runnerId: string) {
 				user_id: owner,
 				cloud_identity_id: runner.cloud_identity_id!,
 				job_type: "UPDATE_RUNNER",
+				initiated_by: "user",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 			}))

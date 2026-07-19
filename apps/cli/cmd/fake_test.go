@@ -46,6 +46,12 @@ type fakeClient struct {
 	createdComp  *api.Component
 	classDims    []api.ClassificationDimension
 	classAssigns []api.ClassificationAssignment
+	configExport *api.ConfigurationExport
+	repos        []api.Repository
+	providerStat *api.ProviderStatus
+	verifyResult *api.ConnectIdentityResponse
+	drift        *api.DriftPosture
+	cost         *api.EnvironmentCost
 
 	// recorded classification calls
 	assignedKind    string
@@ -141,6 +147,22 @@ func (f *fakeClient) GetRunners() ([]api.Runner, error)          { return f.runn
 func (f *fakeClient) GetClusters() ([]api.ClusterSummary, error) { return f.clusters, f.err }
 func (f *fakeClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	return f.configs, f.err
+}
+
+func (f *fakeClient) ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error) {
+	return f.configExport, f.err
+}
+
+func (f *fakeClient) GetRepositories(provider string) ([]api.Repository, error) {
+	return f.repos, f.err
+}
+
+func (f *fakeClient) GetProviderStatus(provider string) (*api.ProviderStatus, error) {
+	return f.providerStat, f.err
+}
+
+func (f *fakeClient) VerifyProviderIdentity(provider, identityID string) (*api.ConnectIdentityResponse, error) {
+	return f.verifyResult, f.err
 }
 func (f *fakeClient) GetJobs(status string, limit, offset int) (*api.JobsPage, error) {
 	return f.jobsPage, f.err
@@ -332,6 +354,14 @@ func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]
 func (f *fakeClient) RemoveComponent(project, kind, name string) error {
 	f.rmCompProj, f.rmCompKind, f.rmCompName = project, kind, name
 	return f.err
+}
+
+func (f *fakeClient) GetProjectDrift(project, env string) (*api.DriftPosture, error) {
+	return f.drift, f.err
+}
+
+func (f *fakeClient) GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error) {
+	return f.cost, f.err
 }
 
 var _ apiClient = (*fakeClient)(nil)

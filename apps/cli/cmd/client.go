@@ -23,6 +23,10 @@ type apiClient interface {
 	GetRunners() ([]api.Runner, error)
 	GetClusters() ([]api.ClusterSummary, error)
 	GetConfigurations() ([]types.ConfigurationSummary, error)
+	ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error)
+	GetRepositories(provider string) ([]api.Repository, error)
+	GetProviderStatus(provider string) (*api.ProviderStatus, error)
+	VerifyProviderIdentity(provider, identityID string) (*api.ConnectIdentityResponse, error)
 	GetJobs(status string, limit, offset int) (*api.JobsPage, error)
 	GetJob(jobID string) (*api.ProvisionJob, error)
 	ListChannels() ([]api.Channel, error)
@@ -55,6 +59,8 @@ type apiClient interface {
 	ListComponents(project, kind, env string) ([]api.Component, error)
 	AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error)
 	RemoveComponent(project, kind, name string) error
+	GetProjectDrift(project, env string) (*api.DriftPosture, error)
+	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
 }
 
 // Ensure the concrete client satisfies the interface at compile time.

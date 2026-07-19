@@ -12,6 +12,7 @@ import {
 	projects,
 	runners,
 } from "@/lib/db/schema";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { likeTerm } from "@/lib/db/like";
 import { newTraceparent } from "@/lib/observability/trace";
@@ -307,6 +308,7 @@ export async function getProjectJobs(projectId: string) {
 export async function rerunJob(jobId: string) {
 	const actor = await authorize("create", { type: "job" });
 	await assertUsageAllowed(actor.orgId);
+	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [original] = await tx
@@ -328,6 +330,7 @@ export async function rerunJob(jobId: string) {
 				user_id: owner,
 				org_id: actor.orgId,
 				job_type: original.job_type,
+				initiated_by: "user",
 				config_snapshot: original.config_snapshot,
 				cloud_identity_id: original.cloud_identity_id,
 				project_id: original.project_id,
