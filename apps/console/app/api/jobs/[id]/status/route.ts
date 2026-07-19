@@ -14,7 +14,10 @@ import {
 	enqueueDeployAfterBuild,
 	finalizeBuild,
 } from "@/app/server/actions/builds";
-import { recordDriftPosture } from "@/app/server/actions/drift";
+import {
+	recordDriftPosture,
+	recordFabricDriftPosture,
+} from "@/app/server/actions/drift";
 import { recordEnvironmentCost } from "@/app/server/actions/cost";
 import {
 	advancePromotionOnPlan,
@@ -28,6 +31,7 @@ import {
 	recordSecurityPosture,
 } from "@/lib/addons/inspection-persistence";
 import { captureServer } from "@/lib/analytics/server";
+import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
@@ -142,6 +146,7 @@ export async function PUT(
 					org_id: jobs.org_id,
 					user_id: jobs.user_id,
 					cloud_identity_id: jobs.cloud_identity_id,
+					config_snapshot: jobs.config_snapshot,
 					execution_metadata: jobs.execution_metadata,
 					provider: jobs.provider,
 					traceparent: jobs.traceparent,
@@ -409,29 +414,56 @@ export async function PUT(
 			) {
 				const posture = job.execution_metadata?.drift_posture;
 				if (posture) {
+					const details = (posture.details ?? []).map((d) => ({
+						address: d.address,
+						type: d.type,
+						kind: d.kind,
+					}));
+					const scannedAt = posture.scanned_at ?? new Date().toISOString();
 					try {
 						await recordDriftPosture({
 							projectId: job.project_id,
 							environmentId: job.environment_id ?? null,
 							inSync: posture.in_sync,
 							drifted: posture.drifted,
-							details: (posture.details ?? []).map((d) => ({
-								address: d.address,
-								type: d.type,
-								kind: d.kind,
-							})),
-							scannedAt: posture.scanned_at ?? new Date().toISOString(),
+							details,
+							scannedAt,
 						});
 					} catch (err) {
 						jlog.error("persist drift posture error", { err });
 					}
-					// Day-2 reconcile: if the env drifted, consider auto-healing it (opt-in;
-					// prod stays approval-gated; guarded by backoff + circuit breaker).
-					if (!posture.in_sync && job.environment_id) {
-						await maybeAutoHeal(job.project_id, job.environment_id).catch(
-							(err) => jlog.error("auto-heal error", { err }),
+					// #841 split drift: INFRA drift is per-Fabric. When the snapshot carries a Fabric
+					// (every env post-#837), also record the posture keyed on the Fabric — the single
+					// per-Fabric infra truth (for `dedicated` it mirrors the env row; for a shared
+					// placement it's the one state co-Fabric envs share). Best-effort.
+					const fabricId = job.config_snapshot.fabric_id;
+					if (typeof fabricId === "string") {
+						await recordFabricDriftPosture({
+							projectId: job.project_id,
+							fabricId,
+							inSync: posture.in_sync,
+							drifted: posture.drifted,
+							details,
+							scannedAt,
+						}).catch((err) =>
+							jlog.error("persist fabric drift posture error", { err }),
 						);
 					}
+				}
+				// Day-2 reconcile self-heal (#841): fire on EITHER infra drift (tofu refresh-only
+				// !in_sync) OR delivery drift (the apps ArgoCD Application is OutOfSync). The healer is
+				// shared — a re-deploy restores tofu state AND re-syncs ArgoCD — so heal at most once.
+				// Opt-in per env; prod stays approval-gated; backoff + circuit breaker inside maybeAutoHeal.
+				const infraDrifted = !!posture && !posture.in_sync;
+				const gitops = gitopsStatusReportSchema.safeParse(
+					job.execution_metadata?.gitops_status,
+				);
+				const deliveryDrifted =
+					gitops.success && gitops.data.app_health?.sync === "OutOfSync";
+				if ((infraDrifted || deliveryDrifted) && job.environment_id) {
+					await maybeAutoHeal(job.project_id, job.environment_id).catch((err) =>
+						jlog.error("auto-heal error", { err }),
+					);
 				}
 				// Continuous day-2 refresh (Phase 4): the drift job also inspected the live
 				// cluster (ArgoCD add-on health + Trivy security), posted alongside the posture.
