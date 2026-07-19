@@ -134,7 +134,16 @@ type Report struct {
 	Providers []string   // normalized required_providers source addresses (e.g. "hashicorp/aws")
 	Modules   []string   // every module source discovered (registry, git, local)
 	Resources []Resource // the declared resource inventory, sorted by address
-	OK        bool       // true iff no error-severity findings
+	// Outputs are the ROOT module's declared `output` block names, sorted. Only
+	// root outputs are surfaced: `tofu output` returns exactly the root module's
+	// outputs (a child module's outputs are internal unless re-exported at root),
+	// and those names are precisely the keys of the deploy-time outputs map a W3
+	// binding resolves against (packages/core/manifests resolveBindings). A
+	// customer picks one of these as the endpoint / credential-secret output when
+	// binding a service to a BYO-IaC resource (#687). Declared, not evaluated —
+	// the value is unknown until a real apply. Never null (serialize as []).
+	Outputs []string
+	OK      bool // true iff no error-severity findings
 }
 
 // impliedUse records a resource/data/provider reference whose provider is
@@ -167,6 +176,8 @@ type scanner struct {
 	// scanned module DIRECTORY to the Terraform module path that reaches it.
 	resources  []Resource
 	modulePath map[string]string
+	// outputs is the set of ROOT-module `output` block names (see Report.Outputs).
+	outputs map[string]bool
 }
 
 // Scan walks dir (the customer root module and any LOCAL child modules it
@@ -208,6 +219,7 @@ func Scan(dir string, allowlist []string) (*Report, error) {
 		modules:   map[string]bool{},
 		declared:  map[string]bool{},
 		visited:   map[string]bool{},
+		outputs:   map[string]bool{},
 		// The scan root IS the root module — no module path prefix.
 		modulePath: map[string]string{root: ""},
 	}
@@ -232,6 +244,7 @@ func Scan(dir string, allowlist []string) (*Report, error) {
 		Providers: sortedKeys(s.providers),
 		Modules:   sortedKeys(s.modules),
 		Resources: s.resources,
+		Outputs:   sortedKeys(s.outputs),
 		OK:        true,
 	}
 	for _, f := range report.Findings {
@@ -363,6 +376,19 @@ func (s *scanner) recordResource(typeName, name, moduleDir string) {
 		Name:   name,
 		Module: s.modulePath[moduleDir],
 	})
+}
+
+// recordOutput adds one declared root-module `output` block name to the output
+// inventory. Only ROOT outputs are recorded (moduleDir maps to the empty module
+// path): `tofu output` returns exactly the root module's outputs, so a child
+// module's output — invisible to `tofu output` unless re-exported at root —
+// would be a name a W3 binding could never resolve against. Name is read from
+// the block label; the value expression is never evaluated (static scan).
+func (s *scanner) recordOutput(name, moduleDir string) {
+	if name == "" || s.modulePath[moduleDir] != "" {
+		return
+	}
+	s.outputs[name] = true
 }
 
 // joinModulePath extends a parent module path with one module call name.

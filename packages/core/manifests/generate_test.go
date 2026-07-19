@@ -417,6 +417,132 @@ func TestFromServices_UnresolvableBindingFailsClosed(t *testing.T) {
 	}
 }
 
+// byoDBTarget is a bound BYO-IaC database target with its customer-module output mapping (#687).
+func byoDBTarget() types.ServiceBindingTarget {
+	return types.ServiceBindingTarget{
+		Kind:    "database",
+		Name:    "primary",
+		Address: "module.db.aws_db_instance.main",
+		OutputKeys: &types.ServiceBindingOutputKeys{
+			Endpoint:         "db_endpoint",
+			CredentialSecret: "db_master_secret",
+		},
+	}
+}
+
+// TestFromServices_ResolvesBYOIaCBinding locks #687: a binding to a BYO-IaC target resolves its
+// endpoint from the CUSTOMER module's declared output (not the platform template key), and a
+// credential facet becomes a secretKeyRef when the module exported a master-secret output the ESO
+// store can read — mirroring the first-class contract but keyed off the target's OutputKeys.
+func TestFromServices_ResolvesBYOIaCBinding(t *testing.T) {
+	apps, skipped := FromServices([]types.ProjectServiceConfig{{
+		Name:   "api",
+		Type:   "deployment",
+		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+		Bindings: []types.ServiceBinding{{
+			Target: byoDBTarget(),
+			Inject: []types.ServiceBindingInjection{
+				{Env: "DATABASE_HOST", From: "endpoint"},
+				{Env: "DATABASE_PORT", From: "port"},
+				{Env: "DATABASE_USER", From: "username"},
+			},
+		}},
+	}}, Options{Provider: "aws", Outputs: map[string]string{
+		// Customer-named outputs — NOT rds_cluster_endpoint / rds_master_credentials_secret_name.
+		"db_endpoint":      "prod-db.internal:5432",
+		"db_master_secret": "arn:aws:secretsmanager:...:acme/db",
+	}})
+	if len(skipped) != 0 {
+		t.Fatalf("nothing should skip, got %v", skipped)
+	}
+	a := apps[0]
+	wantEnv := []types.ServiceEnvVar{
+		{Name: "DATABASE_HOST", Value: "prod-db.internal:5432"}, // from the CUSTOMER output
+		{Name: "DATABASE_PORT", Value: "5432"},                  // kind default (no port output)
+	}
+	if len(a.Env) != len(wantEnv) {
+		t.Fatalf("env = %+v, want %+v", a.Env, wantEnv)
+	}
+	for i, e := range wantEnv {
+		if a.Env[i] != e {
+			t.Errorf("env[%d] = %+v, want %+v", i, a.Env[i], e)
+		}
+	}
+	// The credential facet is satisfiable (module exported db_master_secret, aws has an ESO store) →
+	// secretKeyRef into the SHARED BindingSecretName.
+	wantSecret := AppSecretEnv{
+		Env:        "DATABASE_USER",
+		SecretName: BindingSecretName("api", byoDBTarget()),
+		SecretKey:  "username",
+	}
+	if len(a.SecretEnv) != 1 || a.SecretEnv[0] != wantSecret {
+		t.Fatalf("secretEnv = %+v, want [%+v]", a.SecretEnv, wantSecret)
+	}
+}
+
+// TestFromServices_BYOIaCEndpointUnsatisfiable locks the #687 fail-closed rule for a BYO-IaC target
+// whose declared endpoint output is absent from the deploy outputs: the endpoint env is REPORTED and
+// OMITTED (never injected empty), exactly like the first-class unresolvable case.
+func TestFromServices_BYOIaCEndpointUnsatisfiable(t *testing.T) {
+	tgt := byoDBTarget()
+	_, skipped := FromServices([]types.ProjectServiceConfig{{
+		Name:   "api",
+		Type:   "deployment",
+		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+		Bindings: []types.ServiceBinding{{
+			Target: tgt,
+			Inject: []types.ServiceBindingInjection{{Env: "DATABASE_HOST", From: "endpoint"}},
+		}},
+	}}, Options{Provider: "aws", Outputs: map[string]string{}}) // db_endpoint not emitted
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 unresolved report, got %v", skipped)
+	}
+	for _, want := range []string{"endpoint", "DATABASE_HOST", "database/primary"} {
+		if !strings.Contains(skipped[0], want) {
+			t.Errorf("report %q missing %q", skipped[0], want)
+		}
+	}
+}
+
+// TestFromServices_BYOIaCCredentialUnsatisfiable locks the #687 fail-closed credential rule: when a
+// BYO-IaC module exported NO master-credentials secret output, a credential facet must NOT emit a
+// secretKeyRef (that would point the workload at a Secret the ExternalSecret lane will never
+// materialize) — it is reported and omitted instead.
+func TestFromServices_BYOIaCCredentialUnsatisfiable(t *testing.T) {
+	tgt := types.ServiceBindingTarget{
+		Kind:    "database",
+		Name:    "primary",
+		Address: "module.db.aws_db_instance.main",
+		// Endpoint declared, but NO CredentialSecret output — the module keeps no cloud secret.
+		OutputKeys: &types.ServiceBindingOutputKeys{Endpoint: "db_endpoint"},
+	}
+	apps, skipped := FromServices([]types.ProjectServiceConfig{{
+		Name:   "api",
+		Type:   "deployment",
+		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+		Bindings: []types.ServiceBinding{{
+			Target: tgt,
+			Inject: []types.ServiceBindingInjection{
+				{Env: "DATABASE_HOST", From: "endpoint"},
+				{Env: "DATABASE_PASSWORD", From: "password"},
+			},
+		}},
+	}}, Options{Provider: "aws", Outputs: map[string]string{"db_endpoint": "prod-db.internal"}})
+	// Endpoint resolves; the credential is reported unsatisfiable and emits NO secretKeyRef.
+	if len(apps[0].SecretEnv) != 0 {
+		t.Errorf("no secretKeyRef must be emitted for an unsatisfiable BYO-IaC credential, got %+v", apps[0].SecretEnv)
+	}
+	foundCred := false
+	for _, s := range skipped {
+		if strings.Contains(s, "credential") && strings.Contains(s, "DATABASE_PASSWORD") {
+			foundCred = true
+		}
+	}
+	if !foundCred {
+		t.Errorf("expected a fail-closed credential report naming DATABASE_PASSWORD, got %v", skipped)
+	}
+}
+
 // TestRenderApp_SecretEnv renders a workload whose only env is a binding credential — the env block
 // must still emit with a valueFrom.secretKeyRef (not be skipped for want of plain env).
 func TestRenderApp_SecretEnv(t *testing.T) {

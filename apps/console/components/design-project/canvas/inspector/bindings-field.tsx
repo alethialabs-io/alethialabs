@@ -9,13 +9,15 @@ import { Input } from "@repo/ui/input";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { configName } from "../graph/node-config";
-import type { NodeKind } from "../graph/types";
+import { type NodeKind, nodeOfKind } from "../graph/types";
 
 /**
  * A service→backing-infra binding. A service declares which resources it needs and which environment
@@ -31,8 +33,25 @@ export type BindingFrom =
 	| "username"
 	| "password"
 	| "connection_string";
+/**
+ * A BYO-IaC target's facet→output mapping: which of the customer module's tofu outputs carries each
+ * facet's value. Only set when the target is a BYO-IaC resource (`target.address`). Mirrors
+ * `ServiceBindingOutputKeys` in jsonb.types.ts / the Go `ServiceBindingTarget`.
+ */
+export interface ServiceBindingOutputKeys {
+	endpoint?: string;
+	port?: string;
+	credential_secret?: string;
+}
 export interface ServiceBinding {
-	target: { kind: BindingTargetKind; name: string };
+	target: {
+		kind: BindingTargetKind;
+		name: string;
+		/** Terraform address — set only for a BYO-IaC target; "" / absent for a first-class one. */
+		address?: string;
+		/** The customer module's output names per facet — only for a BYO-IaC target. */
+		output_keys?: ServiceBindingOutputKeys;
+	};
 	inject: { env: string; from: BindingFrom }[];
 }
 
@@ -55,6 +74,55 @@ const FROM_FACETS: { value: BindingFrom; label: string; secret: boolean }[] = [
 const isSecretFacet = (from: BindingFrom): boolean =>
 	FROM_FACETS.find((f) => f.value === from)?.secret ?? false;
 
+/** Radix Select forbids an empty-string value, so the "not mapped" option carries this sentinel. */
+const OUTPUT_NONE = "__none__";
+
+/**
+ * One facet→output row for a BYO-IaC binding: a Select over the module's declared outputs, plus a
+ * "not mapped" choice that clears the mapping (⇒ the facet is unsatisfiable at deploy, mirroring the
+ * runner's fail-closed report). Value `undefined` means unmapped.
+ */
+function FacetOutputRow({
+	label,
+	hint,
+	noneLabel,
+	value,
+	outputs,
+	onChange,
+}: {
+	label: string;
+	hint?: string;
+	noneLabel: string;
+	value: string | undefined;
+	outputs: string[];
+	onChange: (next: string | undefined) => void;
+}) {
+	return (
+		<div className="space-y-1">
+			<span className="vx-eyebrow text-[9px]">{label}</span>
+			<Select
+				value={value || OUTPUT_NONE}
+				onValueChange={(v) => onChange(v === OUTPUT_NONE ? undefined : v)}
+			>
+				<SelectTrigger className="h-8 font-mono text-xs">
+					<SelectValue />
+				</SelectTrigger>
+				<SelectContent>
+					<SelectItem value={OUTPUT_NONE}>{noneLabel}</SelectItem>
+					{outputs.map((o) => (
+						<SelectItem key={o} value={o} className="font-mono">
+							{o}
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+			{hint ? (
+				<p className="text-[10px] leading-tight text-muted-foreground">{hint}</p>
+			) : null}
+		</div>
+	);
+}
+
 /**
  * The Bindings editor — a service's edges to the infrastructure it depends on. Each row picks a
  * backing resource (by kind + a real node on the canvas) and lists the env vars its connection
@@ -64,19 +132,48 @@ const isSecretFacet = (from: BindingFrom): boolean =>
 export function BindingsField({
 	value,
 	onChange,
+	enableIacTargets = false,
 }: {
 	value: ServiceBinding[];
 	onChange: (next: ServiceBinding[]) => void;
+	/**
+	 * Surface BYO-IaC resources (external module cards) as bind targets and show the facet→output
+	 * picker. Only the SERVICE inspector opts in — the chart-workload lane does not resolve
+	 * `output_keys`, so it leaves this off and behaves exactly as before (#823).
+	 */
+	enableIacTargets?: boolean;
 }) {
 	const nodes = useCanvasStore((s) => s.nodes);
+	const iacOutputs = useCanvasStore((s) => s.iacOutputs);
 	const bindings = value ?? [];
 
-	/** Canvas resources of a given kind, as target-name options. */
+	/** Canvas resources of a given kind, as first-class target-name options. */
 	const namesForKind = (kind: BindingTargetKind): string[] =>
 		nodes
 			.filter((n) => n.data.kind === kind)
 			.map((n) => configName(n.data))
 			.filter((name): name is string => !!name);
+
+	/**
+	 * BYO-IaC resources of a given kind: members of the customer module's external cards whose
+	 * `mappedKind` matches. Each is a bind target identified by its Terraform address (the unique
+	 * join key). Empty unless the caller opted in — mirrors the backend's db/cache/queue kind gate.
+	 */
+	const iacTargetsForKind = (
+		kind: BindingTargetKind,
+	): { name: string; address: string }[] => {
+		if (!enableIacTargets) return [];
+		const out: { name: string; address: string }[] = [];
+		for (const n of nodes) {
+			const ext = nodeOfKind(n, "external");
+			if (ext && ext.data.config.mappedKind === kind) {
+				for (const m of ext.data.config.members) {
+					out.push({ name: m.name, address: m.address });
+				}
+			}
+		}
+		return out;
+	};
 
 	const patchBinding = (index: number, next: ServiceBinding) =>
 		onChange(bindings.map((b, i) => (i === index ? next : b)));
@@ -92,6 +189,36 @@ export function BindingsField({
 		<div className="space-y-2">
 			{bindings.map((binding, bi) => {
 				const names = namesForKind(binding.target.kind);
+				const iacTargets = iacTargetsForKind(binding.target.kind);
+				const hasResourceOptions = names.length > 0 || iacTargets.length > 0;
+				// A BYO-IaC target is keyed by its (unique) address; a first-class one by name.
+				const resourceValue = binding.target.address || binding.target.name || "";
+				// Which facets this binding injects — drives which output pickers show for a BYO target.
+				const injectsEndpoint = binding.inject.some((i) => i.from === "endpoint");
+				const injectsPort = binding.inject.some((i) => i.from === "port");
+				const injectsCredential = binding.inject.some((i) => isSecretFacet(i.from));
+				const pickResource = (v: string) => {
+					const iac = iacTargets.find((t) => t.address === v);
+					patchBinding(
+						bi,
+						iac
+							? // BYO-IaC target: carry its address + reset the facet→output mapping.
+								{ ...binding, target: { kind: binding.target.kind, name: iac.name, address: iac.address, output_keys: {} } }
+							: // First-class component: clear any BYO fields.
+								{ ...binding, target: { kind: binding.target.kind, name: v } },
+					);
+				};
+				const patchOutputKey = (
+					facet: keyof ServiceBindingOutputKeys,
+					next: string | undefined,
+				) =>
+					patchBinding(bi, {
+						...binding,
+						target: {
+							...binding.target,
+							output_keys: { ...binding.target.output_keys, [facet]: next },
+						},
+					});
 				return (
 					// Bindings are positional — the array index is their identity.
 					// eslint-disable-next-line react/no-array-index-key
@@ -141,22 +268,37 @@ export function BindingsField({
 							</div>
 							<div className="space-y-1">
 								<span className="vx-eyebrow text-[9px]">Resource</span>
-								{names.length > 0 ? (
-									<Select
-										value={binding.target.name || ""}
-										onValueChange={(v) =>
-											patchBinding(bi, { ...binding, target: { ...binding.target, name: v } })
-										}
-									>
+								{hasResourceOptions ? (
+									<Select value={resourceValue} onValueChange={pickResource}>
 										<SelectTrigger className="h-8 text-xs">
 											<SelectValue placeholder="Choose one" />
 										</SelectTrigger>
 										<SelectContent>
-											{names.map((name) => (
-												<SelectItem key={name} value={name}>
-													{name}
-												</SelectItem>
-											))}
+											{names.length > 0 ? (
+												<SelectGroup>
+													{iacTargets.length > 0 ? (
+														<SelectLabel>In this design</SelectLabel>
+													) : null}
+													{names.map((name) => (
+														<SelectItem key={name} value={name}>
+															{name}
+														</SelectItem>
+													))}
+												</SelectGroup>
+											) : null}
+											{iacTargets.length > 0 ? (
+												<SelectGroup>
+													<SelectLabel>BYO-IaC module</SelectLabel>
+													{iacTargets.map((t) => (
+														<SelectItem key={t.address} value={t.address}>
+															<span className="font-mono">{t.name}</span>
+															<span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
+																{t.address}
+															</span>
+														</SelectItem>
+													))}
+												</SelectGroup>
+											) : null}
 										</SelectContent>
 									</Select>
 								) : (
@@ -254,6 +396,55 @@ export function BindingsField({
 								Inject a value
 							</button>
 						</div>
+
+						{/* BYO-IaC facet→output mapping — only for a BYO-IaC target (has an address), and only
+						    where the context resolves output_keys (services, not chart workloads — gated by
+						    enableIacTargets). The customer module's outputs follow their own naming, so each
+						    injected facet must be mapped to the output that carries it (#823); unmapped is
+						    unsatisfiable. */}
+						{enableIacTargets && binding.target.address ? (
+							<div className="space-y-2 border-t border-border pt-2.5">
+								<span className="vx-eyebrow text-[9px]">Map to module outputs</span>
+								{iacOutputs.length === 0 ? (
+									<p className="text-[11px] leading-relaxed text-muted-foreground">
+										This module exports no{" "}
+										<span className="font-mono">output</span> blocks to bind to. Add them and
+										re-scan the IaC source.
+									</p>
+								) : (
+									<div className="space-y-2">
+										{injectsEndpoint ? (
+											<FacetOutputRow
+												label="endpoint"
+												noneLabel="unmapped · unsatisfiable"
+												value={binding.target.output_keys?.endpoint}
+												outputs={iacOutputs}
+												onChange={(v) => patchOutputKey("endpoint", v)}
+											/>
+										) : null}
+										{injectsPort ? (
+											<FacetOutputRow
+												label="port"
+												noneLabel="use kind default"
+												value={binding.target.output_keys?.port}
+												outputs={iacOutputs}
+												onChange={(v) => patchOutputKey("port", v)}
+											/>
+										) : null}
+										{injectsCredential ? (
+											<FacetOutputRow
+												label="credential secret"
+												hint="The cloud secret-store reference (name / ARN), not the value — ESO reads it keylessly."
+												noneLabel="unmapped · unsatisfiable"
+												value={binding.target.output_keys?.credential_secret}
+												outputs={iacOutputs}
+												onChange={(v) => patchOutputKey("credential_secret", v)}
+											/>
+										) : null}
+									</div>
+								)}
+							</div>
+						) : null}
 					</div>
 				);
 			})}

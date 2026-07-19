@@ -334,9 +334,40 @@ type ServiceBinding struct {
 }
 
 // ServiceBindingTarget references the backing resource by kind + name.
+//
+// A FIRST-CLASS target (an Alethia-provisioned database/cache/queue) has Address == "" and
+// nil OutputKeys: its facets resolve from the platform template's known output keys
+// (manifests.endpointOutputKey). A BYO-IaC target — a resource in a customer-authored tofu
+// module — sets Address (its Terraform address, the universal join key) and OutputKeys,
+// because the module's outputs follow the CUSTOMER's naming, which no platform key map can
+// know (#687). Address != "" is the discriminator.
 type ServiceBindingTarget struct {
 	Kind ServiceBindingKind `json:"kind"`
 	Name string             `json:"name"`
+	// Address is the bound resource's Terraform address (e.g.
+	// "module.db.aws_db_instance.main"). Set only for a BYO-IaC target; "" for first-class.
+	Address string `json:"address,omitempty"`
+	// OutputKeys maps a facet to the customer module's tofu OUTPUT NAME that carries it
+	// (chosen at bind time from IacScanReport.outputs). Set only for a BYO-IaC target; nil for
+	// first-class. An absent/empty key for a facet means "no declared output" — the facet is
+	// resolved fail-closed (reported unsatisfiable, never guessed). See manifests.resolveBindings.
+	OutputKeys *ServiceBindingOutputKeys `json:"output_keys,omitempty"`
+}
+
+// ServiceBindingOutputKeys names the customer module's tofu outputs a BYO-IaC binding
+// resolves its facets against. Every field optional — an absent key makes that facet
+// unsatisfiable (fail-closed), never guessed.
+type ServiceBindingOutputKeys struct {
+	// Endpoint is the output holding the resource's connection endpoint/host.
+	Endpoint string `json:"endpoint,omitempty"`
+	// Port is the output holding the resource's port; when empty the kind's conventional
+	// defaultPort is used (matching the first-class path).
+	Port string `json:"port,omitempty"`
+	// CredentialSecret is the output holding the name/ARN of the cloud secret-store secret
+	// that carries the resource's master credentials — the ExternalSecret RemoteKey. Empty
+	// means no keyless credential path (the module exported no such secret): credential
+	// facets are then unsatisfiable, and no secretKeyRef is emitted.
+	CredentialSecret string `json:"credential_secret,omitempty"`
 }
 
 // ServiceBindingInjection maps one workload env var to one facet of the bound resource.

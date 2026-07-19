@@ -178,10 +178,34 @@ export interface ServiceBindingInjection {
 	from: ServiceBindingFacet;
 }
 
+/** The customer module's tofu OUTPUT names a BYO-IaC binding resolves its facets against
+ * (chosen at bind time from IacScanReport.outputs). Only present on a BYO-IaC target. An
+ * absent key makes that facet unsatisfiable (fail-closed) — never guessed. Wire keys mirror
+ * the Go `ServiceBindingOutputKeys` json tags. */
+export interface ServiceBindingOutputKeys {
+	/** Output holding the connection endpoint/host. */
+	endpoint?: string;
+	/** Output holding the port; empty → the kind's conventional default. */
+	port?: string;
+	/** Output holding the master-credentials secret name/ARN (the ExternalSecret RemoteKey);
+	 * empty → no keyless credential path, credential facets are unsatisfiable. */
+	credential_secret?: string;
+}
+
 /** A service's edge to a backing resource plus the env it injects. `target` references the
- * resource by {kind, name}; the runner resolves the connection info at deploy time. */
+ * resource by {kind, name}; the runner resolves the connection info at deploy time. A BYO-IaC
+ * target additionally carries `address` (its Terraform address) + `output_keys` mapping each
+ * facet to the customer module's real output, because a customer module's outputs follow the
+ * customer's naming, which no platform key map can know (#687). */
 export interface ServiceBinding {
-	target: { kind: ServiceBindingKind; name: string };
+	target: {
+		kind: ServiceBindingKind;
+		name: string;
+		/** Terraform address of a BYO-IaC target; absent for a first-class component. */
+		address?: string;
+		/** Facet→output-name map for a BYO-IaC target; absent for a first-class component. */
+		output_keys?: ServiceBindingOutputKeys;
+	};
 	inject: ServiceBindingInjection[];
 }
 
@@ -487,6 +511,15 @@ export interface IacScanReport {
 	 * than fabricate an empty architecture. Absent ≠ "the module has no resources".
 	 */
 	resources?: IacScanResource[];
+	/**
+	 * The ROOT module's declared `output` block names. When a service binds to a BYO-IaC
+	 * resource, these are the choices the bind sheet offers for the endpoint / credential-secret
+	 * output the binding maps to (#687) — they are exactly the keys of the deploy-time tofu
+	 * outputs a W3 binding resolves against. OPTIONAL for the same reason as `resources`: a row
+	 * scanned by a runner older than the output-capture change has none, and the picker must
+	 * degrade (no candidates) rather than treat absence as "the module exports nothing".
+	 */
+	outputs?: string[];
 	/** The commit the scan actually checked out — finalizeIacScan pins it onto the row's
 	 *  commit_sha so deploys apply exactly what was scanned (TOCTOU protection). */
 	commit_sha?: string;

@@ -46,6 +46,12 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 			}
 		case "module":
 			s.walkModuleBlock(blk, rel, moduleDir)
+		case "output":
+			// Root-module output NAMES feed the BYO-IaC binding picker (#687);
+			// recordOutput ignores child-module outputs. The value is never read.
+			if len(blk.Labels) > 0 {
+				s.recordOutput(blk.Labels[0], moduleDir)
+			}
 		case "provider":
 			if len(blk.Labels) > 0 {
 				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
