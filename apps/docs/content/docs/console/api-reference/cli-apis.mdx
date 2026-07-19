@@ -18,9 +18,6 @@ Get a configuration by name.
 ### `GET /api/cli/configurations/by-project-name/{project_name}`
 Look up a project by name.
 
-### `POST /api/cli/configurations`
-Create a new project configuration from CLI input.
-
 ## Jobs
 
 ### `POST /api/jobs`
@@ -49,7 +46,7 @@ Get job status and metadata.
 Get job logs (same format as the Runner API).
 
 ### `POST /api/cli/jobs/{id}/cancel`
-Cancel a QUEUED or PROCESSING job.
+Cancel a QUEUED, CLAIMED, or PROCESSING job.
 
 ## Runners
 

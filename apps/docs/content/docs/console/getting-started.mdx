@@ -55,16 +55,18 @@ On the same Connectors page, click **Connect** on GitHub (or GitLab/Bitbucket). 
 
 ### Design a Project
 
-Go to **Design a Project** in the sidebar. Fill out the configuration form:
+Start a new project — there's no persistent "Design a Project" sidebar item; use a **Create a project**
+CTA (e.g. from the Jobs or Clusters empty state), which opens the design workbench at `~/new`. It's a
+node-graph canvas where each infrastructure domain is a configurable node:
 
-1. **Project Basics** — name your project, select environment (production/staging/dev)
-2. **Network** — create a new VPC or select an existing one
-3. **Cluster** — choose Kubernetes version, instance types, node scaling
-4. **Database** — add Aurora/Cloud SQL/Azure Database instances
-5. **Cache** — add Redis/Valkey instances
-6. Additional sections for NoSQL, messaging, DNS, secrets, container registries, and repositories
+- **Project Basics** — name your project, select environment (production/staging/dev)
+- **Network** — create a new VPC or select an existing one
+- **Cluster** — choose Kubernetes version, instance types, node scaling
+- **Database** — add Aurora/Cloud SQL/Azure Database instances
+- **Cache** — add Redis/Valkey instances
+- Additional nodes for NoSQL, messaging, DNS, secrets, container registries, and repositories
 
-The **cost sidebar** shows estimated monthly costs as you configure. Click **Create Project** when ready.
+The **cost sidebar** shows estimated monthly costs as you configure. Click **Create project** when ready.
 
 ### Plan
 
@@ -80,8 +82,8 @@ Click **Apply** to provision the infrastructure. The Runner runs the [verify gat
 
 Go to **Clusters** in the sidebar. Your new cluster shows:
 - Cluster endpoint
-- ArgoCD URL (with admin credentials)
-- kubeconfig command
+- ArgoCD URL, plus a command to retrieve the admin password
+- kubeconfig command (generated for AWS clusters)
 
 ### Ask Elench
 
