@@ -63,6 +63,7 @@ export function EnvSettingsSheet() {
 									schema={clusterSchema}
 									config={cluster.data.config}
 									provider={provider}
+									kind="cluster"
 									onChange={(patch) => updateNodeConfig(cluster.id, patch)}
 								/>
 							</section>
@@ -74,6 +75,7 @@ export function EnvSettingsSheet() {
 									schema={networkSchema}
 									config={network.data.config}
 									provider={provider}
+									kind="network"
 									onChange={(patch) => updateNodeConfig(network.id, patch)}
 								/>
 							</section>

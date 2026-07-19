@@ -264,6 +264,7 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 							schema={settingsSchema}
 							config={node.data.config}
 							provider={provider}
+							kind={node.data.kind}
 							onChange={(patch) => updateNodeConfig(node.id, patch)}
 						/>
 					)}

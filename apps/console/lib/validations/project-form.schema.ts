@@ -316,6 +316,7 @@ export type ProjectFormData = z.infer<typeof projectFormSchema>;
 export type ProjectFormInput = z.input<typeof projectFormSchema>;
 
 export {
+	serviceItemSchema,
 	databaseItemSchema,
 	cacheItemSchema,
 	queueItemSchema,
