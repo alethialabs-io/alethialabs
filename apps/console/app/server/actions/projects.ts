@@ -22,6 +22,7 @@ import {
 	resourceHierarchy,
 	type Project,
 	type ProjectEnvironment,
+	type ProjectFabric,
 	projectCaches,
 	projectCluster,
 	projectContainerRegistries,
@@ -29,6 +30,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectFabrics,
 	projectAddons,
 	projectIacSources,
 	projectNetwork,
@@ -713,7 +715,13 @@ async function buildConfigSnapshot(
 		// M1: resolve which environment this job provisions (the given one, else the
 		// project's default). Its `name` feeds the frozen snapshot `environment_stage`
 		// key → the Go provisioner's tofu/S3 state path, unchanged.
-		const environment = await resolveTargetEnvironment(tx, projectId, environmentId);
+		// #837: also resolve the Fabric it is placed onto + the effective destination namespace,
+		// carried into the snapshot below so the #838 provisioner can route by placement.
+		const { environment, fabric, namespace } = await resolveTargetEnvironment(
+			tx,
+			projectId,
+			environmentId,
+		);
 
 		if (!project.cloud_identity_id) {
 			throw new Error(
@@ -1113,6 +1121,16 @@ async function buildConfigSnapshot(
 			// by the runner as the `alethia:environment-id` tag so a guarded sweeper can scope
 			// destroys to exactly one environment's cloud resources.
 			environment_id: environment.id,
+			// #837 (decoupled env-model): the Fabric (infra unit) this env is PLACED onto, and how.
+			// The #838 provisioner re-keys the per-Fabric tofu state onto `fabric_name` and sets the
+			// ArgoCD Application destination from `placement_mode` + `namespace`. For a backfilled
+			// `dedicated` env `fabric_name === environment.name`, so the state path stays
+			// byte-identical (fabric is null only for not-yet-linked transitional rows → fall back
+			// to the env name). `namespace` is null for `dedicated` (owns the whole Fabric).
+			fabric_id: fabric?.id ?? null,
+			fabric_name: fabric?.name ?? environment.name,
+			placement_mode: environment.placement_mode,
+			namespace,
 			region: environment.region ?? project.region,
 			provider: identity.provider,
 			// B1.1: frozen per-dimension classification map ({ dimension_key: value_slug[] }),
@@ -1251,16 +1269,25 @@ function assertIacSourceQueueable(
 }
 
 /**
- * Resolves the environment a provisioning job targets: the explicitly-passed one
- * (verified to belong to the project), else the project's default environment.
+ * Resolves a provisioning job's deploy destination in the decoupled env-model (#837): the target
+ * environment (the explicitly-passed one, verified to belong to the project, else the project's
+ * default), the Fabric (infra unit) it is placed onto, and the effective Kubernetes namespace.
+ * `dedicated` placements own their Fabric 1:1 → `namespace = null` (the legacy env=cluster
+ * behaviour); `namespace`/`vcluster` placements resolve to the env's explicit `namespace`, else a
+ * slug of its name. `fabric` is null only for transitional rows the seam backfill has not linked yet.
  */
 async function resolveTargetEnvironment(
 	tx: Parameters<Parameters<typeof withActorScope>[1]>[0],
 	projectId: string,
 	environmentId?: string | null,
-): Promise<ProjectEnvironment> {
+): Promise<{
+	environment: ProjectEnvironment;
+	fabric: ProjectFabric | null;
+	namespace: string | null;
+}> {
+	let environment: ProjectEnvironment | undefined;
 	if (environmentId) {
-		const [env] = await tx
+		[environment] = await tx
 			.select()
 			.from(projectEnvironments)
 			.where(
@@ -1270,21 +1297,47 @@ async function resolveTargetEnvironment(
 				),
 			)
 			.limit(1);
-		if (!env) throw new Error("Environment not found for this project");
-		return env;
+		if (!environment) throw new Error("Environment not found for this project");
+	} else {
+		[environment] = await tx
+			.select()
+			.from(projectEnvironments)
+			.where(
+				and(
+					eq(projectEnvironments.project_id, projectId),
+					eq(projectEnvironments.is_default, true),
+				),
+			)
+			.limit(1);
+		if (!environment) throw new Error("Project has no default environment");
 	}
-	const [env] = await tx
-		.select()
-		.from(projectEnvironments)
-		.where(
-			and(
-				eq(projectEnvironments.project_id, projectId),
-				eq(projectEnvironments.is_default, true),
-			),
-		)
-		.limit(1);
-	if (!env) throw new Error("Project has no default environment");
-	return env;
+
+	// The Fabric (infra unit) this env is placed onto. NULL only for transitional rows the seam
+	// backfill has not linked yet — the caller treats that as its own dedicated Fabric (back-compat).
+	let fabric: ProjectFabric | null = null;
+	if (environment.fabric_id) {
+		const [row] = await tx
+			.select()
+			.from(projectFabrics)
+			.where(
+				and(
+					eq(projectFabrics.id, environment.fabric_id),
+					eq(projectFabrics.project_id, projectId),
+				),
+			)
+			.limit(1);
+		fabric = row ?? null;
+	}
+
+	// Effective ArgoCD destination namespace. `dedicated` owns the whole Fabric → no namespace
+	// (legacy behaviour); shared placements use the env's explicit namespace, else an RFC-1123
+	// slug of its name (via slugify, capped at 63 chars — the k8s namespace length limit).
+	const namespace =
+		environment.placement_mode === "dedicated"
+			? null
+			: (environment.namespace ?? slugify(environment.name, 63));
+
+	return { environment, fabric, namespace };
 }
 
 /**

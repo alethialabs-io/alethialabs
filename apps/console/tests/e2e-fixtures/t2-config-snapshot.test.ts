@@ -43,6 +43,7 @@ import {
 	projectAddons,
 	projectCluster,
 	projectEnvironments,
+	projectFabrics,
 	projects,
 } from "@/lib/db/schema";
 
@@ -141,9 +142,16 @@ describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
 						status: "DRAFT",
 						is_default: true,
 						region: null,
+						// #837: the env is PLACED onto a Fabric. `dedicated` (the seam default + the
+						// legacy env=cluster shape) → owns its Fabric 1:1, so `namespace` is null and
+						// `fabric_name` == the env name → the tofu state path is byte-identical.
+						fabric_id: "fab-1",
+						placement_mode: "dedicated",
+						namespace: null,
 					},
 				],
 			],
+			[projectFabrics, [{ id: "fab-1", project_id: "p1", name: "fixture" }]],
 			[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
 			[
 				projectCluster,
