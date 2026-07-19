@@ -1,0 +1,51 @@
+{{- if .AppsDestinationRepo }}
+# Multi-environment apps delivery (decoupled env-model, #838). An ApplicationSet whose Git
+# directories generator discovers every overlays/ENV directory in the apps repo and renders one
+# ArgoCD Application per overlay — the standard Kustomize GitOps layout (base + overlays/ENV), and
+# exactly what the enterprise-demo uses (overlays/dev to ns boutique-dev, overlays/staging to ns
+# boutique-staging). This is ADDITIVE to the single root Application in user-apps.yaml: a flat apps
+# repo (no overlays) yields ZERO generated Applications here (harmless); an overlays repo gets one
+# Application per environment. The generated apps run under the same "apps" AppProject.
+#
+# facts.Labels are rendered into the template metadata.labels so the generated Applications carry the
+# B1.4 classification/sweep labels — InjectCommonLabels only stamps top-level Application/AppProject
+# docs, not an ApplicationSet, so the propagation is done explicitly here. The inner ArgoCD
+# Go-template path expressions are emitted LITERALLY (backtick-escaped) for ArgoCD to evaluate.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps-overlays
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: {{ .AppsDestinationRepo }}
+        revision: HEAD
+        directories:
+          - path: overlays/*
+  template:
+    metadata:
+      name: 'apps-{{ `{{ .path.basename }}` }}'
+      {{- if .Labels }}
+      labels:
+        {{- range $k, $v := .Labels }}
+        {{ $k }}: "{{ $v }}"
+        {{- end }}
+      {{- end }}
+    spec:
+      project: apps
+      source:
+        repoURL: {{ .AppsDestinationRepo }}
+        targetRevision: HEAD
+        path: '{{ `{{ .path.path }}` }}'
+      destination:
+        server: https://kubernetes.default.svc
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+{{- end }}
