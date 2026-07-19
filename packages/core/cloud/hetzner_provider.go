@@ -118,7 +118,7 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		// Cloud-parity exclusion (#775): unlike the managed clouds, Hetzner's k8s version is coupled to
 		// the pinned Talos release (v1.9.5 predates k8s 1.35), so it is NOT resolved from the catalog
 		// SSOT here — left empty for Talos to pick its default. Bumping it needs a coordinated Talos
-		// upgrade validated by a real Hetzner apply (tracked separately).
+		// upgrade validated by a real Hetzner apply (tracked in #879).
 		"talos_version":      orDefault(providerString(config.Cluster.ProviderConfig, "talos_version"), "v1.9.5"),
 		"kubernetes_version": config.Cluster.ClusterVersion,
 
