@@ -16,6 +16,7 @@ export * from "./projects";
 export * from "./project-components";
 export * from "./project-environments";
 export * from "./project-fabrics";
+export * from "./project-preview-config";
 export * from "./promotions";
 export * from "./drift";
 export * from "./fabric-drift";
