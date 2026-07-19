@@ -892,16 +892,23 @@ async function buildConfigSnapshot(
 		// component graph is not the source of truth for what gets provisioned. Components and
 		// add-ons still ride the snapshot (the UI reads them; the Go side skips ProviderTfvars
 		// for a replace-mode job and ignores what it doesn't need).
-		const [iacSource] = await tx
-			.select()
-			.from(projectIacSources)
-			.where(
-				and(
-					envScope(projectIacSources, projectId, envId),
-					eq(projectIacSources.enabled, true),
-				),
-			)
-			.limit(1);
+		// #839: BYO-IaC attaches at the Fabric (one source per Fabric), so resolve the source by the
+		// env's Fabric, not the env. `fabric` is null only for a not-yet-linked transitional env → no
+		// BYO source (falls back to the template model). For a `dedicated` env this is the same row the
+		// old per-env lookup returned.
+		const [iacSource] = fabric
+			? await tx
+					.select()
+					.from(projectIacSources)
+					.where(
+						and(
+							eq(projectIacSources.project_id, projectId),
+							eq(projectIacSources.fabric_id, fabric.id),
+							eq(projectIacSources.enabled, true),
+						),
+					)
+					.limit(1)
+			: [];
 
 		// Fail-closed KIND gate: reject any present component whose KIND the target cloud's
 		// built-in template can't provision (Hetzner: topic/nosql/bucket/registry). Derived from

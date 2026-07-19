@@ -267,6 +267,9 @@ func setByoAlethiaTFVars(vc *types.ProjectConfig) func() {
 		"TF_VAR_alethia_region":         vc.Region,
 		"TF_VAR_alethia_project_id":     vc.ID,
 		"TF_VAR_alethia_environment_id": vc.ID,
+		// #839: BYO-IaC attaches at the Fabric — expose the Fabric id so a customer module can
+		// reference the infra unit it belongs to (empty until the console sets fabric_id on the job).
+		"TF_VAR_alethia_fabric_id": vc.FabricID,
 	}
 	type prev struct {
 		val string
