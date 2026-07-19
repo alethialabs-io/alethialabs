@@ -53,11 +53,15 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		"single_nat_gateway": config.Network.SingleNatGateway,
 
 		// AKS. NOTE: keep this on a version in Azure's STANDARD support window — an AKS create
-		// rejects a version that has aged into LTS-only ("K8sVersionNotSupported"). 1.31 fell out of
-		// standard support into LTS; 1.33 is current-standard (Azure serves 1.32–1.36 as standard in
-		// westeurope as of 2026-07). Needs periodic bumping as the support window advances (#775).
+		// rejects a version that has aged into LTS-only ("K8sVersionNotSupported"). The window
+		// advances over time: 1.31 AND 1.32 have since fallen into LTS-only; as of 2026-07 westeurope
+		// serves 1.33–1.36 as standard (`KubernetesOfficial`). Default to a MID-window version (not the
+		// oldest-standard, which rolls to LTS-only next — that is exactly how 1.31 then 1.32 broke) so
+		// there is runway before the next bump. Verify with `az aks get-versions --location <loc>`
+		// (supportPlan must include `KubernetesOfficial`). Durable fix = resolve the latest standard
+		// dynamically (#775). Only a real AKS create catches a stale default — `tofu validate`/CI cannot.
 		"provision_aks":       true,
-		"aks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.33"),
+		"aks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.34"),
 
 		// DNS
 		"azure_dns_enabled":   config.DNS.Enabled,
