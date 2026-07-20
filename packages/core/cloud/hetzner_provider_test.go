@@ -143,6 +143,40 @@ func TestHetznerProvider_ProviderTfvars_NodeTypes(t *testing.T) {
 	}
 }
 
+// TestHetznerProvider_ProviderTfvars_TalosK8sVersions verifies the coupled Talos/Kubernetes
+// pins (#879): the default is Talos v1.13.6 + a CONCRETE k8s patch 1.35.6 (Talos uses the value
+// verbatim as the component image tag, so a bare minor would be unpullable), and both are
+// overridable via provider_config. A bare-minor ClusterVersion from the console is deliberately
+// NOT forwarded — Hetzner's k8s is Talos-coupled, not resolved from the catalog SSOT minor.
+func TestHetznerProvider_ProviderTfvars_TalosK8sVersions(t *testing.T) {
+	p := &hetznerProvider{}
+
+	def := p.ProviderTfvars(baseHetznerConfig())
+	if def["talos_version"] != "v1.13.6" {
+		t.Errorf("default talos_version = %v, want v1.13.6", def["talos_version"])
+	}
+	if def["kubernetes_version"] != "1.35.6" {
+		t.Errorf("default kubernetes_version = %v, want 1.35.6 (concrete patch)", def["kubernetes_version"])
+	}
+
+	// A bare-minor cluster version (as the console emits) must NOT leak through as an unpullable
+	// image tag — the coupled patch default wins.
+	minor := baseHetznerConfig()
+	minor.Cluster.ClusterVersion = "1.35"
+	if got := p.ProviderTfvars(minor)["kubernetes_version"]; got != "1.35.6" {
+		t.Errorf("bare-minor ClusterVersion forwarded: kubernetes_version = %v, want 1.35.6", got)
+	}
+
+	// provider_config overrides both pins (e.g. an advanced pin to another supported patch).
+	over := baseHetznerConfig()
+	over.Cluster.ProviderConfig = map[string]any{"talos_version": "v1.13.5", "kubernetes_version": "1.34.10"}
+	ov := p.ProviderTfvars(over)
+	if ov["talos_version"] != "v1.13.5" || ov["kubernetes_version"] != "1.34.10" {
+		t.Errorf("provider_config override = talos %v / k8s %v, want v1.13.5 / 1.34.10",
+			ov["talos_version"], ov["kubernetes_version"])
+	}
+}
+
 // TestHetznerProvider_ProviderTfvars_CIDRs verifies pod_cidr and service_cidr are
 // non-overlapping SUBNETS of network_cidr (required by Cilium native-routing over the
 // Hetzner private network — disjoint CIDRs break cross-node pod->apiserver routing).

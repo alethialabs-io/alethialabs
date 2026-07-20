@@ -66,13 +66,15 @@ export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = {
 /**
  * Supported Kubernetes versions per provider (latest first). Mirrors the catalog SSOT
  * (packages/core/catalog/catalog.json → k8s_versions); keep in lockstep — bump there.
- * Hetzner stays behind (version coupled to the pinned Talos release; see #775).
  */
 export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
 	aws: ["1.35", "1.34", "1.33"],
 	gcp: ["1.35", "1.34", "1.33"],
 	azure: ["1.35", "1.34", "1.33"],
-	hetzner: ["1.32", "1.31", "1.30"],
+	// Single validated version: Hetzner's k8s is coupled to the pinned Talos release
+	// (v1.13.6 → k8s 1.35), so we expose only what that Talos ships/validates, not a
+	// free 3-minor range the provisioner can't map to concrete Talos patches (#879).
+	hetzner: ["1.35"],
 	alibaba: ["1.35", "1.34", "1.33"],
 };
 
@@ -124,13 +126,13 @@ export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
  * Default K8s version per provider (new-project form seed). Source of truth is the catalog
  * (packages/core/catalog/catalog.json → default_k8s_version); the provisioning path resolves
  * from it directly (resolveK8sVersion). Keep these in lockstep with the catalog — bump there.
- * Hetzner stays behind (its version is coupled to the pinned Talos release; see #775).
+ * Hetzner reached 1.35 with the Talos v1.13.6 bump (#879); its Talos release couples the two.
  */
 export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = {
 	aws: "1.35",
 	gcp: "1.35",
 	azure: "1.35",
-	hetzner: "1.32",
+	hetzner: "1.35",
 	alibaba: "1.35",
 };
 

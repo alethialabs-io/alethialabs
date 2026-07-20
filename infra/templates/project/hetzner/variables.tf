@@ -29,15 +29,20 @@ variable "region" {
 }
 
 variable "talos_version" {
-  description = "Talos Linux version (e.g. v1.9.5)."
+  description = "Talos Linux version (e.g. v1.13.6)."
   type        = string
-  default     = "v1.9.5"
+  default     = "v1.13.6"
 }
 
 variable "kubernetes_version" {
-  description = "Kubernetes version. Leave empty (\"\") to let Talos pick its default."
+  # MUST be a concrete PATCH (e.g. 1.35.6), not a bare minor: Talos installs this verbatim as
+  # the control-plane component image tag (registry.k8s.io/kube-apiserver:v<this>), and upstream
+  # only publishes patch tags — a bare "1.35" yields an unpullable image (ImagePullBackOff).
+  # Coupled to talos_version: Talos v1.13.6 supports k8s 1.31–1.36; we pin 1.35 (the newest minor
+  # Cilium v1.19 officially tests). Leave empty ("") only to let Talos pick its own default (1.36).
+  description = "Kubernetes version (concrete patch, e.g. 1.35.6); coupled to talos_version. Empty → Talos default."
   type        = string
-  default     = ""
+  default     = "1.35.6"
 }
 
 variable "control_plane_count" {

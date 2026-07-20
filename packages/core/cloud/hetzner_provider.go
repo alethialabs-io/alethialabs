@@ -115,12 +115,16 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"region":       orDefault(resolveRegion("hetzner", config.Region), "fsn1"),
 
 		// Talos / Kubernetes versions (pin via provider_config to override).
-		// Cloud-parity exclusion (#775): unlike the managed clouds, Hetzner's k8s version is coupled to
-		// the pinned Talos release (v1.9.5 predates k8s 1.35), so it is NOT resolved from the catalog
-		// SSOT here — left empty for Talos to pick its default. Bumping it needs a coordinated Talos
-		// upgrade validated by a real Hetzner apply (tracked in #879).
-		"talos_version":      orDefault(providerString(config.Cluster.ProviderConfig, "talos_version"), "v1.9.5"),
-		"kubernetes_version": config.Cluster.ClusterVersion,
+		// Cloud-parity note (#879 lifts the #775 exclusion): the catalog SSOT default is now 1.35 for
+		// Hetzner too, but its k8s version is coupled to the pinned Talos release and — unlike the
+		// managed clouds, which accept a bare minor — Talos installs the version VERBATIM as the
+		// component image tag (registry.k8s.io/kube-apiserver:v<ver>), which only exists per-patch.
+		// So we pin a concrete PATCH in lockstep with talos_version (Talos v1.13.6 → k8s 1.35.6) rather
+		// than passing the SSOT minor through; override either via provider_config. config.Cluster.
+		// ClusterVersion (a bare minor from the console) is deliberately NOT forwarded here — it would
+		// resolve to an unpullable image tag.
+		"talos_version":      orDefault(providerString(config.Cluster.ProviderConfig, "talos_version"), "v1.13.6"),
+		"kubernetes_version": orDefault(providerString(config.Cluster.ProviderConfig, "kubernetes_version"), "1.35.6"),
 
 		// Control plane (single-node, cheapest).
 		"control_plane_count":       controlPlaneCount,
