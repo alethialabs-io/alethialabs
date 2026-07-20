@@ -168,6 +168,7 @@ WHERE j.cloud_identity_id = ci.id AND j.provider IS NULL;
 -- Scoped to project/environment jobs. Runner-lifecycle jobs (DEPLOY_RUNNER/DESTROY_RUNNER) key their
 -- state on the target runner and carry NULL project/environment; they are not serialized here, and a
 -- NULL is never treated as "matching" another NULL.
+DROP FUNCTION IF EXISTS public.state_object_busy(UUID, UUID, UUID);
 CREATE OR REPLACE FUNCTION public.state_object_busy(
     p_project_id UUID, p_environment_id UUID, p_job_id UUID
 ) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -403,6 +404,7 @@ DROP FUNCTION IF EXISTS public.fail_unclaimed_connection_tests(INTERVAL, INTERVA
 -- connect-sheet open; abandoned flows leave 'pending' rows forever. Deletes only
 -- pending rows that aged out and have NO job at all (a never-saved identity has none);
 -- never touches testing/failed/connected. jobs.cloud_identity_id is ON DELETE SET NULL.
+DROP FUNCTION IF EXISTS public.gc_pending_identities(INTERVAL);
 CREATE OR REPLACE FUNCTION public.gc_pending_identities(p_age INTERVAL DEFAULT INTERVAL '24 hours')
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_count INTEGER;
@@ -1304,6 +1306,7 @@ END $$;
 -- slow writer's stale ?ID= is rejected by validate_tofu_state_lock (fencing) → no lost update.
 -- SECURITY DEFINER: the service role calls these from runner-authed routes; no direct client access.
 
+DROP FUNCTION IF EXISTS public.acquire_tofu_state_lock(TEXT, TEXT, UUID, JSONB, INT);
 CREATE OR REPLACE FUNCTION public.acquire_tofu_state_lock(
     p_state_key TEXT, p_lock_id TEXT, p_job_id UUID, p_info JSONB, p_ttl_seconds INT
 ) RETURNS TABLE(acquired BOOLEAN, holder JSONB)
@@ -1329,6 +1332,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.release_tofu_state_lock(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.release_tofu_state_lock(p_state_key TEXT, p_lock_id TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
@@ -1337,6 +1341,7 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.validate_tofu_state_lock(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.validate_tofu_state_lock(p_state_key TEXT, p_lock_id TEXT)
 RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     SELECT EXISTS (
@@ -1353,6 +1358,7 @@ $$;
 -- same steal invariant acquire_tofu_state_lock uses), then expire the row so a fresh apply
 -- can immediately steal it. Returns whether a lock existed for the key. Not a customer action
 -- (no alethia_app GRANT) — invoked by the service role from a staff/system path.
+DROP FUNCTION IF EXISTS public.force_release_tofu_state_lock(TEXT);
 CREATE OR REPLACE FUNCTION public.force_release_tofu_state_lock(p_state_key TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
@@ -1386,6 +1392,7 @@ REVOKE EXECUTE ON FUNCTION public.force_release_tofu_state_lock(TEXT) FROM PUBLI
 -- So: rotate + bump the fencing generation exactly like force_release (NEVER a naive delete) — a
 -- zombie writer's stale ?ID= then fails the fence instead of corrupting state — and scope strictly to
 -- locks this job holds. A lock held by a DIFFERENT job is left alone.
+DROP FUNCTION IF EXISTS public.release_tofu_state_locks_for_job(UUID);
 CREATE OR REPLACE FUNCTION public.release_tofu_state_locks_for_job(p_job_id UUID)
 RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE released INTEGER;
@@ -1411,6 +1418,7 @@ REVOKE EXECUTE ON FUNCTION public.release_tofu_state_locks_for_job(UUID) FROM PU
 -- retry), a DIFFERENT instance or an expired token is rejected (ok=false). Returns the currently
 -- linked runner_id (NULL on first use). SECURITY DEFINER: called from the runner-facing bootstrap
 -- route; the token is a shared secret only for the one VM it was minted for.
+DROP FUNCTION IF EXISTS public.redeem_bootstrap_token(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION public.redeem_bootstrap_token(p_token_hash TEXT, p_instance_id TEXT)
 RETURNS TABLE(ok BOOLEAN, runner_id UUID)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -1438,6 +1446,7 @@ $$;
 -- (service role bypasses; an owner-scoped tx is policy-checked), matching how the
 -- sibling env writes are scoped. p_job_id is carry-through context for the caller's
 -- structured log / audit, deliberately not written here.
+DROP FUNCTION IF EXISTS public.set_env_status(UUID, TEXT[], TEXT, UUID);
 CREATE OR REPLACE FUNCTION public.set_env_status(
     p_env_id UUID, p_expected_from TEXT[], p_to TEXT, p_job_id UUID DEFAULT NULL
 ) RETURNS BOOLEAN LANGUAGE plpgsql AS $$
@@ -1465,6 +1474,7 @@ GRANT EXECUTE ON FUNCTION public.set_env_status(UUID, TEXT[], TEXT, UUID) TO ale
 -- as oldest-by-id — id-order == insert-order == created_at-order — so semantics are
 -- unchanged. job_logs has a FK to jobs ON DELETE CASCADE, but we only delete the log rows
 -- themselves here.
+DROP FUNCTION IF EXISTS public.gc_job_logs(INTERVAL, INTEGER);
 CREATE OR REPLACE FUNCTION public.gc_job_logs(
     p_age INTERVAL DEFAULT INTERVAL '30 days', p_limit INTEGER DEFAULT 5000
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -1492,6 +1502,7 @@ GRANT EXECUTE ON FUNCTION public.gc_job_logs(INTERVAL, INTEGER) TO alethia_app;
 -- Oldest first by created_at; the created_at-leading index (idx_fleet_actions_created_at)
 -- serves the range filter + ordered LIMIT as an index scan (the (provider, created_at)
 -- index CANNOT — its leading provider column is unconstrained here), keeping the GC cheap.
+DROP FUNCTION IF EXISTS public.gc_fleet_actions(INTERVAL, INTEGER);
 CREATE OR REPLACE FUNCTION public.gc_fleet_actions(
     p_age INTERVAL DEFAULT INTERVAL '90 days', p_limit INTEGER DEFAULT 5000
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -1522,6 +1533,7 @@ GRANT EXECUTE ON FUNCTION public.gc_fleet_actions(INTERVAL, INTEGER) TO alethia_
 -- org_id column is unconstrained here), so an empty steady-state window costs one index probe
 -- instead of a seq scan every pass (mirrors gc_fleet_actions). FOR UPDATE SKIP LOCKED makes
 -- concurrent app instances safe: two loops racing the same window claim disjoint rows.
+DROP FUNCTION IF EXISTS public.gc_authz_activity_log(INTERVAL, INTEGER);
 CREATE OR REPLACE FUNCTION public.gc_authz_activity_log(
     p_age INTERVAL DEFAULT INTERVAL '365 days', p_limit INTEGER DEFAULT 5000
 ) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
