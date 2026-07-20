@@ -58,8 +58,26 @@ scripts/claim-work.sh --class backend      # loop
 - **Atomic claim** (`claim-work.sh`): acquires `/tmp/alethia-claim.lock` (atomic `mkdir`, stale-reclaim by
   pid — same primitive as `compose-up.sh`), picks the next issue that is `open`, not `claimed`, not `blocked`,
   in the requested class, honoring the migration mutex, then assigns `@me` + `claimed` + posts a lease comment,
-  then releases the lock. The lock serializes the pick-and-assign critical section across all same-box
-  instances, so two instances can never claim the same unit.
+  then releases the lock. The lock serializes the pick-and-assign critical section across all **same-box**
+  instances.
+- **Cross-box safety (claim-work.sh, two guards).** The mkdir-lock is a same-box mutex, and every instance
+  authenticates as the **same GitHub user** (so the assignee can't distinguish them) — nothing stops two
+  *different machines* from claiming one unit (this caused the #587 / #611 / #842 duplicate builds). Two guards
+  close it:
+  - **Pre-claim PR guard** — before assigning a candidate, skip it if an **open or merged** PR already closes
+    it (`Closes #n`). Catches work in flight on another box, and the stale-open case (an issue whose PR merged
+    but GitHub never auto-closed, e.g. #687 → merged #824).
+  - **Claim-and-verify (earliest-lease-wins)** — after assigning + leasing, wait `ALETHIA_CLAIM_VERIFY_DELAY`
+    (default 5s), re-read the issue's lease comments, and let the lease with the **earliest GitHub-server
+    `createdAt`** win (tiebreak: lowest `instance`). Server timestamps are skew-free, so every contender
+    computes the *same* winner: the first claimer keeps it, later claimers **cede** (post a `ceded:` comment and
+    re-pick — they do NOT remove the shared `claimed` label/assignee, which the winner also set). `--self-test`
+    exercises the winner logic against fixtures; set `ALETHIA_CLAIM_VERIFY_DELAY=0` to disable (same-box-only).
+- **NEVER hand-claim a unit** (assigning `@me` / adding `claimed` by hand): it bypasses BOTH the lock and the
+  claim-and-verify, which is exactly how the #842 dup happened. If `claim-work.sh` offers a stale or wrong unit
+  (e.g. its work already merged, or it needs a maintainer decision), **fix the board so the script skips it** —
+  `gh issue close <n>` the done one, or `gh issue edit <n> --remove-label class:backend` an un-actionable one —
+  don't reach around the script to grab a different issue.
 - **Lease + reclaim**: the lease comment carries `instance · pid · branch · UTC-timestamp`. Refresh it on each
   PR push (the worker) — or just let `coordinate.sh` reclaim a unit whose lease is older than `LEASE_TTL` and
   whose linked PR/branch shows no recent activity. Reclaim = clear assignee + `claimed`, comment "reclaimed".
