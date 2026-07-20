@@ -1617,10 +1617,11 @@ describe("addEnvironment", () => {
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
-	it("throws when the project is not found", async () => {
+	it("calls notFound() when the project is missing", async () => {
 		setupDb({ select: new Map([[projects, []]]) });
+		// A stale/deleted id → Next notFound() (digest NEXT_HTTP_ERROR_FALLBACK), not a captured Error.
 		await expect(addEnvironment("p1", { name: "stg", stage: "staging" })).rejects.toThrow(
-			/Project not found/,
+			/NEXT_HTTP_ERROR_FALLBACK/,
 		);
 	});
 });
