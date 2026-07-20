@@ -12,7 +12,7 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 ## Local stack (multi-instance rule)
 
 The compose project name is hardcoded (`name: alethia` in `docker-compose.yml`), so **every
-terminal / Claude window shares one stack** — there is never a duplicate app. The only hazard is
+terminal / agent window shares one stack** — there is never a duplicate app. The only hazard is
 two `docker compose up --build` racing the same builder at once.
 
 - **Only ever bring the stack up via `pnpm compose:up`.** It is guarded by an atomic lock
@@ -27,7 +27,7 @@ two `docker compose up --build` racing the same builder at once.
 
 ### One worktree per instance (source isolation — enforced)
 
-The stack is shared, but the **source tree must not be**. Multiple Claude/human sessions in the
+The stack is shared, but the **source tree must not be**. Multiple agent/human sessions in the
 same checkout tangle: a single `git add -A` once swept three features into one mega-commit. So:
 
 - **`app/` (the main checkout) is pinned to `dev`** — the integration branch. **Never commit
@@ -41,8 +41,9 @@ same checkout tangle: a single `git add -A` once swept three features into one m
     commits on `dev`/`staging`/`main`, blocks any commit in the main checkout, and runs the
     migration-chain guard when a migration is staged. `.githooks/pre-push` blocks direct pushes to
     protected branches.
-  - `.claude/hooks/guard-worktree.sh` (a `PreToolUse` Bash hook) blocks a Claude instance from
-    `git commit` / `git add -A` while it's launched in the main checkout.
+  - `.claude/hooks/guard-worktree.sh` (a Claude `PreToolUse` Bash hook) blocks a Claude instance
+    from `git commit` / `git add -A` while it's launched in the main checkout. Other agents should
+    read `AGENTS.md`; the committed Git hooks still enforce the rule at commit/push time.
   - **Escape hatch** (emergencies only): `git commit --no-verify` (all), or
     `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only). These are for the
     maintainer — **instances must not use them.**
@@ -62,7 +63,8 @@ same checkout tangle: a single `git add -A` once swept three features into one m
   --squash`** on green (the queue lands it). One worktree per piece of work; never work in `app/` or touch
   another instance's worktree.
 - **Claim work from the board (the coordination protocol):** when a program is decomposed into a
-  GitHub-Issues board, don't hand-pick work — read **`.claude/COORDINATION.md`** and run
+  GitHub-Issues board, don't hand-pick work — read **`.claude/COORDINATION.md`** (shared by all
+  agents despite the path) and run
   **`scripts/claim-work.sh --class backend`** to atomically claim the next ready unit (mkdir-lock
   serialized, so no two instances grab the same one), then `pnpm wt` the printed slug. Build only within
   the issue's `scope:` globs; PR into `dev` with `Closes #<n>`; **backend enqueues on green (`gh pr merge

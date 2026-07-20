@@ -1,6 +1,6 @@
 # Instance coordination — the claimable board
 
-Many Claude instances (and humans) drive the north star in parallel. Isolation and integration are already
+Many AI instances (Claude, Codex, and humans) drive the north star in parallel. Isolation and integration are already
 solved by the multi-instance rules in `CLAUDE.md` (one worktree per instance via `pnpm wt`; PR → `dev`;
 **enqueue on green via the merge queue** — `gh pr merge --auto --squash`, never a direct merge; lock-guarded
 migrations). **This file is the missing third half: how work is
