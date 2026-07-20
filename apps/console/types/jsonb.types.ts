@@ -857,6 +857,13 @@ export interface SignedReceipt {
 	algorithm: string;
 	key_id?: string;
 	signature?: string;
+	/**
+	 * base64(std) ed25519 public key the signature verifies under (#884). Lets an auditor
+	 * self-verify a downloaded receipt offline. "Is this the org's key?" is answered out-of-band
+	 * (the recorded key_id→public_key history / a Rekor anchor), never by trusting this field.
+	 * Empty on unsigned receipts / pre-#884 signatures.
+	 */
+	public_key?: string;
 }
 
 // One captured (truncated) file from a scanned repo. Mirrors packages/core/types RepoFile.

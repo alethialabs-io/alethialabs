@@ -162,13 +162,15 @@ describe("deriveGroups", () => {
 		mkRow({ id: "c", stage: "development" }),
 	];
 
-	it("buckets by triage: attention → gaps → healthy", () => {
+	it("groups environments by project", () => {
 		const { groups } = deriveGroups(ev(rows), {
 			search: "",
 			stages: [],
 			status: [],
 		});
-		expect(groups.map((g) => g.key)).toEqual(["attention", "gaps", "healthy"]);
+		// rows a/b/c share the default project → one project group with all three.
+		expect(groups.map((g) => g.label)).toEqual(["proj"]);
+		expect(groups[0]?.rows).toHaveLength(3);
 	});
 
 
@@ -312,16 +314,45 @@ describe("deriveGroups — provider filter", () => {
 	});
 });
 
-describe("deriveGroups — fixed ordering", () => {
-	it("orders rows worst-first with a name tiebreak inside each group", () => {
+describe("deriveGroups — ordering", () => {
+	const healthy: Partial<EvidenceEnvRow> = {
+		drift: { inSync: true, drifted: 0, details: [], scannedAt: NOW },
+		security: {
+			critical: 0,
+			high: 0,
+			medium: 0,
+			low: 0,
+			scanned: true,
+			scannedAt: NOW,
+			reportCount: 1,
+		},
+	};
+
+	it("orders envs worst-first within a project, projects by their worst env", () => {
 		const rows = [
-			mkRow({ id: "b", projectName: "beta", verify: verify("fail") }),
-			mkRow({ id: "a", projectName: "alpha", verify: verify("fail") }),
+			// project "alpha": all healthy
 			mkRow({
-				id: "c",
-				projectName: "gamma",
+				id: "a1",
+				projectId: "alpha",
+				projectName: "alpha",
+				verify: verify("pass"),
+				...healthy,
+			}),
+			// project "beta": a healthy env and a failing env
+			mkRow({
+				id: "b-ok",
+				projectId: "beta",
+				projectName: "beta",
+				environmentName: "ok",
+				verify: verify("pass"),
+				...healthy,
+			}),
+			mkRow({
+				id: "b-bad",
+				projectId: "beta",
+				projectName: "beta",
+				environmentName: "bad",
 				verify: verify("fail"),
-				drift: { inSync: false, drifted: 2, scannedAt: NOW, details: [] },
 			}),
 		];
 		const { groups } = deriveGroups(ev(rows), {
@@ -329,11 +360,12 @@ describe("deriveGroups — fixed ordering", () => {
 			stages: [],
 			status: [],
 		});
-		const attention = groups.find((g) => g.key === "attention");
-		expect(attention?.rows.map((r) => r.environmentId)).toEqual([
-			"c", // worst (fail + drift)
-			"a", // tie with b → name tiebreak
-			"b",
+		// beta (has a failing env) sorts before alpha (all healthy).
+		expect(groups.map((g) => g.label)).toEqual(["beta", "alpha"]);
+		// within beta, the failing env comes first.
+		expect(groups[0]?.rows.map((r) => r.environmentId)).toEqual([
+			"b-bad",
+			"b-ok",
 		]);
 	});
 });

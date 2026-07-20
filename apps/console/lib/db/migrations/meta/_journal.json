@@ -827,6 +827,20 @@
       "when": 1784482026009,
       "tag": "0117_sloppy_starhawk",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1784485498631,
+      "tag": "0118_huge_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1784537205920,
+      "tag": "0119_volatile_wiccan",
+      "breakpoints": true
     }
   ]
 }

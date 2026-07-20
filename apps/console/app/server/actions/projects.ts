@@ -711,7 +711,7 @@ async function buildConfigSnapshot(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!project) throw new Error("Project not found");
+		if (!project) notFound(); // stale/deleted id → 404, not a captured error
 
 		// M1: resolve which environment this job provisions (the given one, else the
 		// project's default). Its `name` feeds the frozen snapshot `environment_stage`
@@ -2090,7 +2090,7 @@ export async function addEnvironment(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!project) throw new Error("Project not found");
+		if (!project) notFound(); // stale/deleted id → 404, not a captured error
 		const [env] = await tx
 			.insert(projectEnvironments)
 			.values({
@@ -2327,7 +2327,7 @@ export async function updateProjectName(
 			.set({ project_name, updated_at: new Date() })
 			.where(eq(projects.id, projectId))
 			.returning({ project_name: projects.project_name });
-		if (!row) throw new Error("Project not found");
+		if (!row) notFound(); // stale/deleted id → 404, not a captured error
 		return row;
 	});
 }

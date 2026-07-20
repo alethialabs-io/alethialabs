@@ -11,6 +11,7 @@ import { cn } from "@repo/ui/utils";
 import type { EvidenceWaiver } from "@/lib/queries/evidence";
 import type { VerifyControlResult, VerifyStatus } from "@/types/jsonb.types";
 import type { EvidenceEnvRow } from "../evidence-derive";
+import { EVIDENCE_HELP } from "../evidence-help";
 import { EvIcon, type IconKey, TONE_TEXT } from "../evidence-status";
 import { TabEmpty } from "./tab-empty";
 
@@ -133,6 +134,7 @@ export function ReportTab({
 				icon="shield-question"
 				title="No verification report yet"
 				description="Evidence is generated when a plan runs against this environment — the verify gate evaluates every control over the plan and records the verdict here."
+				docsHref={EVIDENCE_HELP.verify.docsHref}
 				action={
 					<Link
 						href={row.projectSlug ? `/${org}/${row.projectSlug}` : `/${org}`}
@@ -171,28 +173,6 @@ export function ReportTab({
 				<span className="font-mono text-[10px] text-text-tertiary">
 					{report.provider} · {report.catalog_version}
 				</span>
-			</div>
-			<div className="flex flex-wrap gap-2">
-				{(
-					[
-						["pass", report.summary.pass],
-						["warn", report.summary.warn],
-						["fail", report.summary.fail],
-						["not evaluable", report.summary.not_evaluable],
-					] as const
-				).map(([label, count]) => (
-					<div
-						key={label}
-						className="flex min-w-[70px] flex-col gap-0.5 rounded-sm border px-3 py-2"
-					>
-						<span className="font-display text-lg font-semibold tabular-nums text-text-primary">
-							{count}
-						</span>
-						<span className="font-mono text-[9px] uppercase tracking-wide text-text-tertiary">
-							{label}
-						</span>
-					</div>
-				))}
 			</div>
 			<div className="font-mono text-[9px] uppercase tracking-[0.14em] text-text-disabled">
 				Controls

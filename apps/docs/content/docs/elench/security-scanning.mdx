@@ -1,0 +1,35 @@
+---
+title: Security scanning
+description: How Alethia rolls up in-cluster vulnerability findings from Trivy-Operator, and what "Not scanned" means on the Evidence page.
+---
+
+# Security scanning
+
+<Enterprise />
+
+The Evidence page's **Security** column reports the vulnerability posture of the workloads running in an
+environment's cluster. The data is real — it comes from [Trivy-Operator](https://aquasecurity.github.io/trivy-operator/),
+read live from the cluster — never a synthetic all-clear.
+
+## How it works
+
+When Alethia inspects a cluster (on the deploy finalizer and on the day-2 drift refresh), it reads the
+Trivy-Operator `VulnerabilityReport` custom resources across all namespaces and sums the findings by
+severity — **critical / high / medium / low** — along with the number of reports that fed the aggregate.
+That rollup is stored per environment and surfaced as the Security posture.
+
+## What the Evidence page shows
+
+| Mark | Meaning |
+| --- | --- |
+| **N critical** / **N high** | The highest-severity findings across the cluster's Trivy reports. |
+| **N low** | Only medium/low findings remain. |
+| **Clean** | Trivy scanned and found no critical/high/medium/low vulnerabilities. |
+| **Not scanned** | Trivy-Operator isn't installed (or has produced no reports yet) — an honest unknown. |
+
+## Enabling scans
+
+"Not scanned" means the **Trivy-Operator add-on** isn't running in the cluster. Install it from the add-on
+marketplace; once it produces `VulnerabilityReport`s, the next cluster inspection picks them up and the
+Security posture fills in automatically. Nothing to wire on the Alethia side — if the reports exist,
+Alethia reads them.

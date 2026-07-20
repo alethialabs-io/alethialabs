@@ -186,6 +186,20 @@ attached **unsigned** (`algorithm: "none"`) rather than blocking the apply — s
 evidence, not a precondition for provisioning. Verdicts are described as *reproducible given the
 same plan*, never as proof of compliance.
 
+**Customer-controlled root of trust (#884).** The `Signer` seam (`signer.go`) lets an org's receipts
+be signed by a key the **customer** custodies — non-repudiation *against Alethia*, not just a
+platform self-attestation. Custody model **A**: the key lives in the customer's cloud (KMS-native
+ed25519 on AWS/GCP; a secret store elsewhere) and Alethia holds **no usable key at rest** — only a
+**reference + the public key** (`org_signing_key` table, console-side). The runner invokes it under
+the customer's revocable, audited keyless grant at sign time. `SignReceiptWith(receipt, signer)`
+embeds the signer's public key (`SignedReceipt.PublicKey`) so a downloaded receipt is
+**self-verifiable** offline (`VerifySelf`); but *"is this the org's key?"* is answered against the
+retained `key_id→public_key` history (`VerifyTrusted`), never by trusting the embedded key. A
+registered key is `pending_verification` until a runner **proof-of-possession** job confirms real
+control of `key_ref`; a project on a cloud that doesn't match the active key falls back to the
+platform key / unsigned, **surfaced honestly**. Concrete per-cloud signers, the proof job, and Rekor
+anchoring (#885) are follow-ons.
+
 ## AWS IAM Access Analyzer corroboration (opt-in)
 
 Beyond the pattern checks, the gate can corroborate IAM policies with **AWS IAM Access Analyzer's

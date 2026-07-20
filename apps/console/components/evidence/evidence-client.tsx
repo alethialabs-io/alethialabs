@@ -18,7 +18,7 @@ import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
 import { EvidenceDrawer } from "./drawer/evidence-drawer";
-import { type EvidenceEnvRow, hasAnySignal } from "./evidence-derive";
+import type { EvidenceEnvRow } from "./evidence-derive";
 import { EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
 import { EvidenceFilterBar } from "./evidence-filter-bar";
 import { EvIcon } from "./evidence-status";
@@ -42,7 +42,6 @@ export function EvidenceClient() {
 	const { data: result, isPlaceholderData, isError, refetch } = useEvidenceQuery();
 
 	// Row interaction.
-	const [expandedId, setExpandedId] = useState<string | null>(null);
 	const [drawerId, setDrawerId] = useState<string | null>(null);
 	const [drawerTab, setDrawerTab] = useState("report");
 	const [toast, setToast] = useState("");
@@ -62,9 +61,8 @@ export function EvidenceClient() {
 		return null;
 	}, [result?.groups, drawerId]);
 
-	/** Opens the detail drawer on a valid default tab (rows with ≥1 signal only). */
+	/** Opens the detail drawer — every row opens it; empty tabs show explained states. */
 	const openDrawer = (row: EvidenceEnvRow) => {
-		if (!hasAnySignal(row)) return;
 		setDrawerTab(defaultTab(row));
 		setDrawerId(row.environmentId);
 	};
@@ -133,12 +131,7 @@ export function EvidenceClient() {
 							<EvidenceTable
 								org={org}
 								groups={result.groups}
-								expandedId={expandedId}
-								onToggle={(id) =>
-									setExpandedId((cur) => (cur === id ? null : id))
-								}
 								onOpen={openDrawer}
-								onDownload={download}
 							/>
 						)}
 
