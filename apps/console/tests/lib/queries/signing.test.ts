@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "vitest";
-import { resolveReceiptSignerPosture } from "@/lib/queries/signing";
+import {
+	type OrgSigningKeyView,
+	resolveReceiptSignerPosture,
+} from "@/lib/queries/signing";
 
-type K = { provider: string; status: string; active: boolean };
+type K = Pick<OrgSigningKeyView, "provider" | "status" | "active">;
 const active = (provider: string): K => ({ provider, status: "active", active: true });
 const pending = (provider: string): K => ({ provider, status: "pending_verification", active: false });
 
