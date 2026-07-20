@@ -906,7 +906,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'runners', 'support_cases', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'runners', 'support_cases', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback', 'org_signing_key']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -941,7 +941,7 @@ UPDATE public.jobs j
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback', 'org_signing_key']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(

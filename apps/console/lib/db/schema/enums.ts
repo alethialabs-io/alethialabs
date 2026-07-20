@@ -150,6 +150,16 @@ export const gitProvider = pgEnum("git_provider", [
 	"gitlab",
 ]);
 
+/** How a customer-controlled receipt-signing key is held (#884). Mirrors verify.SigningBackend. */
+export const signingBackend = pgEnum("signing_backend", ["kms", "secret"]);
+
+/** Lifecycle of a registered org signing key (#884): shape-validated → proof-of-possession → active. */
+export const signingKeyStatus = pgEnum("signing_key_status", [
+	"pending_verification",
+	"active",
+	"invalid",
+]);
+
 export const auditAction = pgEnum("audit_action", [
 	"CREATED",
 	"UPDATED",

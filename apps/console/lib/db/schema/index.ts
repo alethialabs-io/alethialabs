@@ -20,6 +20,7 @@ export * from "./project-preview-config";
 export * from "./promotions";
 export * from "./drift";
 export * from "./fabric-drift";
+export * from "./signing";
 export * from "./probes";
 export * from "./security";
 export * from "./runners";
