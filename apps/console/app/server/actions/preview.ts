@@ -10,6 +10,7 @@
 // destroy-on-close. Placement (namespace|vcluster) is the per-team tenancy of each preview.
 
 import { eq } from "drizzle-orm";
+import { notFound } from "next/navigation";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { projectPreviewConfig, projects } from "@/lib/db/schema";
@@ -50,7 +51,7 @@ export async function configurePreviewEnvironments(
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!project) throw new Error("Project not found");
+		if (!project) notFound(); // stale/deleted id → 404, not a captured error
 
 		const [row] = await tx
 			.insert(projectPreviewConfig)

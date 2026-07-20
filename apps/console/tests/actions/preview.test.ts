@@ -113,14 +113,15 @@ describe("configurePreviewEnvironments", () => {
 		expect(captured.values).toBeUndefined();
 	});
 
-	it("throws when the project is missing", async () => {
+	it("calls notFound() when the project is missing", async () => {
 		vi.mocked(withActorScope).mockImplementation(
 			((_a: unknown, cb: (tx: unknown) => unknown) =>
 				cb(makeTx({ selectResult: [] }))) as never,
 		);
+		// A stale/deleted id → Next notFound() (digest NEXT_HTTP_ERROR_FALLBACK), not a captured Error.
 		await expect(
 			configurePreviewEnvironments(PROJECT, VALID_INPUT),
-		).rejects.toThrow(/project not found/i);
+		).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 	});
 });
 
