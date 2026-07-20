@@ -8,6 +8,7 @@
 import { cn } from "@repo/ui/utils";
 import type { EvidenceEnvRow } from "../evidence-derive";
 import { relTime } from "../evidence-derive";
+import { EVIDENCE_HELP } from "../evidence-help";
 import { kindTone, TONE_TEXT } from "../evidence-status";
 import { TabEmpty } from "./tab-empty";
 
@@ -20,6 +21,7 @@ export function DriftTab({ row }: { row: EvidenceEnvRow }) {
 				icon="rotate"
 				title="No drift scan recorded"
 				description="Drift posture appears once a refresh-only plan runs against this environment and compares the cloud with the provisioned state."
+				docsHref={EVIDENCE_HELP.drift.docsHref}
 			/>
 		);
 	}

@@ -1,0 +1,46 @@
+---
+title: Drift
+description: How Alethia detects when the live cloud has diverged from the state it provisioned, and what the drift posture on the Evidence page means.
+---
+
+# Drift
+
+<Enterprise />
+
+Provisioning proves an environment was correct **at apply time**. Drift detection is the other half —
+it keeps proving the live cloud still matches the state Alethia provisioned, so a change made outside
+Alethia (a console edit, a manual `kubectl`, a deleted resource) surfaces instead of hiding.
+
+## How it works
+
+A scheduled `DETECT_DRIFT` job runs `tofu plan -refresh-only -json` against the environment's state and
+feeds the plan to the `drift` analyzer. The analyzer walks the plan's `resource_drift` section, skips
+data sources and no-ops, and classifies every managed resource that diverged:
+
+- **modified** — the resource still exists but one or more attributes changed.
+- **deleted** — the resource is gone from the cloud but still in state.
+- **other** — a divergence that is neither of the above.
+
+The result is a **posture** stored per environment: `in_sync` (nothing diverged), a `drifted` count, and
+the per-resource details (address, type, kind) you see in the drawer's **Drift** tab.
+
+## What the Evidence page shows
+
+| Mark | Meaning |
+| --- | --- |
+| **In sync** | The last refresh-only scan found no managed resource had drifted. |
+| **N drifted** | That many managed resources diverged from the provisioned state. |
+| **Not scanned** | No drift scan has run for this environment yet — an honest unknown, never a green pass. |
+
+## Running a scan
+
+Drift scans run on a schedule (tiered by environment criticality) and can also be triggered for a
+project or environment from the project view. Verification and drift are complementary: verification
+checks the **plan** before apply; drift checks the **live cloud** after.
+
+## Known limit
+
+A refresh-only plan can only see resources that are **in state**. Resources that exist in the cloud but
+were never provisioned by Alethia (true "unmanaged" resources) need a cloud inventory source (AWS Config,
+GCP Cloud Asset Inventory) and are reported as not-yet-known rather than implied absent — the posture
+never claims coverage it doesn't have.
