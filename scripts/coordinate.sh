@@ -6,7 +6,8 @@
 #
 #   reclaim  stale leases (a dead instance's claim → freed, like #534 orphan-reclaim)
 #   unblock  recompute the `blocked` label from each issue's `blocked-by:` line
-#   report   per-wave board status + collisions to eyeball + UI units awaiting the human
+#   report   per-wave board status + collisions to eyeball + UI units awaiting the human +
+#            possibly-shipped units (open, but a merged PR references them — de-stale the board)
 #
 # Usage:
 #   scripts/coordinate.sh                 # reclaim + unblock + report
@@ -130,5 +131,32 @@ migc="$(echo "$board" | jq '[.[]|select((.labels|map(.name)|index("claimed")) an
 # UI awaiting the human.
 uis="$(echo "$board" | jq -r '[.[]|select(.labels|map(.name)|index("class:ui"))|select(.labels|map(.name)|index("needs:design") or (.labels|map(.name)|index("needs:human")))|"#\(.number) \(.title)"][]' 2>/dev/null || true)"
 if [ -n "$uis" ]; then echo "  ── UI awaiting you ──"; echo "$uis" | sed 's/^/  /'; fi
+
+# ── possibly-shipped: open board units a MERGED PR references but that never closed ──
+# The stale-open failure mode: a multi-issue PR closes several units in one merge but omits
+# the per-issue `Closes #n`, so GitHub creates no closing linkage and the issue never
+# auto-closes — a future instance then re-claims finished work. Surface them to eyeball
+# (heuristic — a reference is not a delivery; verify vs origin/dev before closing). Advisory
+# only, never mutates, like the COLLISION flag above. See .claude/COORDINATION.md.
+merged="$(gh pr list --state merged --limit 300 --json number,title,body 2>/dev/null || echo '[]')"
+ship="$(echo "$board" | jq -r --argjson merged "$merged" '
+  [ .[]
+    | select(.labels|map(.name)|any(startswith("class:")))                         # board units only
+    # only the READY/claimable set — a claimed unit is being worked, blocked/gated units
+    # are not claimable; the orphaned-shipped hazard is a unit that still looks claimable.
+    | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "needs:human" or . == "needs:design")|not)
+    | .number as $n
+    | ($merged | map(select((.title|test("#\($n)\\b")) or (.body|test("#\($n)\\b"))))) as $refs
+    | select($refs|length > 0)
+    | { n: $n, title: .title[0:46],
+        strong: ($refs|map(select(.title|test("#\($n)\\b")))|length > 0),          # named in a PR title = likely closed
+        prs: ($refs|map("#\(.number)")|join(",")) } ]
+  | sort_by(.n)[]
+  | "  #\(.n)  \(if .strong then "LIKELY" else "verify" end)  (merged \(.prs))  \(.title)"
+' 2>/dev/null || true)"
+if [ -n "$ship" ]; then
+  echo "  ── ⚠ possibly-shipped (open, but a MERGED PR references it — verify vs origin/dev, close if delivered) ──"
+  echo "$ship"
+fi
 
 [ "$MODE" = "full" ] && echo "  (reclaimed $reclaimed stale lease(s))"
