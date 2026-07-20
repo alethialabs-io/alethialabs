@@ -567,11 +567,9 @@ export const CATALOG: Catalog = {
 			},
 			"hetzner": {
 				"default_instance": "cax11",
-				"default_k8s_version": "1.32",
+				"default_k8s_version": "1.35",
 				"k8s_versions": [
-					"1.32",
-					"1.31",
-					"1.30"
+					"1.35"
 				],
 				"autoscaler_key": "enable_cluster_autoscaler",
 				"instances": [

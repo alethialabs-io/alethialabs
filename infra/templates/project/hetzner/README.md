@@ -58,8 +58,8 @@ variable). Agents must never run `tofu plan` / `tofu apply`.
 | `project_name` | _(required)_ | Combined with `environment` into the cluster name. |
 | `environment` | _(required)_ | Environment name (dev/staging/prod). |
 | `region` | `fsn1` | Hetzner location. |
-| `talos_version` | `v1.9.5` | Talos Linux version. |
-| `kubernetes_version` | `""` | Kubernetes version; empty → Talos default. |
+| `talos_version` | `v1.13.6` | Talos Linux version. |
+| `kubernetes_version` | `1.35.6` | Kubernetes version — concrete **patch** (Talos uses it as the component image tag); coupled to `talos_version`. Empty → Talos default (1.36). |
 | `control_plane_count` | `1` | Number of control-plane nodes. |
 | `control_plane_server_type` | `cpx22` | CP server type (2 vCPU / 4 GB, amd64; orderable). `cax11` ARM is capacity-unreliable, `cpx11` retired. |
 | `control_plane_arch` | `amd64` | CP arch (`arm64` for cax*, `amd64` for cx*/cpx*/ccx*). |

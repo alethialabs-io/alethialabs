@@ -23,13 +23,14 @@
 # ---------------------------------------------------------------------------
 
 locals {
-  cilium_version     = "1.16.5"
-  hcloud_ccm_version = "1.24.0"
+  cilium_version     = "1.19.6"
+  hcloud_ccm_version = "1.34.0"
 
   # kube_version for the offline helm renders. The Cilium chart requires k8s
   # >= 1.21; the helm provider otherwise defaults to 1.20 and the render fails.
-  # Pin from the requested Kubernetes version, else a safe recent default.
-  render_kube_version = var.kubernetes_version == "" ? "1.31.0" : var.kubernetes_version
+  # Pin from the requested Kubernetes version, else a safe recent default matching
+  # the pinned Talos k8s (var.kubernetes_version default 1.35.6).
+  render_kube_version = var.kubernetes_version == "" ? "1.35.6" : var.kubernetes_version
 }
 
 # --- Cilium ----------------------------------------------------------------

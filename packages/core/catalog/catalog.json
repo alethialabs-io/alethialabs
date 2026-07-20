@@ -144,8 +144,8 @@
     },
     "hetzner": {
       "default_instance": "cax11",
-      "default_k8s_version": "1.32",
-      "k8s_versions": ["1.32", "1.31", "1.30"],
+      "default_k8s_version": "1.35",
+      "k8s_versions": ["1.35"],
       "autoscaler_key": "enable_cluster_autoscaler",
       "instances": [
         { "value": "cax11", "label": "CAX11 (Arm)", "vcpu": 2, "memory_gb": 4, "family": "general", "cost": "~€4/mo" },
