@@ -6,9 +6,11 @@
 // DEPLOY carries a jobs.verify_override.
 
 import Link from "next/link";
+import { FieldHelp } from "@repo/ui/field-help";
 import { cn } from "@repo/ui/utils";
 import type { EvidenceWaiver } from "@/lib/queries/evidence";
 import { relTime } from "./evidence-derive";
+import { EVIDENCE_HELP } from "./evidence-help";
 import { EvIcon } from "./evidence-status";
 
 /** The recorded-waivers panel below the posture table. */
@@ -27,6 +29,14 @@ export function EvidenceWaivers({
 				<span className="font-display text-[14px] font-semibold text-text-primary">
 					Recorded waivers
 				</span>
+				<FieldHelp
+					title={EVIDENCE_HELP.waiver.title}
+					docsHref={EVIDENCE_HELP.waiver.docsHref}
+					side="bottom"
+					className="text-text-disabled hover:text-text-secondary"
+				>
+					{EVIDENCE_HELP.waiver.body}
+				</FieldHelp>
 				<span className="rounded-full border px-2 py-px font-mono text-[10px] text-text-tertiary">
 					{active} active
 				</span>

@@ -1,0 +1,56 @@
+---
+title: Receipts & signing
+description: What an evidence receipt is, how ed25519 signing makes it tamper-evident and offline-verifiable, waivers, and the root-of-trust model.
+---
+
+# Receipts & signing
+
+<Enterprise />
+
+An **evidence receipt** is the record Alethia seals on every apply. It is the artifact that turns "the
+console says it passed" into something you can verify independently, later, without trusting the console.
+
+## What a receipt binds
+
+Each receipt is bound to the exact change it describes:
+
+- **`plan_sha256`** — the hash of the exact OpenTofu plan that was applied.
+- **verdict** — the elench gate's decision (`pass` / `warn` / `fail` / `not_evaluable`).
+- **catalog version** — which control catalog produced the verdict (an old receipt is only meaningful
+  against the catalog that generated it).
+- the full per-control report, the provider, OpenTofu version, the runner, and the evaluation time.
+- any **sealed exception** (see waivers below).
+
+## Signing — what it buys you
+
+When a signing key is configured, the receipt is signed with **ed25519**. A signed receipt is
+**tamper-evident** and **verifiable offline**: anyone with the public key can confirm the receipt wasn't
+altered after the fact — the signature is over the receipt's canonical JSON, so any change breaks it. Even
+with the platform-held key, this upgrades "trust the database row" to "cryptographically bound to this
+plan and verdict."
+
+| State | Meaning |
+| --- | --- |
+| **Signed** | An ed25519 signature seals the receipt; it's tamper-evident and offline-verifiable. |
+| **Unsigned** | A receipt was sealed, but no signing key is configured — still a faithful record, not signed. |
+| **—** | No apply has sealed a receipt for this environment yet. |
+
+### Enabling signing
+
+Signing is off until a key is set. Provide an ed25519 key to the runner (via
+`ALETHIA_RECEIPT_SIGNING_KEY`) and every subsequent receipt is signed. Absent a key, receipts are still
+attached — just unsigned — so an apply is never blocked on signing.
+
+### Root of trust
+
+A receipt signed by Alethia's own runner attests "Alethia asserted this." For auditor-grade
+non-repudiation, sign with a **customer-controlled key** and/or anchor the receipt in a **transparency
+log** (Rekor) so its existence and integrity are provable by any third party offline. Both are on the
+roadmap; the signing seam is already in place.
+
+## Waivers
+
+A fail-closed gate blocks an apply on a hard failure. A **waiver** (override) is the authorized, escape
+hatch: a time-boxed pass of **specific** failing control IDs, recorded with who granted it, why, and when
+it expires. The waiver is sealed into the receipt as an **exception**, so the record shows the gate was
+passed deliberately — not disabled. Active waivers are listed on the Evidence page.

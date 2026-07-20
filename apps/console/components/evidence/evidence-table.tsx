@@ -1,16 +1,19 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The org posture table — one row per environment under the fixed triage groups, with
-// a plain-text Stage column (no chip next to "{env} · {region}"), the four postures
-// (Verify / Drift / Security / Receipt), freshness, and the always-populated expanded
-// peek (evidence-row-peek). Grayscale-first; the eye lands on destructive marks.
+// The org posture table — grouped by project, one row per environment (env-led, with a stage
+// tier pill), the four postures (Verify / Drift / Security / Receipt), and freshness. Each
+// posture header carries a "?" that defines the term and links to the docs. A row click opens
+// the detail drawer (one detail surface — no inline peek). Grayscale-first; the eye lands on
+// destructive marks. Horizontally scrolls on narrow viewports to keep the dense columns.
 
-import { cn } from "@repo/ui/utils";
+import { FieldHelp } from "@repo/ui/field-help";
 import { ProviderIcon } from "@repo/ui/provider-icon";
+import { cn } from "@repo/ui/utils";
 import type { EvidenceEnvRow, RowGroup } from "./evidence-derive";
 import { isStale, lastChecked, relTime, stageShort } from "./evidence-derive";
-import { RowPeek } from "./evidence-row-peek";
+import { EVIDENCE_HELP } from "./evidence-help";
 import {
 	driftMark,
 	EvIcon,
@@ -24,15 +27,35 @@ import {
 } from "./evidence-status";
 
 const GRID =
-	"grid grid-cols-[minmax(200px,1.6fr)_64px_128px_116px_150px_104px_minmax(90px,1fr)_28px] gap-3 items-center";
+	"grid grid-cols-[minmax(210px,1.6fr)_128px_116px_150px_104px_minmax(90px,1fr)_28px] gap-3 items-center";
 
-/** The row's cloud logo — a provider mark for a known cloud, else a "layers" (mixed) glyph. */
-function RowProvider({ provider }: { provider: string | null }) {
+/** The cloud logo — a provider mark for a known cloud, else a "layers" (mixed) glyph. */
+function RowProvider({
+	provider,
+	size = 16,
+}: {
+	provider: string | null;
+	size?: number;
+}) {
 	if (isKnownCloud(provider)) {
-		return <ProviderIcon provider={provider} size={16} className="shrink-0" />;
+		return <ProviderIcon provider={provider} size={size} className="shrink-0" />;
 	}
 	return (
-		<EvIcon name="layers" size={15} className="shrink-0 text-text-tertiary" />
+		<EvIcon name="layers" size={size - 1} className="shrink-0 text-text-tertiary" />
+	);
+}
+
+/** The stage tier chip (production carries the most ink). */
+function StageChip({ stage }: { stage: string }) {
+	return (
+		<span
+			className={cn(
+				"shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider",
+				stageTextClass(stage),
+			)}
+		>
+			{stageShort(stage)}
+		</span>
 	);
 }
 
@@ -51,53 +74,60 @@ function PostureCell({ mark }: { mark: Mark }) {
 	);
 }
 
-/** One environment row + its expanded peek. */
-function EnvRow({
-	org,
-	row,
-	expanded,
-	onToggle,
-	onOpen,
-	onDownload,
+/** A posture column header with its "?" explainer + docs link. */
+function HeaderCol({
+	label,
+	help,
 }: {
-	org: string;
+	label: string;
+	help: keyof typeof EVIDENCE_HELP;
+}) {
+	const h = EVIDENCE_HELP[help];
+	return (
+		<span className="inline-flex items-center gap-1">
+			{label}
+			<FieldHelp
+				title={h.title}
+				docsHref={h.docsHref}
+				side="bottom"
+				className="text-text-disabled hover:text-text-secondary"
+			>
+				{h.body}
+			</FieldHelp>
+		</span>
+	);
+}
+
+/** One environment row — a button that opens the detail drawer. */
+function EnvRow({
+	row,
+	onOpen,
+}: {
 	row: EvidenceEnvRow;
-	expanded: boolean;
-	onToggle: (id: string) => void;
 	onOpen: (row: EvidenceEnvRow) => void;
-	onDownload: (row: EvidenceEnvRow) => void;
 }) {
 	const stale = isStale(row);
 	return (
-		<div className="border-b border-border-faint last:border-0">
+		<div className="group/row border-b border-border-faint last:border-0">
 			<button
 				type="button"
-				onClick={() => onToggle(row.environmentId)}
+				onClick={() => onOpen(row)}
 				className={cn(
 					GRID,
 					"w-full cursor-pointer px-4 py-2.5 text-left transition-colors hover:bg-surface-muted",
-					expanded && "bg-surface-muted",
 				)}
 			>
 				<div className="flex min-w-0 items-center gap-2.5">
-					<RowProvider provider={row.provider} />
 					<div className="min-w-0">
 						<div className="truncate text-[13px] font-medium text-text-primary">
-							{row.projectName}
+							{row.environmentName}
 						</div>
 						<div className="truncate font-mono text-[10px] text-text-tertiary">
-							{row.environmentName} · {row.region}
+							{row.region}
 						</div>
 					</div>
+					<StageChip stage={row.stage} />
 				</div>
-				<span
-					className={cn(
-						"font-mono text-[9.5px] uppercase tracking-[0.12em]",
-						stageTextClass(row.stage),
-					)}
-				>
-					{stageShort(row.stage)}
-				</span>
 				<PostureCell mark={verifyMark(row.verify)} />
 				<PostureCell mark={driftMark(row.drift)} />
 				<PostureCell mark={securityMark(row.security)} />
@@ -111,42 +141,27 @@ function EnvRow({
 					{stale && <EvIcon name="clock" size={11} className="shrink-0" />}
 					{relTime(lastChecked(row))}
 				</div>
-				<div
-					className={cn(
-						"grid place-items-center text-text-tertiary transition-transform",
-						expanded && "rotate-180",
-					)}
-				>
-					<EvIcon name="chevron-down" size={15} />
+				<div className="grid place-items-center text-text-disabled opacity-0 transition-opacity group-hover/row:opacity-100">
+					<EvIcon name="arrow-right" size={14} />
 				</div>
 			</button>
-			{expanded && (
-				<RowPeek org={org} row={row} onOpen={onOpen} onDownload={onDownload} />
-			)}
 		</div>
 	);
 }
 
-/** The grouped posture table (fixed triage groups, worst-first rows). */
+/** The project-grouped posture table. */
 export function EvidenceTable({
-	org,
 	groups,
-	expandedId,
-	onToggle,
 	onOpen,
-	onDownload,
 }: {
 	org: string;
 	groups: RowGroup[];
-	expandedId: string | null;
-	onToggle: (id: string) => void;
 	onOpen: (row: EvidenceEnvRow) => void;
-	onDownload: (row: EvidenceEnvRow) => void;
 }) {
 	return (
 		<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
 			<div className="overflow-x-auto">
-				<div className="min-w-[880px]">
+				<div className="min-w-[820px]">
 					<div
 						className={cn(
 							GRID,
@@ -154,39 +169,23 @@ export function EvidenceTable({
 						)}
 					>
 						<span>Environment</span>
-						<span>Stage</span>
-						<span>Verify</span>
-						<span>Drift</span>
-						<span>Security</span>
-						<span>Receipt</span>
+						<HeaderCol label="Verify" help="verify" />
+						<HeaderCol label="Drift" help="drift" />
+						<HeaderCol label="Security" help="security" />
+						<HeaderCol label="Receipt" help="receipt" />
 						<span className="text-right">Checked</span>
 						<span />
 					</div>
 					{groups.map((g) => (
 						<div key={g.key}>
 							<div className="flex items-center gap-2.5 border-b border-border-faint px-4 pb-2 pt-3.5">
-								<EvIcon
-									name={g.iconKey}
-									size={14}
-									className={TONE_TEXT[g.tone]}
-								/>
+								<RowProvider provider={g.provider} size={17} />
 								<span className="font-display text-[13.5px] font-semibold tracking-tight text-text-primary">
 									{g.label}
 								</span>
-								<span className="rounded-full border px-2 py-px font-mono text-[10px] text-text-tertiary">
-									{g.rows.length}
-								</span>
 							</div>
 							{g.rows.map((row) => (
-								<EnvRow
-									key={row.environmentId}
-									org={org}
-									row={row}
-									expanded={expandedId === row.environmentId}
-									onToggle={onToggle}
-									onOpen={onOpen}
-									onDownload={onDownload}
-								/>
+								<EnvRow key={row.environmentId} row={row} onOpen={onOpen} />
 							))}
 						</div>
 					))}

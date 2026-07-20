@@ -7,6 +7,9 @@
     "architecture",
     "engine-internals",
     "control-catalog",
+    "drift",
+    "security-scanning",
+    "receipts",
     "agent-runtime",
     "multi-cloud",
     "extending"
