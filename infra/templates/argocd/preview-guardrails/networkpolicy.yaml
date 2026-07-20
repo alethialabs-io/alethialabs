@@ -1,0 +1,66 @@
+# Preview-env network isolation (#887). Namespace-agnostic: metadata.namespace is intentionally
+# omitted so ArgoCD applies each doc into the Application's destination namespace (preview-<pr>).
+# A preview runs UNTRUSTED PR code, so the baseline is default-deny with a minimal allowlist:
+# pods may resolve DNS and talk within their own preview namespace, and nothing else — no traffic
+# to other tenants on the Fabric, no arbitrary egress to the internet or cloud metadata endpoints.
+#
+# default-deny: no ingress and no egress for every pod in the namespace (empty rule lists = deny).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: preview-default-deny
+  labels:
+    alethia.io/preview: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# allow-dns: egress to the cluster DNS service (kube-dns) on 53/UDP+TCP so workloads can resolve
+# names. Scoped to the kube-system namespace's kube-dns pods, not blanket egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: preview-allow-dns
+  labels:
+    alethia.io/preview: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# allow-intra-namespace: ingress and egress between pods within the same preview namespace, so a
+# multi-service preview (app + its own db/cache) works while staying isolated from the rest of the
+# Fabric. Uses podSelector {} on both ends — same-namespace only (NetworkPolicy peers without a
+# namespaceSelector match the policy's own namespace).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: preview-allow-intra-namespace
+  labels:
+    alethia.io/preview: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}

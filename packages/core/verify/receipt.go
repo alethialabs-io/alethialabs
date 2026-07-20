@@ -61,6 +61,12 @@ type SignedReceipt struct {
 	Algorithm string  `json:"algorithm"`
 	KeyID     string  `json:"key_id"`
 	Signature string  `json:"signature"` // base64(standard) of the detached signature
+	// PublicKey is the base64(standard) ed25519 public key the signature verifies under.
+	// Embedding it makes a receipt SELF-verifiable by an external auditor with no lookup
+	// (#884) — but "does this key belong to the org?" is answered out-of-band (the retained
+	// key_id→public-key history, a published fingerprint, or the Rekor anchor #885), never
+	// by trusting this field blindly. Empty on unsigned receipts / older signatures.
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 // BuildReceiptParams collects everything needed to assemble a Receipt.
@@ -140,12 +146,16 @@ func Sign(r Receipt, priv ed25519.PrivateKey, keyID string) (*SignedReceipt, err
 		return nil, fmt.Errorf("canonicalize receipt: %w", err)
 	}
 	sig := ed25519.Sign(priv, msg)
-	return &SignedReceipt{
+	sr := &SignedReceipt{
 		Receipt:   r,
 		Algorithm: "ed25519",
 		KeyID:     keyID,
 		Signature: base64.StdEncoding.EncodeToString(sig),
-	}, nil
+	}
+	if pub, ok := priv.Public().(ed25519.PublicKey); ok {
+		sr.PublicKey = base64.StdEncoding.EncodeToString(pub)
+	}
+	return sr, nil
 }
 
 // Verify checks that a SignedReceipt's signature matches its receipt under the
@@ -173,4 +183,23 @@ func (s *SignedReceipt) Verify(pub ed25519.PublicKey) error {
 		return fmt.Errorf("signature does not match receipt (tampered, or wrong key)")
 	}
 	return nil
+}
+
+// VerifySelf checks the signature against the receipt's OWN embedded PublicKey (#884). It
+// proves internal consistency — the signature matches the receipt under the embedded key —
+// but NOT that the embedded key is the org's real key. A caller that cares who signed must
+// still bind KeyID to a trusted public key (the retained history or the Rekor anchor) and
+// compare it to PublicKey. Returns an error when no key is embedded.
+func (s *SignedReceipt) VerifySelf() error {
+	if s == nil {
+		return fmt.Errorf("nil signed receipt")
+	}
+	if s.PublicKey == "" {
+		return fmt.Errorf("receipt has no embedded public key to self-verify")
+	}
+	pub, err := base64.StdEncoding.DecodeString(s.PublicKey)
+	if err != nil {
+		return fmt.Errorf("decode embedded public key: %w", err)
+	}
+	return s.Verify(ed25519.PublicKey(pub))
 }

@@ -7,8 +7,10 @@
 // sealed exception, and the root-of-trust disclaimer. Purposeful empty state when no
 // receipt was sealed.
 
+import { ArrowUpRight } from "lucide-react";
 import { CopyButton } from "@repo/ui/copy-button";
 import type { EvidenceEnvRow } from "../evidence-derive";
+import { EVIDENCE_HELP } from "../evidence-help";
 import { EvIcon } from "../evidence-status";
 import { TabEmpty } from "./tab-empty";
 
@@ -55,6 +57,7 @@ export function ReceiptTab({
 				icon="file-minus"
 				title="No receipt sealed"
 				description="Receipts are produced when a verified plan is applied — a signed receipt attests the verdict is reproducible given the same plan."
+				docsHref={EVIDENCE_HELP.receipt.docsHref}
 			/>
 		);
 	}
@@ -133,6 +136,28 @@ export function ReceiptTab({
 					<div className="mt-2 font-mono text-[10px] text-text-tertiary">
 						{body.exception.by}
 					</div>
+				</div>
+			)}
+			{!signed && (
+				<div className="rounded-md border border-dashed border-border-strong bg-surface-sunken px-3.5 py-3">
+					<div className="mb-1 flex items-center gap-1.5">
+						<EvIcon name="file-check" size={14} className="text-text-secondary" />
+						<span className="font-display text-[13px] font-semibold text-text-primary">
+							Enable signed receipts
+						</span>
+					</div>
+					<div className="text-[11.5px] leading-relaxed text-text-tertiary">
+						Set an ed25519 signing key on the runner and every future receipt becomes
+						tamper-evident and verifiable offline — even the platform key upgrades
+						“trust the database row” to “cryptographically bound to this plan”.
+					</div>
+					<a
+						href={EVIDENCE_HELP.receipt.docsHref}
+						className="mt-2.5 inline-flex items-center gap-1 border-b border-border-strong pb-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-text-primary hover:text-text-primary"
+					>
+						How to enable signing
+						<ArrowUpRight className="size-3" />
+					</a>
 				</div>
 			)}
 			<div className="flex gap-2.5 rounded-sm border bg-surface px-3 py-2.5">

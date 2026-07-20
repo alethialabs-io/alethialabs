@@ -138,19 +138,17 @@ export function matchesAnyStatus(
 }
 
 // ── Filter → group → sort pipeline ───────────────────────────────────────────
-// Grouping is FIXED to the triage buckets (the page's point of view, not a user
-// choice) and ordering is fixed to worst-first with a name tiebreak — the Group and
-// Sort controls were removed deliberately; stage/project slicing happens via filters.
-
-/** The icon a triage group header carries (a subset of the status layer's IconKey). */
-export type GroupIconKey = "triangle-alert" | "shield-question" | "shield-check";
+// Grouping is FIXED to the project (the user thinks project-first): each project is a
+// section, its environments sorted worst-first with a name tiebreak, and the projects
+// themselves ordered by their most-urgent environment. Cloud / stage / status slicing
+// happens via the funnel filter, not a group control.
 
 export interface RowGroup {
 	key: string;
 	label: string;
-	iconKey: GroupIconKey;
-	tone: Tone;
 	rows: EvidenceEnvRow[];
+	/** The project's cloud provider — drives the group header's logo. */
+	provider: string | null;
 }
 
 export interface DeriveOptions {
@@ -194,9 +192,8 @@ export function rowScore(row: EvidenceEnvRow): number {
 	return n;
 }
 
-/** Filters rows by search + stages + status + providers, buckets them into the fixed
- * triage groups (Needs attention / Coverage gaps / Healthy), and sorts each group
- * worst-first with a name tiebreak. */
+/** Filters rows by search + stages + status + providers, groups them by project, and sorts
+ * each project's environments worst-first (name tiebreak) with the most-urgent project first. */
 export function deriveGroups(
 	ev: OrgEvidence,
 	opts: DeriveOptions,
@@ -217,86 +214,29 @@ export function deriveGroups(
 	});
 
 	const buckets = new Map<string, RowGroup>();
-	const ensure = (
-		key: string,
-		label: string,
-		iconKey: GroupIconKey,
-		tone: Tone,
-	): RowGroup => {
-		let g = buckets.get(key);
-		if (!g) {
-			g = { key, label, iconKey, tone, rows: [] };
-			buckets.set(key, g);
-		}
-		return g;
-	};
-
 	for (const r of filtered) {
-		const b = triageBucket(r);
-		ensure(b.key, b.label, b.iconKey, b.tone).rows.push(r);
+		let g = buckets.get(r.projectId);
+		if (!g) {
+			g = { key: r.projectId, label: r.projectName, rows: [], provider: r.provider };
+			buckets.set(r.projectId, g);
+		}
+		g.rows.push(r);
 	}
 
 	const groups = [...buckets.values()];
-	groups.sort(
-		(a, b) => TRIAGE_BUCKET_ORDER[a.key] - TRIAGE_BUCKET_ORDER[b.key],
-	);
-	// Worst-first inside each group; name as the deterministic tiebreak.
+	// Worst-first inside each project; name as the deterministic tiebreak.
 	for (const g of groups) {
 		g.rows.sort(
 			(a, b) =>
 				rowScore(b) - rowScore(a) ||
-				a.projectName.localeCompare(b.projectName) ||
 				a.environmentName.localeCompare(b.environmentName),
 		);
 	}
+	// Order the projects by their most-urgent environment, then by name.
+	const worst = (g: RowGroup) => Math.max(...g.rows.map(rowScore));
+	groups.sort((a, b) => worst(b) - worst(a) || a.label.localeCompare(b.label));
 
 	return { groups, resultCount: filtered.length };
-}
-
-const TRIAGE_BUCKET_ORDER: Record<string, number> = {
-	attention: 0,
-	gaps: 1,
-	healthy: 2,
-};
-
-/** Which triage bucket a row falls in when grouping by triage. */
-function triageBucket(row: EvidenceEnvRow): {
-	key: string;
-	label: string;
-	iconKey: GroupIconKey;
-	tone: Tone;
-} {
-	const attention =
-		row.verify?.verdict === "fail" ||
-		Boolean(row.drift && !row.drift.inSync) ||
-		Boolean(
-			row.security?.scanned && row.security.critical + row.security.high > 0,
-		);
-	if (attention)
-		return {
-			key: "attention",
-			label: "Needs attention",
-			iconKey: "triangle-alert",
-			tone: "bad",
-		};
-	const gaps =
-		!row.verify ||
-		row.verify.verdict === "not_evaluable" ||
-		!row.drift ||
-		!row.security?.scanned;
-	if (gaps)
-		return {
-			key: "gaps",
-			label: "Coverage gaps",
-			iconKey: "shield-question",
-			tone: "unknown",
-		};
-	return {
-		key: "healthy",
-		label: "Healthy",
-		iconKey: "shield-check",
-		tone: "good",
-	};
 }
 
 /** Human stage label (capitalized). */
