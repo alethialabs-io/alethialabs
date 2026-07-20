@@ -293,33 +293,6 @@ func gateRequiresReport(dryRun bool, report *verify.Report, ov *verify.Override,
 		cause, verify.ControlPlanUnavailable)
 }
 
-// mergeEksAccessEntry returns the `eks_access_entries` tfvars map with a cluster-admin entry for
-// roleARN added under a stable key, preserving any entries already present. The shape mirrors the
-// module's own admin entries (infra/templates/project/aws/modules/eks/access_entries.tf): a
-// STANDARD entry with the AmazonEKSClusterAdminPolicy associated at cluster scope. Keyed on the
-// role ARN so re-running is idempotent and never collides with a caller-supplied entry.
-func mergeEksAccessEntry(existing interface{}, roleARN string) map[string]interface{} {
-	entries := map[string]interface{}{}
-	if prior, ok := existing.(map[string]interface{}); ok {
-		for k, v := range prior {
-			entries[k] = v
-		}
-	}
-	entries[roleARN] = map[string]interface{}{
-		"principal_arn": roleARN,
-		"type":          "STANDARD",
-		"policy_associations": map[string]interface{}{
-			"admin": map[string]interface{}{
-				"policy_arn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
-				"access_scope": map[string]interface{}{
-					"type": "cluster",
-				},
-			},
-		},
-	}
-	return entries
-}
-
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
 //
 // Error contract: a GitOps-wiring failure returns a PARTIAL non-nil result alongside the
@@ -441,32 +414,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		tfvars = byoTfvars
 	} else {
 		tfvars = provider.ProviderTfvars(vc)
-
-		// #551: on AWS, self-grant the runner's OWN provisioning identity a cluster-admin EKS
-		// access entry, keyed on the PATH-STRIPPED role ARN. The terraform-aws-eks module's
-		// creator-admin grant registers the path-QUALIFIED role ARN (`role/<path>/<name>`), but the
-		// IAM Authenticator resolves an assumed-role session to the path-stripped `role/<name>`, so
-		// a provisioning role created under an IAM path never matches — the runner authenticates to
-		// the EKS API but is authorized by nothing and 401s ("Unauthorized") after a green apply,
-		// wedging the whole post-apply spine (ArgoCD, add-ons). sts:GetCallerIdentity yields exactly
-		// the path-stripped role ARN the kube-token presents, so this entry always matches. It sits
-		// ALONGSIDE the module's creator entry (different principal string → distinct access entry,
-		// no conflict), so it is pure belt-and-suspenders. Best-effort: on any failure we log and
-		// fall back to the module's creator-admin grant (unchanged behaviour). AWS-only — no other
-		// cloud matches a presented identity against a pre-created access-entry principal (EKS is
-		// unique here; the others emit an admin kubeconfig or authorize via IAM roles). See #551.
-		if provider.Name() == "aws" {
-			roleARN, idErr := alethiaAws.CallerRoleARN(ctx, alethiaAws.AWSOptions{Region: vc.Region})
-			switch {
-			case idErr != nil:
-				fmt.Fprintf(stderr, "Warning: could not resolve the runner's AWS identity for the EKS self-access entry (falling back to the module creator-admin grant): %v\n", idErr)
-			case roleARN == "":
-				fmt.Fprintln(stderr, "Warning: runner AWS identity is not an assumed role; skipping the EKS self-access entry (relying on the module creator-admin grant)")
-			default:
-				tfvars["eks_access_entries"] = mergeEksAccessEntry(tfvars["eks_access_entries"], roleARN)
-				fmt.Fprintf(stdout, "Granting the runner identity %s cluster-admin via an explicit EKS access entry (path-stripped, #551)\n", roleARN)
-			}
-		}
 
 		// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
 		// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
