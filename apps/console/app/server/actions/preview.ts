@@ -9,11 +9,16 @@
 // (packages/core/argocd/applicationset_preview.go): create-on-open, deploy head_sha,
 // destroy-on-close. Placement (namespace|vcluster) is the per-team tenancy of each preview.
 
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
-import { projectPreviewConfig, projects } from "@/lib/db/schema";
+import {
+	projectFabrics,
+	projectGitCredentials,
+	projectPreviewConfig,
+	projects,
+} from "@/lib/db/schema";
 import {
 	type PreviewConfigInput,
 	previewConfigSchema,
@@ -32,6 +37,38 @@ export async function getPreviewConfig(projectId: string) {
 			.limit(1);
 		return row ?? null;
 	});
+}
+
+/** Lists the project's fabrics for preview placement selection. */
+export async function listProjectFabrics(projectId: string) {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	return withActorScope(actor, (tx) =>
+		tx
+			.select({
+				id: projectFabrics.id,
+				name: projectFabrics.name,
+				region: projectFabrics.region,
+				status: projectFabrics.status,
+			})
+			.from(projectFabrics)
+			.where(eq(projectFabrics.project_id, projectId))
+			.orderBy(asc(projectFabrics.name)),
+	);
+}
+
+/** Lists project git credentials for selectors; callers decide which purpose(s) apply. */
+export async function listProjectGitCredentials(projectId: string) {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	return withActorScope(actor, (tx) =>
+		tx
+			.select({
+				id: projectGitCredentials.id,
+				purpose: projectGitCredentials.purpose,
+				method: projectGitCredentials.method,
+			})
+			.from(projectGitCredentials)
+			.where(eq(projectGitCredentials.project_id, projectId)),
+	);
 }
 
 /**

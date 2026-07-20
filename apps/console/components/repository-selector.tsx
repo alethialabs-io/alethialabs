@@ -44,6 +44,8 @@ interface RepositorySelectorProps {
 	label: string;
 	placeholder?: string;
 	required?: boolean;
+	variant?: "default" | "settings";
+	onRepositorySelect?: (repository: Repository) => void;
 }
 
 const PROVIDER_HOSTS: Record<string, PublicGitProvider> = {
@@ -74,6 +76,8 @@ export function RepositorySelector({
 	label,
 	placeholder,
 	required,
+	variant = "default",
+	onRepositorySelect,
 }: RepositorySelectorProps) {
 	const sharedCtx = useRepositoryContext();
 	const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -91,6 +95,13 @@ export function RepositorySelector({
 	const [isManual, setIsManual] = useState(false);
 	const [initialValue] = useState(value);
 	const [open, setOpen] = useState(false);
+	const repositoryShellBorder = error
+		? variant === "settings"
+			? "border-border-strong ring-1 ring-border-strong"
+			: "border-destructive/50"
+		: variant === "settings"
+			? "border-border-strong"
+			: "border-input";
 
 	// When shared context exists, use its data instead of fetching independently
 	useEffect(() => {
@@ -241,7 +252,14 @@ export function RepositorySelector({
 
 	if (linkedProviders.length === 0 && !isManual) {
 		return (
-			<div className="space-y-3 border rounded-lg p-4 bg-muted/30">
+			<div
+				className={cn(
+					"space-y-3 border p-4",
+					variant === "settings"
+						? "rounded-sm border-dashed border-border-strong bg-surface-sunken"
+						: "rounded-lg bg-muted/30",
+				)}
+			>
 				<div className="flex items-center gap-2 text-sm font-medium">
 					<AlertCircle className="h-4 w-4 text-muted-foreground" />
 					<span>No Git accounts linked</span>
@@ -321,7 +339,11 @@ export function RepositorySelector({
 					value={value || ""}
 					onChange={(e) => onChange(e.target.value)}
 					placeholder="https://github.com/organization/repository"
-					className="font-mono text-sm"
+					className={cn(
+						"font-mono text-sm",
+						variant === "settings" &&
+							"h-[38px] rounded-sm border-border-strong bg-surface-sunken",
+					)}
 				/>
 				<p className="text-xs text-muted-foreground">
 					Enter the full HTTP URL to your Git repository.
@@ -342,10 +364,15 @@ export function RepositorySelector({
 			)}
 
 			<div className="flex items-center gap-1.5">
-				<div className={cn(
-					"flex flex-1 items-center gap-0 rounded-md border bg-transparent shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-ring",
-					error ? "border-destructive/50" : "border-input"
-				)}>
+				<div
+					className={cn(
+						"flex flex-1 items-center gap-0 overflow-hidden border bg-transparent focus-within:ring-1 focus-within:ring-ring",
+						variant === "settings"
+							? "rounded-sm bg-surface-sunken shadow-none"
+							: "rounded-md shadow-sm",
+						repositoryShellBorder,
+					)}
+				>
 					{/* Provider Selection (Icon Only) */}
 					<Select
 						value={selectedProvider || ""}
@@ -353,7 +380,13 @@ export function RepositorySelector({
 							handleProviderChange(coerceEnum(val, GIT_PROVIDERS, "github"))
 						}
 					>
-						<SelectTrigger className="w-[50px] shrink-0 rounded-none border-0 border-r bg-muted/20 focus:ring-0 focus:ring-offset-0 justify-center px-0">
+						<SelectTrigger
+							className={cn(
+								"w-[50px] shrink-0 justify-center rounded-none border-0 border-r bg-muted/20 px-0 focus:ring-0 focus:ring-offset-0",
+								variant === "settings" &&
+									"h-[38px] border-border-strong bg-transparent",
+							)}
+						>
 							{selectedProvider ? (
 								<GitProviderIcon
 									provider={selectedProvider}
@@ -389,8 +422,22 @@ export function RepositorySelector({
 					{/* Repository Selection with Combobox or Error State */}
 					{error ? (
 						<div className="flex-1 flex items-center gap-2 px-3 min-h-9">
-							<AlertCircle className="w-3.5 h-3.5 shrink-0 text-destructive" />
-							<span className="text-sm text-destructive truncate">
+							<AlertCircle
+								className={cn(
+									"h-3.5 w-3.5 shrink-0",
+									variant === "settings"
+										? "text-text-tertiary"
+										: "text-destructive",
+								)}
+							/>
+							<span
+								className={cn(
+									"truncate text-sm",
+									variant === "settings"
+										? "text-text-secondary"
+										: "text-destructive",
+								)}
+							>
 								{authRecoveryProvider
 									? "Session expired — relink to continue"
 									: error}
@@ -442,6 +489,7 @@ export function RepositorySelector({
 													value={repo.full_name}
 													onSelect={() => {
 														onChange(repo.url);
+														onRepositorySelect?.(repo);
 														setOpen(false);
 													}}
 												>
@@ -472,7 +520,12 @@ export function RepositorySelector({
 						variant="ghost"
 						size="icon"
 						onClick={() => handleLinkAccount(authRecoveryProvider)}
-						className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+						className={cn(
+							"h-9 w-9 shrink-0",
+							variant === "settings"
+								? "text-text-tertiary hover:text-text-primary"
+								: "text-destructive hover:text-destructive",
+						)}
 						title="Relink account"
 					>
 						<GitProviderIcon provider={authRecoveryProvider} size={14} />
