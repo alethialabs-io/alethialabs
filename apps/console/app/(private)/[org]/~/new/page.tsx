@@ -7,6 +7,7 @@ import { getScanProposal } from "@/app/server/actions/scanner";
 import { getCloudConnectSetup } from "@/lib/connectors/cloud-connect-setup";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { CreateProjectForm } from "@/components/create-project/create-project-form";
+import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
 import { ScanReviewNotice } from "@/components/create-project/scan-review-notice";
@@ -33,6 +34,7 @@ export default async function NewProjectPage({
 	const { org } = await params;
 	const sp = await searchParams;
 	const scanJobId = typeof sp.scan === "string" ? sp.scan : undefined;
+	const byoIacEnabled = isByoIacEnabled();
 
 	// Scan-review path: a finished scan's proposal seeds the workbench for review.
 	if (scanJobId) {
@@ -49,13 +51,14 @@ export default async function NewProjectPage({
 							Review proposed infrastructure
 						</h1>
 						<p className="text-sm text-muted-foreground">
-							We scanned your repository and inferred the stack below. Review and edit it,
-							then save to create the project.
+							We scanned your repository and inferred the stack below. Review
+							and edit it, then save to create the project.
 						</p>
 					</div>
 					<DesignProjectWorkbench
 						cloudIdentities={identities}
 						connectors={connectors}
+						byoIacEnabled={byoIacEnabled}
 						sourceProject={{
 							formData: result.proposal.proposedProject,
 							provider: result.proposal.provider,
@@ -69,7 +72,15 @@ export default async function NewProjectPage({
 	}
 
 	const [
-		{ canManage, integrations, awsSetup, gcpSetup, azureSetup, extraSetup, platformConfigured },
+		{
+			canManage,
+			integrations,
+			awsSetup,
+			gcpSetup,
+			azureSetup,
+			extraSetup,
+			platformConfigured,
+		},
 		collab,
 	] = await Promise.all([getCloudConnectSetup(), getCollaborationAccess()]);
 
@@ -85,6 +96,7 @@ export default async function NewProjectPage({
 			extraSetup={extraSetup}
 			platformConfigured={platformConfigured}
 			byoHelmEnabled={isByoHelmEnabled()}
+			byoIacEnabled={byoIacEnabled}
 		/>
 	);
 }

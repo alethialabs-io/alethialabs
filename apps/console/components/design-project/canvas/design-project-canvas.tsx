@@ -11,10 +11,7 @@ import { track } from "@/lib/analytics/track";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-	createProject,
-	provisionProject,
-} from "@/app/server/actions/projects";
+import { createProject, provisionProject } from "@/app/server/actions/projects";
 import {
 	applyStagedChanges,
 	discardStagedChanges,
@@ -32,7 +29,10 @@ import {
 import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
 import { IacSourceCanvasProvider } from "@/components/design-project/byo/iac-source-canvas-context";
 import { IacNode } from "@/components/design-project/byo/iac-node";
-import { getIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
+import {
+	getIacSource,
+	type IacSourceState,
+} from "@/app/server/actions/byo-iac";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { qk } from "@/lib/query/keys";
@@ -202,7 +202,9 @@ function CanvasInner({
 	// ArgoCD Application whose health and sync are already in the database. Out-of-band like charts:
 	// never written by graphToForm, never part of the Deploy diff.
 	useEffect(() => {
-		const installed = (addonsQuery.data?.items ?? []).filter((a) => a.install?.enabled);
+		const installed = (addonsQuery.data?.items ?? []).filter(
+			(a) => a.install?.enabled,
+		);
 		setAddonNodes(
 			installed.map((a) => ({
 				id: a.id,
@@ -266,6 +268,15 @@ function CanvasInner({
 		}
 	}, [projectId, byoHelmEnabled, searchParams, router]);
 
+	// Repo-first on-ramp: the new-project "Bring your own IaC" path lands here with
+	// ?attachIac=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
+	useEffect(() => {
+		if (projectId && byoIacEnabled && searchParams.get("attachIac") === "1") {
+			setIacDialogOpen(true);
+			router.replace(window.location.pathname);
+		}
+	}, [projectId, byoIacEnabled, searchParams, router]);
+
 	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
 	const openAssistantExclusive = useCallback(() => {
 		openPanel(projectId ? { kind: "project", projectId } : { kind: "org" });
@@ -299,9 +310,7 @@ function CanvasInner({
 			return;
 		}
 		try {
-			const { project } = await createProject(
-				parsed.data,
-			);
+			const { project } = await createProject(parsed.data);
 			toast.success("Project created!");
 			useCanvasStore.getState().reset();
 			router.push(
@@ -333,11 +342,7 @@ function CanvasInner({
 				projectId,
 				environmentId,
 			);
-			await applyStagedChanges(
-				projectId,
-				activeEnvId,
-				parsed.data,
-			);
+			await applyStagedChanges(projectId, activeEnvId, parsed.data);
 			await provisionProject(projectId, undefined, undefined, activeEnvId);
 			track("deploy_queued", { environmentId: activeEnvId });
 			useCanvasStore.getState().commitBaseline();
@@ -559,15 +564,15 @@ function CanvasInner({
 				onFitView={() => fitView({ padding: 0.3 })}
 				onAskAi={openAssistantExclusive}
 				dropPosition={dropPosition}
-					onAttachChart={
-						byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
-					}
-					onAttachIac={
-						byoIacEnabled && projectId && !iacGoverned
-							? () => setIacDialogOpen(true)
-							: undefined
-					}
-					disableComponentAdd={iacGoverned}
+				onAttachChart={
+					byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
+				}
+				onAttachIac={
+					byoIacEnabled && projectId && !iacGoverned
+						? () => setIacDialogOpen(true)
+						: undefined
+				}
+				disableComponentAdd={iacGoverned}
 			/>
 			{projectId && byoHelmEnabled && (
 				<ByoChartDialog
@@ -616,7 +621,11 @@ function CanvasInner({
 	const withByoContext = (content: React.ReactNode) =>
 		projectId ? (
 			<ByoChartCanvasProvider
-				value={{ projectId, environmentId: environmentId ?? null, refresh: refreshByo }}
+				value={{
+					projectId,
+					environmentId: environmentId ?? null,
+					refresh: refreshByo,
+				}}
 			>
 				<IacSourceCanvasProvider
 					value={{
@@ -637,7 +646,9 @@ function CanvasInner({
 	// the board renders alone. The standalone create flow renders its own dock beside the board.
 	if (dockInShell)
 		return withByoContext(
-			<div className="relative h-full min-h-[480px] w-full">{boardContent}</div>,
+			<div className="relative h-full min-h-[480px] w-full">
+				{boardContent}
+			</div>,
 		);
 
 	return withByoContext(
