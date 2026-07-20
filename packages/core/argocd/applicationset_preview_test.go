@@ -46,7 +46,8 @@ func TestRenderPreviewApplicationSet_Namespace(t *testing.T) {
 		"path: 'deploy'",
 		"server: https://kubernetes.default.svc",
 		"namespace: 'preview-{{ .number }}'",
-		"CreateNamespace=true",
+		"project: preview-apps-demo", // #887: hardened project, NOT the wide-open "apps"
+		"CreateNamespace=false",      // #887: the guardrails ApplicationSet owns the namespace
 		"prune: true",
 		"alethia.io/project: \"demo\"", // label propagated
 	} {

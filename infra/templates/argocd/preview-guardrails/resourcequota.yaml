@@ -1,0 +1,22 @@
+# Preview-env resource quota (#887). Namespace-agnostic (metadata.namespace omitted → applied into
+# the Application's destination namespace, preview-<pr>). Bounds the blast radius / cost of a single
+# untrusted preview so one PR can't exhaust the Fabric. Sane fixed defaults; per-project overrides
+# are a follow-up (would add config knobs to project_preview_config, out of this unit's scope).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: preview-quota
+  labels:
+    alethia.io/preview: "true"
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    pods: "30"
+    services: "10"
+    persistentvolumeclaims: "10"
+    requests.storage: 20Gi
+    count/deployments.apps: "20"
+    count/jobs.batch: "20"

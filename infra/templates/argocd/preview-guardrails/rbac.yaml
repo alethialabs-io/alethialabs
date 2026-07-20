@@ -1,0 +1,51 @@
+# Preview-env in-namespace RBAC (#887). Namespace-agnostic (metadata.namespace omitted → applied
+# into the Application's destination namespace, preview-<pr>).
+#
+# Two controls, both scoped strictly to the preview namespace — never cluster-wide, never cluster-admin:
+#   1. The namespace's `default` ServiceAccount has token automount DISABLED, so a pod that doesn't
+#      explicitly opt in gets no Kubernetes API credential at all (least privilege by default).
+#   2. A minimal namespace-scoped Role (read-only on a few core workload objects, NO secrets, NO
+#      writes, NO cluster scope) bound to the default SA — a safe baseline for any pod that does
+#      mount the token. Untrusted PR code cannot widen this: the preview-apps AppProject
+#      (packages/core/argocd/preview_guardrails.go) blacklists Role/RoleBinding so the PR's own
+#      manifests can't grant themselves more.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: default
+  labels:
+    alethia.io/preview: "true"
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: preview-workload
+  labels:
+    alethia.io/preview: "true"
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - configmaps
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: preview-workload
+  labels:
+    alethia.io/preview: "true"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: preview-workload
+subjects:
+  - kind: ServiceAccount
+    name: default
