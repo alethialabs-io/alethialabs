@@ -8,10 +8,10 @@ module "eks" {
   cluster_version = var.eks_cluster_version
 
   # Pin the auth mode explicitly rather than inheriting the upstream module default. Access
-  # entries — the keyless cluster-access model that the runner's creator-admin grant and the #551
-  # self-access entry both ride on — are only honored under API / API_AND_CONFIG_MAP. If the
-  # pinned module's default ever drifted to CONFIG_MAP, every access entry would silently drop and
-  # the runner would 401 on the API server after a green apply. Pinning fails that closed.
+  # entries — the keyless cluster-access model that the runner's creator-admin grant rides on —
+  # are only honored under API / API_AND_CONFIG_MAP. If the pinned module's default ever drifted
+  # to CONFIG_MAP, every access entry would silently drop and the runner would 401 on the API
+  # server after a green apply. Pinning fails that closed.
   authentication_mode = "API_AND_CONFIG_MAP"
 
   cluster_endpoint_private_access      = true
