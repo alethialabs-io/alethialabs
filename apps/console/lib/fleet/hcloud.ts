@@ -314,6 +314,10 @@ export function serverCreatePayload(
 		location: string;
 		version: string | null;
 		bootstrapToken: string;
+		/** SSH key ids resolved (by resolveSshKeyIds) to keys that exist in THIS fleet's Hetzner
+		 *  project — numeric ids, never the raw config strings, so Hetzner never name-looks-up a
+		 *  bare id and 404s the create. May be empty (SSH is a non-essential debug convenience). */
+		sshKeyIds: number[];
 	},
 ): Record<string, unknown> {
 	const labels: Record<string, string> = {
@@ -326,7 +330,7 @@ export function serverCreatePayload(
 		server_type: opts.serverType,
 		location: opts.location,
 		image: cfg.image,
-		ssh_keys: cfg.sshKeys,
+		ssh_keys: opts.sshKeyIds,
 		start_after_create: true,
 		labels,
 		user_data: renderCloudInit(cfg, project.provider, opts.version, opts.bootstrapToken),
@@ -388,8 +392,58 @@ function parseServerListPage(body: unknown): HcloudServerListResponse {
 	return { servers, nextPage };
 }
 
+/** A Hetzner SSH key (GET /ssh_keys) — only id + name are needed to resolve a config entry. */
+interface HcloudSshKey {
+	id: number;
+	name: string;
+}
+
+/** Type-guard for a Hetzner ssh_key object (id + name are the only fields resolveSshKeyIds reads). */
+function isHcloudSshKey(v: unknown): v is HcloudSshKey {
+	return isRecord(v) && typeof v.id === "number" && typeof v.name === "string";
+}
+
+/** Defensively narrows a GET /ssh_keys page into its keys slice + pagination cursor (mirrors
+ *  parseServerListPage — a malformed meta.pagination degrades to nextPage=null, never spins). */
+function parseSshKeyListPage(body: unknown): { keys: HcloudSshKey[]; nextPage: number | null } {
+	const keys =
+		isRecord(body) && isUnknownArray(body.ssh_keys) ? body.ssh_keys.filter(isHcloudSshKey) : [];
+	let nextPage: number | null = null;
+	if (isRecord(body) && isRecord(body.meta) && isRecord(body.meta.pagination)) {
+		const next = body.meta.pagination.next_page;
+		if (typeof next === "number") nextPage = next;
+	}
+	return { keys, nextPage };
+}
+
+/** How long a resolved SSH-key-id set is reused before re-querying Hetzner. Short so a key ADDED to
+ *  fix a misconfig is picked up within a scaler tick; long enough that a scale-up burst shares one
+ *  lookup instead of a GET /ssh_keys per VM. */
+const SSH_KEY_CACHE_TTL_MS = 60_000;
+
+/** Pure: map configured HCLOUD_SSH_KEYS references (key NAMES or numeric ids) onto the numeric ids of
+ *  keys that actually exist in the project, splitting out any that don't resolve. An entry matches a
+ *  key by exact NAME or by its id rendered as a string (so a bare id like "12345" resolves to the
+ *  numeric id 12345 rather than being name-looked-up by Hetzner and 404-ing). Ids are order-preserving
+ *  deduped; `missing` carries the unresolved entries so the caller can warn. */
+export function resolveSshKeyIdsFromKeys(
+	configured: string[],
+	keys: { id: number; name: string }[],
+): { ids: number[]; missing: string[] } {
+	const ids: number[] = [];
+	const missing: string[] = [];
+	for (const entry of configured) {
+		const match = keys.find((k) => k.name === entry || String(k.id) === entry);
+		if (match) ids.push(match.id);
+		else missing.push(entry);
+	}
+	return { ids: [...new Set(ids)], missing };
+}
+
 class HcloudFleetProvider implements FleetProvider {
 	private readonly cfg = hcloudConfigFromEnv();
+	/** Short-TTL cache of the resolved SSH-key-id set (see resolveSshKeyIds). */
+	private sshKeyCache: { at: number; ids: number[] } | null = null;
 
 	async list(project: FleetTarget): Promise<ProviderInstance[]> {
 		const selector = encodeURIComponent(`alethia-pool=${project.provider}`);
@@ -423,6 +477,59 @@ class HcloudFleetProvider implements FleetProvider {
 		}));
 	}
 
+	/** Fetches every SSH key in the fleet's Hetzner project (paginated like list()). */
+	private async listSshKeys(): Promise<HcloudSshKey[]> {
+		const keys: HcloudSshKey[] = [];
+		let page = 1;
+		for (let i = 0; i < HCLOUD_LIST_MAX_PAGES; i++) {
+			const body = await this.api("GET", `/ssh_keys?per_page=${HCLOUD_LIST_PER_PAGE}&page=${page}`);
+			const parsed = parseSshKeyListPage(body);
+			keys.push(...parsed.keys);
+			if (parsed.nextPage === null || parsed.nextPage <= page) break;
+			page = parsed.nextPage;
+		}
+		return keys;
+	}
+
+	/**
+	 * Resolves the configured HCLOUD_SSH_KEYS references (key NAMES or numeric ids) to the numeric ids
+	 * that actually exist in THIS fleet's Hetzner project, dropping any that don't resolve.
+	 *
+	 * Hetzner's POST /servers `ssh_keys` accepts an integer id OR a string name; a numeric STRING is
+	 * looked up as a NAME, so a bare id like "12345" 404s the whole create ("SSH key not found").
+	 * Worse, a key that was deleted or lives only in the control-plane project (the fleet uses a
+	 * SEPARATE token) 404s every create and strands the pool. SSH is a human-debug convenience only —
+	 * the runner self-registers over HTTP via its per-VM bootstrap token — so this is FAIL-OPEN: an
+	 * unresolvable key (or even a failed lookup) is skipped with a warning, never a hard failure.
+	 * Cached for a short TTL so a scale-up burst shares one lookup and a key added to fix a misconfig
+	 * is picked up within a tick.
+	 */
+	private async resolveSshKeyIds(configured: string[]): Promise<number[]> {
+		if (configured.length === 0) return [];
+		const now = Date.now();
+		if (this.sshKeyCache && now - this.sshKeyCache.at < SSH_KEY_CACHE_TTL_MS) {
+			return this.sshKeyCache.ids;
+		}
+		let keys: HcloudSshKey[];
+		try {
+			keys = await this.listSshKeys();
+		} catch (err) {
+			// Never let an ssh-key lookup block provisioning (SSH is non-essential). Don't cache a
+			// transient failure — retry the lookup on the next create.
+			flog.warn("hcloud ssh-key lookup failed; provisioning without ssh keys", {
+				err,
+				configured: configured.length,
+			});
+			return [];
+		}
+		const { ids, missing } = resolveSshKeyIdsFromKeys(configured, keys);
+		for (const key of missing) {
+			flog.warn("hcloud ssh key not found in fleet project; skipping", { key });
+		}
+		this.sshKeyCache = { at: now, ids };
+		return ids;
+	}
+
 	async create(
 		project: FleetTarget,
 		opts: { location: string; version: string | null; bootstrapToken?: string },
@@ -431,6 +538,9 @@ class HcloudFleetProvider implements FleetProvider {
 			throw new Error("hcloud create requires a per-VM bootstrapToken (E0 0b)");
 		}
 		const name = `fleet-${project.provider}-${randomUUID().slice(0, 8)}`;
+		// Resolve configured ssh keys to real project ids up front (once per placement attempt-set) so
+		// a stale/misconfigured key never 404s the create — see resolveSshKeyIds.
+		const sshKeyIds = await this.resolveSshKeyIds(this.cfg.sshKeys);
 		// Failsafe placement: try each server type (cheap ARM first, x86 fallback) across the pool's
 		// location then the fallback locations, until one PLACES. A `412 error during placement`
 		// (ARM/region out of capacity) advances to the next candidate; any other error is a real
@@ -458,6 +568,7 @@ class HcloudFleetProvider implements FleetProvider {
 						location,
 						version: opts.version,
 						bootstrapToken: opts.bootstrapToken,
+						sshKeyIds,
 					}),
 				);
 				if (i > 0) {
@@ -480,7 +591,7 @@ class HcloudFleetProvider implements FleetProvider {
 					lastPlacementErr = err;
 					continue; // no capacity for this type/location — try the next candidate
 				}
-				throw err; // real error (auth, bad ssh key, quota) — don't mask it
+				throw err; // real error (auth, quota, bad image) — don't mask it
 			}
 		}
 		throw new Error(

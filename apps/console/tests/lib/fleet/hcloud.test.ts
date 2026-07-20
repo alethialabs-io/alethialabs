@@ -13,6 +13,7 @@ import {
 	getHcloudFleetProvider,
 	hcloudConfigFromEnv,
 	renderCloudInit,
+	resolveSshKeyIdsFromKeys,
 	serverCreatePayload,
 	type HcloudConfig,
 } from "@/lib/fleet/hcloud";
@@ -354,12 +355,14 @@ describe("serverCreatePayload", () => {
 			location: "fsn1",
 			version: "v9",
 			bootstrapToken: "vm-boot-tok",
+			sshKeyIds: [123],
 		});
 		expect(payload.name).toBe("fleet-aws-abc12345");
 		expect(payload.server_type).toBe("cax21");
 		expect(payload.location).toBe("fsn1");
 		expect(payload.image).toBe("ubuntu-24.04");
-		expect(payload.ssh_keys).toEqual(["key-a"]);
+		// Resolved numeric ids, never the raw config strings (a bare id sent as a string 404s).
+		expect(payload.ssh_keys).toEqual([123]);
 		expect(payload.start_after_create).toBe(true);
 		expect(payload.labels).toEqual({
 			"alethia-managed": "true",
@@ -376,8 +379,116 @@ describe("serverCreatePayload", () => {
 			location: "nbg1",
 			version: null,
 			bootstrapToken: "vm-boot-tok",
+			sshKeyIds: [],
 		});
 		expect(payload.labels).toEqual({ "alethia-managed": "true", "alethia-pool": "gcp" });
+	});
+});
+
+describe("resolveSshKeyIdsFromKeys", () => {
+	const keys = [
+		{ id: 123, name: "prod-key" },
+		{ id: 999, name: "debug" },
+	];
+
+	it("matches a configured NAME to its numeric id", () => {
+		expect(resolveSshKeyIdsFromKeys(["prod-key"], keys)).toEqual({ ids: [123], missing: [] });
+	});
+
+	it("matches a numeric-id-as-STRING to the numeric id (not a name lookup — the 404 root cause)", () => {
+		expect(resolveSshKeyIdsFromKeys(["123"], keys)).toEqual({ ids: [123], missing: [] });
+	});
+
+	it("routes an unknown key to `missing` instead of dropping it silently", () => {
+		expect(resolveSshKeyIdsFromKeys(["ghost", "prod-key"], keys)).toEqual({
+			ids: [123],
+			missing: ["ghost"],
+		});
+	});
+
+	it("order-preserving dedupes when name + id-string point at the same key", () => {
+		expect(resolveSshKeyIdsFromKeys(["prod-key", "123", "debug"], keys)).toEqual({
+			ids: [123, 999],
+			missing: [],
+		});
+	});
+
+	it("returns empty for no configured keys", () => {
+		expect(resolveSshKeyIdsFromKeys([], keys)).toEqual({ ids: [], missing: [] });
+	});
+});
+
+describe("HcloudFleetProvider.create — ssh key resolution", () => {
+	// The provider caches its config on first construction, so a non-empty HCLOUD_SSH_KEYS needs a
+	// FRESH module (the top-level singleton was built with no keys). vi.resetModules() + dynamic import
+	// gives us one; the global fetch stub survives the reset. restoreEnv() (afterEach) resets the env.
+	async function freshProviderWithKeys(keysCsv: string) {
+		vi.resetModules();
+		process.env.HCLOUD_TOKEN = "test-token";
+		process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot-xyz";
+		process.env.HCLOUD_SSH_KEYS = keysCsv;
+		const mod = await import("@/lib/fleet/hcloud");
+		return mod.getHcloudFleetProvider();
+	}
+
+	/** GET /ssh_keys → canned keys; POST /servers → placed. */
+	function mockSshKeysThenPlace(keys: { id: number; name: string }[]) {
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/ssh_keys")
+				? jsonRes({ ssh_keys: keys })
+				: jsonRes({ server: { id: 1 } }, 201),
+		);
+	}
+
+	/** The POST /servers body (the create request, past the GET /ssh_keys lookup). */
+	function postBody() {
+		const call = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
+		return JSON.parse(call![1].body);
+	}
+
+	it("resolves configured names + id-strings to numeric ids in the POST payload", async () => {
+		mockSshKeysThenPlace([
+			{ id: 123, name: "prod-key" },
+			{ id: 999, name: "debug" },
+		]);
+		const provider = await freshProviderWithKeys("prod-key,999");
+
+		await provider.create(target("aws"), {
+			location: "fsn1",
+			version: "v3",
+			bootstrapToken: "vm-boot-tok",
+		});
+
+		// A GET /ssh_keys precedes the create; the payload carries numeric ids, never the raw strings.
+		expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/ssh_keys"))).toBe(true);
+		expect(postBody().ssh_keys).toEqual([123, 999]);
+	});
+
+	it("skips an unknown key (does NOT 404 the create) — fail-open on the non-essential ssh convenience", async () => {
+		mockSshKeysThenPlace([{ id: 123, name: "prod-key" }]);
+		const provider = await freshProviderWithKeys("ghost");
+
+		await expect(
+			provider.create(target("aws"), { location: "fsn1", version: null, bootstrapToken: "t" }),
+		).resolves.toBeUndefined();
+
+		expect(postBody().ssh_keys).toEqual([]);
+	});
+
+	it("fails open when the ssh-key lookup itself errors — still POSTs with no ssh keys", async () => {
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/ssh_keys")
+				? errRes(500, "boom")
+				: jsonRes({ server: { id: 1 } }, 201),
+		);
+		const provider = await freshProviderWithKeys("prod-key");
+
+		await expect(
+			provider.create(target("aws"), { location: "fsn1", version: null, bootstrapToken: "t" }),
+		).resolves.toBeUndefined();
+
+		expect(postBody().ssh_keys).toEqual([]);
 	});
 });
 
