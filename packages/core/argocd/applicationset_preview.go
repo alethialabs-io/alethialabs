@@ -86,7 +86,11 @@ spec:
         [[ .Key ]]: "[[ .Value ]]"
 [[- end ]]
     spec:
-      project: apps
+      # Untrusted PR code runs here → the hardened preview-apps AppProject (#887,
+      # preview_guardrails.go): no cluster-scoped resources, pinned to preview-<prefix>-* namespaces,
+      # and the guardrail kinds (NetworkPolicy/ResourceQuota/LimitRange/RBAC) blacklisted so a PR
+      # can't weaken its own isolation. NOT the wide-open "apps" project.
+      project: preview-apps-[[ .Project ]]
       source:
         repoURL: [[ .AppsRepoURL ]]
         targetRevision: '{{ .head_sha }}'
@@ -100,16 +104,26 @@ spec:
         namespace: '[[ .NamespacePrefix ]]-{{ .number }}'
 [[- end ]]
       syncPolicy:
+        # CreateNamespace=false: the companion preview-guardrails ApplicationSet (#887) OWNS the
+        # namespace — it creates it (labelled alethia.io/preview) and lands the default-deny
+        # NetworkPolicy + quota + RBAC first. The app then syncs into that already-guarded namespace
+        # (automated sync retries until it exists), so untrusted pods never run un-isolated.
         automated:
           prune: true
           selfHeal: true
         syncOptions:
-          - CreateNamespace=true
+          - CreateNamespace=false
 `
 
-// SECURITY (#887): a preview deploys UNTRUSTED PR code into a namespace. Before the runner is wired
-// to apply this ApplicationSet, each preview namespace must receive least-priv RBAC + a default-deny
-// NetworkPolicy + a ResourceQuota — this renderer is an unused seam until that guardrail lands.
+// SECURITY (#887, LANDED): a preview deploys UNTRUSTED PR code into a namespace, so the guardrails
+// are now emitted by RenderPreviewGuardrails (preview_guardrails.go): the hardened preview-apps
+// AppProject this template targets (no cluster-scoped resources, pinned to preview-* namespaces,
+// guardrail kinds blacklisted) + a companion guardrails ApplicationSet that OWNS each preview
+// namespace and lands a default-deny NetworkPolicy + ResourceQuota/LimitRange + least-priv RBAC.
+// Because this template sets CreateNamespace=false and references preview-apps-<project>, the app
+// previews FAIL CLOSED if the guardrails half isn't applied first — ArgoCD rejects a generated
+// Application whose AppProject doesn't exist, so untrusted PR code can never deploy un-isolated.
+// Still an unused seam pending runner wiring/activation (which must render+apply BOTH halves).
 //
 // RenderPreviewApplicationSet renders the ephemeral PR-preview ApplicationSet YAML (#842, W-f).
 // It returns an error when a required field is missing, or when PlacementMode is anything other than

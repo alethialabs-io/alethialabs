@@ -1,0 +1,23 @@
+# Preview-env limit range (#887). Namespace-agnostic (metadata.namespace omitted → applied into the
+# Application's destination namespace, preview-<pr>). Supplies default container requests/limits so
+# pods that omit them still schedule (the ResourceQuota's compute limits would otherwise reject any
+# pod without explicit requests/limits), and caps a single container so one pod can't claim the whole
+# namespace quota.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: preview-limits
+  labels:
+    alethia.io/preview: "true"
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
