@@ -58,7 +58,7 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 		return fmt.Errorf("no templates for provider %s: %w", cfg.CloudProvider, err)
 	}
 
-	fmt.Fprintf(stdout, "Deploying runner %q (%s) to %s/%s\n", cfg.RunnerName, cfg.RunnerID[:8], cfg.CloudProvider, cfg.Region)
+	fmt.Fprintf(stdout, "Deploying runner %q (%s) to %s/%s\n", cfg.RunnerName, shortID(cfg.RunnerID, 8), cfg.CloudProvider, cfg.Region)
 
 	tmpRoot, err := os.MkdirTemp("", "alethia-deploy-runner-*")
 	if err != nil {
@@ -104,7 +104,7 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 	defer restoreStateAuth()
 	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
 
-	tf, err := tofu.NewTofuCLI(ctx, tofu.DefaultIaCVersion, workDir, stdout, stderr)
+	tf, err := tofu.NewTofuCLI(ctx, tofu.ResolvedIaCVersion(), workDir, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("tofu setup failed: %w", err)
 	}

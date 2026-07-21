@@ -412,10 +412,17 @@ metadata:
 `, name)
 }
 
+// shortID returns the first n runes-worth of bytes of s, or all of s when it is shorter than n —
+// a panic-safe replacement for s[:n] on ids of unknown length (a short runner_id / job id must
+// not crash a log line with a slice-bounds panic).
+func shortID(s string, n int) string {
+	if n < 0 || len(s) < n {
+		return s
+	}
+	return s[:n]
+}
+
 // shortSHA12 abbreviates a SHA for log lines.
 func shortSHA12(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
+	return shortID(sha, 12)
 }

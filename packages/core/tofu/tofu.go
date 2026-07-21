@@ -35,6 +35,22 @@ var (
 // it unchanged.
 const DefaultIaCVersion = "1.9.0"
 
+// IaCVersionEnv overrides DefaultIaCVersion for the runner-lifecycle provisioning path — deploy /
+// destroy of the runner infra ITSELF, which carries no project snapshot to pin a version. Project
+// deploys pin the version via ProjectConfig.IacVersion; this env is the single knob for the
+// runner-own path, so deploy and destroy always resolve the SAME version (a divergence writes state
+// with one OpenTofu and tears it down with another).
+const IaCVersionEnv = "ALETHIA_IAC_VERSION"
+
+// ResolvedIaCVersion returns the OpenTofu version to provision the runner's own infra with:
+// ALETHIA_IAC_VERSION when set, else DefaultIaCVersion. Never returns a hardcoded per-call literal.
+func ResolvedIaCVersion() string {
+	if v := strings.TrimSpace(os.Getenv(IaCVersionEnv)); v != "" {
+		return v
+	}
+	return DefaultIaCVersion
+}
+
 // DefaultCancelGracePeriod is the grace window between the graceful SIGINT and the
 // hard SIGKILL when a running tofu command's context is cancelled (a mid-flight job
 // cancel). terraform-exec sends SIGINT to the `tofu` child the instant ctx is done

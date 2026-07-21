@@ -36,7 +36,7 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 		return fmt.Errorf("no templates for provider %s: %w", cfg.CloudProvider, err)
 	}
 
-	fmt.Fprintf(stdout, "Destroying runner %q (%s) in %s/%s\n", cfg.RunnerName, cfg.RunnerID[:8], cfg.CloudProvider, cfg.Region)
+	fmt.Fprintf(stdout, "Destroying runner %q (%s) in %s/%s\n", cfg.RunnerName, shortID(cfg.RunnerID, 8), cfg.CloudProvider, cfg.Region)
 
 	tmpRoot, err := os.MkdirTemp("", "alethia-destroy-runner-*")
 	if err != nil {
@@ -78,8 +78,9 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 	defer restoreStateAuth()
 	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
 
-	tfVersion := "1.15.5"
-	tf, err := tofu.NewTofuCLI(ctx, tfVersion, workDir, stdout, stderr)
+	// Resolve the SAME version deploy_runner uses (ALETHIA_IAC_VERSION → DefaultIaCVersion) so the
+	// runner's infra is destroyed with the OpenTofu it was created with — never a hardcoded literal.
+	tf, err := tofu.NewTofuCLI(ctx, tofu.ResolvedIaCVersion(), workDir, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("tofu setup failed: %w", err)
 	}

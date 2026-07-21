@@ -360,7 +360,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				defer cleanup()
 			} else {
 				fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-				sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
+				sessionName := fmt.Sprintf("runner-%s", shortID(job.ID, 8))
 				if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
 					errMsg := fmt.Sprintf("Failed to assume role: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
