@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -32,7 +33,7 @@ import (
 // the console surfaces them — the render we deploy IS authoritative here, so these explain why a
 // service may boot misconfigured. A bring-your-own manifests repo returns no warnings: the
 // customer's manifests own the deploy, so our render (and its warnings) don't apply.
-func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{}, token string, stdout, stderr io.Writer) (warnings []string, err error) {
+func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, token string, stdout, stderr io.Writer) (warnings []string, err error) {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil, nil
 	}
@@ -74,7 +75,7 @@ func generateAppManifests(vc *types.ProjectConfig, outputs map[string]interface{
 	defer os.RemoveAll(dir)
 
 	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
-	if err := repo.Clone("", false); err != nil {
+	if err := repo.Clone(ctx, "", false); err != nil {
 		return warnings, fmt.Errorf("clone apps repo: %w", err)
 	}
 
