@@ -74,7 +74,7 @@ export const CONNECTOR_PROVIDERS: ConnectorProviderMeta[] = [
 		docs_url: "https://docs.docker.com/docker-hub/",
 		status: "active",
 		sort_order: 50,
-		modulePath: "categories/registry/dockerhub",
+		modulePath: "",
 		credentialFields: [{"key":"username","label":"Username","type":"text","secret":false,"required":true},{"key":"access_token","label":"Access Token","type":"password","secret":true,"required":true,"help":"A Docker Hub personal access token (Account Settings → Security)."}],
 		providerConfigFields: [{"key":"namespace","label":"Namespace / Organization","type":"text","required":false,"help":"Defaults to the username if left blank."}],
 	},
