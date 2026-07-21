@@ -80,6 +80,14 @@ function computeResponse(url: string): unknown {
 	return {};
 }
 
+// Tier-1 gate (#938): default every region due, so the verdict assertions below run unchanged.
+vi.mock("@/lib/cloud-providers/capabilities/sync-state", () => ({
+	hashSource: () => "h",
+	regionDue: vi.fn(async () => true),
+	recordRegionHashes: vi.fn(async () => {}),
+	existingNativeIds: vi.fn(async () => []),
+}));
+
 import { syncGcpCapabilities } from "@/lib/cloud-providers/capabilities/gcp";
 
 const identity: CapabilityIdentity = {

@@ -41,6 +41,13 @@ export async function register() {
 	// never-synced connections (self-hostable; no external cron — the /api route stays for hosted).
 	const { startConnectionSweeper } = await import("@/lib/cloud-providers/sweep");
 	startConnectionSweeper();
+	// In-app capability refresh: keeps the per-tenant capabilities catalog (launchable regions +
+	// instance-types) fresh via a hash-gated change-detector, and backfills never-synced connections
+	// (self-hostable; the /api/internal/capabilities/sweep route stays for hosted).
+	const { startCapabilitySweeper } = await import(
+		"@/lib/cloud-providers/capabilities/sweep"
+	);
+	startCapabilitySweeper();
 	// Orphan reclaim: deletes cloud resources an interrupted job created but never recorded in tofu
 	// state (so no `destroy` can ever find them, and they bill forever). Report-only unless
 	// ALETHIA_ORPHAN_RECLAIM is explicitly on — see lib/reclaim/guards.ts for why that is opt-in.

@@ -22,6 +22,11 @@ vi.mock("@/lib/cloud-providers/inventory", () => ({
 	syncCloudInventory: vi.fn(),
 	purgeCloudInventory: vi.fn(),
 }));
+vi.mock("@/lib/cloud-providers/capabilities", () => ({
+	hasServerSideCapabilities: vi.fn(() => true),
+	syncCloudCapabilities: vi.fn(),
+	purgeCloudCapabilities: vi.fn(),
+}));
 // Observability boundaries: every verify outcome is logged, and a hard failure is reported to PostHog
 // Error tracking. Both are stubbed so we can assert they fire without a real logger / PostHog client.
 vi.mock("@/lib/observability/log", () => ({

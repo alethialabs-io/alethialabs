@@ -22,6 +22,12 @@ import {
 } from "@/lib/db/schema";
 import { externalAccountClientFromWif } from "../session/gcp";
 import { softRemoveUnseen } from "../inventory/upsert";
+import {
+	existingNativeIds,
+	hashSource,
+	recordRegionHashes,
+	regionDue,
+} from "./sync-state";
 import type { CapabilityIdentity } from "./types";
 
 const TIMEOUT_MS = 15_000;
@@ -175,6 +181,21 @@ export async function syncGcpCapabilities(
 	const seenTypes: string[] = [];
 	for (const [region, types] of byRegion) {
 		const metricLimits = quotaByRegion.get(region) ?? new Map<string, number>();
+		// The offered machine-type set + the region's classic quota limits gate the per-region upsert.
+		const instanceHash = hashSource(new Set(types.keys()));
+		const quotaHash = hashSource(metricLimits);
+		if (
+			!(await regionDue({
+				cloudIdentityId: identityId,
+				provider: "gcp",
+				region,
+				instanceHash,
+				quotaHash,
+			}))
+		) {
+			seenTypes.push(...(await existingNativeIds(identityId, region)));
+			continue;
+		}
 		const now = new Date();
 		const rows = [...types].map(([name, mt]) => {
 			seenTypes.push(name);
@@ -226,6 +247,13 @@ export async function syncGcpCapabilities(
 					},
 				});
 		}
+		await recordRegionHashes({
+			cloudIdentityId: identityId,
+			provider: "gcp",
+			region,
+			instanceHash,
+			quotaHash,
+		});
 	}
 	await softRemoveUnseen("cloud_capability_instance_types", identityId, seenTypes);
 }

@@ -105,6 +105,14 @@ function armResponse(url: string): unknown {
 	return { value: [] };
 }
 
+// Tier-1 gate (#938): default every region due, so the verdict assertions below run unchanged.
+vi.mock("@/lib/cloud-providers/capabilities/sync-state", () => ({
+	hashSource: () => "h",
+	regionDue: vi.fn(async () => true),
+	recordRegionHashes: vi.fn(async () => {}),
+	existingNativeIds: vi.fn(async () => []),
+}));
+
 import { syncAzureCapabilities } from "@/lib/cloud-providers/capabilities/azure";
 
 const identity: CapabilityIdentity = {

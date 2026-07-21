@@ -21,6 +21,12 @@ import {
 } from "@/lib/db/schema";
 import { assumeAzureIdentity } from "../session/azure";
 import { softRemoveUnseen } from "../inventory/upsert";
+import {
+	existingNativeIds,
+	hashSource,
+	recordRegionHashes,
+	regionDue,
+} from "./sync-state";
 import type { CapabilityIdentity } from "./types";
 
 const TIMEOUT_MS = 15_000;
@@ -189,6 +195,27 @@ export async function syncAzureCapabilities(
 			}
 		}
 
+		// The set of SKUs offered in this location + the per-family core limits gate the upsert.
+		const offeredNames = new Set(
+			skus
+				.filter((s) => (s.locations ?? []).includes(region))
+				.map((s) => s.name),
+		);
+		const instanceHash = hashSource(offeredNames);
+		const quotaHash = hashSource(familyLimit);
+		if (
+			!(await regionDue({
+				cloudIdentityId: identityId,
+				provider: "azure",
+				region,
+				instanceHash,
+				quotaHash,
+			}))
+		) {
+			seenTypes.push(...(await existingNativeIds(identityId, region)));
+			continue;
+		}
+
 		const now = new Date();
 		const rows = skus
 			.filter((s) => (s.locations ?? []).includes(region))
@@ -252,6 +279,13 @@ export async function syncAzureCapabilities(
 					},
 				});
 		}
+		await recordRegionHashes({
+			cloudIdentityId: identityId,
+			provider: "azure",
+			region,
+			instanceHash,
+			quotaHash,
+		});
 	}
 	await softRemoveUnseen("cloud_capability_instance_types", identityId, seenTypes);
 }

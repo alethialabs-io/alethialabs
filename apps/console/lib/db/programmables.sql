@@ -1006,7 +1006,7 @@ BEGIN
     'cloud_kubernetes_clusters', 'cloud_databases', 'cloud_caches', 'cloud_queues', 'cloud_topics',
     'cloud_nosql_tables', 'cloud_container_registries', 'cloud_secrets', 'cloud_storage_buckets',
     'cloud_resources',
-    'cloud_capability_regions', 'cloud_capability_instance_types'
+    'cloud_capability_regions', 'cloud_capability_instance_types', 'cloud_capability_sync_state'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
