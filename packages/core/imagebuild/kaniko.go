@@ -145,7 +145,10 @@ func RenderBuildJob(service types.ProjectServiceConfig, opts Options) (string, e
 	if service.Source.Kind != "repo" {
 		return "", fmt.Errorf("build: service %q source.kind=%q is not buildable (only %q)", service.Name, service.Source.Kind, "repo")
 	}
-	name := dns1123(service.Name)
+	// The Job name and app.kubernetes.io/name label are rendered as "build-<name>", so bound the
+	// name to leave room for that prefix — otherwise a long service name overflows the 63-char
+	// DNS-1123 limit and the Job is un-appliable (#1001).
+	name := dns1123Max(service.Name, dnsLabelMaxLen-len(buildNamePrefix))
 	if name == "" {
 		return "", fmt.Errorf("build: service has no usable name")
 	}
@@ -217,10 +220,26 @@ func orDefaultInt(v, def int) int {
 	return v
 }
 
-// dns1123 lowercases + strips a string to a valid DNS-1123 label. Copied from
+// dnsLabelMaxLen is the RFC-1123 DNS label length limit kubernetes enforces on resource names
+// and label values.
+const dnsLabelMaxLen = 63
+
+// buildNamePrefix is prepended to the (sanitized) service name to form the build Job's name and
+// app.kubernetes.io/name label. It MUST match the "build-" literal in jobTmpl; RenderBuildJob
+// subtracts its length from the DNS-label budget so the rendered name never overflows 63 chars.
+const buildNamePrefix = "build-"
+
+// dns1123 lowercases + strips a string to a valid DNS-1123 label (<=63 chars). Copied from
 // packages/core/manifests (kept local so this package owns its scope and takes no
 // dependency on the manifests package's internals).
 func dns1123(s string) string {
+	return dns1123Max(s, dnsLabelMaxLen)
+}
+
+// dns1123Max is dns1123 bounded to max characters. A caller that adds a prefix (e.g. "build-")
+// passes a smaller budget so the FINAL name still fits the 63-char label limit. The length cap is
+// applied before the final hyphen trim, so the result can never be longer than max nor end in '-'.
+func dns1123Max(s string, max int) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder
 	for _, r := range s {
@@ -231,5 +250,9 @@ func dns1123(s string) string {
 			b.WriteRune('-')
 		}
 	}
-	return strings.Trim(b.String(), "-")
+	out := b.String()
+	if max > 0 && len(out) > max {
+		out = out[:max]
+	}
+	return strings.Trim(out, "-")
 }
