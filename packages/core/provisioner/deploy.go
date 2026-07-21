@@ -34,6 +34,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var (
+	executeCommand           = utils.ExecuteCommand
+	executeCommandWithOutput = utils.ExecuteCommandWithOutput
+)
+
 type DeployParams struct {
 	ProjectConfig  *types.ProjectConfig
 	Provider       string
@@ -216,7 +221,7 @@ func applyBootstrapManifests(ctx context.Context, outputs map[string]interface{}
 	cmd := fmt.Sprintf("kubectl apply --server-side --force-conflicts -f %s", path)
 	var lastErr error
 	for attempt := 1; attempt <= 4; attempt++ {
-		if lastErr = utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); lastErr == nil {
+		if lastErr = executeCommand(cmd, ".", nil, stdout, stderr); lastErr == nil {
 			return nil
 		}
 		fmt.Fprintf(stderr, "CNI bootstrap attempt %d/4 failed (API/CRD not ready yet): %v\n", attempt, lastErr)
@@ -1041,7 +1046,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
 	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
-	if err := utils.ExecuteCommand(addRepoCmd, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand(addRepoCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to add ArgoCD helm repo: %w", err)
 	}
 
@@ -1080,7 +1085,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		}
 	}
 
-	if err := utils.ExecuteCommand(installCmd, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand(installCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to install ArgoCD: %w", err)
 	}
 
@@ -1109,12 +1114,12 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 func ensureArgoRedisSecret(stdout, stderr io.Writer) error {
 	// Ensure the namespace exists (the helm install also uses --create-namespace, but we seed first).
 	nsCmd := "kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
-	if err := utils.ExecuteCommand(nsCmd, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand(nsCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("ensure argocd namespace: %w", err)
 	}
 
 	// Idempotency guard: never regenerate an existing password.
-	if out, err := utils.ExecuteCommandWithOutput(
+	if out, err := executeCommandWithOutput(
 		"kubectl get secret argocd-redis -n argocd -o jsonpath={.data.auth}", ".", nil); err == nil && strings.TrimSpace(out) != "" {
 		fmt.Fprintln(stdout, "argocd-redis secret already present; leaving its auth untouched.")
 		return nil
@@ -1152,7 +1157,7 @@ stringData:
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		return err
 	}
-	if err := utils.ExecuteCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("apply argocd-redis secret: %w", err)
 	}
 	fmt.Fprintln(stdout, "Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).")

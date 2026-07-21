@@ -17,6 +17,11 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
+var (
+	httpGet        = http.Get
+	executeCommand = utils.ExecuteCommand
+)
+
 // InfracostCLI represents the Infracost CLI wrapper.
 type InfracostCLI struct {
 	Version    string
@@ -71,7 +76,7 @@ func (i *InfracostCLI) download(binDir string) error {
 	downloadURL := fmt.Sprintf("https://github.com/infracost/infracost/releases/download/%s/infracost-%s-%s.tar.gz", i.Version, goos, arch)
 	fmt.Printf("Downloading Infracost %s for %s-%s...\n", i.Version, goos, arch)
 
-	resp, err := http.Get(downloadURL)
+	resp, err := httpGet(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download infracost: %w", err)
 	}
@@ -169,7 +174,7 @@ func (i *InfracostCLI) RunInfracost(planFile string, env []string) (*CostBreakdo
 	breakdownJSONPath := filepath.Join(tempDir, "infracost_breakdown.json")
 
 	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s", i.binaryPath, planFile, breakdownJSONPath)
-	if err := utils.ExecuteCommand(breakdownCmd, ".", env, nil, nil); err != nil {
+	if err := executeCommand(breakdownCmd, ".", env, nil, nil); err != nil {
 		return nil, fmt.Errorf("infracost breakdown failed: %w", err)
 	}
 
