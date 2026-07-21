@@ -355,7 +355,7 @@ describe("getConnectorsWithStatus", () => {
 		const [row] = await getConnectorsWithStatus();
 		expect(row.connected).toBe(true);
 		expect(row.token_health).toBe("healthy");
-		expect(row.group).toBe("apps");
+		expect(row.group).toBe("source");
 		expect(row.connection_details).toBeNull();
 	});
 
