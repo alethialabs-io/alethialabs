@@ -26,11 +26,14 @@ const ORG = randomUUID();
 const USER = randomUUID();
 const PROJ = randomUUID();
 const FABRIC = randomUUID();
+const FABRIC_UNLINKED = randomUUID();
 const ENV_DEDICATED = randomUUID();
 const ENV_NAMESPACE = randomUUID();
 const ENV_LEGACY = randomUUID();
+const ENV_UNLINKED = randomUUID();
 const CLUSTER_SHARED = randomUUID();
 const CLUSTER_LEGACY = randomUUID();
+const CLUSTER_UNLINKED = randomUUID();
 
 describeIfDb("cluster-for-env — fabric-scoped resolution + shared-cluster invariant", () => {
 	beforeAll(async () => {
@@ -43,13 +46,24 @@ describeIfDb("cluster-for-env — fabric-scoped resolution + shared-cluster inva
 			region: "westeurope",
 			iac_version: "1.0",
 		});
-		await db.insert(projectFabrics).values({
-			id: FABRIC,
-			project_id: PROJ,
-			user_id: USER,
-			org_id: ORG,
-			name: "production",
-		});
+		await db.insert(projectFabrics).values([
+			{
+				id: FABRIC,
+				project_id: PROJ,
+				user_id: USER,
+				org_id: ORG,
+				name: "production",
+			},
+			// A Fabric whose cluster row exists but is not Fabric-linked yet (fabric_id null) — the
+			// createProject-before-backfill shape.
+			{
+				id: FABRIC_UNLINKED,
+				project_id: PROJ,
+				user_id: USER,
+				org_id: ORG,
+				name: "staging",
+			},
+		]);
 		await db.insert(projectEnvironments).values([
 			// Dedicated env — owns the Fabric 1:1; carries the cluster row.
 			{
@@ -80,6 +94,16 @@ describeIfDb("cluster-for-env — fabric-scoped resolution + shared-cluster inva
 				fabric_id: null,
 				placement_mode: "dedicated",
 			},
+			// Dedicated env WITH a fabric_id, but whose cluster row is not Fabric-linked yet — must
+			// fall back to the env key (the createProject-before-backfill regression guard).
+			{
+				id: ENV_UNLINKED,
+				project_id: PROJ,
+				user_id: USER,
+				name: "staging",
+				fabric_id: FABRIC_UNLINKED,
+				placement_mode: "dedicated",
+			},
 		]);
 		// The Fabric's single (shared) cluster — owned by the dedicated env.
 		await db.insert(projectCluster).values({
@@ -96,6 +120,15 @@ describeIfDb("cluster-for-env — fabric-scoped resolution + shared-cluster inva
 			environment_id: ENV_LEGACY,
 			fabric_id: null,
 			cluster_name: "legacy-cluster",
+		});
+		// A dedicated env's cluster inserted BEFORE the Fabric backfill: env has fabric_id, but the
+		// cluster row's fabric_id is still null (as createProject writes it).
+		await db.insert(projectCluster).values({
+			id: CLUSTER_UNLINKED,
+			project_id: PROJ,
+			environment_id: ENV_UNLINKED,
+			fabric_id: null,
+			cluster_name: "unlinked-cluster",
 		});
 	});
 
@@ -118,6 +151,11 @@ describeIfDb("cluster-for-env — fabric-scoped resolution + shared-cluster inva
 	it("falls back to the env-keyed row for a legacy env with no fabric_id", async () => {
 		const cluster = await resolveServingCluster(getServiceDb(), PROJ, ENV_LEGACY);
 		expect(cluster?.id).toBe(CLUSTER_LEGACY);
+	});
+
+	it("falls back to the env key when the env has a fabric_id but its cluster row is not Fabric-linked yet", async () => {
+		const cluster = await resolveServingCluster(getServiceDb(), PROJ, ENV_UNLINKED);
+		expect(cluster?.id).toBe(CLUSTER_UNLINKED);
 	});
 
 	it("enforces at-most-one cluster per Fabric (partial unique index)", async () => {
