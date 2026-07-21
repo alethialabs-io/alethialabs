@@ -872,7 +872,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		manifestWarnings, genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr)
+		manifestWarnings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, stdout, stderr)
 		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
@@ -929,7 +929,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				}
 			}
 			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-			if gitErr := writeAddOnGitOps(vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
+			if gitErr := writeAddOnGitOps(ctx, vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
 				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 			}
 		}

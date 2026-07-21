@@ -4,6 +4,7 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -77,7 +78,7 @@ func TestCloneHeadDirtyResetAndFileExists(t *testing.T) {
 	repo, branch, _, sha2 := makeFixtureRepo(t)
 	cloneDir := filepath.Join(t.TempDir(), "clone")
 	g := NewGIT("file://"+repo, cloneDir, false)
-	if err := g.Clone(branch, true); err != nil {
+	if err := g.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
 	if g.Repo == nil {
@@ -185,7 +186,7 @@ func TestCopyFilesClearRepoContentsAndBootstrap(t *testing.T) {
 	repo, branch, _, _ := makeFixtureRepo(t)
 	cloneDir := filepath.Join(t.TempDir(), "clone")
 	client := NewGIT("file://"+repo, cloneDir, true)
-	if err := client.Clone(branch, true); err != nil {
+	if err := client.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("Clone for bootstrap: %v", err)
 	}
 	template := &GIT{LocalPath: src}
@@ -204,7 +205,7 @@ func TestRepositoryMethodsRejectUninitializedRepo(t *testing.T) {
 	for name, err := range map[string]error{
 		"Checkout":               g.Checkout("0123456789abcdef0123456789abcdef01234567"),
 		"HeadSHA":                func() error { _, err := g.HeadSHA(); return err }(),
-		"Pull":                   g.Pull(),
+		"Pull":                   g.Pull(context.Background()),
 		"Push":                   g.Push(),
 		"AddAndCommit":           g.AddAndCommit("msg"),
 		"ResetAndRestoreChanges": g.ResetAndRestoreChanges(),
