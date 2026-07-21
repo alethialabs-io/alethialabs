@@ -533,7 +533,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	if planJSON != nil {
 		planJSONFile = filepath.Join(tmpRoot, "tofu.plan.json")
 		if jsonBytes, marshalErr := json.Marshal(planJSON); marshalErr == nil {
-			_ = os.WriteFile(planJSONFile, jsonBytes, 0644)
+			// Plan JSON can carry sensitive resource attributes (passwords, keys) — owner-only.
+			_ = utils.WriteSecretFile(planJSONFile, jsonBytes)
 			var parsed map[string]interface{}
 			if json.Unmarshal(jsonBytes, &parsed) == nil {
 				result.PlanJSON = parsed

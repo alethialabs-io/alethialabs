@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
 // Compose wires pluggable category providers into a prepared OpenTofu working
@@ -136,7 +137,9 @@ func Compose(
 	if err != nil {
 		return 0, fmt.Errorf("failed to encode _categories.tf.json: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(workDir, "_categories.tf.json"), append(data, '\n'), 0644); err != nil {
+	// _categories.tf.json carries decrypted connector credentials (Vault/Cloudflare/DockerHub/
+	// Datadog/Grafana/Prometheus) — owner-only so a co-located uid can't read them off disk.
+	if err := utils.WriteSecretFile(filepath.Join(workDir, "_categories.tf.json"), append(data, '\n')); err != nil {
 		return 0, fmt.Errorf("failed to write _categories.tf.json: %w", err)
 	}
 	return len(modules), nil
