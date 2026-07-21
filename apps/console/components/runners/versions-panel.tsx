@@ -54,13 +54,14 @@ export function VersionsPanel() {
 			.catch(() => setReleases([]));
 	}, [latestRelease?.version]);
 
-	// Runners not on the latest release, and the subset we can roll in place (deployed with a
-	// stored token). The rest need a manual re-deploy.
+	// Runners not on the latest release, and the subset we can roll in place (deployed, i.e. have a
+	// deploy config). UPDATE re-mints a fresh token, so no stored token is needed. The rest need a
+	// manual re-deploy.
 	const { outdated, updatable } = useMemo(() => {
 		if (!latestRelease) return { outdated: 0, updatable: Array<string>() };
 		const out = runners.filter((r) => r.version && r.version !== latestRelease.version);
 		const upd = out.filter(
-			(r) => r.cloud_identity_id && r.metadata?.deploy_config?.runner_token,
+			(r) => r.cloud_identity_id && r.metadata?.deploy_config,
 		);
 		return { outdated: out.length, updatable: upd.map((r) => r.id) };
 	}, [runners, latestRelease]);

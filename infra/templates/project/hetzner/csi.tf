@@ -21,18 +21,16 @@ locals {
   #                    volume-labelling block below) arrived in v2.14.0, but upstream marks
   #                    v2.14.0 itself as DO-NOT-INSTALL ("install v2.15.0 or later"). On any
   #                    chart below this the label setting is SILENTLY IGNORED → leaked volumes.
-  #   CEILING v2.20.2 — upstream's version-policy table maps k8s 1.32 → v2.20.2 (no "+"): it is
-  #                    the LAST release supporting 1.32, and v2.21.0 explicitly "drop[s] support
-  #                    for Kubernetes v1.32". This template's talos_version default (v1.9.5)
-  #                    ships DefaultKubernetesVersion = 1.32.3, so anything newer than v2.20.2 is
-  #                    OUT OF SUPPORT here — and this is the real CUSTOMER provisioning template,
-  #                    not just the nightly, so an unsupported CSI driver would land in customer
-  #                    clusters (which DO run PVC workloads via the addon catalog).
+  #   CEILING v2.22.0 — upstream supports the latest 3 k8s minors: v2.21.0 added k8s 1.36 and
+  #                    dropped 1.32, so the supported window is now k8s 1.34/1.35/1.36. This
+  #                    template's talos_version (v1.13.6) targets k8s 1.35 (var.kubernetes_version),
+  #                    which is inside that window, and v2.22.0 is the current stable. This is the
+  #                    real CUSTOMER provisioning template (its clusters run PVC workloads via the
+  #                    addon catalog), so an out-of-support driver would land in customer clusters.
   #
-  # v2.20.2 satisfies both, and carries the 2.20.1/2.20.2 volume-label validation + truncation
-  # fixes. Raising this ceiling REQUIRES first moving Talos to a release whose default k8s is
-  # >= 1.33 — bump them together, never the chart alone.
-  hcloud_csi_version = "2.20.2"
+  # Raising this ceiling REQUIRES moving Talos + var.kubernetes_version in lockstep so the target
+  # k8s stays inside the driver's latest-3-minors window — bump them together, never the chart alone.
+  hcloud_csi_version = "2.22.0"
 }
 
 data "helm_template" "hcloud_csi" {
@@ -131,7 +129,7 @@ resource "terraform_data" "csi_volume_label_guard" {
   lifecycle {
     precondition {
       condition     = local.csi_has_volume_labels
-      error_message = "CSI controller must set HCLOUD_VOLUME_EXTRA_LABELS with cluster=${local.cluster_name} (needs hcloud-csi chart in [2.15.0, 2.20.2]); without it, dynamically-provisioned pvc-* volumes carry no cluster label, cannot be reclaimed by the cluster-scoped teardown, and leak as billable resources."
+      error_message = "CSI controller must set HCLOUD_VOLUME_EXTRA_LABELS with cluster=${local.cluster_name} (needs hcloud-csi chart >= 2.15.0, within the driver's supported-k8s window — currently 2.22.0 for k8s 1.34-1.36); without it, dynamically-provisioned pvc-* volumes carry no cluster label, cannot be reclaimed by the cluster-scoped teardown, and leak as billable resources."
     }
   }
 }

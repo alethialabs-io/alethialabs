@@ -81,7 +81,11 @@ export function ConnectorRow({
 							/>
 						)}
 					</div>
-					<div className="min-w-0">
+					{/* Cap the text column so `truncate` has a width to clamp against — the table is
+					    `table-layout: auto` and TableCell is `whitespace-nowrap`, so without a max-width
+					    the cell grows to the full un-wrapped description (the 150+ char Hetzner blurb was
+					    the worst offender) and tips the whole table into horizontal scroll. */}
+					<div className="min-w-0 max-w-[16rem] sm:max-w-[24rem] lg:max-w-[32rem]">
 						<div className="truncate text-sm font-medium text-foreground">
 							{integration.name}
 						</div>

@@ -10,7 +10,7 @@
 // the target is HTTPS and its host is in ALLOWED_HOSTS — a fixed set of global SaaS
 // endpoints. Connectors whose endpoint is customer-internal (e.g. Vault) are NOT
 // verified here; their credential is validated on the runner (inside the customer
-// network) at provision time, like grafana/prometheus.
+// network) at provision time, like grafana.
 
 export interface VerifyResult {
 	ok: boolean;
@@ -110,7 +110,7 @@ const VERIFIERS: Record<string, Verifier> = {
 
 /**
  * Verifies a credential for a connector slug. Providers with no registered
- * verifier (vault, grafana, prometheus) are accepted optimistically — a bad
+ * verifier (vault, grafana) are accepted optimistically — a bad
  * credential surfaces at provision time instead.
  */
 export async function verifyConnectorCredential(

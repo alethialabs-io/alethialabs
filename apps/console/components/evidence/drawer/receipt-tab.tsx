@@ -42,6 +42,14 @@ function short(value: string, n = 24): string {
 	return value.length > n ? `${value.slice(0, n)}…` : value;
 }
 
+/** A human-viewable URL for a Rekor log entry (the Sigstore search UI for the public good log). */
+function rekorEntryUrl(logUrl: string | undefined, logIndex: number): string {
+	if (!logUrl || logUrl.includes("rekor.sigstore.dev")) {
+		return `https://search.sigstore.dev/?logIndex=${logIndex}`;
+	}
+	return `${logUrl.replace(/\/+$/, "")}/api/v1/log/entries?logIndex=${logIndex}`;
+}
+
 /** The Receipt tab body. */
 export function ReceiptTab({
 	row,
@@ -64,6 +72,7 @@ export function ReceiptTab({
 
 	const signed = receipt.algorithm === "ed25519";
 	const body = receipt.receipt;
+	const anchor = receipt.rekor ?? null;
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -114,7 +123,38 @@ export function ReceiptTab({
 				)}
 				{body.evaluated_at && <Field label="evaluated" value={body.evaluated_at} />}
 				{body.runner && <Field label="runner" value={body.runner} />}
+				{anchor && (
+					<Field
+						label="transparency log"
+						value={`#${anchor.log_index} · anchored`}
+						copy={anchor.log_id}
+					/>
+				)}
 			</div>
+			{anchor && (
+				<div className="rounded-md border border-dashed border-border-strong bg-surface-sunken px-3.5 py-3">
+					<div className="mb-1 flex items-center gap-1.5">
+						<EvIcon name="shield-check" size={14} className="text-text-secondary" />
+						<span className="font-display text-[13px] font-semibold text-text-primary">
+							Anchored in a transparency log
+						</span>
+					</div>
+					<div className="text-[11.5px] leading-relaxed text-text-tertiary">
+						This receipt’s digest was entered into an append-only Rekor log (entry{" "}
+						<span className="font-mono">#{anchor.log_index}</span>), so any third party can
+						confirm offline that it existed and was not altered — no callback to Alethia.
+					</div>
+					<a
+						href={rekorEntryUrl(anchor.log_url, anchor.log_index)}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="mt-2.5 inline-flex items-center gap-1 border-b border-border-strong pb-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-text-primary hover:text-text-primary"
+					>
+						View log entry
+						<ArrowUpRight className="size-3" />
+					</a>
+				</div>
+			)}
 			{body.exception && (
 				<div className="rounded-md border border-dashed border-border-strong bg-surface-sunken px-3.5 py-3">
 					<div className="mb-2 font-mono text-[9px] uppercase tracking-[0.13em] text-text-tertiary">

@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -196,7 +197,7 @@ func TestGenerateAppManifests_ReturnsWarnings(t *testing.T) {
 			// No ResolvedImage → unbuilt → FromServices skips it → apps empty → returns before git.
 		}},
 	}
-	warnings, err := generateAppManifests(vc, map[string]interface{}{}, "token", io.Discard, io.Discard)
+	warnings, err := generateAppManifests(context.Background(), vc, map[string]interface{}{}, "token", io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

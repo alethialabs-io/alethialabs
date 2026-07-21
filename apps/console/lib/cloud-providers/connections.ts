@@ -14,6 +14,11 @@ import {
 	purgeCloudInventory,
 	syncCloudInventory,
 } from "@/lib/cloud-providers/inventory";
+import {
+	hasServerSideCapabilities,
+	purgeCloudCapabilities,
+	syncCloudCapabilities,
+} from "@/lib/cloud-providers/capabilities";
 import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
 import { azureIdConflict } from "./azure-ids";
 import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "./gcp-wif";
@@ -326,7 +331,14 @@ async function verifyConnectionInline(
 	// reconciliation sweep is the reliable backstop). Reload creds so the probe's updates are seen.
 	if (ok) {
 		const fresh = await loadIdentity(scope, identityId).catch(() => null);
-		if (fresh) void syncCloudInventory(fresh);
+		if (fresh) {
+			void syncCloudInventory(fresh);
+			// Kick off the initial capability enumeration too, so the design-canvas pickers have
+			// account-accurate options before the first open (the refresh sweep is the backstop).
+			if (hasServerSideCapabilities(fresh.provider)) {
+				void syncCloudCapabilities(fresh);
+			}
+		}
 	}
 
 	return {
@@ -795,8 +807,10 @@ export async function disconnectIdentity(
 		.set({ cloud_identity_id: null })
 		.where(eq(projects.cloud_identity_id, identityId));
 
-	// Purge the stored asset inventory — we keep no projection of a cloud we no longer access.
+	// Purge the stored asset inventory + capability catalog (incl. its change-detection hashes) — we keep
+	// no projection of a cloud we no longer access.
 	await purgeCloudInventory(identityId);
+	await purgeCloudCapabilities(identityId);
 
 	// Ops alert (free): a cloud identity was revoked/disconnected.
 	if (disconnected?.org_id) {

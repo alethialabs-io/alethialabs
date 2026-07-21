@@ -34,6 +34,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var (
+	executeCommand           = utils.ExecuteCommand
+	executeCommandWithOutput = utils.ExecuteCommandWithOutput
+)
+
 type DeployParams struct {
 	ProjectConfig  *types.ProjectConfig
 	Provider       string
@@ -135,10 +140,26 @@ type PlanResult struct {
 	GitopsStatus *argocd.GitopsStatus
 }
 
+// gitTokenValues collects every non-empty git token in play — the apps-repo GitAccessToken and each
+// per-repo BYO token — for passing to the token-redactor so none can survive in a job-log/result
+// error string (#948).
+func gitTokenValues(appsToken string, repoTokens map[string]string) []string {
+	out := make([]string, 0, len(repoTokens)+1)
+	if appsToken != "" {
+		out = append(out, appsToken)
+	}
+	for _, t := range repoTokens {
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // gitopsFailure builds the GitopsStatus for a GitOps-wiring hard-fail: which step died
 // plus a token-SANITIZED error message (the metadata scrub is key-based, so a tokened
 // git URL inside the value must be redacted here, before it crosses result.json).
-func gitopsFailure(requested bool, appsRepo, step string, err error, token string) *argocd.GitopsStatus {
+func gitopsFailure(requested bool, appsRepo, step string, err error, tokens ...string) *argocd.GitopsStatus {
 	mode := "direct"
 	if requested {
 		mode = "gitops"
@@ -148,7 +169,7 @@ func gitopsFailure(requested bool, appsRepo, step string, err error, token strin
 		AppsRepo:   appsRepo,
 		ArgocdApp:  argocd.UserAppsApplicationName,
 		FailedStep: step,
-		Error:      argocd.SanitizeGitopsError(err, token),
+		Error:      argocd.SanitizeGitopsError(err, tokens...),
 	}
 }
 
@@ -216,7 +237,7 @@ func applyBootstrapManifests(ctx context.Context, outputs map[string]interface{}
 	cmd := fmt.Sprintf("kubectl apply --server-side --force-conflicts -f %s", path)
 	var lastErr error
 	for attempt := 1; attempt <= 4; attempt++ {
-		if lastErr = utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); lastErr == nil {
+		if lastErr = executeCommand(cmd, ".", nil, stdout, stderr); lastErr == nil {
 			return nil
 		}
 		fmt.Fprintf(stderr, "CNI bootstrap attempt %d/4 failed (API/CRD not ready yet): %v\n", attempt, lastErr)
@@ -293,33 +314,6 @@ func gateRequiresReport(dryRun bool, report *verify.Report, ov *verify.Override,
 		cause, verify.ControlPlanUnavailable)
 }
 
-// mergeEksAccessEntry returns the `eks_access_entries` tfvars map with a cluster-admin entry for
-// roleARN added under a stable key, preserving any entries already present. The shape mirrors the
-// module's own admin entries (infra/templates/project/aws/modules/eks/access_entries.tf): a
-// STANDARD entry with the AmazonEKSClusterAdminPolicy associated at cluster scope. Keyed on the
-// role ARN so re-running is idempotent and never collides with a caller-supplied entry.
-func mergeEksAccessEntry(existing interface{}, roleARN string) map[string]interface{} {
-	entries := map[string]interface{}{}
-	if prior, ok := existing.(map[string]interface{}); ok {
-		for k, v := range prior {
-			entries[k] = v
-		}
-	}
-	entries[roleARN] = map[string]interface{}{
-		"principal_arn": roleARN,
-		"type":          "STANDARD",
-		"policy_associations": map[string]interface{}{
-			"admin": map[string]interface{}{
-				"policy_arn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
-				"access_scope": map[string]interface{}{
-					"type": "cluster",
-				},
-			},
-		},
-	}
-	return entries
-}
-
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
 //
 // Error contract: a GitOps-wiring failure returns a PARTIAL non-nil result alongside the
@@ -367,6 +361,21 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if err := ValidatePlacement(vc); err != nil {
 			return nil, err
 		}
+	}
+
+	// Placement activation dispatch (#955/#956). `dedicated` (incl. empty = legacy env=cluster) falls
+	// through to the full-cluster provisioning below, byte-identical. `namespace` on aws deploys onto an
+	// EXISTING shared Fabric cluster via keyless re-mint (no tofu) — a fully separate path so the
+	// dedicated body stays untouched. Everything else (namespace on a cloud whose re-mint isn't wired,
+	// vcluster) stays FAIL-CLOSED rather than silently running the full-cluster tofu, which would ignore
+	// the placement the user chose and collide with the Fabric's real cluster.
+	switch selectPlacementPath(vc.PlacementMode, params.Provider) {
+	case placementNamespaceAWS:
+		return runNamespaceDeploy(ctx, params)
+	case placementUnactivated:
+		return nil, unactivatedPlacementError(vc.PlacementMode, params.Provider)
+	case placementDedicated:
+		// Fall through to the existing full-cluster provisioning path (unchanged).
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
@@ -441,32 +450,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		tfvars = byoTfvars
 	} else {
 		tfvars = provider.ProviderTfvars(vc)
-
-		// #551: on AWS, self-grant the runner's OWN provisioning identity a cluster-admin EKS
-		// access entry, keyed on the PATH-STRIPPED role ARN. The terraform-aws-eks module's
-		// creator-admin grant registers the path-QUALIFIED role ARN (`role/<path>/<name>`), but the
-		// IAM Authenticator resolves an assumed-role session to the path-stripped `role/<name>`, so
-		// a provisioning role created under an IAM path never matches — the runner authenticates to
-		// the EKS API but is authorized by nothing and 401s ("Unauthorized") after a green apply,
-		// wedging the whole post-apply spine (ArgoCD, add-ons). sts:GetCallerIdentity yields exactly
-		// the path-stripped role ARN the kube-token presents, so this entry always matches. It sits
-		// ALONGSIDE the module's creator entry (different principal string → distinct access entry,
-		// no conflict), so it is pure belt-and-suspenders. Best-effort: on any failure we log and
-		// fall back to the module's creator-admin grant (unchanged behaviour). AWS-only — no other
-		// cloud matches a presented identity against a pre-created access-entry principal (EKS is
-		// unique here; the others emit an admin kubeconfig or authorize via IAM roles). See #551.
-		if provider.Name() == "aws" {
-			roleARN, idErr := alethiaAws.CallerRoleARN(ctx, alethiaAws.AWSOptions{Region: vc.Region})
-			switch {
-			case idErr != nil:
-				fmt.Fprintf(stderr, "Warning: could not resolve the runner's AWS identity for the EKS self-access entry (falling back to the module creator-admin grant): %v\n", idErr)
-			case roleARN == "":
-				fmt.Fprintln(stderr, "Warning: runner AWS identity is not an assumed role; skipping the EKS self-access entry (relying on the module creator-admin grant)")
-			default:
-				tfvars["eks_access_entries"] = mergeEksAccessEntry(tfvars["eks_access_entries"], roleARN)
-				fmt.Fprintf(stdout, "Granting the runner identity %s cluster-admin via an explicit EKS access entry (path-stripped, #551)\n", roleARN)
-			}
-		}
 
 		// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
 		// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
@@ -581,7 +564,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	if planJSON != nil {
 		planJSONFile = filepath.Join(tmpRoot, "tofu.plan.json")
 		if jsonBytes, marshalErr := json.Marshal(planJSON); marshalErr == nil {
-			_ = os.WriteFile(planJSONFile, jsonBytes, 0644)
+			// Plan JSON can carry sensitive resource attributes (passwords, keys) — owner-only.
+			_ = utils.WriteSecretFile(planJSONFile, jsonBytes)
 			var parsed map[string]interface{}
 			if json.Unmarshal(jsonBytes, &parsed) == nil {
 				result.PlanJSON = parsed
@@ -632,7 +616,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 
 	if params.InfracostToken != "" {
 		infracostEnv := []string{"INFRACOST_API_KEY=" + params.InfracostToken}
-		infracostCLI := infracost.NewInfracostCLI("v0.10.39", params.InfracostToken)
+		infracostCLI := infracost.NewInfracostCLI(infracost.ResolvedInfracostVersion(), params.InfracostToken)
 		infracostInput := planFile
 		if planJSONFile != "" {
 			infracostInput = planJSONFile
@@ -798,7 +782,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// message) on the partial result — the sandbox writes result.json even on error,
 		// so the console can show an actionable GitOps failure, not just a failed job.
 		gitopsFailed := func(step string, err error) *argocd.GitopsStatus {
-			return gitopsFailure(gitopsRequested, vc.Repositories.AppsDestinationRepo, step, err, params.GitAccessToken)
+			// Redact EVERY git token that could appear in the message — the apps-repo token and every
+			// BYO per-repo token — not just GitAccessToken (#948).
+			return gitopsFailure(gitopsRequested, vc.Repositories.AppsDestinationRepo, step, err,
+				gitTokenValues(params.GitAccessToken, params.GitRepoTokens)...)
 		}
 
 		setStage("argocd")
@@ -882,10 +869,23 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
 		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
 
+		// A pluggable container-registry connector's dockerconfigjson imagePullSecret is seeded
+		// HERE, post-apply, over the authenticated kubeconfig — NOT in tofu, whose kubernetes
+		// provider is host+CA-only on AWS and cannot create it. Must land before the app pods that
+		// reference it (manifests.Options.ImagePullSecrets) sync. Credentials come from the job's
+		// ConnectorCredentials (never the snapshot); the payload is never logged.
+		if pullSpec, pullErr := categories.DominantRegistryPullSecretSpec(vc); pullErr != nil {
+			return nil, fmt.Errorf("failed to build the registry pull secret: %w", pullErr)
+		} else if pullSpec != nil {
+			if err := argocd.EnsureRegistryPullSecret(pullSpec.Name, pullSpec.Namespace, pullSpec.DockerConfigJSON, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the registry pull secret: %w", err)
+			}
+		}
+
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		manifestWarnings, genErr := generateAppManifests(vc, result.Outputs, params.GitAccessToken, stdout, stderr)
+		manifestWarnings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, stdout, stderr)
 		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
@@ -942,7 +942,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				}
 			}
 			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-			if gitErr := writeAddOnGitOps(vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
+			if gitErr := writeAddOnGitOps(ctx, vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
 				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 			}
 		}
@@ -958,6 +958,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// those Secrets (deliberately: no ArgoCD tracking metadata), so ArgoCD will never
 		// prune them; this is their only GC.
 		argocd.PruneAddOnSecrets(enabledAddonIDs(vc.AddOns), stdout, stderr)
+		// And the runner-seeded registry pull secret of any deselected registry — likewise owned
+		// by no Application. Desired = the current dominant registry's "<slug>-pull" (empty when
+		// native/none), so switching or removing a registry cleans up the stale secret.
+		var desiredPullSecrets []string
+		if n := categories.DominantRegistryPullSecret(vc); n != "" {
+			desiredPullSecrets = []string{n}
+		}
+		argocd.PruneRegistryPullSecrets(desiredPullSecrets, stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//
@@ -1093,8 +1101,10 @@ func resolveArgoTemplatesDir() string {
 func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
-	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
-	if err := utils.ExecuteCommand(addRepoCmd, ".", nil, stdout, stderr); err != nil {
+	// Repo URL + chart version are config-driven (env override, current literals as defaults) and
+	// shell-quoted since they interpolate into a bash -c command (#951, #944).
+	addRepoCmd := fmt.Sprintf("helm repo add argo %s && helm repo update", utils.ShellQuote(argocd.ResolvedArgoHelmRepo()))
+	if err := executeCommand(addRepoCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to add ArgoCD helm repo: %w", err)
 	}
 
@@ -1109,7 +1119,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
-	installCmd := "helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version 7.1.3 --wait --timeout 5m"
+	installCmd := fmt.Sprintf("helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s --wait --timeout 5m", utils.ShellQuote(argocd.ResolvedArgoChartVersion()))
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
@@ -1133,7 +1143,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		}
 	}
 
-	if err := utils.ExecuteCommand(installCmd, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand(installCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to install ArgoCD: %w", err)
 	}
 
@@ -1162,12 +1172,12 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 func ensureArgoRedisSecret(stdout, stderr io.Writer) error {
 	// Ensure the namespace exists (the helm install also uses --create-namespace, but we seed first).
 	nsCmd := "kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
-	if err := utils.ExecuteCommand(nsCmd, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand(nsCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("ensure argocd namespace: %w", err)
 	}
 
 	// Idempotency guard: never regenerate an existing password.
-	if out, err := utils.ExecuteCommandWithOutput(
+	if out, err := executeCommandWithOutput(
 		"kubectl get secret argocd-redis -n argocd -o jsonpath={.data.auth}", ".", nil); err == nil && strings.TrimSpace(out) != "" {
 		fmt.Fprintln(stdout, "argocd-redis secret already present; leaving its auth untouched.")
 		return nil
@@ -1205,7 +1215,7 @@ stringData:
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		return err
 	}
-	if err := utils.ExecuteCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); err != nil {
+	if err := executeCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("apply argocd-redis secret: %w", err)
 	}
 	fmt.Fprintln(stdout, "Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).")

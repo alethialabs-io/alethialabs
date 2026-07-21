@@ -184,8 +184,12 @@ export function securityMark(security: EvidenceSecurity | null): Mark {
 export function receiptMark(verify: EvidenceVerify | null): Mark {
 	const receipt = verify?.receipt;
 	if (!receipt) return { iconKey: "minus", label: "—", tone: "muted" };
-	if (receipt.algorithm === "ed25519")
+	if (receipt.algorithm === "ed25519") {
+		// A receipt anchored in a transparency log (#885) is the strongest state — offline,
+		// third-party-verifiable proof of existence — so it outranks a plain signed receipt.
+		if (receipt.rekor) return { iconKey: "shield-check", label: "Anchored", tone: "good" };
 		return { iconKey: "file-check", label: "Signed", tone: "good" };
+	}
 	return { iconKey: "file-minus", label: "Unsigned", tone: "unknown" };
 }
 

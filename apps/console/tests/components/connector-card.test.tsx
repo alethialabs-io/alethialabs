@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { ConnectorCard } from "@/components/connectors/connector-card";
 
-/** Builds a non-git ("apps") connector fixture so the logo routes through ConnectorIcon. */
+/** Builds a non-git (observability) connector fixture so the logo routes through ConnectorIcon. */
 function connector(
 	over: Partial<ConnectorWithConnection> = {},
 ): ConnectorWithConnection {
@@ -33,7 +33,7 @@ function connector(
 		updated_at: null,
 		connected: false,
 		connection_details: null,
-		group: "apps",
+		group: "observability",
 		...over,
 	};
 }

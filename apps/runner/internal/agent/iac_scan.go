@@ -67,7 +67,7 @@ func (w *Runner) executeIacScan(ctx context.Context, job *Job, stdout, stderr *J
 		repo = git.NewGIT(repoURL, cloneDir, false)
 	}
 	fmt.Fprintln(stdout, "Cloning…")
-	if err := repo.Clone(ref, true); err != nil {
+	if err := repo.Clone(ctx, ref, true); err != nil {
 		return fmt.Errorf("clone failed: %w", err)
 	}
 

@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +27,7 @@ const addonsRepoDir = "addons"
 // gitops add-ons and nothing of ours to prune. commonLabels are the classification/sweep labels
 // stamped onto each seeded Application (BYOC B1.4) — the app-of-apps syncs these into the cluster
 // as ArgoCD Applications, so they must carry the same sweep handles as their managed-mode twins.
-func writeAddOnGitOps(vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) error {
+func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) error {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil
 	}
@@ -46,7 +47,7 @@ func writeAddOnGitOps(vc *types.ProjectConfig, token string, commonLabels map[st
 	defer os.RemoveAll(dir)
 
 	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
-	if err := repo.Clone("", false); err != nil {
+	if err := repo.Clone(ctx, "", false); err != nil {
 		return fmt.Errorf("clone apps repo: %w", err)
 	}
 

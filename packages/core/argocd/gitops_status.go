@@ -165,17 +165,27 @@ func parseAppsStatus(raw []byte) (AddOnHealth, string, map[string]ServiceHealth,
 	return agg, app.Status.Sync.Revision, services, nil
 }
 
-// SanitizeGitopsError renders err for execution_metadata with the git access token
-// redacted. The runner's metadata scrub is KEY-based (it never inspects values), and a
-// git/kubectl failure can echo a tokened remote URL into the error text — so the value
-// itself must be scrubbed before it leaves the sandbox. Safe on an empty token.
-func SanitizeGitopsError(err error, token string) string {
+// RedactTokens replaces every non-empty token in s with [REDACTED]. Use it on any error/log text
+// that can carry a git credential before it leaves the sandbox into result.json / a job log: the
+// runner's metadata scrub is KEY-based (it never inspects values), and a git/kubectl failure can
+// echo a tokened remote URL. Pass EVERY token that could appear — the apps-repo GitAccessToken AND
+// every per-repo BYO token — since the scrub only knows the values it's given (#948). Safe on empty
+// tokens and an empty list.
+func RedactTokens(s string, tokens ...string) string {
+	for _, t := range tokens {
+		if t != "" {
+			s = strings.ReplaceAll(s, t, "[REDACTED]")
+		}
+	}
+	return s
+}
+
+// SanitizeGitopsError renders err for execution_metadata with every supplied git token redacted.
+// Variadic so a caller can pass both the apps-repo token and every BYO per-repo token — a tokened
+// remote URL in the error text must be scrubbed before it crosses result.json. Safe on a nil err.
+func SanitizeGitopsError(err error, tokens ...string) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
-	if token != "" {
-		msg = strings.ReplaceAll(msg, token, "[REDACTED]")
-	}
-	return msg
+	return RedactTokens(err.Error(), tokens...)
 }

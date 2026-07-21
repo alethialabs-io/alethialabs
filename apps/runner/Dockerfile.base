@@ -65,10 +65,19 @@ RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
     rm -f "${ASSET}" SHA256SUMS && \
     chmod +x /usr/local/bin/tofu
 
+# Infracost (Apache-2.0) — cost estimation. Baked in so the runner never downloads it at provision
+# time. SHA256-verified against the release's published per-asset .sha256 (was previously an
+# unverified curl | tar).
+ARG INFRACOST_VERSION=0.10.39
 RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
-    curl -fsSL "https://github.com/infracost/infracost/releases/download/v0.10.39/infracost-linux-${ARCH}.tar.gz" | \
-    tar -xz -C /usr/local/bin && \
+    ASSET="infracost-linux-${ARCH}.tar.gz" && \
+    cd /tmp && \
+    curl -fsSL "https://github.com/infracost/infracost/releases/download/v${INFRACOST_VERSION}/${ASSET}" -o "${ASSET}" && \
+    curl -fsSL "https://github.com/infracost/infracost/releases/download/v${INFRACOST_VERSION}/${ASSET}.sha256" -o "${ASSET}.sha256" && \
+    echo "$(awk '{print $1}' ${ASSET}.sha256)  ${ASSET}" | sha256sum -c - && \
+    tar -xz -C /usr/local/bin -f "${ASSET}" && \
     mv /usr/local/bin/infracost-linux-${ARCH} /usr/local/bin/infracost && \
+    rm -f "${ASSET}" "${ASSET}.sha256" && \
     chmod +x /usr/local/bin/infracost
 
 COPY --from=builder /runner /usr/local/bin/runner

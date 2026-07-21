@@ -10,11 +10,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 import {
 	buildEgressAllowlist,
+	buildPlacementAttempts,
 	getHcloudFleetProvider,
 	hcloudConfigFromEnv,
 	renderCloudInit,
+	resetServerTypeAvailabilityCacheForTest,
 	resolveSshKeyIdsFromKeys,
 	serverCreatePayload,
+	serverTypeAvailabilityFromTypes,
 	type HcloudConfig,
 } from "@/lib/fleet/hcloud";
 import type { FleetTarget } from "@/lib/fleet/types";
@@ -90,6 +93,23 @@ function noContentRes() {
 function errRes(status: number, text: string) {
 	return { ok: false, status, json: async () => ({}), text: async () => text };
 }
+/** A canned GET /server_types page: each entry offers its type in the given locations (prices[].location). */
+function serverTypesRes(offer: Record<string, string[]>) {
+	return jsonRes({
+		server_types: Object.entries(offer).map(([name, locations]) => ({
+			name,
+			prices: locations.map((location) => ({ location })),
+		})),
+		meta: { pagination: { next_page: null } },
+	});
+}
+/** A 422 "unsupported location for server type" — the structural placement miss create() must spill past. */
+function unsupportedLocationErr() {
+	return errRes(
+		422,
+		JSON.stringify({ error: { code: "invalid_input", message: "unsupported location for server type" } }),
+	);
+}
 
 beforeAll(() => {
 	snapshotEnv();
@@ -108,6 +128,9 @@ beforeAll(() => {
 
 beforeEach(() => {
 	fetchMock.mockReset();
+	// create() now consults a (cached) GET /server_types availability lookup — clear it so each test
+	// fully controls that response rather than inheriting a prior test's cached map.
+	resetServerTypeAvailabilityCacheForTest();
 });
 
 afterEach(() => {
@@ -605,7 +628,11 @@ describe("HcloudFleetProvider.list — Hetzner pagination", () => {
 
 describe("HcloudFleetProvider.create", () => {
 	it("POSTs a generated server payload built from serverCreatePayload", async () => {
-		fetchMock.mockResolvedValue(jsonRes({ server: { id: 1 } }, 201));
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/server_types")
+				? serverTypesRes({ cax21: ["fsn1"] })
+				: jsonRes({ server: { id: 1 } }, 201),
+		);
 
 		await getHcloudFleetProvider().create(target("aws"), {
 			location: "fsn1",
@@ -613,7 +640,9 @@ describe("HcloudFleetProvider.create", () => {
 			bootstrapToken: "vm-boot-tok",
 		});
 
-		const [url, init] = fetchMock.mock.calls[0];
+		// The create is the POST /servers (preceded by the GET /server_types availability lookup).
+		const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST")!;
+		const [url, init] = post;
 		expect(url).toBe("https://api.hetzner.cloud/v1/servers");
 		expect(init.method).toBe("POST");
 		expect(init.headers["Content-Type"]).toBe("application/json");
@@ -633,10 +662,23 @@ describe("HcloudFleetProvider.create — failsafe placement", () => {
 	const placementErr = () =>
 		errRes(412, JSON.stringify({ error: { code: "resource_unavailable", message: "error during placement" } }));
 
+	/** POST /servers bodies in call order (skips the GET /server_types availability lookup). */
+	function postBodies() {
+		return fetchMock.mock.calls
+			.filter((c) => c[1]?.method === "POST")
+			.map((c) => JSON.parse(c[1].body));
+	}
+
 	it("falls back from ARM (cax) to x86 (cpx) when ARM has no capacity", async () => {
-		// Every ARM attempt misses; the first x86 attempt places.
-		fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
-			const body = JSON.parse(init.body);
+		// Both types are offered in EU; every ARM attempt misses (412); the first x86 attempt places.
+		fetchMock.mockImplementation(async (url: string, init?: { body?: string }) => {
+			if (String(url).includes("/server_types")) {
+				return serverTypesRes({
+					cax21: ["fsn1", "nbg1", "hel1"],
+					cpx31: ["fsn1", "nbg1", "hel1", "ash", "hil"],
+				});
+			}
+			const body = JSON.parse(init!.body!);
 			return String(body.server_type).startsWith("cax") ? placementErr() : jsonRes({ server: { id: 1 } }, 201);
 		});
 
@@ -648,22 +690,65 @@ describe("HcloudFleetProvider.create — failsafe placement", () => {
 			}),
 		).resolves.toBeUndefined();
 
-		const bodies = fetchMock.mock.calls.map((c) => JSON.parse(c[1].body));
+		const bodies = postBodies();
 		// ARM is tried FIRST (cheapest), at the pool's location.
 		expect(bodies[0].server_type).toBe("cax21");
 		expect(bodies[0].location).toBe("fsn1");
 		// The placed VM is x86 (fell back).
 		expect(bodies[bodies.length - 1].server_type).toBe("cpx31");
-		// EU-only guard: no ARM attempt is ever aimed at a non-EU DC (ash/hil).
+		// Availability-driven (not a hardcoded set): ARM is only offered in EU here, so no ARM attempt is
+		// ever aimed at a DC that doesn't offer it (ash/hil).
 		const armInUs = bodies.some(
 			(b) => String(b.server_type).startsWith("cax") && ["ash", "hil"].includes(String(b.location)),
 		);
 		expect(armInUs).toBe(false);
 	});
 
+	it("spills past a 422 'unsupported location for server type' to a later candidate (the #912 fix)", async () => {
+		// Availability lookup fails → full offline candidate set. Every ARM pair returns the structural
+		// 422; the first x86 pair places. Before the fix the 422 aborted on the FIRST attempt (the bug).
+		fetchMock.mockImplementation(async (url: string, init?: { body?: string }) => {
+			if (String(url).includes("/server_types")) return errRes(500, "boom");
+			const body = JSON.parse(init!.body!);
+			return String(body.server_type).startsWith("cax")
+				? unsupportedLocationErr()
+				: jsonRes({ server: { id: 1 } }, 201);
+		});
+
+		await expect(
+			getHcloudFleetProvider().create(target("aws"), {
+				location: "fsn1",
+				version: null,
+				bootstrapToken: "t",
+			}),
+		).resolves.toBeUndefined();
+
+		const bodies = postBodies();
+		expect(bodies[0].server_type).toBe("cax21"); // first (unsupported) pair 422'd — but did NOT abort
+		expect(bodies[bodies.length - 1].server_type).toBe("cpx31"); // spilled through to x86
+	});
+
+	it("does NOT spill on a non-placement 422 (e.g. bad image) — surfaces it immediately", async () => {
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/server_types")
+				? errRes(500, "boom")
+				: errRes(422, JSON.stringify({ error: { code: "invalid_input", message: "image not found" } })),
+		);
+		await expect(
+			getHcloudFleetProvider().create(target("aws"), {
+				location: "fsn1",
+				version: null,
+				bootstrapToken: "t",
+			}),
+		).rejects.toThrow(/image not found/);
+		expect(postBodies()).toHaveLength(1); // aborted on the first POST — narrow 422 match, no over-retry
+	});
+
 	it("does NOT retry a real (non-placement) error — surfaces it immediately", async () => {
-		fetchMock.mockResolvedValue(
-			errRes(404, JSON.stringify({ error: { code: "not_found", message: "SSH key not found" } })),
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/server_types")
+				? serverTypesRes({ cax21: ["fsn1"], cpx31: ["fsn1"] })
+				: errRes(404, JSON.stringify({ error: { code: "not_found", message: "SSH key not found" } })),
 		);
 		await expect(
 			getHcloudFleetProvider().create(target("aws"), {
@@ -672,7 +757,7 @@ describe("HcloudFleetProvider.create — failsafe placement", () => {
 				bootstrapToken: "t",
 			}),
 		).rejects.toThrow(/SSH key not found/);
-		expect(fetchMock).toHaveBeenCalledTimes(1); // aborted on the first attempt, no failover
+		expect(postBodies()).toHaveLength(1); // aborted on the first POST, no failover
 	});
 
 	it("throws a clear no-capacity error when every candidate is exhausted", async () => {
@@ -684,6 +769,112 @@ describe("HcloudFleetProvider.create — failsafe placement", () => {
 				bootstrapToken: "t",
 			}),
 		).rejects.toThrow(/no capacity for gcp/);
+	});
+});
+
+describe("HcloudFleetProvider.create — server-type availability pre-filter", () => {
+	/** POST /servers bodies in call order (skips the GET /server_types availability lookup). */
+	function postBodies() {
+		return fetchMock.mock.calls
+			.filter((c) => c[1]?.method === "POST")
+			.map((c) => JSON.parse(c[1].body));
+	}
+
+	it("only attempts {type,location} pairs Hetzner offers — avoids the 422 before POSTing", async () => {
+		// cpx31 is offered ONLY in ash; cax21 nowhere. The default candidate grid (cax21/cpx31 across
+		// fsn1+fallbacks) is filtered down to the single supported pair, so we POST cpx31@ash directly.
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/server_types")
+				? serverTypesRes({ cpx31: ["ash"] })
+				: jsonRes({ server: { id: 1 } }, 201),
+		);
+
+		await expect(
+			getHcloudFleetProvider().create(target("gcp"), {
+				location: "fsn1",
+				version: null,
+				bootstrapToken: "t",
+			}),
+		).resolves.toBeUndefined();
+
+		const bodies = postBodies();
+		expect(bodies).toHaveLength(1); // no wasted round-trips on unsupported pairs
+		expect(bodies[0].server_type).toBe("cpx31");
+		expect(bodies[0].location).toBe("ash");
+	});
+
+	it("fails open to the full offline candidate set when the availability lookup errors", async () => {
+		// /server_types 500s → availability is null → create() must use the offline cross-product, not
+		// give up. Every POST placement-misses (412), proving it tried MORE than one candidate.
+		const placement412 = errRes(
+			412,
+			JSON.stringify({ error: { code: "resource_unavailable", message: "error during placement" } }),
+		);
+		fetchMock.mockImplementation(async (url: string) =>
+			String(url).includes("/server_types") ? errRes(500, "boom") : placement412,
+		);
+
+		await expect(
+			getHcloudFleetProvider().create(target("gcp"), {
+				location: "fsn1",
+				version: null,
+				bootstrapToken: "t",
+			}),
+		).rejects.toThrow(/no capacity/);
+
+		expect(postBodies().length).toBeGreaterThan(1);
+	});
+});
+
+describe("serverTypeAvailabilityFromTypes", () => {
+	it("folds server_types into name → offered-locations, empty set when a type has no prices", () => {
+		const map = serverTypeAvailabilityFromTypes([
+			{ name: "cax21", prices: [{ location: "fsn1" }, { location: "hel1" }] },
+			{ name: "cpx31", prices: [{ location: "ash" }] },
+			{ name: "ccx13", prices: undefined },
+		]);
+		expect([...(map.get("cax21") ?? [])].sort()).toEqual(["fsn1", "hel1"]);
+		expect([...(map.get("cpx31") ?? [])]).toEqual(["ash"]);
+		expect(map.get("ccx13")?.size).toBe(0);
+	});
+
+	it("defensively skips malformed price entries without throwing", () => {
+		const map = serverTypeAvailabilityFromTypes([
+			{ name: "cax21", prices: [{ location: "fsn1" }, { nope: true }, null, { location: "" }] },
+		]);
+		expect([...(map.get("cax21") ?? [])]).toEqual(["fsn1"]);
+	});
+});
+
+describe("buildPlacementAttempts", () => {
+	const TYPES = ["cax21", "cpx31"];
+	const LOCS = ["fsn1", "ash"];
+
+	it("no availability: the FULL cross-product, serverType-major (no hardcoded geography)", () => {
+		// With no live data we make no assumptions about where a type is offered — the 412/422 spill
+		// classifier skips any pair the DC can't place. Order is serverType-major, location-minor.
+		expect(buildPlacementAttempts(TYPES, LOCS, null)).toEqual([
+			{ serverType: "cax21", location: "fsn1" },
+			{ serverType: "cax21", location: "ash" },
+			{ serverType: "cpx31", location: "fsn1" },
+			{ serverType: "cpx31", location: "ash" },
+		]);
+	});
+
+	it("with availability: keeps only the pairs Hetzner actually offers", () => {
+		const avail = new Map([
+			["cax21", new Set(["fsn1"])],
+			["cpx31", new Set(["ash"])],
+		]);
+		expect(buildPlacementAttempts(TYPES, LOCS, avail)).toEqual([
+			{ serverType: "cax21", location: "fsn1" },
+			{ serverType: "cpx31", location: "ash" },
+		]);
+	});
+
+	it("falls back to the offline set when the availability filter would empty the list (misconfig)", () => {
+		const avail = new Map([["cax99", new Set(["fsn1"])]]); // none of TYPES are offered anywhere
+		expect(buildPlacementAttempts(TYPES, LOCS, avail)).toEqual(buildPlacementAttempts(TYPES, LOCS, null));
 	});
 });
 

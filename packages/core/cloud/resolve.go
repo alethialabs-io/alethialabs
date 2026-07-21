@@ -39,11 +39,9 @@ func resolveDBEngine(provider string, db types.ProjectDatabaseConfig) (engine, v
 }
 
 // resolveCacheNodeType returns the concrete provider cache SKU. Prefers MemoryGB (nearest
-// catalog tier); falls back to the legacy NodeType.
+// catalog tier); falls back to the legacy NodeType — matching the abstract-first precedence of
+// resolveDBEngine and the file invariant, so a stale legacy NodeType can't shadow MemoryGB (#1002).
 func resolveCacheNodeType(provider string, c types.ProjectCacheConfig) string {
-	if c.NodeType != "" {
-		return c.NodeType
-	}
 	if c.MemoryGB > 0 {
 		if t, ok := catalog.MustLoad().NearestCacheTier(provider, c.MemoryGB); ok {
 			return t.Value

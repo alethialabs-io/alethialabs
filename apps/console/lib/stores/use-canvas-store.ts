@@ -348,14 +348,17 @@ interface CanvasStore {
 			sync?: string | null;
 		}[],
 	) => void;
-	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
-	/** Add a node with an explicit config + placement (used by Ask AI proposals + palette variants). */
+	/** Add a node; returns the new node's id (or the existing one's, for a singleton already placed)
+	 * so callers can immediately configure it inline (W5). */
+	addNode: (kind: NodeKind, position?: { x: number; y: number }) => string;
+	/** Add a node with an explicit config + placement (used by Ask AI proposals + palette variants).
+	 * Returns the new node's id (or the existing singleton's). */
 	addNodeWithConfig: (
 		kind: NodeKind,
 		config?: Record<string, unknown>,
 		cloudIdentityId?: string | null,
 		position?: { x: number; y: number },
-	) => void;
+	) => string;
 	updateNodeConfig: (id: string, patch: Record<string, unknown>) => void;
 	setNodeIdentity: (
 		id: string,
@@ -653,7 +656,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					const existing = nodes.find((n) => n.data.kind === kind);
 					if (existing) {
 						set({ inspectorNodeId: existing.id, selectedIds: [existing.id] });
-						return;
+						return existing.id;
 					}
 				}
 				get().commit();
@@ -679,6 +682,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					selectedIds: [node.id],
 					dirty: true,
 				});
+				return node.id;
 			},
 
 			addNodeWithConfig: (kind, config, cloudIdentityId, position) => {
@@ -687,7 +691,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					const existing = nodes.find((n) => n.data.kind === kind);
 					if (existing) {
 						set({ inspectorNodeId: existing.id, selectedIds: [existing.id] });
-						return;
+						return existing.id;
 					}
 				}
 				get().commit();
@@ -727,6 +731,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					selectedIds: [node.id],
 					dirty: true,
 				});
+				return node.id;
 			},
 
 			updateNodeConfig: (id, patch) => {

@@ -61,10 +61,12 @@ import { authClient } from "@/lib/auth/client";
 import { track, captureException } from "@/lib/analytics/track";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import {
+	Activity,
 	BookOpen,
-	Boxes,
 	Cloud,
 	Container,
+	GitBranch,
+	Globe,
 	KeyRound,
 	Loader2,
 	Search,
@@ -121,12 +123,12 @@ const GROUP_META: {
 		docsHref: "/docs/console/connectors",
 	},
 	{
-		id: "secrets",
-		label: "Secrets",
+		id: "source",
+		label: "Source",
 		description:
-			"Where Projects read secrets at deploy time — fetched just-in-time, never written to state.",
-		icon: KeyRound,
-		docsHref: "/docs/console/connectors/pluggable",
+			"Git providers Alethia reads repositories from and wires GitOps deployments through.",
+		icon: GitBranch,
+		docsHref: "/docs/console/connectors/git-providers",
 	},
 	{
 		id: "registries",
@@ -137,12 +139,28 @@ const GROUP_META: {
 		docsHref: "/docs/console/connectors/pluggable",
 	},
 	{
-		id: "apps",
-		label: "Apps",
+		id: "secrets",
+		label: "Secrets",
 		description:
-			"Git, observability and DNS services Alethia connects to and acts through.",
-		icon: Boxes,
-		docsHref: "/docs/console/connectors/git-providers",
+			"External secret stores Projects read secrets from at deploy time — fetched just-in-time, never written to state.",
+		icon: KeyRound,
+		docsHref: "/docs/console/connectors/pluggable",
+	},
+	{
+		id: "observability",
+		label: "Observability",
+		description:
+			"External destinations Alethia ships cluster metrics, logs, and traces to.",
+		icon: Activity,
+		docsHref: "/docs/console/connectors/pluggable",
+	},
+	{
+		id: "dns",
+		label: "DNS",
+		description:
+			"DNS providers Alethia manages records and certificates through.",
+		icon: Globe,
+		docsHref: "/docs/console/connectors/pluggable",
 	},
 ];
 

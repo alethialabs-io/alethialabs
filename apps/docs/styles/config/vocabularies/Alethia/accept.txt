@@ -38,6 +38,9 @@ Cloudflare
 Stripe
 Vercel
 namespace
+vcluster
+Fabric
+Placement
 GitHub
 GitLab
 JSONB

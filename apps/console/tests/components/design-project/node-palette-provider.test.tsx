@@ -141,3 +141,83 @@ describe("NodePalette — per-provider variant filtering", () => {
 		expect(screen.getByText("MySQL")).toBeInTheDocument();
 	});
 });
+
+// W5 — after a service is added the palette stays open and swaps to an inline config step (breadcrumb
+// + essentials + "Full settings →"), so adding and configuring are one flow.
+describe("NodePalette — W5 inline config step", () => {
+	/** The bucket node just added by the flow under test. */
+	function addedBucketId(): string | undefined {
+		return useCanvasStore
+			.getState()
+			.nodes.find((n) => n.data.kind === "bucket")?.id;
+	}
+
+	it("adds the node and swaps to its config step without closing", async () => {
+		seedCanvas("aws");
+		const onOpenChange = vi.fn();
+		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
+
+		await userEvent.click(screen.getByText("Bucket"));
+
+		// The node was added to the store...
+		expect(addedBucketId()).toBeDefined();
+		// ...the palette stayed open (never asked to close)...
+		expect(onOpenChange).not.toHaveBeenCalledWith(false);
+		// ...and it now shows the config step: breadcrumb, name field, and the two footer actions.
+		expect(screen.getByText("Full settings")).toBeInTheDocument();
+		expect(screen.getByText("Done")).toBeInTheDocument();
+		// The name field for an array kind (targeted by its unique placeholder).
+		expect(screen.getByPlaceholderText("name")).toBeInTheDocument();
+	});
+
+	it("reaches the config step through the variant picker", async () => {
+		seedCanvas("aws");
+		render(<NodePalette open onOpenChange={vi.fn()} identities={[]} />);
+
+		await userEvent.click(screen.getByText("Database"));
+		await userEvent.click(screen.getByText("PostgreSQL"));
+
+		expect(screen.getByText("Full settings")).toBeInTheDocument();
+		expect(
+			useCanvasStore.getState().nodes.some((n) => n.data.kind === "database"),
+		).toBe(true);
+	});
+
+	it("'Full settings' opens the inspector on the new node and closes the palette", async () => {
+		seedCanvas("aws");
+		const onOpenChange = vi.fn();
+		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
+
+		await userEvent.click(screen.getByText("Bucket"));
+		const id = addedBucketId();
+		await userEvent.click(screen.getByText("Full settings"));
+
+		expect(useCanvasStore.getState().inspectorNodeId).toBe(id);
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+	});
+
+	it("'Done' closes the palette and keeps the node", async () => {
+		seedCanvas("aws");
+		const onOpenChange = vi.fn();
+		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
+
+		await userEvent.click(screen.getByText("Bucket"));
+		await userEvent.click(screen.getByText("Done"));
+
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+		expect(addedBucketId()).toBeDefined();
+	});
+
+	it("the breadcrumb returns to the catalog with the node kept", async () => {
+		seedCanvas("aws");
+		render(<NodePalette open onOpenChange={vi.fn()} identities={[]} />);
+
+		await userEvent.click(screen.getByText("Bucket"));
+		// Back via the breadcrumb.
+		await userEvent.click(screen.getByText("Add a service"));
+
+		// The catalog is shown again (a sibling service is back), and the added node persists.
+		expect(screen.getByText("Database")).toBeInTheDocument();
+		expect(addedBucketId()).toBeDefined();
+	});
+});
