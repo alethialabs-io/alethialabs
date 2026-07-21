@@ -1075,7 +1075,13 @@ func snapshotToProjectConfig(snapshot map[string]any) (*types.ProjectConfig, err
 	return &vc, nil
 }
 
+// resolveAccountID returns the provider-specific account identifier for an identity, or "" when
+// the identity is nil (all current callers guard nil, but the guard keeps the helper safe for any
+// future caller — #989).
 func resolveAccountID(identity *CloudIdentity) string {
+	if identity == nil {
+		return ""
+	}
 	switch identity.Provider {
 	case "gcp":
 		return identity.ProjectID

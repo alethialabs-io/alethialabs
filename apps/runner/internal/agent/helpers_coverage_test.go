@@ -46,6 +46,7 @@ func TestResolveAccountID(t *testing.T) {
 		{"azure", &CloudIdentity{Provider: "azure", SubscriptionID: "sub-1", AccountID: "acct"}, "sub-1"},
 		{"aws (default)", &CloudIdentity{Provider: "aws", AccountID: "1234567890"}, "1234567890"},
 		{"unknown (default)", &CloudIdentity{Provider: "nimbus", AccountID: "acct-x"}, "acct-x"},
+		{"nil identity", nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.provider, func(t *testing.T) {
