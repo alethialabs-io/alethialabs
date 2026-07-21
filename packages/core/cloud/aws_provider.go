@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	coreaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -351,20 +352,19 @@ func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 	if err != nil {
 		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	eksClient := eks.NewFromConfig(cfg)
-	resp, err := eksClient.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: &clusterName})
+	// Safely resolve endpoint/CA/ARN — ErrClusterNotReady (not a nil-deref panic) when the cluster
+	// isn't ACTIVE yet, e.g. kubeconfig requested moments after provisioning.
+	conn, err := coreaws.ResolveEKSClusterConn(ctx, eks.NewFromConfig(cfg), clusterName)
 	if err != nil {
-		return fmt.Errorf("failed to describe cluster: %w", err)
+		return err
 	}
-
-	cluster := resp.Cluster
 	// CLI-free: the kubeconfig authenticates via the runner's own `kube-token` exec-plugin
 	// (in-process presigned STS token, x-k8s-aws-id bound to this cluster) instead of the
 	// aws-iam-authenticator binary. Endpoint + CA come from DescribeCluster.
 	return writeExecKubeconfig(
-		*cluster.Arn,
-		*cluster.Endpoint,
-		*cluster.CertificateAuthority.Data,
+		conn.ARN,
+		conn.Endpoint,
+		conn.CAData,
 		[]string{"kube-token", "--provider", "aws", "--cluster", clusterName, "--region", config.Region},
 		stdout,
 	)

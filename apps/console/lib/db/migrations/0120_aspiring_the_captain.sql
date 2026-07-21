@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "project_cluster_fabric_id_key" ON "project_cluster" USING btree ("fabric_id") WHERE "project_cluster"."fabric_id" is not null;

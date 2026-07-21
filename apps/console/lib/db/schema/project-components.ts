@@ -20,6 +20,7 @@ import {
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import type {
@@ -131,10 +132,16 @@ export const projectCluster = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		// The environment that OWNS this cluster row. For a `dedicated` placement this is the env
+		// itself (env↔Fabric 1:1, the legacy env=cluster shape). For a shared Fabric the owning env is
+		// the `dedicated`/first env that provisioned it; `namespace`/`vcluster` envs placed on the same
+		// Fabric have NO cluster row of their own and resolve the shared cluster via `fabric_id`
+		// (see lib/queries/cluster-for-env.ts). Kept populated so transitional env-keyed readers work.
 		environment_id: envRef(),
-		// The Fabric (infra unit) this cluster realizes. Nullable during the transition — the
-		// programmables.sql backfill links each existing cluster to the Fabric created for its env
-		// (#836 seam); #838 re-keys the tofu state onto the Fabric. ON DELETE SET NULL.
+		// The Fabric (infra unit) this cluster realizes — the AUTHORITATIVE key for the cluster in the
+		// decoupled env-model. A Fabric has at most one cluster (enforced by the partial unique below),
+		// shared by every environment placed on it. Nullable only for legacy rows the programmables.sql
+		// backfill hasn't linked yet (#836 seam); the app always sets it. ON DELETE SET NULL.
 		fabric_id: uuid().references(() => projectFabrics.id, { onDelete: "set null" }),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
@@ -168,10 +175,20 @@ export const projectCluster = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		// Legacy per-env uniqueness. KEPT during the transition: the generic CLI singleton upsert
+		// (lib/cli/project-components.ts) and the createProject insert still name this composite as
+		// their conflict target. A `dedicated` env owns its Fabric 1:1, so this stays 1 row per env.
 		unique("project_cluster_project_id_environment_id_key").on(
 			t.project_id,
 			t.environment_id,
 		),
+		// The shared-cluster invariant: a Fabric realizes at most ONE cluster, shared by every env
+		// placed on it. Partial (WHERE fabric_id IS NOT NULL) so legacy un-backfilled rows are exempt.
+		// This is what makes `namespace`/`vcluster` placement a real tenant-on-a-shared-cluster model
+		// rather than a second full cluster.
+		uniqueIndex("project_cluster_fabric_id_key")
+			.on(t.fabric_id)
+			.where(sql`${t.fabric_id} is not null`),
 	],
 );
 
@@ -230,7 +247,7 @@ export const projectDns = pgTable(
 );
 
 // Observability component — no cloud-native default today; provider chooses the
-// backend (datadog / grafana / prometheus). Singleton per project environment like DNS.
+// backend (datadog / grafana). Singleton per project environment like DNS.
 export const projectObservability = pgTable(
 	"project_observability",
 	{

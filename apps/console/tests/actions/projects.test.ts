@@ -11,7 +11,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({
+	authorize: vi.fn(),
+	currentActor: vi.fn(),
+}));
 vi.mock("@/lib/db", () => ({
 	withActorScope: vi.fn(),
 	withScope: vi.fn(),
@@ -81,7 +84,9 @@ function mockRunnerLookup(runnerOrgId: string | null = "org-1") {
 				where: () => ({
 					limit: () =>
 						Promise.resolve(
-							t === runners && runnerOrgId !== null ? [{ org_id: runnerOrgId }] : [],
+							t === runners && runnerOrgId !== null
+								? [{ org_id: runnerOrgId }]
+								: [],
 						),
 				}),
 			}),
@@ -115,13 +120,19 @@ function setupDb(cfg: {
 	const envCasUpdated = cfg.envCasUpdated ?? true;
 	const def = cfg.default ?? [];
 
-	const resolve = (map: Map<unknown, RowsResolver> | undefined, table: unknown): Rows => {
+	const resolve = (
+		map: Map<unknown, RowsResolver> | undefined,
+		table: unknown,
+	): Rows => {
 		const v = map?.get(table);
 		if (typeof v === "function") return v();
 		return v ?? def;
 	};
 
-	function makeChain(op: "select" | "insert" | "update" | "delete", table?: unknown) {
+	function makeChain(
+		op: "select" | "insert" | "update" | "delete",
+		table?: unknown,
+	) {
 		let from = table;
 		const c: Record<string, unknown> = {};
 		Object.assign(c, {
@@ -177,27 +188,50 @@ function setupDb(cfg: {
 		},
 	};
 
-	vi.mocked(withActorScope).mockImplementation(
-		((_owner: string, cb: (tx: unknown) => unknown) => cb(tx)) as never,
-	);
+	vi.mocked(withActorScope).mockImplementation(((
+		_owner: string,
+		cb: (tx: unknown) => unknown,
+	) => cb(tx)) as never);
 	// createProject scopes to the ACTIVE ORG via withScope({ownerId, orgId}); wire it the same way.
-	vi.mocked(withScope).mockImplementation(
-		((_scope: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
-	);
+	vi.mocked(withScope).mockImplementation(((
+		_scope: unknown,
+		cb: (tx: unknown) => unknown,
+	) => cb(tx)) as never);
 	return { tx, valuesSpy, setSpy, insertSpy, updateSpy, deleteSpy, executeSpy };
 }
 
 /** Pulls the single `.values()` payload recorded against a given schema table. */
-function valuesFor(spy: ReturnType<typeof vi.fn>, table: unknown): Record<string, unknown> {
+function valuesFor(
+	spy: ReturnType<typeof vi.fn>,
+	table: unknown,
+): Record<string, unknown> {
 	const call = spy.mock.calls.find((c) => c[0] === table);
 	if (!call) throw new Error("no values() recorded for table");
 	return call[1] as Record<string, unknown>;
 }
 
+function valueRowsFor(
+	spy: ReturnType<typeof vi.fn>,
+	table: unknown,
+): Record<string, unknown>[] {
+	const call = spy.mock.calls.find((c) => c[0] === table);
+	if (!call) throw new Error("no values() recorded for table");
+	const rows = call[1];
+	if (!Array.isArray(rows))
+		throw new Error("values() payload was not an array");
+	return rows as Record<string, unknown>[];
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
-	vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+	vi.mocked(authorize).mockResolvedValue({
+		userId: "user-1",
+		orgId: "org-1",
+	} as never);
+	vi.mocked(currentActor).mockResolvedValue({
+		userId: "user-1",
+		orgId: "org-1",
+	} as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 	// Default: any client-supplied assigned runner belongs to the caller's org.
@@ -217,7 +251,11 @@ describe("createProject", () => {
 			cloud_identity_id: "ci-1",
 			iac_version: "1.9.5",
 		},
-		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		network: {
+			provision_network: true,
+			cidr_block: "10.0.0.0/16",
+			single_nat_gateway: true,
+		},
 		cluster: {
 			cluster_version: "1.31",
 			instance_types: ["m5.large"],
@@ -237,8 +275,12 @@ describe("createProject", () => {
 		const { valuesSpy, insertSpy } = setupDb({
 			select: new Map([[projects, [{ slug: "my-app" }]]]), // an existing project already owns "my-app"
 			insert: new Map<unknown, RowsResolver>([
-				[projects, [{ id: "p1", org_id: "org-1", slug: "my-app-2", user_id: "user-1" }]],
-				[projectEnvironments, [{ id: "env-1" }]],
+				[
+					projects,
+					[{ id: "p1", org_id: "org-1", slug: "my-app-2", user_id: "user-1" }],
+				],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
 			]),
 		});
 
@@ -262,17 +304,44 @@ describe("createProject", () => {
 		});
 		expect(projVals).not.toHaveProperty("environment_stage");
 
-		// default environment seeded from environment_stage
-		expect(valuesFor(valuesSpy, projectEnvironments)).toEqual({
+		expect(valuesFor(valuesSpy, projectFabrics)).toEqual({
 			project_id: "p1",
 			user_id: "user-1",
 			org_id: "org-1",
 			name: "production",
-			stage: "production",
-			status: "DRAFT",
-			is_default: true,
+			cloud_identity_id: "ci-1",
 			region: "us-east-1",
+			status: "DRAFT",
 		});
+
+		// default + preview environments are seeded with explicit placement.
+		expect(valueRowsFor(valuesSpy, projectEnvironments)).toEqual([
+			{
+				project_id: "p1",
+				user_id: "user-1",
+				org_id: "org-1",
+				name: "production",
+				stage: "production",
+				status: "DRAFT",
+				is_default: true,
+				region: "us-east-1",
+				fabric_id: "fabric-1",
+				placement_mode: "dedicated",
+			},
+			{
+				project_id: "p1",
+				user_id: "user-1",
+				org_id: "org-1",
+				name: "preview",
+				stage: "development",
+				status: "DRAFT",
+				is_default: false,
+				region: "us-east-1",
+				fabric_id: "fabric-1",
+				placement_mode: "namespace",
+				namespace: "preview",
+			},
+		]);
 
 		// authz hierarchy edge project → org (both the DB row and the FGA mirror). Parent is the ORG
 		// (actor.orgId), so the org's grants flow down to the project — pointing it at the creating
@@ -283,7 +352,12 @@ describe("createProject", () => {
 			parent_type: "org",
 			parent_id: "org-1",
 		});
-		expect(mirrorHierarchyEdge).toHaveBeenCalledWith("project", "p1", "org", "org-1");
+		expect(mirrorHierarchyEdge).toHaveBeenCalledWith(
+			"project",
+			"p1",
+			"org",
+			"org-1",
+		);
 
 		// singleton + collection components are scoped to the new project id
 		expect(valuesFor(valuesSpy, projectNetwork)).toMatchObject({
@@ -291,7 +365,12 @@ describe("createProject", () => {
 			provision_network: true,
 		});
 		expect(valuesFor(valuesSpy, projectDatabases)).toEqual([
-			{ project_id: "p1", environment_id: "env-1", name: "db1", engine: "postgres" },
+			{
+				project_id: "p1",
+				environment_id: "env-1",
+				name: "db1",
+				engine: "postgres",
+			},
 		]);
 		expect(valuesFor(valuesSpy, projectSecrets)).toEqual([
 			{ project_id: "p1", environment_id: "env-1", name: "s1" },
@@ -306,7 +385,12 @@ describe("createProject", () => {
 
 		expect(insertSpy).toHaveBeenCalledWith(projects);
 		expect(r).toEqual({
-			project: { id: "p1", org_id: "org-1", slug: "my-app-2", user_id: "user-1" },
+			project: {
+				id: "p1",
+				org_id: "org-1",
+				slug: "my-app-2",
+				user_id: "user-1",
+			},
 		});
 	});
 
@@ -315,7 +399,8 @@ describe("createProject", () => {
 			select: new Map([[projects, []]]), // no existing projects, the reservation alone collides
 			insert: new Map<unknown, RowsResolver>([
 				[projects, [{ id: "p2", org_id: "org-1" }]],
-				[projectEnvironments, [{ id: "env-1" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
 			]),
 		});
 
@@ -330,14 +415,48 @@ describe("createProject", () => {
 	});
 
 	it("throws when the project insert returns nothing", async () => {
-		setupDb({ select: new Map([[projects, []]]), insert: new Map([[projects, []]]) });
-		await expect(createProject(baseInput as never)).rejects.toThrow(/Failed to create project/);
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map([[projects, []]]),
+		});
+		await expect(createProject(baseInput as never)).rejects.toThrow(
+			/Failed to create project/,
+		);
+	});
+
+	it("throws when the Fabric insert returns nothing", async () => {
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1" }]],
+				[projectFabrics, []],
+			]),
+		});
+		await expect(createProject(baseInput as never)).rejects.toThrow(
+			/Failed to create default Fabric/,
+		);
+	});
+
+	it("throws when either required environment insert row is missing", async () => {
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }]],
+			]),
+		});
+		await expect(createProject(baseInput as never)).rejects.toThrow(
+			/Failed to create project environments/,
+		);
 	});
 
 	it("propagates the guard rejection without touching the db", async () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("forbidden"));
 		setupDb({});
-		await expect(createProject(baseInput as never)).rejects.toThrow(/forbidden/);
+		await expect(createProject(baseInput as never)).rejects.toThrow(
+			/forbidden/,
+		);
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 });
@@ -358,7 +477,11 @@ describe("getProjectsList", () => {
 							env_name: "prod",
 							env_status: "DEPLOYED",
 						},
-						{ project: { id: "p2", project_name: "B" }, env_name: null, env_status: null },
+						{
+							project: { id: "p2", project_name: "B" },
+							env_name: null,
+							env_status: null,
+						},
 					],
 				],
 			]),
@@ -367,8 +490,18 @@ describe("getProjectsList", () => {
 		const r = await getProjectsList();
 		expect(authorize).toHaveBeenCalledWith("view", { type: "project" });
 		expect(r.projects).toEqual([
-			{ id: "p1", project_name: "A", environment_stage: "prod", status: "DEPLOYED" },
-			{ id: "p2", project_name: "B", environment_stage: "development", status: "DRAFT" },
+			{
+				id: "p1",
+				project_name: "A",
+				environment_stage: "prod",
+				status: "DEPLOYED",
+			},
+			{
+				id: "p2",
+				project_name: "B",
+				environment_stage: "development",
+				status: "DRAFT",
+			},
 		]);
 	});
 });
@@ -394,12 +527,21 @@ describe("getProject", () => {
 					},
 				],
 			],
-			[projectNetwork, [{ provision_network: true, cidr_block: "10.0.0.0/16" }]],
-			[projectCluster, [{ cluster_version: "1.31", instance_types: ["m5.large"] }]],
+			[
+				projectNetwork,
+				[{ provision_network: true, cidr_block: "10.0.0.0/16" }],
+			],
+			[
+				projectCluster,
+				[{ cluster_version: "1.31", instance_types: ["m5.large"] }],
+			],
 			[projectDns, [{ enabled: false }]],
 			[projectRepositories, [{ apps_destination_repo: "git@x" }]],
 			[projectDatabases, [{ name: "db1", engine: "postgres" }]],
-			[projectSecrets, [{ name: "s1", generate: true, length: 32, special_chars: true }]],
+			[
+				projectSecrets,
+				[{ name: "s1", generate: true, length: 32, special_chars: true }],
+			],
 			[
 				projectEnvironments,
 				[
@@ -419,12 +561,17 @@ describe("getProject", () => {
 		setupDb({ select: fullSelect() });
 		const r = await getProject("p1");
 
-		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
+		expect(authorize).toHaveBeenCalledWith("view", {
+			type: "project",
+			id: "p1",
+		});
 		expect(r.project.environment_stage).toBe("production");
 		expect(r.project.status).toBe("DEPLOYED");
 		expect(r.project.default_environment_id).toBe("env-1");
 		expect(r.cloudProvider).toBe("gcp");
-		expect(r.components.databases).toEqual([{ name: "db1", engine: "postgres" }]);
+		expect(r.components.databases).toEqual([
+			{ name: "db1", engine: "postgres" },
+		]);
 		expect(r.components.network).toMatchObject({ provision_network: true });
 		expect(r.environments).toHaveLength(1);
 	});
@@ -433,13 +580,21 @@ describe("getProject", () => {
 		setupDb({ select: new Map([[projects, []]]) });
 		// A stale/deleted id on this render loader → Next notFound() (digest NEXT_HTTP_ERROR_FALLBACK),
 		// not a captured Error.
-		await expect(getProject("missing")).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
+		await expect(getProject("missing")).rejects.toThrow(
+			/NEXT_HTTP_ERROR_FALLBACK/,
+		);
 	});
 
 	it("defaults the cloud provider to aws when no identity is linked (no identity query)", async () => {
 		const m = fullSelect();
 		m.set(projects, [
-			{ id: "p1", org_id: "org-1", cloud_identity_id: null, region: "x", iac_version: "1" },
+			{
+				id: "p1",
+				org_id: "org-1",
+				cloud_identity_id: null,
+				region: "x",
+				iac_version: "1",
+			},
 		]);
 		m.set(cloudIdentities, () => {
 			throw new Error("cloud identity must NOT be queried when none is linked");
@@ -476,7 +631,14 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 			],
 			[
 				projectEnvironments,
-				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+				[
+					{
+						id: "env-1",
+						name: "production",
+						status: "DEPLOYED",
+						is_default: true,
+					},
+				],
 			],
 			[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
 			[projectServices, [serviceRow]],
@@ -542,7 +704,11 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 			select: selectWithService({
 				name: "api",
 				type: "deployment",
-				source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+				source: {
+					kind: "repo",
+					repo_url: "https://github.com/acme/api",
+					path: ".",
+				},
 				env: [],
 				bindings,
 				ports: [],
@@ -565,7 +731,17 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 /** A select map sufficient for buildConfigSnapshot to succeed against a verified aws identity. */
 function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 	const m = new Map<unknown, RowsResolver>([
-		[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: "ci-1", region: "us-east-1" }]],
+		[
+			projects,
+			[
+				{
+					id: "p1",
+					org_id: "org-1",
+					cloud_identity_id: "ci-1",
+					region: "us-east-1",
+				},
+			],
+		],
 		[
 			projectEnvironments,
 			[
@@ -613,7 +789,10 @@ describe("placement-aware dispatch (#837)", () => {
 							},
 						],
 					],
-					[projectFabrics, [{ id: "fab-1", project_id: "p1", name: "production" }]],
+					[
+						projectFabrics,
+						[{ id: "fab-1", project_id: "p1", name: "production" }],
+					],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
@@ -621,7 +800,10 @@ describe("placement-aware dispatch (#837)", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		expect(snapshot).toMatchObject({
 			fabric_id: "fab-1",
 			// A backfilled dedicated env: fabric name == env name, so `fabric_name` (the per-Fabric
@@ -653,7 +835,10 @@ describe("placement-aware dispatch (#837)", () => {
 							},
 						],
 					],
-					[projectFabrics, [{ id: "fab-shared", project_id: "p1", name: "shared-dev" }]],
+					[
+						projectFabrics,
+						[{ id: "fab-shared", project_id: "p1", name: "shared-dev" }],
+					],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
@@ -661,7 +846,10 @@ describe("placement-aware dispatch (#837)", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		expect(snapshot).toMatchObject({
 			fabric_id: "fab-shared",
 			// On a SHARED Fabric the tofu state keys on the Fabric, not the env → fabric_name != env name.
@@ -692,7 +880,10 @@ describe("placement-aware dispatch (#837)", () => {
 							},
 						],
 					],
-					[projectFabrics, [{ id: "fab-shared", project_id: "p1", name: "shared-dev" }]],
+					[
+						projectFabrics,
+						[{ id: "fab-shared", project_id: "p1", name: "shared-dev" }],
+					],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
@@ -700,8 +891,14 @@ describe("placement-aware dispatch (#837)", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
-		expect(snapshot).toMatchObject({ placement_mode: "vcluster", namespace: "team-a" });
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
+		expect(snapshot).toMatchObject({
+			placement_mode: "vcluster",
+			namespace: "team-a",
+		});
 	});
 
 	it("falls back to the env identity when the Fabric link is not backfilled yet (back-compat)", async () => {
@@ -731,7 +928,10 @@ describe("placement-aware dispatch (#837)", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		expect(snapshot).toMatchObject({
 			fabric_id: null,
 			fabric_name: "production",
@@ -749,7 +949,10 @@ describe("planProject", () => {
 
 		const r = await planProject("p1", "runner-9");
 
-		expect(authorize).toHaveBeenCalledWith("plan", { type: "project", id: "p1" });
+		expect(authorize).toHaveBeenCalledWith("plan", {
+			type: "project",
+			id: "p1",
+		});
 		expect(assertUsageAllowed).toHaveBeenCalledWith("org-1");
 
 		const jobVals = valuesFor(valuesSpy, jobs);
@@ -769,9 +972,7 @@ describe("planProject", () => {
 			region: "us-east-1",
 		});
 		// A fresh W3C traceparent is minted at enqueue (the correlation-trace root).
-		expect(jobVals.traceparent).toMatch(
-			/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/,
-		);
+		expect(jobVals.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
 
 		// The env→QUEUED write now routes through the set_env_status CAS (tx.execute).
 		expect(executeSpy).toHaveBeenCalled();
@@ -823,7 +1024,14 @@ describe("planProject", () => {
 					],
 					[
 						projectContainerRegistries,
-						[{ name: "apps", provider: null, cloud_identity_id: null, region: null }],
+						[
+							{
+								name: "apps",
+								provider: null,
+								cloud_identity_id: null,
+								region: null,
+							},
+						],
 					],
 				]),
 			),
@@ -832,7 +1040,10 @@ describe("planProject", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		// Buckets ride the snapshot (they were previously never selected — the known gap).
 		expect(snapshot.storage_buckets).toEqual([
 			expect.objectContaining({
@@ -867,7 +1078,11 @@ describe("planProject", () => {
 							{
 								name: "api",
 								type: "deployment",
-								source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+								source: {
+									kind: "repo",
+									repo_url: "https://github.com/acme/api",
+									path: ".",
+								},
 								build: { dockerfile: "Dockerfile", context: "." },
 								env: [],
 								ports: [],
@@ -888,7 +1103,10 @@ describe("planProject", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		expect(snapshot.services).toEqual([
 			expect.objectContaining({
 				name: "api",
@@ -916,7 +1134,11 @@ describe("planProject", () => {
 							{
 								name: "api",
 								type: "deployment",
-								source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+								source: {
+									kind: "repo",
+									repo_url: "https://github.com/acme/api",
+									path: ".",
+								},
 								env: [],
 								bindings,
 								ports: [],
@@ -933,7 +1155,10 @@ describe("planProject", () => {
 
 		await planProject("p1");
 
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		expect(snapshot.services).toEqual([
 			expect.objectContaining({ name: "api", bindings }),
 		]);
@@ -952,7 +1177,11 @@ describe("planProject", () => {
 							{
 								name: "api",
 								type: "deployment",
-								source: { kind: "repo", repo_url: "https://github.com/acme/api", path: "." },
+								source: {
+									kind: "repo",
+									repo_url: "https://github.com/acme/api",
+									path: ".",
+								},
 								env: [],
 								bindings: [
 									{
@@ -982,7 +1211,17 @@ describe("planProject", () => {
 		setupDb({
 			select: snapshotSelect(
 				new Map([
-					[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: null, region: "x" }]],
+					[
+						projects,
+						[
+							{
+								id: "p1",
+								org_id: "org-1",
+								cloud_identity_id: null,
+								region: "x",
+							},
+						],
+					],
 				]),
 			),
 		});
@@ -998,10 +1237,14 @@ describe("planProject", () => {
 	it("enforces the cross-cloud placement gate on a CORE resource", async () => {
 		setupDb({
 			select: snapshotSelect(
-				new Map([[projectDatabases, [{ name: "db1", cloud_identity_id: "ci-OTHER" }]]]),
+				new Map([
+					[projectDatabases, [{ name: "db1", cloud_identity_id: "ci-OTHER" }]],
+				]),
 			),
 		});
-		await expect(planProject("p1")).rejects.toThrow(/Cross-cloud database "db1"/);
+		await expect(planProject("p1")).rejects.toThrow(
+			/Cross-cloud database "db1"/,
+		);
 	});
 
 	it("fails closed on a non-postgres database on hetzner (no silent chart drop)", async () => {
@@ -1011,7 +1254,13 @@ describe("planProject", () => {
 					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
 					[
 						projectDatabases,
-						[{ name: "orders", engine_family: "mysql", cloud_identity_id: null }],
+						[
+							{
+								name: "orders",
+								engine_family: "mysql",
+								cloud_identity_id: null,
+							},
+						],
 					],
 				]),
 			),
@@ -1030,7 +1279,11 @@ describe("planProject", () => {
 					[
 						projectDatabases,
 						[
-							{ name: "pg", engine_family: "postgres", cloud_identity_id: null },
+							{
+								name: "pg",
+								engine_family: "postgres",
+								cloud_identity_id: null,
+							},
 							{ name: "legacy", engine_family: null, cloud_identity_id: null },
 						],
 					],
@@ -1053,7 +1306,9 @@ describe("planProject", () => {
 	it("rejects when network provisioning is off but no existing network is selected", async () => {
 		setupDb({
 			select: snapshotSelect(
-				new Map([[projectNetwork, [{ provision_network: false, network_id: null }]]]),
+				new Map([
+					[projectNetwork, [{ provision_network: false, network_id: null }]],
+				]),
 			),
 		});
 		await expect(planProject("p1")).rejects.toThrow(/no VPC selected/);
@@ -1094,7 +1349,10 @@ describe("planProject", () => {
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
 					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
-					[projectContainerRegistries, [{ name: "apps", cloud_identity_id: null }]],
+					[
+						projectContainerRegistries,
+						[{ name: "apps", cloud_identity_id: null }],
+					],
 				]),
 			),
 		});
@@ -1108,12 +1366,21 @@ describe("planProject", () => {
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
 					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
-					[projectNetwork, [{ provision_network: true, cloud_identity_id: null }]],
+					[
+						projectNetwork,
+						[{ provision_network: true, cloud_identity_id: null }],
+					],
 					[projectCluster, [{ cloud_identity_id: null }]],
 					[projectDns, [{ enabled: true, domain_name: "example.com" }]],
 					[
 						projectDatabases,
-						[{ name: "pg", engine_family: "postgres", cloud_identity_id: null }],
+						[
+							{
+								name: "pg",
+								engine_family: "postgres",
+								cloud_identity_id: null,
+							},
+						],
 					],
 					[projectCaches, [{ name: "cache", cloud_identity_id: null }]],
 					[projectQueues, [{ name: "queue", cloud_identity_id: null }]],
@@ -1133,7 +1400,10 @@ describe("planProject", () => {
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
 					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
-					[projectNetwork, [{ provision_network: true, cloud_identity_id: null }]],
+					[
+						projectNetwork,
+						[{ provision_network: true, cloud_identity_id: null }],
+					],
 					[projectCluster, [{ cloud_identity_id: null }]],
 					[projectSecrets, [{ name: "api-key", cloud_identity_id: null }]],
 				]),
@@ -1154,20 +1424,28 @@ describe("planProject", () => {
 					// aws is the default identity in snapshotSelect
 					[projectTopics, [{ name: "events", cloud_identity_id: null }]],
 					[projectNosqlTables, [{ name: "sessions", cloud_identity_id: null }]],
-					[projectContainerRegistries, [{ name: "apps", cloud_identity_id: null }]],
+					[
+						projectContainerRegistries,
+						[{ name: "apps", cloud_identity_id: null }],
+					],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
 		const r = await planProject("p1");
 		expect(r).toEqual({ jobId: "job-1" });
-		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
 		expect(snapshot.provider).toBe("aws");
 	});
 
 	it("targets an explicit environment, rejecting when it does not belong to the project", async () => {
 		setupDb({ select: snapshotSelect(new Map([[projectEnvironments, []]])) });
-		await expect(planProject("p1", null, "env-x")).rejects.toThrow(/Environment not found/);
+		await expect(planProject("p1", null, "env-x")).rejects.toThrow(
+			/Environment not found/,
+		);
 	});
 
 	it("rejects when the project has no default environment", async () => {
@@ -1249,7 +1527,9 @@ describe("planProject — BYO IaC source", () => {
 	it("rejects a scanned-but-unpinned source (defense in depth)", async () => {
 		setupDb({
 			select: snapshotSelect(
-				new Map([[projectIacSources, [{ ...scannedIacRow, commit_sha: null }]]]),
+				new Map([
+					[projectIacSources, [{ ...scannedIacRow, commit_sha: null }]],
+				]),
 			),
 		});
 		await expect(planProject("p1")).rejects.toThrow(/hasn't passed a scan/);
@@ -1274,7 +1554,10 @@ describe("provisionProject", () => {
 
 		const r = await provisionProject("p1", "plan-3", "runner-2");
 
-		expect(authorize).toHaveBeenCalledWith("deploy", { type: "project", id: "p1" });
+		expect(authorize).toHaveBeenCalledWith("deploy", {
+			type: "project",
+			id: "p1",
+		});
 		const jobVals = valuesFor(valuesSpy, jobs);
 		expect(jobVals).toMatchObject({
 			job_type: "DEPLOY",
@@ -1347,7 +1630,13 @@ describe("destroyProject — BYO IaC source", () => {
 				new Map([
 					[
 						projectIacSources,
-						[{ ...deployedIacRow, deployed_commit_sha: null, scan_status: "unscanned" }],
+						[
+							{
+								...deployedIacRow,
+								deployed_commit_sha: null,
+								scan_status: "unscanned",
+							},
+						],
 					],
 				]),
 			),
@@ -1365,7 +1654,10 @@ describe("deleteProject", () => {
 	it("authorizes destroy, deletes the project row (CASCADE), and returns success", async () => {
 		const { deleteSpy } = setupDb({});
 		const r = await deleteProject("p1");
-		expect(authorize).toHaveBeenCalledWith("destroy", { type: "project", id: "p1" });
+		expect(authorize).toHaveBeenCalledWith("destroy", {
+			type: "project",
+			id: "p1",
+		});
 		expect(deleteSpy).toHaveBeenCalledWith(projects);
 		expect(r).toEqual({ success: true });
 	});
@@ -1393,19 +1685,41 @@ describe("getProjectAsFormData", () => {
 			],
 			[
 				projectNetwork,
-				[{ provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true }],
+				[
+					{
+						provision_network: true,
+						cidr_block: "10.0.0.0/16",
+						single_nat_gateway: true,
+					},
+				],
 			],
 			[
 				projectCluster,
-				[{ cluster_version: "1.31", instance_types: ["m5.large"], provider_config: {} }],
+				[
+					{
+						cluster_version: "1.31",
+						instance_types: ["m5.large"],
+						provider_config: {},
+					},
+				],
 			],
 			[projectDns, [{ enabled: false }]],
 			[projectRepositories, [{ apps_destination_repo: "git@x" }]],
 			[
 				projectDatabases,
-				[{ name: "db1", engine: "postgres", min_capacity: 0.5, max_capacity: 4 }],
+				[
+					{
+						name: "db1",
+						engine: "postgres",
+						min_capacity: 0.5,
+						max_capacity: 4,
+					},
+				],
 			],
-			[projectSecrets, [{ name: "s1", generate: true, length: 32, special_chars: true }]],
+			[
+				projectSecrets,
+				[{ name: "s1", generate: true, length: 32, special_chars: true }],
+			],
 			[
 				projectEnvironments,
 				[
@@ -1445,7 +1759,11 @@ describe("getProjectAsFormData", () => {
 				iam_auth: undefined,
 			},
 		]);
-		expect(formData.secrets[0]).toMatchObject({ name: "s1", special_chars: true, length: 32 });
+		expect(formData.secrets[0]).toMatchObject({
+			name: "s1",
+			special_chars: true,
+			length: 32,
+		});
 		expect(formData.cluster).toMatchObject({
 			instance_types: ["m5.large"],
 			cluster_version: "1.31",
@@ -1456,7 +1774,9 @@ describe("getProjectAsFormData", () => {
 		const m = formSelect();
 		m.set(cloudIdentities, []); // both getProject's lookup and the form lookup return nothing
 		setupDb({ select: m });
-		await expect(getProjectAsFormData("p1")).rejects.toThrow(/Cloud identity not found/);
+		await expect(getProjectAsFormData("p1")).rejects.toThrow(
+			/Cloud identity not found/,
+		);
 	});
 });
 
@@ -1470,7 +1790,11 @@ describe("duplicateProjectForProvider", () => {
 		// then the duplicate's TARGET lookup (gcp). projects is queried as the getProject row, then
 		// as createProject's slug-collision list — sequence both with function resolvers.
 		let ciCall = 0;
-		const ciSeq: Rows[] = [[{ provider: "aws" }], [{ provider: "aws" }], [{ provider: "gcp" }]];
+		const ciSeq: Rows[] = [
+			[{ provider: "aws" }],
+			[{ provider: "aws" }],
+			[{ provider: "gcp" }],
+		];
 		let projCall = 0;
 		const projSeq: Rows[] = [
 			[
@@ -1492,32 +1816,63 @@ describe("duplicateProjectForProvider", () => {
 				[cloudIdentities, () => ciSeq[ciCall++] ?? [{ provider: "gcp" }]],
 				[
 					projectNetwork,
-					[{ provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true }],
+					[
+						{
+							provision_network: true,
+							cidr_block: "10.0.0.0/16",
+							single_nat_gateway: true,
+						},
+					],
 				],
 				[
 					projectCluster,
-					[{ cluster_version: "1.31", instance_types: ["m5.large"], provider_config: {} }],
+					[
+						{
+							cluster_version: "1.31",
+							instance_types: ["m5.large"],
+							provider_config: {},
+						},
+					],
 				],
 				[projectDns, [{ enabled: false }]],
 				[projectRepositories, [{ apps_destination_repo: "git@x" }]],
 				[
 					projectDatabases,
-					[{ name: "db1", engine: "postgres", min_capacity: 0.5, max_capacity: 4 }],
+					[
+						{
+							name: "db1",
+							engine: "postgres",
+							min_capacity: 0.5,
+							max_capacity: 4,
+						},
+					],
 				],
 				[projectSecrets, []],
 				[projectCaches, []],
 				[
 					projectEnvironments,
-					[{ id: "env-1", name: "production", status: "DRAFT", is_default: true }],
+					[
+						{
+							id: "env-1",
+							name: "production",
+							status: "DRAFT",
+							is_default: true,
+						},
+					],
 				],
 			]),
 			insert: new Map<unknown, RowsResolver>([
 				[projects, [{ id: "new-proj", slug: "new-proj", org_id: "org-1" }]],
-				[projectEnvironments, [{ id: "env-1" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
 			]),
 		});
 
-		const r = await duplicateProjectForProvider("p1", "ci-target", "europe-west1");
+		const r = await duplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+		);
 
 		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
 		expect(r.newProjectId).toBe("new-proj");
@@ -1553,7 +1908,10 @@ describe("duplicateProjectForProvider", () => {
 					],
 				],
 				[cloudIdentities, () => ciSeq[ciCall++] ?? []],
-				[projectEnvironments, [{ id: "env-1", name: "production", is_default: true }]],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", is_default: true }],
+				],
 			]),
 		});
 		await expect(
@@ -1580,7 +1938,10 @@ describe("getProjectEnvironments", () => {
 			]),
 		});
 		const r = await getProjectEnvironments("p1");
-		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
+		expect(authorize).toHaveBeenCalledWith("view", {
+			type: "project",
+			id: "p1",
+		});
 		expect(r.environments).toHaveLength(2);
 		expect(r.environments[1]).toMatchObject({ id: "env-2", name: "staging" });
 	});
@@ -1590,12 +1951,21 @@ describe("addEnvironment", () => {
 	it("slugifies the name, inherits the org, and persists a non-default DRAFT env", async () => {
 		const { valuesSpy } = setupDb({
 			select: new Map([[projects, [{ org_id: "org-1" }]]]),
-			insert: new Map([[projectEnvironments, [{ id: "env-2", name: "my-staging" }]]]),
+			insert: new Map([
+				[projectEnvironments, [{ id: "env-2", name: "my-staging" }]],
+			]),
 		});
 
-		const r = await addEnvironment("p1", { name: "My Staging!", stage: "staging", region: null });
+		const r = await addEnvironment("p1", {
+			name: "My Staging!",
+			stage: "staging",
+			region: null,
+		});
 
-		expect(authorize).toHaveBeenCalledWith("edit", { type: "project", id: "p1" });
+		expect(authorize).toHaveBeenCalledWith("edit", {
+			type: "project",
+			id: "p1",
+		});
 		expect(valuesFor(valuesSpy, projectEnvironments)).toEqual({
 			project_id: "p1",
 			user_id: "user-1",
@@ -1611,25 +1981,27 @@ describe("addEnvironment", () => {
 
 	it("rejects a name that slugifies to empty (before any db work)", async () => {
 		setupDb({});
-		await expect(addEnvironment("p1", { name: "!!!", stage: "staging" })).rejects.toThrow(
-			/name is required/,
-		);
+		await expect(
+			addEnvironment("p1", { name: "!!!", stage: "staging" }),
+		).rejects.toThrow(/name is required/);
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
 	it("calls notFound() when the project is missing", async () => {
 		setupDb({ select: new Map([[projects, []]]) });
 		// A stale/deleted id → Next notFound() (digest NEXT_HTTP_ERROR_FALLBACK), not a captured Error.
-		await expect(addEnvironment("p1", { name: "stg", stage: "staging" })).rejects.toThrow(
-			/NEXT_HTTP_ERROR_FALLBACK/,
-		);
+		await expect(
+			addEnvironment("p1", { name: "stg", stage: "staging" }),
+		).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 	});
 });
 
 describe("deleteEnvironment", () => {
 	it("deletes a non-default environment", async () => {
 		const { deleteSpy } = setupDb({
-			select: new Map([[projectEnvironments, [{ id: "env-2", is_default: false }]]]),
+			select: new Map([
+				[projectEnvironments, [{ id: "env-2", is_default: false }]],
+			]),
 		});
 		const r = await deleteEnvironment("p1", "env-2");
 		expect(deleteSpy).toHaveBeenCalledWith(projectEnvironments);
@@ -1638,7 +2010,9 @@ describe("deleteEnvironment", () => {
 
 	it("refuses to delete the default environment", async () => {
 		const { deleteSpy } = setupDb({
-			select: new Map([[projectEnvironments, [{ id: "env-1", is_default: true }]]]),
+			select: new Map([
+				[projectEnvironments, [{ id: "env-1", is_default: true }]],
+			]),
 		});
 		await expect(deleteEnvironment("p1", "env-1")).rejects.toThrow(
 			/Cannot delete the project's default/,
@@ -1648,7 +2022,9 @@ describe("deleteEnvironment", () => {
 
 	it("throws when the environment is not found for the project", async () => {
 		setupDb({ select: new Map([[projectEnvironments, []]]) });
-		await expect(deleteEnvironment("p1", "env-x")).rejects.toThrow(/Environment not found/);
+		await expect(deleteEnvironment("p1", "env-x")).rejects.toThrow(
+			/Environment not found/,
+		);
 	});
 });
 

@@ -1,5 +1,5 @@
 {
-  "$comment": "SSOT — declarative registry of connectors. `providers` are the pluggable per-category backends (DNS/secrets/registry/observability): consumed by Go (go:embed, packages/core/categories) for module composition AND by the console codegen (apps/console/scripts/gen-connectors.mjs → lib/connectors/registry.generated.ts) for the Project selectors. `builtin` are the first-class cloud + git connectors (cloud federation / OAuth, handled outside the category module system): catalog rows only — seeded into the `connectors` table but NOT emitted to the TS registry. Both arrays are emitted into lib/db/seed/connectors.generated.sql. Go ignores `builtin`. Adding a pluggable provider = a `providers` row + a Go impl + an OpenTofu module under infra/templates/<module_path>.",
+  "$comment": "SSOT — declarative registry of connectors. `providers` are the pluggable per-category backends (DNS/secrets/registry/observability): consumed by Go (go:embed, packages/core/categories) for module composition AND by the console codegen (apps/console/scripts/gen-connectors.mjs → lib/connectors/registry.generated.ts) for the Project selectors. `builtin` are the first-class cloud + git connectors (cloud federation / OAuth, handled outside the category module system): catalog rows only — seeded into the `connectors` table but NOT emitted to the TS registry. Both arrays are emitted into lib/db/seed/connectors.generated.sql. Go ignores `builtin`. Adding a pluggable provider = a `providers` row + a Go impl + an OpenTofu module under infra/templates/<module_path> — EXCEPT registry providers, whose only artifact is a dockerconfigjson imagePullSecret the runner seeds post-apply (no module; module_path is \"\"), because the in-tofu kubernetes provider is host+CA-only on AWS and can't create it.",
   "builtin": [
     {
       "category": "cloud",
@@ -226,7 +226,7 @@
       "docs_url": "https://docs.docker.com/docker-hub/",
       "status": "active",
       "sort_order": 50,
-      "module_path": "categories/registry/dockerhub",
+      "module_path": "",
       "credential": {
         "fields": [
           {
@@ -338,54 +338,6 @@
             "type": "text",
             "required": true,
             "help": "The Grafana Cloud Prometheus remote_write endpoint."
-          }
-        ]
-      }
-    },
-    {
-      "category": "observability",
-      "slug": "prometheus",
-      "name": "Prometheus",
-      "description": "Install in-cluster Prometheus, optionally remote-writing to an external store.",
-      "organization": "Prometheus Authors",
-      "auth_method": "api_key",
-      "icon_url": "/icons/prometheus/prometheus-32x32.png",
-      "docs_url": "https://prometheus.io/docs/",
-      "status": "active",
-      "sort_order": 80,
-      "module_path": "categories/observability/prometheus",
-      "credential": {
-        "fields": [
-          {
-            "key": "remote_write_username",
-            "label": "Remote Write Username",
-            "type": "text",
-            "secret": false,
-            "required": false
-          },
-          {
-            "key": "remote_write_password",
-            "label": "Remote Write Password",
-            "type": "password",
-            "secret": true,
-            "required": false
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "remote_write_url",
-            "label": "Remote Write URL",
-            "type": "text",
-            "required": false,
-            "help": "Optional external Prometheus-compatible remote_write endpoint."
-          },
-          {
-            "key": "retention_days",
-            "label": "Local Retention (days)",
-            "type": "text",
-            "default": "15"
           }
         ]
       }

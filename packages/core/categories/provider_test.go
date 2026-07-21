@@ -24,7 +24,6 @@ func TestGet(t *testing.T) {
 		{"dockerhub registry", "registry", "dockerhub", false},
 		{"datadog observability", "observability", "datadog", false},
 		{"grafana observability", "observability", "grafana", false},
-		{"prometheus observability", "observability", "prometheus", false},
 		{"unknown slug", "dns", "route53again", true},
 		{"wrong category", "registry", "cloudflare", true},
 	}
@@ -43,7 +42,10 @@ func TestGet(t *testing.T) {
 			if p.Slug() != tt.slug || p.Category() != tt.category {
 				t.Fatalf("got %s/%s, want %s/%s", p.Category(), p.Slug(), tt.category, tt.slug)
 			}
-			if p.ModulePath() == "" {
+			// registry providers are runner-seeded (a dockerconfigjson imagePullSecret applied
+			// post-apply), so they legitimately carry NO tofu module — empty module_path is
+			// expected there; every other category must declare one.
+			if tt.category != "registry" && p.ModulePath() == "" {
 				t.Fatalf("%s/%s has empty module path", tt.category, tt.slug)
 			}
 		})
@@ -122,5 +124,91 @@ func TestComposeMissingCredentialFails(t *testing.T) {
 	var log bytes.Buffer
 	if _, err := Compose(t.TempDir(), "", vc, map[string]any{}, &log); err == nil {
 		t.Fatal("expected compose to fail without a Cloudflare credential")
+	}
+}
+
+func TestComposeCopiesModulesForPluggableProvider(t *testing.T) {
+	workDir := t.TempDir()
+	srcDir := t.TempDir()
+	moduleDir := filepath.Join(srcDir, "secrets", "vault")
+	if err := os.MkdirAll(moduleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "main.tf"), []byte("output \"ok\" { value = true }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	vc := &types.ProjectConfig{
+		Secrets: []types.ProjectSecretConfig{
+			{Name: "db-password", Provider: "vault", ProviderConfig: map[string]any{"path": "secret/data/db"}},
+			{Name: "api-token", Provider: "native"},
+			{Name: "legacy-token", Provider: "vault", ProviderConfig: map[string]any{"path": "secret/data/legacy"}},
+		},
+		ConnectorCredentials: []types.ConnectorCredential{
+			{Category: "secrets", Slug: "vault", Credentials: map[string]string{"address": "https://vault.example.test", "token": "root"}},
+		},
+	}
+
+	tfvars := map[string]any{}
+	var log bytes.Buffer
+	n, err := Compose(workDir, srcDir, vc, tfvars, &log)
+	if err != nil {
+		t.Fatalf("Compose() error = %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("composed modules = %d, want 1", n)
+	}
+	if tfvars["secrets_provider"] != "vault" {
+		t.Fatalf("secrets_provider = %v, want vault", tfvars["secrets_provider"])
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "categories", "secrets", "vault", "main.tf")); err != nil {
+		t.Fatalf("expected copied module file: %v", err)
+	}
+	if !bytes.Contains(log.Bytes(), []byte("Composed secrets provider: vault")) {
+		t.Fatalf("compose log missing module message: %s", log.String())
+	}
+}
+
+func TestDominantProviderWarnsAndIncludesAllItems(t *testing.T) {
+	var log bytes.Buffer
+	slug, items := dominantProvider([]providerItem{
+		{provider: "", item: ComponentItem{Name: "native-empty"}},
+		{provider: "vault", item: ComponentItem{Name: "primary"}},
+		{provider: "native", item: ComponentItem{Name: "native-explicit"}},
+		{provider: "other-vault", item: ComponentItem{Name: "secondary"}},
+	}, &log, "secrets")
+
+	if slug != "vault" {
+		t.Fatalf("dominant provider = %q, want vault", slug)
+	}
+	if len(items) != 4 {
+		t.Fatalf("items = %d, want all 4 items", len(items))
+	}
+	if !bytes.Contains(log.Bytes(), []byte("mixed secrets providers selected")) {
+		t.Fatalf("expected mixed-provider warning, got %q", log.String())
+	}
+}
+
+func TestDominantRegistryPullSecret(t *testing.T) {
+	tests := []struct {
+		name       string
+		registries []types.ProjectContainerRegistryConfig
+		want       string
+	}{
+		{"no registries", nil, ""},
+		{"native only", []types.ProjectContainerRegistryConfig{{Name: "app", Provider: "native"}}, ""},
+		{"empty provider is native", []types.ProjectContainerRegistryConfig{{Name: "app", Provider: ""}}, ""},
+		{"pluggable dockerhub", []types.ProjectContainerRegistryConfig{{Name: "app", Provider: "dockerhub"}}, "dockerhub-pull"},
+		{"native + pluggable → pluggable wins", []types.ProjectContainerRegistryConfig{
+			{Name: "a", Provider: "native"}, {Name: "b", Provider: "dockerhub"},
+		}, "dockerhub-pull"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vc := &types.ProjectConfig{ContainerRegistries: tt.registries}
+			if got := DominantRegistryPullSecret(vc); got != tt.want {
+				t.Errorf("DominantRegistryPullSecret() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

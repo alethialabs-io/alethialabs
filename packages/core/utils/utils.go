@@ -71,6 +71,15 @@ func CheckDependencies(commands ...string) error {
 	)
 }
 
+// ShellQuote wraps s in single quotes so it can be interpolated into a command string built
+// for ExecuteCommand / ExecuteCommandWithOutput (which run it via `bash -c`) without any shell
+// metacharacter in s being interpreted — closing the command-injection surface. Embedded single
+// quotes are escaped with the standard `'\”` idiom. Prefer passing values as discrete argv
+// elements where a shell isn't actually needed; use this only when the shell string is unavoidable.
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func ExecuteCommand(command string, dir string, env []string, outWriter, errWriter io.Writer) error {
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Dir = dir

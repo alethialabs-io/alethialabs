@@ -290,7 +290,7 @@ func TestE2EByoIacLifecycleKind(t *testing.T) {
 	// — and what the DEPLOY actually applies (the writeback→deploy handoff). ──
 	scanClone := filepath.Join(t.TempDir(), "scan-clone")
 	sg := git.NewGIT(repoURL, scanClone, false)
-	if err := sg.Clone(branch, true); err != nil {
+	if err := sg.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("scan clone: %v", err)
 	}
 	pinnedSHA, err := sg.HeadSHA()

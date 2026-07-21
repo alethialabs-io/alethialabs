@@ -15,8 +15,11 @@ terraform {
       version = ">= 1.51, < 2.0"
     }
     talos = {
-      source  = "siderolabs/talos"
-      version = ">= 0.7, < 0.13"
+      source = "siderolabs/talos"
+      # Floor 0.11: v0.11.0 is the first release that vendors Talos v1.13 machinery, so it is
+      # the minimum that can generate valid v1.13.6 machine config. Ceiling < 0.13 keeps Terraform
+      # on the 0.11.x line (0.12.x-alpha vendors Talos 1.14 machinery — not what we pin).
+      version = ">= 0.11, < 0.13"
     }
     # Uploads the Talos disk image (raw.xz) into Hetzner and snapshots it.
     # Reads the Hetzner token from the HCLOUD_TOKEN env var, same as hcloud.

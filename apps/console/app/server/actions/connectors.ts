@@ -37,8 +37,19 @@ export type ConnectorConnectionDetails = {
 
 export type GitTokenHealth = "healthy" | "expired" | "refresh_failed";
 
-/** The four presentation groups the connectors page renders (from the design). */
-export type ConnectorGroup = "clouds" | "secrets" | "registries" | "apps";
+/**
+ * The presentation groups the connectors page renders. Each maps 1:1 to a connector category so the
+ * page reflects what a connector actually IS (a credential to an external system we act through), with
+ * no `apps` catch-all lumping git/observability/dns together. (`chart_repos` for the `helm_registry`
+ * category lands with W-C.)
+ */
+export type ConnectorGroup =
+	| "clouds"
+	| "source"
+	| "registries"
+	| "secrets"
+	| "observability"
+	| "dns";
 
 /** The health of one cloud account, mirroring `cloud_identities.status`. */
 export type CloudAccountStatus = "connected" | "degraded" | "testing" | "failed";
@@ -89,18 +100,27 @@ function identityWasConfigured(
 	}
 }
 
-/** Maps a catalog category to its presentation group on the connectors page. */
+/** Maps a catalog category to its presentation group on the connectors page (1:1, exhaustive). */
 function groupForCategory(category: ConnectorCategory): ConnectorGroup {
 	switch (category) {
 		case "cloud":
 			return "clouds";
-		case "secrets":
-			return "secrets";
+		case "git":
+			return "source";
 		case "registry":
 			return "registries";
-		default:
-			// git, observability, dns → external app/service connections
-			return "apps";
+		case "secrets":
+			return "secrets";
+		case "observability":
+			return "observability";
+		case "dns":
+			return "dns";
+		default: {
+			// Exhaustiveness guard: a new connector_category (e.g. helm_registry in W-C) must add its
+			// group here — otherwise this fails to compile rather than silently falling through.
+			const _exhaustive: never = category;
+			return _exhaustive;
+		}
 	}
 }
 
@@ -113,7 +133,7 @@ export type ConnectorWithConnection = Connector & {
 	/** The connector_credential row id for a connected api_key connector — the
 	 *  classifiable `connector_credential` resource. Undefined for cloud/git. */
 	credential_id?: string;
-	/** The presentation group (clouds / secrets / registries / apps). */
+	/** The presentation group (clouds / source / registries / secrets / observability / dns). */
 	group: ConnectorGroup;
 	/** Configured accounts for cloud connectors — a provider can hold several, and a broken one is
 	 *  listed too (with its status) so it can be re-verified or removed. */

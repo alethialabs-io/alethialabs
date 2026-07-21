@@ -25,6 +25,7 @@ import {
 	variantOptionsFor,
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
+import { NodeQuickConfig } from "./inspector/node-quick-config";
 
 interface NodePaletteProps {
 	open: boolean;
@@ -101,6 +102,7 @@ export function NodePalette({
 }: NodePaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
+	const openInspector = useCanvasStore((s) => s.openInspector);
 	const nodes = useCanvasStore((s) => s.nodes);
 	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
 	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
@@ -109,10 +111,16 @@ export function NodePalette({
 	);
 	// When set, the palette shows the variant step for this kind (e.g. pick a DB engine).
 	const [variantKind, setVariantKind] = useState<NodeKind | null>(null);
+	// W5: after a service is added the palette stays open and swaps to the inline config step for
+	// this node id — so adding + configuring is one flow (the palette never closes underneath you).
+	const [configuringId, setConfiguringId] = useState<string | null>(null);
 
-	/** Reset the variant step whenever the dialog closes. */
+	/** Reset the nested steps whenever the dialog closes. */
 	const handleOpenChange = (o: boolean) => {
-		if (!o) setVariantKind(null);
+		if (!o) {
+			setVariantKind(null);
+			setConfiguringId(null);
+		}
 		onOpenChange(o);
 	};
 
@@ -122,15 +130,16 @@ export function NodePalette({
 			setVariantKind(entry.kind);
 			return;
 		}
-		addNode(entry.kind, dropPosition?.());
-		handleOpenChange(false);
+		// Add the node and stay open on its inline config step (W5).
+		setConfiguringId(addNode(entry.kind, dropPosition?.()));
 	};
 
-	/** Commit a variant choice: add the node pre-filled for it, then open its sheet. */
+	/** Commit a variant choice: add the node pre-filled for it, then drop into its config step. */
 	const pickVariant = (kind: NodeKind, value: string) => {
 		const { key } = NODE_REGISTRY[kind].variants ?? { key: "" };
-		addNodeWithConfig(kind, { [key]: value }, null, dropPosition?.());
-		handleOpenChange(false);
+		const id = addNodeWithConfig(kind, { [key]: value }, null, dropPosition?.());
+		setVariantKind(null);
+		setConfiguringId(id);
 	};
 
 	const noCloud = identities.length === 0;
@@ -141,11 +150,27 @@ export function NodePalette({
 		<CommandDialog
 			open={open}
 			onOpenChange={handleOpenChange}
-			title={variantDef ? `Choose ${variantDef.label.toLowerCase()} type` : "Add a service"}
+			title={
+				configuringId
+					? "Configure service"
+					: variantDef
+						? `Choose ${variantDef.label.toLowerCase()} type`
+						: "Add a service"
+			}
 			description="Search and add infrastructure to your project."
 			className="sm:max-w-xl"
 		>
-			{variantDef && variantKind ? (
+			{configuringId ? (
+				<NodeQuickConfig
+					nodeId={configuringId}
+					onBack={() => setConfiguringId(null)}
+					onFullSettings={() => {
+						openInspector(configuringId);
+						handleOpenChange(false);
+					}}
+					onDone={() => handleOpenChange(false)}
+				/>
+			) : variantDef && variantKind ? (
 				<>
 					<CommandInput
 						placeholder={`Choose a ${variantDef.label.toLowerCase()} type…`}

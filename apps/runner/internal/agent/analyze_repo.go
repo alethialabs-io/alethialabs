@@ -17,7 +17,6 @@ import (
 // repo code is executed — clone + walk + parse only) which the console feeds to the
 // model to infer a Project. The digest is written to execution_metadata.repo_digest.
 func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
-	_ = ctx
 	repoURL, _ := job.ConfigSnapshot["repo_url"].(string)
 	if repoURL == "" {
 		return fmt.Errorf("config_snapshot missing repo_url")
@@ -45,7 +44,7 @@ func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stder
 	}
 
 	fmt.Fprintln(stdout, "Cloning…")
-	if err := repo.Clone(ref, true); err != nil {
+	if err := repo.Clone(ctx, ref, true); err != nil {
 		return fmt.Errorf("clone failed: %w", err)
 	}
 

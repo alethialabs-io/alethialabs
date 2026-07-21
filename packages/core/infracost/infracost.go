@@ -5,7 +5,9 @@ package infracost
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,8 +15,42 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+)
+
+// maxDownloadBytes bounds the Infracost release download so a stalled or oversized response can't
+// exhaust memory (the tarball is ~20 MiB; 200 MiB is a generous ceiling).
+const maxDownloadBytes = 200 << 20
+
+const (
+	// DefaultInfracostVersion is the Infracost CLI version the runtime fallback downloads when the
+	// binary isn't already on PATH. Production bakes it into the runner image (Dockerfile.base's
+	// ARG INFRACOST_VERSION) — this constant is the native/dev fallback and should match that ARG.
+	DefaultInfracostVersion = "v0.10.39"
+	// InfracostVersionEnv overrides DefaultInfracostVersion (mirrors ALETHIA_IAC_VERSION for tofu).
+	InfracostVersionEnv = "ALETHIA_INFRACOST_VERSION"
+)
+
+// ResolvedInfracostVersion returns ALETHIA_INFRACOST_VERSION when set, else DefaultInfracostVersion
+// — a single config-driven source, never a hardcoded per-call literal.
+func ResolvedInfracostVersion() string {
+	if v := strings.TrimSpace(os.Getenv(InfracostVersionEnv)); v != "" {
+		return v
+	}
+	return DefaultInfracostVersion
+}
+
+var (
+	// httpGet carries a timeout so a stalled release download can never hang a provisioning job
+	// forever (the default http.Get has no timeout). Overridden in tests.
+	httpGet        = (&http.Client{Timeout: 5 * time.Minute}).Get
+	executeCommand = utils.ExecuteCommand
+	// binaryCacheDir is where the native/dev fallback caches the downloaded infracost binary. Rooted
+	// in the OS temp dir (an absolute path), NOT the process cwd, so concurrent jobs that share a
+	// working directory don't race the same "bin/" path (#952). Overridden in tests.
+	binaryCacheDir = filepath.Join(os.TempDir(), "alethia-infracost")
 )
 
 // InfracostCLI represents the Infracost CLI wrapper.
@@ -44,24 +80,17 @@ func (i *InfracostCLI) CheckToken() bool {
 
 // ensureBinary checks if the Infracost binary exists and downloads it if not.
 func (i *InfracostCLI) ensureBinary() error {
-	binDir := "bin"
-	absBinDir, err := filepath.Abs(binDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path for bin directory: %w", err)
-	}
-
-	i.binaryPath = filepath.Join(absBinDir, fmt.Sprintf("infracost_%s", i.Version))
+	i.binaryPath = filepath.Join(binaryCacheDir, fmt.Sprintf("infracost_%s", i.Version))
 	if _, err := os.Stat(i.binaryPath); err == nil {
 		fmt.Printf("Infracost %s is already available.\n", i.Version)
 		return nil
 	}
 
-	// Create bin directory if it doesn't exist
-	if err := os.MkdirAll(absBinDir, 0755); err != nil {
-		return fmt.Errorf("failed to create bin directory: %w", err)
+	if err := os.MkdirAll(binaryCacheDir, 0755); err != nil {
+		return fmt.Errorf("failed to create infracost cache directory: %w", err)
 	}
 
-	return i.download(absBinDir)
+	return i.download(binaryCacheDir)
 }
 
 func (i *InfracostCLI) download(binDir string) error {
@@ -71,81 +100,102 @@ func (i *InfracostCLI) download(binDir string) error {
 	downloadURL := fmt.Sprintf("https://github.com/infracost/infracost/releases/download/%s/infracost-%s-%s.tar.gz", i.Version, goos, arch)
 	fmt.Printf("Downloading Infracost %s for %s-%s...\n", i.Version, goos, arch)
 
-	resp, err := http.Get(downloadURL)
+	tarBytes, err := fetchBounded(downloadURL, "infracost")
 	if err != nil {
-		return fmt.Errorf("failed to download infracost: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download infracost: status code %d", resp.StatusCode)
+		return err
 	}
 
-	tarFile := filepath.Join(binDir, fmt.Sprintf("infracost_%s.tar.gz", i.Version))
-	out, err := os.Create(tarFile)
-	if err != nil {
-		return fmt.Errorf("failed to create tar file: %w", err)
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to write tar file: %w", err)
+	// Supply-chain: verify the published SHA256 before extracting + executing the binary. The runner
+	// image bakes a checksum-verified copy; this guards the native/dev fallback download.
+	if err := verifyInfracostChecksum(downloadURL, tarBytes); err != nil {
+		return err
 	}
 
-	// Extract the tar.gz file
-	f, err := os.Open(tarFile)
-	if err != nil {
-		return fmt.Errorf("failed to open tar file: %w", err)
-	}
-	defer f.Close()
-
-	gzReader, err := gzip.NewReader(f)
+	gzReader, err := gzip.NewReader(bytes.NewReader(tarBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gzReader.Close()
 
 	tarReader := tar.NewReader(gzReader)
-
+	// Extract to a unique temp file in the cache dir, then atomically rename into the versioned
+	// path — so two jobs downloading at once never write the same file mid-flight (#952).
+	dest := filepath.Join(binDir, fmt.Sprintf("infracost_%s", i.Version))
+	tmpFile, err := os.CreateTemp(binDir, "infracost-dl-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for infracost binary: %w", err)
+	}
+	tmpName := tmpFile.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeds
+	extracted := false
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
-			break // End of archive
+			break
 		}
 		if err != nil {
+			tmpFile.Close()
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
-
 		if header.Typeflag == tar.TypeReg && strings.Contains(header.Name, "infracost") {
-			outPath := filepath.Join(binDir, "infracost")
-			outFile, err := os.Create(outPath)
-			if err != nil {
-				return fmt.Errorf("failed to create infracost binary: %w", err)
-			}
-			defer outFile.Close()
-
-			_, err = io.Copy(outFile, tarReader)
-			if err != nil {
+			if _, err := io.Copy(tmpFile, tarReader); err != nil {
+				tmpFile.Close()
 				return fmt.Errorf("failed to write infracost binary: %w", err)
 			}
-
-			i.binaryPath = outPath // Update binaryPath to the extracted path
+			extracted = true
 			break
 		}
 	}
+	tmpFile.Close()
+	if !extracted {
+		return fmt.Errorf("infracost binary not found in the downloaded archive")
+	}
 
-	// Make executable
-	if err := os.Chmod(i.binaryPath, 0755); err != nil {
+	if err := os.Chmod(tmpName, 0755); err != nil {
 		return fmt.Errorf("failed to make infracost binary executable: %w", err)
 	}
-
-	// Clean up tar.gz file
-	if err := os.Remove(tarFile); err != nil {
-		fmt.Printf("Warning: failed to remove tar.gz file %s: %v\n", tarFile, err)
+	if err := os.Rename(tmpName, dest); err != nil {
+		return fmt.Errorf("failed to install infracost binary: %w", err)
 	}
+	i.binaryPath = dest
 
-	fmt.Println("Infracost downloaded and extracted successfully.")
+	fmt.Println("Infracost downloaded and verified successfully.")
+	return nil
+}
+
+// fetchBounded GETs url and returns up to maxDownloadBytes of the body, erroring on a transport
+// failure or a non-200 status.
+func fetchBounded(url, what string) ([]byte, error) {
+	resp, err := httpGet(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download %s: %w", what, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download %s: status code %d", what, resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", what, err)
+	}
+	return b, nil
+}
+
+// verifyInfracostChecksum fetches the release's per-asset "<url>.sha256" and checks it against the
+// downloaded tarball (Infracost publishes "infracost-<os>-<arch>.tar.gz.sha256" per asset).
+func verifyInfracostChecksum(downloadURL string, tarBytes []byte) error {
+	sumBytes, err := fetchBounded(downloadURL+".sha256", "infracost checksum")
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(sumBytes))
+	if len(fields) == 0 {
+		return fmt.Errorf("infracost checksum file was empty")
+	}
+	got := fmt.Sprintf("%x", sha256.Sum256(tarBytes))
+	if !strings.EqualFold(fields[0], got) {
+		return fmt.Errorf("infracost checksum mismatch: got %s, want %s", got, fields[0])
+	}
 	return nil
 }
 
@@ -162,14 +212,21 @@ func (i *InfracostCLI) RunInfracost(planFile string, env []string) (*CostBreakdo
 		return nil, fmt.Errorf("failed to ensure infracost binary: %w", err)
 	}
 
-	tempDir := "temp"
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	// A per-invocation temp dir (not the cwd-relative "temp"), so concurrent jobs sharing a working
+	// directory can't clobber each other's breakdown output (#952).
+	tempDir, err := os.MkdirTemp("", "alethia-infracost-*")
+	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
+	defer os.RemoveAll(tempDir)
 	breakdownJSONPath := filepath.Join(tempDir, "infracost_breakdown.json")
 
-	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s", i.binaryPath, planFile, breakdownJSONPath)
-	if err := utils.ExecuteCommand(breakdownCmd, ".", env, nil, nil); err != nil {
+	// binaryPath, planFile and breakdownJSONPath are interpolated into a `bash -c` command string;
+	// shell-quote each so a path containing shell metacharacters can't inject (command-injection
+	// guard, #944). planFile is caller-supplied, so this is the value that matters most.
+	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s",
+		utils.ShellQuote(i.binaryPath), utils.ShellQuote(planFile), utils.ShellQuote(breakdownJSONPath))
+	if err := executeCommand(breakdownCmd, ".", env, nil, nil); err != nil {
 		return nil, fmt.Errorf("infracost breakdown failed: %w", err)
 	}
 

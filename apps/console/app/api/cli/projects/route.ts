@@ -4,20 +4,10 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
-import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
-import {
-	cloudIdentities,
-	projectEnvironments,
-	projects,
-	resourceHierarchy,
-} from "@/lib/db/schema";
+import { cloudIdentities } from "@/lib/db/schema";
 import { environmentStage } from "@/lib/db/schema/enums";
-import {
-	pickFreeSlug,
-	RESERVED_PROJECT_CHILD_SLUGS,
-	slugify,
-} from "@/lib/routing";
+import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliProjectResponse } from "@/lib/validations/cli-contract";
@@ -35,10 +25,12 @@ const createProjectBody = z.object({
 });
 
 /**
- * Creates a project scoped to the active org: the project row, its default environment,
- * and the authz hierarchy edge (project → org) so org-wide grants flow down. Components
- * are added afterwards via `project component add`. Mirrors the console createProject
- * server action, minus the form-driven component seeding.
+ * Creates a project scoped to the active org via the shared front-door core
+ * ({@link insertProjectWithDefaultFabric}): the project row, its default Fabric, the
+ * Production (dedicated) + Preview (namespace) environments, and the project → org authz
+ * hierarchy edge so org-wide grants flow down. Identical shape to a console-created project;
+ * components are added afterwards via `project component add` (this route skips the
+ * form-driven component seeding the createProject server action does).
  */
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "create", { type: "project" });
@@ -71,50 +63,21 @@ export async function POST(req: Request) {
 			cloudProvider = ci.provider;
 		}
 
-		// Unique-per-org URL slug, skipping reserved project-child segments.
-		const existing = await db
-			.select({ slug: projects.slug })
-			.from(projects)
-			.where(eq(projects.org_id, actor.orgId));
-		const slug = pickFreeSlug(slugify(body.project_name) || "project", [
-			...existing.map((r) => r.slug).filter((s): s is string => Boolean(s)),
-			...RESERVED_PROJECT_CHILD_SLUGS,
-		]);
-
-		const [project] = await db
-			.insert(projects)
-			.values({
+		// One transaction over the shared front-door core: project + default Fabric + Prod(dedicated)
+		// /Preview(namespace) envs + project→org edge — the SAME invariant the console createProject
+		// server action applies, so a CLI-created project has the identical shape. A mid-sequence
+		// failure now rolls the whole thing back instead of orphaning a project.
+		const { project } = await db.transaction((tx) =>
+			insertProjectWithDefaultFabric(tx, {
 				project_name: body.project_name,
 				region: body.region,
-				iac_version: body.iac_version,
-				slug,
-				user_id: actor.userId,
-				org_id: actor.orgId,
 				cloud_identity_id: body.cloud_identity_id ?? null,
-			})
-			.returning();
-
-		await db.insert(projectEnvironments).values({
-			project_id: project.id,
-			user_id: actor.userId,
-			org_id: actor.orgId,
-			name: body.stage,
-			stage: body.stage,
-			status: "DRAFT",
-			is_default: true,
-			region: body.region,
-		});
-
-		await db
-			.insert(resourceHierarchy)
-			.values({
-				child_type: "project",
-				child_id: project.id,
-				parent_type: "org",
-				parent_id: actor.orgId,
-			})
-			.onConflictDoNothing();
-		mirrorHierarchyEdge("project", project.id, "org", actor.orgId);
+				iac_version: body.iac_version,
+				environment_stage: body.stage,
+				owner: actor.userId,
+				orgId: actor.orgId,
+			}),
+		);
 
 		return cliJson(
 			cliProjectResponse,

@@ -149,7 +149,7 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	// Pin the exact commit being built: shallow-resolve the repo's HEAD runner-side. The
 	// git token (when the repo is private) stays HERE — it is used for this clone only and
 	// never reaches the in-cluster Job spec or execution_metadata.
-	sha, err := w.resolveHeadSHA(job.ID, svc.Source.RepoURL, stderr)
+	sha, err := w.resolveHeadSHA(ctx, job.ID, svc.Source.RepoURL, stderr)
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD of %s: %w", svc.Source.RepoURL, err)
 	}
@@ -223,7 +223,7 @@ func buildJobName(serviceName string) string {
 // resolveHeadSHA pins the commit a build renders against: a shallow clone (with the job's
 // git token when one exists) and HeadSHA. The clone is a data fetch only — nothing from
 // the repository executes on the runner.
-func (w *Runner) resolveHeadSHA(jobID, repoURL string, stderr *JobLogger) (string, error) {
+func (w *Runner) resolveHeadSHA(ctx context.Context, jobID, repoURL string, stderr *JobLogger) (string, error) {
 	if repoURL == "" {
 		return "", fmt.Errorf("service has no repo_url")
 	}
@@ -239,7 +239,7 @@ func (w *Runner) resolveHeadSHA(jobID, repoURL string, stderr *JobLogger) (strin
 		token = ""
 	}
 	repo := git.NewGITWithToken(repoURL, dir, false, token)
-	if err := repo.Clone("", false); err != nil {
+	if err := repo.Clone(ctx, "", false); err != nil {
 		return "", fmt.Errorf("clone for commit pinning: %w", err)
 	}
 	return repo.HeadSHA()
@@ -412,10 +412,17 @@ metadata:
 `, name)
 }
 
+// shortID returns the first n runes-worth of bytes of s, or all of s when it is shorter than n —
+// a panic-safe replacement for s[:n] on ids of unknown length (a short runner_id / job id must
+// not crash a log line with a slice-bounds panic).
+func shortID(s string, n int) string {
+	if n < 0 || len(s) < n {
+		return s
+	}
+	return s[:n]
+}
+
 // shortSHA12 abbreviates a SHA for log lines.
 func shortSHA12(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
+	return shortID(sha, 12)
 }

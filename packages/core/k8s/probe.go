@@ -16,6 +16,8 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
+var executeCommandWithOutput = utils.ExecuteCommandWithOutput
+
 // probeImage is the tiny image the in-cluster reachability probe runs (needs a shell + nc;
 // busybox has both). Overridable for air-gapped/mirror registries.
 func probeImage() string {
@@ -46,7 +48,7 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 	authRejections := 0
 	apiErr := func() error {
 		for {
-			out, e := utils.ExecuteCommandWithOutput("kubectl get --raw=/readyz", ".", nil)
+			out, e := executeCommandWithOutput("kubectl get --raw=/readyz", ".", nil)
 			if e == nil {
 				return nil
 			}
@@ -86,7 +88,7 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 	var lastReady, lastTotal int
 	var lastNodesRaw []byte
 	if err := pollUntil(ctx, deadline, 15*time.Second, func() bool {
-		raw, err := utils.ExecuteCommandWithOutput("kubectl get nodes -o json", ".", nil)
+		raw, err := executeCommandWithOutput("kubectl get nodes -o json", ".", nil)
 		if err != nil {
 			return false
 		}
@@ -204,7 +206,7 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 
 	// The kubernetes Service ClusterIP (server-picked, first host of the service CIDR). We test
 	// the raw IP rather than the DNS name so this isolates the pod->apiserver DATAPATH from CoreDNS.
-	clusterIP, err := utils.ExecuteCommandWithOutput(
+	clusterIP, err := executeCommandWithOutput(
 		"kubectl get svc kubernetes -n default -o jsonpath={.spec.clusterIP}", ".", nil)
 	if err != nil || strings.TrimSpace(clusterIP) == "" {
 		return fmt.Errorf("could not resolve the kubernetes Service ClusterIP for the in-cluster probe: %w", err)
@@ -213,9 +215,9 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 
 	const jobName = "alethia-apiserver-probe"
 	// Best-effort clean any leftover from a previous run, then always clean up on exit.
-	_, _ = utils.ExecuteCommandWithOutput("kubectl delete job "+jobName+" -n default --ignore-not-found", ".", nil)
+	_, _ = executeCommandWithOutput("kubectl delete job "+jobName+" -n default --ignore-not-found", ".", nil)
 	defer func() {
-		_, _ = utils.ExecuteCommandWithOutput("kubectl delete job "+jobName+" -n default --ignore-not-found --wait=false", ".", nil)
+		_, _ = executeCommandWithOutput("kubectl delete job "+jobName+" -n default --ignore-not-found --wait=false", ".", nil)
 	}()
 
 	dir, err := os.MkdirTemp("", "alethia-probe-*")
@@ -227,7 +229,7 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 	if err := os.WriteFile(manifestPath, []byte(podToAPIServerJob(jobName, clusterIP, probeImage())), 0o600); err != nil {
 		return err
 	}
-	if _, err := utils.ExecuteCommandWithOutput("kubectl apply -f "+manifestPath, ".", nil); err != nil {
+	if _, err := executeCommandWithOutput("kubectl apply -f "+manifestPath, ".", nil); err != nil {
 		return fmt.Errorf("failed to create the in-cluster pod->apiserver probe Job: %w", err)
 	}
 	fmt.Fprintf(stdout, "Verifying a pod can reach the API server (ClusterIP %s:443) across the cluster network...\n", clusterIP)
@@ -235,16 +237,16 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 	deadline := time.Now().Add(timeout)
 	var lastState, lastWaiting string
 	err = pollUntil(ctx, deadline, 8*time.Second, func() bool {
-		succeeded, _ := utils.ExecuteCommandWithOutput(
+		succeeded, _ := executeCommandWithOutput(
 			"kubectl get job "+jobName+" -n default -o jsonpath={.status.succeeded}", ".", nil)
 		if strings.TrimSpace(succeeded) == "1" {
 			return true
 		}
-		lastState, _ = utils.ExecuteCommandWithOutput(
+		lastState, _ = executeCommandWithOutput(
 			"kubectl get pods -n default -l job-name="+jobName+" -o jsonpath={.items[*].status.phase}", ".", nil)
 		// Why a not-Running pod is stuck (ImagePullBackOff, unschedulable, …) — so a scheduling/
 		// image failure isn't misreported as a pod-network verdict below.
-		lastWaiting, _ = utils.ExecuteCommandWithOutput(
+		lastWaiting, _ = executeCommandWithOutput(
 			"kubectl get pods -n default -l job-name="+jobName+
 				" -o jsonpath={.items[*].status.containerStatuses[*].state.waiting.reason}", ".", nil)
 		return false

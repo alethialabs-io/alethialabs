@@ -4,6 +4,7 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -141,8 +142,10 @@ func getSSHAuthMethod() (transport.AuthMethod, error) {
 	return auth, nil
 }
 
-// Clone clones a repository or opens an existing one.
-func (g *GIT) Clone(branch string, force bool) error {
+// Clone clones a repository or opens an existing one. ctx bounds every network operation (clone /
+// fetch / pull) so a hung remote is interrupted by a job cancel or timeout instead of blocking
+// forever (#987).
+func (g *GIT) Clone(ctx context.Context, branch string, force bool) error {
 	fmt.Printf("Cloning %s into %s...\n", g.RepoURL, g.LocalPath)
 
 	if _, err := os.Stat(g.LocalPath); err == nil && !force && g.isCorrectRepo() {
@@ -173,7 +176,7 @@ func (g *GIT) Clone(branch string, force bool) error {
 				if authErr == nil {
 					fetchOptions.Auth = auth
 				}
-				_ = g.Repo.Fetch(fetchOptions)
+				_ = g.Repo.FetchContext(ctx, fetchOptions)
 
 				err = w.Checkout(&gogit.CheckoutOptions{
 					Branch: plumbing.NewBranchReferenceName(branch),
@@ -184,7 +187,7 @@ func (g *GIT) Clone(branch string, force bool) error {
 			}
 		}
 		_ = g.ResetAndRestoreChanges() // Discard local changes and untracked files
-		return g.Pull()
+		return g.Pull(ctx)
 	} else {
 		// Remove existing directory if not correct repo or force is true
 		_ = os.RemoveAll(g.LocalPath)
@@ -209,7 +212,7 @@ func (g *GIT) Clone(branch string, force bool) error {
 			cloneOptions.SingleBranch = false
 		}
 
-		repo, err := gogit.PlainClone(g.LocalPath, false, cloneOptions)
+		repo, err := gogit.PlainCloneContext(ctx, g.LocalPath, false, cloneOptions)
 		if err != nil {
 			return mapCloneError(g.RepoURL, err)
 		}
@@ -360,7 +363,7 @@ func (g *GIT) isCorrectRepo() bool {
 }
 
 // Pull pulls the latest changes from the remote repository.
-func (g *GIT) Pull() error {
+func (g *GIT) Pull(ctx context.Context) error {
 	if g.Repo == nil {
 		return fmt.Errorf("repository not initialized")
 	}
@@ -380,7 +383,7 @@ func (g *GIT) Pull() error {
 		pullOptions.Auth = auth
 	}
 
-	err = w.Pull(pullOptions)
+	err = w.PullContext(ctx, pullOptions)
 	if err != nil && err != gogit.NoErrAlreadyUpToDate {
 		if err == transport.ErrEmptyRemoteRepository {
 			fmt.Printf("Remote repository %s is empty.\n", g.RepoURL)

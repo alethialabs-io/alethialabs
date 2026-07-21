@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
 // Compose wires pluggable category providers into a prepared OpenTofu working
@@ -111,6 +112,11 @@ func Compose(
 	}
 
 	// ── Container registries (multi → homogeneous) ──
+	// A pluggable registry has NO tofu module — its only artifact is a dockerconfigjson
+	// imagePullSecret the runner seeds POST-APPLY (categories.DominantRegistryPullSecretSpec →
+	// argocd.EnsureRegistryPullSecret), because the in-tofu kubernetes provider is host+CA-only
+	// on AWS and can't create it. So here we only validate the selection and set the native-guard
+	// var (which switches the cluster template's native ECR/AR/ACR off).
 	if slug, items := dominantProvider(registryItems(vc), log, "registry"); IsPluggable(slug) {
 		p, err := Get("registry", slug)
 		if err != nil {
@@ -121,10 +127,11 @@ func Compose(
 			Credentials: vc.ConnectorCredentialFor("registry", slug),
 			Items:       items,
 		}
-		if err := add("registry", p, ctx); err != nil {
-			return 0, err
+		if err := p.Validate(ctx); err != nil {
+			return 0, fmt.Errorf("registry/%s validation failed: %w", slug, err)
 		}
 		tfvars["registry_provider"] = slug
+		fmt.Fprintf(log, "Registry provider %s: pull secret is runner-seeded post-apply (no tofu module)\n", slug)
 	}
 
 	if len(modules) == 0 {
@@ -136,7 +143,9 @@ func Compose(
 	if err != nil {
 		return 0, fmt.Errorf("failed to encode _categories.tf.json: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(workDir, "_categories.tf.json"), append(data, '\n'), 0644); err != nil {
+	// _categories.tf.json carries decrypted connector credentials (Vault/Cloudflare/DockerHub/
+	// Datadog/Grafana/Prometheus) — owner-only so a co-located uid can't read them off disk.
+	if err := utils.WriteSecretFile(filepath.Join(workDir, "_categories.tf.json"), append(data, '\n')); err != nil {
 		return 0, fmt.Errorf("failed to write _categories.tf.json: %w", err)
 	}
 	return len(modules), nil
@@ -168,6 +177,21 @@ func registryItems(vc *types.ProjectConfig) []providerItem {
 		})
 	}
 	return out
+}
+
+// DominantRegistryPullSecret returns the name of the imagePullSecret the project's selected pluggable
+// container registry creates (dockerhub/ghcr/…), or "" when the registry is native/none. The name is
+// the dominant registry provider's slug + "-pull" — the convention every credential-based registry
+// module uses for its dockerconfigjson secret (dockerhub → "dockerhub-pull"). The provisioner attaches
+// this to generated app pods (manifests.Options.ImagePullSecrets) so a private pull authenticates;
+// without it the secret the registry module creates is orphaned. Kept in lockstep with each registry
+// module's `secret_name` — if that convention changes, change it here too.
+func DominantRegistryPullSecret(vc *types.ProjectConfig) string {
+	slug, _ := dominantProvider(registryItems(vc), io.Discard, "registry")
+	if !IsPluggable(slug) {
+		return ""
+	}
+	return slug + "-pull"
 }
 
 // dominantProvider picks the single pluggable provider for a homogeneous-MVP

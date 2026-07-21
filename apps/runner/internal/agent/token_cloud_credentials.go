@@ -53,12 +53,20 @@ func ActivateTokenCloud(provider, token string, selfManaged bool) (func(), error
 	if token == "" {
 		return nil, fmt.Errorf("empty API token for %s", provider)
 	}
+	// Save each var's prior value so cleanup RESTORES it rather than clearing it — a pre-existing
+	// value must survive, mirroring ActivateHetznerS3 (#988).
+	prior := make(map[string]string, len(envs))
 	for _, e := range envs {
+		prior[e] = os.Getenv(e)
 		_ = os.Setenv(e, token)
 	}
 	return func() {
 		for _, e := range envs {
-			_ = os.Unsetenv(e)
+			if prev := prior[e]; prev != "" {
+				_ = os.Setenv(e, prev)
+			} else {
+				_ = os.Unsetenv(e)
+			}
 		}
 	}, nil
 }

@@ -113,8 +113,6 @@ function csv(v: string | undefined): string[] | undefined {
 const DEFAULT_SERVER_TYPES = ["cax21", "cpx31"];
 /** Extra locations to spill into (after the pool's own) when the primary can't place any type. */
 const DEFAULT_FALLBACK_LOCATIONS = ["nbg1", "hel1", "ash", "hil"];
-/** Hetzner ARM (`cax*`) is EU-only — skip ARM types in non-EU DCs instead of a guaranteed 412. */
-const EU_LOCATIONS = new Set(["fsn1", "nbg1", "hel1"]);
 
 /** Resolve the server-type preference list from env, honouring the legacy single `HCLOUD_SERVER_TYPE`
  *  by appending the x86 fallback so an existing deployment gains failover without a config change. */
@@ -134,7 +132,40 @@ function dedupe(xs: string[]): string[] {
 /** True for a Hetzner error that means "no capacity here, try elsewhere" (retryable placement). */
 function isPlacementError(err: unknown): boolean {
 	if (!(err instanceof HcloudApiError)) return false;
-	return err.status === 412 || err.code === "resource_unavailable";
+	if (err.status === 412 || err.code === "resource_unavailable") return true;
+	// 422 "unsupported location for server type" = the type is not OFFERED in this DC (structural, not a
+	// capacity blip). Spill to the next candidate instead of aborting the whole placement loop — the root
+	// cause of the recurring prod HcloudApiError. Match by MESSAGE so a genuinely malformed payload (bad
+	// image / ssh key also surfaces as 422 `invalid_input`) still aborts rather than silently retrying.
+	return err.status === 422 && /unsupported location for server type/i.test(err.message);
+}
+
+/** One candidate {serverType, location} placement attempt. */
+export type PlacementAttempt = { serverType: string; location: string };
+
+/**
+ * Pure: build the ordered placement-attempt list. Preference is serverType-major (cheap ARM first),
+ * location-minor (the pool's location, then the fallback locations). When live availability is known,
+ * keep ONLY the {type, location} pairs Hetzner actually offers (`prices[].location`) — the single source
+ * of truth for what a DC supports, so the "unsupported location for server type" 422 is avoided up front
+ * without any baked-in geography. When availability is unknown (the fail-open lookup errored) OR the live
+ * filter would empty the list (a misconfig — still worth attempting so the error is honest), fall back to
+ * the FULL cross-product and let the 412/422 placement-spill classifier skip guaranteed-miss pairs.
+ */
+export function buildPlacementAttempts(
+	serverTypes: string[],
+	locations: string[],
+	availability: Map<string, Set<string>> | null,
+): PlacementAttempt[] {
+	const all: PlacementAttempt[] = [];
+	for (const serverType of serverTypes) {
+		for (const location of locations) {
+			all.push({ serverType, location });
+		}
+	}
+	if (!availability) return all;
+	const filtered = all.filter(({ serverType, location }) => availability.get(serverType)?.has(location));
+	return filtered.length > 0 ? filtered : all;
 }
 
 /** The forward-proxy service name + port the runner (and its nested child) point HTTP(S)_PROXY at. */
@@ -421,6 +452,61 @@ function parseSshKeyListPage(body: unknown): { keys: HcloudSshKey[]; nextPage: n
  *  lookup instead of a GET /ssh_keys per VM. */
 const SSH_KEY_CACHE_TTL_MS = 60_000;
 
+/** One Hetzner server type (GET /server_types). We read only the name + the locations it is priced in —
+ *  `prices[].location` is Hetzner's per-location "offered here" signal, so a {type, location} pair the
+ *  list does NOT contain is exactly the "unsupported location for server type" 422 we want to avoid. */
+interface HcloudServerType {
+	name: string;
+	prices?: unknown;
+}
+
+/** Type-guard for a Hetzner server_type object (only `name` is required; prices are validated in the fold). */
+function isHcloudServerType(v: unknown): v is HcloudServerType {
+	return isRecord(v) && typeof v.name === "string";
+}
+
+/** Defensively narrow a GET /server_types page into its types slice + pagination cursor (mirrors
+ *  parseServerListPage — a malformed meta.pagination degrades to nextPage=null, never spins). */
+function parseServerTypeListPage(body: unknown): { types: HcloudServerType[]; nextPage: number | null } {
+	const types =
+		isRecord(body) && isUnknownArray(body.server_types)
+			? body.server_types.filter(isHcloudServerType)
+			: [];
+	let nextPage: number | null = null;
+	if (isRecord(body) && isRecord(body.meta) && isRecord(body.meta.pagination)) {
+		const next = body.meta.pagination.next_page;
+		if (typeof next === "number") nextPage = next;
+	}
+	return { types, nextPage };
+}
+
+/** Pure: fold GET /server_types entries into `serverTypeName → Set<location offered>`. A type with no
+ *  readable prices maps to an empty set (offered nowhere we can see). Exported for unit tests. */
+export function serverTypeAvailabilityFromTypes(types: HcloudServerType[]): Map<string, Set<string>> {
+	const map = new Map<string, Set<string>>();
+	for (const t of types) {
+		const locations = new Set<string>();
+		if (isUnknownArray(t.prices)) {
+			for (const p of t.prices) {
+				if (isRecord(p) && typeof p.location === "string" && p.location) locations.add(p.location);
+			}
+		}
+		map.set(t.name, locations);
+	}
+	return map;
+}
+
+/** Live Hetzner server-type availability changes rarely (offerings, not capacity) — cache the map for
+ *  10 min so a scale-up burst shares one GET /server_types instead of one lookup per create. */
+const SERVER_TYPE_CACHE_TTL_MS = 600_000;
+let availabilityCache: { at: number; availability: Map<string, Set<string>> } | null = null;
+
+/** Test-only: clear the module-level server-type availability cache so each test fully controls the
+ *  /server_types response (the cache otherwise persists across tests via the provider singleton). */
+export function resetServerTypeAvailabilityCacheForTest(): void {
+	availabilityCache = null;
+}
+
 /** Pure: map configured HCLOUD_SSH_KEYS references (key NAMES or numeric ids) onto the numeric ids of
  *  keys that actually exist in the project, splitting out any that don't resolve. An entry matches a
  *  key by exact NAME or by its id rendered as a string (so a bare id like "12345" resolves to the
@@ -530,6 +616,45 @@ class HcloudFleetProvider implements FleetProvider {
 		return ids;
 	}
 
+	/**
+	 * Fetch (cached, paginated) the map of serverType → locations Hetzner actually offers, so create()
+	 * can pre-filter its placement attempts and skip the guaranteed "unsupported location for server
+	 * type" 422s. FAIL-OPEN: any error returns null and create() falls back to the offline heuristic —
+	 * availability is an optimization to avoid wasted round-trips, never a gate on provisioning.
+	 */
+	private async serverTypeAvailability(): Promise<Map<string, Set<string>> | null> {
+		const now = Date.now();
+		if (availabilityCache && now - availabilityCache.at < SERVER_TYPE_CACHE_TTL_MS) {
+			return availabilityCache.availability;
+		}
+		try {
+			const types: HcloudServerType[] = [];
+			let page = 1;
+			// Bound by iteration count + require strict progress — same runaway/cyclic-next_page guard as list().
+			for (let i = 0; i < HCLOUD_LIST_MAX_PAGES; i++) {
+				const body = await this.api(
+					"GET",
+					`/server_types?per_page=${HCLOUD_LIST_PER_PAGE}&page=${page}`,
+				);
+				const parsed = parseServerTypeListPage(body);
+				types.push(...parsed.types);
+				if (parsed.nextPage === null || parsed.nextPage <= page) break;
+				page = parsed.nextPage;
+			}
+			const availability = serverTypeAvailabilityFromTypes(types);
+			availabilityCache = { at: now, availability };
+			return availability;
+		} catch (err) {
+			// Never let an availability lookup block provisioning. Don't cache a transient failure — retry
+			// on the next create; this placement falls back to the full candidate cross-product and lets
+			// the 412/422 placement-spill classifier skip any pair the DC doesn't support.
+			flog.warn("hcloud server-type availability lookup failed; trying the full candidate set", {
+				err,
+			});
+			return null;
+		}
+	}
+
 	async create(
 		project: FleetTarget,
 		opts: { location: string; version: string | null; bootstrapToken?: string },
@@ -543,18 +668,14 @@ class HcloudFleetProvider implements FleetProvider {
 		const sshKeyIds = await this.resolveSshKeyIds(this.cfg.sshKeys);
 		// Failsafe placement: try each server type (cheap ARM first, x86 fallback) across the pool's
 		// location then the fallback locations, until one PLACES. A `412 error during placement`
-		// (ARM/region out of capacity) advances to the next candidate; any other error is a real
-		// failure and aborts. First success wins — so a healthy pool with ARM capacity is unchanged,
-		// and a fleet only spills to x86/other DCs when it genuinely must.
+		// (ARM/region out of capacity) OR a `422 unsupported location for server type` (the type isn't
+		// offered there) advances to the next candidate; any other error is a real failure and aborts.
+		// First success wins — so a healthy pool with ARM capacity is unchanged, and a fleet only spills
+		// to x86/other DCs when it genuinely must. The (cached, fail-open) availability lookup pre-filters
+		// pairs Hetzner doesn't offer, so the 422 is usually avoided before we ever POST.
 		const locations = dedupe([opts.location, ...this.cfg.fallbackLocations]);
-		const attempts: { serverType: string; location: string }[] = [];
-		for (const serverType of this.cfg.serverTypes) {
-			for (const location of locations) {
-				// Hetzner ARM is EU-only — don't burn a create round-trip on a guaranteed placement miss.
-				if (serverType.startsWith("cax") && !EU_LOCATIONS.has(location)) continue;
-				attempts.push({ serverType, location });
-			}
-		}
+		const availability = await this.serverTypeAvailability();
+		const attempts = buildPlacementAttempts(this.cfg.serverTypes, locations, availability);
 		let lastPlacementErr: unknown = null;
 		for (let i = 0; i < attempts.length; i++) {
 			const { serverType, location } = attempts[i];

@@ -163,8 +163,9 @@ func (c *Catalog) Region(canonicalID, provider string) (string, bool) {
 }
 
 // DefaultK8sVersion returns the catalog's default Kubernetes minor for a provider's
-// managed cluster (e.g. "1.35"). Returns false when the provider carries no default —
-// callers then fall back to their own passthrough (e.g. Hetzner lets Talos pick).
+// managed cluster (e.g. "1.35"). Returns false only for a provider the catalog has no default
+// for — an unknown/unlisted provider — in which case the caller falls back to its own passthrough.
+// All five managed clouds, including Hetzner, currently pin a default in catalog.json.
 func (c *Catalog) DefaultK8sVersion(provider string) (string, bool) {
 	if cp, ok := c.Compute[provider]; ok && cp.DefaultK8sVersion != "" {
 		return cp.DefaultK8sVersion, true
@@ -227,19 +228,26 @@ func (c *Catalog) DBEngine(provider, family string) (DBEngine, bool) {
 }
 
 // NearestCacheTier picks the provider cache SKU whose memory is closest to (and, when
-// possible, at least) the requested size. Returns false when the provider has no cache
-// inventory.
+// possible, at least) the requested size. It prefers the SMALLEST tier that meets or exceeds
+// memoryGB (never silently under-provisioning), and only when no tier is large enough falls back
+// to the largest available. Returns false when the provider has no cache inventory.
 func (c *Catalog) NearestCacheTier(provider string, memoryGB float64) (CacheTier, bool) {
 	cp, ok := c.Cache[provider]
 	if !ok || len(cp.Tiers) == 0 {
 		return CacheTier{}, false
 	}
-	best := cp.Tiers[0]
-	bestDist := math.Abs(best.MemoryGB - memoryGB)
-	for _, t := range cp.Tiers[1:] {
-		if d := math.Abs(t.MemoryGB - memoryGB); d < bestDist {
-			best, bestDist = t, d
+	var atLeast, largest *CacheTier
+	for i := range cp.Tiers {
+		t := &cp.Tiers[i]
+		if largest == nil || t.MemoryGB > largest.MemoryGB {
+			largest = t
+		}
+		if t.MemoryGB >= memoryGB && (atLeast == nil || t.MemoryGB < atLeast.MemoryGB) {
+			atLeast = t
 		}
 	}
-	return best, true
+	if atLeast != nil {
+		return *atLeast, true
+	}
+	return *largest, true
 }

@@ -19,10 +19,10 @@ func TestGetModulePath(t *testing.T) {
 	}{
 		{"cloudflare dns", "dns", "cloudflare", "categories/dns/cloudflare"},
 		{"vault secrets", "secrets", "vault", "categories/secrets/vault"},
-		{"dockerhub registry", "registry", "dockerhub", "categories/registry/dockerhub"},
+		// registry providers are runner-seeded (no tofu module) → empty module_path.
+		{"dockerhub registry", "registry", "dockerhub", ""},
 		{"datadog observability", "observability", "datadog", "categories/observability/datadog"},
 		{"grafana observability", "observability", "grafana", "categories/observability/grafana"},
-		{"prometheus observability", "observability", "prometheus", "categories/observability/prometheus"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

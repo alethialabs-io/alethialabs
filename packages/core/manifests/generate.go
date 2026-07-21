@@ -66,6 +66,13 @@ type App struct {
 	// Volumes are pod volumes (emptyDir only today) shared between the app's containers — e.g. the
 	// Azure Entra-token file the refresher writes and the proxy reads. Empty → not rendered.
 	Volumes []Volume
+	// ImagePullSecrets are the names of dockerconfigjson Secrets the kubelet uses to pull the app's
+	// image from a private, non-native registry (the pluggable registry connectors — dockerhub, ghcr,
+	// …). Without this the pull secret those connectors create is orphaned: nothing references it, so
+	// a private pull 401s. Empty → not rendered (a public image or the cluster's own-account
+	// ECR/GAR/ACR, which authenticates at the node level). Attached to the pod, not the SA, so it is
+	// scoped to this app and needs no namespace-default-SA patch.
+	ImagePullSecrets []string
 	// Compute requests/limits; nil → the opinionated scaffold defaults.
 	Resources *types.ServiceResources
 	// Readiness/liveness probe; nil → none.
@@ -178,6 +185,12 @@ spec:
     spec:
       {{- if .ServiceAccount }}
       serviceAccountName: {{ .ServiceAccount }}
+      {{- end }}
+      {{- if .ImagePullSecrets }}
+      imagePullSecrets:
+        {{- range .ImagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
       {{- end }}
       containers:
         - name: {{ .Name }}
@@ -388,6 +401,11 @@ type Options struct {
 	// the Azure keyless sidecar runs). Empty → Azure keyless fails closed (reported), never a
 	// half-wired pod.
 	RunnerImage string
+	// ImagePullSecrets are dockerconfigjson Secret names attached to every generated app pod so the
+	// kubelet can pull from a private, non-native registry connector (dockerhub/ghcr/…). Empty → none
+	// (public image or own-account ECR/GAR/AR via node auth). The provisioner derives this from the
+	// project's selected pluggable registry (categories.DominantRegistryPullSecret).
+	ImagePullSecrets []string
 }
 
 // endpointOutputKey maps a (provider, backing-kind) to the tofu output holding that resource's
@@ -681,6 +699,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 			SecretEnv:                 binds.secretEnv,
 			Sidecars:                  binds.sidecars,
 			Volumes:                   binds.volumes,
+			ImagePullSecrets:          opts.ImagePullSecrets,
 			Resources:                 s.Resources,
 			Probe:                     s.Probe,
 		})

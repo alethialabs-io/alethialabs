@@ -473,6 +473,21 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		deployJobID:  jobID,
 		expectedApps: expectedApps,
 	})
+
+	// (9) NAMESPACE-PLACEMENT scenario (#959). Opt-in via ALETHIA_E2E_NAMESPACE_TENANT — layers a
+	//     SECOND DEPLOY onto the SAME cluster with placement_mode=namespace (cluster.cluster_name =
+	//     this Fabric) and asserts the app landed in <ns> on that cluster: no new cluster, ArgoCD not
+	//     reinstalled, hardened per-namespace isolation applied. aws-first (a clean skip elsewhere).
+	//     Runs BEFORE the guaranteed teardown (registered earlier), reusing the still-running runner.
+	runT2NamespaceTenant(t, ctx, cp, kc, namespaceTenantParams{
+		project:     project,
+		env:         env,
+		provider:    provider,
+		region:      region,
+		fabricClust: meta.ClusterName,
+		owner:       owner,
+		appsRepo:    repos.appsRepo,
+	})
 }
 
 // assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least

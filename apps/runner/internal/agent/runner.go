@@ -360,7 +360,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				defer cleanup()
 			} else {
 				fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-				sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
+				sessionName := fmt.Sprintf("runner-%s", shortID(job.ID, 8))
 				if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
 					errMsg := fmt.Sprintf("Failed to assume role: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
@@ -1075,7 +1075,13 @@ func snapshotToProjectConfig(snapshot map[string]any) (*types.ProjectConfig, err
 	return &vc, nil
 }
 
+// resolveAccountID returns the provider-specific account identifier for an identity, or "" when
+// the identity is nil (all current callers guard nil, but the guard keeps the helper safe for any
+// future caller — #989).
 func resolveAccountID(identity *CloudIdentity) string {
+	if identity == nil {
+		return ""
+	}
 	switch identity.Provider {
 	case "gcp":
 		return identity.ProjectID

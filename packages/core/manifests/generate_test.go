@@ -161,6 +161,34 @@ func TestRenderApp_DeploymentAndService(t *testing.T) {
 	}
 }
 
+func TestRenderApp_ImagePullSecrets(t *testing.T) {
+	// With a private-registry pull secret, the pod spec must reference it so the kubelet
+	// authenticates the image pull (otherwise the secret the registry connector creates is orphaned).
+	y, err := RenderApp(App{
+		Name:             "api",
+		Image:            "ghcr.io/acme/api@sha256:abc",
+		ImagePullSecrets: []string{"ghcr-pull"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"imagePullSecrets:", "- name: ghcr-pull"} {
+		if !strings.Contains(y, want) {
+			t.Errorf("manifest missing %q:\n%s", want, y)
+		}
+	}
+
+	// Without it (the common case: public image / own-account ECR-GAR-AR node auth), NO
+	// imagePullSecrets block renders — output stays identical to a plain app.
+	plain, err := RenderApp(App{Name: "api", Image: "ghcr.io/acme/api@sha256:abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "imagePullSecrets") {
+		t.Errorf("imagePullSecrets must not render when none are set:\n%s", plain)
+	}
+}
+
 func TestRenderApp_IngressWhenHost(t *testing.T) {
 	y, err := RenderApp(App{Name: "web", Image: "r/web:1", Host: "web.example.com"})
 	if err != nil {

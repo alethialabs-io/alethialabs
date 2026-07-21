@@ -22,6 +22,13 @@ import (
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+)
+
+var (
+	lookPath = exec.LookPath
+	httpGet  = defaultHTTPGet
 )
 
 // DefaultIaCVersion is the OpenTofu version the runner provisions with when a project
@@ -29,6 +36,22 @@ import (
 // state- and CLI-compatible with the Terraform 1.6 line, so terraform-exec drives
 // it unchanged.
 const DefaultIaCVersion = "1.9.0"
+
+// IaCVersionEnv overrides DefaultIaCVersion for the runner-lifecycle provisioning path — deploy /
+// destroy of the runner infra ITSELF, which carries no project snapshot to pin a version. Project
+// deploys pin the version via ProjectConfig.IacVersion; this env is the single knob for the
+// runner-own path, so deploy and destroy always resolve the SAME version (a divergence writes state
+// with one OpenTofu and tears it down with another).
+const IaCVersionEnv = "ALETHIA_IAC_VERSION"
+
+// ResolvedIaCVersion returns the OpenTofu version to provision the runner's own infra with:
+// ALETHIA_IAC_VERSION when set, else DefaultIaCVersion. Never returns a hardcoded per-call literal.
+func ResolvedIaCVersion() string {
+	if v := strings.TrimSpace(os.Getenv(IaCVersionEnv)); v != "" {
+		return v
+	}
+	return DefaultIaCVersion
+}
 
 // DefaultCancelGracePeriod is the grace window between the graceful SIGINT and the
 // hard SIGKILL when a running tofu command's context is cancelled (a mid-flight job
@@ -231,7 +254,9 @@ func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, e
 		return "", fmt.Errorf("failed to encode tfvars: %w", err)
 	}
 
-	if err := os.WriteFile(tfvarsPath, append(tfvarsData, '\n'), 0644); err != nil {
+	// tfvars can carry decrypted connector secrets + the runner token (categories.Compose merges
+	// them in) — write owner-only so a co-located uid on a shared runner host can't read them.
+	if err := utils.WriteSecretFile(tfvarsPath, append(tfvarsData, '\n')); err != nil {
 		return "", fmt.Errorf("failed to write tfvars file: %w", err)
 	}
 
@@ -264,7 +289,7 @@ func ensurePluginCache() {
 // cached download, then fetching + SHA256-verifying the release from the OpenTofu
 // GitHub releases.
 func ensureBinary(ctx context.Context, tfVersion string) (string, error) {
-	if path, err := exec.LookPath("tofu"); err == nil {
+	if path, err := lookPath("tofu"); err == nil {
 		return path, nil
 	}
 
@@ -346,7 +371,7 @@ func downloadTofu(ctx context.Context, ver, dst string) error {
 	return fmt.Errorf("`tofu` binary not found in %s", asset)
 }
 
-func httpGet(ctx context.Context, url string) ([]byte, error) {
+func defaultHTTPGet(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
