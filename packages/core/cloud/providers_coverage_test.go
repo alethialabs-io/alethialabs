@@ -551,21 +551,16 @@ func TestAzureBuilders_Containers(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// KNOWN BUG (see findings): resolveCacheNodeType's doc comment says it "Prefers
-// MemoryGB (nearest catalog tier); falls back to the legacy NodeType", and the
-// file-level invariant is "prefers the abstract field and falls back to the
-// legacy concrete value". But the code returns NodeType first, so when BOTH the
-// abstract MemoryGB and a stale legacy NodeType are present the abstract size is
-// silently ignored. This test encodes the DOCUMENTED (correct) behavior and is
-// skipped until the precedence is fixed.
-// ---------------------------------------------------------------------------
-
+// TestResolveCacheNodeType_PrefersAbstractMemoryGB asserts the DOCUMENTED precedence (abstract
+// MemoryGB first, legacy NodeType fallback) now enforced (#1002) — matching resolveDBEngine and
+// the file-level invariant.
 func TestResolveCacheNodeType_PrefersAbstractMemoryGB(t *testing.T) {
-	t.Skip("known bug (#1002): resolveCacheNodeType prefers legacy NodeType over the abstract MemoryGB, contradicting its doc")
 	// gcp 4GB resolves to catalog tier "M2"; a stale legacy NodeType must NOT win.
-	got := resolveCacheNodeType("gcp", types.ProjectCacheConfig{MemoryGB: 4, NodeType: "cache.legacy.stale"})
-	if got != "M2" {
-		t.Errorf("resolveCacheNodeType prefers legacy NodeType over MemoryGB: got %q, want M2", got)
+	if got := resolveCacheNodeType("gcp", types.ProjectCacheConfig{MemoryGB: 4, NodeType: "cache.legacy.stale"}); got != "M2" {
+		t.Errorf("abstract MemoryGB must win: got %q, want M2", got)
+	}
+	// With no MemoryGB, the legacy NodeType is the fallback.
+	if got := resolveCacheNodeType("gcp", types.ProjectCacheConfig{NodeType: "cache.legacy.explicit"}); got != "cache.legacy.explicit" {
+		t.Errorf("legacy NodeType fallback: got %q, want cache.legacy.explicit", got)
 	}
 }
