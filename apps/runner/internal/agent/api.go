@@ -199,15 +199,43 @@ func parseWakeLine(line string) (WakeEvent, bool) {
 // every typed event (a wake, or a cancel targeting one of this runner's jobs). It blocks
 // until the stream ends or ctx is cancelled, then returns — the caller reconnects with
 // backoff. Uses a no-timeout client (the connection is long-lived); ctx governs its lifetime.
+// SSE wake-stream tunables (vars so tests can shorten them). The server heartbeats every ~10s and a
+// 45s gap marks the runner OFFLINE, so the idle deadline sits between: long enough that a healthy
+// stream never trips it, short enough to reconnect before the server sweeps us.
+var (
+	wakeResponseHeaderTimeout = 30 * time.Second
+	wakeIdleTimeout           = 35 * time.Second
+)
+
+// wakeStreamClient returns a client for the long-lived SSE wake stream: NO overall Timeout (the
+// stream is meant to stay open) but it REUSES the base client's transport, so a custom proxy/TLS
+// applies to the wake stream too, plus a response-header deadline so a server that accepts the
+// connection but never responds is caught rather than hanging forever (#953).
+func (c *RunnerAPIClient) wakeStreamClient() *http.Client {
+	var tr *http.Transport
+	if base, ok := c.httpClient.Transport.(*http.Transport); ok && base != nil {
+		tr = base.Clone()
+	} else {
+		tr = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	tr.ResponseHeaderTimeout = wakeResponseHeaderTimeout
+	return &http.Client{Timeout: 0, Transport: tr}
+}
+
 func (c *RunnerAPIClient) StreamWake(ctx context.Context, onEvent func(WakeEvent)) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/runners/wake", nil)
+	// A context we cancel if the stream goes idle, so a silently half-open connection unblocks
+	// scanner.Scan() and the caller reconnects with backoff instead of hanging forever (#953).
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(streamCtx, "GET", c.baseURL+"/runners/wake", nil)
 	if err != nil {
 		return err
 	}
 	c.setRunnerHeaders(req)
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := (&http.Client{Timeout: 0}).Do(req)
+	resp, err := c.wakeStreamClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -217,8 +245,14 @@ func (c *RunnerAPIClient) StreamWake(ctx context.Context, onEvent func(WakeEvent
 		return fmt.Errorf("wake stream returned status %d", resp.StatusCode)
 	}
 
+	// Idle watchdog: if no line — data OR a heartbeat comment — arrives within wakeIdleTimeout, the
+	// connection is dead; cancel the request so the read unblocks and the caller reconnects.
+	idle := time.AfterFunc(wakeIdleTimeout, cancel)
+	defer idle.Stop()
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
+		idle.Reset(wakeIdleTimeout)
 		// SSE: "data: …" lines carry events; ":" comments are heartbeats (ignored).
 		if ev, ok := parseWakeLine(scanner.Text()); ok {
 			onEvent(ev)
