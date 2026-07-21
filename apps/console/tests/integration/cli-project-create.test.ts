@@ -106,6 +106,32 @@ describeIfDb("CLI project create — shared front-door core parity (#904)", () =
 		expect(edges[0]?.parent_id).toBe(ORG);
 	});
 
+	it("honors an explicit placement_mode on the default env — the value flows from input, not a literal", async () => {
+		const db = getServiceDb();
+		const { project } = await db.transaction((tx) =>
+			insertProjectWithDefaultFabric(tx, {
+				project_name: `p-${randomUUID()}`,
+				region: "westeurope",
+				iac_version: "1.11.4",
+				environment_stage: "production",
+				placement_mode: "vcluster",
+				owner: USER,
+				orgId: ORG,
+			}),
+		);
+
+		const envs = await db
+			.select()
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.project_id, project.id));
+		const prod = envs.find((e) => e.is_default);
+		const preview = envs.find((e) => !e.is_default);
+		// The default env's placement came from the input (un-hardcoded)...
+		expect(prod?.placement_mode).toBe("vcluster");
+		// ...while Preview stays `namespace` on the same Fabric (structural, not a user choice).
+		expect(preview?.placement_mode).toBe("namespace");
+	});
+
 	it("rolls the whole create back on a mid-transaction failure — no orphaned project", async () => {
 		const db = getServiceDb();
 		const doomedName = `rollback-${randomUUID()}`;

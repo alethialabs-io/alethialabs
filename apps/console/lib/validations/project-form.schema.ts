@@ -5,6 +5,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { slugify } from "@/lib/slug";
 import {
+	placementMode,
 	projectCaches,
 	projectCluster,
 	projectContainerRegistries,
@@ -185,6 +186,9 @@ const projectSchema = projectsInsert
 		// M1: environment_stage moved off the projects table; the form still captures the
 		// project's INITIAL environment (createProject turns it into the default env row).
 		environment_stage: z.enum(["development", "staging", "production"]),
+		// The default (Production) env's placement onto its first Fabric. Optional — createProject
+		// defaults it to `dedicated` (the new Fabric's owner). The placement selector (#844) sets it.
+		placement_mode: z.enum(placementMode.enumValues).optional(),
 	});
 
 const networkSchema = networkInsert

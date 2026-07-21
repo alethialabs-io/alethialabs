@@ -6,6 +6,7 @@ import type { Tx } from "@/lib/db";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import {
 	type EnvironmentStage,
+	type PlacementMode,
 	type Project,
 	projectEnvironments,
 	projectFabrics,
@@ -28,6 +29,12 @@ export interface CreateProjectCoreInput {
 	iac_version: string;
 	/** Seeds the default Fabric's name AND the default (Production) environment's name + stage. */
 	environment_stage: EnvironmentStage;
+	/** The default (Production) environment's placement onto its first Fabric. Optional so the value
+	 *  flows from the create front door (UI #844 / CLI) rather than a literal; defaults to `dedicated`
+	 *  — a new project's first env OWNS the Fabric it provisions, so `dedicated` is the sensible
+	 *  default (placing the first env as `namespace`/`vcluster` would leave the new Fabric with no
+	 *  cluster owner). Preview is always `namespace` on that same Fabric. */
+	placement_mode?: PlacementMode;
 	/** The creating user id — stamped on every row. */
 	owner: string;
 	/** The ACTIVE ORG id — rows belong to the org, not the creating user (they diverge under EE). */
@@ -102,8 +109,9 @@ export async function insertProjectWithDefaultFabric(
 		.returning({ id: projectFabrics.id });
 	if (!defaultFabric) throw new Error("Failed to create default Fabric");
 
-	// Project creation owns the Production + Preview invariant: the default env is a dedicated
-	// placement on the new Fabric; Preview is namespace-placed on that same Fabric.
+	// Project creation owns the Production + Preview invariant: the default env's placement comes from
+	// the input (defaulting to `dedicated` — the new Fabric's owner); Preview is namespace-placed on
+	// that same Fabric.
 	const [defaultEnv, previewEnv] = await tx
 		.insert(projectEnvironments)
 		.values([
@@ -117,7 +125,7 @@ export async function insertProjectWithDefaultFabric(
 				is_default: true,
 				region: input.region,
 				fabric_id: defaultFabric.id,
-				placement_mode: "dedicated",
+				placement_mode: input.placement_mode ?? "dedicated",
 			},
 			{
 				project_id: project.id,
