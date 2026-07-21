@@ -213,7 +213,11 @@ func (i *InfracostCLI) RunInfracost(planFile string, env []string) (*CostBreakdo
 	}
 	breakdownJSONPath := filepath.Join(tempDir, "infracost_breakdown.json")
 
-	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s", i.binaryPath, planFile, breakdownJSONPath)
+	// binaryPath, planFile and breakdownJSONPath are interpolated into a `bash -c` command string;
+	// shell-quote each so a path containing shell metacharacters can't inject (command-injection
+	// guard, #944). planFile is caller-supplied, so this is the value that matters most.
+	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s",
+		utils.ShellQuote(i.binaryPath), utils.ShellQuote(planFile), utils.ShellQuote(breakdownJSONPath))
 	if err := executeCommand(breakdownCmd, ".", env, nil, nil); err != nil {
 		return nil, fmt.Errorf("infracost breakdown failed: %w", err)
 	}

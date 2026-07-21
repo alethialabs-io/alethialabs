@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	alethiaaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
@@ -15,6 +16,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"gopkg.in/yaml.v3"
 )
+
+// k8sNameRe is the RFC-1123 DNS-label charset kubernetes enforces on namespaces. Apply
+// interpolates the namespace into a `bash -c` command string, so we fail closed on anything
+// that isn't a valid label rather than let it reach the shell (mirrors argocd.k8sNameRe).
+var k8sNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 var executeCommand = utils.ExecuteCommand
 
@@ -127,7 +133,13 @@ func execSelfPath() string {
 }
 
 func (k *K8sCLI) Apply(namespace, manifest string, env map[string]string, logger *utils.Logger) error {
-	cmd := fmt.Sprintf("kubectl apply -n %s -f %s", namespace, manifest)
+	// namespace and manifest are interpolated into a `bash -c` command string. Fail closed on a
+	// namespace that isn't an RFC-1123 DNS label, and shell-quote the manifest path, so neither can
+	// smuggle shell metacharacters into the executed command (command-injection guard, #944).
+	if !k8sNameRe.MatchString(namespace) {
+		return fmt.Errorf("refusing to apply: namespace %q is not a valid RFC-1123 DNS label", namespace)
+	}
+	cmd := fmt.Sprintf("kubectl apply -n %s -f %s", namespace, utils.ShellQuote(manifest))
 	logger.Info(fmt.Sprintf("Running kubectl apply command for %s", manifest), "k8s")
 
 	serverDryRunCmd := cmd + " --dry-run=server"

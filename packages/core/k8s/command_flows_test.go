@@ -234,11 +234,42 @@ func TestK8sCLIApplyCommandSequencing(t *testing.T) {
 			t.Fatalf("Apply: %v", err)
 		}
 		want := []string{
-			"kubectl apply -n prod -f app.yaml --dry-run=server",
-			"kubectl apply -n prod -f app.yaml",
+			"kubectl apply -n prod -f 'app.yaml' --dry-run=server",
+			"kubectl apply -n prod -f 'app.yaml'",
 		}
 		if strings.Join(commands, "\n") != strings.Join(want, "\n") {
 			t.Fatalf("commands = %#v, want %#v", commands, want)
+		}
+	})
+
+	t.Run("injectable namespace is rejected before any command runs", func(t *testing.T) {
+		var commands []string
+		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+			commands = append(commands, command)
+			return nil
+		}
+		err := (&K8sCLI{}).Apply("default; touch /tmp/pwned", "app.yaml", nil, utils.NewLogger(nil, ""))
+		if err == nil || !strings.Contains(err.Error(), "not a valid RFC-1123 DNS label") {
+			t.Fatalf("Apply with injectable namespace error = %v, want rejection", err)
+		}
+		if len(commands) != 0 {
+			t.Fatalf("commands = %#v, want none (must fail closed before executing)", commands)
+		}
+	})
+
+	t.Run("injectable manifest path is shell-quoted", func(t *testing.T) {
+		var commands []string
+		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+			commands = append(commands, command)
+			return nil
+		}
+		evil := "app.yaml; touch /tmp/pwned"
+		err := (&K8sCLI{DryRun: true}).Apply("default", evil, nil, utils.NewLogger(nil, ""))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(commands) != 1 || !strings.Contains(commands[0], utils.ShellQuote(evil)) {
+			t.Fatalf("commands = %#v, want manifest shell-quoted", commands)
 		}
 	})
 

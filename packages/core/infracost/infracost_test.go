@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
 func resetInfracostSeams(t *testing.T) {
@@ -221,10 +223,47 @@ func TestRunInfracostExecutesBreakdownAndParsesOutput(t *testing.T) {
 	if len(gotEnv) != 1 || gotEnv[0] != "A=B" {
 		t.Fatalf("env = %#v, want [A=B]", gotEnv)
 	}
-	for _, want := range []string{versionedBinary, "breakdown", "--path tfplan.json", "--format json", "--out-file temp/infracost_breakdown.json"} {
+	// Paths are shell-quoted to close the command-injection surface (#944).
+	for _, want := range []string{versionedBinary, "breakdown", "--path 'tfplan.json'", "--format json", "--out-file 'temp/infracost_breakdown.json'"} {
 		if !strings.Contains(gotCommand, want) {
 			t.Fatalf("command %q does not contain %q", gotCommand, want)
 		}
+	}
+}
+
+// TestRunInfracostShellQuotesPlanPath asserts a plan path with shell metacharacters is
+// single-quoted into the command string rather than interpreted by the shell (#944).
+func TestRunInfracostShellQuotesPlanPath(t *testing.T) {
+	resetInfracostSeams(t)
+	t.Chdir(t.TempDir())
+
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	versionedBinary, err := filepath.Abs(filepath.Join("bin", "infracost_v0.10.0"))
+	if err != nil {
+		t.Fatalf("abs binary: %v", err)
+	}
+	if err := os.WriteFile(versionedBinary, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+
+	var gotCommand string
+	executeCommand = func(command string, _ string, _ []string, _, _ io.Writer) error {
+		gotCommand = command
+		if err := os.WriteFile(filepath.Join("temp", "infracost_breakdown.json"), []byte(sampleBreakdown), 0644); err != nil {
+			return fmt.Errorf("write breakdown: %w", err)
+		}
+		return nil
+	}
+
+	// A malicious plan path: without quoting, `$(...)` would be command-substituted by bash.
+	evil := "tfplan.json; $(touch /tmp/pwned)"
+	if _, err := NewInfracostCLI("v0.10.0", "token").RunInfracost(evil, nil); err != nil {
+		t.Fatalf("RunInfracost: %v", err)
+	}
+	if !strings.Contains(gotCommand, utils.ShellQuote(evil)) {
+		t.Fatalf("plan path not shell-quoted in command %q", gotCommand)
 	}
 }
 
