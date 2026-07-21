@@ -155,12 +155,9 @@ func TestNearestCacheTierUnknownProvider(t *testing.T) {
 }
 
 // TestNearestCacheTierAtLeast encodes the CORRECT behavior promised by the doc comment
-// ("closest to (and, when possible, at least) the requested size"). It is skipped
-// because the implementation minimizes absolute distance only and will under-provision:
-// a 6 GB request on GCP (tiers 1/4/10/35) returns M2 (4 GB, below the request) instead
-// of M3 (10 GB). See findings: NearestCacheTier ignores its "at least" guarantee.
+// ("closest to (and, when possible, at least) the requested size"): a 6 GB request on GCP
+// (tiers 1/4/10/35) must round UP to M3 (10 GB), never down to M2 (4 GB). Fixed in #999.
 func TestNearestCacheTierAtLeast(t *testing.T) {
-	t.Skip("known bug (#999): NearestCacheTier picks nearest by |diff| and ignores its doc's 'when possible, at least' guarantee — under-provisions")
 	c := MustLoad()
 	got, ok := c.NearestCacheTier("gcp", 6)
 	if !ok || got.Value != "M3" {
@@ -168,14 +165,20 @@ func TestNearestCacheTierAtLeast(t *testing.T) {
 	}
 }
 
-// TestNearestCacheTierCurrentBehavior documents the resolver's ACTUAL nearest-by-distance
-// behavior for a request that sits between two tiers, so the miss/tie path is exercised
-// without asserting the buggy under-provisioning as correct.
-func TestNearestCacheTierCurrentBehavior(t *testing.T) {
+// TestNearestCacheTierRoundsUpAndFallsBack exercises the between-tiers round-up and the
+// no-tier-large-enough fallback to the largest available (#999).
+func TestNearestCacheTierRoundsUpAndFallsBack(t *testing.T) {
 	c := MustLoad()
-	// GCP tiers 1/4/10/35: 5 GB is nearest to M2 (4 GB, dist 1) vs M3 (10 GB, dist 5).
-	got, ok := c.NearestCacheTier("gcp", 5)
-	if !ok || got.Value != "M2" {
-		t.Errorf("gcp cache ~5GB = %q (ok=%v), want M2 (nearest by distance)", got.Value, ok)
+	// GCP tiers 1/4/10/35: 5 GB rounds UP to M3 (smallest tier >= 5), never down to M2.
+	if got, ok := c.NearestCacheTier("gcp", 5); !ok || got.Value != "M3" {
+		t.Errorf("gcp cache ~5GB = %q (ok=%v), want M3 (round up, never under-provision)", got.Value, ok)
+	}
+	// An exact match returns that tier: 4 GB -> M2.
+	if got, ok := c.NearestCacheTier("gcp", 4); !ok || got.Value != "M2" {
+		t.Errorf("gcp cache 4GB = %q (ok=%v), want M2 (exact)", got.Value, ok)
+	}
+	// Bigger than every tier -> fall back to the largest (M4 = 35 GB).
+	if got, ok := c.NearestCacheTier("gcp", 1000); !ok || got.Value != "M4" {
+		t.Errorf("gcp cache 1000GB = %q (ok=%v), want M4 (largest fallback)", got.Value, ok)
 	}
 }
