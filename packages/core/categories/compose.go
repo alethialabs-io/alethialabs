@@ -173,6 +173,21 @@ func registryItems(vc *types.ProjectConfig) []providerItem {
 	return out
 }
 
+// DominantRegistryPullSecret returns the name of the imagePullSecret the project's selected pluggable
+// container registry creates (dockerhub/ghcr/…), or "" when the registry is native/none. The name is
+// the dominant registry provider's slug + "-pull" — the convention every credential-based registry
+// module uses for its dockerconfigjson secret (dockerhub → "dockerhub-pull"). The provisioner attaches
+// this to generated app pods (manifests.Options.ImagePullSecrets) so a private pull authenticates;
+// without it the secret the registry module creates is orphaned. Kept in lockstep with each registry
+// module's `secret_name` — if that convention changes, change it here too.
+func DominantRegistryPullSecret(vc *types.ProjectConfig) string {
+	slug, _ := dominantProvider(registryItems(vc), io.Discard, "registry")
+	if !IsPluggable(slug) {
+		return ""
+	}
+	return slug + "-pull"
+}
+
 // dominantProvider picks the single pluggable provider for a homogeneous-MVP
 // category and returns its items. Logs a warning if selections are mixed.
 func dominantProvider(items []providerItem, log io.Writer, category string) (string, []ComponentItem) {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -50,14 +51,22 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// (holding no password) instead of the ExternalSecret path. Off → every credential facet keeps
 	// the existing password path unchanged.
 	keylessOn := os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
+	// A private, non-native registry connector (dockerhub/ghcr/…) creates a dockerconfigjson pull
+	// secret; attach it to every generated app pod so the kubelet can actually authenticate the pull.
+	// "" (native/none) → no imagePullSecrets rendered (public image / own-account ECR-GAR-AR node auth).
+	var pullSecrets []string
+	if s := categories.DominantRegistryPullSecret(vc); s != "" {
+		pullSecrets = []string{s}
+	}
 	mopts := manifests.Options{
-		Namespace:     appNamespace,
-		Domain:        vc.DNS.DomainName,
-		Outputs:       strOutputs,
-		Provider:      string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
-		KeylessDBAuth: keylessOn,
-		Databases:     vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
-		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
+		Namespace:        appNamespace,
+		Domain:           vc.DNS.DomainName,
+		Outputs:          strOutputs,
+		Provider:         string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
+		KeylessDBAuth:    keylessOn,
+		Databases:        vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
+		RunnerImage:      os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
+		ImagePullSecrets: pullSecrets,
 	}
 	apps, skipped := manifests.FromServices(vc.Services, mopts)
 	for _, reason := range skipped {
