@@ -43,6 +43,7 @@
 		"@ai-sdk/openai": "3.0.82",
 		"@ai-sdk/provider": "3.0.13",
 		"@ai-sdk/react": "^3.0.210",
+		"@alicloud/ecs20140526": "^7.9.2",
 		"@alicloud/openapi-client": "^0.4.15",
 		"@alicloud/tea-util": "^1.4.11",
 		"@alicloud/vpc20160428": "^7.2.2",
