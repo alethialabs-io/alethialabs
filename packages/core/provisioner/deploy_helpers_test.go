@@ -307,3 +307,42 @@ func TestAttachReceiptNoopsWithoutReport(t *testing.T) {
 		t.Fatalf("unexpected direct ArgocdApp: %q", status.ArgocdApp)
 	}
 }
+
+// TestGitTokenValues asserts the collector gathers the apps-repo token plus every non-empty
+// per-repo BYO token (and drops empties) so all of them can be redacted from error output (#948).
+func TestGitTokenValues(t *testing.T) {
+	got := gitTokenValues("apps-tok", map[string]string{
+		"https://github.com/a/b":  "byo-1",
+		"https://gitlab.com/c/d":  "byo-2",
+		"https://example.com/e/f": "", // no token for this repo — must be skipped
+	})
+	want := map[string]bool{"apps-tok": true, "byo-1": true, "byo-2": true}
+	if len(got) != len(want) {
+		t.Fatalf("gitTokenValues = %#v, want the 3 non-empty tokens", got)
+	}
+	for _, tok := range got {
+		if !want[tok] {
+			t.Errorf("unexpected token %q", tok)
+		}
+	}
+
+	// Empty apps token is dropped too; no tokens → empty (not nil-panic).
+	if got := gitTokenValues("", nil); len(got) != 0 {
+		t.Errorf("gitTokenValues empty = %#v, want none", got)
+	}
+}
+
+// TestGitopsFailureRedactsAllTokens asserts a BYO per-repo token embedded in a wiring error is
+// scrubbed from the persisted GitopsStatus.Error, not just the apps-repo token (#948).
+func TestGitopsFailureRedactsAllTokens(t *testing.T) {
+	byoTok := "glpat-byosecret"
+	err := errors.New("clone https://x-access-token:" + byoTok + "@gitlab.com/acme/chart failed")
+	gs := gitopsFailure(true, "https://github.com/acme/apps", "byo_charts", err,
+		gitTokenValues("apps-tok", map[string]string{"https://gitlab.com/acme/chart": byoTok})...)
+	if strings.Contains(gs.Error, byoTok) {
+		t.Fatalf("BYO token survived in GitopsStatus.Error: %q", gs.Error)
+	}
+	if !strings.Contains(gs.Error, "[REDACTED]") {
+		t.Errorf("want [REDACTED] marker, got %q", gs.Error)
+	}
+}

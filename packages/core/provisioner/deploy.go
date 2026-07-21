@@ -140,10 +140,26 @@ type PlanResult struct {
 	GitopsStatus *argocd.GitopsStatus
 }
 
+// gitTokenValues collects every non-empty git token in play — the apps-repo GitAccessToken and each
+// per-repo BYO token — for passing to the token-redactor so none can survive in a job-log/result
+// error string (#948).
+func gitTokenValues(appsToken string, repoTokens map[string]string) []string {
+	out := make([]string, 0, len(repoTokens)+1)
+	if appsToken != "" {
+		out = append(out, appsToken)
+	}
+	for _, t := range repoTokens {
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // gitopsFailure builds the GitopsStatus for a GitOps-wiring hard-fail: which step died
 // plus a token-SANITIZED error message (the metadata scrub is key-based, so a tokened
 // git URL inside the value must be redacted here, before it crosses result.json).
-func gitopsFailure(requested bool, appsRepo, step string, err error, token string) *argocd.GitopsStatus {
+func gitopsFailure(requested bool, appsRepo, step string, err error, tokens ...string) *argocd.GitopsStatus {
 	mode := "direct"
 	if requested {
 		mode = "gitops"
@@ -153,7 +169,7 @@ func gitopsFailure(requested bool, appsRepo, step string, err error, token strin
 		AppsRepo:   appsRepo,
 		ArgocdApp:  argocd.UserAppsApplicationName,
 		FailedStep: step,
-		Error:      argocd.SanitizeGitopsError(err, token),
+		Error:      argocd.SanitizeGitopsError(err, tokens...),
 	}
 }
 
@@ -760,7 +776,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// message) on the partial result — the sandbox writes result.json even on error,
 		// so the console can show an actionable GitOps failure, not just a failed job.
 		gitopsFailed := func(step string, err error) *argocd.GitopsStatus {
-			return gitopsFailure(gitopsRequested, vc.Repositories.AppsDestinationRepo, step, err, params.GitAccessToken)
+			// Redact EVERY git token that could appear in the message — the apps-repo token and every
+			// BYO per-repo token — not just GitAccessToken (#948).
+			return gitopsFailure(gitopsRequested, vc.Repositories.AppsDestinationRepo, step, err,
+				gitTokenValues(params.GitAccessToken, params.GitRepoTokens)...)
 		}
 
 		setStage("argocd")

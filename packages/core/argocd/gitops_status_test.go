@@ -102,6 +102,37 @@ func TestSanitizeGitopsError(t *testing.T) {
 	if got := SanitizeGitopsError(errors.New("plain failure"), ""); got != "plain failure" {
 		t.Errorf("empty-token sanitize = %q", got)
 	}
+	// No tokens at all is a no-op.
+	if got := SanitizeGitopsError(errors.New("plain failure")); got != "plain failure" {
+		t.Errorf("no-token sanitize = %q", got)
+	}
+}
+
+// TestSanitizeGitopsErrorMultipleTokens asserts every supplied token — apps-repo AND per-repo BYO —
+// is redacted from a single error string; the redactor only knows the values it's given (#948).
+func TestSanitizeGitopsErrorMultipleTokens(t *testing.T) {
+	appsTok := "ghp_appsrepotoken"
+	byoTok := "glpat-byorepotoken"
+	err := errors.New("clone https://x-access-token:" + byoTok + "@gitlab.com/acme/chart failed; apps token " + appsTok + " also present")
+	got := SanitizeGitopsError(err, appsTok, byoTok)
+	if strings.Contains(got, appsTok) || strings.Contains(got, byoTok) {
+		t.Fatalf("a token survived multi-token sanitization: %q", got)
+	}
+	if strings.Count(got, "[REDACTED]") != 2 {
+		t.Errorf("want both tokens redacted, got %q", got)
+	}
+}
+
+// TestRedactTokens covers the standalone redactor: empty inputs are no-ops, non-empty tokens
+// are replaced, and empty strings in the list are skipped (never redacting the whole message).
+func TestRedactTokens(t *testing.T) {
+	if got := RedactTokens("nothing to redact"); got != "nothing to redact" {
+		t.Errorf("no tokens = %q", got)
+	}
+	// The empty token must be skipped (not match-everything); only "X" is redacted.
+	if got := RedactTokens("a secret X here", "", "X"); got != "a secret [REDACTED] here" {
+		t.Errorf("empty token must be skipped: %q", got)
+	}
 }
 
 // TestGitopsStatusJSONShape locks the wire shape the console's zod schema
