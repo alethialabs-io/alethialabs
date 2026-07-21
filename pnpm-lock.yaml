@@ -183,6 +183,9 @@ importers:
       '@ai-sdk/react':
         specifier: ^3.0.210
         version: 3.0.210(react@19.2.3)(zod@4.4.3)
+      '@alicloud/ecs20140526':
+        specifier: ^7.9.2
+        version: 7.9.2
       '@alicloud/openapi-client':
         specifier: ^0.4.15
         version: 0.4.15
@@ -1102,6 +1105,9 @@ packages:
 
   '@alicloud/darabonba-string@1.0.3':
     resolution: {integrity: sha512-NyWwrU8cAIesWk3uHL1Q7pTDTqLkCI/0PmJXC4/4A0MFNAZ9Ouq0iFBsRqvfyUujSSM+WhYLuTfakQXiVLkTMA==}
+
+  '@alicloud/ecs20140526@7.9.2':
+    resolution: {integrity: sha512-Uc80zFE1JJ3bN+UDDeSFvlyEPS1+8MQHTu3ditzeVtPt5i+yfsAkhsz1BcDLf//Xd2z024e2NsVWWEuup3zhnA==}
 
   '@alicloud/endpoint-util@0.0.1':
     resolution: {integrity: sha512-+pH7/KEXup84cHzIL6UJAaPqETvln4yXlD9JzlrqioyCSaWxbug5FUobsiI6fuUOpw5WwoB3fWAtGbFnJ1K3Yg==}
@@ -10823,6 +10829,13 @@ snapshots:
   '@alicloud/darabonba-string@1.0.3':
     dependencies:
       '@alicloud/tea-typescript': 1.8.0
+    transitivePeerDependencies:
+      - supports-color
+
+  '@alicloud/ecs20140526@7.9.2':
+    dependencies:
+      '@alicloud/openapi-core': 1.0.7
+      '@darabonba/typescript': 1.0.4
     transitivePeerDependencies:
       - supports-color
 
