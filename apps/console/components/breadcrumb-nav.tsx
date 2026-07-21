@@ -29,8 +29,8 @@ export function BreadcrumbNav({ items }: { items: BreadcrumbSegment[] }) {
 						{i > 0 && <BreadcrumbSeparator />}
 						<BreadcrumbItem>
 							{i < items.length - 1 && item.href ? (
-								<BreadcrumbLink asChild>
-									<Link href={item.href}>{item.label}</Link>
+								<BreadcrumbLink render={<Link href={item.href} />}>
+									{item.label}
 								</BreadcrumbLink>
 							) : (
 								<BreadcrumbPage>{item.label}</BreadcrumbPage>
