@@ -230,25 +230,25 @@ func TestRenderBuildJob_TrailingNewline(t *testing.T) {
 	}
 }
 
-// TestRenderBuildJob_LongNameLabelBound documents the DNS-1123 length bound the
-// renderer does NOT enforce. Kubernetes label values (and the Job name) are capped
-// at 63 chars; dns1123 never truncates, so a long service name yields a manifest
-// the API server rejects at apply time. Skipped pending a length cap in dns1123.
+// TestRenderBuildJob_LongNameLabelBound asserts the DNS-1123 length bound the renderer now
+// enforces (#1001): kubernetes caps resource names and label values at 63 chars, so an 80-char
+// service name must be truncated so the rendered "build-<name>" (name + label values) still fits.
 func TestRenderBuildJob_LongNameLabelBound(t *testing.T) {
-	t.Skip("known bug (#1001): dns1123 does not cap length to 63; 'build-'+long name overflows the k8s label/name limit")
 	svc := repoService()
 	svc.Name = strings.Repeat("a", 80)
 	y, err := RenderBuildJob(svc, fullOpts())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Correct behavior: the rendered metadata.name (build-<name>) must be a valid
-	// DNS-1123 label (<=63 chars).
+	// The rendered metadata.name and every label value must be a valid DNS-1123 label (<=63 chars).
 	for _, line := range strings.Split(y, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "name: build-") {
-			val := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "name:"))
-			if len(val) > 63 {
-				t.Errorf("job name %q exceeds the 63-char DNS-1123 label limit", val)
+		trimmed := strings.TrimSpace(line)
+		for _, key := range []string{"name:", "app.kubernetes.io/name:", "alethia.io/build-service:"} {
+			if strings.HasPrefix(trimmed, key) {
+				val := strings.TrimSpace(strings.TrimPrefix(trimmed, key))
+				if len(val) > 63 {
+					t.Errorf("%s %q exceeds the 63-char DNS-1123 limit (%d)", key, val, len(val))
+				}
 			}
 		}
 	}
