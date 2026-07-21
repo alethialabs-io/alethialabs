@@ -362,7 +362,6 @@ describe("destroyRunner", () => {
 				region: "us-east-1",
 				cloud_provider: "aws",
 				image_tag: "v1",
-				runner_token: "deploy-tok",
 			},
 		},
 	};
@@ -385,7 +384,8 @@ describe("destroyRunner", () => {
 			job_type: "DESTROY_RUNNER",
 			status: "QUEUED",
 		});
-		expect(jobValues.config_snapshot.runner_token).toBe("deploy-tok");
+		// DESTROY carries no real token — the runner uses a placeholder tfvar (#945).
+		expect(jobValues.config_snapshot.runner_token).toBe("");
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 
@@ -429,17 +429,17 @@ describe("updateRunner", () => {
 				region: "us-east-1",
 				cloud_provider: "aws",
 				image_tag: "v1",
-				runner_token: "deploy-tok",
 			},
 		},
 	};
 
-	it("queues an UPDATE_RUNNER job pinned to the latest release version", async () => {
+	it("queues an UPDATE_RUNNER job pinned to the latest release + re-mints the token", async () => {
 		mock.queue.push(
 			[runnerRow], // runner lookup
 			[{ provider: "aws" }], // identity lookup
 			[], // no active lifecycle job for this runner
 			[{ version: "3.4.5" }], // latest release
+			[], // token_hash rotation update
 			[{ id: "job-up" }], // job insert
 		);
 		const res = await updateRunner("r-up");
@@ -454,6 +454,10 @@ describe("updateRunner", () => {
 			status: "QUEUED",
 		});
 		expect(jobValues.config_snapshot.image_tag).toBe("3.4.5");
+		// A fresh token is minted and handed to the job; only its hash is persisted (#945).
+		expect(generateRunnerToken).toHaveBeenCalledTimes(1);
+		expect(jobValues.config_snapshot.runner_token).toBe("tok-plain");
+		expect(mock.setSpy).toHaveBeenCalledWith({ token_hash: "tok-hash" });
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 
@@ -466,7 +470,7 @@ describe("updateRunner", () => {
 		await expect(updateRunner("r-up")).rejects.toThrow(/already in progress/);
 	});
 
-	it("refuses when the deploy config has no runner token", async () => {
+	it("succeeds without a stored token — the token is re-minted, not read from at rest (#945)", async () => {
 		mock.queue.push(
 			[
 				{
@@ -477,8 +481,15 @@ describe("updateRunner", () => {
 				},
 			],
 			[{ provider: "aws" }],
+			[], // no active lifecycle job
+			[{ version: "3.4.5" }], // latest release
+			[], // token_hash rotation update
+			[{ id: "job-up" }], // job insert
 		);
-		await expect(updateRunner("r-up")).rejects.toThrow(/missing deploy token/);
+		const res = await updateRunner("r-up");
+		expect(res).toEqual({ jobId: "job-up" });
+		const jobValues = mock.valuesSpy.mock.calls[0][0];
+		expect(jobValues.config_snapshot.runner_token).toBe("tok-plain");
 	});
 
 	it("throws when there are no runner releases", async () => {

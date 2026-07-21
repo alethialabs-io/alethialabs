@@ -415,11 +415,12 @@ export async function destroyRunner(
 	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
 
+		// DESTROY needs no runner token: the runner's destroy path uses a placeholder tfvar and never
+		// authenticates as the target, so we pass none (the token is no longer persisted, #945).
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
 			deployConfig,
 			identity?.provider,
-			{ runner_token: deployConfig.runner_token },
 		);
 
 		const [job] = await tx
@@ -451,12 +452,12 @@ export async function updateRunner(runnerId: string) {
 		runnerId,
 	);
 
-	if (!deployConfig.runner_token)
-		throw new Error(
-			"Runner is missing deploy token — re-deploy required to enable updates",
-		);
-
 	await assertJobQuotaAllowed(actor.orgId);
+
+	// UPDATE re-deploys the runner container, so mint a FRESH token and store only its hash — the
+	// live plaintext is handed to this job once and never persisted at rest (#945). This also rotates
+	// the credential on every update, invalidating the previous one.
+	const { token: newToken, hash: newTokenHash } = generateRunnerToken();
 
 	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
@@ -469,12 +470,17 @@ export async function updateRunner(runnerId: string) {
 
 		if (!latestRelease) throw new Error("No runner releases found");
 
+		await tx
+			.update(runners)
+			.set({ token_hash: newTokenHash })
+			.where(eq(runners.id, runnerId));
+
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
 			deployConfig,
 			identity?.provider,
 			{
-				runner_token: deployConfig.runner_token,
+				runner_token: newToken,
 				image_tag: latestRelease.version,
 			},
 		);
