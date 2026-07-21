@@ -12,6 +12,7 @@ export * from "./ai-credit-grant";
 export * from "./ai-usage";
 export * from "./identities";
 export * from "./cloud-inventory";
+export * from "./cloud-capabilities";
 export * from "./projects";
 export * from "./project-components";
 export * from "./project-environments";

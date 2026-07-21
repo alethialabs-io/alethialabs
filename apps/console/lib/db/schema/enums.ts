@@ -325,6 +325,32 @@ export const cloudIdentityStatus = pgEnum("cloud_identity_status", [
 	"failed",
 ]);
 
+// Per-tenant cloud capabilities catalog (epic #928 / wave:capabilities). Whether THIS account can
+// actually launch an enumerated offering. Tri-state, mirroring packages/core/verify's honest
+// `not_evaluable`: quota is not uniformly knowable read-only (Hetzner has no queryable project quota;
+// AWS is only knowable at family-class vCPU grain). `not_evaluable` = availability known, quota unknown
+// — NEVER imply green. Availability is design-time GUIDANCE, never a hard gate (the #918 fail-open rule).
+export const capabilityLaunchable = pgEnum("capability_launchable", [
+	"launchable",
+	"not_launchable",
+	"not_evaluable",
+]);
+// Normalized reason behind a `launchable` verdict — a finite, provider-neutral lexicon (per the
+// finite-known-values-are-enums rule) so the one provider-echoed field the pickers render is a bounded
+// enum, never attacker-influenceable free text. Providers map their native signals onto these:
+// Azure restrictions[] reasonCode (NotAvailableForSubscription/QuotaId), Alibaba StatusCategory
+// (SoldOut/Closed*), AWS family-class ListServiceQuotas, Hetzner /datacenters available/supported.
+export const capabilityLaunchableReason = pgEnum("capability_launchable_reason", [
+	"available", // offered and (where knowable) has quota headroom
+	"region_not_offered", // the type/service is not offered in this region
+	"quota_zero", // the account's quota for this (family-class) is 0
+	"sku_restricted", // Azure QuotaId / offer restriction on this SKU
+	"not_available_for_subscription", // Azure NotAvailableForSubscription
+	"sold_out", // Alibaba SoldOut / capacity closed
+	"capacity_blocked", // Hetzner supported-but-not-available (capacity)
+	"quota_unknown", // availability known, quota not queryable read-only (Hetzner; AWS per-type grain)
+]);
+
 // Alerting (dataroom/spec/mvp/25-alerting-notifications.md). Delivery channels, event
 // sources, severity, and the deliveries-ledger lifecycle.
 export const alertChannelType = pgEnum("alert_channel_type", [
@@ -472,6 +498,10 @@ export type AlertSeverity = (typeof alertSeverity.enumValues)[number];
 export type CredentialScope = (typeof credentialScope.enumValues)[number];
 export type CloudIdentityStatus =
 	(typeof cloudIdentityStatus.enumValues)[number];
+export type CapabilityLaunchable =
+	(typeof capabilityLaunchable.enumValues)[number];
+export type CapabilityLaunchableReason =
+	(typeof capabilityLaunchableReason.enumValues)[number];
 export type ConnectorHealthKind =
 	(typeof connectorHealthKind.enumValues)[number];
 export type ConnectorHealthStatus =

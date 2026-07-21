@@ -55,6 +55,10 @@ export const cloudIdentities = pgTable(
 		missing_permissions: text().array().default([]),
 		// When the server-side asset inventory for this connection last completed a full sweep.
 		inventory_synced_at: timestamp({ withTimezone: true }),
+		// When the per-tenant capabilities catalog (regions/instance-types) last completed a full sweep
+		// for this connection (epic #928). Doubles as the change-detection DIRTY SENTINEL: an
+		// invalidation event NULLs it so the next sweep tick treats the slice as due (no extra column).
+		capabilities_synced_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
