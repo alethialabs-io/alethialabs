@@ -6,6 +6,7 @@ import { lookup } from "@/lib/typed-object";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	ArrowRight,
+	Boxes,
 	Check,
 	GitBranch,
 	Loader2,
@@ -101,7 +102,8 @@ interface CreateProjectFormProps {
 	platformConfigured: Record<string, boolean>;
 	/** Whether bring-your-own Helm charts are enabled (server flag) — shows the "start from a chart" path. */
 	byoHelmEnabled?: boolean;
-	/** Whether bring-your-own IaC is enabled (server flag) — consumed by the scratch-card lane. */
+	/** Whether bring-your-own IaC is enabled (server flag) — shows the "start from an OpenTofu
+	 * module" on-ramp (create → land on the canvas with the ByoIacDialog open). */
 	byoIacEnabled?: boolean;
 }
 
@@ -123,12 +125,14 @@ export function CreateProjectForm({
 	extraSetup,
 	platformConfigured,
 	byoHelmEnabled,
+	byoIacEnabled,
 }: CreateProjectFormProps) {
 	const router = useRouter();
 	const { openUpgrade } = useUpgradeSheet();
 	const [creating, setCreating] = useState(false);
 	const [creatingEmpty, setCreatingEmpty] = useState(false);
 	const [creatingFromChart, setCreatingFromChart] = useState(false);
+	const [creatingFromIac, setCreatingFromIac] = useState(false);
 	const [launching, setLaunching] = useState(false);
 
 	const cloudConnect: CloudConnectResult = useCloudConnect({
@@ -277,8 +281,39 @@ export function CreateProjectForm({
 		}
 	};
 
+	/** Creates a blank project, then lands on its canvas with the "attach an IaC source" flow open —
+	 * the repo-first on-ramp (seed a project from an OpenTofu module). The source coords are collected
+	 * on the canvas via the shared ByoIacDialog (which the ?attachIac param auto-opens). */
+	const onCreateFromIac = async () => {
+		if (!(await form.trigger("project_name"))) {
+			form.setFocus("project_name");
+			return;
+		}
+		const projectName = form.getValues("project_name");
+		const region = DEFAULT_REGION.aws;
+		setCreatingFromIac(true);
+		try {
+			const { project } = await createProject(
+				buildEmptyCreateInput({
+					projectName,
+					defaultEnvironment: {
+						name: "production",
+						stage: "production",
+						region,
+					},
+				}),
+			);
+			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachIac=1`);
+		} catch (err) {
+			toast.error(
+				err instanceof Error ? err.message : "Failed to create project.",
+			);
+			setCreatingFromIac(false);
+		}
+	};
+
 	const slugPreview = slugify(name) || "project";
-	const busy = creating || creatingEmpty || creatingFromChart;
+	const busy = creating || creatingEmpty || creatingFromChart || creatingFromIac;
 
 	return (
 		<div className="mx-auto w-full max-w-3xl space-y-8 pb-20">
@@ -389,6 +424,37 @@ export function CreateProjectForm({
 						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
 							Start from a git repo — Alethia deploys and governs it on your
 							cluster via ArgoCD.
+						</span>
+					</span>
+					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</button>
+			)}
+
+			{/* ===== start from an OpenTofu module (repo-first on-ramp) ===== */}
+			{byoIacEnabled && (
+				<button
+					type="button"
+					onClick={() => void onCreateFromIac()}
+					disabled={busy}
+					className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
+				>
+					<span className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
+						{creatingFromIac ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : (
+							<Boxes className="size-4" />
+						)}
+					</span>
+					<span className="min-w-0 flex-1">
+						<span className="flex items-center gap-2 text-[14px] font-medium text-foreground">
+							Bring your own IaC
+							<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">
+								New
+							</span>
+						</span>
+						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
+							Start from a git repo — Alethia plans, verifies, and applies your
+							OpenTofu module on your cluster.
 						</span>
 					</span>
 					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
