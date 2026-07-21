@@ -1,0 +1,108 @@
+---
+title: Fabrics & Placement
+description: How an environment is decoupled from its cluster — placed onto a Fabric as a namespace, a virtual cluster, or a dedicated cluster.
+---
+
+# Fabrics & Placement
+
+Most tools tie an environment to a cluster one-to-one: one `staging`, one cluster. Alethia
+decouples the two. An **environment** is *where you deliver* (a target for your apps). A **Fabric**
+is *the infrastructure that hosts it* (a control plane, a network, shared add-ons, its own OpenTofu
+state). A **Placement** connects them — it says *how* an environment sits on a Fabric.
+
+This decoupling lets several environments share one Fabric, so a preview or a `dev` target costs a
+namespace instead of a whole cluster. This page explains the model. For the wider entity graph, start
+with the [Domain Model](/concepts/domain-model).
+
+## The three parts
+
+<Mermaid chart={`
+flowchart TD
+  Env["environment<br/>(project_environments)"] -->|placement_mode| Place{"Placement"}
+  Place -->|dedicated| FabA["Fabric A<br/>(project_fabrics)"]
+  Place -->|namespace / vcluster| FabB["Fabric B<br/>(shared)"]
+  FabA --> ClusterA["cluster (1:1)"]
+  FabB --> ClusterB["cluster (shared)"]
+`} />
+
+- An **environment** (`project_environments`) is a delivery target — `production`, `staging`, a
+  preview. It owns its delivered apps and its managed data.
+- A **Fabric** (`project_fabrics`) is the infrastructure unit: a control plane plus its network,
+  cluster-scoped shared add-ons (ingress, `cert-manager`, ArgoCD), and **its own OpenTofu state**. A
+  project owns one or more Fabrics. A Fabric can be Alethia-templated or
+  [bring-your-own IaC](/concepts/bring-your-own-iac).
+- A **Placement** is how an environment sits on a Fabric. It is the `placement_mode` column on
+  `project_environments`, plus the `fabric_id` that names the host Fabric.
+
+## Placement modes
+
+An environment is placed in one of three modes. They form an isolation ladder — each tier isolates
+more, and costs more.
+
+| Mode | What the environment gets | Isolation | Cost |
+|---|---|---|---|
+| `namespace` | A Kubernetes namespace on a **shared** Fabric cluster | Soft — same nodes and API server as its neighbors, bounded by `ResourceQuota`, `LimitRange`, `NetworkPolicy`, and Pod Security Admission | Lowest |
+| `vcluster` | A **virtual cluster** on a shared Fabric cluster — its own API server, custom resources, and Kubernetes version | Medium — an isolated control plane, but workloads still run on shared nodes | Medium |
+| `dedicated` | The environment **owns its Fabric** one-to-one — a whole cluster | Hard — a separate cluster | Highest |
+
+<Callout type="warn">
+  **Tell the truth about the tier.** A `vcluster` isolates the control plane, not the nodes — its
+  pods share the host's nodes, so it is not a hard boundary for untrusted node-level workloads. Use
+  `dedicated` when you need a hard boundary. `namespace` is for same-trust targets like `dev` and
+  previews.
+</Callout>
+
+<Callout type="info">
+  **Maturity.** `dedicated` is generally available — it is the classic environment-owns-a-cluster
+  shape and the default for a new project's first environment. `namespace` and `vcluster` are rolling
+  out; a deploy fails closed on those modes until the runner path for them lands, so the product never
+  silently ignores the placement you chose.
+</Callout>
+
+## Infrastructure and delivery split apart
+
+Because a Fabric owns the infrastructure and an environment owns the delivery, the two halves track
+separately:
+
+- **Infrastructure is per-Fabric.** Each Fabric has its own OpenTofu state (see
+  [OpenTofu State](/concepts/terraform-state)), and infrastructure [drift](/concepts/drift) is
+  detected per Fabric with `tofu plan -refresh-only`.
+- **Delivery is per-environment.** Each environment's apps sync through
+  [ArgoCD](/concepts/gitops-argocd) into its own destination — the namespace for a `namespace` or
+  `vcluster` placement, the whole cluster for a `dedicated` one. Delivery drift is an ArgoCD concern,
+  not an OpenTofu one.
+- **Managed data is per-environment.** A database or cache belongs to the environment that declares
+  it, even when several environments share a Fabric.
+
+A `dedicated` environment is the simple case of this model: it owns its Fabric, so its infrastructure
+and delivery collapse back to one cluster — the same behavior as before Fabrics existed.
+
+## How it maps to the schema
+
+<Files>
+  <Folder name="apps/console/lib/db/schema" defaultOpen>
+    <File name="project-fabrics.ts — the Fabric (name, cloud identity, region, status)" />
+    <File name="project-environments.ts — fabric_id, placement_mode, namespace, lifecycle" />
+    <File name="project-components.ts — project_cluster (one per Fabric)" />
+    <File name="enums.ts — placement_mode: namespace | vcluster | dedicated" />
+  </Folder>
+</Files>
+
+Key columns on `project_environments`:
+
+| Column | Meaning |
+|---|---|
+| `fabric_id` | The Fabric this environment is placed onto. |
+| `placement_mode` | `namespace` \| `vcluster` \| `dedicated`. Empty is treated as `dedicated`. |
+| `namespace` | The Kubernetes namespace for a `namespace` or `vcluster` placement. Ignored for `dedicated`. |
+
+A cluster belongs to its **Fabric**, not to a single environment — a partial unique index
+(`project_cluster_fabric_id_key`) keeps at most one cluster per Fabric, shared by every environment
+placed on it.
+
+## Related
+
+- [Domain Model](/concepts/domain-model) — the full entity graph.
+- [Promotions](/concepts/promotions) — moving a change `staging → production`, placement-agnostic.
+- [OpenTofu State](/concepts/terraform-state) — the per-Fabric state key.
+- [GitOps with ArgoCD](/concepts/gitops-argocd) — how delivery reaches each environment.
