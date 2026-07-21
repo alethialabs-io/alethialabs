@@ -4,7 +4,15 @@
 
 import { lookup } from "@/lib/typed-object";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Check, GitBranch, Loader2, Sparkles, Users } from "lucide-react";
+import {
+	ArrowRight,
+	Boxes,
+	Check,
+	GitBranch,
+	Loader2,
+	Sparkles,
+	Users,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -13,7 +21,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { addEnvironment, createProject } from "@/app/server/actions/projects";
+import { createProject } from "@/app/server/actions/projects";
 import { track } from "@/lib/analytics/track";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ContainerPlatformSelector } from "@/components/design-project/container-platform-selector";
@@ -67,7 +75,10 @@ const formSchema = z.object({
 		.string()
 		.min(1, "Project name is required")
 		.max(50)
-		.refine((v) => slugify(v).length > 0, "Enter at least one letter or number"),
+		.refine(
+			(v) => slugify(v).length > 0,
+			"Enter at least one letter or number",
+		),
 	template: z.string().min(1),
 	// The selected cloud provider slug; connectedness/provisionability enforced at submit.
 	cloud: z.string().min(1, "Select a connected cloud"),
@@ -91,6 +102,9 @@ interface CreateProjectFormProps {
 	platformConfigured: Record<string, boolean>;
 	/** Whether bring-your-own Helm charts are enabled (server flag) — shows the "start from a chart" path. */
 	byoHelmEnabled?: boolean;
+	/** Whether bring-your-own IaC is enabled (server flag) — shows the "start from an OpenTofu
+	 * module" on-ramp (create → land on the canvas with the ByoIacDialog open). */
+	byoIacEnabled?: boolean;
 }
 
 /**
@@ -111,12 +125,14 @@ export function CreateProjectForm({
 	extraSetup,
 	platformConfigured,
 	byoHelmEnabled,
+	byoIacEnabled,
 }: CreateProjectFormProps) {
 	const router = useRouter();
 	const { openUpgrade } = useUpgradeSheet();
 	const [creating, setCreating] = useState(false);
 	const [creatingEmpty, setCreatingEmpty] = useState(false);
 	const [creatingFromChart, setCreatingFromChart] = useState(false);
+	const [creatingFromIac, setCreatingFromIac] = useState(false);
 	const [launching, setLaunching] = useState(false);
 
 	const cloudConnect: CloudConnectResult = useCloudConnect({
@@ -135,7 +151,12 @@ export function CreateProjectForm({
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
 		mode: "onChange",
-		defaultValues: { prompt: "", project_name: "", template: "ai-workloads", cloud: "" },
+		defaultValues: {
+			prompt: "",
+			project_name: "",
+			template: "ai-workloads",
+			cloud: "",
+		},
 	});
 
 	const name = form.watch("project_name");
@@ -161,7 +182,9 @@ export function CreateProjectForm({
 	/** Creates the project from the manual path (Production + Preview envs) and opens its design page. */
 	const onCreate = form.handleSubmit(async (values) => {
 		if (!provider) {
-			toast.error("Pick a connected cloud that supports provisioning (AWS, GCP or Azure).");
+			toast.error(
+				"Pick a connected cloud that supports provisioning (AWS, GCP or Azure).",
+			);
 			return;
 		}
 		const selected = cloudIntegrations.find((i) => i.slug === values.cloud);
@@ -182,20 +205,20 @@ export function CreateProjectForm({
 					template: TEMPLATE_BY_PLATFORM[values.template] ?? "standard",
 					provider,
 					cloudIdentityId,
-					defaultEnvironment: { name: "production", stage: "production", region },
+					defaultEnvironment: {
+						name: "production",
+						stage: "production",
+						region,
+					},
 				}),
 			);
-			await addEnvironment(project.id, {
-				name: "preview",
-				stage: "development",
-				region,
-			});
-
 			track("project_created", { provider, template: values.template });
 			toast.success("Project created — start designing.");
 			router.push(projectHref(orgSlug, project.slug ?? ""));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to create project.");
+			toast.error(
+				err instanceof Error ? err.message : "Failed to create project.",
+			);
 			setCreating(false);
 		}
 	});
@@ -210,19 +233,19 @@ export function CreateProjectForm({
 			const { project } = await createProject(
 				buildEmptyCreateInput({
 					projectName,
-					defaultEnvironment: { name: "production", stage: "production", region },
+					defaultEnvironment: {
+						name: "production",
+						stage: "production",
+						region,
+					},
 				}),
 			);
-			await addEnvironment(project.id, {
-				name: "preview",
-				stage: "development",
-				region,
-			});
-
 			toast.success("Empty project created — start designing.");
 			router.push(projectHref(orgSlug, project.slug ?? ""));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to create project.");
+			toast.error(
+				err instanceof Error ? err.message : "Failed to create project.",
+			);
 			setCreatingEmpty(false);
 		}
 	};
@@ -242,19 +265,55 @@ export function CreateProjectForm({
 			const { project } = await createProject(
 				buildEmptyCreateInput({
 					projectName,
-					defaultEnvironment: { name: "production", stage: "production", region },
+					defaultEnvironment: {
+						name: "production",
+						stage: "production",
+						region,
+					},
 				}),
 			);
-			await addEnvironment(project.id, { name: "preview", stage: "development", region });
 			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachChart=1`);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to create project.");
+			toast.error(
+				err instanceof Error ? err.message : "Failed to create project.",
+			);
 			setCreatingFromChart(false);
 		}
 	};
 
+	/** Creates a blank project, then lands on its canvas with the "attach an IaC source" flow open —
+	 * the repo-first on-ramp (seed a project from an OpenTofu module). The source coords are collected
+	 * on the canvas via the shared ByoIacDialog (which the ?attachIac param auto-opens). */
+	const onCreateFromIac = async () => {
+		if (!(await form.trigger("project_name"))) {
+			form.setFocus("project_name");
+			return;
+		}
+		const projectName = form.getValues("project_name");
+		const region = DEFAULT_REGION.aws;
+		setCreatingFromIac(true);
+		try {
+			const { project } = await createProject(
+				buildEmptyCreateInput({
+					projectName,
+					defaultEnvironment: {
+						name: "production",
+						stage: "production",
+						region,
+					},
+				}),
+			);
+			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachIac=1`);
+		} catch (err) {
+			toast.error(
+				err instanceof Error ? err.message : "Failed to create project.",
+			);
+			setCreatingFromIac(false);
+		}
+	};
+
 	const slugPreview = slugify(name) || "project";
-	const busy = creating || creatingEmpty || creatingFromChart;
+	const busy = creating || creatingEmpty || creatingFromChart || creatingFromIac;
 
 	return (
 		<div className="mx-auto w-full max-w-3xl space-y-8 pb-20">
@@ -306,7 +365,9 @@ export function CreateProjectForm({
 						/>
 					</div>
 					<div className="flex items-center justify-between px-4 pb-3">
-						<span className="font-mono text-[10px] text-muted-foreground">⌘ + ⏎</span>
+						<span className="font-mono text-[10px] text-muted-foreground">
+							⌘ + ⏎
+						</span>
 						<Button
 							type="button"
 							size="icon"
@@ -361,7 +422,39 @@ export function CreateProjectForm({
 							</span>
 						</span>
 						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
-							Start from a git repo — Alethia deploys and governs it on your cluster via ArgoCD.
+							Start from a git repo — Alethia deploys and governs it on your
+							cluster via ArgoCD.
+						</span>
+					</span>
+					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</button>
+			)}
+
+			{/* ===== start from an OpenTofu module (repo-first on-ramp) ===== */}
+			{byoIacEnabled && (
+				<button
+					type="button"
+					onClick={() => void onCreateFromIac()}
+					disabled={busy}
+					className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
+				>
+					<span className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
+						{creatingFromIac ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : (
+							<Boxes className="size-4" />
+						)}
+					</span>
+					<span className="min-w-0 flex-1">
+						<span className="flex items-center gap-2 text-[14px] font-medium text-foreground">
+							Bring your own IaC
+							<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">
+								New
+							</span>
+						</span>
+						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
+							Start from a git repo — Alethia plans, verifies, and applies your
+							OpenTofu module on your cluster.
 						</span>
 					</span>
 					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
@@ -381,7 +474,10 @@ export function CreateProjectForm({
 			<section className="space-y-4">
 				<BlockHead num="01" title="Project" />
 				<div className="space-y-2">
-					<Label htmlFor="project_name" className="text-xs text-muted-foreground">
+					<Label
+						htmlFor="project_name"
+						className="text-xs text-muted-foreground"
+					>
 						Project name
 					</Label>
 					<Input
@@ -486,7 +582,9 @@ function BlockHead({
 			<span className="font-mono text-[11px] text-muted-foreground">{num}</span>
 			<h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
 			<span className="h-px flex-1 self-center bg-border" />
-			{hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
+			{hint && (
+				<span className="text-[11px] text-muted-foreground">{hint}</span>
+			)}
 		</div>
 	);
 }

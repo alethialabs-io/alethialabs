@@ -10,10 +10,7 @@ import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
-import {
-	type EnvTransitionContext,
-	transitionEnv,
-} from "@/lib/db/env-status";
+import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
 import {
 	auditLog,
 	cloudIdentities,
@@ -47,7 +44,10 @@ import {
 	clusterAdmins,
 	topicSubscriptions,
 } from "@/lib/db/schema";
-import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
+import {
+	resolveAddOnInstall,
+	resolveByoChartInstall,
+} from "@/lib/addons/catalog";
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
@@ -72,7 +72,11 @@ import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
+import {
+	pickFreeSlug,
+	RESERVED_PROJECT_CHILD_SLUGS,
+	slugify,
+} from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
 import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
 
@@ -133,7 +137,8 @@ function unsupportedKindGateError(
 		secret:
 			"there is no cloud secret store — deploy the Vault marketplace add-on (or connect an external secret store) and reference its secrets from your workloads, or move the stack to a cloud with a managed secret store",
 	};
-	const detail = hint[kind] ?? `"${kind}" components have no provisioning path here`;
+	const detail =
+		hint[kind] ?? `"${kind}" components have no provisioning path here`;
 	return new Error(
 		`Component "${name}" (${kind}) can't be provisioned on ${cloud}: ${detail}.`,
 	);
@@ -190,7 +195,9 @@ export interface CreateProjectInput {
 	topics?: ComponentInsert<typeof projectTopics.$inferInsert>[];
 	nosql_tables?: ComponentInsert<typeof projectNosqlTables.$inferInsert>[];
 	secrets?: ComponentInsert<typeof projectSecrets.$inferInsert>[];
-	storage_buckets?: ComponentInsert<typeof projectStorageBuckets.$inferInsert>[];
+	storage_buckets?: ComponentInsert<
+		typeof projectStorageBuckets.$inferInsert
+	>[];
 	container_registries?: Omit<
 		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
 		"repository_url"
@@ -251,7 +258,9 @@ async function writeComponents(
 		);
 	}
 	await tx.insert(projectDns).values({ ...base, ...data.dns });
-	await tx.insert(projectRepositories).values({ ...base, ...data.repositories });
+	await tx
+		.insert(projectRepositories)
+		.values({ ...base, ...data.repositories });
 	if (data.source_repos?.length)
 		await tx
 			.insert(projectSourceRepos)
@@ -329,9 +338,15 @@ async function clearComponents(
 	projectId: string,
 	environmentId: string,
 ) {
-	await tx.delete(projectNetwork).where(envScope(projectNetwork, projectId, environmentId));
-	await tx.delete(projectCluster).where(envScope(projectCluster, projectId, environmentId));
-	await tx.delete(projectDns).where(envScope(projectDns, projectId, environmentId));
+	await tx
+		.delete(projectNetwork)
+		.where(envScope(projectNetwork, projectId, environmentId));
+	await tx
+		.delete(projectCluster)
+		.where(envScope(projectCluster, projectId, environmentId));
+	await tx
+		.delete(projectDns)
+		.where(envScope(projectDns, projectId, environmentId));
 	await tx
 		.delete(projectRepositories)
 		.where(envScope(projectRepositories, projectId, environmentId));
@@ -341,13 +356,21 @@ async function clearComponents(
 	await tx
 		.delete(projectDatabases)
 		.where(envScope(projectDatabases, projectId, environmentId));
-	await tx.delete(projectCaches).where(envScope(projectCaches, projectId, environmentId));
-	await tx.delete(projectQueues).where(envScope(projectQueues, projectId, environmentId));
-	await tx.delete(projectTopics).where(envScope(projectTopics, projectId, environmentId));
+	await tx
+		.delete(projectCaches)
+		.where(envScope(projectCaches, projectId, environmentId));
+	await tx
+		.delete(projectQueues)
+		.where(envScope(projectQueues, projectId, environmentId));
+	await tx
+		.delete(projectTopics)
+		.where(envScope(projectTopics, projectId, environmentId));
 	await tx
 		.delete(projectNosqlTables)
 		.where(envScope(projectNosqlTables, projectId, environmentId));
-	await tx.delete(projectSecrets).where(envScope(projectSecrets, projectId, environmentId));
+	await tx
+		.delete(projectSecrets)
+		.where(envScope(projectSecrets, projectId, environmentId));
 	await tx
 		.delete(projectStorageBuckets)
 		.where(envScope(projectStorageBuckets, projectId, environmentId));
@@ -393,23 +416,56 @@ export async function createProject(data: CreateProjectInput) {
 
 		if (!project) throw new Error("Failed to create project");
 
-		// The project's default (and, for now, only) environment. `name` = the chosen
-		// stage value so the tofu/S3 state path matches the legacy single-env path. Its id
-		// scopes the component rows below (config is environment-scoped).
-		const [defaultEnv] = await tx
-			.insert(projectEnvironments)
+		// The first Fabric is the project-creation front door's infra unit. Project-level
+		// region/cloud stay populated for compatibility while downstream reads move to Fabric.
+		const [defaultFabric] = await tx
+			.insert(projectFabrics)
 			.values({
 				project_id: project.id,
 				user_id: owner,
 				org_id: project.org_id,
 				name: environment_stage,
-				stage: environment_stage,
-				status: "DRAFT",
-				is_default: true,
+				cloud_identity_id: projectFields.cloud_identity_id ?? null,
 				region: projectFields.region,
+				status: "DRAFT",
 			})
+			.returning({ id: projectFabrics.id });
+		if (!defaultFabric) throw new Error("Failed to create default Fabric");
+
+		// Project creation owns the Production + Preview invariant. The default env is a
+		// dedicated placement on the new Fabric; Preview is namespace-placed on that same Fabric.
+		const [defaultEnv, previewEnv] = await tx
+			.insert(projectEnvironments)
+			.values([
+				{
+					project_id: project.id,
+					user_id: owner,
+					org_id: project.org_id,
+					name: environment_stage,
+					stage: environment_stage,
+					status: "DRAFT",
+					is_default: true,
+					region: projectFields.region,
+					fabric_id: defaultFabric.id,
+					placement_mode: "dedicated",
+				},
+				{
+					project_id: project.id,
+					user_id: owner,
+					org_id: project.org_id,
+					name: "preview",
+					stage: "development",
+					status: "DRAFT",
+					is_default: false,
+					region: projectFields.region,
+					fabric_id: defaultFabric.id,
+					placement_mode: "namespace",
+					namespace: "preview",
+				},
+			])
 			.returning({ id: projectEnvironments.id });
-		if (!defaultEnv) throw new Error("Failed to create default environment");
+		if (!defaultEnv || !previewEnv)
+			throw new Error("Failed to create project environments");
 
 		// Authz hierarchy edge: project → org, so an org-wide grant flows down to this project. The
 		// parent is the ACTIVE ORG (= userId in community; a real org under EE) — pointing it at the
@@ -462,7 +518,10 @@ export async function updateProjectDesign(
 		// environment_stage seeds the default env at create time; not a project column.
 		const { environment_stage, ...projectFields } = data.project;
 		void environment_stage;
-		await tx.update(projects).set(projectFields).where(eq(projects.id, projectId));
+		await tx
+			.update(projects)
+			.set(projectFields)
+			.where(eq(projects.id, projectId));
 
 		// Reconcile THIS environment's components only (delete-then-insert within the tx);
 		// other environments of the project keep their own config.
@@ -536,7 +595,10 @@ export async function getProject(
 			.select()
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId))
-			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
+			.orderBy(
+				desc(projectEnvironments.is_default),
+				projectEnvironments.created_at,
+			);
 		const defaultEnv =
 			environments.find((e) => e.is_default) ?? environments[0] ?? null;
 		const activeEnv =
@@ -927,13 +989,19 @@ async function buildConfigSnapshot(
 					...(dns?.enabled
 						? [{ kind: "dns" as const, name: dns.domain_name ?? "dns" }]
 						: []),
-					...databases.map((d) => ({ kind: "database" as const, name: d.name })),
+					...databases.map((d) => ({
+						kind: "database" as const,
+						name: d.name,
+					})),
 					...caches.map((c) => ({ kind: "cache" as const, name: c.name })),
 					...queues.map((q) => ({ kind: "queue" as const, name: q.name })),
 					...topics.map((t) => ({ kind: "topic" as const, name: t.name })),
 					...nosqlTables.map((n) => ({ kind: "nosql" as const, name: n.name })),
 					...secrets.map((s) => ({ kind: "secret" as const, name: s.name })),
-					...storageBuckets.map((b) => ({ kind: "bucket" as const, name: b.name })),
+					...storageBuckets.map((b) => ({
+						kind: "bucket" as const,
+						name: b.name,
+					})),
 					...containerRegistries.map((r) => ({
 						kind: "registry" as const,
 						name: r.name,
@@ -1235,7 +1303,13 @@ async function buildConfigSnapshot(
 			git_access_token: "",
 		};
 
-		return { project, identity, environment, configSnapshot, iacSource: iacSource ?? null };
+		return {
+			project,
+			identity,
+			environment,
+			configSnapshot,
+			iacSource: iacSource ?? null,
+		};
 	});
 }
 
@@ -1381,34 +1455,45 @@ export async function planProject(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "plan");
+		await buildConfigSnapshot(
+			owner,
+			actor.orgId,
+			projectId,
+			environmentId,
+			"plan",
+		);
 	assertIacSourceQueueable(iacSource, "plan");
 
-	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values(signedJob({
-				user_id: owner,
-				org_id: actor.orgId,
-				project_id: projectId,
-				environment_id: environment.id,
-				cloud_identity_id: identity.id,
-				initiated_by: "user",
-				job_type: "PLAN",
-				config_snapshot: configSnapshot,
-				status: "QUEUED",
-				// New trace root for this provisioning operation (enqueue → claim → runner).
-				traceparent: newTraceparent(),
-				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			}))
-			.returning({ id: jobs.id });
+	const result = await withScope(
+		{ ownerId: owner, orgId: actor.orgId },
+		async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values(
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "PLAN",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						// New trace root for this provisioning operation (enqueue → claim → runner).
+						traceparent: newTraceparent(),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+				)
+				.returning({ id: jobs.id });
 
-		await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
-			orgId: actor.orgId,
-			projectId,
-		});
-		return { jobId: job.id };
-	});
+			await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
+				orgId: actor.orgId,
+				projectId,
+			});
+			return { jobId: job.id };
+		},
+	);
 
 	notifyScaler();
 	return result;
@@ -1419,7 +1504,9 @@ export async function planProject(
 function hasRepoSourcedServices(configSnapshot: {
 	services?: { source?: { kind?: string } | null }[];
 }): boolean {
-	return (configSnapshot.services ?? []).some((s) => s?.source?.kind === "repo");
+	return (configSnapshot.services ?? []).some(
+		(s) => s?.source?.kind === "repo",
+	);
 }
 
 /**
@@ -1459,39 +1546,48 @@ export async function buildProject(
 			"Builds run in the environment's own cluster — provision the infrastructure first.",
 		);
 
-	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values(signedJob({
-				user_id: owner,
-				org_id: actor.orgId,
+	const result = await withScope(
+		{ ownerId: owner, orgId: actor.orgId },
+		async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values(
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "BUILD",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						// New trace root for this build operation (enqueue → claim → runner).
+						traceparent: newTraceparent(),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+				)
+				.returning({ id: jobs.id });
+
+			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
+				orgId: actor.orgId,
+				projectId,
+			});
+
+			await tx.insert(auditLog).values({
 				project_id: projectId,
-				environment_id: environment.id,
-				cloud_identity_id: identity.id,
-				initiated_by: "user",
-				job_type: "BUILD",
-				config_snapshot: configSnapshot,
-				status: "QUEUED",
-				// New trace root for this build operation (enqueue → claim → runner).
-				traceparent: newTraceparent(),
-				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			}))
-			.returning({ id: jobs.id });
+				user_id: owner,
+				action: "PROVISIONED",
+				changes: {
+					job_id: job.id,
+					environment_id: environment.id,
+					job_type: "BUILD",
+				},
+			});
 
-		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
-			orgId: actor.orgId,
-			projectId,
-		});
-
-		await tx.insert(auditLog).values({
-			project_id: projectId,
-			user_id: owner,
-			action: "PROVISIONED",
-			changes: { job_id: job.id, environment_id: environment.id, job_type: "BUILD" },
-		});
-
-		return { jobId: job.id };
-	});
+			return { jobId: job.id };
+		},
+	);
 
 	notifyScaler();
 	return result;
@@ -1511,7 +1607,13 @@ export async function provisionProject(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "deploy");
+		await buildConfigSnapshot(
+			owner,
+			actor.orgId,
+			projectId,
+			environmentId,
+			"deploy",
+		);
 	assertIacSourceQueueable(iacSource, "deploy");
 
 	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
@@ -1525,22 +1627,80 @@ export async function provisionProject(
 		environment.status === "ACTIVE" &&
 		hasRepoSourcedServices(configSnapshot)
 	) {
-		const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
+		const result = await withScope(
+			{ ownerId: owner, orgId: actor.orgId },
+			async (tx) => {
+				const [job] = await tx
+					.insert(jobs)
+					.values(
+						signedJob({
+							user_id: owner,
+							org_id: actor.orgId,
+							project_id: projectId,
+							environment_id: environment.id,
+							cloud_identity_id: identity.id,
+							initiated_by: "user",
+							job_type: "BUILD",
+							config_snapshot: configSnapshot,
+							status: "QUEUED",
+							traceparent: newTraceparent(),
+							...(runnerId ? { assigned_runner_id: runnerId } : {}),
+						}),
+					)
+					.returning({ id: jobs.id });
+
+				await enqueueEnvTransition(
+					tx,
+					environment.id,
+					"enqueueDeploy",
+					job.id,
+					{
+						orgId: actor.orgId,
+						projectId,
+					},
+				);
+
+				await tx.insert(auditLog).values({
+					project_id: projectId,
+					user_id: owner,
+					action: "PROVISIONED",
+					changes: {
+						job_id: job.id,
+						environment_id: environment.id,
+						job_type: "BUILD",
+					},
+				});
+
+				return { jobId: job.id, jobType: "BUILD" as const };
+			},
+		);
+
+		notifyScaler();
+		return result;
+	}
+
+	const result = await withScope(
+		{ ownerId: owner, orgId: actor.orgId },
+		async (tx) => {
 			const [job] = await tx
 				.insert(jobs)
-				.values(signedJob({
-					user_id: owner,
-					org_id: actor.orgId,
-					project_id: projectId,
-					environment_id: environment.id,
-					cloud_identity_id: identity.id,
-					initiated_by: "user",
-					job_type: "BUILD",
-					config_snapshot: configSnapshot,
-					status: "QUEUED",
-					traceparent: newTraceparent(),
-					...(runnerId ? { assigned_runner_id: runnerId } : {}),
-				}))
+				.values(
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "DEPLOY",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						// New trace root for this provisioning operation (enqueue → claim → runner).
+						traceparent: newTraceparent(),
+						...(planJobId ? { plan_job_id: planJobId } : {}),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+				)
 				.returning({ id: jobs.id });
 
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
@@ -1552,50 +1712,12 @@ export async function provisionProject(
 				project_id: projectId,
 				user_id: owner,
 				action: "PROVISIONED",
-				changes: { job_id: job.id, environment_id: environment.id, job_type: "BUILD" },
+				changes: { job_id: job.id, environment_id: environment.id },
 			});
 
-			return { jobId: job.id, jobType: "BUILD" as const };
-		});
-
-		notifyScaler();
-		return result;
-	}
-
-	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values(signedJob({
-				user_id: owner,
-				org_id: actor.orgId,
-				project_id: projectId,
-				environment_id: environment.id,
-				cloud_identity_id: identity.id,
-				initiated_by: "user",
-				job_type: "DEPLOY",
-				config_snapshot: configSnapshot,
-				status: "QUEUED",
-				// New trace root for this provisioning operation (enqueue → claim → runner).
-				traceparent: newTraceparent(),
-				...(planJobId ? { plan_job_id: planJobId } : {}),
-				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			}))
-			.returning({ id: jobs.id });
-
-		await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
-			orgId: actor.orgId,
-			projectId,
-		});
-
-		await tx.insert(auditLog).values({
-			project_id: projectId,
-			user_id: owner,
-			action: "PROVISIONED",
-			changes: { job_id: job.id, environment_id: environment.id },
-		});
-
-		return { jobId: job.id };
-	});
+			return { jobId: job.id };
+		},
+	);
 
 	notifyScaler();
 	return result;
@@ -1625,26 +1747,31 @@ export async function queueDriftDetection(
 		environmentId,
 	);
 
-	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values(signedJob({
-				user_id: owner,
-				org_id: actor.orgId,
-				project_id: projectId,
-				environment_id: environment.id,
-				cloud_identity_id: identity.id,
-				initiated_by: "user",
-				job_type: "DETECT_DRIFT",
-				config_snapshot: configSnapshot,
-				status: "QUEUED",
-				// New trace root for this drift-detection operation (enqueue → claim → runner).
-				traceparent: newTraceparent(),
-				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			}))
-			.returning({ id: jobs.id });
-		return { jobId: job.id };
-	});
+	const result = await withScope(
+		{ ownerId: owner, orgId: actor.orgId },
+		async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values(
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "DETECT_DRIFT",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						// New trace root for this drift-detection operation (enqueue → claim → runner).
+						traceparent: newTraceparent(),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+				)
+				.returning({ id: jobs.id });
+			return { jobId: job.id };
+		},
+	);
 
 	notifyScaler();
 	return result;
@@ -1669,42 +1796,53 @@ export async function destroyProject(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(owner, actor.orgId, projectId, environmentId, "destroy");
+		await buildConfigSnapshot(
+			owner,
+			actor.orgId,
+			projectId,
+			environmentId,
+			"destroy",
+		);
 	assertIacSourceQueueable(iacSource, "destroy");
 
-	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values(signedJob({
-				user_id: owner,
-				org_id: actor.orgId,
+	const result = await withScope(
+		{ ownerId: owner, orgId: actor.orgId },
+		async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values(
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "DESTROY",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						// New trace root for this teardown operation (enqueue → claim → runner).
+						traceparent: newTraceparent(),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+				)
+				.returning({ id: jobs.id });
+
+			await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
+				orgId: actor.orgId,
+				projectId,
+			});
+
+			await tx.insert(auditLog).values({
 				project_id: projectId,
-				environment_id: environment.id,
-				cloud_identity_id: identity.id,
-				initiated_by: "user",
-				job_type: "DESTROY",
-				config_snapshot: configSnapshot,
-				status: "QUEUED",
-				// New trace root for this teardown operation (enqueue → claim → runner).
-				traceparent: newTraceparent(),
-				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			}))
-			.returning({ id: jobs.id });
+				user_id: owner,
+				action: "DESTROYED",
+				changes: { job_id: job.id, environment_id: environment.id },
+			});
 
-		await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
-			orgId: actor.orgId,
-			projectId,
-		});
-
-		await tx.insert(auditLog).values({
-			project_id: projectId,
-			user_id: owner,
-			action: "DESTROYED",
-			changes: { job_id: job.id, environment_id: environment.id },
-		});
-
-		return { jobId: job.id };
-	});
+			return { jobId: job.id };
+		},
+	);
 
 	notifyScaler();
 	return result;
@@ -1736,26 +1874,31 @@ export async function detectDrift(
 		environmentId,
 	);
 
-	const result = await withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values(signedJob({
-				user_id: owner,
-				org_id: actor.orgId,
-				project_id: projectId,
-				environment_id: environment.id,
-				cloud_identity_id: identity.id,
-				initiated_by: "user",
-				job_type: "DETECT_DRIFT",
-				config_snapshot: configSnapshot,
-				status: "QUEUED",
-				// New trace root for this drift-detection operation (enqueue → claim → runner).
-				traceparent: newTraceparent(),
-				...(runnerId ? { assigned_runner_id: runnerId } : {}),
-			}))
-			.returning({ id: jobs.id });
-		return { jobId: job.id };
-	});
+	const result = await withScope(
+		{ ownerId: owner, orgId: actor.orgId },
+		async (tx) => {
+			const [job] = await tx
+				.insert(jobs)
+				.values(
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "DETECT_DRIFT",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						// New trace root for this drift-detection operation (enqueue → claim → runner).
+						traceparent: newTraceparent(),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+				)
+				.returning({ id: jobs.id });
+			return { jobId: job.id };
+		},
+	);
 
 	notifyScaler();
 	return result;
@@ -1767,7 +1910,12 @@ export async function detectDrift(
 
 // Environment states that mean live (or in-flight) cloud infrastructure — a project can't be
 // deleted from under them; the environments must be destroyed first.
-const LIVE_ENV_STATUSES = new Set(["QUEUED", "PROVISIONING", "ACTIVE", "DESTROYING"]);
+const LIVE_ENV_STATUSES = new Set([
+	"QUEUED",
+	"PROVISIONING",
+	"ACTIVE",
+	"DESTROYING",
+]);
 
 /**
  * Permanently deletes a project record. Child rows (environments, components, promotions, drift)
@@ -2065,7 +2213,10 @@ export async function getProjectEnvironments(projectId: string) {
 			.select()
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId))
-			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
+			.orderBy(
+				desc(projectEnvironments.is_default),
+				projectEnvironments.created_at,
+			);
 		return { environments };
 	});
 }
@@ -2083,7 +2234,9 @@ export async function addEnvironment(
 	const name = slugify(input.name);
 	if (!name) throw new Error("Environment name is required");
 	if (RESERVED_PROJECT_CHILD_SLUGS.includes(name))
-		throw new Error(`"${name}" is reserved and can't be used as an environment name`);
+		throw new Error(
+			`"${name}" is reserved and can't be used as an environment name`,
+		);
 	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
@@ -2124,7 +2277,9 @@ export async function duplicateEnvironment(
 	const slug = slugify(name);
 	if (!slug) throw new Error("Environment name is required");
 	if (RESERVED_PROJECT_CHILD_SLUGS.includes(slug))
-		throw new Error(`"${slug}" is reserved and can't be used as an environment name`);
+		throw new Error(
+			`"${slug}" is reserved and can't be used as an environment name`,
+		);
 	// The base env's design (form shape = config only; provisioned outputs already stripped). Null
 	// when the base env has no design yet (an empty env) → the duplicate is created empty too.
 	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)
@@ -2161,8 +2316,7 @@ export async function duplicateEnvironment(
 			.returning();
 		if (!env) throw new Error("Failed to create environment");
 		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
-		if (baseConfig)
-			await writeComponents(tx, projectId, env.id, baseConfig);
+		if (baseConfig) await writeComponents(tx, projectId, env.id, baseConfig);
 		return { environment: env };
 	});
 }
@@ -2203,7 +2357,9 @@ export interface EnvConsistency {
  * marked per environment as present / differs / absent. `differs` = the component exists in more than
  * one env with a diverging *structural* signature (from `designInventory`).
  */
-export async function getEnvConsistency(projectId: string): Promise<EnvConsistency> {
+export async function getEnvConsistency(
+	projectId: string,
+): Promise<EnvConsistency> {
 	await authorize("view", { type: "project", id: projectId });
 	const { environments } = await getProjectEnvironments(projectId);
 	const designs = await Promise.all(
@@ -2231,7 +2387,10 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 		const m = new Map<string, string>();
 		for (const entry of inventory) {
 			const composite = `${entry.component_type}${entry.key}`;
-			keys.set(composite, { component_type: entry.component_type, key: entry.key });
+			keys.set(composite, {
+				component_type: entry.component_type,
+				key: entry.key,
+			});
 			m.set(composite, entry.sig);
 		}
 		sigByEnv.set(env.id, m);
@@ -2253,7 +2412,9 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 			return { component_type: meta.component_type, key: meta.key, perEnv };
 		})
 		.sort((a, b) =>
-			`${a.component_type}${a.key}`.localeCompare(`${b.component_type}${b.key}`),
+			`${a.component_type}${a.key}`.localeCompare(
+				`${b.component_type}${b.key}`,
+			),
 		);
 
 	return {
@@ -2263,7 +2424,10 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 }
 
 /** Deletes a non-default environment (the default is the project's anchor). */
-export async function deleteEnvironment(projectId: string, environmentId: string) {
+export async function deleteEnvironment(
+	projectId: string,
+	environmentId: string,
+) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
 		const [env] = await tx
@@ -2279,7 +2443,9 @@ export async function deleteEnvironment(projectId: string, environmentId: string
 		if (!env) throw new Error("Environment not found for this project");
 		if (env.is_default)
 			throw new Error("Cannot delete the project's default environment");
-		await tx.delete(projectEnvironments).where(eq(projectEnvironments.id, environmentId));
+		await tx
+			.delete(projectEnvironments)
+			.where(eq(projectEnvironments.id, environmentId));
 		return { success: true };
 	});
 }
@@ -2381,7 +2547,10 @@ export async function getProjects(): Promise<ProjectWithProvider[]> {
 		const rows = await tx
 			.select(projectSelect())
 			.from(projects)
-			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				cloudIdentities,
+				eq(projects.cloud_identity_id, cloudIdentities.id),
+			)
 			.leftJoin(
 				projectEnvironments,
 				and(
@@ -2464,7 +2633,10 @@ export async function queryProjects(
 		const rows = await tx
 			.select(projectSelect())
 			.from(projects)
-			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				cloudIdentities,
+				eq(projects.cloud_identity_id, cloudIdentities.id),
+			)
 			.leftJoin(
 				projectEnvironments,
 				and(
