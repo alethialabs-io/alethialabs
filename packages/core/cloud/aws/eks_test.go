@@ -86,3 +86,34 @@ func TestResolveEKSClusterConn_DescribeErrorPropagates(t *testing.T) {
 		t.Fatalf("err = %v, want a wrapped describe error (not ErrClusterNotReady)", err)
 	}
 }
+
+// The OIDC issuer is surfaced for the per-namespace IRSA path (#957) when present, and its ABSENCE is
+// best-effort — an ACTIVE cluster without a reported issuer still resolves (kubeconfig doesn't need it).
+func TestResolveEKSClusterConn_OIDCIssuer(t *testing.T) {
+	active := func(id *ekstypes.Identity) *ekstypes.Cluster {
+		return &ekstypes.Cluster{
+			Status:               ekstypes.ClusterStatusActive,
+			Arn:                  awssdk.String("arn:aws:eks:us-east-1:111:cluster/c"),
+			Endpoint:             awssdk.String("https://eks.example"),
+			CertificateAuthority: &ekstypes.Certificate{Data: awssdk.String("CA")},
+			Identity:             id,
+		}
+	}
+	conn, err := ResolveEKSClusterConn(context.Background(), fakeDescribeCluster{out: out(active(&ekstypes.Identity{
+		Oidc: &ekstypes.OIDC{Issuer: awssdk.String("https://oidc.eks.us-east-1.amazonaws.com/id/ABC")},
+	}))}, "c")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if conn.OIDCIssuer != "https://oidc.eks.us-east-1.amazonaws.com/id/ABC" {
+		t.Fatalf("OIDCIssuer = %q", conn.OIDCIssuer)
+	}
+	// No identity block → resolves fine, empty issuer (not an error).
+	conn2, err := ResolveEKSClusterConn(context.Background(), fakeDescribeCluster{out: out(active(nil))}, "c")
+	if err != nil {
+		t.Fatalf("unexpected error without identity: %v", err)
+	}
+	if conn2.OIDCIssuer != "" {
+		t.Fatalf("OIDCIssuer = %q, want empty", conn2.OIDCIssuer)
+	}
+}
