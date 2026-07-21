@@ -214,12 +214,13 @@ export function ElenchPanelEmpty({
 				<span className="text-[13px] text-foreground">Need more help?</span>
 				{supportHref && (
 					<Button
-						asChild
 						variant="outline"
 						size="xs"
 						className="rounded-none"
+						nativeButton={false}
+						render={<Link href={supportHref} />}
 					>
-						<Link href={supportHref}>Support</Link>
+						Support
 					</Button>
 				)}
 			</div>

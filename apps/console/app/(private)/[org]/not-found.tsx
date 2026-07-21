@@ -17,8 +17,8 @@ export default function OrgNotFound() {
 			title="Organization not found"
 			description="This organization doesn't exist, or you don't have access to it."
 			actions={
-				<Button asChild size="sm">
-					<Link href="/">Go home</Link>
+				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
+					Go home
 				</Button>
 			}
 		/>

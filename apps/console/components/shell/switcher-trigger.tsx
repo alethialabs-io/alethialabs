@@ -74,15 +74,14 @@ export function SwitcherTrigger({
 		return (
 			<div className="flex w-full items-center gap-1">
 				<Button
-					asChild
 					variant="ghost"
 					className="h-auto min-w-0 flex-1 justify-start gap-2.5 px-2.5 py-2"
+					nativeButton={false}
+					render={<Link href={href} />}
 				>
-					<Link href={href}>
-						{leading}
-						{labelBlock}
-						{badge}
-					</Link>
+					{leading}
+					{labelBlock}
+					{badge}
 				</Button>
 				<PopoverTrigger asChild>
 					<Button
