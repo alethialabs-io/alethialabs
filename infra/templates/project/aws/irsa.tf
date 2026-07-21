@@ -1,3 +1,10 @@
+# NOTE (#957): the roles below are CLUSTER-level IRSA, provisioned by tofu at Fabric creation and scoped
+# to specific control-plane KSAs (e.g. default:alethia-app). A `namespace`-placement tenant does NOT get
+# one of these — its per-namespace tenant identity is provisioned by the RUNNER via the IAM SDK at
+# deploy time (packages/core/cloud/aws/tenant_identity.go: a zero-perm role trusting
+# system:serviceaccount:<ns>:*), because the namespace-deploy path runs no tofu. GCP Workload-Identity /
+# Azure federated per-namespace parity is the documented #1013 follow-up.
+
 ##########################
 #IRSA for RDS IAM Auth   #
 ##########################
