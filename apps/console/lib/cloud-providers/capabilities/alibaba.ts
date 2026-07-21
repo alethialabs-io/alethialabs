@@ -29,6 +29,12 @@ import {
 } from "@/lib/db/schema";
 import { type AlibabaCredentials, assumeAlibabaRole } from "../session/alibaba";
 import { softRemoveUnseen } from "../inventory/upsert";
+import {
+	existingNativeIds,
+	hashSource,
+	recordRegionHashes,
+	regionDue,
+} from "./sync-state";
 import type { CapabilityIdentity } from "./types";
 
 const BOOTSTRAP_REGION = "cn-hangzhou";
@@ -192,6 +198,23 @@ export async function syncAlibabaCapabilities(
 			continue;
 		}
 
+		// The per-region stock status + region-wide vCPU quota are the change-detection input; they gate
+		// the batch upsert (the specs are one global call already fetched above).
+		const instanceHash = hashSource(status);
+		const quotaHash = hashSource(vcpuMax ?? null);
+		if (
+			!(await regionDue({
+				cloudIdentityId: identityId,
+				provider: "alibaba",
+				region,
+				instanceHash,
+				quotaHash,
+			}))
+		) {
+			seenTypes.push(...(await existingNativeIds(identityId, region)));
+			continue;
+		}
+
 		const now = new Date();
 		const rows = [...status].map(([type, st]) => {
 			seenTypes.push(type);
@@ -240,6 +263,13 @@ export async function syncAlibabaCapabilities(
 					},
 				});
 		}
+		await recordRegionHashes({
+			cloudIdentityId: identityId,
+			provider: "alibaba",
+			region,
+			instanceHash,
+			quotaHash,
+		});
 	}
 	await softRemoveUnseen("cloud_capability_instance_types", identityId, seenTypes);
 }

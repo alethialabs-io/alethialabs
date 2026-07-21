@@ -36,6 +36,12 @@ import {
 } from "@/lib/db/schema";
 import { assumeAwsRole } from "../session/aws";
 import { softRemoveUnseen } from "../inventory/upsert";
+import {
+	existingNativeIds,
+	hashSource,
+	recordRegionHashes,
+	regionDue,
+} from "./sync-state";
 import type { CapabilityIdentity } from "./types";
 
 const TIMEOUT_MS = 15_000;
@@ -211,16 +217,34 @@ export async function syncAwsCapabilities(
 	}
 	await softRemoveUnseen("cloud_capability_regions", identityId, seenRegions);
 
-	// Per region: offered types ∧ specs ∧ family-class quota → tri-state rows (batch upsert).
+	// Per region: offered types ∧ specs ∧ family-class quota → tri-state rows (batch upsert). The cheap
+	// signals (offered set + quota) are the change-detection input; they gate the expensive per-type specs
+	// fetch (`DescribeInstanceTypes`, ~700 types) + the upsert, which are skipped when neither has moved.
 	const seenTypes: string[] = [];
 	for (const region of regions) {
 		const client = ec2(region, root.credentials);
-		const [offered, specs, quotas] = await Promise.all([
+		const [offered, quotas] = await Promise.all([
 			offeredTypes(client),
-			instanceSpecs(client),
 			ec2QuotaValues(region, root.credentials),
 		]);
+		const instanceHash = hashSource(offered);
+		const quotaHash = hashSource(quotas);
+		if (
+			!(await regionDue({
+				cloudIdentityId: identityId,
+				provider: "aws",
+				region,
+				instanceHash,
+				quotaHash,
+			}))
+		) {
+			// Unchanged: keep this region's stored types in the seen set so the global-per-identity
+			// softRemoveUnseen doesn't remove a type offered only here.
+			seenTypes.push(...(await existingNativeIds(identityId, region)));
+			continue;
+		}
 
+		const specs = await instanceSpecs(client);
 		const now = new Date();
 		const rows = [...offered].map((type) => {
 			seenTypes.push(type);
@@ -273,6 +297,13 @@ export async function syncAwsCapabilities(
 					},
 				});
 		}
+		await recordRegionHashes({
+			cloudIdentityId: identityId,
+			provider: "aws",
+			region,
+			instanceHash,
+			quotaHash,
+		});
 	}
 	await softRemoveUnseen("cloud_capability_instance_types", identityId, seenTypes);
 }

@@ -22,6 +22,12 @@ import {
 	cloudCapabilityRegions,
 } from "@/lib/db/schema";
 import { softRemoveUnseen } from "../inventory/upsert";
+import {
+	existingNativeIds,
+	hashSource,
+	recordRegionHashes,
+	regionDue,
+} from "./sync-state";
 import type { CapabilityIdentity } from "./types";
 
 const HCLOUD_API = "https://api.hetzner.cloud/v1";
@@ -179,6 +185,23 @@ export async function syncHetznerCapabilities(
 
 	const seenTypes: string[] = [];
 	for (const [region, agg] of byRegion) {
+		// The available + supported server-type sets are the launch signal. Hetzner exposes no queryable
+		// project quota, so there is no quota axis — gate on instance_types only.
+		const instanceHash = hashSource({
+			available: agg.available,
+			supported: agg.supported,
+		});
+		if (
+			!(await regionDue({
+				cloudIdentityId: identityId,
+				provider: "hetzner",
+				region,
+				instanceHash,
+			}))
+		) {
+			seenTypes.push(...(await existingNativeIds(identityId, region)));
+			continue;
+		}
 		const now = new Date();
 		const rows = [...agg.supported].flatMap((id) => {
 			const spec = specById.get(id);
@@ -236,6 +259,12 @@ export async function syncHetznerCapabilities(
 					},
 				});
 		}
+		await recordRegionHashes({
+			cloudIdentityId: identityId,
+			provider: "hetzner",
+			region,
+			instanceHash,
+		});
 	}
 	await softRemoveUnseen("cloud_capability_instance_types", identityId, seenTypes);
 }

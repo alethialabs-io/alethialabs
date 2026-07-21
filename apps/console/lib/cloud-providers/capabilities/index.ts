@@ -19,6 +19,7 @@ import {
 	type CloudProvider,
 	cloudCapabilityInstanceTypes,
 	cloudCapabilityRegions,
+	cloudCapabilitySyncState,
 	cloudIdentities,
 } from "@/lib/db/schema";
 import { syncAlibabaCapabilities } from "./alibaba";
@@ -82,6 +83,12 @@ export async function purgeCloudCapabilities(
 	for (const table of CAPABILITY_TABLES) {
 		await db.delete(table).where(eq(table.cloud_identity_id, cloudIdentityId));
 	}
+	// Also drop the change-detection hashes (not a CAPABILITY_TABLES member — it has no `removed_at`, so it
+	// stays out of gcRemovedCapabilities). Otherwise a reconnect inherits stale hashes that would suppress
+	// the first re-enumeration until the TTL backstop.
+	await db
+		.delete(cloudCapabilitySyncState)
+		.where(eq(cloudCapabilitySyncState.cloud_identity_id, cloudIdentityId));
 }
 
 /** Garbage-collects soft-removed capability rows (an offering withdrawn in-cloud) older than the

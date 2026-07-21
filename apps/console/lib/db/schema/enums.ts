@@ -350,6 +350,15 @@ export const capabilityLaunchableReason = pgEnum("capability_launchable_reason",
 	"capacity_blocked", // Hetzner supported-but-not-available (capacity)
 	"quota_unknown", // availability known, quota not queryable read-only (Hetzner; AWS per-type grain)
 ]);
+// The change-detection axis a `cloud_capability_sync_state` row hashes (epic #928 / #938). The Tier-1
+// refresh sweep re-runs a lane, and the lane short-circuits the expensive per-region enumeration when the
+// axis's cheap source signature is unchanged: `instance_types` = the offered-type set (near-static, 24h
+// backstop); `quota` = the account's launch quota (a limit-increase ticket flips a verdict, so a shorter
+// sub-TTL). A finite, provider-neutral set (per the finite-known-values-are-enums rule).
+export const capabilitySyncAxis = pgEnum("capability_sync_axis", [
+	"instance_types",
+	"quota",
+]);
 
 // Alerting (dataroom/spec/mvp/25-alerting-notifications.md). Delivery channels, event
 // sources, severity, and the deliveries-ledger lifecycle.
@@ -503,6 +512,7 @@ export type CapabilityLaunchable =
 	(typeof capabilityLaunchable.enumValues)[number];
 export type CapabilityLaunchableReason =
 	(typeof capabilityLaunchableReason.enumValues)[number];
+export type CapabilitySyncAxis = (typeof capabilitySyncAxis.enumValues)[number];
 export type ConnectorHealthKind =
 	(typeof connectorHealthKind.enumValues)[number];
 export type ConnectorHealthStatus =

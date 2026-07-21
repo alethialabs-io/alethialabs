@@ -14,6 +14,19 @@ import type { CapabilityIdentity } from "@/lib/cloud-providers/capabilities/type
 const h = vi.hoisted(() => ({
 	inserted: [] as unknown[],
 	softRemoves: [] as string[],
+	seen: {} as Record<string, string[]>,
+	typesSends: 0,
+	due: true,
+	existingIds: [] as string[],
+}));
+
+// The Tier-1 gate (#938). Default: every region is due (so the existing verdict assertions run the full
+// enumeration unchanged); a test flips `h.due` to exercise the skip path.
+vi.mock("@/lib/cloud-providers/capabilities/sync-state", () => ({
+	hashSource: () => "h",
+	regionDue: vi.fn(async () => h.due),
+	recordRegionHashes: vi.fn(async () => {}),
+	existingNativeIds: vi.fn(async () => h.existingIds),
 }));
 
 vi.mock("@/lib/cloud-providers/session/aws", () => ({
@@ -25,8 +38,9 @@ vi.mock("@/lib/cloud-providers/session/aws", () => ({
 }));
 
 vi.mock("@/lib/cloud-providers/inventory/upsert", () => ({
-	softRemoveUnseen: vi.fn(async (table: string) => {
+	softRemoveUnseen: vi.fn(async (table: string, _id: string, seen: string[]) => {
 		h.softRemoves.push(table);
+		h.seen[table] = seen;
 	}),
 }));
 
@@ -76,6 +90,7 @@ vi.mock("@aws-sdk/client-ec2", () => {
 				};
 			}
 			if (cmd._t === "types") {
+				h.typesSends += 1;
 				return {
 					InstanceTypes: [
 						{
@@ -142,6 +157,10 @@ const identity: CapabilityIdentity = {
 beforeEach(() => {
 	h.inserted = [];
 	h.softRemoves = [];
+	h.seen = {};
+	h.typesSends = 0;
+	h.due = true;
+	h.existingIds = [];
 	vi.clearAllMocks();
 });
 
@@ -187,5 +206,16 @@ describe("syncAwsCapabilities", () => {
 				launchable_reason: "quota_unknown",
 			}),
 		);
+	});
+
+	it("skips the expensive DescribeInstanceTypes when the region is not due", async () => {
+		h.due = false;
+		h.existingIds = ["m5.large"]; // already stored for this region
+		await syncAwsCapabilities(identity);
+		// The expensive per-type specs call (DescribeInstanceTypes) must NOT run when nothing moved.
+		expect(h.typesSends).toBe(0);
+		// The skipped region's stored types are folded into the seen set so the global-per-identity
+		// softRemoveUnseen doesn't wrongly remove a type offered only there.
+		expect(h.seen.cloud_capability_instance_types).toContain("m5.large");
 	});
 });

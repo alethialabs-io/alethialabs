@@ -28,6 +28,7 @@ import {
 import {
 	capabilityLaunchable,
 	capabilityLaunchableReason,
+	capabilitySyncAxis,
 	cloudProvider,
 } from "./enums";
 import { cloudIdentities } from "./identities";
@@ -105,6 +106,39 @@ export const cloudCapabilityInstanceTypes = pgTable(
 	],
 );
 
+// ── Change-detection state — the Tier-1 hash gate (#938) ────────────────────────────
+// One row per (identity, provider, axis, region): the hash of that slice's cheap SOURCE signal at its last
+// full enumeration. The refresh sweep re-runs a lane; the lane recomputes the cheap signature (offered-type
+// set / launch quota) and, if the stored hash still matches AND the axis's TTL hasn't lapsed, SKIPS the
+// expensive per-region work (AWS `DescribeInstanceTypes`; a batch upsert on the account-wide clouds). This
+// is a control table, NOT part of the tenant-facing catalog — but it FKs to `cloud_identity`, so it rides
+// the same `owner_all` RLS loop (programmables.sql). `region` is NOT NULL (both Wave-1 axes are per-region);
+// a real value keeps the unique key from tripping Postgres's "NULLs are distinct" rule under onConflict.
+export const cloudCapabilitySyncState = pgTable(
+	"cloud_capability_sync_state",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		cloud_identity_id: uuid()
+			.notNull()
+			.references(() => cloudIdentities.id, { onDelete: "cascade" }),
+		provider: cloudProvider().notNull(),
+		axis: capabilitySyncAxis().notNull(),
+		region: text().notNull(),
+		// Deterministic sha256 of the axis's cheap source signal at the last successful enumeration.
+		source_hash: text().notNull(),
+		hashed_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [
+		unique("cloud_capability_sync_state_identity_axis_region_key").on(
+			t.cloud_identity_id,
+			t.provider,
+			t.axis,
+			t.region,
+		),
+		index("idx_cloud_capability_sync_state_identity").on(t.cloud_identity_id),
+	],
+);
+
 export type CloudCapabilityRegion = typeof cloudCapabilityRegions.$inferSelect;
 export type CloudCapabilityRegionInsert =
 	typeof cloudCapabilityRegions.$inferInsert;
@@ -112,3 +146,7 @@ export type CloudCapabilityInstanceType =
 	typeof cloudCapabilityInstanceTypes.$inferSelect;
 export type CloudCapabilityInstanceTypeInsert =
 	typeof cloudCapabilityInstanceTypes.$inferInsert;
+export type CloudCapabilitySyncState =
+	typeof cloudCapabilitySyncState.$inferSelect;
+export type CloudCapabilitySyncStateInsert =
+	typeof cloudCapabilitySyncState.$inferInsert;
