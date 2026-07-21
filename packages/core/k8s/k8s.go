@@ -56,7 +56,14 @@ func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 	if err != nil {
 		return err
 	}
-	kubeconfigPath := "temp/kubeconfig"
+	// A per-invocation temp dir (not the cwd-relative "temp/kubeconfig"), so concurrent jobs sharing
+	// a working directory can never clobber each other's kubeconfig — a wrong-cluster kubeconfig is a
+	// correctness + security hazard (#952).
+	kubeconfigDir, err := os.MkdirTemp("", "alethia-kubeconfig-*")
+	if err != nil {
+		return fmt.Errorf("failed to create kubeconfig directory: %w", err)
+	}
+	kubeconfigPath := filepath.Join(kubeconfigDir, "kubeconfig")
 
 	clusterConfig := map[string]interface{}{
 		"apiVersion": "v1",
@@ -108,10 +115,6 @@ func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 	data, err := yaml.Marshal(clusterConfig)
 	if err != nil {
 		return fmt.Errorf("failed to marshal kubeconfig: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
 	if err := os.WriteFile(kubeconfigPath, data, 0600); err != nil {
