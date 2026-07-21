@@ -8,6 +8,34 @@ import (
 	"testing"
 )
 
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"app.yaml":            `'app.yaml'`,
+		"":                    `''`,
+		"a b":                 `'a b'`,
+		"x; rm -rf /":         `'x; rm -rf /'`,
+		"$(touch /tmp/pwned)": `'$(touch /tmp/pwned)'`,
+		"`id`":                "'`id`'",
+		"it's":                `'it'\''s'`,
+		"a'b'c":               `'a'\''b'\''c'`,
+	}
+	for in, want := range cases {
+		if got := ShellQuote(in); got != want {
+			t.Errorf("ShellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// Round-trip: a quoted string handed to `bash -c echo` yields the original verbatim.
+	for in := range cases {
+		out, err := ExecuteCommandWithOutput("printf %s "+ShellQuote(in), ".", nil)
+		if err != nil {
+			t.Fatalf("ExecuteCommandWithOutput(%q): %v", in, err)
+		}
+		if out != in {
+			t.Errorf("round-trip of %q via bash printf = %q", in, out)
+		}
+	}
+}
+
 func TestCheckDependenciesFindsInstalledCommands(t *testing.T) {
 	err := CheckDependencies("echo", "ls")
 	if err != nil {
