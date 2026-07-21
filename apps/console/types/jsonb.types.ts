@@ -583,7 +583,9 @@ export interface RunnerDeployConfig {
 	cpu: number;
 	memory: number;
 	image_repository: string;
-	runner_token?: string;
+	// NOTE: the runner_token is deliberately NOT persisted here — it is a live bearer credential and
+	// this JSONB is plaintext at rest. The console keeps only its SHA-256 hash and re-mints a fresh
+	// token for each UPDATE/DESTROY job (#945).
 }
 
 export interface RunnerMetadata {

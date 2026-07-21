@@ -28,6 +28,14 @@ export async function PATCH(
 
 	try {
 		const metadata = await req.json();
+		// Backstop: a live bearer token must never land in the plaintext metadata JSONB (#945). New
+		// runners no longer send it; this catches an older runner binary mid-rollout still PATCHing it.
+		if (
+			metadata?.deploy_config &&
+			typeof metadata.deploy_config === "object"
+		) {
+			delete metadata.deploy_config.runner_token;
+		}
 
 		const db = getServiceDb();
 		await db.update(runners).set({ metadata }).where(eq(runners.id, runnerId));
