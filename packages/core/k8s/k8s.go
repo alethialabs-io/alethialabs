@@ -19,10 +19,12 @@ import (
 var executeCommand = utils.ExecuteCommand
 
 type K8sCLI struct {
-	Profile   string
-	Region    string
-	DryRun    bool
-	eksClient *eks.Client
+	Profile string
+	Region  string
+	DryRun  bool
+	// eksClient is the interface slice of *eks.Client used here (DescribeCluster) — an interface so
+	// GetContext's cluster-readiness handling is unit-testable against a fake.
+	eksClient alethiaaws.DescribeClusterAPI
 }
 
 func NewK8sCLI(opts alethiaaws.AWSOptions, dryRun bool) (*K8sCLI, error) {
@@ -42,14 +44,12 @@ func NewK8sCLI(opts alethiaaws.AWSOptions, dryRun bool) (*K8sCLI, error) {
 func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 	logger.Info(fmt.Sprintf("Getting context for cluster: %s", clusterName), "k8s")
 
-	resp, err := k.eksClient.DescribeCluster(context.Background(), &eks.DescribeClusterInput{
-		Name: &clusterName,
-	})
+	// Safely resolve the cluster's connection details — returns ErrClusterNotReady (never a nil
+	// deref) when the cluster isn't ACTIVE yet, e.g. kubeconfig requested moments after provisioning.
+	conn, err := alethiaaws.ResolveEKSClusterConn(context.Background(), k.eksClient, clusterName)
 	if err != nil {
-		return fmt.Errorf("failed to describe cluster: %w", err)
+		return err
 	}
-
-	cluster := resp.Cluster
 	kubeconfigPath := "temp/kubeconfig"
 
 	clusterConfig := map[string]interface{}{
@@ -58,26 +58,26 @@ func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 		"clusters": []interface{}{
 			map[string]interface{}{
 				"cluster": map[string]interface{}{
-					"server":                     *cluster.Endpoint,
-					"certificate-authority-data": *cluster.CertificateAuthority.Data,
+					"server":                     conn.Endpoint,
+					"certificate-authority-data": conn.CAData,
 				},
-				"name": *cluster.Arn,
+				"name": conn.ARN,
 			},
 		},
 		"contexts": []interface{}{
 			map[string]interface{}{
 				"context": map[string]interface{}{
-					"cluster": *cluster.Arn,
-					"user":    *cluster.Arn,
+					"cluster": conn.ARN,
+					"user":    conn.ARN,
 				},
-				"name": *cluster.Arn,
+				"name": conn.ARN,
 			},
 		},
-		"current-context": *cluster.Arn,
+		"current-context": conn.ARN,
 		"preferences":     map[string]interface{}{},
 		"users": []interface{}{
 			map[string]interface{}{
-				"name": *cluster.Arn,
+				"name": conn.ARN,
 				"user": map[string]interface{}{
 					// CLI-free: authenticate via the runner's own kube-token exec-plugin (in-process
 					// presigned STS token), not the aws-iam-authenticator binary (no longer in the image).
