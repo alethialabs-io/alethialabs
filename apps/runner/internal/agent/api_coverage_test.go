@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // These tests cover the RunnerAPIClient methods left uncovered after api_test.go /
@@ -45,6 +46,41 @@ func TestStreamWake_DeliversTypedEventsAndIgnoresComments(t *testing.T) {
 	}
 	if got[1].Type != "wake" {
 		t.Errorf("event 1 = %#v, want legacy wake", got[1])
+	}
+}
+
+func TestStreamWake_IdleStreamUnblocks(t *testing.T) {
+	// A half-open stream: headers + one heartbeat, then the server hangs without closing. The idle
+	// watchdog must cancel the read so StreamWake returns instead of blocking forever (#953).
+	origIdle := wakeIdleTimeout
+	wakeIdleTimeout = 100 * time.Millisecond
+	defer func() { wakeIdleTimeout = origIdle }()
+
+	block := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		fmt.Fprint(w, ": heartbeat\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-block // hang until the test releases us
+	}))
+	defer server.Close()
+	defer close(block)
+
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
+	done := make(chan error, 1)
+	go func() { done <- client.StreamWake(context.Background(), func(WakeEvent) {}) }()
+
+	select {
+	case <-done:
+		// Returned (idle watchdog fired) — the exact error value doesn't matter, only that it unblocked.
+	case <-time.After(2 * time.Second):
+		t.Fatal("StreamWake did not unblock on an idle stream")
 	}
 }
 
