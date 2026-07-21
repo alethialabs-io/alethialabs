@@ -109,7 +109,7 @@
 		"jszip": "^3.10.1",
 		"lexical": "^0.47.0",
 		"libphonenumber-js": "^1.13.7",
-		"lucide-react": "^0.539.0",
+		"lucide-react": "^1.25.0",
 		"mcp-handler": "^1.1.0",
 		"motion": "^12.40.0",
 		"nanoid": "^5.1.15",
