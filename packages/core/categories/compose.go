@@ -112,6 +112,11 @@ func Compose(
 	}
 
 	// ── Container registries (multi → homogeneous) ──
+	// A pluggable registry has NO tofu module — its only artifact is a dockerconfigjson
+	// imagePullSecret the runner seeds POST-APPLY (categories.DominantRegistryPullSecretSpec →
+	// argocd.EnsureRegistryPullSecret), because the in-tofu kubernetes provider is host+CA-only
+	// on AWS and can't create it. So here we only validate the selection and set the native-guard
+	// var (which switches the cluster template's native ECR/AR/ACR off).
 	if slug, items := dominantProvider(registryItems(vc), log, "registry"); IsPluggable(slug) {
 		p, err := Get("registry", slug)
 		if err != nil {
@@ -122,10 +127,11 @@ func Compose(
 			Credentials: vc.ConnectorCredentialFor("registry", slug),
 			Items:       items,
 		}
-		if err := add("registry", p, ctx); err != nil {
-			return 0, err
+		if err := p.Validate(ctx); err != nil {
+			return 0, fmt.Errorf("registry/%s validation failed: %w", slug, err)
 		}
 		tfvars["registry_provider"] = slug
+		fmt.Fprintf(log, "Registry provider %s: pull secret is runner-seeded post-apply (no tofu module)\n", slug)
 	}
 
 	if len(modules) == 0 {

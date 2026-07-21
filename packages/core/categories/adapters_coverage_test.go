@@ -165,14 +165,19 @@ func TestObservabilityAndSecretsAdapters(t *testing.T) {
 			t.Fatalf("vault defaults = %+v", v)
 		}
 	})
-	t.Run("dockerhub namespace defaults to username", func(t *testing.T) {
+	t.Run("dockerhub is runner-seeded (pullAuth, no module tfvars)", func(t *testing.T) {
 		p := mustGet(t, "registry", "dockerhub")
 		ok := ComponentContext{Credentials: map[string]string{"username": "acme", "access_token": "t"}}
 		if err := p.Validate(ok); err != nil {
 			t.Fatalf("validate: %v", err)
 		}
-		if v := p.Tfvars(ok); v["dockerhub_namespace"] != "acme" {
-			t.Fatalf("namespace default = %v, want acme", v["dockerhub_namespace"])
+		// No tofu module → no tfvars; the credential surfaces via pullAuth instead.
+		if v := p.Tfvars(ok); len(v) != 0 {
+			t.Fatalf("registry providers emit no tfvars, got %+v", v)
+		}
+		host, user, pass, hasPull := p.PullAuth(ok)
+		if !hasPull || host != "https://index.docker.io/v1/" || user != "acme" || pass != "t" {
+			t.Fatalf("pullAuth = (%q, %q, %q, %v), want docker v1 / acme / t / true", host, user, pass, hasPull)
 		}
 	})
 }

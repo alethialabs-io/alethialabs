@@ -41,6 +41,12 @@ type ComponentContext struct {
 type behavior struct {
 	tfvars   func(ComponentContext) map[string]any
 	validate func(ComponentContext) error
+	// pullAuth, when set (registry category only), returns the docker registry host used as the
+	// dockerconfig `auths` key plus the username/password the kubelet authenticates a pull with.
+	// The runner builds a dockerconfigjson imagePullSecret from it and seeds it POST-APPLY via
+	// `kubectl apply` (works on all clouds incl. AWS, where the in-tofu kubernetes provider is
+	// host+CA-only and cannot create the Secret). nil → the provider has no pull-auth mapping.
+	pullAuth func(ComponentContext) (host, username, password string)
 }
 
 var behaviors = map[string]behavior{}
@@ -103,6 +109,17 @@ func (p *CategoryProvider) Validate(ctx ComponentContext) error {
 		return nil
 	}
 	return p.b.validate(ctx)
+}
+
+// PullAuth returns the registry host + username/password the runner builds a dockerconfigjson
+// imagePullSecret from (registry providers only). ok is false when the provider registered no
+// pullAuth — a non-registry provider, or a registry that authenticates some other way.
+func (p *CategoryProvider) PullAuth(ctx ComponentContext) (host, username, password string, ok bool) {
+	if p.b.pullAuth == nil {
+		return "", "", "", false
+	}
+	h, u, pw := p.b.pullAuth(ctx)
+	return h, u, pw, true
 }
 
 // Get resolves a provider by (category, slug). The slug must exist both in the

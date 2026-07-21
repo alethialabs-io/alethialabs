@@ -869,6 +869,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
 		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
 
+		// A pluggable container-registry connector's dockerconfigjson imagePullSecret is seeded
+		// HERE, post-apply, over the authenticated kubeconfig — NOT in tofu, whose kubernetes
+		// provider is host+CA-only on AWS and cannot create it. Must land before the app pods that
+		// reference it (manifests.Options.ImagePullSecrets) sync. Credentials come from the job's
+		// ConnectorCredentials (never the snapshot); the payload is never logged.
+		if pullSpec, pullErr := categories.DominantRegistryPullSecretSpec(vc); pullErr != nil {
+			return nil, fmt.Errorf("failed to build the registry pull secret: %w", pullErr)
+		} else if pullSpec != nil {
+			if err := argocd.EnsureRegistryPullSecret(pullSpec.Name, pullSpec.Namespace, pullSpec.DockerConfigJSON, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the registry pull secret: %w", err)
+			}
+		}
+
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
@@ -945,6 +958,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// those Secrets (deliberately: no ArgoCD tracking metadata), so ArgoCD will never
 		// prune them; this is their only GC.
 		argocd.PruneAddOnSecrets(enabledAddonIDs(vc.AddOns), stdout, stderr)
+		// And the runner-seeded registry pull secret of any deselected registry — likewise owned
+		// by no Application. Desired = the current dominant registry's "<slug>-pull" (empty when
+		// native/none), so switching or removing a registry cleans up the stale secret.
+		var desiredPullSecrets []string
+		if n := categories.DominantRegistryPullSecret(vc); n != "" {
+			desiredPullSecrets = []string{n}
+		}
+		argocd.PruneRegistryPullSecrets(desiredPullSecrets, stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//

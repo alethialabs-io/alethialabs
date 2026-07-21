@@ -42,7 +42,10 @@ func TestGet(t *testing.T) {
 			if p.Slug() != tt.slug || p.Category() != tt.category {
 				t.Fatalf("got %s/%s, want %s/%s", p.Category(), p.Slug(), tt.category, tt.slug)
 			}
-			if p.ModulePath() == "" {
+			// registry providers are runner-seeded (a dockerconfigjson imagePullSecret applied
+			// post-apply), so they legitimately carry NO tofu module — empty module_path is
+			// expected there; every other category must declare one.
+			if tt.category != "registry" && p.ModulePath() == "" {
 				t.Fatalf("%s/%s has empty module path", tt.category, tt.slug)
 			}
 		})
