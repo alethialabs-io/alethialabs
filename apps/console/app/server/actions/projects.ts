@@ -7,7 +7,6 @@ import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
-import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
@@ -16,7 +15,6 @@ import {
 	cloudIdentities,
 	type EnvironmentStage,
 	jobs,
-	resourceHierarchy,
 	type Project,
 	type ProjectEnvironment,
 	type ProjectFabric,
@@ -53,6 +51,7 @@ import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { listAssignmentsFor } from "@/lib/queries/classification";
+import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
 import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
@@ -72,11 +71,7 @@ import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import {
-	pickFreeSlug,
-	RESERVED_PROJECT_CHILD_SLUGS,
-	slugify,
-} from "@/lib/routing";
+import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
 import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
 
@@ -397,90 +392,18 @@ export async function createProject(data: CreateProjectInput) {
 		// M1: environment_stage is no longer a project column — it seeds the default env.
 		const { environment_stage, ...projectFields } = data.project;
 
-		// Projects are top-level under the org: derive a unique-per-org URL slug from the name
-		// (RLS scopes this select to the active org — now genuinely the org, not just the owner).
-		const existing = await tx.select({ slug: projects.slug }).from(projects);
-		const slug = pickFreeSlug(
-			slugify(projectFields.project_name) || "project",
-			// Skip reserved project-child segments (e.g. "settings") so a project slug can never
-			// shadow the project-scoped settings route.
-			[...existing.map((r) => r.slug), ...RESERVED_PROJECT_CHILD_SLUGS],
-		);
-
-		const [project] = await tx
-			.insert(projects)
-			// Stamp org_id explicitly: the set_org_id trigger only defaults it to user_id (it does not
-			// read app.current_org), so relying on it re-introduces the exact mis-scoping.
-			.values({ ...projectFields, slug, user_id: owner, org_id: orgId })
-			.returning();
-
-		if (!project) throw new Error("Failed to create project");
-
-		// The first Fabric is the project-creation front door's infra unit. Project-level
-		// region/cloud stay populated for compatibility while downstream reads move to Fabric.
-		const [defaultFabric] = await tx
-			.insert(projectFabrics)
-			.values({
-				project_id: project.id,
-				user_id: owner,
-				org_id: project.org_id,
-				name: environment_stage,
-				cloud_identity_id: projectFields.cloud_identity_id ?? null,
-				region: projectFields.region,
-				status: "DRAFT",
-			})
-			.returning({ id: projectFabrics.id });
-		if (!defaultFabric) throw new Error("Failed to create default Fabric");
-
-		// Project creation owns the Production + Preview invariant. The default env is a
-		// dedicated placement on the new Fabric; Preview is namespace-placed on that same Fabric.
-		const [defaultEnv, previewEnv] = await tx
-			.insert(projectEnvironments)
-			.values([
-				{
-					project_id: project.id,
-					user_id: owner,
-					org_id: project.org_id,
-					name: environment_stage,
-					stage: environment_stage,
-					status: "DRAFT",
-					is_default: true,
-					region: projectFields.region,
-					fabric_id: defaultFabric.id,
-					placement_mode: "dedicated",
-				},
-				{
-					project_id: project.id,
-					user_id: owner,
-					org_id: project.org_id,
-					name: "preview",
-					stage: "development",
-					status: "DRAFT",
-					is_default: false,
-					region: projectFields.region,
-					fabric_id: defaultFabric.id,
-					placement_mode: "namespace",
-					namespace: "preview",
-				},
-			])
-			.returning({ id: projectEnvironments.id });
-		if (!defaultEnv || !previewEnv)
-			throw new Error("Failed to create project environments");
-
-		// Authz hierarchy edge: project → org, so an org-wide grant flows down to this project. The
-		// parent is the ACTIVE ORG (= userId in community; a real org under EE) — pointing it at the
-		// creating user instead would strand the project under a phantom org, and the org's real grants
-		// would never reach it.
-		await tx
-			.insert(resourceHierarchy)
-			.values({
-				child_type: "project",
-				child_id: project.id,
-				parent_type: "org",
-				parent_id: orgId,
-			})
-			.onConflictDoNothing();
-		mirrorHierarchyEdge("project", project.id, "org", orgId);
+		// The default Fabric + Prod(dedicated)/Preview(namespace) placement + project→org edge are
+		// the shared front-door invariant — the SAME core the CLI route (POST /api/cli/projects)
+		// runs, so the two creation paths can never drift.
+		const { project, defaultEnv } = await insertProjectWithDefaultFabric(tx, {
+			project_name: projectFields.project_name,
+			region: projectFields.region,
+			cloud_identity_id: projectFields.cloud_identity_id ?? null,
+			iac_version: projectFields.iac_version,
+			environment_stage,
+			owner,
+			orgId,
+		});
 
 		// Components belong to the default environment (tx rolls back on any failure).
 		await writeComponents(tx, project.id, defaultEnv.id, data);
