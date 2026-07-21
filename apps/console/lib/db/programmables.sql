@@ -994,9 +994,10 @@ BEGIN
   END LOOP;
 END $$;
 
--- Cloud inventory tables: ownership flows through the parent cloud_identity's scope. Writes come from
--- the console's server-side sync/event-ingester via the service role (RLS-bypassing); this gates tenant
--- reads to identities they own/share.
+-- Cloud inventory + per-tenant CAPABILITIES tables (#928): ownership flows through the parent
+-- cloud_identity's scope. Writes come from the console's server-side sync/event-ingester via the service
+-- role (RLS-bypassing); this gates tenant reads to identities they own/share. The cloud_capability_*
+-- tables share the inventory shape (cloud_identity_id FK) so they inherit the identical owner_all policy.
 DO $$
 DECLARE tbl TEXT;
 BEGIN
@@ -1004,7 +1005,8 @@ BEGIN
     'cloud_regions', 'cloud_networks', 'cloud_subnets', 'cloud_nics', 'cloud_dns_zones',
     'cloud_kubernetes_clusters', 'cloud_databases', 'cloud_caches', 'cloud_queues', 'cloud_topics',
     'cloud_nosql_tables', 'cloud_container_registries', 'cloud_secrets', 'cloud_storage_buckets',
-    'cloud_resources'
+    'cloud_resources',
+    'cloud_capability_regions', 'cloud_capability_instance_types'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
