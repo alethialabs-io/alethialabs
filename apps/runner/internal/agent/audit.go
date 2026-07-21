@@ -44,7 +44,12 @@ func (w *Runner) executeAudit(ctx context.Context, job *Job, stdout, stderr *Job
 		report.Verdict, report.Summary.Pass, report.Summary.Fail, report.Summary.Warn,
 		report.Summary.NotEvaluable)
 
-	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{"verify_result": report})
+	// The verify verdict IS the audit's deliverable — if it can't be persisted the job must NOT
+	// report success (else it's marked SUCCESS while the console's get_plan_result / VerifyBlock
+	// find nothing). Mirrors analyze_repo.go, which returns this error (#986).
+	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{"verify_result": report}); err != nil {
+		return fmt.Errorf("persist audit verdict: %w", err)
+	}
 	return nil
 }
 
