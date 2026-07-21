@@ -124,6 +124,11 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 		fmt.Fprintf(stderr, "Warning: could not apply BYO AppProject %s (charts will not sync until it exists): %v\n", projName, err)
 	}
 
+	// Every git token in play (shared + per-repo) — used to redact any of them from the credential
+	// error text before it reaches the job log; the runner's metadata scrub is key-based and a
+	// kubectl/git failure can echo a tokened URL (#948).
+	allTokens := gitTokenValues(token, repoTokens)
+
 	// Per-repo credentials. Each repo prefers its own token (repoTokens[repo], set when the chart
 	// lives on a different provider than the apps-destination repo) and falls back to the shared
 	// token. Without any token a private BYO Application can't clone — warn (public charts still
@@ -143,7 +148,7 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 			continue
 		}
 		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %v\n", repo, err)
+			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
 	return true
