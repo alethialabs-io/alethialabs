@@ -120,7 +120,8 @@ func runChartScanStage(ctx context.Context, p stageChartScanPayload, workDir str
 		if merr != nil {
 			return writeStageResult(workDir, stageResult{}, fmt.Errorf("marshal values: %w", merr))
 		}
-		if werr := os.WriteFile(valuesFile, data, 0o644); werr != nil {
+		// Helm values can carry secrets — owner-only even inside the sandbox workdir.
+		if werr := utils.WriteSecretFile(valuesFile, data); werr != nil {
 			return writeStageResult(workDir, stageResult{}, fmt.Errorf("write values: %w", werr))
 		}
 		helmCmd += " --values " + shellQuote(valuesFile)

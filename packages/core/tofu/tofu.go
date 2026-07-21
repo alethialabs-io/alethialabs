@@ -22,6 +22,8 @@ import (
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 	tfjson "github.com/hashicorp/terraform-json"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
 var (
@@ -236,7 +238,9 @@ func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, e
 		return "", fmt.Errorf("failed to encode tfvars: %w", err)
 	}
 
-	if err := os.WriteFile(tfvarsPath, append(tfvarsData, '\n'), 0644); err != nil {
+	// tfvars can carry decrypted connector secrets + the runner token (categories.Compose merges
+	// them in) — write owner-only so a co-located uid on a shared runner host can't read them.
+	if err := utils.WriteSecretFile(tfvarsPath, append(tfvarsData, '\n')); err != nil {
 		return "", fmt.Errorf("failed to write tfvars file: %w", err)
 	}
 
