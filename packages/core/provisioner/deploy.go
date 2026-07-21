@@ -585,7 +585,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 
 	if params.InfracostToken != "" {
 		infracostEnv := []string{"INFRACOST_API_KEY=" + params.InfracostToken}
-		infracostCLI := infracost.NewInfracostCLI("v0.10.39", params.InfracostToken)
+		infracostCLI := infracost.NewInfracostCLI(infracost.ResolvedInfracostVersion(), params.InfracostToken)
 		infracostInput := planFile
 		if planJSONFile != "" {
 			infracostInput = planJSONFile

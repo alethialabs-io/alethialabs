@@ -7,6 +7,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -79,13 +80,19 @@ func TestDownloadExtractsBinaryAndRemovesArchive(t *testing.T) {
 	resetInfracostSeams(t)
 	t.Chdir(t.TempDir())
 
+	tarball := tarGz(t, "dist/infracost", "binary")
+	sum := fmt.Sprintf("%x", sha256.Sum256(tarball))
 	httpGet = func(url string) (*http.Response, error) {
 		if !strings.Contains(url, "/v0.10.0/") {
 			t.Fatalf("download URL %q does not include requested version", url)
 		}
+		// The download now verifies the published per-asset checksum before extracting.
+		if strings.HasSuffix(url, ".sha256") {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(sum + "  infracost.tar.gz"))}, nil
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewReader(tarGz(t, "dist/infracost", "binary"))),
+			Body:       io.NopCloser(bytes.NewReader(tarball)),
 		}, nil
 	}
 

@@ -5,7 +5,9 @@ package infracost
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,12 +15,37 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
+// maxDownloadBytes bounds the Infracost release download so a stalled or oversized response can't
+// exhaust memory (the tarball is ~20 MiB; 200 MiB is a generous ceiling).
+const maxDownloadBytes = 200 << 20
+
+const (
+	// DefaultInfracostVersion is the Infracost CLI version the runtime fallback downloads when the
+	// binary isn't already on PATH. Production bakes it into the runner image (Dockerfile.base's
+	// ARG INFRACOST_VERSION) — this constant is the native/dev fallback and should match that ARG.
+	DefaultInfracostVersion = "v0.10.39"
+	// InfracostVersionEnv overrides DefaultInfracostVersion (mirrors ALETHIA_IAC_VERSION for tofu).
+	InfracostVersionEnv = "ALETHIA_INFRACOST_VERSION"
+)
+
+// ResolvedInfracostVersion returns ALETHIA_INFRACOST_VERSION when set, else DefaultInfracostVersion
+// — a single config-driven source, never a hardcoded per-call literal.
+func ResolvedInfracostVersion() string {
+	if v := strings.TrimSpace(os.Getenv(InfracostVersionEnv)); v != "" {
+		return v
+	}
+	return DefaultInfracostVersion
+}
+
 var (
-	httpGet        = http.Get
+	// httpGet carries a timeout so a stalled release download can never hang a provisioning job
+	// forever (the default http.Get has no timeout). Overridden in tests.
+	httpGet        = (&http.Client{Timeout: 5 * time.Minute}).Get
 	executeCommand = utils.ExecuteCommand
 )
 
@@ -76,81 +103,94 @@ func (i *InfracostCLI) download(binDir string) error {
 	downloadURL := fmt.Sprintf("https://github.com/infracost/infracost/releases/download/%s/infracost-%s-%s.tar.gz", i.Version, goos, arch)
 	fmt.Printf("Downloading Infracost %s for %s-%s...\n", i.Version, goos, arch)
 
-	resp, err := httpGet(downloadURL)
+	tarBytes, err := fetchBounded(downloadURL, "infracost")
 	if err != nil {
-		return fmt.Errorf("failed to download infracost: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download infracost: status code %d", resp.StatusCode)
+		return err
 	}
 
-	tarFile := filepath.Join(binDir, fmt.Sprintf("infracost_%s.tar.gz", i.Version))
-	out, err := os.Create(tarFile)
-	if err != nil {
-		return fmt.Errorf("failed to create tar file: %w", err)
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to write tar file: %w", err)
+	// Supply-chain: verify the published SHA256 before extracting + executing the binary. The runner
+	// image bakes a checksum-verified copy; this guards the native/dev fallback download.
+	if err := verifyInfracostChecksum(downloadURL, tarBytes); err != nil {
+		return err
 	}
 
-	// Extract the tar.gz file
-	f, err := os.Open(tarFile)
-	if err != nil {
-		return fmt.Errorf("failed to open tar file: %w", err)
-	}
-	defer f.Close()
-
-	gzReader, err := gzip.NewReader(f)
+	gzReader, err := gzip.NewReader(bytes.NewReader(tarBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gzReader.Close()
 
 	tarReader := tar.NewReader(gzReader)
-
+	outPath := filepath.Join(binDir, "infracost")
+	extracted := false
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
-			break // End of archive
+			break
 		}
 		if err != nil {
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
-
 		if header.Typeflag == tar.TypeReg && strings.Contains(header.Name, "infracost") {
-			outPath := filepath.Join(binDir, "infracost")
 			outFile, err := os.Create(outPath)
 			if err != nil {
 				return fmt.Errorf("failed to create infracost binary: %w", err)
 			}
-			defer outFile.Close()
-
-			_, err = io.Copy(outFile, tarReader)
-			if err != nil {
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				outFile.Close()
 				return fmt.Errorf("failed to write infracost binary: %w", err)
 			}
-
-			i.binaryPath = outPath // Update binaryPath to the extracted path
+			outFile.Close()
+			extracted = true
 			break
 		}
 	}
+	if !extracted {
+		return fmt.Errorf("infracost binary not found in the downloaded archive")
+	}
 
-	// Make executable
+	i.binaryPath = outPath
 	if err := os.Chmod(i.binaryPath, 0755); err != nil {
 		return fmt.Errorf("failed to make infracost binary executable: %w", err)
 	}
 
-	// Clean up tar.gz file
-	if err := os.Remove(tarFile); err != nil {
-		fmt.Printf("Warning: failed to remove tar.gz file %s: %v\n", tarFile, err)
-	}
+	fmt.Println("Infracost downloaded and verified successfully.")
+	return nil
+}
 
-	fmt.Println("Infracost downloaded and extracted successfully.")
+// fetchBounded GETs url and returns up to maxDownloadBytes of the body, erroring on a transport
+// failure or a non-200 status.
+func fetchBounded(url, what string) ([]byte, error) {
+	resp, err := httpGet(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download %s: %w", what, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download %s: status code %d", what, resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", what, err)
+	}
+	return b, nil
+}
+
+// verifyInfracostChecksum fetches the release's per-asset "<url>.sha256" and checks it against the
+// downloaded tarball (Infracost publishes "infracost-<os>-<arch>.tar.gz.sha256" per asset).
+func verifyInfracostChecksum(downloadURL string, tarBytes []byte) error {
+	sumBytes, err := fetchBounded(downloadURL+".sha256", "infracost checksum")
+	if err != nil {
+		return err
+	}
+	fields := strings.Fields(string(sumBytes))
+	if len(fields) == 0 {
+		return fmt.Errorf("infracost checksum file was empty")
+	}
+	got := fmt.Sprintf("%x", sha256.Sum256(tarBytes))
+	if !strings.EqualFold(fields[0], got) {
+		return fmt.Errorf("infracost checksum mismatch: got %s, want %s", got, fields[0])
+	}
 	return nil
 }
 
