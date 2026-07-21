@@ -855,6 +855,13 @@
       "when": 1784646363575,
       "tag": "0121_square_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1784646363576,
+      "tag": "0122_remove_prometheus_connector",
+      "breakpoints": true
     }
   ]
 }

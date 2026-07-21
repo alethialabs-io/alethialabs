@@ -106,20 +106,6 @@ export const CONNECTOR_PROVIDERS: ConnectorProviderMeta[] = [
 		credentialFields: [{"key":"instance_id","label":"Instance ID / Username","type":"text","secret":false,"required":true},{"key":"api_token","label":"API Token","type":"password","secret":true,"required":true}],
 		providerConfigFields: [{"key":"remote_write_url","label":"Remote Write URL","type":"text","required":true,"help":"The Grafana Cloud Prometheus remote_write endpoint."}],
 	},
-	{
-		category: "observability",
-		slug: "prometheus",
-		name: "Prometheus",
-		description: "Install in-cluster Prometheus, optionally remote-writing to an external store.",
-		organization: "Prometheus Authors",
-		icon_url: "/icons/prometheus/prometheus-32x32.png",
-		docs_url: "https://prometheus.io/docs/",
-		status: "active",
-		sort_order: 80,
-		modulePath: "categories/observability/prometheus",
-		credentialFields: [{"key":"remote_write_username","label":"Remote Write Username","type":"text","secret":false,"required":false},{"key":"remote_write_password","label":"Remote Write Password","type":"password","secret":true,"required":false}],
-		providerConfigFields: [{"key":"remote_write_url","label":"Remote Write URL","type":"text","required":false,"help":"Optional external Prometheus-compatible remote_write endpoint."},{"key":"retention_days","label":"Local Retention (days)","type":"text","default":"15"}],
-	},
 ];
 
 /** Pluggable providers offered for a category (excludes the cloud-native default). */

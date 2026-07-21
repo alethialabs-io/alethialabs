@@ -24,7 +24,6 @@ func TestGet(t *testing.T) {
 		{"dockerhub registry", "registry", "dockerhub", false},
 		{"datadog observability", "observability", "datadog", false},
 		{"grafana observability", "observability", "grafana", false},
-		{"prometheus observability", "observability", "prometheus", false},
 		{"unknown slug", "dns", "route53again", true},
 		{"wrong category", "registry", "cloudflare", true},
 	}
