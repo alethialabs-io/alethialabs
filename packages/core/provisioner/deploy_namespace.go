@@ -50,8 +50,11 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 			return placementNamespaceAWS
 		}
 		return placementUnactivated
+	case types.PlacementModeVcluster:
+		// vcluster exec is P2 (#960) — not activated on any cloud yet.
+		return placementUnactivated
 	default:
-		// vcluster + any unrecognized mode.
+		// any unrecognized/future mode → fail closed.
 		return placementUnactivated
 	}
 }
