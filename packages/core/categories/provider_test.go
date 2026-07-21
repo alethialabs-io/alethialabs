@@ -185,3 +185,27 @@ func TestDominantProviderWarnsAndIncludesAllItems(t *testing.T) {
 		t.Fatalf("expected mixed-provider warning, got %q", log.String())
 	}
 }
+
+func TestDominantRegistryPullSecret(t *testing.T) {
+	tests := []struct {
+		name       string
+		registries []types.ProjectContainerRegistryConfig
+		want       string
+	}{
+		{"no registries", nil, ""},
+		{"native only", []types.ProjectContainerRegistryConfig{{Name: "app", Provider: "native"}}, ""},
+		{"empty provider is native", []types.ProjectContainerRegistryConfig{{Name: "app", Provider: ""}}, ""},
+		{"pluggable dockerhub", []types.ProjectContainerRegistryConfig{{Name: "app", Provider: "dockerhub"}}, "dockerhub-pull"},
+		{"native + pluggable → pluggable wins", []types.ProjectContainerRegistryConfig{
+			{Name: "a", Provider: "native"}, {Name: "b", Provider: "dockerhub"},
+		}, "dockerhub-pull"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vc := &types.ProjectConfig{ContainerRegistries: tt.registries}
+			if got := DominantRegistryPullSecret(vc); got != tt.want {
+				t.Errorf("DominantRegistryPullSecret() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
