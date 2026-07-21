@@ -197,8 +197,22 @@ embeds the signer's public key (`SignedReceipt.PublicKey`) so a downloaded recei
 retained `key_id→public_key` history (`VerifyTrusted`), never by trusting the embedded key. A
 registered key is `pending_verification` until a runner **proof-of-possession** job confirms real
 control of `key_ref`; a project on a cloud that doesn't match the active key falls back to the
-platform key / unsigned, **surfaced honestly**. Concrete per-cloud signers, the proof job, and Rekor
-anchoring (#885) are follow-ons.
+platform key / unsigned, **surfaced honestly**. Concrete per-cloud signers and the proof job are
+follow-ons.
+
+**Transparency-log anchor (#885).** A signed receipt is tamper-evident but a verifier has no
+third-party proof it *existed in a permanent record*. `RekorAnchor` (`rekor.go`) closes that: the
+receipt's digest is entered into a **Rekor** transparency log as a `hashedrekord` (hash-only — the
+receipt body, which references customer plan data, is never uploaded) and the returned inclusion
+proof is stored **on the receipt** (`SignedReceipt.Rekor`), making a downloaded receipt
+offline-verifiable by any third party with no callback. Because `hashedrekord` verifies a bare
+digest and PureEd25519 does not (rekor#851), the logged signature is a **dedicated platform
+ECDSA-P256 "anchor signature"** over `sha256(canonical receipt)`, SEPARATE from the ed25519 receipt
+signature. `VerifyAnchor(receipt, anchor, logKey)` re-checks the whole chain offline (anchor-sig
+binding → logged-entry binding → the log's signed inclusion promise (SET) → the RFC 6962 Merkle
+audit path). Anchoring runs **console-side** and opt-in (`ALETHIA_REKOR_ANCHOR_ENABLED`), fail-open
+(never blocks an apply). Split-view detection (a consistency monitor / witness) and an RFC 3161
+timestamp are the named "keep proving it" follow-ons; the signed checkpoint is stored for them.
 
 ## AWS IAM Access Analyzer corroboration (opt-in)
 

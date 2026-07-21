@@ -49,11 +49,15 @@ hex() { openssl rand -hex 32; }      # 64-char hex token
 # base64(PKCS8 RSA-2048 PEM) on ONE line — the workload-identity OIDC issuer signing key
 # (lib/oidc/issuer.ts). Asymmetric so clouds verify via the published JWKS; never shared.
 rsa_b64() { openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null | openssl base64 -A; }
+# base64(PKCS8 ECDSA-P256 PEM) on ONE line — the #885 receipt-anchor key. Hash-only hashedrekord
+# entries require ECDSA (pure ed25519 is rejected), so the anchor key is a dedicated P-256 key.
+ec_p256_b64() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null | openssl base64 -A; }
 
 gen_if_absent BETTER_AUTH_SECRET "$(b64)"
 gen_if_absent CLI_JWT_SECRET "$(hex)"
 gen_if_absent ALETHIA_CRED_ENCRYPTION_KEY "$(b64)"   # base64, decodes to 32 bytes
 gen_if_absent ALETHIA_SNAPSHOT_HMAC_KEY "$(b64)"     # config_snapshot HMAC (lib/runners/snapshot-sig.ts)
+gen_if_absent ALETHIA_RECEIPT_ANCHOR_KEY "$(ec_p256_b64)"  # #885 Rekor anchor key (ECDSA-P256, base64(PKCS8 PEM)); anchoring stays OFF until ALETHIA_REKOR_ANCHOR_ENABLED=true
 gen_if_absent ALETHIA_DB_PASSWORD "$(hex)"
 gen_if_absent ALETHIA_APP_DB_PASSWORD "$(hex)"
 gen_if_absent OPENFGA_DB_PASSWORD "$(hex)"
