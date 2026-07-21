@@ -15,6 +15,7 @@ import {
 	cloudIdentities,
 	type EnvironmentStage,
 	jobs,
+	type PlacementMode,
 	type Project,
 	type ProjectEnvironment,
 	type ProjectFabric,
@@ -164,6 +165,10 @@ export interface CreateProjectInput {
 		region: string;
 		cloud_identity_id?: string | null;
 		iac_version: string;
+		// The default (Production) env's placement onto its first Fabric. Optional — defaults to
+		// `dedicated` (the new Fabric's owner). Threaded so the placement selector (#844) can set it
+		// instead of it being a literal; see insertProjectWithDefaultFabric.
+		placement_mode?: PlacementMode;
 	};
 	network: ComponentInsert<typeof projectNetwork.$inferInsert>;
 	cluster: Omit<
@@ -402,6 +407,7 @@ export async function createProject(data: CreateProjectInput) {
 			cloud_identity_id: projectFields.cloud_identity_id ?? null,
 			iac_version: projectFields.iac_version,
 			environment_stage,
+			placement_mode: projectFields.placement_mode,
 			owner,
 			orgId,
 		});
