@@ -113,8 +113,6 @@ function csv(v: string | undefined): string[] | undefined {
 const DEFAULT_SERVER_TYPES = ["cax21", "cpx31"];
 /** Extra locations to spill into (after the pool's own) when the primary can't place any type. */
 const DEFAULT_FALLBACK_LOCATIONS = ["nbg1", "hel1", "ash", "hil"];
-/** Hetzner ARM (`cax*`) is EU-only — skip ARM types in non-EU DCs instead of a guaranteed 412. */
-const EU_LOCATIONS = new Set(["fsn1", "nbg1", "hel1"]);
 
 /** Resolve the server-type preference list from env, honouring the legacy single `HCLOUD_SERVER_TYPE`
  *  by appending the x86 fallback so an existing deployment gains failover without a config change. */
@@ -148,32 +146,26 @@ export type PlacementAttempt = { serverType: string; location: string };
 /**
  * Pure: build the ordered placement-attempt list. Preference is serverType-major (cheap ARM first),
  * location-minor (the pool's location, then the fallback locations). When live availability is known,
- * keep ONLY pairs Hetzner actually offers — this supersedes the coarse EU-only heuristic and avoids the
- * "unsupported location for server type" 422 up front. When availability is unknown (the lookup failed)
- * or the live filter would empty the list (a misconfig — still worth attempting so the error is honest),
- * fall back to the offline heuristic: drop ARM (`cax*`) outside EU DCs, keep everything else.
+ * keep ONLY the {type, location} pairs Hetzner actually offers (`prices[].location`) — the single source
+ * of truth for what a DC supports, so the "unsupported location for server type" 422 is avoided up front
+ * without any baked-in geography. When availability is unknown (the fail-open lookup errored) OR the live
+ * filter would empty the list (a misconfig — still worth attempting so the error is honest), fall back to
+ * the FULL cross-product and let the 412/422 placement-spill classifier skip guaranteed-miss pairs.
  */
 export function buildPlacementAttempts(
 	serverTypes: string[],
 	locations: string[],
 	availability: Map<string, Set<string>> | null,
 ): PlacementAttempt[] {
-	const offline: PlacementAttempt[] = [];
+	const all: PlacementAttempt[] = [];
 	for (const serverType of serverTypes) {
 		for (const location of locations) {
-			// Hetzner ARM is EU-only — don't burn a create round-trip on a guaranteed placement miss.
-			if (serverType.startsWith("cax") && !EU_LOCATIONS.has(location)) continue;
-			offline.push({ serverType, location });
+			all.push({ serverType, location });
 		}
 	}
-	if (!availability) return offline;
-	const filtered: PlacementAttempt[] = [];
-	for (const serverType of serverTypes) {
-		for (const location of locations) {
-			if (availability.get(serverType)?.has(location)) filtered.push({ serverType, location });
-		}
-	}
-	return filtered.length > 0 ? filtered : offline;
+	if (!availability) return all;
+	const filtered = all.filter(({ serverType, location }) => availability.get(serverType)?.has(location));
+	return filtered.length > 0 ? filtered : all;
 }
 
 /** The forward-proxy service name + port the runner (and its nested child) point HTTP(S)_PROXY at. */
@@ -654,8 +646,9 @@ class HcloudFleetProvider implements FleetProvider {
 			return availability;
 		} catch (err) {
 			// Never let an availability lookup block provisioning. Don't cache a transient failure — retry
-			// on the next create; use the offline heuristic (EU-only ARM) for this placement.
-			flog.warn("hcloud server-type availability lookup failed; using offline placement heuristic", {
+			// on the next create; this placement falls back to the full candidate cross-product and lets
+			// the 412/422 placement-spill classifier skip any pair the DC doesn't support.
+			flog.warn("hcloud server-type availability lookup failed; trying the full candidate set", {
 				err,
 			});
 			return null;

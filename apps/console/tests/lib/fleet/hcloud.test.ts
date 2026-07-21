@@ -696,7 +696,8 @@ describe("HcloudFleetProvider.create — failsafe placement", () => {
 		expect(bodies[0].location).toBe("fsn1");
 		// The placed VM is x86 (fell back).
 		expect(bodies[bodies.length - 1].server_type).toBe("cpx31");
-		// EU-only guard: no ARM attempt is ever aimed at a non-EU DC (ash/hil).
+		// Availability-driven (not a hardcoded set): ARM is only offered in EU here, so no ARM attempt is
+		// ever aimed at a DC that doesn't offer it (ash/hil).
 		const armInUs = bodies.some(
 			(b) => String(b.server_type).startsWith("cax") && ["ash", "hil"].includes(String(b.location)),
 		);
@@ -849,15 +850,18 @@ describe("buildPlacementAttempts", () => {
 	const TYPES = ["cax21", "cpx31"];
 	const LOCS = ["fsn1", "ash"];
 
-	it("offline (no availability): drops ARM outside EU, keeps the rest, ARM-major order", () => {
+	it("no availability: the FULL cross-product, serverType-major (no hardcoded geography)", () => {
+		// With no live data we make no assumptions about where a type is offered — the 412/422 spill
+		// classifier skips any pair the DC can't place. Order is serverType-major, location-minor.
 		expect(buildPlacementAttempts(TYPES, LOCS, null)).toEqual([
-			{ serverType: "cax21", location: "fsn1" }, // cax21@ash dropped (non-EU ARM)
+			{ serverType: "cax21", location: "fsn1" },
+			{ serverType: "cax21", location: "ash" },
 			{ serverType: "cpx31", location: "fsn1" },
 			{ serverType: "cpx31", location: "ash" },
 		]);
 	});
 
-	it("with availability: keeps only offered pairs (supersedes the EU heuristic)", () => {
+	it("with availability: keeps only the pairs Hetzner actually offers", () => {
 		const avail = new Map([
 			["cax21", new Set(["fsn1"])],
 			["cpx31", new Set(["ash"])],
