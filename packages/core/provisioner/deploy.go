@@ -1080,7 +1080,9 @@ func resolveArgoTemplatesDir() string {
 func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
-	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
+	// Repo URL + chart version are config-driven (env override, current literals as defaults) and
+	// shell-quoted since they interpolate into a bash -c command (#951, #944).
+	addRepoCmd := fmt.Sprintf("helm repo add argo %s && helm repo update", utils.ShellQuote(argocd.ResolvedArgoHelmRepo()))
 	if err := executeCommand(addRepoCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to add ArgoCD helm repo: %w", err)
 	}
@@ -1096,7 +1098,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
-	installCmd := "helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version 7.1.3 --wait --timeout 5m"
+	installCmd := fmt.Sprintf("helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s --wait --timeout 5m", utils.ShellQuote(argocd.ResolvedArgoChartVersion()))
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
