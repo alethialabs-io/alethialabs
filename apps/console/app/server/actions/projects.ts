@@ -50,6 +50,7 @@ import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
+import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
 import { listAssignmentsFor } from "@/lib/queries/classification";
 import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
 import {
@@ -734,11 +735,14 @@ async function buildConfigSnapshot(
 			.from(projectNetwork)
 			.where(envScope(projectNetwork, projectId, envId))
 			.limit(1);
-		const [cluster] = await tx
-			.select()
-			.from(projectCluster)
-			.where(envScope(projectCluster, projectId, envId))
-			.limit(1);
+		// The cluster belongs to the FABRIC, not the env: a `dedicated` env resolves to its own 1:1
+		// cluster, while a `namespace`/`vcluster` env placed on a shared Fabric resolves to that
+		// Fabric's single cluster — it has no env-keyed row of its own. Resolving via the Fabric is
+		// what lets the runner receive the EXISTING shared cluster's identity (name/region/cloud
+		// identity) to mint keyless access against instead of provisioning a new cluster (#955).
+		// Byte-identical for `dedicated` (env↔cluster == env↔Fabric↔cluster). See cluster-for-env.ts.
+		const cluster =
+			(await resolveServingCluster(tx, projectId, envId)) ?? undefined;
 		const [dns] = await tx
 			.select()
 			.from(projectDns)

@@ -18,8 +18,9 @@ type ProjectClusterRow = typeof projectCluster.$inferSelect;
  *  - `namespace`/`vcluster` envs placed on a SHARED Fabric resolve to that Fabric's single cluster
  *    (they have no cluster row of their own — the shared-cluster invariant enforced by the partial
  *    `project_cluster_fabric_id_key` unique index);
- *  - legacy envs whose `fabric_id` the `programmables.sql` backfill hasn't set fall back to the
- *    env-keyed row, so behaviour is byte-identical for any un-migrated data.
+ *  - when no Fabric-linked cluster exists yet — a `dedicated`/legacy env whose cluster row still has
+ *    a null `fabric_id` (createProject inserts it unset; `programmables.sql` backfills it later) — it
+ *    falls back to the env-keyed row, so behaviour is byte-identical for any un-linked data.
  *
  * This is the canonical `env → Fabric → cluster` seam consumed by the placement-activation lanes
  * (deploy branch + keyless re-mint, ArgoCD destination, console cluster surfaces). Returns `null`
@@ -37,22 +38,36 @@ export async function resolveServingCluster(
 		.where(eq(projectEnvironments.id, environmentId))
 		.limit(1);
 
-	// A Fabric-linked env resolves by Fabric (shared cluster); otherwise fall back to the env key.
-	const where = env?.fabric_id
-		? and(
-				eq(projectCluster.project_id, projectId),
-				eq(projectCluster.fabric_id, env.fabric_id),
+	// 1. Fabric-keyed (the authoritative shared-cluster model): a `namespace`/`vcluster` env — and a
+	//    `dedicated` env whose cluster row has already been Fabric-linked — resolves here.
+	if (env?.fabric_id) {
+		const [byFabric] = await db
+			.select()
+			.from(projectCluster)
+			.where(
+				and(
+					eq(projectCluster.project_id, projectId),
+					eq(projectCluster.fabric_id, env.fabric_id),
+				),
 			)
-		: and(
-				eq(projectCluster.project_id, projectId),
-				eq(projectCluster.environment_id, environmentId),
-			);
+			.limit(1);
+		if (byFabric) return byFabric;
+	}
 
-	const [cluster] = await db
+	// 2. Env-key fallback: a `dedicated`/legacy env whose cluster row is NOT Fabric-linked yet — e.g.
+	//    createProject inserts the cluster with a null fabric_id; the programmables.sql backfill links
+	//    it later. Keeps resolution byte-identical for un-linked data (and for a `namespace` env whose
+	//    Fabric has no cluster yet, returns null — nothing to serve it).
+	const [byEnv] = await db
 		.select()
 		.from(projectCluster)
-		.where(where)
+		.where(
+			and(
+				eq(projectCluster.project_id, projectId),
+				eq(projectCluster.environment_id, environmentId),
+			),
+		)
 		.limit(1);
 
-	return cluster ?? null;
+	return byEnv ?? null;
 }

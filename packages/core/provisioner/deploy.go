@@ -347,6 +347,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 	}
 
+	// Placement activation gate (#955). A `namespace`/`vcluster` env deploys onto an EXISTING shared
+	// Fabric cluster (no tofu run) via keyless re-mint — that runner path is being activated
+	// incrementally. Until it lands, fail CLOSED on a non-dedicated placement rather than silently
+	// running the full-cluster tofu (which would ignore the placement the user chose and could collide
+	// with the Fabric's real cluster). `dedicated` (incl. empty = legacy env=cluster) is unaffected.
+	if pm := vc.PlacementMode; pm != "" && pm != types.PlacementModeDedicated {
+		return nil, fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' provisions today (tracked: #955)", pm)
+	}
+
 	provider, err := cloud.NewCloudProvider(params.Provider)
 	if err != nil {
 		return nil, err
