@@ -14,7 +14,7 @@
 # QEMU — an emulated `tofu init` crashes lfstack.push). ENDS AS ROOT on purpose: each variant installs its
 # cloud CLI (apk/pip need root) and only then switches to `USER runner` before `tofu init`.
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git
 
