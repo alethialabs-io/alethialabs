@@ -864,6 +864,50 @@ export interface SignedReceipt {
 	 * Empty on unsigned receipts / pre-#884 signatures.
 	 */
 	public_key?: string;
+	/**
+	 * Transparency-log anchor (#885): offline proof this receipt's digest was entered into an
+	 * append-only Rekor log. Populated console-side after the receipt is authenticated; absent
+	 * when anchoring is disabled or the log was unreachable (anchoring is additive evidence).
+	 * Mirrors the Go `verify.RekorAnchor`.
+	 */
+	rekor?: RekorAnchor;
+}
+
+// Mirrors the Go `verify.RekorInclusionProof` — the RFC 6962 Merkle audit path + signed
+// checkpoint proving the entry is in the log tree.
+export interface RekorInclusionProof {
+	log_index: number;
+	/** lowercase-hex Merkle root the audit path resolves to. */
+	root_hash: string;
+	tree_size: number;
+	/** lowercase-hex sibling hashes (leaf→root). */
+	hashes: string[];
+	/** the log's signed tree head; stored for the consistency-monitor follow-on. */
+	checkpoint?: string;
+}
+
+// Mirrors the Go `verify.RekorAnchor` — a self-contained, offline-verifiable Rekor inclusion
+// proof for a receipt digest. The receipt BODY is never logged (a `hashedrekord` hash-only
+// entry); the logged signature is a dedicated platform ECDSA-P256 anchor signature, separate
+// from the ed25519 receipt signature.
+export interface RekorAnchor {
+	log_url?: string;
+	/** lowercase-hex SHA-256 of the DER log public key. */
+	log_id: string;
+	log_index: number;
+	/** log self-asserted integration time (Unix seconds, Rekor v1); not externally trustworthy. */
+	integrated_time?: number;
+	/** base64(std) canonicalized `hashedrekord` entry as logged (the Merkle leaf source). */
+	body: string;
+	inclusion_proof: RekorInclusionProof;
+	/** base64(std) signed entry timestamp — the log key's signed inclusion promise (Rekor v1). */
+	signed_entry_timestamp?: string;
+	/** anchor-signature scheme, always "ecdsa-p256-sha256" today. */
+	anchor_algorithm: string;
+	/** base64(std) ASN.1-DER ECDSA-P256 signature over sha256(canonical receipt). */
+	anchor_signature: string;
+	/** base64(std) PEM-encoded ECDSA-P256 public key the anchor signature verifies under. */
+	anchor_public_key: string;
 }
 
 // One captured (truncated) file from a scanned repo. Mirrors packages/core/types RepoFile.

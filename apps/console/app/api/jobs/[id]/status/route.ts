@@ -31,6 +31,7 @@ import {
 	recordSecurityPosture,
 } from "@/lib/addons/inspection-persistence";
 import { captureServer } from "@/lib/analytics/server";
+import { anchorReceipt } from "@/lib/evidence/receipt-anchor";
 import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
@@ -92,6 +93,21 @@ export async function PUT(
 			jlog.warn("dropped secret-bearing execution_metadata key(s) at ingest", {
 				dropped: droppedSecretKeys,
 			});
+		}
+
+		// Rekor anchor (#885): the runner produced + ed25519-signed the receipt; NOW that it has
+		// landed (authenticated), the console anchors its digest in a transparency log so the
+		// receipt is offline-verifiable by a third party. Console-side keeps submission + any
+		// private-log credentials out of the untrusted runner sandbox. FAIL-OPEN: anchoring is
+		// additive evidence — it must never block or corrupt a job report, so it runs opt-in
+		// (ALETHIA_REKOR_ANCHOR_ENABLED) and any failure just leaves the receipt unanchored.
+		if (execution_metadata?.verify_receipt) {
+			try {
+				const anchor = await anchorReceipt(execution_metadata.verify_receipt);
+				if (anchor) execution_metadata.verify_receipt.rekor = anchor;
+			} catch (err) {
+				jlog.error("rekor anchoring threw unexpectedly (fail-open)", { err: String(err) });
+			}
 		}
 
 		const db = getServiceDb();

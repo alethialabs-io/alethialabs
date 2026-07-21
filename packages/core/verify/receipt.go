@@ -67,6 +67,12 @@ type SignedReceipt struct {
 	// key_id→public-key history, a published fingerprint, or the Rekor anchor #885), never
 	// by trusting this field blindly. Empty on unsigned receipts / older signatures.
 	PublicKey string `json:"public_key,omitempty"`
+	// Rekor is the transparency-log anchor (#885): proof that this receipt's digest was
+	// entered into an append-only Rekor log, so its existence is offline-verifiable by a
+	// third party. Populated console-side after the receipt is authenticated (the untrusted
+	// runner never submits to Rekor); nil when anchoring is disabled or the log was
+	// unreachable (anchoring is additive evidence, never a precondition for an apply).
+	Rekor *RekorAnchor `json:"rekor,omitempty"`
 }
 
 // BuildReceiptParams collects everything needed to assemble a Receipt.
