@@ -48,6 +48,7 @@
 		"@alicloud/vpc20160428": "^7.2.2",
 		"@aws-sdk/client-ec2": "^3.1076.0",
 		"@aws-sdk/client-eks": "^3.1086.0",
+		"@aws-sdk/client-service-quotas": "^3.1086.0",
 		"@aws-sdk/client-elastic-load-balancing-v2": "^3.1086.0",
 		"@aws-sdk/client-resource-groups-tagging-api": "^3.1086.0",
 		"@aws-sdk/client-s3": "^3.1080.0",
