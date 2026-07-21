@@ -19,8 +19,17 @@ func TestGetModulePath(t *testing.T) {
 	}{
 		{"cloudflare dns", "dns", "cloudflare", "categories/dns/cloudflare"},
 		{"vault secrets", "secrets", "vault", "categories/secrets/vault"},
-		// registry providers are runner-seeded (no tofu module) → empty module_path.
+		// registry providers are runner-seeded (a dockerconfigjson imagePullSecret applied
+		// post-apply), so they carry NO tofu module → empty module_path.
 		{"dockerhub registry", "registry", "dockerhub", ""},
+		{"generic-cr registry", "registry", "generic-cr", ""},
+		{"ghcr registry", "registry", "ghcr", ""},
+		{"ghcr-enterprise registry", "registry", "ghcr-enterprise", ""},
+		{"gitlab-cr registry", "registry", "gitlab-cr", ""},
+		{"quay registry", "registry", "quay", ""},
+		{"harbor registry", "registry", "harbor", ""},
+		{"docr registry", "registry", "docr", ""},
+		{"scaleway-cr registry", "registry", "scaleway-cr", ""},
 		{"datadog observability", "observability", "datadog", "categories/observability/datadog"},
 		{"grafana observability", "observability", "grafana", "categories/observability/grafana"},
 	}

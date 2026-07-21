@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -22,6 +23,14 @@ func TestGet(t *testing.T) {
 		{"cloudflare dns", "dns", "cloudflare", false},
 		{"vault secrets", "secrets", "vault", false},
 		{"dockerhub registry", "registry", "dockerhub", false},
+		{"generic-cr registry", "registry", "generic-cr", false},
+		{"ghcr registry", "registry", "ghcr", false},
+		{"ghcr-enterprise registry", "registry", "ghcr-enterprise", false},
+		{"gitlab-cr registry", "registry", "gitlab-cr", false},
+		{"quay registry", "registry", "quay", false},
+		{"harbor registry", "registry", "harbor", false},
+		{"docr registry", "registry", "docr", false},
+		{"scaleway-cr registry", "registry", "scaleway-cr", false},
 		{"datadog observability", "observability", "datadog", false},
 		{"grafana observability", "observability", "grafana", false},
 		{"unknown slug", "dns", "route53again", true},
@@ -81,6 +90,125 @@ func TestCloudflareTfvarsAndValidate(t *testing.T) {
 	if vars["proxied"] != true {
 		t.Fatalf("expected proxied=true, got %v", vars["proxied"])
 	}
+}
+
+// TestRegistryTfvarsAndValidate covers the credential-based registry providers
+// that share the generic module. It exercises the three credential-mapping
+// shapes: username+password (ghcr / generic — generic also needs a user-supplied
+// registry_url), a single token used as both username and password (docr), and a
+// fixed "nologin" username with a secret-key password (scaleway-cr).
+// TestRegistryPullAuthAndValidate covers the credential-based registry providers, which are
+// runner-seeded (no tofu module): each exposes a pullAuth mapping (host + username/password) the
+// runner turns into a dockerconfigjson imagePullSecret. It exercises the three credential-mapping
+// shapes: username+password (ghcr / generic — generic also needs a user-supplied registry_url), a
+// single token used as both username and password (docr), and a fixed "nologin" username with a
+// secret-key password (scaleway-cr).
+func TestRegistryPullAuthAndValidate(t *testing.T) {
+	t.Run("generic-cr needs url + username + password", func(t *testing.T) {
+		p, err := Get("registry", "generic-cr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Missing registry_url → fails even with creds.
+		noURL := ComponentContext{Credentials: map[string]string{"username": "u", "password": "p"}}
+		if err := p.Validate(noURL); err == nil {
+			t.Fatal("expected validation error for missing registry_url")
+		}
+		// Missing creds → fails even with a url.
+		noCred := ComponentContext{ProviderConfig: map[string]any{"registry_url": "https://reg.example.com"}}
+		if err := p.Validate(noCred); err == nil {
+			t.Fatal("expected validation error for missing credential")
+		}
+		ctx := ComponentContext{
+			Credentials:    map[string]string{"username": "u", "password": "p"},
+			ProviderConfig: map[string]any{"registry_url": "https://reg.example.com"},
+		}
+		if err := p.Validate(ctx); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		host, user, pass, has := p.PullAuth(ctx)
+		if !has || host != "https://reg.example.com" || user != "u" || pass != "p" {
+			t.Fatalf("pullAuth = (%q, %q, %q, %v), want reg.example.com / u / p / true", host, user, pass, has)
+		}
+	})
+
+	t.Run("ghcr pins ghcr.io and needs username + token", func(t *testing.T) {
+		p, err := Get("registry", "ghcr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Validate(ComponentContext{Credentials: map[string]string{"username": "u"}}); err == nil {
+			t.Fatal("expected validation error for missing token")
+		}
+		ctx := ComponentContext{Credentials: map[string]string{"username": "u", "password": "tok"}}
+		if err := p.Validate(ctx); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		host, user, pass, has := p.PullAuth(ctx)
+		if !has || host != "https://ghcr.io" || user != "u" || pass != "tok" {
+			t.Fatalf("pullAuth = (%q, %q, %q, %v), want ghcr.io / u / tok / true", host, user, pass, has)
+		}
+	})
+
+	t.Run("docr uses the token as both username and password", func(t *testing.T) {
+		p, err := Get("registry", "docr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Validate(ComponentContext{}); err == nil {
+			t.Fatal("expected validation error for missing token")
+		}
+		ctx := ComponentContext{Credentials: map[string]string{"token": "dop_v1_abc"}}
+		if err := p.Validate(ctx); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		host, user, pass, has := p.PullAuth(ctx)
+		if !has || host != "https://registry.digitalocean.com" || user != "dop_v1_abc" || pass != "dop_v1_abc" {
+			t.Fatalf("pullAuth = (%q, %q, %q, %v), want docr / token / token / true", host, user, pass, has)
+		}
+	})
+
+	t.Run("scaleway-cr fixes username to nologin and needs url + secret_key", func(t *testing.T) {
+		p, err := Get("registry", "scaleway-cr")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Validate(ComponentContext{ProviderConfig: map[string]any{"registry_url": "https://rg.fr-par.scw.cloud"}}); err == nil {
+			t.Fatal("expected validation error for missing secret_key")
+		}
+		ctx := ComponentContext{
+			Credentials:    map[string]string{"secret_key": "scw-secret"},
+			ProviderConfig: map[string]any{"registry_url": "https://rg.fr-par.scw.cloud"},
+		}
+		if err := p.Validate(ctx); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		host, user, pass, has := p.PullAuth(ctx)
+		if !has || host != "https://rg.fr-par.scw.cloud" || user != "nologin" || pass != "scw-secret" {
+			t.Fatalf("pullAuth = (%q, %q, %q, %v), want scw host / nologin / secret / true", host, user, pass, has)
+		}
+	})
+
+	// The dominant-registry spec builder derives the pull-secret name as "<slug>-pull" and builds
+	// the dockerconfigjson for a generic-set provider end-to-end (locks the naming + host wiring).
+	t.Run("spec: ghcr → ghcr-pull dockerconfigjson", func(t *testing.T) {
+		vc := &types.ProjectConfig{
+			ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "app", Provider: "ghcr"}},
+			ConnectorCredentials: []types.ConnectorCredential{
+				{Category: "registry", Slug: "ghcr", Credentials: map[string]string{"username": "u", "password": "tok"}},
+			},
+		}
+		spec, err := DominantRegistryPullSecretSpec(vc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if spec == nil || spec.Name != "ghcr-pull" || spec.Namespace != "default" {
+			t.Fatalf("spec = %+v, want name ghcr-pull / ns default", spec)
+		}
+		if !strings.Contains(spec.DockerConfigJSON, "https://ghcr.io") {
+			t.Fatalf("dockerconfigjson missing ghcr host: %s", spec.DockerConfigJSON)
+		}
+	})
 }
 
 func TestComposeWritesGuardsAndModuleFile(t *testing.T) {
