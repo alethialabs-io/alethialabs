@@ -841,6 +841,13 @@
       "when": 1784537205920,
       "tag": "0119_volatile_wiccan",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1784644056483,
+      "tag": "0120_aspiring_the_captain",
+      "breakpoints": true
     }
   ]
 }
