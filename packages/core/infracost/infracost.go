@@ -47,6 +47,10 @@ var (
 	// forever (the default http.Get has no timeout). Overridden in tests.
 	httpGet        = (&http.Client{Timeout: 5 * time.Minute}).Get
 	executeCommand = utils.ExecuteCommand
+	// binaryCacheDir is where the native/dev fallback caches the downloaded infracost binary. Rooted
+	// in the OS temp dir (an absolute path), NOT the process cwd, so concurrent jobs that share a
+	// working directory don't race the same "bin/" path (#952). Overridden in tests.
+	binaryCacheDir = filepath.Join(os.TempDir(), "alethia-infracost")
 )
 
 // InfracostCLI represents the Infracost CLI wrapper.
@@ -76,24 +80,17 @@ func (i *InfracostCLI) CheckToken() bool {
 
 // ensureBinary checks if the Infracost binary exists and downloads it if not.
 func (i *InfracostCLI) ensureBinary() error {
-	binDir := "bin"
-	absBinDir, err := filepath.Abs(binDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path for bin directory: %w", err)
-	}
-
-	i.binaryPath = filepath.Join(absBinDir, fmt.Sprintf("infracost_%s", i.Version))
+	i.binaryPath = filepath.Join(binaryCacheDir, fmt.Sprintf("infracost_%s", i.Version))
 	if _, err := os.Stat(i.binaryPath); err == nil {
 		fmt.Printf("Infracost %s is already available.\n", i.Version)
 		return nil
 	}
 
-	// Create bin directory if it doesn't exist
-	if err := os.MkdirAll(absBinDir, 0755); err != nil {
-		return fmt.Errorf("failed to create bin directory: %w", err)
+	if err := os.MkdirAll(binaryCacheDir, 0755); err != nil {
+		return fmt.Errorf("failed to create infracost cache directory: %w", err)
 	}
 
-	return i.download(absBinDir)
+	return i.download(binaryCacheDir)
 }
 
 func (i *InfracostCLI) download(binDir string) error {
@@ -121,7 +118,15 @@ func (i *InfracostCLI) download(binDir string) error {
 	defer gzReader.Close()
 
 	tarReader := tar.NewReader(gzReader)
-	outPath := filepath.Join(binDir, "infracost")
+	// Extract to a unique temp file in the cache dir, then atomically rename into the versioned
+	// path — so two jobs downloading at once never write the same file mid-flight (#952).
+	dest := filepath.Join(binDir, fmt.Sprintf("infracost_%s", i.Version))
+	tmpFile, err := os.CreateTemp(binDir, "infracost-dl-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for infracost binary: %w", err)
+	}
+	tmpName := tmpFile.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeds
 	extracted := false
 	for {
 		header, err := tarReader.Next()
@@ -129,30 +134,30 @@ func (i *InfracostCLI) download(binDir string) error {
 			break
 		}
 		if err != nil {
+			tmpFile.Close()
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 		if header.Typeflag == tar.TypeReg && strings.Contains(header.Name, "infracost") {
-			outFile, err := os.Create(outPath)
-			if err != nil {
-				return fmt.Errorf("failed to create infracost binary: %w", err)
-			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
+			if _, err := io.Copy(tmpFile, tarReader); err != nil {
+				tmpFile.Close()
 				return fmt.Errorf("failed to write infracost binary: %w", err)
 			}
-			outFile.Close()
 			extracted = true
 			break
 		}
 	}
+	tmpFile.Close()
 	if !extracted {
 		return fmt.Errorf("infracost binary not found in the downloaded archive")
 	}
 
-	i.binaryPath = outPath
-	if err := os.Chmod(i.binaryPath, 0755); err != nil {
+	if err := os.Chmod(tmpName, 0755); err != nil {
 		return fmt.Errorf("failed to make infracost binary executable: %w", err)
 	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		return fmt.Errorf("failed to install infracost binary: %w", err)
+	}
+	i.binaryPath = dest
 
 	fmt.Println("Infracost downloaded and verified successfully.")
 	return nil
@@ -207,10 +212,13 @@ func (i *InfracostCLI) RunInfracost(planFile string, env []string) (*CostBreakdo
 		return nil, fmt.Errorf("failed to ensure infracost binary: %w", err)
 	}
 
-	tempDir := "temp"
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	// A per-invocation temp dir (not the cwd-relative "temp"), so concurrent jobs sharing a working
+	// directory can't clobber each other's breakdown output (#952).
+	tempDir, err := os.MkdirTemp("", "alethia-infracost-*")
+	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
+	defer os.RemoveAll(tempDir)
 	breakdownJSONPath := filepath.Join(tempDir, "infracost_breakdown.json")
 
 	// binaryPath, planFile and breakdownJSONPath are interpolated into a `bash -c` command string;

@@ -24,10 +24,30 @@ func resetInfracostSeams(t *testing.T) {
 	t.Helper()
 	origHTTPGet := httpGet
 	origExecuteCommand := executeCommand
+	origCacheDir := binaryCacheDir
+	// Point the binary cache at a fresh temp dir per test so it's isolated (and not the shared
+	// process cwd) — the #952 fix roots it in the OS temp dir.
+	binaryCacheDir = t.TempDir()
 	t.Cleanup(func() {
 		httpGet = origHTTPGet
 		executeCommand = origExecuteCommand
+		binaryCacheDir = origCacheDir
 	})
+}
+
+// writeBreakdownFromCmd simulates infracost writing its breakdown JSON: it extracts the
+// (shell-quoted) --out-file path from the built command and writes content there. Robust to the
+// per-invocation MkdirTemp path the #952 fix uses.
+func writeBreakdownFromCmd(t *testing.T, command, content string) error {
+	t.Helper()
+	const marker = "--out-file "
+	i := strings.Index(command, marker)
+	if i < 0 {
+		t.Fatalf("no --out-file in command %q", command)
+	}
+	rest := command[i+len(marker):]
+	path := strings.Trim(strings.Fields(rest)[0], "'")
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 func TestNewInfracostCLIAndCheckToken(t *testing.T) {
@@ -49,17 +69,9 @@ func TestNewInfracostCLIAndCheckToken(t *testing.T) {
 
 func TestEnsureBinaryUsesExistingVersionedBinary(t *testing.T) {
 	resetInfracostSeams(t)
-	t.Chdir(t.TempDir())
 
 	version := "v0.10.0"
-	binDir := filepath.Join("bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	wantPath, err := filepath.Abs(filepath.Join(binDir, "infracost_"+version))
-	if err != nil {
-		t.Fatalf("abs path: %v", err)
-	}
+	wantPath := filepath.Join(binaryCacheDir, "infracost_"+version)
 	if err := os.WriteFile(wantPath, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
@@ -99,18 +111,13 @@ func TestDownloadExtractsBinaryAndRemovesArchive(t *testing.T) {
 	}
 
 	cli := NewInfracostCLI("v0.10.0", "token")
-	binDir, err := filepath.Abs("bin")
-	if err != nil {
-		t.Fatalf("abs bin: %v", err)
-	}
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
+	binDir := binaryCacheDir
 	if err := cli.download(binDir); err != nil {
 		t.Fatalf("download: %v", err)
 	}
 
-	wantPath := filepath.Join(binDir, "infracost")
+	// The binary is extracted to the VERSIONED cache path via an atomic rename (#952).
+	wantPath := filepath.Join(binDir, "infracost_v0.10.0")
 	if cli.binaryPath != wantPath {
 		t.Fatalf("binaryPath = %q, want %q", cli.binaryPath, wantPath)
 	}
@@ -121,8 +128,15 @@ func TestDownloadExtractsBinaryAndRemovesArchive(t *testing.T) {
 	if string(data) != "binary" {
 		t.Fatalf("extracted binary = %q, want binary", data)
 	}
-	if _, err := os.Stat(filepath.Join(binDir, "infracost_v0.10.0.tar.gz")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("archive still exists or stat failed unexpectedly: %v", err)
+	// No leftover temp download files remain in the cache dir.
+	entries, err := os.ReadDir(binDir)
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "infracost-dl-") {
+			t.Fatalf("leftover temp download file: %q", e.Name())
+		}
 	}
 }
 
@@ -181,16 +195,8 @@ func TestRunInfracostSkipsWithoutToken(t *testing.T) {
 
 func TestRunInfracostExecutesBreakdownAndParsesOutput(t *testing.T) {
 	resetInfracostSeams(t)
-	t.Chdir(t.TempDir())
 
-	binDir := filepath.Join("bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	versionedBinary, err := filepath.Abs(filepath.Join(binDir, "infracost_v0.10.0"))
-	if err != nil {
-		t.Fatalf("abs binary: %v", err)
-	}
+	versionedBinary := filepath.Join(binaryCacheDir, "infracost_v0.10.0")
 	if err := os.WriteFile(versionedBinary, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
@@ -201,10 +207,7 @@ func TestRunInfracostExecutesBreakdownAndParsesOutput(t *testing.T) {
 		gotCommand = command
 		gotDir = dir
 		gotEnv = append([]string(nil), env...)
-		if err := os.WriteFile(filepath.Join("temp", "infracost_breakdown.json"), []byte(sampleBreakdown), 0644); err != nil {
-			return fmt.Errorf("write breakdown: %w", err)
-		}
-		return nil
+		return writeBreakdownFromCmd(t, command, sampleBreakdown)
 	}
 
 	breakdown, err := NewInfracostCLI("v0.10.0", "token").RunInfracost("tfplan.json", []string{"A=B"})
@@ -223,8 +226,9 @@ func TestRunInfracostExecutesBreakdownAndParsesOutput(t *testing.T) {
 	if len(gotEnv) != 1 || gotEnv[0] != "A=B" {
 		t.Fatalf("env = %#v, want [A=B]", gotEnv)
 	}
-	// Paths are shell-quoted to close the command-injection surface (#944).
-	for _, want := range []string{versionedBinary, "breakdown", "--path 'tfplan.json'", "--format json", "--out-file 'temp/infracost_breakdown.json'"} {
+	// Paths are shell-quoted to close the command-injection surface (#944); the breakdown output
+	// now lands in a per-invocation temp dir (#952), so assert the basename rather than a fixed path.
+	for _, want := range []string{utils.ShellQuote(versionedBinary), "breakdown", "--path 'tfplan.json'", "--format json", "infracost_breakdown.json"} {
 		if !strings.Contains(gotCommand, want) {
 			t.Fatalf("command %q does not contain %q", gotCommand, want)
 		}
@@ -235,15 +239,8 @@ func TestRunInfracostExecutesBreakdownAndParsesOutput(t *testing.T) {
 // single-quoted into the command string rather than interpreted by the shell (#944).
 func TestRunInfracostShellQuotesPlanPath(t *testing.T) {
 	resetInfracostSeams(t)
-	t.Chdir(t.TempDir())
 
-	if err := os.MkdirAll("bin", 0755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	versionedBinary, err := filepath.Abs(filepath.Join("bin", "infracost_v0.10.0"))
-	if err != nil {
-		t.Fatalf("abs binary: %v", err)
-	}
+	versionedBinary := filepath.Join(binaryCacheDir, "infracost_v0.10.0")
 	if err := os.WriteFile(versionedBinary, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
@@ -251,10 +248,7 @@ func TestRunInfracostShellQuotesPlanPath(t *testing.T) {
 	var gotCommand string
 	executeCommand = func(command string, _ string, _ []string, _, _ io.Writer) error {
 		gotCommand = command
-		if err := os.WriteFile(filepath.Join("temp", "infracost_breakdown.json"), []byte(sampleBreakdown), 0644); err != nil {
-			return fmt.Errorf("write breakdown: %w", err)
-		}
-		return nil
+		return writeBreakdownFromCmd(t, command, sampleBreakdown)
 	}
 
 	// A malicious plan path: without quoting, `$(...)` would be command-substituted by bash.
@@ -269,13 +263,8 @@ func TestRunInfracostShellQuotesPlanPath(t *testing.T) {
 
 func TestRunInfracostPropagatesCommandAndParseErrors(t *testing.T) {
 	resetInfracostSeams(t)
-	t.Chdir(t.TempDir())
 
-	binDir := filepath.Join("bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("mkdir bin: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(binDir, "infracost_v0.10.0"), []byte("#!/bin/sh\n"), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(binaryCacheDir, "infracost_v0.10.0"), []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
 
@@ -290,8 +279,8 @@ func TestRunInfracostPropagatesCommandAndParseErrors(t *testing.T) {
 	})
 
 	t.Run("invalid output", func(t *testing.T) {
-		executeCommand = func(string, string, []string, io.Writer, io.Writer) error {
-			return os.WriteFile(filepath.Join("temp", "infracost_breakdown.json"), []byte(`{invalid`), 0644)
+		executeCommand = func(command string, _ string, _ []string, _, _ io.Writer) error {
+			return writeBreakdownFromCmd(t, command, `{invalid`)
 		}
 		_, err := NewInfracostCLI("v0.10.0", "token").RunInfracost("tfplan.json", nil)
 		if err == nil {
