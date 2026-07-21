@@ -51,6 +51,22 @@ func TestActivateTokenCloud_Managed(t *testing.T) {
 	}
 }
 
+func TestActivateTokenCloud_ManagedRestoresPriorValue(t *testing.T) {
+	// A pre-existing value must be RESTORED on cleanup, not cleared (#988).
+	t.Setenv("HCLOUD_TOKEN", "pre-existing")
+	cleanup, err := ActivateTokenCloud("hetzner", "platform-tok", false)
+	if err != nil {
+		t.Fatalf("ActivateTokenCloud: %v", err)
+	}
+	if got := os.Getenv("HCLOUD_TOKEN"); got != "platform-tok" {
+		t.Fatalf("during activation HCLOUD_TOKEN = %q, want platform-tok", got)
+	}
+	cleanup()
+	if got := os.Getenv("HCLOUD_TOKEN"); got != "pre-existing" {
+		t.Fatalf("cleanup cleared the pre-existing value: %q, want pre-existing", got)
+	}
+}
+
 func TestActivateTokenCloud_ManagedEmptyToken(t *testing.T) {
 	if _, err := ActivateTokenCloud("civo", "", false); err == nil {
 		t.Fatal("expected an error for an empty API token")
