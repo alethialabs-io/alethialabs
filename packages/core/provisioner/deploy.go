@@ -347,13 +347,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 	}
 
-	// Placement activation gate (#955). A `namespace`/`vcluster` env deploys onto an EXISTING shared
-	// Fabric cluster (no tofu run) via keyless re-mint — that runner path is being activated
-	// incrementally. Until it lands, fail CLOSED on a non-dedicated placement rather than silently
-	// running the full-cluster tofu (which would ignore the placement the user chose and could collide
-	// with the Fabric's real cluster). `dedicated` (incl. empty = legacy env=cluster) is unaffected.
-	if pm := vc.PlacementMode; pm != "" && pm != types.PlacementModeDedicated {
-		return nil, fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' provisions today (tracked: #955)", pm)
+	// Placement activation dispatch (#955/#956). `dedicated` (incl. empty = legacy env=cluster) falls
+	// through to the full-cluster provisioning below, byte-identical. `namespace` on aws deploys onto an
+	// EXISTING shared Fabric cluster via keyless re-mint (no tofu) — a fully separate path so the
+	// dedicated body stays untouched. Everything else (namespace on a cloud whose re-mint isn't wired,
+	// vcluster) stays FAIL-CLOSED rather than silently running the full-cluster tofu, which would ignore
+	// the placement the user chose and collide with the Fabric's real cluster.
+	switch selectPlacementPath(vc.PlacementMode, params.Provider) {
+	case placementNamespaceAWS:
+		return runNamespaceDeploy(ctx, params)
+	case placementUnactivated:
+		return nil, unactivatedPlacementError(vc.PlacementMode, params.Provider)
+	case placementDedicated:
+		// Fall through to the existing full-cluster provisioning path (unchanged).
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
