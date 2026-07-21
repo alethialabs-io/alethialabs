@@ -163,8 +163,9 @@ func (c *Catalog) Region(canonicalID, provider string) (string, bool) {
 }
 
 // DefaultK8sVersion returns the catalog's default Kubernetes minor for a provider's
-// managed cluster (e.g. "1.35"). Returns false when the provider carries no default —
-// callers then fall back to their own passthrough (e.g. Hetzner lets Talos pick).
+// managed cluster (e.g. "1.35"). Returns false only for a provider the catalog has no default
+// for — an unknown/unlisted provider — in which case the caller falls back to its own passthrough.
+// All five managed clouds, including Hetzner, currently pin a default in catalog.json.
 func (c *Catalog) DefaultK8sVersion(provider string) (string, bool) {
 	if cp, ok := c.Compute[provider]; ok && cp.DefaultK8sVersion != "" {
 		return cp.DefaultK8sVersion, true
