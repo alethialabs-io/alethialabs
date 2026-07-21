@@ -245,6 +245,28 @@
     font-weight: 700;
     letter-spacing: -0.03em;
   }
+
+  /* Minimal grayscale scrollbars, app-wide. Native scrollbars can't detect "idle"
+     (no scrolling pseudo-state), so the native ceiling is thin + very subtle-always,
+     tuned low enough to nearly vanish when idle and darken on hover. True idle
+     auto-hide lives on the ScrollArea component (see @repo/ui/scroll-area). */
+  * {
+    scrollbar-width: thin;                                 /* Firefox */
+    scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+  }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--foreground) 16%, transparent);
+    border-radius: 9999px;
+    border: 2px solid transparent;                         /* inset → floating thumb */
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--foreground) 30%, transparent);
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-corner { background: transparent; }
 }
 
 @keyframes scroll {

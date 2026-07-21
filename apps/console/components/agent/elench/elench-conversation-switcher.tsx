@@ -81,7 +81,7 @@ export function ElenchConversationSwitcher({
 						{filtered.length > 0 && (
 							<div className="vx-eyebrow px-2 pb-1 pt-2 text-[9px]">Recent</div>
 						)}
-						<ScrollArea className="max-h-[240px] [&_[data-slot=scroll-area-viewport]>div]:!block">
+						<ScrollArea className="max-h-[240px]">
 							{filtered.map((t) => (
 								<button
 									key={t.id}
