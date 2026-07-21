@@ -19,8 +19,7 @@ VALUES
   ('vault', 'HashiCorp Vault', 'Store and read application secrets from a HashiCorp Vault instance.', 'secrets'::connector_category, 'api_key'::connector_auth_method, 'HashiCorp', '/icons/vault/vault-32x32.png', 'https://developer.hashicorp.com/vault/docs', 'active'::connector_status, 40),
   ('dockerhub', 'Docker Hub', 'Use a Docker Hub repository as the container registry instead of the cloud-native one.', 'registry'::connector_category, 'api_key'::connector_auth_method, 'Docker, Inc.', '/icons/dockerhub/dockerhub-32x32.png', 'https://docs.docker.com/docker-hub/', 'active'::connector_status, 50),
   ('datadog', 'Datadog', 'Ship cluster metrics, logs, and traces to Datadog.', 'observability'::connector_category, 'api_key'::connector_auth_method, 'Datadog, Inc.', '/icons/datadog/datadog-32x32.png', 'https://docs.datadoghq.com/', 'active'::connector_status, 60),
-  ('grafana', 'Grafana Cloud', 'Remote-write metrics to Grafana Cloud''s managed Prometheus.', 'observability'::connector_category, 'api_key'::connector_auth_method, 'Grafana Labs', '/icons/grafana/grafana-32x32.png', 'https://grafana.com/docs/grafana-cloud/', 'active'::connector_status, 70),
-  ('prometheus', 'Prometheus', 'Install in-cluster Prometheus, optionally remote-writing to an external store.', 'observability'::connector_category, 'api_key'::connector_auth_method, 'Prometheus Authors', '/icons/prometheus/prometheus-32x32.png', 'https://prometheus.io/docs/', 'active'::connector_status, 80)
+  ('grafana', 'Grafana Cloud', 'Remote-write metrics to Grafana Cloud''s managed Prometheus.', 'observability'::connector_category, 'api_key'::connector_auth_method, 'Grafana Labs', '/icons/grafana/grafana-32x32.png', 'https://grafana.com/docs/grafana-cloud/', 'active'::connector_status, 70)
 ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description,

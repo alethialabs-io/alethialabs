@@ -442,14 +442,12 @@ export interface SecretsProviderConfig {
 	kv_version?: string;
 }
 
-// Datadog / Grafana Cloud / Prometheus — non-secret knobs only.
+// Datadog / Grafana Cloud — non-secret knobs only.
 export interface ObservabilityProviderConfig {
 	// Datadog
 	site?: string;
-	// Grafana Cloud / Prometheus remote-write
+	// Grafana Cloud remote-write
 	remote_write_url?: string;
-	// Prometheus (in-cluster)
-	retention_days?: string;
 }
 
 // project_addons.values — the user's tuned knobs for a marketplace add-on. Validated + typed

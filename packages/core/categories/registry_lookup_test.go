@@ -22,7 +22,6 @@ func TestGetModulePath(t *testing.T) {
 		{"dockerhub registry", "registry", "dockerhub", "categories/registry/dockerhub"},
 		{"datadog observability", "observability", "datadog", "categories/observability/datadog"},
 		{"grafana observability", "observability", "grafana", "categories/observability/grafana"},
-		{"prometheus observability", "observability", "prometheus", "categories/observability/prometheus"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

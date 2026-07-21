@@ -247,7 +247,7 @@ export const projectDns = pgTable(
 );
 
 // Observability component — no cloud-native default today; provider chooses the
-// backend (datadog / grafana / prometheus). Singleton per project environment like DNS.
+// backend (datadog / grafana). Singleton per project environment like DNS.
 export const projectObservability = pgTable(
 	"project_observability",
 	{
