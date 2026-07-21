@@ -24,6 +24,11 @@ import (
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
+var (
+	lookPath = exec.LookPath
+	httpGet  = defaultHTTPGet
+)
+
 // DefaultIaCVersion is the OpenTofu version the runner provisions with when a project
 // snapshot doesn't pin one. OpenTofu (MPL-2.0) replaces Terraform (BUSL); it is
 // state- and CLI-compatible with the Terraform 1.6 line, so terraform-exec drives
@@ -264,7 +269,7 @@ func ensurePluginCache() {
 // cached download, then fetching + SHA256-verifying the release from the OpenTofu
 // GitHub releases.
 func ensureBinary(ctx context.Context, tfVersion string) (string, error) {
-	if path, err := exec.LookPath("tofu"); err == nil {
+	if path, err := lookPath("tofu"); err == nil {
 		return path, nil
 	}
 
@@ -346,7 +351,7 @@ func downloadTofu(ctx context.Context, ver, dst string) error {
 	return fmt.Errorf("`tofu` binary not found in %s", asset)
 }
 
-func httpGet(ctx context.Context, url string) ([]byte, error) {
+func defaultHTTPGet(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

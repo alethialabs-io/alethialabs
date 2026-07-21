@@ -16,6 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var executeCommand = utils.ExecuteCommand
+
 type K8sCLI struct {
 	Profile   string
 	Region    string
@@ -137,7 +139,7 @@ func (k *K8sCLI) Apply(namespace, manifest string, env map[string]string, logger
 
 	if k.DryRun {
 		logger.Info("Performing server-side dry-run...", "k8s")
-		err := utils.ExecuteCommand(serverDryRunCmd, ".", envList, nil, nil)
+		err := executeCommand(serverDryRunCmd, ".", envList, nil, nil)
 		if err != nil {
 			logger.Warn("Server-side dry-run failed. It might be expected in dry-run mode.", "k8s")
 		} else {
@@ -145,13 +147,13 @@ func (k *K8sCLI) Apply(namespace, manifest string, env map[string]string, logger
 		}
 	} else {
 		logger.Info("Performing server-side dry-run before actual execution...", "k8s")
-		err := utils.ExecuteCommand(serverDryRunCmd, ".", envList, nil, nil)
+		err := executeCommand(serverDryRunCmd, ".", envList, nil, nil)
 		if err != nil {
 			return fmt.Errorf("server-side dry-run failed: %w", err)
 		}
 		logger.Info("Server-side dry-run succeeded. Proceeding with actual command.", "k8s")
 
-		err = utils.ExecuteCommand(cmd, ".", envList, nil, nil)
+		err = executeCommand(cmd, ".", envList, nil, nil)
 		if err != nil {
 			return fmt.Errorf("kubectl apply failed: %w", err)
 		}
