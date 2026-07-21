@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
@@ -70,12 +71,24 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 // the fail-closed per-namespace isolation (hardened AppProject + Namespace w/ PSA + the guardrail
 // bundle), and delivers the tenant app as ONE ArgoCD Application into the namespace — WITHOUT
 // reinstalling the shared Fabric's ArgoCD. v1 provisions no per-env cloud resources and grants the
-// tenant NO cloud credential (per-namespace identity is the #957 follow-up), the safe default.
+// tenant NO Kubernetes-API credential (default-SA token automount off, no IRSA — per-namespace
+// identity is the #957 follow-up).
 //
 // It is a fully separate path from RunDeployV2's full-cluster body so the `dedicated` path stays
 // byte-identical. Because no infrastructure (cloud) is mutated, the tofu plan / verify gate / cost
 // guard / evidence receipt do not apply and are deliberately absent — a namespace deploy mutates only
 // in-cluster Kubernetes objects on a Fabric that already passed the gate at ITS creation.
+//
+// SECURITY — INCOMPLETE tenant isolation on the current Fabric (do NOT offer namespace placement in
+// the UI until closed; the placement selector is parked precisely for this bar):
+//   - The default-deny NetworkPolicy in the guardrail bundle is only enforced if the Fabric's CNI
+//     enforces NetworkPolicy. The AWS EKS Fabric template does NOT enable VPC-CNI NetworkPolicy today,
+//     so the network half is currently a NO-OP on AWS — tenants are not network-isolated from each
+//     other, and (with node metadata hop-limit 2) a pod can reach IMDS and assume the NODE IAM role
+//     (cluster-wide node creds: ECR, ENI/EC2). Closing this needs, on the Fabric: VPC-CNI
+//     NetworkPolicy enforcement (parity: Calico/Cilium equivalents on the other clouds) AND node IMDS
+//     hop-limit 1 (or an explicit metadata-egress deny), AND per-namespace IRSA/WI (#957). Until then
+//     the honest isolation level is "soft, and not a cloud-credential boundary."
 func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult, retErr error) {
 	vc := params.ProjectConfig
 
@@ -123,6 +136,19 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	ns := strings.TrimSpace(vc.Namespace)
 	if ns == "" {
 		return nil, fmt.Errorf("namespace placement: no destination namespace on the config snapshot")
+	}
+
+	// Defense-in-depth: `ns` and `clusterName` flow into SHELL commands (utils.ExecuteCommand runs
+	// `bash -c`, e.g. `kubectl apply -n <ns> ...`) and into rendered YAML manifests. The console builds
+	// the snapshot and derives `ns` as a DNS-1123 slug, but the RUNNER is the trust boundary for a
+	// (project-data-influenced) snapshot — reject anything that isn't a strict DNS-1123 label / valid
+	// cluster name, so a malformed or hostile value can never inject a shell command (it would run with
+	// the runner's ambient cloud creds) or break the manifest.
+	if !isDNS1123Label(ns) {
+		return nil, fmt.Errorf("namespace placement: destination namespace %q is not a valid DNS-1123 label", ns)
+	}
+	if !isValidClusterName(clusterName) {
+		return nil, fmt.Errorf("namespace placement: serving cluster name %q contains invalid characters", clusterName)
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
@@ -265,3 +291,20 @@ func applyNamespaceGuardrailBundle(ns string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Applying namespace guardrail bundle into %q...\n", ns)
 	return executeCommand(fmt.Sprintf("kubectl apply -n %s -f %s", ns, bundleDir), ".", nil, stdout, stderr)
 }
+
+// dns1123LabelRe matches a strict Kubernetes DNS-1123 label (lowercase alnum + hyphens, not
+// hyphen-bounded). Used to fail-closed a namespace that isn't shell-safe / YAML-safe.
+var dns1123LabelRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// isDNS1123Label reports whether s is a valid (≤63-char) DNS-1123 label — the k8s namespace grammar,
+// which by construction contains no shell metacharacters or YAML-breaking runes.
+func isDNS1123Label(s string) bool {
+	return len(s) > 0 && len(s) <= 63 && dns1123LabelRe.MatchString(s)
+}
+
+// clusterNameRe matches the EKS cluster-name grammar (alnum start, then alnum/hyphen/underscore) —
+// shell-safe. Used to fail-closed a serving-cluster name from the snapshot before it reaches a shell.
+var clusterNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`)
+
+// isValidClusterName reports whether s is a shell-safe cluster name.
+func isValidClusterName(s string) bool { return clusterNameRe.MatchString(s) }

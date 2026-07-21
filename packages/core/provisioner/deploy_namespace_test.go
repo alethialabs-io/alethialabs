@@ -60,3 +60,34 @@ func TestUnactivatedPlacementError(t *testing.T) {
 		t.Errorf("vcluster error %q missing 'vcluster'", vcErr.Error())
 	}
 }
+
+func TestNamespaceInputValidation(t *testing.T) {
+	// Valid DNS-1123 labels pass; shell/YAML-hostile or malformed values fail closed — the guard
+	// stops a hostile snapshot value from injecting a shell command (kubectl apply -n <ns>) that would
+	// run with the runner's ambient cloud creds.
+	validNS := []string{"production", "e2e-ns-prod", "a", "team-1-web"}
+	badNS := []string{"", "Production", "foo bar", "foo;rm -rf /", "foo$(whoami)", "foo`id`", "-lead", "trail-", "a/b", strings.Repeat("x", 64)}
+	for _, s := range validNS {
+		if !isDNS1123Label(s) {
+			t.Errorf("isDNS1123Label(%q) = false, want true", s)
+		}
+	}
+	for _, s := range badNS {
+		if isDNS1123Label(s) {
+			t.Errorf("isDNS1123Label(%q) = true, want false (must fail closed)", s)
+		}
+	}
+
+	validCluster := []string{"eks-fabric", "prod_cluster-1", "A1"}
+	badCluster := []string{"", "cluster name", "clus;ter", "clus$(x)", "-lead"}
+	for _, s := range validCluster {
+		if !isValidClusterName(s) {
+			t.Errorf("isValidClusterName(%q) = false, want true", s)
+		}
+	}
+	for _, s := range badCluster {
+		if isValidClusterName(s) {
+			t.Errorf("isValidClusterName(%q) = true, want false (must fail closed)", s)
+		}
+	}
+}
