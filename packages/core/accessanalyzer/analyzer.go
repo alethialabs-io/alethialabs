@@ -21,7 +21,14 @@ import (
 
 // Checker implements verify.PolicyChecker over the Access Analyzer API.
 type Checker struct {
-	client *accessanalyzer.Client
+	client accessAnalyzerAPI
+}
+
+// accessAnalyzerAPI is the subset of the Access Analyzer client the Checker calls — an
+// extracted seam so the checker can be unit-tested against a fake. The real client
+// (*accessanalyzer.Client) satisfies it.
+type accessAnalyzerAPI interface {
+	CheckAccessNotGranted(context.Context, *accessanalyzer.CheckAccessNotGrantedInput, ...func(*accessanalyzer.Options)) (*accessanalyzer.CheckAccessNotGrantedOutput, error)
 }
 
 // compile-time guarantee that Checker satisfies the verify seam.
