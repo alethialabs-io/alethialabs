@@ -86,6 +86,17 @@ resource "google_container_cluster" "cluster" {
     channel = "REGULAR"
   }
 
+  # Namespace-placement tenant isolation (#1012 — cloud parity with the AWS Fabric fix).
+  # GKE already closes both halves the AWS EKS template had to fix:
+  #   1. NetworkPolicy ENFORCEMENT: Calico NP is enabled here (Standard) so the guardrail
+  #      bundle's default-deny NetworkPolicy actually enforces between tenant namespaces —
+  #      it is NOT a no-op the way an unconfigured VPC-CNI was on AWS. Autopilot enforces
+  #      NetworkPolicy natively via Dataplane V2, so the block is omitted there.
+  #   2. Metadata / node-credential lockdown: the node pool sets
+  #      `workload_metadata_config { mode = "GKE_METADATA" }` (GKE Metadata Server), which
+  #      conceals the raw GCE metadata endpoint from Pods — a tenant Pod cannot read the node
+  #      SA token, the GCP analogue of the EKS IMDS-hop-limit lockdown. Workloads get scoped
+  #      identity via Workload Identity instead.
   dynamic "network_policy" {
     for_each = var.enable_autopilot ? [] : [1]
     content {
