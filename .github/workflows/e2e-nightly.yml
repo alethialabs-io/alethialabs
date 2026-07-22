@@ -28,8 +28,13 @@ name: E2E Nightly (T2 · real cloud)
 
 on:
   schedule:
-    # 03:17 UTC nightly (off the hour to avoid the cron stampede).
+    # 03:17 UTC nightly (off the hour to avoid the cron stampede) — the cheap GREEN-FLOOR smoke
+    # (base provision + cluster_ready + ArgoCD Healthy, + A0.6 repos when wired).
     - cron: "17 3 * * *"
+    # 05:17 UTC Sunday — the OPT-IN FULL-BAR run (P2-F, #1068): the same matrix but with
+    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 19 add-ons — heavy/costly,
+    # so weekly not nightly). Resolved from this exact cron string in "Resolve full-bar dimension".
+    - cron: "17 5 * * 0"
   workflow_dispatch:
     inputs:
       provider:
@@ -46,6 +51,10 @@ on:
         description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure germanywestcentral, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
         type: string
         default: ""
+      full_bar:
+        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 19 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -251,6 +260,40 @@ jobs:
           if [ -n "$NET" ]; then
             echo "ALETHIA_E2E_NETWORK_JSON=$NET" >> "$GITHUB_ENV"
             echo "::notice::T2 network override for $PROVIDER: $NET"
+          fi
+
+      # ── Resolve the FULL-BAR dimension (P2-F, #1068). Off by default (the nightly stays the cheap
+      #    green-floor smoke); ON for the weekly Sunday cron OR a workflow_dispatch with full_bar=true.
+      #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
+      #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
+      #    proves all 11 resource kinds land in tofu state AND all 19 marketplace add-ons converge.
+      #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
+      #    row (full vs floor). Both are also read by the rollup job, which recomputes the same way. ──
+      - name: Resolve full-bar dimension
+        if: steps.gate.outputs.run == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          full="false"
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then full="true"; fi
+          # The weekly Sunday cron (05:17 UTC) is the scheduled full-bar run.
+          if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then full="true"; fi
+          if [ "$full" = "true" ]; then
+            {
+              echo "E2E_FULL_BAR=true"
+              echo "E2E_DIMENSION=full"
+              echo "ALETHIA_E2E_MAX_CONFIG=1"
+              echo "ALETHIA_E2E_ALL_ADDONS=1"
+            } >> "$GITHUB_ENV"
+            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (19) on this run (raised cost ceiling)."
+          else
+            {
+              echo "E2E_FULL_BAR=false"
+              echo "E2E_DIMENSION=floor"
+            } >> "$GITHUB_ENV"
+            echo "::notice::green-floor dimension (base provision + ArgoCD Healthy; + A0.6 repos when wired)."
           fi
 
       - uses: pnpm/action-setup@v4
@@ -488,9 +531,12 @@ jobs:
           #    monthly-estimate guard dominated by the always-on EKS control plane + single NAT ⇒ a
           #    cheap run ≈ $150–200/mo) catches a runaway shape. Enabling the ceiling REQUIRES the
           #    secret — without it the guard fail-closes (a ceiling with no estimate refuses). For
-          #    non-aws providers the ceiling is unset ⇒ no cost gate (their waves add their own). ──
+          #    non-aws providers the ceiling is unset ⇒ no cost gate (their waves add their own).
+          #    On a FULL-BAR run (P2-F, #1068) the 11-kind + 19-add-on surface bills more (extra
+          #    managed resources + add-on scale-up), so the ceiling is raised to the full-bar var
+          #    (default $600/mo) — E2E_FULL_BAR was set to `true` in $GITHUB_ENV by the resolve step. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (vars.E2E_AWS_COST_CEILING_USD || '300') || '' }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_FULL_BAR == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
         run: |
           GOWORK=off go test -tags=e2e_t2 ./... \
             -run TestT2RealCloudProvisioning -count=1 -timeout 80m -v
@@ -691,3 +737,45 @@ jobs:
               && echo "::notice::filed tracking issue: ${title}" \
               || echo "::warning::could not create issue '${title}' (continuing)."
           done
+
+      # ── Provisioning-parity ledger append (P2-F, #1068). Every scheduled/dispatched run auto-records
+      #    one append-only row PER LEG THAT RAN into demos/proofs/provisioning-e2e-log.md, via the
+      #    scripts/e2e/provisioning-e2e.sh RECORD_ONLY path (the same engine the parity board uses) —
+      #    verdict derived from each leg's provision-summary.json (success⇒PASS, else FAIL), dimension
+      #    from the same full-bar resolution as the provision job (full vs floor). Gate-off legs produced
+      #    no bundle (nothing ran) so they contribute no row. The updated ledger is uploaded as an
+      #    artifact for a maintainer to commit — CI never pushes to the repo. ──
+      - name: Append provisioning-e2e ledger rows (RECORD_ONLY)
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          SCHEDULE: ${{ github.event.schedule }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          dim="floor"
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then dim="full"; fi
+          if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then dim="full"; fi
+          sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+          for p in hetzner aws gcp azure alibaba; do
+            summary="$(find "proofs/e2e-proof-${p}-${RUN_ID}" -type f -name provision-summary.json 2>/dev/null | head -1 || true)"
+            # No bundle ⇒ the leg green-skipped at the gate (nothing ran) ⇒ no ledger row.
+            [ -z "$summary" ] && continue
+            outcome="$(jq -r '.outcome // "unknown"' "$summary" 2>/dev/null || echo unknown)"
+            verdict_detail="$(jq -r '.verdict // ""' "$summary" 2>/dev/null || echo "")"
+            if [ "$outcome" = "success" ]; then v="PASS"; else v="FAIL"; fi
+            RECORD_ONLY=1 RECORD_VERDICT="$v" RECORD_BUNDLE="e2e-proof-${p}-${RUN_ID}" \
+              RECORD_DETAIL="${verdict_detail:-$outcome}" RECORD_SHA="$sha" \
+              ./scripts/e2e/provisioning-e2e.sh "$p" "$dim" \
+              || echo "::warning::ledger RECORD_ONLY failed for ${p}/${dim} (continuing)."
+          done
+          echo "::notice::appended provisioning-e2e ledger rows (dimension=${dim}) — upload for a maintainer to commit."
+
+      - name: Upload updated provisioning-e2e ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provisioning-e2e-log-${{ github.run_id }}
+          path: demos/proofs/provisioning-e2e-log.md
+          if-no-files-found: warn
+          retention-days: 30
