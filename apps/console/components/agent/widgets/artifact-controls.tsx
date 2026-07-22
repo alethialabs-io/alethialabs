@@ -16,6 +16,18 @@ import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 
+/**
+ * Portal these grid-header popovers to `<body>` instead of base-ui's default (which nests the popup
+ * into the enclosing Elench `Dialog`'s floating-tree portal). Nested there, the popup lands DOM-before
+ * the `position: relative` widget-grid, which then paints over it and swallows the click on "Save" /
+ * an artifact row. Portaling to `<body>` makes the popup a later body child that paints above the
+ * dialog content, while base-ui keeps it in the dialog's React floating tree (so dismiss + inert
+ * exemption still work). Guarded for SSR — the portal only renders once the popover is open (client).
+ */
+function bodyContainer() {
+  return typeof document !== "undefined" ? document.body : undefined;
+}
+
 /** Portable spec from live rows: positions normalized to the selection's top row. */
 export function specFromWidgets(widgets: ThreadWidget[]): ArtifactSpec {
   const minY = widgets.reduce(
@@ -92,7 +104,11 @@ export function SaveArtifactButton({
           </Button>
         }
       />
-      <PopoverContent align="end" className="w-[240px] rounded-none p-2">
+      <PopoverContent
+        align="end"
+        container={bodyContainer()}
+        className="w-[240px] rounded-none p-2"
+      >
         <div className="vx-eyebrow pb-1.5 text-[9px]">
           {kind === "widget"
             ? "Save widget as artifact"
@@ -173,7 +189,11 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
           </Button>
         }
       />
-      <PopoverContent align="end" className="w-[260px] rounded-none p-2">
+      <PopoverContent
+        align="end"
+        container={bodyContainer()}
+        className="w-[260px] rounded-none p-2"
+      >
         <div className="vx-eyebrow pb-1.5 text-[9px]">Saved artifacts</div>
         {items === null ? (
           <div className="py-3 text-center text-[11px] text-muted-foreground">
