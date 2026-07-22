@@ -19,143 +19,154 @@ const toastError = vi.fn();
 const toastSuccess = vi.fn();
 
 vi.mock("@/app/server/actions/canvas-jobs", () => ({
-	queueEnvironmentAudit: (...a: unknown[]) => queueEnvironmentAudit(...a),
-	queueClusterProbe: (...a: unknown[]) => queueClusterProbe(...a),
+  queueEnvironmentAudit: (...a: unknown[]) => queueEnvironmentAudit(...a),
+  queueClusterProbe: (...a: unknown[]) => queueClusterProbe(...a),
 }));
 vi.mock("@/app/server/actions/projects", () => ({
-	planProject: (...a: unknown[]) => planProject(...a),
-	queueDriftDetection: (...a: unknown[]) => queueDriftDetection(...a),
+  planProject: (...a: unknown[]) => planProject(...a),
+  queueDriftDetection: (...a: unknown[]) => queueDriftDetection(...a),
 }));
 vi.mock("sonner", () => ({
-	toast: {
-		success: (...a: unknown[]) => toastSuccess(...a),
-		error: (...a: unknown[]) => toastError(...a),
-	},
+  toast: {
+    success: (...a: unknown[]) => toastSuccess(...a),
+    error: (...a: unknown[]) => toastError(...a),
+  },
 }));
 
 const PROJECT = "proj-1";
 const ENV = "env-1";
 
+// base-ui menus open on keyboard/pointer interaction. jsdom can't drive base-ui's pointer-open path
+// (it dispatches no working PointerEvent to Floating UI), so open via keyboard — the menu items then
+// respond to click as usual. Gesture only; every behavioral assertion below is unchanged.
+async function openTrigger(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = screen.getByRole("button", { name: /run/i });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+}
+
 async function openMenu() {
-	const user = userEvent.setup();
-	render(<RunMenu projectId={PROJECT} environmentId={ENV} />);
-	await user.click(screen.getByRole("button", { name: /run/i }));
-	return user;
+  const user = userEvent.setup();
+  render(<RunMenu projectId={PROJECT} environmentId={ENV} />);
+  await openTrigger(user);
+  return user;
 }
 
 beforeEach(() => {
-	vi.clearAllMocks();
-	queueEnvironmentAudit.mockResolvedValue({ jobId: "job-1" });
-	queueClusterProbe.mockResolvedValue({ jobId: "job-2" });
-	planProject.mockResolvedValue({ jobId: "job-3" });
-	queueDriftDetection.mockResolvedValue({ jobId: "job-4" });
+  vi.clearAllMocks();
+  queueEnvironmentAudit.mockResolvedValue({ jobId: "job-1" });
+  queueClusterProbe.mockResolvedValue({ jobId: "job-2" });
+  planProject.mockResolvedValue({ jobId: "job-3" });
+  queueDriftDetection.mockResolvedValue({ jobId: "job-4" });
 });
 
 describe("every job the platform can run is reachable from the board", () => {
-	it("offers Plan, Audit, Detect drift and Probe cluster", async () => {
-		await openMenu();
+  it("offers Plan, Audit, Detect drift and Probe cluster", async () => {
+    await openMenu();
 
-		expect(screen.getByText("Plan")).toBeInTheDocument();
-		expect(screen.getByText("Audit")).toBeInTheDocument();
-		expect(screen.getByText("Detect drift")).toBeInTheDocument();
-		expect(screen.getByText("Probe cluster")).toBeInTheDocument();
-	});
+    expect(screen.getByText("Plan")).toBeInTheDocument();
+    expect(screen.getByText("Audit")).toBeInTheDocument();
+    expect(screen.getByText("Detect drift")).toBeInTheDocument();
+    expect(screen.getByText("Probe cluster")).toBeInTheDocument();
+  });
 
-	it("queues an AUDIT against this environment", async () => {
-		const user = await openMenu();
-		await user.click(screen.getByText("Audit"));
+  it("queues an AUDIT against this environment", async () => {
+    const user = await openMenu();
+    await user.click(screen.getByText("Audit"));
 
-		expect(queueEnvironmentAudit).toHaveBeenCalledWith(PROJECT, ENV);
-		expect(toastSuccess).toHaveBeenCalledWith("Audit queued");
-	});
+    expect(queueEnvironmentAudit).toHaveBeenCalledWith(PROJECT, ENV);
+    expect(toastSuccess).toHaveBeenCalledWith("Audit queued");
+  });
 
-	it("queues a PROBE_CLUSTER", async () => {
-		const user = await openMenu();
-		await user.click(screen.getByText("Probe cluster"));
+  it("queues a PROBE_CLUSTER", async () => {
+    const user = await openMenu();
+    await user.click(screen.getByText("Probe cluster"));
 
-		expect(queueClusterProbe).toHaveBeenCalledWith(PROJECT, ENV);
-	});
+    expect(queueClusterProbe).toHaveBeenCalledWith(PROJECT, ENV);
+  });
 
-	it("queues a DETECT_DRIFT", async () => {
-		const user = await openMenu();
-		await user.click(screen.getByText("Detect drift"));
+  it("queues a DETECT_DRIFT", async () => {
+    const user = await openMenu();
+    await user.click(screen.getByText("Detect drift"));
 
-		expect(queueDriftDetection).toHaveBeenCalledWith(PROJECT, ENV);
-	});
+    expect(queueDriftDetection).toHaveBeenCalledWith(PROJECT, ENV);
+  });
 
-	it("queues a PLAN scoped to the environment on the board, not the project's default", async () => {
-		const user = await openMenu();
-		await user.click(screen.getByText("Plan"));
+  it("queues a PLAN scoped to the environment on the board, not the project's default", async () => {
+    const user = await openMenu();
+    await user.click(screen.getByText("Plan"));
 
-		expect(planProject).toHaveBeenCalledWith(PROJECT, null, ENV);
-	});
+    expect(planProject).toHaveBeenCalledWith(PROJECT, null, ENV);
+  });
 });
 
 // The actions throw for HONEST reasons — "run a plan first", "already running", "never deployed".
 // Those messages are the answer, and swallowing them would leave the user staring at a menu that
 // silently did nothing.
 describe("a refusal explains itself", () => {
-	it("surfaces why an audit can't run yet", async () => {
-		queueEnvironmentAudit.mockRejectedValue(
-			new Error("Run a plan first — there's nothing to audit yet."),
-		);
-		const user = await openMenu();
-		await user.click(screen.getByText("Audit"));
+  it("surfaces why an audit can't run yet", async () => {
+    queueEnvironmentAudit.mockRejectedValue(
+      new Error("Run a plan first — there's nothing to audit yet."),
+    );
+    const user = await openMenu();
+    await user.click(screen.getByText("Audit"));
 
-		expect(toastError).toHaveBeenCalledWith(
-			"Run a plan first — there's nothing to audit yet.",
-		);
-		expect(toastSuccess).not.toHaveBeenCalled();
-	});
+    expect(toastError).toHaveBeenCalledWith(
+      "Run a plan first — there's nothing to audit yet.",
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
 
-	it("surfaces why a probe can't run on an undeployed environment", async () => {
-		queueClusterProbe.mockRejectedValue(
-			new Error("This environment has never been deployed, so there's no cluster to probe."),
-		);
-		const user = await openMenu();
-		await user.click(screen.getByText("Probe cluster"));
+  it("surfaces why a probe can't run on an undeployed environment", async () => {
+    queueClusterProbe.mockRejectedValue(
+      new Error(
+        "This environment has never been deployed, so there's no cluster to probe.",
+      ),
+    );
+    const user = await openMenu();
+    await user.click(screen.getByText("Probe cluster"));
 
-		expect(toastError).toHaveBeenCalledWith(
-			"This environment has never been deployed, so there's no cluster to probe.",
-		);
-	});
+    expect(toastError).toHaveBeenCalledWith(
+      "This environment has never been deployed, so there's no cluster to probe.",
+    );
+  });
 
-	it("surfaces a duplicate-job refusal rather than queueing a second one", async () => {
-		queueClusterProbe.mockRejectedValue(
-			new Error("A cluster probe is already running for this environment."),
-		);
-		const user = await openMenu();
-		await user.click(screen.getByText("Probe cluster"));
+  it("surfaces a duplicate-job refusal rather than queueing a second one", async () => {
+    queueClusterProbe.mockRejectedValue(
+      new Error("A cluster probe is already running for this environment."),
+    );
+    const user = await openMenu();
+    await user.click(screen.getByText("Probe cluster"));
 
-		expect(toastError).toHaveBeenCalledWith(
-			"A cluster probe is already running for this environment.",
-		);
-	});
+    expect(toastError).toHaveBeenCalledWith(
+      "A cluster probe is already running for this environment.",
+    );
+  });
 });
 
 describe("the caller is told when a job lands", () => {
-	it("notifies so the activity rail and node statuses refresh immediately", async () => {
-		const onQueued = vi.fn();
-		const user = userEvent.setup();
-		render(
-			<RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
-		);
-		await user.click(screen.getByRole("button", { name: /run/i }));
-		await user.click(screen.getByText("Audit"));
+  it("notifies so the activity rail and node statuses refresh immediately", async () => {
+    const onQueued = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
+    );
+    await openTrigger(user);
+    await user.click(screen.getByText("Audit"));
 
-		expect(onQueued).toHaveBeenCalled();
-	});
+    expect(onQueued).toHaveBeenCalled();
+  });
 
-	it("does not notify when the job was refused", async () => {
-		queueEnvironmentAudit.mockRejectedValue(new Error("nope"));
-		const onQueued = vi.fn();
-		const user = userEvent.setup();
-		render(
-			<RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
-		);
-		await user.click(screen.getByRole("button", { name: /run/i }));
-		await user.click(screen.getByText("Audit"));
+  it("does not notify when the job was refused", async () => {
+    queueEnvironmentAudit.mockRejectedValue(new Error("nope"));
+    const onQueued = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
+    );
+    await openTrigger(user);
+    await user.click(screen.getByText("Audit"));
 
-		expect(onQueued).not.toHaveBeenCalled();
-	});
+    expect(onQueued).not.toHaveBeenCalled();
+  });
 });

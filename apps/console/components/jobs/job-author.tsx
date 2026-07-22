@@ -8,74 +8,81 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
 import {
-	HoverCard,
-	HoverCardContent,
-	HoverCardTrigger,
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
 } from "@repo/ui/hover-card";
 import { displayName, userInitials } from "@/lib/user-display";
 
 /** The member fields the author card reads (a subset of MemberRow). */
 export interface JobAuthorInfo {
-	name: string | null;
-	username: string | null;
-	email: string;
-	image: string | null;
+  name: string | null;
+  username: string | null;
+  email: string;
+  image: string | null;
 }
 
 function AuthorAvatar({
-	image,
-	initials,
-	size,
+  image,
+  initials,
+  size,
 }: {
-	image: string | null;
-	initials: string;
-	size: "sm" | "md";
+  image: string | null;
+  initials: string;
+  size: "sm" | "md";
 }) {
-	return (
-		<Avatar
-			className={`${size === "sm" ? "size-6" : "size-8"} shrink-0 border border-border`}
-		>
-			<AvatarImage src={image ?? undefined} alt="" />
-			<AvatarFallback
-				className={`font-mono ${size === "sm" ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}
-			>
-				{initials}
-			</AvatarFallback>
-		</Avatar>
-	);
+  return (
+    <Avatar
+      className={`${size === "sm" ? "size-6" : "size-8"} shrink-0 border border-border`}
+    >
+      <AvatarImage src={image ?? undefined} alt="" />
+      <AvatarFallback
+        className={`font-mono ${size === "sm" ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}
+      >
+        {initials}
+      </AvatarFallback>
+    </Avatar>
+  );
 }
 
 /** Initiator avatar + a hover-card showing just the avatar + display name (name→username→email). */
 export function JobAuthor({ author }: { author?: JobAuthorInfo | null }) {
-	const name = author ? displayName(author) : "Unknown";
-	const initials = userInitials(author);
+  const name = author ? displayName(author) : "Unknown";
+  const initials = userInitials(author);
 
-	return (
-		<HoverCard openDelay={150} closeDelay={80}>
-			<HoverCardTrigger asChild>
-				<button
-					type="button"
-					onClick={(e) => e.stopPropagation()}
-					aria-label={`Initiated by ${name}`}
-					className="rounded-full outline-none ring-offset-background transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
-				>
-					<AuthorAvatar
-						image={author?.image ?? null}
-						initials={initials}
-						size="sm"
-					/>
-				</button>
-			</HoverCardTrigger>
-			<HoverCardContent align="end" className="flex w-auto items-center gap-2.5 p-2.5">
-				<AuthorAvatar
-					image={author?.image ?? null}
-					initials={initials}
-					size="md"
-				/>
-				<p className="whitespace-nowrap pr-1 text-sm font-medium text-foreground">
-					{name}
-				</p>
-			</HoverCardContent>
-		</HoverCard>
-	);
+  return (
+    <HoverCard>
+      <HoverCardTrigger
+        delay={150}
+        closeDelay={80}
+        render={
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Initiated by ${name}`}
+            className="rounded-full outline-none ring-offset-background transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <AuthorAvatar
+              image={author?.image ?? null}
+              initials={initials}
+              size="sm"
+            />
+          </button>
+        }
+      />
+      <HoverCardContent
+        align="end"
+        className="flex w-auto items-center gap-2.5 p-2.5"
+      >
+        <AuthorAvatar
+          image={author?.image ?? null}
+          initials={initials}
+          size="md"
+        />
+        <p className="whitespace-nowrap pr-1 text-sm font-medium text-foreground">
+          {name}
+        </p>
+      </HoverCardContent>
+    </HoverCard>
+  );
 }
