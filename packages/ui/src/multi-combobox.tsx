@@ -14,9 +14,8 @@ import {
   Plus,
   type LucideIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./avatar";
-import { Popover, PopoverContent } from "./popover";
 import { cn } from "./utils";
 
 export interface ComboboxOption {
@@ -80,9 +79,6 @@ export function MultiCombobox({
 }: MultiComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // base-ui Popover has no Anchor part; we anchor the popup to this input wrapper via the
-  // Positioner's `anchor` prop (PopoverContent forwards it).
-  const anchorRef = useRef<HTMLDivElement>(null);
   const selected = new Set(value);
 
   const q = query.trim().toLowerCase();
@@ -107,16 +103,12 @@ export function MultiCombobox({
     onChange([...next]);
   }
 
+  // A custom typeahead (input-is-the-trigger) doesn't fit base-ui Popover's trigger/dismiss model —
+  // opening on focus fights its outside-press dismiss — so the list is a plain anchored dropdown:
+  // controlled `open`, closed on input blur (option clicks `preventDefault` mousedown to keep focus).
   return (
-    <Popover
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) setQuery("");
-      }}
-    >
+    <div className="relative">
       <div
-        ref={anchorRef}
         className={cn(
           "flex h-8 w-40 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs transition-colors focus-within:border-text-primary",
           className,
@@ -132,93 +124,99 @@ export function MultiCombobox({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
+          onBlur={() => {
+            setOpen(false);
+            setQuery("");
+          }}
         />
         <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
       </div>
-      <PopoverContent
-        anchor={anchorRef}
-        align={align}
-        initialFocus={false}
-        className="w-[var(--anchor-width)] min-w-[200px] p-1"
-      >
-        <div className="max-h-64 overflow-y-auto">
-          {filtered.length === 0 ? (
-            loading ? (
-              <div className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" />
-                Loading…
-              </div>
-            ) : emptyAction ? (
+      {open && (
+        <div
+          className={cn(
+            "absolute top-full z-50 mt-1 min-w-[200px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
+            align === "end" ? "right-0" : "left-0",
+          )}
+        >
+          <div className="max-h-64 overflow-y-auto">
+            {filtered.length === 0 ? (
+              loading ? (
+                <div className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Loading…
+                </div>
+              ) : emptyAction ? (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    emptyAction.onSelect();
+                    setOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent"
+                >
+                  <Plus className="size-3.5 shrink-0" />
+                  {emptyAction.label}
+                </button>
+              ) : (
+                <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                  No matches.
+                </div>
+              )
+            ) : (
+              filtered.map((o) => {
+                const on = selected.has(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    // Keep focus in the input so multi-select stays typeable.
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => toggle(o.value)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
+                      on && "bg-accent/40",
+                    )}
+                  >
+                    {o.leading && (
+                      <span className="flex size-4 shrink-0 items-center justify-center">
+                        {o.leading}
+                      </span>
+                    )}
+                    {withAvatar && (
+                      <OptionAvatar image={o.image} label={o.label} />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-foreground">
+                      {o.label}
+                    </span>
+                    {o.hint && (
+                      <span className="shrink-0 truncate font-mono text-[10.5px] text-muted-foreground">
+                        {o.hint}
+                      </span>
+                    )}
+                    {/* Reserved check slot — present always so selecting never reflows the row. */}
+                    <span className="flex size-3.5 shrink-0 items-center justify-center">
+                      {on && <Check size={13} className="text-foreground" />}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {value.length > 0 && (
+            <div className="mt-1 border-t border-border pt-1">
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  emptyAction.onSelect();
-                  setOpen(false);
-                }}
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent"
+                onClick={() => onChange([])}
+                className="w-full rounded-sm px-2 py-1.5 text-center text-[12px] text-muted-foreground transition-colors hover:bg-accent"
               >
-                <Plus className="size-3.5 shrink-0" />
-                {emptyAction.label}
+                Clear {value.length} selected
               </button>
-            ) : (
-              <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-                No matches.
-              </div>
-            )
-          ) : (
-            filtered.map((o) => {
-              const on = selected.has(o.value);
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  // Keep focus in the input so multi-select stays typeable.
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => toggle(o.value)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
-                    on && "bg-accent/40",
-                  )}
-                >
-                  {o.leading && (
-                    <span className="flex size-4 shrink-0 items-center justify-center">
-                      {o.leading}
-                    </span>
-                  )}
-                  {withAvatar && (
-                    <OptionAvatar image={o.image} label={o.label} />
-                  )}
-                  <span className="min-w-0 flex-1 truncate text-foreground">
-                    {o.label}
-                  </span>
-                  {o.hint && (
-                    <span className="shrink-0 truncate font-mono text-[10.5px] text-muted-foreground">
-                      {o.hint}
-                    </span>
-                  )}
-                  {/* Reserved check slot — present always so selecting never reflows the row. */}
-                  <span className="flex size-3.5 shrink-0 items-center justify-center">
-                    {on && <Check size={13} className="text-foreground" />}
-                  </span>
-                </button>
-              );
-            })
+            </div>
           )}
         </div>
-        {value.length > 0 && (
-          <div className="mt-1 border-t border-border pt-1">
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onChange([])}
-              className="w-full rounded-sm px-2 py-1.5 text-center text-[12px] text-muted-foreground transition-colors hover:bg-accent"
-            >
-              Clear {value.length} selected
-            </button>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+      )}
+    </div>
   );
 }
