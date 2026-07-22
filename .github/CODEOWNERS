@@ -19,3 +19,11 @@
 
 # DB schema / migrations — linear-chain sensitive.
 /apps/console/lib/db/       @bobikenobi12
+
+# Cloud-capabilities surface (wave:capabilities) — keyless federation + cloud_identities.
+# A security-review sign-off is required before these merge; enforced by flipping
+# "require review from Code Owners" on `protect-dev` (see infra/github/README.md).
+/apps/console/lib/cloud-providers/capabilities/   @bobikenobi12
+/apps/console/lib/db/schema/cloud-capabilities.ts @bobikenobi12
+/apps/console/lib/db/schema/cloud-capability*.ts  @bobikenobi12
+/infra/connector/                                 @bobikenobi12

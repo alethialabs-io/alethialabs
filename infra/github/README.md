@@ -34,6 +34,27 @@ manual fallback only.
 
 `github_owner`/`repository` are variables → switching to an org repo is a var change.
 
+### Code-owner review gate for the capabilities surface (#982)
+
+`.github/CODEOWNERS` marks the `wave:capabilities` security-sensitive paths
+(`apps/console/lib/cloud-providers/capabilities/`, `apps/console/lib/db/schema/cloud-capabilit*.ts`,
+`infra/connector/`) as code-owned. Ownership alone only **auto-requests** a reviewer — it does not
+block a merge. To make a security-review sign-off **required** on those paths, flip one line in the
+`protect-dev` ruleset (`main.tf`, `resource "github_repository_ruleset" "dev"` → `rules.pull_request`):
+
+```hcl
+require_code_owner_review = true   # default is false / unset
+```
+
+**Warning — merge-queue deadlock risk.** `protect-dev` runs `required_approving_review_count = 0` (solo
+repo, CI is the gate) and Mergify does the ordered squash-merge. `require_code_owner_review = true`
+makes GitHub require a code-owner **approval** on any PR touching those paths, but the CODEOWNERS owner
+is the maintainer, who **cannot approve their own PR**. A capabilities PR authored by the maintainer
+would then sit unapprovable and **wedge behind Mergify** (Mergify only merges once branch protection is
+satisfied). Enable this only once a *second* code-owner (a distinct reviewer or an
+`@alethialabs-io/<security-team>` handle) can supply the approval, or scope the requirement so the PR
+author is never the sole owner. Until then this stays a review *request* (auto-assigned), not a hard gate.
+
 ## Auth (your own `gh` token — no App)
 
 Applied **locally, once** as part of the admin bootstrap. The provider needs a token with
