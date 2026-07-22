@@ -1,0 +1,5 @@
+▶ hetzner/register: ghcr.io/alethialabs-io/runner-hetzner:latest (amd64 ELF arch)
+latest: Pulling from alethialabs-io/runner-hetzner
+Digest: sha256:5849b8b00a427a5fe079fca16d03cbe6a1d6c2957c1799c6e3def09c4bea1e78
+Status: Image is up to date for ghcr.io/alethialabs-io/runner-hetzner:latest
+amd64 /runner e_machine=3e00
