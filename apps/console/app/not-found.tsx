@@ -18,11 +18,11 @@ export default function NotFound() {
 			description="The page you're looking for doesn't exist or may have moved."
 			actions={
 				<>
-					<Button asChild size="sm">
-						<Link href="/">Go home</Link>
+					<Button size="sm" nativeButton={false} render={<Link href="/" />}>
+						Go home
 					</Button>
-					<Button asChild size="sm" variant="outline">
-						<Link href="/login">Sign in</Link>
+					<Button size="sm" variant="outline" nativeButton={false} render={<Link href="/login" />}>
+						Sign in
 					</Button>
 				</>
 			}

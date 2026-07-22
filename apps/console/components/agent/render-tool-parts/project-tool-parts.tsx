@@ -191,15 +191,14 @@ export function projectRenderToolPart({
 						part={part}
 						actions={
 							<Button
-								asChild
 								variant="outline"
 								size="sm"
 								className="h-6 gap-1.5 rounded-none px-2 text-[11px]"
+								nativeButton={false}
+								render={<Link href={parsed.data.openInCanvasUrl} />}
 							>
-								<Link href={parsed.data.openInCanvasUrl}>
-									<Telescope className="h-3 w-3" />
-									Review proposed project
-								</Link>
+								<Telescope className="h-3 w-3" />
+								Review proposed project
 							</Button>
 						}
 					/>

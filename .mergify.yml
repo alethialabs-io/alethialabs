@@ -1,24 +1,26 @@
 # Mergify merge queue for the integration branch `dev`.
 #
-# This REPLACES the native GitHub merge queue (the `merge_queue` rule removed from the Terraform-managed
-# `protect-dev` ruleset, infra/github/main.tf). Why the switch: the native queue re-ran required checks via
-# the `merge_group` event, where the `merge_group`-only "Provisioning E2E (T1)" job fails on missing auth env
-# and wedged EVERY queued PR. Mergify validates each PR on its own branch (no `merge_group`), so that wedge is
-# gone; real-apply validation stays main-gated (e2e-nightly).
+# Mergify reads THIS FILE ONLY FROM THE DEFAULT BRANCH (`main`) — config changes take effect only after they
+# reach main (via the dev→staging→main train), not from a PR's base branch. So iterate carefully.
 #
-# Behaviour: every NON-DRAFT, conflict-free PR into `dev` is auto-queued and SQUASH-merged once the same
-# required checks pass (mirrors the old SQUASH/ALLGREEN queue). Instances no longer run `gh pr merge --auto`
-# — just open a non-draft PR; keep WIP as a draft. The `protect-dev` ruleset still enforces the required
-# checks + no-direct-push, so nothing lands red.
+# It REPLACES the native GitHub merge queue (the `merge_queue` rule was removed from the Terraform-managed
+# `protect-dev` ruleset, infra/github/main.tf). Why: the native queue re-ran required checks via the
+# `merge_group` event, where the `merge_group`-only "Provisioning E2E (T1)" job fails on missing auth env and
+# wedged EVERY queued PR. Mergify validates each PR on its own branch (no `merge_group`), so that wedge is gone.
+#
+# Behaviour: every NON-DRAFT PR into `dev` is AUTO-queued (merge_protections_settings.auto_merge_conditions —
+# the current replacement for the deprecated `autoqueue`) and SQUASH-merged once the 8 protect-dev required
+# checks pass. No `@mergifyio queue`, no `gh pr merge` — just open a non-draft PR; keep WIP as a draft.
 
 queue_rules:
   - name: dev
-    # SQUASH matches the repo's feature→dev convention (promotions dev→staging→main stay human `--merge`).
-    merge_method: squash
-    # The required checks must pass before Mergify merges. These mirror `protect-dev`'s required_status_checks
-    # (Mergify also auto-injects branch-protection checks, so this is explicit + belt-and-suspenders). Quoted
-    # because the check names contain `·`, `(`, `)`, `/`.
+    # queue_conditions decide which PRs THIS queue accepts — REQUIRED, or a PR can't be assigned to the queue
+    # (its absence returned `queue_rule_name: null` before). merge_conditions decide WHEN to merge.
+    queue_conditions:
+      - base = dev
+      - "-draft"
     merge_conditions:
+      # The 8 protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
       - "check-success=TypeScript (lint · types · test · docs)"
       - "check-success=Go (build · vet · test · lint) (packages/core)"
       - "check-success=Go (build · vet · test · lint) (apps/cli)"
@@ -27,13 +29,11 @@ queue_rules:
       - "check-success=Secret scan (gitleaks)"
       - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
       - "check-success=Authz / open-core guards"
+    # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
+    merge_method: squash
 
-pull_request_rules:
-  - name: auto-queue non-draft PRs into dev
-    conditions:
-      - base=dev
-      - "-draft"
-      - "-conflict"
-    actions:
-      queue:
-        name: dev
+# Auto-queue: the current, non-deprecated way to add matching PRs to the queue with no manual command.
+merge_protections_settings:
+  auto_merge_conditions:
+    - base = dev
+    - "-draft"

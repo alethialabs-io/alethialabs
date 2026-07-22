@@ -258,8 +258,8 @@ function DeployForm({
 						own runner instead — it needs none.
 					</p>
 				</div>
-				<Button asChild size="sm" onClick={() => onOpenChange(false)}>
-					<Link href={globalHref(orgSlug, "connectors")}>Connect a cloud</Link>
+				<Button size="sm" onClick={() => onOpenChange(false)} nativeButton={false} render={<Link href={globalHref(orgSlug, "connectors")} />}>
+					Connect a cloud
 				</Button>
 			</div>
 		);

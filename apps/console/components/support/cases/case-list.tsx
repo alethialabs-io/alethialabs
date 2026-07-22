@@ -94,8 +94,8 @@ export function CaseList({
 						</EmptyDescription>
 					</EmptyHeader>
 					<EmptyContent>
-						<Button asChild size="sm">
-							<Link href={`/${orgSlug}/~/support/submit`}>Submit a case</Link>
+						<Button size="sm" nativeButton={false} render={<Link href={`/${orgSlug}/~/support/submit`} />}>
+							Submit a case
 						</Button>
 					</EmptyContent>
 				</Empty>

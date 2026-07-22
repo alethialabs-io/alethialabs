@@ -79,6 +79,25 @@ body {
 	-webkit-font-smoothing: antialiased;
 }
 
+/* Minimal grayscale scrollbars — mirrors packages/brand/src/tokens.css (blog doesn't
+   import the brand tokens). The squared rule below flattens the thumb radius, on-brand. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+	background: color-mix(in oklab, var(--foreground) 16%, transparent);
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in oklab, var(--foreground) 30%, transparent);
+	background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner { background: transparent; }
+
 /* Squared everywhere — the brand rejects rounding. */
 * {
 	border-radius: 0 !important;
