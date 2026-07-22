@@ -8,8 +8,8 @@
 import type { CloudProvider } from "@/lib/db/schema/enums";
 
 // The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
-// `cloud_provider` enum (derived so it can't drift).
-export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure">;
+// `cloud_provider` enum, derived from the catalog's own `providers[]` so it can't drift.
+export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure" | "hetzner" | "alibaba">;
 export type InstanceFamily = "general" | "compute" | "memory" | "gpu";
 export type EngineFamily = "postgres" | "mysql";
 
