@@ -4,7 +4,7 @@
 # Runner → cluster provisioning — cloud parity & e2e board
 
 Living status for **per-cloud runner health + cluster provisioning**: does each cloud's runner image
-(`runner-{aws,gcp,azure,hetzner}`) boot + **register**, and can a runner **provision a real cluster**
+(`runner-{aws,gcp,azure,alibaba,hetzner}`) boot + **register**, and can a runner **provision a real cluster**
 (EKS / GKE / AKS / Talos) on that cloud from a connected keyless identity. Tracking epic: **#1050**.
 Run history: [`demos/proofs/runner-xcloud-e2e-log.md`](../../demos/proofs/runner-xcloud-e2e-log.md).
 
@@ -18,17 +18,21 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
 
 | Cloud | image arch ✓ | runner registers | connector wired | **cluster provision (T2)** | signed receipt | security-reviewed | known issues |
 |-------|:---:|:---:|:---:|:---:|:---:|:---:|:---|
-| **Hetzner** — Talos | ⏳ (#1052) | ⏳ | ✅ token | ✅ (nightly) | ✅ | ✅ | — |
-| **AWS** — EKS (`alethialabs`) | ⏳ (#1052) | ⏳ | ✅ keyless role | ⏳ (wired, gate off) | ✅ | ⏳ | — |
-| **GCP** — GKE (`itgix`) | ⏳ (#1052) | ⏳ | ✅ keyless WIF | ⏳ (wired, gate off) | ✅ | ⏳ | — |
-| **Azure** — AKS (student sub) | ⏳ (#1052) | ⏳ | ✅ keyless UAMI | ⏳ (wired, gate off) | ✅ | ⏳ | AKS quota TBD |
-| Alibaba — ACK | ⏳ (#1052) | ⏳ | ✅ keyless RAM | ⏳ (wired, gate off) | ✅ | ⏳ | — |
+| **Hetzner** — Talos | ✅ (register) | ⏳ | ✅ token | ✅ (nightly) | ✅ | ✅ | — |
+| **AWS** — EKS (`alethialabs`) | ✅ (register) | ⏳ | ✅ keyless role | ⏳ (wired, gate off) | ✅ | ⏳ | — |
+| **GCP** — GKE (`itgix`) | ✅ (register) | ⏳ | ✅ keyless WIF | ⏳ (wired, gate off) | ✅ | ⏳ | — |
+| **Azure** — AKS (student sub) | ✅ (register) | ✅ (prod) | ✅ keyless UAMI | ⏳ (wired, gate off) | ✅ | ⏳ | AKS quota TBD |
+| Alibaba — ACK | ✅ (register) | ⏳ | ✅ keyless RAM | ⏳ (wired, gate off) | ✅ | ⏳ | — |
 
 - **image arch ✓** = the published `runner-<cloud>:latest` **amd64** image ships a genuine x86-64 runner
-  (the INCIDENT regression: an arm64 binary in the amd64 image crash-looped every x86 fleet VM). Turns ✅
-  once the arch fix (**#1052**) merges + `deploy-console.yml` rebuilds the images. Run: `runner-e2e.sh <cloud> register`.
-- **runner registers** = a fleet VM on that image boots + self-registers (heartbeat, `runners` row). Gated
-  on `image arch ✓` + the redeploy.
+  (the INCIDENT regression: an arm64 binary in the amd64 image crash-looped every x86 fleet VM). ✅ for
+  all five as of **2026-07-22** — `runner-e2e.sh <cloud> register` PASSed on each post-#1052 image
+  (`e_machine=0x3e`); see the ledger. A pre-merge CI guard (`runner-image-arch` in `ci.yml`) now asserts
+  the same on a freshly-built `runner-base`, so a regression can't reach prod again. Re-run: `runner-e2e.sh <cloud> register`.
+- **runner registers** = a fleet VM on that image boots + self-registers (heartbeat, `runners` row).
+  ✅ **azure** — a fleet VM registered live on the corrected image during the 2026-07-22 incident
+  recovery. The others stay ⏳: the `register` stage proves the image *arch*, not a live self-register
+  (that needs a booted VM — mild spend, folded into Stage 2). Gated on `image arch ✓`.
 - **cluster provision (T2)** = the real-apply harness `test/e2e/t2_provision_test.go`
   (`TestT2RealCloudProvisioning`, `-tags=e2e_t2`) → `SUCCESS` job + Ready cluster + signed receipt + ArgoCD
   Healthy/Synced. Wired for **all** clouds in `.github/workflows/e2e-nightly.yml`; **only Hetzner runs
@@ -39,14 +43,20 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
 
 ## What's left
 
-- [ ] **Ship #1052** (runner-image cross-compile fix) → train → redeploy correct-arch images. Then flip
-      every `image arch ✓` to ✅ (via `runner-e2e.sh <cloud> register`).
-- [ ] **Fleet circuit-breaker** (auto-pause a zero-registration reap loop) — #1056.
-- [ ] **Stage 1 — registration** on each published image once the redeploy lands.
+- [x] **Ship #1052** (runner-image cross-compile fix) → train → redeploy correct-arch images.
+- [x] **Fleet circuit-breaker** (auto-pause a zero-registration reap loop) — #1056.
+- [x] **Stage 1 — registration** (image-arch proof) on each published image — all five PASS
+      (2026-07-22, `runner-e2e.sh <cloud> register`).
+- [x] **CI regression guard** — `runner-image-arch` job in `ci.yml` builds `runner-base` for
+      `linux/amd64` and fails the PR if `/usr/local/bin/runner` isn't x86-64 (the AI-caught improvement).
 - [ ] **Stage 2 — cluster provision** per cloud: run the connector CloudShell script, set the gate
       secret/var, dispatch `e2e-nightly.yml provider=<cloud>` (or `runner-e2e.sh <cloud> cluster`).
-      Accounts: AWS=`alethialabs`, GCP=`itgix`, Azure=student sub, Hetzner=token. **Real money** — each
-      cloud enabled deliberately, cost-guarded (cheapest node shape, single-NAT, AWS cost ceiling).
+      **All clouds**, each enabled **deliberately** + cost-guarded (cheapest node shape, single-NAT, AWS
+      cost ceiling), one at a time. Confirmed accounts + gate vars:
+  - **AWS** — `alethialabs` *or* tovr's AWS (either works) → `E2E_AWS_ROLE_ARN`
+  - **GCP** — `itgix-adp` project → `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`
+  - **Azure** — student subscription → `E2E_AZURE_CLIENT_ID` (AKS quota TBD)
+  - **Hetzner** — scoped API token → `HCLOUD_TOKEN`
 
 ## Flagged issues
 - **INCIDENT 2026-07-22 — fleet runner-churn (root cause).** Multi-arch build shipped an arm64 binary in
@@ -59,5 +69,9 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
 - (none yet — populate as the per-cloud e2e runs + reviews land.)
 
 ## AI-caught improvements
-- The `register` stage (published-image ELF-arch check) is a cheap CI-runnable regression guard that would
-  have caught the INCIDENT before it reached prod. Wire it into CI as a follow-up.
+- ✅ **DONE** — the `register` ELF-arch check is now a pre-merge CI guard: `runner-image-arch` in
+  `.github/workflows/ci.yml` builds `runner-base` for `linux/amd64` and asserts `/usr/local/bin/runner`
+  is x86-64 (`e_machine=0x3e`), failing the PR on `0xb7` (aarch64) — the exact 2026-07-22 regression.
+  It builds the real image (a plain `go build` can't reproduce a Dockerfile ARG regression) and covers
+  every per-cloud image, which all inherit the binary `FROM runner-base`. Gated on the runner surface
+  (`apps/runner/`, `apps/cli/`, `packages/core/`, `go.work`).
