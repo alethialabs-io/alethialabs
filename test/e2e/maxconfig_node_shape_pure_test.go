@@ -77,23 +77,27 @@ func TestMaxConfigNodeShapeGuard(t *testing.T) {
 		}
 	})
 
-	t.Run("shipped heavy profile clears the floor", func(t *testing.T) {
-		enableHeavy(t)
-		snap := map[string]any{"cluster": loadHeavyProfile(t)}
-		if fatal, msg := t2RequireMaxConfigNodeShape(snap); msg != "" || fatal {
-			t.Fatalf("the shipped heavy profile must satisfy the guard, but it did not: fatal=%v msg=%q", fatal, msg)
-		}
-	})
+	// Every shipped per-cloud heavy profile must clear the floor — the nightly injects it as the
+	// real node shape, so an under-provisioned fixture would silently fail the max-config surface.
+	for _, cloud := range []string{"aws", "gcp"} {
+		t.Run("shipped "+cloud+" heavy profile clears the floor", func(t *testing.T) {
+			enableHeavy(t)
+			snap := map[string]any{"cluster": loadHeavyProfile(t, cloud)}
+			if fatal, msg := t2RequireMaxConfigNodeShape(snap); msg != "" || fatal {
+				t.Fatalf("the shipped %s heavy profile must satisfy the guard, but it did not: fatal=%v msg=%q", cloud, fatal, msg)
+			}
+		})
+	}
 }
 
-// loadHeavyProfile reads fixtures/cluster_json.heavy.aws.json as the cluster block.
-func loadHeavyProfile(t *testing.T) map[string]any {
+// loadHeavyProfile reads fixtures/cluster_json.heavy.<cloud>.json as the cluster block.
+func loadHeavyProfile(t *testing.T, cloud string) map[string]any {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot locate the e2e package directory")
 	}
-	path := filepath.Join(filepath.Dir(thisFile), "fixtures", "cluster_json.heavy.aws.json")
+	path := filepath.Join(filepath.Dir(thisFile), "fixtures", "cluster_json.heavy."+cloud+".json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read heavy profile fixture: %v", err)
