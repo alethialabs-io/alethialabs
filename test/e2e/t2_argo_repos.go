@@ -8,7 +8,13 @@
 // a real customer APPS-DESTINATION repo and a real BRING-YOUR-OWN Helm chart repo, wired as
 // CREDENTIALED ArgoCD Applications, converging Healthy+Synced.
 //
-// What it proves, end to end, over CRs only (never the ArgoCD URL/ingress — AWS-only today):
+// The proof is cloud-agnostic: it works entirely over ArgoCD CRs (kubectl against the runner-written
+// kubeconfig), never the ArgoCD URL/ingress (an ingress path would be aws-specific), so it runs
+// unchanged on any gate-enabled leg — aws, gcp, azure (P2-D, #1066). Each leg's repo inputs are
+// resolvable per provider (see the env-var const block), because a gcp/azure BYO chart / apps-repo —
+// and, per #687, its service-binding against per-cloud tofu outputs — often cannot be the aws one.
+//
+// What it proves, end to end, over CRs only:
 //
 //   - repo-apps: the runner credentials ArgoCD to the apps-destination repo (the shared
 //     "repo-apps" repository Secret) and renders the "apps" app-of-apps that syncs it. This
@@ -64,6 +70,14 @@ import (
 
 // The A0.6 configuration env vars. Repo URLs are non-secret CI vars; the token is a CI secret
 // consumed only via the git-token API (envArgoGitToken is read by controlplane.go handleGitToken).
+//
+// Per-cloud overrides (P2-D, #1066): every repo input is ALSO resolvable per provider via a
+// "<base>_<PROVIDER>" sibling (e.g. ALETHIA_E2E_ARGO_BYO_CHART_REPO_GCP), so a leg whose chart /
+// apps-repo — and, per #687, whose service-binding resolves against THAT cloud's tofu outputs —
+// must differ from the aws one can point at a cloud-appropriate repo/revision. When no per-provider
+// sibling is set the shared cross-cloud var is used (aws's proven path is unchanged). The git token
+// stays a single shared secret (it crosses via the API, and the handler reads only envArgoGitToken),
+// so the git account it belongs to must grant read to every per-cloud repo.
 const (
 	envArgoAppsRepo     = "ALETHIA_E2E_ARGO_APPS_REPO"
 	envArgoByoChartRepo = "ALETHIA_E2E_ARGO_BYO_CHART_REPO"
@@ -72,7 +86,26 @@ const (
 	envArgoByoNamespace = "ALETHIA_E2E_ARGO_BYO_CHART_NAMESPACE"
 	envArgoGitToken     = "ALETHIA_E2E_GIT_TOKEN"
 	envArgoReposRequire = "ALETHIA_E2E_ARGO_REPOS_REQUIRE"
+	// envE2EProvider is the current leg's cloud (aws|gcp|azure|alibaba|hetzner); the harness sets it
+	// from the workflow matrix. Read here (not just by the base test) so the repo inputs can be
+	// resolved per provider.
+	envE2EProvider = "ALETHIA_E2E_PROVIDER"
 )
+
+// t2ArgoEnvForProvider resolves an A0.6 repo input with an optional per-provider override. It prefers
+// "<base>_<PROVIDER>" (uppercased provider suffix, matching the conventional CI variable name) so a
+// gcp/azure leg can point at a cloud-appropriate chart/apps-repo (#687: its service-binding resolves
+// against per-cloud tofu outputs), and falls back to the shared cross-cloud "<base>" (aws's proven
+// path), then to def. An empty provider (unit tests, no leg) skips straight to the shared var, so the
+// flat resolution is byte-identical to before per-cloud overrides existed.
+func t2ArgoEnvForProvider(base, provider, def string) string {
+	if p := strings.ToUpper(strings.TrimSpace(provider)); p != "" {
+		if v := t2Env(base+"_"+p, ""); v != "" {
+			return v
+		}
+	}
+	return t2Env(base, def)
+}
 
 // byoAddonID is the catalog id of the seeded bring-your-own chart. Its ArgoCD Application is
 // "addon-<byoAddonID>" (argocd.AddOnAppName) and its per-repo credential Secret is
@@ -97,12 +130,15 @@ type t2ArgoRepos struct {
 // the BYO chart path/revision/namespace. It reads os.Getenv via t2Env so unit tests drive it with
 // t.Setenv.
 func t2ArgoReposFromEnv() t2ArgoRepos {
+	provider := t2Env(envE2EProvider, "")
 	return t2ArgoRepos{
-		appsRepo:     t2Env(envArgoAppsRepo, ""),
-		byoChartRepo: t2Env(envArgoByoChartRepo, ""),
-		byoChartPath: t2Env(envArgoByoChartPath, "chart"),
-		byoRevision:  t2Env(envArgoByoRevision, "HEAD"),
-		byoNamespace: t2Env(envArgoByoNamespace, "byo-e2e"),
+		appsRepo:     t2ArgoEnvForProvider(envArgoAppsRepo, provider, ""),
+		byoChartRepo: t2ArgoEnvForProvider(envArgoByoChartRepo, provider, ""),
+		byoChartPath: t2ArgoEnvForProvider(envArgoByoChartPath, provider, "chart"),
+		byoRevision:  t2ArgoEnvForProvider(envArgoByoRevision, provider, "HEAD"),
+		byoNamespace: t2ArgoEnvForProvider(envArgoByoNamespace, provider, "byo-e2e"),
+		// The token is a single shared secret (crosses via the API; the handler reads only the flat
+		// var), so it is NOT resolved per provider — presence is enough here.
 		tokenPresent: t2Env(envArgoGitToken, "") != "",
 		require:      t2Truthy(t2Env(envArgoReposRequire, "")),
 	}
