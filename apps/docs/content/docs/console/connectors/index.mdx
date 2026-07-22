@@ -19,7 +19,7 @@ Connectors are displayed as cards organized by category:
 | **DNS** | Cloudflare | API key |
 | **Secrets** | HashiCorp Vault | API key |
 | **Registry** | Docker Hub | API key |
-| **Observability** | Datadog, Grafana Cloud, Prometheus | API key |
+| **Observability** | Datadog, Grafana Cloud | API key |
 
 Each card shows:
 - Provider icon and name
@@ -64,7 +64,7 @@ Git connections use standard OAuth. See [Git Providers](/console/connectors/git-
 DNS, secrets, registry, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
 
 <Cards>
-  <Card title="Pluggable Connectors" href="/console/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana · Prometheus</Card>
+  <Card title="Pluggable Connectors" href="/console/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana Cloud</Card>
 </Cards>
 
 ## Disconnecting
