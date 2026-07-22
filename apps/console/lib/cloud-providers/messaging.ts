@@ -1,51 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { CloudProviderSlug } from "./registry";
-
-interface MessagingConfig {
-	queueLabel: string;
-	topicLabel: string;
-	supportsFifo: boolean;
-	fifoLabel: string;
-	visibilityTimeoutLabel: string;
-}
-
-/** Messaging service configuration per provider. */
-export const MESSAGING: Record<CloudProviderSlug, MessagingConfig> = {
-	aws: {
-		queueLabel: "SQS Queues",
-		topicLabel: "SNS Topics",
-		supportsFifo: true,
-		fifoLabel: "FIFO Queue",
-		visibilityTimeoutLabel: "Visibility Timeout",
-	},
-	gcp: {
-		queueLabel: "Pub/Sub Subscriptions",
-		topicLabel: "Pub/Sub Topics",
-		supportsFifo: false,
-		fifoLabel: "Ordered Delivery",
-		visibilityTimeoutLabel: "Ack Deadline",
-	},
-	azure: {
-		queueLabel: "Service Bus Queues",
-		topicLabel: "Service Bus Topics",
-		supportsFifo: true,
-		fifoLabel: "Session-Based Ordering",
-		visibilityTimeoutLabel: "Lock Duration",
-	},
-	hetzner: {
-		queueLabel: "RabbitMQ Queue",
-		topicLabel: "RabbitMQ Exchange",
-		supportsFifo: false,
-		fifoLabel: "Ordered",
-		visibilityTimeoutLabel: "Visibility timeout (s)",
-	},
-	alibaba: {
-		queueLabel: "MNS Queues",
-		topicLabel: "MNS Topics",
-		supportsFifo: false,
-		fifoLabel: "Ordered Delivery",
-		visibilityTimeoutLabel: "Visibility Timeout",
-	},
-};
+// #940b (#969): barrel shim over the generated catalog baseline (#1126). The per-provider messaging
+// service configuration is re-exported verbatim from the single source of truth — same path + symbol,
+// ZERO behaviour change. #940c deletes this shim and repoints importers straight at the generated module.
+export { MESSAGING } from "./generated/catalog";
