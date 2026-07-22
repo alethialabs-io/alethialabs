@@ -46,4 +46,10 @@ if (typeof Element !== "undefined") {
 	if (!Element.prototype.releasePointerCapture) {
 		Element.prototype.releasePointerCapture = () => {};
 	}
+	// jsdom doesn't implement the Web Animations `Element.getAnimations()`. base-ui's ScrollArea
+	// calls viewport.getAnimations({ subtree: true }) to recompute the scrollbar thumb — without
+	// this it throws "getAnimations is not a function" and flips the test run to exit 1.
+	if (!Element.prototype.getAnimations) {
+		Element.prototype.getAnimations = () => [];
+	}
 }
