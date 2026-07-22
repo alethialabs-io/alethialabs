@@ -21,6 +21,15 @@ const raw = readFileSync(srcPath, "utf8");
 const data = JSON.parse(raw);
 const json = JSON.stringify(data, null, "\t").replace(/\n/g, "\n\t");
 
+// Derive the `ProviderSlug` union from the catalog's OWN provider coverage rather than
+// hardcoding it, so the type can never drift from the data (the whole point of this SSOT).
+// `Extract<CloudProvider, …>` still gates each slug against the generated `cloud_provider`
+// enum — a catalog provider that isn't a valid enum member resolves to `never` and drops out,
+// surfacing the mismatch instead of inventing an off-enum slug.
+const providerSlugUnion = data.providers
+	.map((p) => JSON.stringify(p.slug))
+	.join(" | ");
+
 const out = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -31,8 +40,8 @@ const out = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 import type { CloudProvider } from "@/lib/db/schema/enums";
 
 // The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
-// \`cloud_provider\` enum (derived so it can't drift).
-export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure">;
+// \`cloud_provider\` enum, derived from the catalog's own \`providers[]\` so it can't drift.
+export type ProviderSlug = Extract<CloudProvider, ${providerSlugUnion}>;
 export type InstanceFamily = "general" | "compute" | "memory" | "gpu";
 export type EngineFamily = "postgres" | "mysql";
 

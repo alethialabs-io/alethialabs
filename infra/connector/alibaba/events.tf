@@ -115,3 +115,44 @@ resource "alicloud_event_bridge_rule" "asset_changes" {
     }
   }
 }
+
+# Capability-invalidation routing (#978): a Quota Center change (acs.quotas) can alter launch limits →
+# the forwarder emits a capability_dirty(axis=quota) signal that marks the capability catalog stale (the
+# console re-enumerates keyless on the next sweep). Alibaba has no region enable/disable event (regions are
+# always available under the account), so — per the cloud-parity rule — the regions axis is an EXPLICIT
+# exclusion here; quota is the invalidation signal Alibaba exposes. (RAM policy-detach / connection_health
+# is added by #979.)
+resource "alicloud_event_bridge_rule" "capability_changes" {
+  event_bus_name = "default"
+  rule_name      = "alethia-capability-changes"
+  description    = "Route Quota Center change ActionTrail events to the Alethia forwarder."
+  filter_pattern = jsonencode({
+    source = ["acs.quotas"]
+    type = [
+      { prefix = "quotas:CreateQuotaApplication" },
+      { prefix = "quotas:ModifyQuota" },
+    ]
+  })
+  status = "ENABLE"
+
+  targets {
+    target_id = "alethia-forwarder"
+    endpoint  = alicloud_fc_function.forwarder.function_arn
+    type      = "acs.fc.function"
+
+    param_list {
+      resource_key = "serviceName"
+      form         = "CONSTANT"
+      value        = alicloud_fc_service.forwarder.name
+    }
+    param_list {
+      resource_key = "functionName"
+      form         = "CONSTANT"
+      value        = alicloud_fc_function.forwarder.name
+    }
+    param_list {
+      resource_key = "Body"
+      form         = "ORIGINAL"
+    }
+  }
+}

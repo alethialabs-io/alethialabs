@@ -98,3 +98,29 @@ resource "azurerm_eventgrid_system_topic_event_subscription" "networks" {
     }
   }
 }
+
+# Route capability-affecting writes to the SAME forwarder (#978). A Microsoft.Quota quota change alters
+# launch limits (→ capability_dirty axis=quota); a Microsoft.Features feature registration can change which
+# regions/SKUs are available to the subscription (→ axis=regions). The forwarder classifies by subject and
+# emits a capability_dirty signal that marks the capability catalog stale (the console re-enumerates keyless
+# on the next sweep). (Role-assignment-delete / connection_health is added by #979.)
+resource "azurerm_eventgrid_system_topic_event_subscription" "capabilities" {
+  name                = "alethia-capabilities"
+  system_topic        = azurerm_eventgrid_system_topic.subscription.name
+  resource_group_name = azurerm_resource_group.forwarder.name
+
+  azure_function_endpoint {
+    function_id = "${azurerm_linux_function_app.forwarder.id}/functions/forward"
+  }
+
+  included_event_types = [
+    "Microsoft.Resources.ResourceWriteSuccess",
+  ]
+  # Quota + feature-registration writes (mid-subject resource-type tokens → string_contains).
+  advanced_filter {
+    string_contains {
+      key    = "subject"
+      values = ["Microsoft.Quota", "Microsoft.Features"]
+    }
+  }
+}

@@ -30,6 +30,18 @@ resource "alicloud_cs_managed_kubernetes" "this" {
 
   deletion_protection = false
 
+  # Namespace-placement tenant isolation (#1012) — cloud-parity note / DOCUMENTED EXCLUSION.
+  # NetworkPolicy ENFORCEMENT is intentionally NOT enabled on ACK here. `pod_cidr` above pins
+  # this cluster to the Flannel CNI, which does not enforce NetworkPolicy. The alicloud provider
+  # exposes NP only indirectly, via the Terway CNI addon config
+  # (`addons { name = "terway-eniip", config = jsonencode({ NetworkPolicy = "true", ... }) }`) —
+  # switching Flannel→Terway is a CNI migration that REPLACES the cluster and reassigns Pod IPs
+  # from vSwitch ENIs (needs vSwitch IP capacity), which is out of scope for this isolation gate
+  # and unsafe to flip without a real-cloud plan. The credential-boundary half is already closed:
+  # RRSA (enable_rrsa below) gives each tenant Pod a SCOPED RAM role instead of the shared node
+  # instance role — the ACK analogue of per-namespace IRSA (#957). Enabling Terway NP is tracked
+  # as a follow-up for when namespace placement is offered on Alibaba.
+
   # RRSA (RAM Roles for Service Accounts) — ACK's workload identity. Creates the
   # cluster's OIDC issuer + RAM OIDC provider so in-cluster components (e.g. the
   # external-secrets operator) can assume least-privilege RAM roles per service

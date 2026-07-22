@@ -1,6 +1,5 @@
 "use client";
 
-import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import {
   Collapsible,
   CollapsibleContent,
@@ -25,6 +24,36 @@ import {
 import { Streamdown } from "streamdown";
 
 import { Shimmer } from "./shimmer";
+
+/** Minimal controllable-state hook (replaces `@radix-ui/react-use-controllable-state`): the value is
+ * controlled when `prop` is provided, otherwise internally stateful seeded from `defaultProp`;
+ * `onChange` fires on every set. Value-only setter — every call site here passes a value, not an updater. */
+function useControllableState<T>({
+  prop,
+  defaultProp,
+  onChange,
+}: {
+  prop?: T;
+  defaultProp: T;
+  onChange?: (value: T) => void;
+}): [T, (next: T) => void] {
+  const [uncontrolled, setUncontrolled] = useState(defaultProp);
+  const value = prop !== undefined ? prop : uncontrolled;
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+  const setValue = useCallback(
+    (next: T) => {
+      if (prop === undefined) {
+        setUncontrolled(next);
+      }
+      onChangeRef.current?.(next);
+    },
+    [prop],
+  );
+  return [value, setValue];
+}
 
 interface ReasoningContextValue {
   isStreaming: boolean;
