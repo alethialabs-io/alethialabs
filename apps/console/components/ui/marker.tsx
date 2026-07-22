@@ -1,3 +1,4 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -8,72 +9,79 @@
 
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Slot } from "radix-ui";
+import { mergeProps } from "@base-ui-components/react/merge-props";
+import { useRender } from "@base-ui-components/react/use-render";
 import { cn } from "@repo/ui/utils";
 
 const markerVariants = cva(
-	"group/marker relative flex min-h-4 w-full items-center gap-2 text-left text-sm text-muted-foreground [&_svg:not([class*='size-'])]:size-4 [a]:underline [a]:underline-offset-3 [a]:hover:text-foreground",
-	{
-		variants: {
-			variant: {
-				default: "",
-				separator:
-					"before:mr-1 before:h-px before:min-w-0 before:flex-1 before:bg-border after:ml-1 after:h-px after:min-w-0 after:flex-1 after:bg-border",
-				border: "border-b border-border pb-2",
-			},
-		},
-	},
+  "group/marker relative flex min-h-4 w-full items-center gap-2 text-left text-sm text-muted-foreground [&_svg:not([class*='size-'])]:size-4 [a]:underline [a]:underline-offset-3 [a]:hover:text-foreground",
+  {
+    variants: {
+      variant: {
+        default: "",
+        separator:
+          "before:mr-1 before:h-px before:min-w-0 before:flex-1 before:bg-border after:ml-1 after:h-px after:min-w-0 after:flex-1 after:bg-border",
+        border: "border-b border-border pb-2",
+      },
+    },
+  },
 );
 
-/** An inline conversation marker row (status update / system note / labeled separator). */
+/** An inline conversation marker row (status update / system note / labeled separator).
+ * `asChild` renders it as its single child — migrated off Radix `Slot` to base-ui `useRender`. */
 function Marker({
-	className,
-	variant = "default",
-	asChild = false,
-	...props
+  className,
+  variant = "default",
+  asChild = false,
+  children,
+  ...props
 }: React.ComponentProps<"div"> &
-	VariantProps<typeof markerVariants> & {
-		asChild?: boolean;
-	}) {
-	const Comp = asChild ? Slot.Root : "div";
-
-	return (
-		<Comp
-			data-slot="marker"
-			data-variant={variant}
-			className={cn(markerVariants({ variant, className }))}
-			{...props}
-		/>
-	);
+  VariantProps<typeof markerVariants> & {
+    asChild?: boolean;
+  }) {
+  const useAsChild = asChild && React.isValidElement(children);
+  const ownProps: React.ComponentProps<"div"> & {
+    "data-slot": string;
+    "data-variant"?: string;
+  } = {
+    "data-slot": "marker",
+    "data-variant": variant ?? undefined,
+    className: cn(markerVariants({ variant, className })),
+    ...(useAsChild ? {} : { children }),
+  };
+  return useRender({
+    render: useAsChild ? children : <div />,
+    props: mergeProps<"div">(ownProps, props),
+  });
 }
 
 /** The marker's leading icon slot (decorative — hidden from assistive tech). */
 function MarkerIcon({ className, ...props }: React.ComponentProps<"span">) {
-	return (
-		<span
-			data-slot="marker-icon"
-			aria-hidden="true"
-			className={cn(
-				"size-4 shrink-0 [&_svg:not([class*='size-'])]:size-4",
-				className,
-			)}
-			{...props}
-		/>
-	);
+  return (
+    <span
+      data-slot="marker-icon"
+      aria-hidden="true"
+      className={cn(
+        "size-4 shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 /** The marker's text content (centered and non-flexing in the separator variant). */
 function MarkerContent({ className, ...props }: React.ComponentProps<"span">) {
-	return (
-		<span
-			data-slot="marker-content"
-			className={cn(
-				"min-w-0 wrap-break-word group-data-[variant=separator]/marker:flex-none group-data-[variant=separator]/marker:text-center *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
-				className,
-			)}
-			{...props}
-		/>
-	);
+  return (
+    <span
+      data-slot="marker-content"
+      className={cn(
+        "min-w-0 wrap-break-word group-data-[variant=separator]/marker:flex-none group-data-[variant=separator]/marker:text-center *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export { Marker, MarkerIcon, MarkerContent, markerVariants };
