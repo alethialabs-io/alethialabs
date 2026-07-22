@@ -94,6 +94,68 @@ func TestMaxConfigAWSPerKindNegative(t *testing.T) {
 	}
 }
 
+// TestMaxConfigGCPEmitsEveryKind is the POSITIVE proof for GCP: with all 11 kinds populated, GCP
+// ProviderTfvars emits a meaningful signal for each. The shape-bearing kinds (cluster/database/cache)
+// use GCP-valid literals via the provider-aware Apply, so this also guards that a real GCP apply
+// wouldn't be fed an AWS instance type / tier / engine version.
+func TestMaxConfigGCPEmitsEveryKind(t *testing.T) {
+	tfvars := gcpMaxConfigTfvars(t, "") // no skip — full surface
+
+	for _, k := range MaxConfigKinds {
+		for _, sig := range k.GCPSignals {
+			v, ok := tfvars[sig]
+			if !ok {
+				t.Errorf("kind %q: GCP tfvars missing signal %q — the kind is not wired to the template", k.Kind, sig)
+				continue
+			}
+			if !meaningful(v) {
+				t.Errorf("kind %q: GCP tfvar %q is present but not meaningful (%#v) — the kind did not populate", k.Kind, sig, v)
+			}
+		}
+	}
+}
+
+// TestMaxConfigGCPPerKindNegative is the LOUD negative for GCP. Seven of the nine optional kinds have
+// kind-EXCLUSIVE GCP signals (create_*), so the generic drop-and-check works. Queue and topic SHARE
+// create_pubsub + pubsub_topics (both fold into the same map), so their discriminator is the
+// pubsub_topics MAP KEY — dropping the queue removes "jobs"; dropping the topic removes "events".
+func TestMaxConfigGCPPerKindNegative(t *testing.T) {
+	for _, k := range MaxConfigKinds {
+		if k.Foundational {
+			continue
+		}
+		t.Run(k.Kind, func(t *testing.T) {
+			tfvars := gcpMaxConfigTfvars(t, k.Kind) // every kind EXCEPT this one
+			switch k.Kind {
+			case "queue":
+				if pubsubTopicsHasKey(tfvars, "jobs") {
+					t.Errorf("dropping kind %q left pubsub_topics[\"jobs\"] present — the queue is not isolable", k.Kind)
+				}
+			case "topic":
+				if pubsubTopicsHasKey(tfvars, "events") {
+					t.Errorf("dropping kind %q left pubsub_topics[\"events\"] present — the topic is not isolable", k.Kind)
+				}
+			default:
+				for _, sig := range k.GCPSignals {
+					if v, ok := tfvars[sig]; ok && meaningful(v) {
+						t.Errorf("dropping kind %q left signal %q still meaningful (%#v) — the signal is not kind-exclusive, so the positive proof is vacuous", k.Kind, sig, v)
+					}
+				}
+			}
+		})
+	}
+}
+
+// pubsubTopicsHasKey reports whether the emitted pubsub_topics map carries the given topic/queue name.
+func pubsubTopicsHasKey(tfvars map[string]any, key string) bool {
+	m, ok := tfvars["pubsub_topics"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	_, present := m[key]
+	return present
+}
+
 // TestMaxConfigSnapshotFailsClosed proves MaxConfigSnapshot injects all 11 kind blocks onto a base
 // snapshot. (The incomplete-surface guard is covered by Populated on the typed struct — every kind's
 // Apply sets its field, so a good build always populates; this asserts the merge reaches the map.)
@@ -125,6 +187,17 @@ func awsMaxConfigTfvars(t *testing.T, skip string) map[string]any {
 	return p.ProviderTfvars(cfg)
 }
 
+// gcpMaxConfigTfvars is the GCP twin of awsMaxConfigTfvars.
+func gcpMaxConfigTfvars(t *testing.T, skip string) map[string]any {
+	t.Helper()
+	cfg := maxConfigPCExcept("gcp", skip)
+	p, err := cloud.NewCloudProvider("gcp")
+	if err != nil {
+		t.Fatalf("NewCloudProvider(gcp): %v", err)
+	}
+	return p.ProviderTfvars(cfg)
+}
+
 // maxConfigPCExcept applies every kind except `skip` (empty = all), leaving the skipped kind's field
 // at its zero value.
 func maxConfigPCExcept(provider, skip string) *types.ProjectConfig {
@@ -133,7 +206,7 @@ func maxConfigPCExcept(provider, skip string) *types.ProjectConfig {
 		if k.Kind == skip {
 			continue
 		}
-		k.Apply(pc)
+		k.Apply(pc, provider)
 	}
 	return pc
 }
