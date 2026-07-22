@@ -2,11 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { XIcon } from "lucide-react"
-import { Dialog as DialogPrimitive } from "radix-ui"
+import { Dialog as DialogPrimitive } from "@base-ui-components/react/dialog"
 
 import { cn } from "./utils"
 import { Button } from "./button"
@@ -16,9 +15,13 @@ import { Button } from "./button"
  * callers never re-derive it via `className` (which fights tailwind-merge — a base
  * edit could then leak stray centering/`max-w` into a caller's override). `fullscreen`
  * is a near-edge-to-edge panel (7px gutter) for immersive surfaces like the AI modal.
+ *
+ * Migrated Radix → base-ui: Radix `Content` → base-ui `Popup` (CSS-positioned, same as before);
+ * `data-[state=open|closed]` → `data-[open]`/`data-[closed]` (base-ui keeps the popup mounted through
+ * a CSS animation on the closed state, so tw-animate-css still drives enter/exit).
  */
 const dialogContentVariants = cva(
-  "fixed z-50 bg-background shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+  "fixed z-50 bg-background shadow-lg duration-200 outline-none data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[open]:animate-in data-[open]:fade-in-0 data-[open]:zoom-in-95",
   {
     variants: {
       size: {
@@ -44,10 +47,12 @@ function DialogTrigger({
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
 }
 
+/** base-ui `Dialog.Portal` takes no `className`/`data-slot` (only `container`/`keepMounted`), so this
+ * wrapper forwards children/props straight through — no data-slot. */
 function DialogPortal({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+  return <DialogPrimitive.Portal {...props} />
 }
 
 function DialogClose({
@@ -56,15 +61,16 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+/** Radix `Overlay` → base-ui `Backdrop`; export name kept. */
 function DialogOverlay({
   className,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+}: React.ComponentProps<typeof DialogPrimitive.Backdrop>) {
   return (
-    <DialogPrimitive.Overlay
+    <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/50 data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:animate-in data-[open]:fade-in-0",
         className
       )}
       {...props}
@@ -78,14 +84,15 @@ function DialogContent({
   showCloseButton = true,
   size,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> &
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Popup>, "children"> &
   VariantProps<typeof dialogContentVariants> & {
     showCloseButton?: boolean
+    children?: React.ReactNode
   }) {
   return (
-    <DialogPortal data-slot="dialog-portal">
+    <DialogPortal>
       <DialogOverlay />
-      <DialogPrimitive.Content
+      <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(dialogContentVariants({ size }), className)}
         {...props}
@@ -94,13 +101,13 @@ function DialogContent({
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[open]:bg-accent data-[open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         )}
-      </DialogPrimitive.Content>
+      </DialogPrimitive.Popup>
     </DialogPortal>
   )
 }
@@ -134,8 +141,8 @@ function DialogFooter({
     >
       {children}
       {showCloseButton && (
-        <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
+        <DialogPrimitive.Close render={<Button variant="outline" />}>
+          Close
         </DialogPrimitive.Close>
       )}
     </div>
