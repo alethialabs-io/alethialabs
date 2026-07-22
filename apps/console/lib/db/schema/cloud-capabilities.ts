@@ -50,6 +50,19 @@ export const capabilityServiceKind = pgEnum("capability_service_kind", [
 export type CapabilityServiceKind =
 	(typeof capabilityServiceKind.enumValues)[number];
 
+// The networking service-quota a `cloud_capability_quotas` row measures headroom for (#981 axis; seams
+// #1115). A finite, provider-neutral discriminator (per the finite-known-values-are-enums rule) — each
+// row measures exactly one kind, and the picker degrades to advisory when the used/available figures are
+// not knowable. Kept inline here (not enums.ts) for the same reason as capabilityServiceKind above.
+export const capabilityQuotaKind = pgEnum("capability_quota_kind", [
+	"elastic_ip", // account/region elastic-IP (EIP) address limit (AWS EIPs, GCP static IPs, Azure public IPs, Alibaba EIPs)
+	"nat_gateway", // NAT gateway count limit per region/VPC
+	"load_balancer", // load-balancer count limit (ELB/ALB/NLB, GCP forwarding rules, Azure LB, Alibaba SLB)
+	"security_group", // security-group (or equivalent firewall-policy) count limit
+]);
+export type CapabilityQuotaKind =
+	(typeof capabilityQuotaKind.enumValues)[number];
+
 /** The columns every capability row shares — a factory (not a shared object) so each table gets fresh
  * drizzle column builders. Mirrors inventoryBase() (cloud-inventory.ts) but WITHOUT the AES-GCM
  * `sensitive` blob: an account's offerings (region codes, instance-type names/specs) are not
@@ -200,6 +213,40 @@ export const cloudCapabilitySyncState = pgTable(
 	],
 );
 
+// ── Service-quota HEADROOM offerable PER REGION — the quota axis (#981; seams #1115) ───────────────
+// The account-accurate "how many more can you launch" picture for the networking quotas a provision plan
+// consumes. One row per (identity, provider, region, quota_kind, native_id): `native_id` is the provider
+// quota code (e.g. AWS `L-0263D0A3` for EIPs); `quota_limit`/`used`/`available` carry the headroom, each
+// NULL when the plan/provider can't report it (honest `not_evaluable`, not a fabricated zero). Shares the
+// capabilityBase() shape (cloud_identity_id FK, soft-removal) so it rides the identical `owner_all` RLS
+// loop (programmables.sql) and the retention GC. Availability is GUIDANCE — the picker renders low headroom
+// as advisory, never a hard gate.
+export const cloudCapabilityQuotas = pgTable(
+	"cloud_capability_quotas",
+	{
+		...capabilityBase(),
+		quota_kind: capabilityQuotaKind().notNull(),
+		// The provider-reported quota ceiling for this kind in this region; NULL when not knowable.
+		quota_limit: integer(),
+		// Currently consumed against the ceiling; NULL when not knowable.
+		used: integer(),
+		// Remaining headroom (ceiling − used) where the provider reports it directly; NULL when not knowable.
+		available: integer(),
+	},
+	(t) => [
+		// quota_kind + native_id are BOTH in the key: a kind can span several provider quota codes, and the
+		// same code recurs per region as a distinct offering.
+		unique("cloud_capability_quotas_identity_region_kind_native_key").on(
+			t.cloud_identity_id,
+			t.provider,
+			t.region,
+			t.quota_kind,
+			t.native_id,
+		),
+		index("idx_cloud_capability_quotas_identity").on(t.cloud_identity_id),
+	],
+);
+
 export type CloudCapabilityRegion = typeof cloudCapabilityRegions.$inferSelect;
 export type CloudCapabilityRegionInsert =
 	typeof cloudCapabilityRegions.$inferInsert;
@@ -215,3 +262,6 @@ export type CloudCapabilitySyncState =
 	typeof cloudCapabilitySyncState.$inferSelect;
 export type CloudCapabilitySyncStateInsert =
 	typeof cloudCapabilitySyncState.$inferInsert;
+export type CloudCapabilityQuota = typeof cloudCapabilityQuotas.$inferSelect;
+export type CloudCapabilityQuotaInsert =
+	typeof cloudCapabilityQuotas.$inferInsert;
