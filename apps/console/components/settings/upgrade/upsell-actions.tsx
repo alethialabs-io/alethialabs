@@ -23,20 +23,16 @@ export function UpsellActions({ feature }: { feature: GatedFeature }) {
 	return (
 		<div className="flex flex-wrap items-center justify-center gap-2">
 			{meta.requiredPlan === "enterprise" ? (
-				<Button size="sm" asChild>
-					<a href={legalUrl("/contact/sales")} target="_blank" rel="noreferrer">
-						Contact Sales
-					</a>
+				<Button size="sm" nativeButton={false} render={<a href={legalUrl("/contact/sales")} target="_blank" rel="noreferrer" />}>
+					Contact Sales
 				</Button>
 			) : (
 				<Button size="sm" onClick={openUpgrade}>
 					Upgrade to {planName}
 				</Button>
 			)}
-			<Button size="sm" variant="ghost" asChild>
-				<a href={meta.learnMoreHref} target="_blank" rel="noreferrer">
-					Learn more
-				</a>
+			<Button size="sm" variant="ghost" nativeButton={false} render={<a href={meta.learnMoreHref} target="_blank" rel="noreferrer" />}>
+				Learn more
 			</Button>
 		</div>
 	);

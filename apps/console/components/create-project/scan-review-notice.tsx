@@ -62,11 +62,9 @@ export function ScanReviewNotice({
 							target it. Connect one, then re-open the scan.
 						</p>
 					</div>
-					<Button asChild className="gap-1.5 rounded-none">
-						<Link href={globalHref(org, "connectors")}>
-							<Plug className="h-3.5 w-3.5" />
-							Connect a cloud
-						</Link>
+					<Button className="gap-1.5 rounded-none" nativeButton={false} render={<Link href={globalHref(org, "connectors")} />}>
+						<Plug className="h-3.5 w-3.5" />
+						Connect a cloud
 					</Button>
 				</>
 			)}
@@ -80,8 +78,8 @@ export function ScanReviewNotice({
 							This scan no longer exists. Start a new project and scan your repo again.
 						</p>
 					</div>
-					<Button asChild variant="outline" className="gap-1.5 rounded-none">
-						<Link href={globalHref(org, "new")}>Start a new project</Link>
+					<Button variant="outline" className="gap-1.5 rounded-none" nativeButton={false} render={<Link href={globalHref(org, "new")} />}>
+						Start a new project
 					</Button>
 				</>
 			)}

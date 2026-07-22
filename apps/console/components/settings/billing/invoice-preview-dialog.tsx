@@ -97,23 +97,26 @@ export function InvoicePreviewDialog({
 
 						<DialogFooter>
 							{invoice.hasPdf ? (
-								<Button asChild size="sm">
-									<a href={invoicePdfHref(org, invoice.id, true)}>
-										<Download size={14} />
-										Download PDF
-									</a>
+								<Button size="sm" nativeButton={false} render={<a href={invoicePdfHref(org, invoice.id, true)} />}>
+									<Download size={14} />
+									Download PDF
 								</Button>
 							) : (
 								invoice.hostedInvoiceUrl && (
-									<Button asChild size="sm" variant="outline">
-										<a
-											href={invoice.hostedInvoiceUrl}
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											<ExternalLink size={14} />
-											Open receipt
-										</a>
+									<Button
+										size="sm"
+										variant="outline"
+										nativeButton={false}
+										render={
+											<a
+												href={invoice.hostedInvoiceUrl}
+												target="_blank"
+												rel="noopener noreferrer"
+											/>
+										}
+									>
+										<ExternalLink size={14} />
+										Open receipt
 									</Button>
 								)
 							)}

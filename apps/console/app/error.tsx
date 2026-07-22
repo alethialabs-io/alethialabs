@@ -36,8 +36,8 @@ export default function AppError({
 					<Button size="sm" onClick={reset}>
 						Try again
 					</Button>
-					<Button asChild size="sm" variant="outline">
-						<Link href="/">Go home</Link>
+					<Button size="sm" variant="outline" nativeButton={false} render={<Link href="/" />}>
+						Go home
 					</Button>
 				</>
 			}
