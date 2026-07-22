@@ -30,6 +30,11 @@ type EKSClusterConn struct {
 	Endpoint string
 	// CAData is the base64 certificate-authority data (the kubeconfig `certificate-authority-data`).
 	CAData string
+	// OIDCIssuer is the cluster's IRSA OpenID-Connect issuer URL (`https://oidc.eks.<region>.amazonaws.com/id/<id>`).
+	// Best-effort: populated when the cluster reports one (every EKS cluster does), empty otherwise — it is
+	// NOT required to build a kubeconfig, so its absence never makes a cluster "not ready". The per-namespace
+	// IRSA path (#957) needs it and errors clearly if it's empty.
+	OIDCIssuer string
 }
 
 // ResolveEKSClusterConn calls DescribeCluster and safely extracts the cluster's connection
@@ -49,9 +54,14 @@ func ResolveEKSClusterConn(ctx context.Context, api DescribeClusterAPI, clusterN
 		c.CertificateAuthority.Data == nil {
 		return EKSClusterConn{}, fmt.Errorf("%w: %q", ErrClusterNotReady, clusterName)
 	}
-	return EKSClusterConn{
+	conn := EKSClusterConn{
 		ARN:      *c.Arn,
 		Endpoint: *c.Endpoint,
 		CAData:   *c.CertificateAuthority.Data,
-	}, nil
+	}
+	// Best-effort: the OIDC issuer is only needed by the per-namespace IRSA path, not the kubeconfig.
+	if c.Identity != nil && c.Identity.Oidc != nil && c.Identity.Oidc.Issuer != nil {
+		conn.OIDCIssuer = *c.Identity.Oidc.Issuer
+	}
+	return conn, nil
 }
