@@ -32,7 +32,25 @@ queue_rules:
     # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
     merge_method: squash
 
-# Auto-queue: the current, non-deprecated way to add matching PRs to the queue with no manual command.
+# Merge protections: `auto_merge_conditions` below only fires once a merge_protections rule's
+# `success_conditions` all pass. Without this block there were no success_conditions to satisfy, so
+# auto-merge never triggered (the bug). This rule requires the 8 protect-dev checks on every PR into `dev`.
+merge_protections:
+  - name: dev required CI
+    if:
+      - base = dev
+    success_conditions:
+      - "check-success=TypeScript (lint · types · test · docs)"
+      - "check-success=Go (build · vet · test · lint) (packages/core)"
+      - "check-success=Go (build · vet · test · lint) (apps/cli)"
+      - "check-success=Go (build · vet · test · lint) (apps/runner)"
+      - "check-success=Integration (real Postgres + RLS)"
+      - "check-success=Secret scan (gitleaks)"
+      - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
+      - "check-success=Authz / open-core guards"
+
+# Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
+# success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).
 merge_protections_settings:
   auto_merge_conditions:
     - base = dev
