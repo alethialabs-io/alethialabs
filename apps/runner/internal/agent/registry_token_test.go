@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,101 @@ func TestMintACRRejectsNonACRHost(t *testing.T) {
 	// A non-ACR host must fail closed BEFORE any AAD token is minted/sent.
 	if _, _, err := mintACRDockerConfig(context.Background(), "evil.example.com"); err == nil {
 		t.Fatal("expected mintACRDockerConfig to reject a non-ACR host")
+	}
+}
+
+// rewriteTransport redirects every request to base (a test server), preserving the request path — so
+// the host-derived exchange URL (https://<host>/oauth2/exchange) lands on the stub without real DNS.
+type rewriteTransport struct{ base *url.URL }
+
+// RoundTrip rewrites the request's scheme+host to the test server and forwards it.
+func (rt rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.URL.Scheme = rt.base.Scheme
+	req.URL.Host = rt.base.Host
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestMintACRDockerConfigWith_Success(t *testing.T) {
+	// Stub ACR /oauth2/exchange: assert the exchange request shape, return a refresh token.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/oauth2/exchange" {
+			t.Errorf("exchange hit unexpected path %q", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse form: %v", err)
+		}
+		if r.FormValue("grant_type") != "access_token" || r.FormValue("access_token") != "aad-tok" {
+			t.Errorf("unexpected form: %v", r.Form)
+		}
+		if r.FormValue("service") != "acme.azurecr.io" {
+			t.Errorf("service = %q, want the ACR host", r.FormValue("service"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"refresh_token":"acr-refresh-xyz"}`))
+	}))
+	defer srv.Close()
+	base, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server url: %v", err)
+	}
+	client := &http.Client{Transport: rewriteTransport{base: base}}
+
+	var gotScope string
+	getAAD := func(ctx context.Context, scope string) (string, error) {
+		gotScope = scope
+		return "aad-tok", nil
+	}
+
+	before := time.Now()
+	dcj, exp, err := mintACRDockerConfigWith(context.Background(), getAAD, client, "acme.azurecr.io")
+	if err != nil {
+		t.Fatalf("mintACRDockerConfigWith: %v", err)
+	}
+	if gotScope != acrAADScope {
+		t.Errorf("getAAD scope = %q, want %q", gotScope, acrAADScope)
+	}
+	// The dockerconfigjson carries the fixed ACR user + the exchanged refresh token under the host.
+	var doc struct {
+		Auths map[string]struct{ Username, Password string } `json:"auths"`
+	}
+	if err := json.Unmarshal([]byte(dcj), &doc); err != nil {
+		t.Fatalf("dcj not json: %v\n%s", err, dcj)
+	}
+	e, ok := doc.Auths["acme.azurecr.io"]
+	if !ok {
+		t.Fatalf("missing host entry: %s", dcj)
+	}
+	if e.Username != acrTokenUser || e.Password != "acr-refresh-xyz" {
+		t.Errorf("entry = %+v, want user=%s pass=acr-refresh-xyz", e, acrTokenUser)
+	}
+	// Expiry is derived from the assumed ACR refresh-token TTL.
+	if exp.Before(before.Add(acrTokenTTL-time.Minute)) || exp.After(time.Now().Add(acrTokenTTL+time.Minute)) {
+		t.Errorf("exp = %v, want ~now+%v", exp, acrTokenTTL)
+	}
+}
+
+func TestMintACRDockerConfigWith_HostRejectedBeforeTokenMinted(t *testing.T) {
+	// A non-ACR host must fail closed BEFORE the AAD token-getter is ever invoked (so a tampered host
+	// never receives the management-scoped token).
+	called := false
+	getAAD := func(ctx context.Context, scope string) (string, error) {
+		called = true
+		return "aad-tok", nil
+	}
+	if _, _, err := mintACRDockerConfigWith(context.Background(), getAAD, http.DefaultClient, "evil.example.com"); err == nil {
+		t.Fatal("expected a non-ACR host to be rejected")
+	}
+	if called {
+		t.Error("AAD token-getter must NOT run for a non-ACR host")
+	}
+}
+
+func TestMintACRDockerConfigWith_TokenGetterErrorPropagates(t *testing.T) {
+	getAAD := func(ctx context.Context, scope string) (string, error) {
+		return "", context.DeadlineExceeded
+	}
+	if _, _, err := mintACRDockerConfigWith(context.Background(), getAAD, http.DefaultClient, "acme.azurecr.io"); err == nil {
+		t.Fatal("expected the AAD token-getter error to propagate")
 	}
 }
 

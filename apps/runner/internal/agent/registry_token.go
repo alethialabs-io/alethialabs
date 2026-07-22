@@ -251,26 +251,54 @@ func mintGARDockerConfig(ctx context.Context, host string) (string, time.Time, e
 	return dockerConfigJSON(host, garTokenUser, tok.AccessToken), tok.Expiry, nil
 }
 
+// aadTokenGetter mints an AAD bearer token for the given scope. The real implementation
+// (workloadIdentityAADToken) needs the pod's in-cluster Azure Workload Identity, so tests inject a
+// stub — the DI seam that makes the whole ACR mint flow locally testable (mirrors the file's other
+// swappable seams: registryTokenMinter, secretPatcher).
+type aadTokenGetter func(ctx context.Context, scope string) (string, error)
+
+// workloadIdentityAADToken is the real aadTokenGetter: it mints an AAD token from the pod's Azure
+// Workload Identity credential. It only functions in-cluster (needs the WI env + a projected federated
+// token), which is exactly why it is behind the injectable seam.
+func workloadIdentityAADToken(ctx context.Context, scope string) (string, error) {
+	cred, err := azidentity.NewWorkloadIdentityCredential(nil)
+	if err != nil {
+		return "", fmt.Errorf("azure workload identity credential: %w", err)
+	}
+	// The caller (mintACRDockerConfigWith) adds the "obtain AAD token" context, so return the
+	// GetToken error as-is to avoid a doubled prefix.
+	tok, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{scope}})
+	if err != nil {
+		return "", err
+	}
+	return tok.Token, nil
+}
+
 // mintACRDockerConfig obtains an AAD token via the pod's Azure Workload Identity, exchanges it at the
 // registry's /oauth2/exchange endpoint for an ACR refresh token (the target ACR granted this identity
-// AcrPull), and renders the dockerconfigjson.
+// AcrPull), and renders the dockerconfigjson. It wires the real Workload-Identity token-getter +
+// http.DefaultClient into mintACRDockerConfigWith (the DI'd core).
 func mintACRDockerConfig(ctx context.Context, host string) (string, time.Time, error) {
-	// The AAD token below is sent to https://<host>/oauth2/exchange. `host` comes from provider_config,
-	// so fail closed unless it is a clean ACR hostname — otherwise a wrong/tampered host would receive
-	// the (management-scoped) AAD token. This is the only path that sends a token to a config-supplied
-	// host (ECR/GAR mint via cloud SDKs), so the allowlist lives here.
+	return mintACRDockerConfigWith(ctx, workloadIdentityAADToken, http.DefaultClient, host)
+}
+
+// mintACRDockerConfigWith is the dependency-injected core of the ACR mint: it takes the AAD
+// token-getter + HTTP client so the entire flow — host allowlist → AAD token → refresh-token exchange
+// → dockerconfigjson — is unit-testable off-cluster (the real getter needs in-cluster Workload
+// Identity). The host allowlist is checked FIRST, before any AAD token is minted or sent: the token is
+// POSTed to https://<host>/oauth2/exchange and `host` comes from provider_config, so fail closed unless
+// it is a clean ACR hostname — otherwise a wrong/tampered host would receive the (management-scoped)
+// AAD token. This is the only path that sends a token to a config-supplied host (ECR/GAR mint via cloud
+// SDKs), so the allowlist lives here.
+func mintACRDockerConfigWith(ctx context.Context, getAAD aadTokenGetter, client *http.Client, host string) (string, time.Time, error) {
 	if !isACRHost(host) {
 		return "", time.Time{}, fmt.Errorf("refusing ACR token exchange with non-ACR host %q (must be a *.azurecr.io hostname)", host)
 	}
-	cred, err := azidentity.NewWorkloadIdentityCredential(nil)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("azure workload identity credential: %w", err)
-	}
-	aad, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{acrAADScope}})
+	aad, err := getAAD(ctx, acrAADScope)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("obtain AAD token: %w", err)
 	}
-	refresh, err := exchangeACRRefreshToken(ctx, http.DefaultClient, host, aad.Token)
+	refresh, err := exchangeACRRefreshToken(ctx, client, host, aad)
 	if err != nil {
 		return "", time.Time{}, err
 	}
