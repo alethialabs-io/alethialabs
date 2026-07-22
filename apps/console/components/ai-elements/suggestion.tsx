@@ -1,10 +1,7 @@
 "use client";
 
 import { Button } from "@repo/ui/button";
-import {
-  ScrollArea,
-  ScrollBar,
-} from "@repo/ui/scroll-area";
+import { ScrollArea } from "@repo/ui/scroll-area";
 import { cn } from "@repo/ui/utils";
 import type { ComponentProps } from "react";
 import { useCallback } from "react";
@@ -16,11 +13,14 @@ export const Suggestions = ({
   children,
   ...props
 }: SuggestionsProps) => (
-  <ScrollArea className="w-full overflow-x-auto whitespace-nowrap" {...props}>
+  <ScrollArea
+    className="w-full whitespace-nowrap"
+    orientation="horizontal"
+    {...props}
+  >
     <div className={cn("flex w-max flex-nowrap items-center gap-2", className)}>
       {children}
     </div>
-    <ScrollBar className="hidden" orientation="horizontal" />
   </ScrollArea>
 );
 

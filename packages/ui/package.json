@@ -14,6 +14,7 @@
     "test": "vitest run --coverage"
   },
   "dependencies": {
+    "@base-ui-components/react": "1.0.0-rc.0",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-collapsible": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",

@@ -12,6 +12,7 @@ import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { Loader2, ScrollText } from "lucide-react";
 import { useMemo } from "react";
 import type { ActivityRow } from "@/app/server/actions/activity";
+import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { userInitials } from "@/lib/user-display";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
@@ -46,6 +47,14 @@ export function ActivityFeed({
 	loadingMore?: boolean;
 }) {
 	const groups = useMemo(() => byMonth(rows), [rows]);
+	// Auto-pull the next page as the tail scrolls into view; the button below stays as an
+	// explicit fallback.
+	const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
+		hasMore,
+		loading: loadingMore,
+		onLoadMore: () => onLoadMore?.(),
+		resetKey: rows.length,
+	});
 
 	if (rows.length === 0) {
 		return (
@@ -127,6 +136,8 @@ export function ActivityFeed({
 
 			{hasMore && onLoadMore && (
 				<div className="flex justify-center pt-1">
+					{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
+					<div ref={sentinelRef} aria-hidden className="h-px w-px" />
 					<Button
 						variant="outline"
 						size="sm"

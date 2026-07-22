@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import {
@@ -119,6 +120,16 @@ export function DataTable<TData extends { id?: string }, TValue>({
 		},
 	});
 
+	// Auto-grow the "Show more" window as the footer scrolls into view (the button stays as an
+	// explicit fallback). Windowing is synchronous, so re-arm the observer on the rendered count.
+	const visibleRowCount = table.getRowModel().rows.length;
+	const loadMoreSentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
+		hasMore: loadMore?.hasMore ?? false,
+		loading: false,
+		onLoadMore: () => loadMore?.onLoadMore(),
+		resetKey: visibleRowCount,
+	});
+
 	const tableEl = (
 		<Table>
 			<TableHeader className={scrollHeight ? "sticky top-0 z-10 bg-background" : undefined}>
@@ -202,13 +213,21 @@ export function DataTable<TData extends { id?: string }, TValue>({
 								{table.getFilteredRowModel().rows.length}
 							</p>
 							{loadMore.hasMore && (
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={loadMore.onLoadMore}
-								>
-									Show more
-								</Button>
+								<>
+									{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
+									<div
+										ref={loadMoreSentinelRef}
+										aria-hidden
+										className="h-px w-px"
+									/>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={loadMore.onLoadMore}
+									>
+										Show more
+									</Button>
+								</>
 							)}
 						</div>
 					))
