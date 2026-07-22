@@ -242,6 +242,30 @@ export async function insertFleetAction(record: FleetActionRecord): Promise<void
 		});
 }
 
+/** Circuit-breaker input: how many `reap-dead` (booted-but-never-registered) actions this provider
+ *  logged in the last `windowMin` minutes. A sustained count is a zero-registration boot loop
+ *  (INCIDENT 2026-07-22). Raw sql (string provider param) like the other fleet queries here. */
+export async function recentReapDeadCount(
+	provider: string,
+	windowMin: number,
+): Promise<number> {
+	const rows = await getServiceDb().execute<CountRow>(sql`
+		select count(*)::int as n from public.fleet_actions
+		where provider = ${provider}::cloud_provider
+		  and reason = 'reap-dead'
+		  and created_at > now() - (${windowMin} * interval '1 minute')
+	`);
+	return Number(rows[0]?.n ?? 0);
+}
+
+/** Circuit-breaker action: pause a LIVE pool (never a draining one). Idempotent. */
+export async function disableFleetPool(provider: string): Promise<void> {
+	await getServiceDb().execute(sql`
+		update public.fleet_pools set enabled = false, updated_at = now()
+		where provider = ${provider}::cloud_provider and deleting = false
+	`);
+}
+
 /**
  * Cross-replica scale guard for one provider's pool. Opens a transaction, takes a NON-blocking
  * per-provider advisory xact lock (`pg_try_advisory_xact_lock`), and only runs `apply` if it won the

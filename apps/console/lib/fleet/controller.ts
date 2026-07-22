@@ -86,6 +86,18 @@ export interface ControllerDeps {
 	 *  Best-effort by contract — the controller wraps every call so a ledger write can NEVER break a
 	 *  reconcile (the ledger is observability, not a correctness dependency). */
 	recordAction(record: FleetActionRecord): Promise<void>;
+	/** Circuit-breaker input: count of `reap-dead` (booted-but-never-registered) ledger actions for
+	 *  this provider in the last `windowMin` minutes. A sustained run is a zero-registration boot loop
+	 *  (a runner image that crash-loops, INCIDENT 2026-07-22). Optional → a fake without it disables
+	 *  the breaker, so convergence tests are unaffected. */
+	recentBootFailures?(provider: string, windowMin: number): Promise<number>;
+	/** Circuit-breaker action: pause a pool (`enabled=false`) after the breaker trips, so the scaler
+	 *  stops recreating VMs that can never register. Optional (see above). */
+	disablePool?(provider: string): Promise<void>;
+	/** Reap-dead count within the window that trips the breaker (default 5 ≈ ~20min at 4min/cycle). */
+	bootFailureLimit?: number;
+	/** The breaker's look-back window in minutes (default 30). */
+	bootFailureWindowMin?: number;
 	/**
 	 * Cross-replica scale guard: run `apply` (the create/drain/destroy span for one provider's pool)
 	 * while holding a per-provider Postgres advisory lock, so at most ONE replica mutates a given
@@ -303,6 +315,39 @@ export async function reconcilePool(
 		});
 		return 0;
 	}
+
+	// Circuit-breaker (INCIDENT 2026-07-22): if this tick reaped a booted-but-never-registered VM and
+	// NOTHING is online (a zero-registration loop — e.g. a runner image that crash-loops on the wrong
+	// arch), and the ledger shows this has persisted, PAUSE the pool instead of recreating forever.
+	// `max` / the global ceiling don't save us — reaped ghosts aren't counted as live, so the pool
+	// stays under warm_min and re-creates every cycle (~100 emails / 8h before this breaker existed).
+	const reapedDead = actions.some((a) => a.type === "destroy" && a.reason === "reap-dead");
+	if (reapedDead && onlineNow === 0 && deps.recentBootFailures && deps.disablePool) {
+		const limit = deps.bootFailureLimit ?? 5;
+		const windowMin = deps.bootFailureWindowMin ?? 30;
+		const recent = await deps
+			.recentBootFailures(project.provider, windowMin)
+			.catch((err) => {
+				flog.error("circuit-breaker: recentBootFailures failed", { provider: project.provider, err });
+				return 0;
+			});
+		if (recent >= limit) {
+			await deps
+				.disablePool(project.provider)
+				.catch((err) => flog.error("circuit-breaker: disablePool failed", { provider: project.provider, err }));
+			flog.error("fleet circuit-breaker TRIPPED — pool auto-paused after a zero-registration boot loop", {
+				provider: project.provider,
+				reap_dead_in_window: recent,
+				limit,
+				window_min: windowMin,
+			});
+			void captureServerException(
+				new Error("fleet circuit-breaker tripped: zero-registration boot loop"),
+				{ props: { area: "fleet", provider: project.provider, reap_dead: recent, limit } },
+			);
+		}
+	}
+
 	return actions.length;
 }
 
