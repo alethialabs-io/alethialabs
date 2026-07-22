@@ -14,7 +14,7 @@
 # QEMU — an emulated `tofu init` crashes lfstack.push). ENDS AS ROOT on purpose: each variant installs its
 # cloud CLI (apk/pip need root) and only then switches to `USER runner` before `tofu init`.
 
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -32,9 +32,16 @@ RUN cd apps/runner && go mod download
 COPY apps/runner/ apps/runner/
 
 ARG VERSION=dev
-# TARGETARCH is provided by buildx (defaults to the build host's arch). Each arch is built natively.
-ARG TARGETARCH=arm64
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+# Cross-compile the runner for the IMAGE's target arch. TARGETOS/TARGETARCH are injected by buildx
+# from `--platform`; there is deliberately NO default. A prior `ARG TARGETARCH=arm64` default
+# silently compiled an arm64 runner INTO THE AMD64 IMAGE, so every x86 (cpx) fleet VM crash-looped on
+# ENOEXEC ("syntax error" as the shell parsed the ELF) and never registered → the scaler churned
+# (INCIDENT 2026-07-22). Fail loud if buildx didn't set it. `--platform=$BUILDPLATFORM` keeps the
+# builder NATIVE (no QEMU) while Go cross-compiles (CGO off) to the target arch.
+ARG TARGETOS
+ARG TARGETARCH
+RUN : "${TARGETARCH:?TARGETARCH must be set by buildx — build with --platform}" && \
+    CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH}" go build \
     -ldflags="-s -w -X github.com/alethialabs-io/alethialabs/apps/runner/internal/version.Version=${VERSION}" \
     -o /runner ./apps/runner/cmd/runner
 
