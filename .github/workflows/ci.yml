@@ -88,8 +88,10 @@ jobs:
           # gate the amd64-ELF-arch guard on any change that could rebuild that binary/image (the
           # Dockerfiles, the runner/cli Go, and the shared Go the runner compiles in — packages/core +
           # go.work). A plain `go build` can't reproduce a Dockerfile ARG regression, so the guard
-          # builds the real image — only run it when one of these actually changed.
-          if echo "$changed" | grep -qE '^(apps/runner/|apps/cli/|packages/core/|go\.work)'; then
+          # builds the real image — only run it when one of these actually changed. Also fire on a
+          # change to THIS workflow, so an edit to the guard job itself re-validates it (and so its
+          # introducing PR exercises it).
+          if echo "$changed" | grep -qE '^(apps/runner/|apps/cli/|packages/core/|go\.work|\.github/workflows/ci\.yml$)'; then
             echo "runner=true" >> "$GITHUB_OUTPUT"
           else
             echo "runner=false" >> "$GITHUB_OUTPUT"
