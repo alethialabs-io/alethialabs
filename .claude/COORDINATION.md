@@ -2,7 +2,8 @@
 
 Many Claude instances (and humans) drive the north star in parallel. Isolation and integration are already
 solved by the multi-instance rules in `CLAUDE.md` (one worktree per instance via `pnpm wt`; PR → `dev`;
-**enqueue on green via the merge queue** — `gh pr merge --auto --squash`, never a direct merge; lock-guarded
+**Mergify auto-queues + squash-merges every non-draft, conflict-free `dev` PR on green** — you run no
+`gh pr merge` and never merge directly; lock-guarded
 migrations). **This file is the missing third half: how work is
 distributed** so N instances claim disjoint work without collision, respect dependencies, and never tangle
 each other's files.
@@ -32,8 +33,9 @@ like #530). You already built and debugged this for provisioning — this reuses
 ## The two work classes (the routing rule)
 
 **`class:backend`** — server actions, runner, schema, core, tofu, tests, docs. **Fully autonomous:**
-claim → `pnpm wt` → build → PR into `dev` → **enqueue on green** (`gh pr merge --auto --squash`; the merge
-queue rebuilds on the projected `dev` tip and lands it in order). The human is NOT in the loop.
+claim → `pnpm wt` → build → **open a non-draft PR into `dev`** → **Mergify lands it on green** (it auto-queues
+every non-draft, conflict-free `dev` PR and squash-merges it in order, validating each on its own branch — you
+run NO `gh pr merge`). The human is NOT in the loop.
 
 **`class:ui`** — canvas, components, anything visual. **Human-in-the-loop.** A UI unit's deliverable is NOT a
 merged PR — it is a **UI design spec grounded in the data model** the backend lanes define (the seams issue +
@@ -50,8 +52,8 @@ Every instance, at kickoff, reads this file, then:
 ```
 scripts/claim-work.sh --class backend      # atomically claim the next ready backend unit
 cd ../wt-<slug>                             # the script prints the pnpm wt slug
-# ... build; PR into dev with "Closes #<n>"; enqueue on green: gh pr merge --auto --squash (backend) ...
-scripts/complete-work.sh <n>               # release the claim; coordinate opens downstream
+# ... build; open a NON-DRAFT PR into dev with "Closes #<n>"; Mergify auto-queues + squash-merges on green (run NO gh pr merge) ...
+scripts/complete-work.sh <n>               # REQUIRED: a dev squash-merge does NOT auto-close the issue (dev isn't the default branch) — this closes + de-claims it; coordinate opens downstream
 scripts/claim-work.sh --class backend      # loop
 ```
 
