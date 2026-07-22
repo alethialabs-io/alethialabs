@@ -24,3 +24,12 @@ variable "registry_provider" {
   type        = string
   default     = "native"
 }
+
+# Declared for uniformity with the other clouds (Compose sets this guard on every cloud). Alibaba has
+# NO cross-account keyless registry provider — token clouds are an explicit exclusion (see the PR B
+# design doc), so this stays "native" for Alibaba projects; no keyless pull role is wired here.
+variable "registry_pull_provider" {
+  description = "Cross-account keyless registry-pull provider slug; \"native\" means no cross-account pull. Unused on Alibaba (no keyless registry support)."
+  type        = string
+  default     = "native"
+}
