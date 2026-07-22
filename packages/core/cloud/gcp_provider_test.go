@@ -207,36 +207,45 @@ func TestGCPProvider_ProviderTfvars_CloudSQLOptional(t *testing.T) {
 	}
 }
 
-// TestGCPProvider_ProviderTfvars_Memorystore verifies the cache mapping:
-// STANDARD_HA tier only for >1 node, plus engine / instance-type / multi-az
-// pass-through.
+// TestGCPProvider_ProviderTfvars_Memorystore verifies the cache mapping onto the tfvars the GCP
+// template actually declares (#1085): memorystore_tier (STANDARD_HA for >1 node OR multi-AZ, else
+// the BASIC default = absent), memorystore_memory_size_gb (whole GB from MemoryGB), and
+// memorystore_redis_version (the REDIS_x_y enum). The old undeclared engine / instance-type /
+// multi-az tfvars are NO LONGER emitted (they were silently dropped by the template).
 func TestGCPProvider_ProviderTfvars_Memorystore(t *testing.T) {
 	tests := []struct {
-		name         string
-		cache        types.ProjectCacheConfig
-		wantTier     interface{} // nil => key absent
-		wantEngine   interface{}
-		wantInstance interface{}
-		wantMultiAz  interface{}
+		name        string
+		cache       types.ProjectCacheConfig
+		wantTier    interface{} // nil => key absent
+		wantMemGB   interface{}
+		wantVersion interface{}
 	}{
 		{
-			name:     "single node, basic",
-			cache:    types.ProjectCacheConfig{Name: "r", NumCacheNodes: intPtr(1)},
-			wantTier: nil,
+			name:  "single node, basic (tier default, no size/version)",
+			cache: types.ProjectCacheConfig{Name: "r", NumCacheNodes: intPtr(1)},
 		},
 		{
-			name:         "ha cluster with all knobs",
-			cache:        types.ProjectCacheConfig{Name: "r", NumCacheNodes: intPtr(3), Engine: "redis", NodeType: "M1", MultiAz: boolPtr(true)},
-			wantTier:     "STANDARD_HA",
-			wantEngine:   "redis",
-			wantInstance: "M1",
-			wantMultiAz:  true,
+			name:        "ha via multi-node with size + version enum-mapped",
+			cache:       types.ProjectCacheConfig{Name: "r", NumCacheNodes: intPtr(3), Engine: "redis", MemoryGB: 10, EngineVersion: "7.1"},
+			wantTier:    "STANDARD_HA",
+			wantMemGB:   10,
+			wantVersion: "REDIS_7_0",
 		},
 		{
-			name:        "multi-az false still emitted",
-			cache:       types.ProjectCacheConfig{Name: "r", MultiAz: boolPtr(false)},
-			wantTier:    nil,
-			wantMultiAz: false,
+			name:     "ha via multi-az flag",
+			cache:    types.ProjectCacheConfig{Name: "r", MultiAz: boolPtr(true)},
+			wantTier: "STANDARD_HA",
+		},
+		{
+			name:        "version 7.2 maps to REDIS_7_2, fractional GB rounds",
+			cache:       types.ProjectCacheConfig{Name: "r", MemoryGB: 3.6, EngineVersion: "7.2"},
+			wantMemGB:   4,
+			wantVersion: "REDIS_7_2",
+		},
+		{
+			name:        "version 6.x maps to REDIS_6_X",
+			cache:       types.ProjectCacheConfig{Name: "r", EngineVersion: "6.2"},
+			wantVersion: "REDIS_6_X",
 		},
 	}
 
@@ -253,9 +262,14 @@ func TestGCPProvider_ProviderTfvars_Memorystore(t *testing.T) {
 				t.Errorf("create_memorystore = %v, want true", tfvars["create_memorystore"])
 			}
 			assertOptional(t, tfvars, "memorystore_tier", tt.wantTier)
-			assertOptional(t, tfvars, "memorystore_engine", tt.wantEngine)
-			assertOptional(t, tfvars, "memorystore_instance_type", tt.wantInstance)
-			assertOptional(t, tfvars, "memorystore_multi_az", tt.wantMultiAz)
+			assertOptional(t, tfvars, "memorystore_memory_size_gb", tt.wantMemGB)
+			assertOptional(t, tfvars, "memorystore_redis_version", tt.wantVersion)
+			// The undeclared tfvars must no longer be emitted.
+			for _, k := range []string{"memorystore_engine", "memorystore_instance_type", "memorystore_multi_az"} {
+				if _, ok := tfvars[k]; ok {
+					t.Errorf("tfvars[%q] should no longer be emitted (undeclared in variables.tf)", k)
+				}
+			}
 		})
 	}
 }
