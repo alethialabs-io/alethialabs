@@ -1,0 +1,15 @@
+▶ alibaba/register: ghcr.io/alethialabs-io/runner-alibaba:latest (amd64 ELF arch)
+latest: Pulling from alethialabs-io/runner-alibaba
+92b010e874b9: Pulling fs layer
+dac907d8b424: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+4f4fb700ef54: Already exists
+83eefe29ab46: Download complete
+dac907d8b424: Download complete
+4f4fb700ef54: Pull complete
+dac907d8b424: Pull complete
+92b010e874b9: Download complete
+92b010e874b9: Pull complete
+Digest: sha256:759cdb5a175108c6aaac653bfcd61a8c685241d43f26ad30ba7713a142dddaa8
+Status: Downloaded newer image for ghcr.io/alethialabs-io/runner-alibaba:latest
+amd64 /runner e_machine=3e00
