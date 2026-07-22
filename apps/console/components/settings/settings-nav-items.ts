@@ -7,6 +7,7 @@
 
 import {
 	CreditCard,
+	GitPullRequest,
 	KeyRound,
 	Network,
 	ScrollText,
@@ -41,6 +42,12 @@ export interface SettingsNavItem {
 // Access · Activity.
 export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
 	{ label: "General", sub: "general", icon: Settings2, scopes: ["org", "project"] },
+	{
+		label: "Preview environments",
+		sub: "preview",
+		icon: GitPullRequest,
+		scopes: ["project"],
+	},
 	{ label: "Billing", sub: "billing", icon: CreditCard, scopes: ["org"] },
 	{ label: "Members", sub: "members", icon: Users, scopes: ["org"] },
 	{ label: "Teams", sub: "teams", icon: UsersRound, scopes: ["org"] },

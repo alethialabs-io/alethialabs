@@ -13,6 +13,8 @@ vi.mock("@/lib/db", () => ({ withActorScope: vi.fn() }));
 import {
 	configurePreviewEnvironments,
 	getPreviewConfig,
+	listProjectFabrics,
+	listProjectGitCredentials,
 	setPreviewEnabled,
 } from "@/app/server/actions/preview";
 import { authorize } from "@/lib/authz/guard";
@@ -35,6 +37,7 @@ function makeTx(opts: {
 		from: () => tx,
 		where: () => tx,
 		limit: async () => opts.selectResult ?? [],
+		orderBy: async () => opts.selectResult ?? [],
 		insert: () => tx,
 		values: (v: Record<string, unknown>) => {
 			captured.values = v;
@@ -50,6 +53,7 @@ function makeTx(opts: {
 			return tx;
 		},
 		returning: async () => [{ id: "pc-1", ...captured.values, ...captured.set }],
+		then: (resolve: (v: unknown[]) => unknown) => resolve(opts.selectResult ?? []),
 	});
 	// setPreviewEnabled's update chain ends in .returning() but has its own row shape.
 	if (opts.updateRows) {
@@ -145,6 +149,59 @@ describe("getPreviewConfig", () => {
 				cb(makeTx({ selectResult: [] }))) as never,
 		);
 		expect(await getPreviewConfig(PROJECT)).toBeNull();
+	});
+});
+
+describe("listProjectFabrics", () => {
+	it("PDP-gates on project:view and returns fabric selector rows", async () => {
+		vi.mocked(withActorScope).mockImplementation(
+			((_a: unknown, cb: (tx: unknown) => unknown) =>
+				cb(
+					makeTx({
+						selectResult: [
+							{
+								id: "fab-1",
+								name: "shared",
+								region: "eu-west-1",
+								status: "ACTIVE",
+							},
+						],
+					}),
+				)) as never,
+		);
+		const rows = await listProjectFabrics(PROJECT);
+		expect(authorize).toHaveBeenCalledWith("view", {
+			type: "project",
+			id: PROJECT,
+		});
+		expect(rows).toEqual([
+			{ id: "fab-1", name: "shared", region: "eu-west-1", status: "ACTIVE" },
+		]);
+	});
+});
+
+describe("listProjectGitCredentials", () => {
+	it("PDP-gates on project:view and returns git credential selector rows", async () => {
+		vi.mocked(withActorScope).mockImplementation(
+			((_a: unknown, cb: (tx: unknown) => unknown) =>
+				cb(
+					makeTx({
+						selectResult: [
+							{ id: "cred-1", purpose: "argocd", method: "oauth" },
+							{ id: "cred-2", purpose: "applications", method: "pat" },
+						],
+					}),
+				)) as never,
+		);
+		const rows = await listProjectGitCredentials(PROJECT);
+		expect(authorize).toHaveBeenCalledWith("view", {
+			type: "project",
+			id: PROJECT,
+		});
+		expect(rows).toEqual([
+			{ id: "cred-1", purpose: "argocd", method: "oauth" },
+			{ id: "cred-2", purpose: "applications", method: "pat" },
+		]);
 	});
 });
 
