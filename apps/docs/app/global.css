@@ -12,3 +12,23 @@
   --runner-color: oklch(0.6 0.15 240); /* Blue */
   --concepts-color: oklch(0.6 0.12 60); /* Amber */
 }
+
+/* Minimal grayscale scrollbars — mirrors packages/brand/src/tokens.css (docs doesn't
+   import the brand tokens; keyed off the fumadocs foreground var). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-fd-foreground, currentColor) 18%, transparent) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-fd-foreground, currentColor) 16%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--color-fd-foreground, currentColor) 30%, transparent);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner { background: transparent; }
