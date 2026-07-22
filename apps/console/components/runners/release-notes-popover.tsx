@@ -128,11 +128,9 @@ export function ReleaseNotesPopover({
 				{(release?.github_release_url || (isOutdated && runnerId)) && (
 					<div className="flex items-center justify-end gap-2 border-t border-border p-3">
 						{release?.github_release_url && (
-							<Button variant="outline" size="sm" asChild>
-								<a href={release.github_release_url} target="_blank" rel="noopener noreferrer">
-									<ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-									GitHub Release
-								</a>
+							<Button variant="outline" size="sm" nativeButton={false} render={<a href={release.github_release_url} target="_blank" rel="noopener noreferrer" />}>
+								<ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+								GitHub Release
 							</Button>
 						)}
 						{isOutdated && runnerId && (

@@ -1,5 +1,10 @@
+"use client"
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { mergeProps } from "@base-ui-components/react/merge-props"
+import { useRender } from "@base-ui-components/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
 
 import { cn } from "./utils"
 import { Separator } from "./separator"
@@ -21,6 +26,8 @@ const buttonGroupVariants = cva(
   }
 )
 
+/** Grayscale button cluster: collapses the adjacent-sibling radii/borders so children read as one
+ * segmented control (horizontal or vertical). */
 function ButtonGroup({
   className,
   orientation,
@@ -37,26 +44,30 @@ function ButtonGroup({
   )
 }
 
+/** A non-button label/affordance rendered inline in the group. Migrated off Radix `Slot`: pass a
+ * `render` prop (base-ui's `asChild` replacement, e.g. `render={<label htmlFor="…" />}`) to render
+ * as a different element; the text's own props merge into it. */
 function ButtonGroupText({
   className,
-  asChild = false,
+  render,
   ...props
-}: React.ComponentProps<"div"> & {
-  asChild?: boolean
-}) {
-  const Comp = asChild ? Slot.Root : "div"
-
-  return (
-    <Comp
-      className={cn(
-        "flex items-center gap-2 rounded-md border bg-muted px-4 text-sm font-medium shadow-xs [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4",
-        className
-      )}
-      {...props}
-    />
-  )
+}: useRender.ComponentProps<"div">) {
+  return useRender({
+    defaultTagName: "div",
+    render,
+    props: mergeProps<"div">(
+      {
+        className: cn(
+          "flex items-center gap-2 rounded-md border bg-muted px-4 text-sm font-medium shadow-xs [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4",
+          className
+        ),
+      },
+      props
+    ),
+  })
 }
 
+/** The composed divider between segments of the group. */
 function ButtonGroupSeparator({
   className,
   orientation = "vertical",

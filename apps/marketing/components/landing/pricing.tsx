@@ -135,8 +135,8 @@ function PlanCard({ plan, priceLabel }: { plan: (typeof PLAN_CATALOG)[number]; p
 			    of how many features or buttons the card has. */}
 			<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: "auto", paddingTop: 24 }}>
 				{ctas.map((cta) => (
-					<Button key={cta.label} asChild variant={cta.variant} size="sm" className="w-full">
-						<Link href={cta.href}>{cta.label}<Icon k="arrow" size={14} /></Link>
+					<Button key={cta.label} variant={cta.variant} size="sm" className="w-full" nativeButton={false} render={<Link href={cta.href} />}>
+						{cta.label}<Icon k="arrow" size={14} />
 					</Button>
 				))}
 			</div>
@@ -305,13 +305,11 @@ function OpenCore() {
 						</p>
 					</div>
 					<div style={{ display: "flex", flexDirection: "column", gap: 10 }} className="ah-hide-sm">
-						<Button asChild variant="outline">
-							<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noopener noreferrer">
-								<ProviderIcon provider="github" size={15} />Star on GitHub
-							</a>
+						<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noopener noreferrer" />}>
+							<ProviderIcon provider="github" size={15} />Star on GitHub
 						</Button>
-						<Button asChild variant="outline">
-							<Link href="/docs"><Icon k="book" size={15} />Read the docs</Link>
+						<Button variant="outline" nativeButton={false} render={<Link href="/docs" />}>
+							<Icon k="book" size={15} />Read the docs
 						</Button>
 					</div>
 				</div>

@@ -217,8 +217,8 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 						</EmptyDescription>
 					</EmptyHeader>
 					<EmptyContent>
-						<Button asChild variant="outline" size="sm">
-							<Link href={`/${orgSlug}/~/new`}>Create a project</Link>
+						<Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/${orgSlug}/~/new`} />}>
+							Create a project
 						</Button>
 					</EmptyContent>
 				</Empty>

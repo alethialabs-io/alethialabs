@@ -5,7 +5,8 @@
 
 import * as React from "react"
 import * as LabelPrimitive from "@radix-ui/react-label"
-import { Slot } from "@radix-ui/react-slot"
+import { mergeProps } from "@base-ui-components/react/merge-props"
+import { useRender } from "@base-ui-components/react/use-render"
 import {
   Controller,
   FormProvider,
@@ -107,22 +108,34 @@ function FormLabel({
   )
 }
 
-function FormControl({ ...props }: React.ComponentProps<typeof Slot>) {
+/** Wires the react-hook-form field state (id + `aria-describedby` / `aria-invalid`) onto the field
+ * control it wraps. Migrated off Radix `Slot` to the base-ui `useRender` hook: the single wrapped
+ * child (e.g. `<Input />`) is forwarded as the `render` element so the id/aria attributes land on the
+ * actual control — the same "merge onto my child, no wrapper element" behavior Slot provided. */
+function FormControl({
+  children,
+  ...props
+}: React.ComponentProps<"div"> & {
+  children?: React.ReactElement<Record<string, unknown>>
+}) {
   const { error, formItemId, formDescriptionId, formMessageId } = useFormField()
 
-  return (
-    <Slot
-      data-slot="form-control"
-      id={formItemId}
-      aria-describedby={
-        !error
-          ? `${formDescriptionId}`
-          : `${formDescriptionId} ${formMessageId}`
-      }
-      aria-invalid={!!error}
-      {...props}
-    />
-  )
+  // Typed via an intersection so the `data-slot` data-attribute is a known property (a bare object
+  // literal of div props rejects `data-*` under React's excess-property check).
+  const controlProps: React.ComponentProps<"div"> & { "data-slot": string } = {
+    "data-slot": "form-control",
+    id: formItemId,
+    "aria-describedby": !error
+      ? `${formDescriptionId}`
+      : `${formDescriptionId} ${formMessageId}`,
+    "aria-invalid": !!error,
+  }
+
+  return useRender({
+    defaultTagName: "div",
+    render: children,
+    props: mergeProps<"div">(controlProps, props),
+  })
 }
 
 function FormDescription({ className, ...props }: React.ComponentProps<"p">) {

@@ -75,8 +75,8 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 					</EmptyDescription>
 				</EmptyHeader>
 				<EmptyContent>
-					<Button asChild variant="outline" size="sm">
-						<Link href={`/${orgSlug}/~/new`}>Browse projects</Link>
+					<Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/${orgSlug}/~/new`} />}>
+						Browse projects
 					</Button>
 				</EmptyContent>
 			</Empty>

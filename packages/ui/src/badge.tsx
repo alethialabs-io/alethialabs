@@ -1,8 +1,9 @@
+"use client"
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import * as React from "react"
-import { Slot } from "@radix-ui/react-slot"
+import { mergeProps } from "@base-ui-components/react/merge-props"
+import { useRender } from "@base-ui-components/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "./utils"
@@ -28,22 +29,29 @@ const badgeVariants = cva(
   }
 )
 
+/** Grayscale/squared badge. Migrated off Radix `Slot` to the base-ui `useRender` hook: pass a
+ * `render` prop (base-ui's `asChild` replacement, e.g. `render={<a href="…" />}`) to render as a
+ * different element; the badge's props merge into it via `mergeProps`. `useRender` is a hook, so
+ * this module is a client component — the exported `badgeVariants` cva still imports cleanly into
+ * Server Components. */
 function Badge({
   className,
-  variant,
-  asChild = false,
+  variant = "default",
+  render,
   ...props
-}: React.ComponentProps<"span"> &
-  VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot : "span"
-
-  return (
-    <Comp
-      data-slot="badge"
-      className={cn(badgeVariants({ variant }), className)}
-      {...props}
-    />
-  )
+}: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
+  // `data-slot` is a valid JSX data-attribute but not a member of the typed
+  // `InputProps<"span">` literal, so it must be supplied via a variable (extra
+  // props are allowed structurally) rather than a fresh literal (excess-checked).
+  const ownProps = {
+    "data-slot": "badge",
+    className: cn(badgeVariants({ variant }), className),
+  }
+  return useRender({
+    defaultTagName: "span",
+    render,
+    props: mergeProps<"span">(ownProps, props),
+  })
 }
 
 export { Badge, badgeVariants }

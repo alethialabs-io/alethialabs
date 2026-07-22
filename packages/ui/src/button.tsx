@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import * as React from "react"
+import { Button as ButtonPrimitive } from "@base-ui-components/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
+import type * as React from "react"
 
 import { cn } from "./utils"
 
@@ -44,20 +44,28 @@ const buttonVariants = cva(
   }
 )
 
+/** Public Button surface: the familiar native-`<button>` props plus base-ui's `render` /
+ * `nativeButton` opt-ins. We deliberately present this stable shape instead of base-ui's raw
+ * native|non-native union — the union can't be spread cleanly and types events as `BaseUIEvent`,
+ * which would ripple type errors into every consumer that re-spreads Button props or types an
+ * `onClick`. Consumers keep the standard React surface; base-ui's extras stay available. */
+type ButtonProps = React.ComponentProps<"button"> &
+  Pick<ButtonPrimitive.Props, "render" | "nativeButton"> &
+  VariantProps<typeof buttonVariants>
+
+/** Grayscale/squared button. Migrated off Radix `Slot` to the base-ui `Button` primitive: pass a
+ * `render` prop (base-ui's `asChild` replacement, e.g. `render={<Link href="…" />}`) to render as a
+ * different element; the button's children merge into it. `nativeButton={false}` when rendering a
+ * non-`<button>` element (e.g. an anchor). base-ui's Button is itself a client component, so this
+ * wrapper stays server-compatible. */
 function Button({
   className,
   variant = "default",
   size = "default",
-  asChild = false,
   ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean
-  }) {
-  const Comp = asChild ? Slot.Root : "button"
-
+}: ButtonProps) {
   return (
-    <Comp
+    <ButtonPrimitive
       data-slot="button"
       data-variant={variant}
       data-size={size}
@@ -68,3 +76,4 @@ function Button({
 }
 
 export { Button, buttonVariants }
+export type { ButtonProps }

@@ -167,10 +167,15 @@ export function HeaderBreadcrumbs() {
 						{i > 0 && <BreadcrumbSeparator />}
 						<BreadcrumbItem className="min-w-0">
 							{i < crumbs.length - 1 && crumb.href ? (
-								<BreadcrumbLink asChild>
-									<Link href={crumb.href} className="truncate max-w-[120px] sm:max-w-[180px]">
-										{crumb.label}
-									</Link>
+								<BreadcrumbLink
+									render={
+										<Link
+											href={crumb.href}
+											className="truncate max-w-[120px] sm:max-w-[180px]"
+										/>
+									}
+								>
+									{crumb.label}
 								</BreadcrumbLink>
 							) : (
 								<BreadcrumbPage className="truncate max-w-[120px] sm:max-w-[180px]">
