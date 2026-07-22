@@ -1,31 +1,33 @@
-"use client"
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type * as React from "react";
+import { Separator as SeparatorPrimitive } from "@base-ui-components/react/separator";
 
-import * as React from "react"
-import * as SeparatorPrimitive from "@radix-ui/react-separator"
+import { cn } from "./utils";
 
-import { cn } from "./utils"
-
+/** Grayscale hairline separator. Migrated off `@radix-ui/react-separator` to the base-ui `Separator`
+ * primitive. base-ui exposes `aria-orientation` but no `data-orientation`, so the axis sizing is
+ * branched on the `orientation` value directly (visually identical). base-ui has no `decorative`
+ * prop — it always renders a presentational separator, which matches every call site. */
 function Separator({
   className,
   orientation = "horizontal",
-  decorative = true,
   ...props
-}: React.ComponentProps<typeof SeparatorPrimitive.Root>) {
+}: React.ComponentProps<typeof SeparatorPrimitive>) {
   return (
-    <SeparatorPrimitive.Root
+    <SeparatorPrimitive
       data-slot="separator"
-      decorative={decorative}
       orientation={orientation}
       className={cn(
-        "bg-border shrink-0 data-[orientation=horizontal]:h-px data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-px",
-        className
+        "bg-border shrink-0",
+        orientation === "horizontal" ? "h-px w-full" : "h-full w-px",
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
-export { Separator }
+export { Separator };
