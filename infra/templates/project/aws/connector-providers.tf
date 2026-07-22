@@ -24,3 +24,9 @@ variable "registry_provider" {
   type        = string
   default     = "native"
 }
+
+variable "registry_pull_provider" {
+  description = "Cross-account keyless registry-pull provider slug (ecr-xacct/gar-xacct/acr-xacct); \"native\" means no cross-account pull. SEPARATE from registry_provider so the cluster keeps its native registry AND wires a foreign-account keyless pull."
+  type        = string
+  default     = "native"
+}

@@ -161,3 +161,20 @@ check "ecr_build_role_name_within_limit" {
     error_message = "Derived build IRSA role name (ecr-build-<eks_name>) exceeds IAM's 64-character limit; shorten environment/project_name."
   }
 }
+
+# Cross-account ECR pull (PR B): if ecr-xacct is selected, the refresher needs a target-account role
+# to assume — a missing ARN is a misconfigured connector, so fail the plan loudly.
+check "ecr_pull_xacct_target_configured" {
+  assert {
+    condition     = !local.enable_ecr_pull || var.registry_pull_target_role_arn != ""
+    error_message = "registry_pull_provider = ecr-xacct requires registry_pull_target_role_arn (the target-account role the refresher assumes for cross-account ECR pull)."
+  }
+}
+
+# The cross-account pull IRSA role name must fit IAM's 64-char role-name limit (it embeds the EKS name).
+check "ecr_pull_xacct_role_name_within_limit" {
+  assert {
+    condition     = !local.enable_ecr_pull || length("ecr-pull-xacct-${local.eks_name}") <= 64
+    error_message = "Derived ecr-pull-xacct-<eks_name> role name exceeds IAM's 64-character limit; shorten environment/project_name."
+  }
+}

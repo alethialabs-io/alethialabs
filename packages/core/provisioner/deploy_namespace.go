@@ -14,6 +14,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	coreaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -244,6 +245,25 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 		result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, err)
 		return &result, fmt.Errorf("failed to apply namespace guardrail bundle into %q: %w", ns, err)
 	}
+
+	// #957: provision the tenant's OWN least-priv cloud identity — a per-namespace IRSA role (zero-perm,
+	// OIDC trust scoped to system:serviceaccount:<ns>:*) — and bind the namespace's default ServiceAccount
+	// to it. Without this a namespace tenant has no distinct AWS identity; with it, a pod in this namespace
+	// assumes ONLY its namespace role, never the cluster-wide controller/node role. Runs AFTER the guardrail
+	// bundle (which creates the default SA) and BEFORE the app, so pods pick up the annotation on sync.
+	// AWS-only — the dispatcher fail-closes other clouds; per-cloud parity (GCP Workload-Identity, Azure
+	// federated, Alibaba) is the documented #1013 follow-up (cloud parity is a hard rule).
+	roleARN, idErr := coreaws.ProvisionNamespaceIdentity(ctx, vc.Region, clusterName, ns)
+	if idErr != nil {
+		return &result, fmt.Errorf("failed to provision per-namespace identity for %q: %w", ns, idErr)
+	}
+	if !coreaws.IsValidRoleARN(roleARN) {
+		return &result, fmt.Errorf("provisioned per-namespace role ARN %q is malformed", roleARN)
+	}
+	if err := bindNamespaceIdentity(ns, roleARN, stdout, stderr); err != nil {
+		return &result, fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
+	}
+
 	if manifests.App != "" {
 		if err := kubectlApplyManifest(manifests.App, "namespace app Application", stdout, stderr); err != nil {
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, err)
@@ -293,6 +313,19 @@ func applyNamespaceGuardrailBundle(ns string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Applying namespace guardrail bundle into %q...\n", ns)
 	return executeCommand(fmt.Sprintf("kubectl apply -n %s -f %s", ns, bundleDir), ".", nil, stdout, stderr)
+}
+
+// bindNamespaceIdentity annotates the namespace's default ServiceAccount with the per-namespace IRSA role
+// ARN (`eks.amazonaws.com/role-arn`), so a pod that uses it assumes ONLY the tenant's least-priv identity.
+// The guardrail bundle already created the `default` SA (token automount off); `--overwrite` keeps the
+// annotate idempotent across re-deploys. `ns` is a validated DNS-1123 label and `roleARN` passed
+// IsValidRoleARN, so neither can inject the `bash -c` shell this runs through.
+func bindNamespaceIdentity(ns, roleARN string, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace identity...\n", ns)
+	return executeCommand(
+		fmt.Sprintf("kubectl annotate serviceaccount default -n %s eks.amazonaws.com/role-arn=%s --overwrite", ns, roleARN),
+		".", nil, stdout, stderr,
+	)
 }
 
 // dns1123LabelRe matches a strict Kubernetes DNS-1123 label (lowercase alnum + hyphens, not

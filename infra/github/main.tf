@@ -21,17 +21,18 @@ locals {
   dev_required_status_checks = [for c in var.required_status_checks : c if c != "branch-flow-guard"]
 }
 
-# ── dev — integration branch. PR + green CI, NO approval, MERGE QUEUE. ──
+# ── dev — integration branch. PR + green CI, NO approval; queued by MERGIFY. ──
 # Closes the gate into the shared integration branch: feature PRs can't land red or via direct push.
 # The maintainer reviews the integrated dev (dev.alethialabs.io) and promotes dev → staging → main.
 #
-# The merge queue is the fix for the stale-green race: N automated instances open PRs concurrently, and
-# direct self-merges of two PRs each green against a now-stale dev broke the integration branch (per-PR
-# CI can't see a cross-PR conflict). Instead of merging directly, an instance enables auto-merge
-# (`gh pr merge --auto --squash`); GitHub enqueues the PR, rebuilds each candidate on the PROJECTED dev
-# tip (base + preceding queued PRs), re-runs the required checks via the merge_group event, and squash-
-# merges in FIFO order. strict_required_status_checks_policy stays false — the queue supersedes it by
-# building on the projected tip, so branches need no manual "update branch" dance.
+# The merge QUEUE (the fix for the stale-green race, where two PRs each green against a now-stale dev broke
+# the branch) is now driven by MERGIFY, not GitHub's native merge queue — see `.mergify.yml`. Mergify
+# auto-queues every non-draft dev PR and squash-merges it in order once the required checks pass, validating
+# each PR on its OWN branch. We removed the native `merge_queue` rule because its `merge_group`-only checks
+# (the "Provisioning E2E (T1)" job, which fails on missing auth env) wedged every queued PR; Mergify has no
+# `merge_group` event, so that wedge is gone. This ruleset still enforces `pull_request` + the required
+# checks below (so nothing lands red or via direct push); Mergify does the ordered squash-merge on top.
+# strict_required_status_checks_policy stays false — Mergify updates/rebases candidates itself.
 resource "github_repository_ruleset" "dev" {
   name        = "protect-dev"
   repository  = var.repository
@@ -65,19 +66,8 @@ resource "github_repository_ruleset" "dev" {
       }
     }
 
-    # Native merge queue. ALLGREEN: every PR in a batch must pass required checks on its OWN projected
-    # candidate — a flaky/bad PR can't ride in on another's green head (safest for autonomous agents).
-    # Batch up to 5 per merge_group build for throughput under a flood of instance PRs; a lone PR merges
-    # after a short wait rather than stalling for a batch. SQUASH matches the repo's squash convention.
-    merge_queue {
-      merge_method                      = "SQUASH"
-      grouping_strategy                 = "ALLGREEN"
-      max_entries_to_build              = 5
-      max_entries_to_merge              = 5
-      min_entries_to_merge              = 1
-      min_entries_to_merge_wait_minutes = 5
-      check_response_timeout_minutes    = 60 # room for the Go matrix + real-Postgres integration
-    }
+    # No native `merge_queue` rule: the dev merge queue is Mergify (`.mergify.yml`, SQUASH, auto-queue every
+    # non-draft PR). The native queue's `merge_group`-only T1 job wedged the whole queue; Mergify avoids it.
   }
 }
 

@@ -46,28 +46,29 @@ same checkout tangle: a single `git add -A` once swept three features into one m
   - **Escape hatch** (emergencies only): `git commit --no-verify` (all), or
     `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only). These are for the
     maintainer — **instances must not use them.**
-- **Merging into `dev` — the merge queue (NOT direct merge):** the `protect-dev` ruleset (`infra/github`)
-  requires **green CI**, **no approval**, and routes every merge through a **native merge queue**. So once
-  your PR's checks pass, **don't merge directly — enqueue it: `gh pr merge --auto --squash`.** GitHub then
-  rebuilds your PR on the *projected* `dev` tip (base + any PRs ahead of you), re-runs the required checks
-  via the `merge_group` event, and squash-merges in FIFO order. This is what kills the stale-green race —
-  you never merge against a `dev` that moved under you, so **there is no "recheck dev moved + rebase first"
-  dance anymore; the queue does it.** `--auto` needs a *mergeable* (conflict-free) PR, so if GitHub reports
-  a conflict, rebase onto `origin/dev` and push, then re-enable auto-merge. Never merge a red PR; never
-  `gh pr merge --admin` (it bypasses the queue); never target `staging`/`main` directly (`branch-flow-guard`
-  blocks it). The maintainer reviews the integrated `dev` (`dev.alethialabs.io`) and promotes `dev → staging
-  → main`.
+- **Merging into `dev` — the Mergify queue (NOT direct merge):** the `protect-dev` ruleset (`infra/github`)
+  requires **green CI** and **no approval**, and the merge queue is **Mergify** (`.mergify.yml`), not GitHub's
+  native queue. So you **do NOT run `gh pr merge` at all** — **just open a non-draft PR into `dev`.** Mergify
+  auto-queues every non-draft, conflict-free dev PR and **squash-merges it in order once the required checks
+  pass**, validating each PR on its own branch (it rebases/updates candidates itself). This kills the
+  stale-green race — you never merge against a `dev` that moved under you — and, because Mergify uses no
+  `merge_group` event, the old `merge_group`-only "Provisioning E2E (T1)" job no longer wedges the queue.
+  Keep WIP as a **draft** (drafts are excluded); if Mergify reports a **conflict**, rebase onto `origin/dev`
+  and push (it re-queues automatically). You can nudge Mergify with a `@mergifyio requeue`/`refresh` comment.
+  Never merge a red PR; never merge directly / `gh pr merge --admin` (bypasses the queue); never target
+  `staging`/`main` directly (`branch-flow-guard` blocks it). The maintainer reviews the integrated `dev`
+  (`dev.alethialabs.io`) and promotes `dev → staging → main`.
 - **Instance kickoff (parallel sessions):** if you're one of several instances, your first move is
-  `pnpm wt <name>` → `cd ../wt-<name>` → work there → open a PR into `dev`, then **`gh pr merge --auto
-  --squash`** on green (the queue lands it). One worktree per piece of work; never work in `app/` or touch
-  another instance's worktree.
+  `pnpm wt <name>` → `cd ../wt-<name>` → work there → **open a non-draft PR into `dev`** (Mergify lands it on
+  green — no `gh pr merge`). One worktree per piece of work; never work in `app/` or touch another instance's
+  worktree.
 - **Claim work from the board (the coordination protocol):** when a program is decomposed into a
   GitHub-Issues board, don't hand-pick work — read **`.claude/COORDINATION.md`** and run
   **`scripts/claim-work.sh --class backend`** to atomically claim the next ready unit (mkdir-lock
   serialized, so no two instances grab the same one), then `pnpm wt` the printed slug. Build only within
-  the issue's `scope:` globs; PR into `dev` with `Closes #<n>`; **backend enqueues on green (`gh pr merge
-  --auto --squash`), UI is human-gated** (deliverable = a data-model-grounded design spec for Claude Design;
-  a human enables auto-merge on the UI PR, which still flows through the queue).
+  the issue's `scope:` globs; PR into `dev` with `Closes #<n>`; **backend opens a non-draft PR and Mergify
+  lands it on green, UI is human-gated** (deliverable = a data-model-grounded design spec for Claude Design;
+  a human takes the UI PR out of draft, which flows through the same Mergify queue).
   `scripts/coordinate.sh` reclaims dead instances' claims + reports the board.
 - **Migrations stay serial:** `pnpm -F console db:generate` is lock-guarded
   (`scripts/db-generate.sh`, atomic `/tmp/alethia-migrate.lock`) and warns if you're not rebased on
