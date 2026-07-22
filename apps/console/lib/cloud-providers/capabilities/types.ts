@@ -12,20 +12,26 @@
 import type {
 	CapabilityLaunchable,
 	CapabilityLaunchableReason,
+	CapabilityServiceKind,
 	CloudCapabilityInstanceType,
 	CloudCapabilityInstanceTypeInsert,
 	CloudCapabilityRegion,
 	CloudCapabilityRegionInsert,
+	CloudCapabilityService,
+	CloudCapabilityServiceInsert,
 	CloudIdentity,
 } from "@/lib/db/schema";
 
 export type {
 	CapabilityLaunchable,
 	CapabilityLaunchableReason,
+	CapabilityServiceKind,
 	CloudCapabilityInstanceType,
 	CloudCapabilityInstanceTypeInsert,
 	CloudCapabilityRegion,
 	CloudCapabilityRegionInsert,
+	CloudCapabilityService,
+	CloudCapabilityServiceInsert,
 };
 
 /** The subset of a cloud_identity a capability lane needs: its id (row scoping), provider (dispatch),
@@ -35,8 +41,17 @@ export type CapabilityIdentity = Pick<
 	"id" | "provider" | "credentials"
 >;
 
-/** The one method every cloud implements. Enumerates + upserts this account's launchable offerings.
- * MUST be best-effort (never throw) — the dispatcher stamps freshness only after it resolves. */
+/** The one Wave-1 method every cloud implements. Enumerates + upserts this account's launchable regions
+ * + instance types. MUST be best-effort (never throw) — the dispatcher stamps freshness only after it
+ * resolves. */
 export type SyncCapabilities = (
+	identity: CapabilityIdentity,
+) => Promise<void>;
+
+/** The Wave-2 method every cloud implements: enumerates + upserts this account's launchable managed
+ * SERVICES (DB engines+versions, cache tiers, managed-Kubernetes versions, NoSQL availability) into
+ * `cloud_capability_services`. Same structural contract as `SyncCapabilities` — best-effort, never
+ * throws; the services dispatcher stamps freshness only after it resolves. */
+export type SyncServiceCapabilities = (
 	identity: CapabilityIdentity,
 ) => Promise<void>;
