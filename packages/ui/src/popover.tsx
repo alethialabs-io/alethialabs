@@ -41,6 +41,7 @@ function PopoverContent({
   side,
   alignOffset,
   anchor,
+  container,
   children,
   ...props
 }: Omit<React.ComponentProps<typeof PopoverPrimitive.Popup>, "children"> & {
@@ -55,10 +56,19 @@ function PopoverContent({
   /** Anchor the popup to a custom element/ref instead of the trigger (base-ui has no `Anchor` part
    * — this maps to the Positioner's `anchor` prop). */
   anchor?: React.ComponentProps<typeof PopoverPrimitive.Positioner>["anchor"];
+  /**
+   * DOM node to portal the popup into (maps to base-ui `Popover.Portal`'s `root`). Base-ui's default
+   * nests the portal inside the parent floating tree — so a popover opened from **inside a modal
+   * Dialog** lands in the dialog's subtree, DOM-ordered *before* later positioned siblings (e.g. a
+   * `position: relative` grid), which then paint over it and swallow clicks. Pass `container={document.body}`
+   * to portal to `<body>` (Radix's old default): the popup becomes a later body child, painting above
+   * the dialog content, while its React floating-tree membership (and inert-exemption) is preserved.
+   */
+  container?: React.ComponentProps<typeof PopoverPrimitive.Portal>["container"];
   children?: React.ReactNode;
 }) {
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Positioner
         side={side}
         sideOffset={sideOffset}
