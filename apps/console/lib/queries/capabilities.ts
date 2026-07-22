@@ -19,6 +19,7 @@ import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import {
 	cloudCapabilityInstanceTypes,
+	cloudCapabilityQuotas,
 	cloudCapabilityRegions,
 	cloudCapabilityServices,
 } from "@/lib/db/schema";
@@ -31,6 +32,7 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import type {
 	CapabilityLaunchable,
 	CapabilityLaunchableReason,
+	CapabilityQuotaKind,
 } from "@/lib/db/schema";
 
 /** An instance-type option the pickers consume — the static Catalog #2 shape plus the account-accurate
@@ -388,4 +390,73 @@ export async function getNosqlCapability(
 		available: config.serviceName !== "—",
 		config,
 	};
+}
+
+// ── Service-quota HEADROOM read (the quota axis, #981; seams #1115) ──────────────────
+// Unlike the region/instance/service reads there is NO static Catalog #2 baseline for numeric quotas —
+// a limit/used figure is inherently account-specific. So this fails open to an EMPTY list: when nothing
+// has synced (fresh connect / sync error / a provider that can't report a quota) the picker simply shows
+// no headroom advisory — availability is GUIDANCE, and its absence is honest `not_evaluable`, never a
+// hard gate. Same tenancy discipline as the other reads: PDP-gated `authorize("view", cloud_identity)`
+// → RLS-enforced withActorScope, always filtered by `provider`.
+
+/** One networking service-quota headroom row the pickers consume. `limit`/`used`/`available` are null
+ * when the provider/plan couldn't report the figure (honest `not_evaluable`, not a fabricated zero). */
+export interface CapabilityQuotaOption {
+	kind: CapabilityQuotaKind;
+	/** The provider-native quota code (e.g. AWS `L-0263D0A3`). */
+	nativeId: string;
+	label: string;
+	region: string | null;
+	limit: number | null;
+	used: number | null;
+	available: number | null;
+}
+
+/**
+ * This account's networking service-quota headroom (EIP / NAT-gateway / load-balancer / security-group),
+ * optionally scoped to a region. Fails open to an EMPTY list (no static numeric baseline exists) so the
+ * picker degrades to "no advisory" rather than a hard block when nothing has synced.
+ */
+export async function getQuotaCapabilities(
+	cloudIdentityId: string,
+	provider: CloudProviderSlug,
+	region?: string,
+): Promise<CapabilityQuotaOption[]> {
+	const actor = await authorize("view", {
+		type: "cloud_identity",
+		id: cloudIdentityId,
+	});
+	const rows = await withActorScope(actor, (tx) =>
+		tx
+			.select({
+				kind: cloudCapabilityQuotas.quota_kind,
+				nativeId: cloudCapabilityQuotas.native_id,
+				name: cloudCapabilityQuotas.name,
+				region: cloudCapabilityQuotas.region,
+				quotaLimit: cloudCapabilityQuotas.quota_limit,
+				used: cloudCapabilityQuotas.used,
+				available: cloudCapabilityQuotas.available,
+			})
+			.from(cloudCapabilityQuotas)
+			.where(
+				and(
+					eq(cloudCapabilityQuotas.cloud_identity_id, cloudIdentityId),
+					eq(cloudCapabilityQuotas.provider, provider),
+					isNull(cloudCapabilityQuotas.removed_at),
+					region ? eq(cloudCapabilityQuotas.region, region) : undefined,
+				),
+			)
+			.orderBy(cloudCapabilityQuotas.quota_kind, cloudCapabilityQuotas.native_id),
+	);
+	// Fail-open: empty when nothing has synced (no static numeric baseline for quotas).
+	return rows.map((r) => ({
+		kind: r.kind,
+		nativeId: r.nativeId,
+		label: r.name ?? r.nativeId,
+		region: r.region,
+		limit: r.quotaLimit,
+		used: r.used,
+		available: r.available,
+	}));
 }
