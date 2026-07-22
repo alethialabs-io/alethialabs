@@ -538,7 +538,12 @@ jobs:
             emit ALETHIA_CONVERGE_MIN_AGE_MINUTES
             emit ALETHIA_JOB_LOG_RETENTION_DAYS
             emit ALETHIA_FLEET_ACTION_RETENTION_DAYS
-            echo "FLEET_PROVIDER=hcloud"
+            # Managed runner fleet is OFF by default (no warm Hetzner VMs billed when there
+            # are no prod users). A non-"hcloud" value makes the in-app scaler a no-op
+            # (getFleetProvider → ManualFleetProvider). Re-enable purely from the vault by
+            # setting FLEET_PROVIDER=hcloud in alethia/prod/env — no code change/redeploy-PR needed.
+            FLEET_PROVIDER_VAL="$(val FLEET_PROVIDER)"
+            echo "FLEET_PROVIDER=${FLEET_PROVIDER_VAL:-manual}"
             echo "HCLOUD_TOKEN=$(val HCLOUD_FLEET_TOKEN)"   # runtime fleet token (not the CP token)
             emit FLEET_POOLS                                 # declarative warm-pool set → seedFleetPoolsFromEnv on boot
             emit HCLOUD_SSH_KEYS
