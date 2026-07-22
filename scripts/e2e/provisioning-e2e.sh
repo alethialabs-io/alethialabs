@@ -46,6 +46,10 @@ case "$dimension" in floor|maxconfig|addons|byo|day2|full) ;; *) echo "unknown d
 # ── append one ledger row after the sentinel (idempotent shape; awk fallback to >>) ────────────
 append_ledger() {
   local sha="$1" verdict="$2" detail="$3" bundle="$4" issue="$5"
+  # Free-text detail is the only untrusted column — a literal `|` would break the markdown table
+  # (the RUN path pre-sanitizes, but the RECORD_ONLY path passes RECORD_DETAIL through verbatim),
+  # so neutralize it here for every caller. Also collapse newlines to keep the row on one line.
+  detail="${detail//|/;}"; detail="${detail//$'\n'/ }"
   local row="| $(date -u +%Y-%m-%d) | $sha | $cloud | $dimension | **$verdict** | ${detail:-} | \`$bundle\` | ${issue:-—} |"
   if grep -q "provisioning-e2e.sh appends new rows below this line" "$ledger" 2>/dev/null; then
     awk -v r="$row" '/appends new rows below this line/{print;print r;next}1' "$ledger" >"$ledger.tmp" && mv "$ledger.tmp" "$ledger"
