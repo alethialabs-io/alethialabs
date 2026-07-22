@@ -8,7 +8,7 @@
 # It runs the matching check, appends the append-only ledger, and on FAILURE files (or updates) a
 # title-deduped GitHub issue. History accumulates; nothing is lost.
 #
-#   cloud : aws | gcp | azure | hetzner
+#   cloud : aws | gcp | azure | alibaba | hetzner
 #   stage : register — the published `runner-<cloud>:latest` amd64 image ships a genuine x86-64
 #                       runner binary (the exact regression that crash-looped every x86 fleet VM in
 #                       INCIDENT 2026-07-22). No cloud, no VM — pull + inspect the ELF.
@@ -19,6 +19,7 @@
 #   aws     : AWS creds (OIDC role) + ALETHIA_E2E_AWS_READY=1
 #   gcp     : GOOGLE_* WIF creds
 #   azure   : ARM_* federated creds
+#   alibaba : ALICLOUD_* / STS federated creds
 #   hetzner : HCLOUD_TOKEN
 #   all     : ALETHIA_DATABASE_URL, ALETHIA_E2E_REGION, ALETHIA_E2E_CLUSTER_JSON (managed clouds)
 #
@@ -27,9 +28,9 @@
 #            IMAGE_TAG=latest (register stage) · REGISTRY=ghcr.io/alethialabs-io.
 set -uo pipefail
 
-cloud="${1:?usage: runner-e2e.sh <aws|gcp|azure|hetzner> <register|cluster>}"
-stage="${2:?usage: runner-e2e.sh <aws|gcp|azure|hetzner> <register|cluster>}"
-case "$cloud" in aws|gcp|azure|hetzner) ;; *) echo "unknown cloud $cloud" >&2; exit 2 ;; esac
+cloud="${1:?usage: runner-e2e.sh <aws|gcp|azure|alibaba|hetzner> <register|cluster>}"
+stage="${2:?usage: runner-e2e.sh <aws|gcp|azure|alibaba|hetzner> <register|cluster>}"
+case "$cloud" in aws|gcp|azure|alibaba|hetzner) ;; *) echo "unknown cloud $cloud" >&2; exit 2 ;; esac
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
