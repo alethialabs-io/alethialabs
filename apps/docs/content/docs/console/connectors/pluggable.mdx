@@ -5,7 +5,7 @@ description: Bring your own DNS, secrets, registry, and observability tools via 
 
 # Pluggable Connectors
 
-Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, and Datadog / Grafana Cloud / Prometheus for observability.
+Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, and Datadog / Grafana Cloud for observability.
 
 These connectors authenticate with an **API key / token** (`auth_method = api_key`) rather than cloud federation or OAuth.
 
@@ -18,7 +18,6 @@ These connectors authenticate with an **API key / token** (`auth_method = api_ke
 | **Registry** | ECR / Artifact Registry / ACR | **Docker Hub** | Username, access token |
 | **Observability** | — (none) | **Datadog** | API key, app key |
 | **Observability** | — | **Grafana Cloud** | Instance ID, API token |
-| **Observability** | — | **Prometheus** | (optional) remote-write user/password |
 
 The catalog is data-driven — each provider is one row in the `connectors` table, seeded from a single manifest (`packages/core/categories/catalog.json`). See [Connectors Architecture](/concepts/connectors) for how this works end to end.
 
@@ -43,13 +42,13 @@ Once connected, pick the provider per component in the [Project designer](/conso
 - [DNS & WAF](/console/design-project/dns) — choose **Cloudflare** instead of cloud-native DNS.
 - [Secrets](/console/design-project/secrets) — choose **Vault**.
 - [Container Registry](/console/design-project/container-registry) — choose **Docker Hub**.
-- [Observability](/console/design-project/observability) — choose **Datadog / Grafana / Prometheus**.
+- [Observability](/console/design-project/observability) — choose **Datadog / Grafana Cloud**.
 
 At provision time the runner composes the chosen provider's module into the plan and **skips** the cloud-native resource for that category.
 
 ## Adding a new provider
 
-Pluggable connectors are an open-ended catalog. Adding a seventh provider takes four steps and **no** changes to routes, the runner core, or the form engine:
+Pluggable connectors are an open-ended catalog. Adding a sixth provider takes four steps and **no** changes to routes, the runner core, or the form engine:
 
 1. Add a row to `packages/core/categories/catalog.json` (category, slug, auth_method, icon, credential + provider_config fields).
 2. Add a `CategoryProvider` Go impl under `packages/core/categories/` (its `Tfvars`/`Validate` behavior).
