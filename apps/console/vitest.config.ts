@@ -17,7 +17,13 @@ export default defineConfig({
 	test: {
 		environment: "jsdom",
 		setupFiles: ["./tests/setup.ts"],
-		include: ["./tests/**/*.test.{ts,tsx}"],
+		// Co-located capability-service tests (the Wave-2 per-cloud lanes ship `services/<cloud>.test.ts`
+		// next to the enumeration code) run alongside the central `tests/**` suite — without this glob
+		// they'd be silently skipped.
+		include: [
+			"./tests/**/*.test.{ts,tsx}",
+			"./lib/cloud-providers/capabilities/**/*.test.{ts,tsx}",
+		],
 		// The integration suite needs a live Postgres — it runs via its own config.
 		exclude: ["**/node_modules/**", "**/tests/integration/**"],
 		css: false,
