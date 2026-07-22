@@ -156,6 +156,49 @@ func pubsubTopicsHasKey(tfvars map[string]any, key string) bool {
 	return present
 }
 
+// TestMaxConfigAzureEmitsEveryKind is the POSITIVE proof for Azure: with all 11 kinds populated, Azure
+// ProviderTfvars emits a meaningful signal for each. The shape-bearing kinds (cluster/database/cache)
+// use Azure-valid literals via the provider-aware Apply (Standard_D2s_v3 / B_Standard_B1ms / a Managed-
+// Redis SKU), so this also guards that a real AKS / PostgreSQL-Flexible / Managed-Redis apply wouldn't
+// be fed an AWS instance type / tier / engine version.
+func TestMaxConfigAzureEmitsEveryKind(t *testing.T) {
+	tfvars := azureMaxConfigTfvars(t, "") // no skip — full surface
+
+	for _, k := range MaxConfigKinds {
+		for _, sig := range k.AzureSignals {
+			v, ok := tfvars[sig]
+			if !ok {
+				t.Errorf("kind %q: Azure tfvars missing signal %q — the kind is not wired to the template", k.Kind, sig)
+				continue
+			}
+			if !meaningful(v) {
+				t.Errorf("kind %q: Azure tfvar %q is present but not meaningful (%#v) — the kind did not populate", k.Kind, sig, v)
+			}
+		}
+	}
+}
+
+// TestMaxConfigAzurePerKindNegative is the LOUD negative for Azure — and, unlike GCP, a PLAIN generic
+// drop-and-check for all nine optional kinds. Azure emits DISTINCT service_bus_queues and
+// service_bus_topics maps (queue and topic share only the create_service_bus bool, which is NOT a
+// signal here), and every other optional kind's signal is a kind-exclusive create_* bool / build*ed
+// map that empties when the kind is dropped — so no pubsub_topics-style map-key discriminator is needed.
+func TestMaxConfigAzurePerKindNegative(t *testing.T) {
+	for _, k := range MaxConfigKinds {
+		if k.Foundational {
+			continue
+		}
+		t.Run(k.Kind, func(t *testing.T) {
+			tfvars := azureMaxConfigTfvars(t, k.Kind) // every kind EXCEPT this one
+			for _, sig := range k.AzureSignals {
+				if v, ok := tfvars[sig]; ok && meaningful(v) {
+					t.Errorf("dropping kind %q left signal %q still meaningful (%#v) — the signal is not kind-exclusive, so the positive proof is vacuous", k.Kind, sig, v)
+				}
+			}
+		})
+	}
+}
+
 // TestMaxConfigSnapshotFailsClosed proves MaxConfigSnapshot injects all 11 kind blocks onto a base
 // snapshot. (The incomplete-surface guard is covered by Populated on the typed struct — every kind's
 // Apply sets its field, so a good build always populates; this asserts the merge reaches the map.)
@@ -194,6 +237,17 @@ func gcpMaxConfigTfvars(t *testing.T, skip string) map[string]any {
 	p, err := cloud.NewCloudProvider("gcp")
 	if err != nil {
 		t.Fatalf("NewCloudProvider(gcp): %v", err)
+	}
+	return p.ProviderTfvars(cfg)
+}
+
+// azureMaxConfigTfvars is the Azure twin of awsMaxConfigTfvars.
+func azureMaxConfigTfvars(t *testing.T, skip string) map[string]any {
+	t.Helper()
+	cfg := maxConfigPCExcept("azure", skip)
+	p, err := cloud.NewCloudProvider("azure")
+	if err != nil {
+		t.Fatalf("NewCloudProvider(azure): %v", err)
 	}
 	return p.ProviderTfvars(cfg)
 }

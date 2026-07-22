@@ -79,7 +79,7 @@ func TestMaxConfigNodeShapeGuard(t *testing.T) {
 
 	// Every shipped per-cloud heavy profile must clear the floor — the nightly injects it as the
 	// real node shape, so an under-provisioned fixture would silently fail the max-config surface.
-	for _, cloud := range []string{"aws", "gcp"} {
+	for _, cloud := range []string{"aws", "gcp", "azure"} {
 		t.Run("shipped "+cloud+" heavy profile clears the floor", func(t *testing.T) {
 			enableHeavy(t)
 			snap := map[string]any{"cluster": loadHeavyProfile(t, cloud)}
