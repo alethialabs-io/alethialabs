@@ -1,0 +1,5 @@
+▶ azure/register: ghcr.io/alethialabs-io/runner-azure:latest (amd64 ELF arch)
+latest: Pulling from alethialabs-io/runner-azure
+Digest: sha256:68d17df1ab760908f15dd3ccb092f68d6af1f5383ed6ee83f4ec24b8ae4149ba
+Status: Image is up to date for ghcr.io/alethialabs-io/runner-azure:latest
+amd64 /runner e_machine=3e00

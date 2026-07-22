@@ -1,0 +1,15 @@
+▶ aws/register: ghcr.io/alethialabs-io/runner-aws:latest (amd64 ELF arch)
+latest: Pulling from alethialabs-io/runner-aws
+fa27aa2c8ce7: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+ad4c69da5148: Pulling fs layer
+4f4fb700ef54: Already exists
+10d231244299: Download complete
+fa27aa2c8ce7: Download complete
+4f4fb700ef54: Pull complete
+fa27aa2c8ce7: Pull complete
+ad4c69da5148: Download complete
+ad4c69da5148: Pull complete
+Digest: sha256:2461d2f494b93220e2bea0acbd1ad2422544925d24d547911c353f0b3483240b
+Status: Downloaded newer image for ghcr.io/alethialabs-io/runner-aws:latest
+amd64 /runner e_machine=3e00

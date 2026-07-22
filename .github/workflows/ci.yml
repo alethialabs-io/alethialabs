@@ -41,6 +41,7 @@ jobs:
       agent: ${{ steps.filter.outputs.agent }}
       console: ${{ steps.filter.outputs.console }}
       docs: ${{ steps.filter.outputs.docs }}
+      runner: ${{ steps.filter.outputs.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,7 +51,8 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "agent=false" >> "$GITHUB_OUTPUT"
             echo "console=false" >> "$GITHUB_OUTPUT"
-            echo "docs=false" >> "$GITHUB_OUTPUT"; exit 0
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+            echo "runner=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # THREE-dot (merge-base): the PR's OWN changes only. Two-dot (`git diff base head`)
           # false-positives every filter the moment this branch falls behind base — it then lists
@@ -80,6 +82,17 @@ jobs:
             echo "docs=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs=false" >> "$GITHUB_OUTPUT"
+          fi
+          # `runner` — the inputs to the runner BINARY + its Docker image. The 2026-07-22 fleet-churn
+          # incident came from apps/runner/Dockerfile.base shipping an arm64 binary in the amd64 image;
+          # gate the amd64-ELF-arch guard on any change that could rebuild that binary/image (the
+          # Dockerfiles, the runner/cli Go, and the shared Go the runner compiles in — packages/core +
+          # go.work). A plain `go build` can't reproduce a Dockerfile ARG regression, so the guard
+          # builds the real image — only run it when one of these actually changed.
+          if echo "$changed" | grep -qE '^(apps/runner/|apps/cli/|packages/core/|go\.work)'; then
+            echo "runner=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "runner=false" >> "$GITHUB_OUTPUT"
           fi
 
   typescript:
@@ -513,6 +526,42 @@ jobs:
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
+
+  runner-image-arch:
+    name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
+    # Would have caught the 2026-07-22 fleet-churn incident BEFORE prod: apps/runner/Dockerfile.base
+    # shipped an arm64 binary inside the amd64 image (a stray `ARG TARGETARCH=arm64` default), so every
+    # x86 fleet VM crash-looped on `execve` ENOEXEC and never registered. A plain `go build` can't
+    # reproduce a Dockerfile ARG regression — so BUILD THE REAL IMAGE for linux/amd64 and assert its
+    # /usr/local/bin/runner is a genuine x86-64 ELF (e_machine 0x3e), not aarch64 (0xb7). runner-base
+    # carries the compiled binary that every per-cloud image inherits FROM without rebuilding, so this
+    # one build covers runner-{aws,gcp,azure,alibaba,hetzner}. Mirrors scripts/e2e/runner-e2e.sh's
+    # `register` stage (which asserts the same on the PUBLISHED images). Gated on the runner surface.
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.runner == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runner-base for linux/amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile.base
+          platforms: linux/amd64
+          load: true
+          tags: runner-base:arch-check
+          cache-from: type=gha,scope=runner-base-amd64
+      - name: Assert /usr/local/bin/runner is x86-64 (e_machine 0x3e, not 0xb7 aarch64)
+        run: |
+          em=$(docker run --rm --entrypoint sh runner-base:arch-check \
+                 -c 'od -An -tx1 -j18 -N2 /usr/local/bin/runner' | tr -d ' ')
+          echo "amd64 /runner e_machine=$em"
+          case "$em" in
+            3e00) echo "OK — amd64 runner is x86-64 (e_machine=0x3e)" ;;
+            b700) echo "::error file=apps/runner/Dockerfile.base::amd64 image ships an ARM64 runner (e_machine=0xb7) — the 2026-07-22 fleet-churn INCIDENT bug (arm64 binary in the amd64 image). Ensure the builder cross-compiles from buildx's TARGETARCH with NO arm64 default."; exit 1 ;;
+            *)    echo "::error file=apps/runner/Dockerfile.base::unexpected e_machine=$em in the amd64 runner binary (expected 0x3e x86-64)"; exit 1 ;;
+          esac
 
   provision-e2e:
     name: Provisioning E2E (T1 · real runner → kind)

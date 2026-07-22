@@ -17,3 +17,8 @@ audit trail — git history is the timeline. Parity board:
 | 2026-07-22 | (pre-#1052) | azure | register | **FAIL** | amd64 image shipped an ARM64 runner (`e_machine=0xb7`) — the INCIDENT bug; diag cpx31 VM crash-looped on ENOEXEC, never registered | manual diag (VM 153847169) | #1050 |
 | 2026-07-22 | (pre-#1052) | aws | register | **FAIL** | amd64 image shipped an ARM64 runner (`e_machine=0xb7`) — same build bug | manual diag | #1050 |
 <!-- runner-e2e.sh appends new rows below this line -->
+| 2026-07-22 | c94a61f6 | alibaba | register | **PASS** | amd64 runner is x86-64 (e_machine=0x3e) | `demos/proofs/alibaba/20260722T164150Z` | — |
+| 2026-07-22 | c94a61f6 | azure | register | **PASS** | amd64 runner is x86-64 (e_machine=0x3e) | `demos/proofs/azure/20260722T164148Z` | — |
+| 2026-07-22 | c94a61f6 | gcp | register | **PASS** | amd64 runner is x86-64 (e_machine=0x3e) | `demos/proofs/gcp/20260722T164138Z` | — |
+| 2026-07-22 | c94a61f6 | aws | register | **PASS** | amd64 runner is x86-64 (e_machine=0x3e) | `demos/proofs/aws/20260722T164107Z` | — |
+| 2026-07-22 | c94a61f6 | hetzner | register | **PASS** | amd64 runner is x86-64 (e_machine=0x3e) | `demos/proofs/hetzner/20260722T164105Z` | — |
