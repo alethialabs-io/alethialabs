@@ -451,6 +451,18 @@ jobs:
           ALETHIA_E2E_ARGO_BYO_CHART_NAMESPACE: ${{ vars.E2E_ARGO_BYO_CHART_NAMESPACE }}
           ALETHIA_E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
           ALETHIA_E2E_ARGO_REPOS_REQUIRE: ${{ vars.E2E_ARGO_APPS_REPO != '' && '1' || '' }}
+          # ── NAMESPACE-PLACEMENT proof (#959 · wave:fabric). Opt-in, ON TOP of the base T2 proof:
+          #    after the base run provisions a real cluster (the Fabric) and ArgoCD is Healthy, the
+          #    harness layers a SECOND DEPLOY onto the SAME cluster with placement_mode=namespace and
+          #    asserts the tenant app landed in <ns> on that cluster — no new cluster provisioned,
+          #    ArgoCD not reinstalled, hardened per-namespace isolation applied (the #955+#956+#957
+          #    activation). aws-first (a clean skip on the other clouds, whose keyless re-mint is a
+          #    follow-up) and REQUIRES the A0.6 apps repo above (E2E_ARGO_APPS_REPO) — the tenant-app
+          #    routing assertion needs an apps destination to deliver into. Absent ⇒ a clean skip of
+          #    this layer (the base T2 proof is unchanged). Real-apply is main-gated, so this
+          #    exercises meaningfully only from `main`. Set the repo VARIABLE E2E_NAMESPACE_TENANT
+          #    (truthy) to enable once the apps repo is wired. ──
+          ALETHIA_E2E_NAMESPACE_TENANT: ${{ vars.E2E_NAMESPACE_TENANT }}
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
