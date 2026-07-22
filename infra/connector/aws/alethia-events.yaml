@@ -1,14 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Alethia Platform: near-real-time asset-inventory event forwarder. Watches EC2 network changes
-  (CloudTrail via EventBridge) and POSTs NORMALIZED change events to Alethia's ingestion endpoint
-  (/api/cloud-events/aws), keeping the connection's asset inventory fresh between reconciliation sweeps.
-  Opt-in companion to alethia-bootstrap.yaml (the cross-account role). Stays entirely in the customer
-  account; only normalized {kind, native_id, region, deleted} events leave it — never credentials.
+  Alethia Platform: near-real-time asset-inventory + capability-invalidation event forwarder. Watches EC2
+  network changes AND capability-affecting events (Service Quotas changes, region enable/disable) via
+  CloudTrail/EventBridge and POSTs NORMALIZED events to Alethia's ingestion endpoint (/api/cloud-events/aws):
+  inventory changes keep the asset inventory fresh, and capability_dirty SIGNALS mark the account's
+  capability catalog stale so the next sweep re-enumerates it. Opt-in companion to alethia-bootstrap.yaml
+  (the cross-account role). Stays entirely in the customer account; only normalized signals leave it
+  ({kind, native_id, region, deleted} for inventory, {kind, axis, region} for capability) — never credentials.
 
 # NOTE: deploy/verify in a real AWS account (CloudTrail must be enabled in the region for the management
 # events below to reach EventBridge). The console side (the ingester + the normalized contract) is live;
 # this is the in-account forwarder half.
+# REGION SCOPE: `account:EnableRegion`/`DisableRegion` are GLOBAL events delivered to CloudTrail/EventBridge
+# in us-east-1 ONLY — deploy this stack (or at least the RegionOptStatusRule) in us-east-1 to catch them.
+# Service Quotas + EC2 events are regional, so a per-region stack copy covers those in each active region.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -41,7 +46,8 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
 
-  # Normalizes one EC2 management event → the Alethia NormalizedCloudEvent contract and POSTs it.
+  # Normalizes one EC2 / Service-Quotas / region-opt CloudTrail event → the Alethia NormalizedCloudEvent
+  # contract and POSTs it.
   ForwarderFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -55,41 +61,63 @@ Resources:
           INGESTION_SECRET: !Ref IngestionSecret
       Code:
         ZipFile: |
-          // Maps an EC2 CloudTrail event (via EventBridge) → Alethia's normalized change event and
-          // POSTs { account_id, events: [...] } to /api/cloud-events/aws. The console resolves the
-          // account → connection and upserts/soft-removes the matching inventory row.
+          // Maps an EC2 / Service-Quotas / region-opt CloudTrail event (via EventBridge) → Alethia's
+          // normalized change event and POSTs { account_id, events: [...] } to /api/cloud-events/aws. The
+          // console resolves the account → connection and either upserts/soft-removes the matching inventory
+          // row (inventory kinds) or NULLs the capability freshness sentinel (capability_dirty signals).
           const KIND = {
             CreateVpc: ["network", false], DeleteVpc: ["network", true],
             CreateSubnet: ["subnet", false], DeleteSubnet: ["subnet", true],
           };
-          exports.handler = async (event) => {
-            const name = event?.detail?.eventName;
-            const map = KIND[name];
-            if (!map) return { skipped: name };
-            const [kind, deleted] = map;
-            const region = event.region || event?.detail?.awsRegion || null;
-            const accountId = event.account || event?.detail?.recipientAccountId;
-            const d = event.detail || {};
-            // Native id: from the response (create) or the request params (delete).
-            const nativeId =
-              d.responseElements?.vpc?.vpcId ||
-              d.responseElements?.subnet?.subnetId ||
-              d.requestParameters?.vpcId ||
-              d.requestParameters?.subnetId;
-            if (!accountId || !nativeId) return { skipped: "no id" };
-            const body = JSON.stringify({
-              account_id: accountId,
-              events: [{ kind, native_id: nativeId, region, deleted }],
-            });
+          // A capability-affecting eventSource → the capability axis it dirties. A Service Quotas change can
+          // alter launch limits (quota); enabling/disabling a region changes which regions are launchable.
+          const CAP_AXIS = {
+            "servicequotas.amazonaws.com": "quota",
+            "account.amazonaws.com": "regions",
+          };
+          // POSTs one normalized-events batch for an account to the console ingester.
+          async function post(accountId, events) {
             const res = await fetch(`${process.env.INGESTION_URL}/api/cloud-events/aws`, {
               method: "POST",
               headers: {
                 "content-type": "application/json",
                 authorization: `Bearer ${process.env.INGESTION_SECRET}`,
               },
-              body,
+              body: JSON.stringify({ account_id: accountId, events }),
             });
             return { status: res.status };
+          }
+          exports.handler = async (event) => {
+            const d = event.detail || {};
+            const name = d.eventName;
+            const region = event.region || d.awsRegion || null;
+            const accountId = event.account || d.recipientAccountId;
+            if (!accountId) return { skipped: "no account" };
+
+            // 1) Inventory change (VPC/subnet create+delete) → an inventory upsert/soft-remove.
+            const map = KIND[name];
+            if (map) {
+              const [kind, deleted] = map;
+              // Native id: from the response (create) or the request params (delete).
+              const nativeId =
+                d.responseElements?.vpc?.vpcId ||
+                d.responseElements?.subnet?.subnetId ||
+                d.requestParameters?.vpcId ||
+                d.requestParameters?.subnetId;
+              if (!nativeId) return { skipped: "no id" };
+              return post(accountId, [{ kind, native_id: nativeId, region, deleted }]);
+            }
+
+            // 2) Capability invalidation (quota change / region enable-disable) → a capability_dirty SIGNAL
+            // (no data). The console NULLs capabilities_synced_at so the next sweep re-enumerates keyless.
+            const axis = CAP_AXIS[d.eventSource];
+            if (axis) {
+              // For a region opt-in/out the affected region is in requestParameters (the event itself is
+              // global/us-east-1); for a quota change the event's own region is the right scope.
+              const sigRegion = d.requestParameters?.RegionName || region;
+              return post(accountId, [{ kind: "capability_dirty", axis, region: sigRegion }]);
+            }
+            return { skipped: name };
           };
 
   # EC2 network management events (CloudTrail → EventBridge default bus).
@@ -115,6 +143,56 @@ Resources:
       Action: 'lambda:InvokeFunction'
       Principal: events.amazonaws.com
       SourceArn: !GetAtt NetworkChangeRule.Arn
+
+  # Service Quotas changes (CloudTrail → EventBridge). A granted/requested quota change can alter which
+  # instance types are launchable → the forwarder emits a capability_dirty(axis=quota) signal.
+  ServiceQuotasChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Alethia: Service Quotas change → capability-invalidation forwarder"
+      EventPattern:
+        source: ["aws.servicequotas"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventSource: ["servicequotas.amazonaws.com"]
+          eventName: [RequestServiceQuotaIncrease, PutServiceQuotaIncreaseRequestIntoTemplate]
+      State: ENABLED
+      Targets:
+        - Id: AlethiaForwarder
+          Arn: !GetAtt ForwarderFunction.Arn
+
+  ServiceQuotasInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ServiceQuotasChangeRule.Arn
+
+  # Region enable/disable (`account:EnableRegion`/`DisableRegion`, global → us-east-1 only). Changes which
+  # regions the account can deploy in → the forwarder emits a capability_dirty(axis=regions) signal.
+  RegionOptStatusRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Alethia: account region enable/disable → capability-invalidation forwarder"
+      EventPattern:
+        source: ["aws.account"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventSource: ["account.amazonaws.com"]
+          eventName: [EnableRegion, DisableRegion]
+      State: ENABLED
+      Targets:
+        - Id: AlethiaForwarder
+          Arn: !GetAtt ForwarderFunction.Arn
+
+  RegionOptStatusInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RegionOptStatusRule.Arn
 
 Outputs:
   ForwarderFunctionArn:
