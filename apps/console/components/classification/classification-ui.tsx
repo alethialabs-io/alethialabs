@@ -12,37 +12,41 @@ import type { ReactNode } from "react";
 
 /** An unobtrusive info icon that reveals an explanation on hover/focus. */
 export function InfoHint({
-	children,
-	size = 13,
-	className,
+  children,
+  size = 13,
+  className,
 }: {
-	children: ReactNode;
-	size?: number;
-	className?: string;
+  children: ReactNode;
+  size?: number;
+  className?: string;
 }) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					type="button"
-					tabIndex={-1}
-					aria-label="More information"
-					className={cn(
-						"inline-grid place-items-center text-text-tertiary transition-colors hover:text-text-secondary",
-						className,
-					)}
-				>
-					<Info style={{ width: size, height: size }} />
-				</button>
-			</TooltipTrigger>
-			<TooltipContent className="max-w-[240px] text-[12px] leading-relaxed">
-				{children}
-			</TooltipContent>
-		</Tooltip>
-	);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="More information"
+            className={cn(
+              "inline-grid place-items-center text-text-tertiary transition-colors hover:text-text-secondary",
+              className,
+            )}
+          >
+            <Info style={{ width: size, height: size }} />
+          </button>
+        }
+      />
+      <TooltipContent className="max-w-[240px] text-[12px] leading-relaxed">
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** A spinning loader for in-flight buttons. */
 export function Spinner({ size = 14 }: { size?: number }) {
-	return <Loader2 className="animate-spin" style={{ width: size, height: size }} />;
+  return (
+    <Loader2 className="animate-spin" style={{ width: size, height: size }} />
+  );
 }

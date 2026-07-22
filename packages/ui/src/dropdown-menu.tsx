@@ -86,11 +86,24 @@ function DropdownMenuItem({
   className,
   inset,
   variant = "default",
+  onSelect,
+  onClick,
   ...props
-}: React.ComponentProps<typeof MenuPrimitive.Item> & {
+}: Omit<React.ComponentProps<typeof MenuPrimitive.Item>, "onSelect"> & {
   inset?: boolean;
   variant?: "default" | "destructive";
+  /** Radix-compatible selection callback. base-ui fires item selection via `onClick` (mouse +
+   * keyboard activation) — its own `onSelect` is the DOM text-selection event — so we map
+   * `onSelect` → `onClick` to preserve the call-site API. */
+  onSelect?: React.MouseEventHandler<HTMLElement>;
 }) {
+  const handleClick =
+    onSelect || onClick
+      ? (event: React.MouseEvent<HTMLElement>) => {
+          onSelect?.(event);
+          onClick?.(event);
+        }
+      : undefined;
   return (
     <MenuPrimitive.Item
       data-slot="dropdown-menu-item"
@@ -101,6 +114,7 @@ function DropdownMenuItem({
         className,
       )}
       {...props}
+      onClick={handleClick}
     />
   );
 }
@@ -166,17 +180,20 @@ function DropdownMenuRadioItem({
   );
 }
 
+/** A standalone menu heading. base-ui's `Menu.GroupLabel` must live inside a `Menu.Group`, but Radix's
+ * `DropdownMenuLabel` was free-standing (and most call sites use it that way), so this renders a plain
+ * styled `<div>` to preserve that. Use `DropdownMenuGroup` + this together for a labelled group. */
 function DropdownMenuLabel({
   className,
   inset,
   ...props
-}: React.ComponentProps<typeof MenuPrimitive.GroupLabel> & {
+}: React.ComponentProps<"div"> & {
   inset?: boolean;
 }) {
   return (
-    <MenuPrimitive.GroupLabel
+    <div
       data-slot="dropdown-menu-label"
-      data-inset={inset}
+      data-inset={inset || undefined}
       className={cn(
         "px-2 py-1.5 text-sm font-medium data-[inset]:pl-8",
         className,
