@@ -47,6 +47,12 @@ type behavior struct {
 	// `kubectl apply` (works on all clouds incl. AWS, where the in-tofu kubernetes provider is
 	// host+CA-only and cannot create the Secret). nil → the provider has no pull-auth mapping.
 	pullAuth func(ComponentContext) (host, username, password string)
+	// keylessRegistry, when set (cross-account keyless registry providers: ecr/gar/acr in a DIFFERENT
+	// account than the cluster), describes the target registry an in-cluster refresher mints a pull
+	// token for from the app's Workload Identity — NO stored key. Mutually exclusive with pullAuth: a
+	// keyless registry gets a continuously-refreshed dockerconfigjson (the refresher Deployment), not a
+	// static one. nil → not a keyless registry.
+	keylessRegistry func(ComponentContext) KeylessRegistryTarget
 }
 
 var behaviors = map[string]behavior{}
@@ -120,6 +126,24 @@ func (p *CategoryProvider) PullAuth(ctx ComponentContext) (host, username, passw
 	}
 	h, u, pw := p.b.pullAuth(ctx)
 	return h, u, pw, true
+}
+
+// KeylessRegistry returns the cross-account keyless registry target (ecr/gar/acr in a foreign
+// account), or ok=false when the provider is not a keyless registry. A keyless registry has no
+// pullAuth; its pull secret is refreshed in-cluster by the `registry-token` refresher.
+func (p *CategoryProvider) KeylessRegistry(ctx ComponentContext) (KeylessRegistryTarget, bool) {
+	if p.b.keylessRegistry == nil {
+		return KeylessRegistryTarget{}, false
+	}
+	return p.b.keylessRegistry(ctx), true
+}
+
+// IsKeylessRegistry reports whether a registry slug is a cross-account keyless provider (its pull
+// secret is refreshed in-cluster, not seeded statically). Cheap lookup for routing in Compose /
+// DominantRegistryPullSecretSpec without building a full ComponentContext.
+func IsKeylessRegistry(slug string) bool {
+	b, ok := behaviors["registry/"+slug]
+	return ok && b.keylessRegistry != nil
 }
 
 // Get resolves a provider by (category, slug). The slug must exist both in the

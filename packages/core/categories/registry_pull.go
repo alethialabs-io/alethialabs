@@ -35,6 +35,12 @@ func DominantRegistryPullSecretSpec(vc *types.ProjectConfig) (*RegistryPullSecre
 	if !IsPluggable(slug) {
 		return nil, nil
 	}
+	// A cross-account keyless registry (ecr/gar/acr in a foreign account) gets NO static secret — its
+	// dockerconfigjson is minted + refreshed in-cluster by the registry-token refresher (see
+	// DominantRegistryKeylessTarget + the flag-gated wiring). Skip the static pull-secret path.
+	if IsKeylessRegistry(slug) {
+		return nil, nil
+	}
 	p, err := Get("registry", slug)
 	if err != nil {
 		return nil, err

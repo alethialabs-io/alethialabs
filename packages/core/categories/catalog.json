@@ -578,6 +578,150 @@
       }
     },
     {
+      "category": "registry",
+      "slug": "ecr-xacct",
+      "name": "Amazon ECR (cross-account)",
+      "description": "Pull from an ECR registry in a different AWS account — keyless, no stored key. The cluster mints a short-lived pull token in-cluster from a role the target account trusts.",
+      "organization": "Amazon Web Services",
+      "auth_method": "iam_role",
+      "icon_url": "/icons/aws/aws-32x32.png",
+      "docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/repository-policy-examples.html",
+      "status": "coming_soon",
+      "sort_order": 60,
+      "module_path": "",
+      "credential": {
+        "fields": []
+      },
+      "provider_config": {
+        "fields": [
+          {
+            "key": "target_account_id",
+            "label": "Target AWS Account ID",
+            "type": "text",
+            "required": true,
+            "help": "The AWS account that owns the ECR registry (the account the cluster pulls from cross-account)."
+          },
+          {
+            "key": "region",
+            "label": "Region",
+            "type": "text",
+            "required": true,
+            "help": "The ECR registry region, e.g. us-east-1."
+          },
+          {
+            "key": "registry_host",
+            "label": "Registry Host",
+            "type": "text",
+            "required": true,
+            "help": "The registry endpoint, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com."
+          },
+          {
+            "key": "target_role_arn",
+            "label": "Target Role ARN",
+            "type": "text",
+            "required": true,
+            "help": "An IAM role in the target account that trusts this cluster's workload identity and grants ECR pull (GetAuthorizationToken + BatchGetImage). You create this in the registry account."
+          }
+        ]
+      }
+    },
+    {
+      "category": "registry",
+      "slug": "gar-xacct",
+      "name": "Google Artifact Registry (cross-project)",
+      "description": "Pull from an Artifact Registry repository in a different GCP project — keyless, no stored key. The cluster mints a short-lived token in-cluster from a service account the target project granted reader.",
+      "organization": "Google Cloud",
+      "auth_method": "service_account",
+      "icon_url": "/icons/gcp/gcp-32x32.png",
+      "docs_url": "https://cloud.google.com/artifact-registry/docs/access-control",
+      "status": "coming_soon",
+      "sort_order": 61,
+      "module_path": "",
+      "credential": {
+        "fields": []
+      },
+      "provider_config": {
+        "fields": [
+          {
+            "key": "target_project_id",
+            "label": "Target GCP Project ID",
+            "type": "text",
+            "required": true,
+            "help": "The GCP project that owns the Artifact Registry repository."
+          },
+          {
+            "key": "region",
+            "label": "Region",
+            "type": "text",
+            "required": true,
+            "help": "The Artifact Registry location, e.g. us-central1."
+          },
+          {
+            "key": "registry_host",
+            "label": "Registry Host",
+            "type": "text",
+            "required": true,
+            "help": "The registry endpoint, e.g. us-central1-docker.pkg.dev."
+          },
+          {
+            "key": "target_service_account",
+            "label": "Reader Service Account",
+            "type": "text",
+            "required": true,
+            "help": "The service account the target project granted roles/artifactregistry.reader on the repository. You grant this in the registry project."
+          }
+        ]
+      }
+    },
+    {
+      "category": "registry",
+      "slug": "acr-xacct",
+      "name": "Azure Container Registry (cross-subscription)",
+      "description": "Pull from an ACR in a different Azure subscription — keyless, no stored key. The cluster mints a short-lived token in-cluster from an identity the target ACR granted AcrPull.",
+      "organization": "Microsoft Azure",
+      "auth_method": "service_principal",
+      "icon_url": "/icons/azure/azure-32x32.png",
+      "docs_url": "https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication",
+      "status": "coming_soon",
+      "sort_order": 62,
+      "module_path": "",
+      "credential": {
+        "fields": []
+      },
+      "provider_config": {
+        "fields": [
+          {
+            "key": "target_subscription_id",
+            "label": "Target Subscription ID",
+            "type": "text",
+            "required": true,
+            "help": "The Azure subscription that owns the ACR."
+          },
+          {
+            "key": "region",
+            "label": "Region",
+            "type": "text",
+            "required": false,
+            "help": "The ACR region (optional)."
+          },
+          {
+            "key": "registry_host",
+            "label": "Registry Host",
+            "type": "text",
+            "required": true,
+            "help": "The registry endpoint, e.g. myregistry.azurecr.io."
+          },
+          {
+            "key": "target_identity_client_id",
+            "label": "Pull Identity Client ID",
+            "type": "text",
+            "required": true,
+            "help": "The client id of the identity the target ACR granted AcrPull. You grant this in the registry subscription."
+          }
+        ]
+      }
+    },
+    {
       "category": "observability",
       "slug": "datadog",
       "name": "Datadog",

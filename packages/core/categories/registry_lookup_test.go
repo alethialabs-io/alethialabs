@@ -30,6 +30,9 @@ func TestGetModulePath(t *testing.T) {
 		{"harbor registry", "registry", "harbor", ""},
 		{"docr registry", "registry", "docr", ""},
 		{"scaleway-cr registry", "registry", "scaleway-cr", ""},
+		{"ecr-xacct registry", "registry", "ecr-xacct", ""},
+		{"gar-xacct registry", "registry", "gar-xacct", ""},
+		{"acr-xacct registry", "registry", "acr-xacct", ""},
 		{"datadog observability", "observability", "datadog", "categories/observability/datadog"},
 		{"grafana observability", "observability", "grafana", "categories/observability/grafana"},
 	}
