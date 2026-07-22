@@ -1,33 +1,34 @@
 ---
 title: Observability
-description: Ship cluster metrics, logs, and traces to Datadog, Grafana Cloud, or Prometheus.
+description: Ship cluster metrics, logs, and traces to Datadog or Grafana Cloud.
 ---
 
 # Observability
 
-The observability section installs a monitoring stack into the cluster. Unlike DNS or secrets, observability has **no cloud-native default** — it is a pluggable-only component, so enabling it means choosing a provider and connecting its credential.
+The observability section ships cluster metrics, logs, and traces to an external monitoring platform. Unlike DNS or secrets, observability has **no cloud-native default** — it is a connector-only component, so enabling it means choosing a provider and connecting its credential.
 
 ## Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | **Enabled** | Toggle | Master switch for observability |
-| **Provider** | Select | Datadog, Grafana Cloud, or Prometheus |
+| **Provider** | Select | Datadog or Grafana Cloud |
 | **Provider options** | Varies | Provider-specific configuration (see below) |
 
 ## Providers
 
-<Tabs items={["Datadog", "Grafana Cloud", "Prometheus"]}>
+<Tabs items={["Datadog", "Grafana Cloud"]}>
   <Tab value="Datadog">
     Installs the **Datadog agent** via Helm. Requires a connected [Datadog connector](/console/connectors/pluggable) (API key + application key). Choose the **site** (e.g. `datadoghq.com`, `datadoghq.eu`).
   </Tab>
   <Tab value="Grafana Cloud">
     Installs the **Grafana Agent** remote-writing metrics to Grafana Cloud. Requires a connected [Grafana Cloud connector](/console/connectors/pluggable) (instance ID + API token) and the **remote-write URL**.
   </Tab>
-  <Tab value="Prometheus">
-    Installs **kube-prometheus-stack** in-cluster, optionally remote-writing to an external Prometheus-compatible store. The remote-write URL and basic-auth credentials are optional — a local-only install is valid. Set the local **retention** window (days).
-  </Tab>
 </Tabs>
+
+<Callout type="info">
+Want a self-hosted metrics stack instead of an external platform? Add the **kube-prometheus-stack** [add-on](/cli/commands/addons) — it installs Prometheus, Grafana, and Alertmanager in-cluster. Prometheus is an add-on (an in-cluster workload), not an observability connector (a credential to an external system).
+</Callout>
 
 ## Credentials
 
