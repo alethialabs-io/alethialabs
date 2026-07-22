@@ -41,6 +41,24 @@ resource "google_cloud_asset_project_feed" "networks" {
   }
 }
 
+# Capability-invalidation feed (#978) → the SAME topic. A serviceusage Service enable/disable changes WHICH
+# services (and therefore offerings) the project can launch, so the forwarder turns each such change into a
+# capability_dirty(axis=services) SIGNAL that marks the capability catalog stale (the console re-enumerates
+# keyless on the next sweep). (IAM_POLICY / role-removal → connection_health is added by #979.)
+resource "google_cloud_asset_project_feed" "capabilities" {
+  project      = var.project_id
+  feed_id      = "alethia-capabilities"
+  content_type = "RESOURCE"
+  asset_types = [
+    "serviceusage.googleapis.com/Service",
+  ]
+  feed_output_config {
+    pubsub_destination {
+      topic = google_pubsub_topic.asset_changes.id
+    }
+  }
+}
+
 # The forwarder source (normalizes a CAI change → POST). Packaged from ./forwarder/gcp.
 data "archive_file" "forwarder" {
   type        = "zip"

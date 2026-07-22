@@ -15,6 +15,10 @@ const KIND = {
 	DeleteVSwitch: ["subnet", true],
 };
 
+/** Quota Center eventNames whose success can alter launch limits → a capability_dirty(axis=quota) signal
+ * (#978). Alibaba has no region enable/disable event, so the regions axis is an explicit exclusion here. */
+const QUOTA_EVENTS = new Set(["CreateQuotaApplication", "ModifyQuota"]);
+
 /** Reads a key from an object case-insensitively (ActionTrail casing varies by field). */
 function pick(obj, ...keys) {
 	if (!obj) return undefined;
@@ -35,6 +39,50 @@ exports.handler = async (event, context, callback) => {
 		const ce = JSON.parse(Buffer.from(event).toString("utf8"));
 		const data = ce.data || ce; // tolerate an already-unwrapped record
 		const name = pick(data, "eventName", "EventName");
+		const region = pick(data, "acsRegion", "AcsRegion", "region") || null;
+
+		// The account id maps the event → connection (verified_account_id). Injected by ../events.tf
+		// from the account data source (reliable), with the ActionTrail record as a fallback.
+		const accountId =
+			process.env.ALIBABA_ACCOUNT_ID ||
+			pick(data, "acsAccountId", "AcsAccountId") ||
+			pick(pick(data, "userIdentity", "UserIdentity") || {}, "accountId", "AccountId");
+		if (!accountId) {
+			callback(null, JSON.stringify({ skipped: "no account" }));
+			return;
+		}
+
+		// POSTs one normalized-events batch for the account to the console ingester.
+		const post = async (events) => {
+			const res = await fetch(
+				`${process.env.INGESTION_URL}/api/cloud-events/alibaba`,
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						authorization: `Bearer ${process.env.INGESTION_SECRET}`,
+					},
+					body: JSON.stringify({ account_id: String(accountId), events }),
+				},
+			);
+			if (!res.ok) throw new Error(`ingestion HTTP ${res.status}`);
+		};
+
+		// 1) Capability invalidation (Quota Center change) → a capability_dirty SIGNAL (no data). The
+		// console NULLs capabilities_synced_at → the next sweep re-enumerates keyless.
+		if (QUOTA_EVENTS.has(name)) {
+			await post([
+				{
+					kind: "capability_dirty",
+					axis: "quota",
+					region: region ? String(region) : null,
+				},
+			]);
+			callback(null, JSON.stringify({ forwarded: "capability_dirty" }));
+			return;
+		}
+
+		// 2) Inventory change (VPC/VSwitch create+delete) → an inventory upsert/soft-remove.
 		const map = KIND[name];
 		if (!map) {
 			callback(null, JSON.stringify({ skipped: name || "unknown" }));
@@ -51,43 +99,21 @@ exports.handler = async (event, context, callback) => {
 			kind === "network"
 				? pick(resp, "VpcId") || pick(req, "VpcId")
 				: pick(resp, "VSwitchId") || pick(req, "VSwitchId");
-		const region = pick(data, "acsRegion", "AcsRegion", "region") || null;
 
-		// The account id maps the event → connection (verified_account_id). Injected by ../events.tf
-		// from the account data source (reliable), with the ActionTrail record as a fallback.
-		const accountId =
-			process.env.ALIBABA_ACCOUNT_ID ||
-			pick(data, "acsAccountId", "AcsAccountId") ||
-			pick(pick(data, "userIdentity", "UserIdentity") || {}, "accountId", "AccountId");
-
-		if (!accountId || !nativeId) {
+		if (!nativeId) {
 			callback(null, JSON.stringify({ skipped: "no id" }));
 			return;
 		}
 
-		const res = await fetch(
-			`${process.env.INGESTION_URL}/api/cloud-events/alibaba`,
+		await post([
 			{
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					authorization: `Bearer ${process.env.INGESTION_SECRET}`,
-				},
-				body: JSON.stringify({
-					account_id: String(accountId),
-					events: [
-						{
-							kind,
-							native_id: String(nativeId),
-							name: null,
-							region: region ? String(region) : null,
-							deleted,
-						},
-					],
-				}),
+				kind,
+				native_id: String(nativeId),
+				name: null,
+				region: region ? String(region) : null,
+				deleted,
 			},
-		);
-		if (!res.ok) throw new Error(`ingestion HTTP ${res.status}`);
+		]);
 		callback(null, JSON.stringify({ forwarded: nativeId }));
 	} catch (err) {
 		callback(err);
