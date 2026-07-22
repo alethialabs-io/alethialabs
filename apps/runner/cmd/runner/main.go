@@ -52,6 +52,19 @@ func main() {
 		return
 	}
 
+	// Keyless cross-account registry-pull refresher mode (PR B): as a standalone in-cluster Deployment,
+	// mint a short-lived registry pull token from the pod's Workload Identity (assuming the target
+	// account's role / using a target-granted SA / exchanging an AAD token) and keep the <slug>-pull
+	// dockerconfigjson Secret fresh. Long-running (loops until SIGTERM), so — like db-token — handled
+	// before the normal runner boot.
+	if len(os.Args) > 1 && os.Args[1] == "registry-token" {
+		if err := agent.RunRegistryToken(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "registry-token error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container-sandbox child mode: this process was re-exec'd INSIDE a per-job sandbox
 	// container to run one untrusted stage. It has an allowlisted env only (no runner
 	// token / storage keys / bootstrap token), so it must run the stage and exit BEFORE
