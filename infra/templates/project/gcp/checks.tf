@@ -112,3 +112,12 @@ check "classification_labels_present" {
     error_message = "A classification_tags entry was dropped from gcp_default_labels; classification/sweep-handle labels must reach labelled resources."
   }
 }
+
+# Cross-project GAR pull (PR B): when gar-xacct is selected the cluster-side pull GSA must exist (the
+# refresher's Workload-Identity impersonation target). A missing GSA means the refresher can't mint.
+check "gar_pull_xacct_identity_present" {
+  assert {
+    condition     = !local.enable_gar_pull || length(google_service_account.gar_pull) == 1
+    error_message = "registry_pull_provider = gar-xacct but the cross-project GAR pull service account was not created."
+  }
+}

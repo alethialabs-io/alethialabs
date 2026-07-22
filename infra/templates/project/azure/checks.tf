@@ -188,3 +188,12 @@ check "aks_runner_admin_path" {
     error_message = "AKS would have NO runner-reachable admin: set aks_enable_creator_admin=true (default — grants the apply-runner RBAC Cluster Admin), or provide aks_admin_group_object_ids. Without one, the runner cannot install ArgoCD."
   }
 }
+
+# Cross-subscription ACR pull (PR B): when acr-xacct is selected (and AKS is provisioned) the cluster-
+# side pull identity must exist (the refresher's federated Workload Identity). A missing UAMI = no mint.
+check "acr_pull_xacct_identity_present" {
+  assert {
+    condition     = !local.enable_acr_pull || length(azurerm_user_assigned_identity.acr_pull) == 1
+    error_message = "registry_pull_provider = acr-xacct but the cross-subscription ACR pull identity was not created."
+  }
+}
