@@ -36,6 +36,9 @@ func Compose(
 	tfvars["dns_provider"] = "native"
 	tfvars["secrets_provider"] = "native"
 	tfvars["registry_provider"] = "native"
+	// Cross-account keyless registry PULL is off by default (separate from registry_provider — it
+	// adds a foreign-account pull without replacing the native registry).
+	tfvars["registry_pull_provider"] = "native"
 
 	modules := map[string]map[string]any{}
 
@@ -122,16 +125,32 @@ func Compose(
 		if err != nil {
 			return 0, err
 		}
-		ctx := ComponentContext{
-			Project:     vc,
-			Credentials: vc.ConnectorCredentialFor("registry", slug),
-			Items:       items,
+		if IsKeylessRegistry(slug) {
+			// A cross-account KEYLESS registry (ecr/gar/acr in a foreign account) is a PULL add-on, not a
+			// replacement: the cluster keeps its native registry. So set the SEPARATE registry_pull_provider
+			// guard (activates the B4 tofu pull role), NEVER registry_provider (which would destroy the
+			// native repo). The pull secret is refreshed in-cluster (no static secret, no tofu module).
+			ctx := ComponentContext{Project: vc, ProviderConfig: registryProviderConfig(vc, slug), Items: items}
+			if err := p.Validate(ctx); err != nil {
+				return 0, fmt.Errorf("registry/%s validation failed: %w", slug, err)
+			}
+			tfvars["registry_pull_provider"] = slug
+			if t, ok := p.KeylessRegistry(ctx); ok && t.Provider == "aws" {
+				// AWS: the cluster-side pull role must be allowed to assume this target role (B4).
+				tfvars["registry_pull_target_role_arn"] = t.TargetIdentityRef
+			}
+			fmt.Fprintf(log, "Cross-account keyless registry %s: pull token refreshed in-cluster (native registry untouched)\n", slug)
+		} else {
+			// A credential-based registry (dockerhub/ghcr/…) REPLACES the native one: its dockerconfigjson
+			// pull secret is runner-seeded post-apply (no tofu module), and registry_provider switches the
+			// cluster template's native ECR/AR/ACR off.
+			ctx := ComponentContext{Project: vc, Credentials: vc.ConnectorCredentialFor("registry", slug), Items: items}
+			if err := p.Validate(ctx); err != nil {
+				return 0, fmt.Errorf("registry/%s validation failed: %w", slug, err)
+			}
+			tfvars["registry_provider"] = slug
+			fmt.Fprintf(log, "Registry provider %s: pull secret is runner-seeded post-apply (no tofu module)\n", slug)
 		}
-		if err := p.Validate(ctx); err != nil {
-			return 0, fmt.Errorf("registry/%s validation failed: %w", slug, err)
-		}
-		tfvars["registry_provider"] = slug
-		fmt.Fprintf(log, "Registry provider %s: pull secret is runner-seeded post-apply (no tofu module)\n", slug)
 	}
 
 	if len(modules) == 0 {

@@ -116,6 +116,15 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		return warnings, err
 	}
 	warnings = append(warnings, jobSkips...)
+	// Cross-account keyless registry (PR B): if the project pulls from a foreign-account ECR/GAR/ACR
+	// and the flag is on, write the standalone pull-token refresher (KSA + placeholder Secret +
+	// least-priv Role/RoleBinding + Deployment) so the <slug>-pull secret the app pods reference stays
+	// fresh — minted keylessly in-cluster. Off (or no keyless registry) → nothing rendered.
+	refSkips, err := writeRegistryRefresher(dir, vc, strOutputs, stdout)
+	if err != nil {
+		return warnings, err
+	}
+	warnings = append(warnings, refSkips...)
 	if err := repo.AddAndCommit("chore: scaffold app manifests (alethia)"); err != nil {
 		return warnings, fmt.Errorf("commit generated manifests: %w", err)
 	}
@@ -190,6 +199,88 @@ func writeBootstrapJobs(dir string, vc *types.ProjectConfig, mopts manifests.Opt
 		}
 	}
 	return skips, count, nil
+}
+
+// writeRegistryRefresher writes the standalone cross-account keyless registry pull-token refresher
+// (PR B) into dir for ArgoCD to sync. Dark by default: only when ALETHIA_XACCT_REGISTRY_ENABLED=true
+// AND the project selects a keyless registry (ecr-xacct/gar-xacct/acr-xacct) does anything render — so
+// with the flag off the generated manifests are byte-identical. The KSA is annotated to the B4 tofu
+// pull identity (per cloud). A missing pull-identity output is REPORTED + returned as a skip, never
+// fatal (fail-closed: no refresher, so the private pull just can't authenticate — surfaced, not
+// silent). Skip reasons carry no secret values (provider/output names only).
+func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[string]string, stdout io.Writer) (skips []string, err error) {
+	if os.Getenv("ALETHIA_XACCT_REGISTRY_ENABLED") != "true" {
+		return nil, nil
+	}
+	tgt, tErr := categories.DominantRegistryKeylessTarget(vc)
+	if tErr != nil {
+		msg := fmt.Sprintf("keyless registry: %v — pull refresher not rendered (fail-closed)", tErr)
+		fmt.Fprintln(stdout, "Registry refresher skipped "+msg)
+		return []string{msg}, nil
+	}
+	if tgt == nil {
+		return nil, nil // no keyless registry selected
+	}
+
+	ref := manifests.RegistryRefresher{
+		Provider:      tgt.Provider,
+		Namespace:     appNamespace,
+		SecretName:    tgt.SecretName(),
+		RegistryHost:  tgt.RegistryHost,
+		Region:        tgt.Region,
+		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"),
+		SAAnnotations: map[string]string{},
+		SALabels:      map[string]string{},
+		PodLabels:     map[string]string{},
+	}
+	// Wire the KSA to the B4 tofu pull identity + carry the per-cloud mint inputs. A missing output =
+	// the pull role wasn't provisioned (flag/selection mismatch) → fail closed.
+	var missing string
+	switch tgt.Provider {
+	case "aws":
+		arn := outputs["ecr_pull_irsa_arn"]
+		if arn == "" {
+			missing = "ecr_pull_irsa_arn"
+			break
+		}
+		ref.SAAnnotations["eks.amazonaws.com/role-arn"] = arn
+		ref.TargetRoleArn = tgt.TargetIdentityRef
+	case "gcp":
+		gsa := outputs["gar_pull_gsa_email"]
+		if gsa == "" {
+			missing = "gar_pull_gsa_email"
+			break
+		}
+		ref.SAAnnotations["iam.gke.io/gcp-service-account"] = gsa
+	case "azure":
+		clientID := outputs["acr_pull_client_id"]
+		if clientID == "" {
+			missing = "acr_pull_client_id"
+			break
+		}
+		ref.SAAnnotations["azure.workload.identity/client-id"] = clientID
+		ref.SALabels["azure.workload.identity/use"] = "true"
+		ref.PodLabels["azure.workload.identity/use"] = "true"
+	default:
+		missing = "provider"
+	}
+	if missing != "" {
+		msg := fmt.Sprintf("keyless registry %s: missing tofu output %q — pull refresher not rendered (fail-closed)", tgt.Slug, missing)
+		fmt.Fprintln(stdout, "Registry refresher skipped "+msg)
+		return []string{msg}, nil
+	}
+
+	y, rErr := manifests.RenderRegistryRefresher(ref)
+	if rErr != nil {
+		msg := fmt.Sprintf("keyless registry %s: %v — pull refresher not rendered (fail-closed)", tgt.Slug, rErr)
+		fmt.Fprintln(stdout, "Registry refresher skipped "+msg)
+		return []string{msg}, nil
+	}
+	if wErr := os.WriteFile(filepath.Join(dir, "registry-pull-refresher.yaml"), []byte(y), 0o644); wErr != nil {
+		return skips, wErr
+	}
+	fmt.Fprintf(stdout, "Rendered cross-account registry pull refresher (%s) for %s\n", tgt.Provider, tgt.SecretName())
+	return nil, nil
 }
 
 // credentialSecretOutputKey maps a binding kind to the tofu output holding the resource's

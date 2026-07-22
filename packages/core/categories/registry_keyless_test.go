@@ -4,10 +4,35 @@
 package categories
 
 import (
+	"io"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
+
+func TestComposeKeylessRegistrySetsPullGuard(t *testing.T) {
+	vc := keylessProject("ecr-xacct", map[string]any{
+		"target_account_id": "999999999999", "region": "us-east-1",
+		"registry_host":   "999999999999.dkr.ecr.us-east-1.amazonaws.com",
+		"target_role_arn": "arn:aws:iam::999999999999:role/alethia-pull",
+	})
+	tfvars := map[string]any{}
+	if _, err := Compose(t.TempDir(), "", vc, tfvars, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// The keyless pull guard is set…
+	if tfvars["registry_pull_provider"] != "ecr-xacct" {
+		t.Fatalf("registry_pull_provider = %v, want ecr-xacct", tfvars["registry_pull_provider"])
+	}
+	if tfvars["registry_pull_target_role_arn"] != "arn:aws:iam::999999999999:role/alethia-pull" {
+		t.Fatalf("registry_pull_target_role_arn = %v", tfvars["registry_pull_target_role_arn"])
+	}
+	// …and the native registry is UNTOUCHED (registry_provider stays native — the cluster keeps its
+	// own ECR repo; cross-account pull is additive).
+	if tfvars["registry_provider"] != "native" {
+		t.Fatalf("registry_provider must stay native for a keyless pull registry, got %v", tfvars["registry_provider"])
+	}
+}
 
 // keylessProject wires a project selecting one cross-account keyless registry with the given
 // provider_config (no credentials — keyless reads only provider_config).
