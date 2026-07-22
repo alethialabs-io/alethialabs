@@ -1,12 +1,10 @@
-"use client"
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
-import * as React from "react"
-import * as LabelPrimitive from "@radix-ui/react-label"
-import { mergeProps } from "@base-ui-components/react/merge-props"
-import { useRender } from "@base-ui-components/react/use-render"
+import * as React from "react";
+import { mergeProps } from "@base-ui-components/react/merge-props";
+import { useRender } from "@base-ui-components/react/use-render";
 import {
   Controller,
   FormProvider,
@@ -15,23 +13,23 @@ import {
   type ControllerProps,
   type FieldPath,
   type FieldValues,
-} from "react-hook-form"
+} from "react-hook-form";
 
-import { cn } from "./utils"
-import { Label } from "./label"
+import { cn } from "./utils";
+import { Label } from "./label";
 
-const Form = FormProvider
+const Form = FormProvider;
 
 type FormFieldContextValue<
   TFieldValues extends FieldValues = FieldValues,
   TName extends FieldPath<TFieldValues> = FieldPath<TFieldValues>,
 > = {
-  name: TName
-}
+  name: TName;
+};
 
 const FormFieldContext = React.createContext<FormFieldContextValue>(
-  {} as FormFieldContextValue
-)
+  {} as FormFieldContextValue,
+);
 
 const FormField = <
   TFieldValues extends FieldValues = FieldValues,
@@ -43,21 +41,21 @@ const FormField = <
     <FormFieldContext.Provider value={{ name: props.name }}>
       <Controller {...props} />
     </FormFieldContext.Provider>
-  )
-}
+  );
+};
 
 const useFormField = () => {
-  const fieldContext = React.useContext(FormFieldContext)
-  const itemContext = React.useContext(FormItemContext)
-  const { getFieldState } = useFormContext()
-  const formState = useFormState({ name: fieldContext.name })
-  const fieldState = getFieldState(fieldContext.name, formState)
+  const fieldContext = React.useContext(FormFieldContext);
+  const itemContext = React.useContext(FormItemContext);
+  const { getFieldState } = useFormContext();
+  const formState = useFormState({ name: fieldContext.name });
+  const fieldState = getFieldState(fieldContext.name, formState);
 
   if (!fieldContext) {
-    throw new Error("useFormField should be used within <FormField>")
+    throw new Error("useFormField should be used within <FormField>");
   }
 
-  const { id } = itemContext
+  const { id } = itemContext;
 
   return {
     id,
@@ -66,19 +64,19 @@ const useFormField = () => {
     formDescriptionId: `${id}-form-item-description`,
     formMessageId: `${id}-form-item-message`,
     ...fieldState,
-  }
-}
+  };
+};
 
 type FormItemContextValue = {
-  id: string
-}
+  id: string;
+};
 
 const FormItemContext = React.createContext<FormItemContextValue>(
-  {} as FormItemContextValue
-)
+  {} as FormItemContextValue,
+);
 
 function FormItem({ className, ...props }: React.ComponentProps<"div">) {
-  const id = React.useId()
+  const id = React.useId();
 
   return (
     <FormItemContext.Provider value={{ id }}>
@@ -88,14 +86,14 @@ function FormItem({ className, ...props }: React.ComponentProps<"div">) {
         {...props}
       />
     </FormItemContext.Provider>
-  )
+  );
 }
 
 function FormLabel({
   className,
   ...props
-}: React.ComponentProps<typeof LabelPrimitive.Root>) {
-  const { error, formItemId } = useFormField()
+}: React.ComponentProps<typeof Label>) {
+  const { error, formItemId } = useFormField();
 
   return (
     <Label
@@ -105,7 +103,7 @@ function FormLabel({
       htmlFor={formItemId}
       {...props}
     />
-  )
+  );
 }
 
 /** Wires the react-hook-form field state (id + `aria-describedby` / `aria-invalid`) onto the field
@@ -116,9 +114,10 @@ function FormControl({
   children,
   ...props
 }: React.ComponentProps<"div"> & {
-  children?: React.ReactElement<Record<string, unknown>>
+  children?: React.ReactElement<Record<string, unknown>>;
 }) {
-  const { error, formItemId, formDescriptionId, formMessageId } = useFormField()
+  const { error, formItemId, formDescriptionId, formMessageId } =
+    useFormField();
 
   // Typed via an intersection so the `data-slot` data-attribute is a known property (a bare object
   // literal of div props rejects `data-*` under React's excess-property check).
@@ -129,17 +128,17 @@ function FormControl({
       ? `${formDescriptionId}`
       : `${formDescriptionId} ${formMessageId}`,
     "aria-invalid": !!error,
-  }
+  };
 
   return useRender({
     defaultTagName: "div",
     render: children,
     props: mergeProps<"div">(controlProps, props),
-  })
+  });
 }
 
 function FormDescription({ className, ...props }: React.ComponentProps<"p">) {
-  const { formDescriptionId } = useFormField()
+  const { formDescriptionId } = useFormField();
 
   return (
     <p
@@ -148,15 +147,15 @@ function FormDescription({ className, ...props }: React.ComponentProps<"p">) {
       className={cn("text-muted-foreground text-sm", className)}
       {...props}
     />
-  )
+  );
 }
 
 function FormMessage({ className, ...props }: React.ComponentProps<"p">) {
-  const { error, formMessageId } = useFormField()
-  const body = error ? String(error?.message ?? "") : props.children
+  const { error, formMessageId } = useFormField();
+  const body = error ? String(error?.message ?? "") : props.children;
 
   if (!body) {
-    return null
+    return null;
   }
 
   return (
@@ -168,7 +167,7 @@ function FormMessage({ className, ...props }: React.ComponentProps<"p">) {
     >
       {body}
     </p>
-  )
+  );
 }
 
 export {
@@ -180,4 +179,4 @@ export {
   FormDescription,
   FormMessage,
   FormField,
-}
+};
