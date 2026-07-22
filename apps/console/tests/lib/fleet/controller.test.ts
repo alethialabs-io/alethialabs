@@ -347,3 +347,55 @@ describe("reconcilePool — create failure is non-fatal + observable", () => {
 		);
 	});
 });
+
+describe("controller — circuit-breaker (zero-registration boot loop)", () => {
+	// A dead VM = booted past bootGrace, status "none" (never registered) → plan reaps it as
+	// "reap-dead". With nothing online, that's the loop the breaker guards against (INCIDENT 2026-07-22).
+	function deadPool(): FakeFleet {
+		const fake = new FakeFleet();
+		fake.seed({ location: "fsn1", version: "v2", status: "none", runnerId: null, ageSeconds: 600 });
+		return fake;
+	}
+
+	it("pauses the pool once reap-dead runs past the limit with nothing online", async () => {
+		const fake = deadPool();
+		const disablePool = vi.fn(async () => {});
+		const deps: ControllerDeps = {
+			...fake.deps(),
+			recentBootFailures: async () => 7, // ≥ limit
+			disablePool,
+			bootFailureLimit: 5,
+			bootFailureWindowMin: 30,
+		};
+		await reconcilePool(project(), fake, deps, new Map());
+		expect(disablePool).toHaveBeenCalledWith("aws");
+		expect(captureServerException).toHaveBeenCalled();
+	});
+
+	it("does NOT pause below the limit", async () => {
+		const fake = deadPool();
+		const disablePool = vi.fn(async () => {});
+		const deps: ControllerDeps = {
+			...fake.deps(),
+			recentBootFailures: async () => 2, // < limit
+			disablePool,
+			bootFailureLimit: 5,
+		};
+		await reconcilePool(project(), fake, deps, new Map());
+		expect(disablePool).not.toHaveBeenCalled();
+	});
+
+	it("does NOT pause when a runner is online (registration is happening)", async () => {
+		const fake = new FakeFleet();
+		fake.seed({ location: "fsn1", version: "v2" }); // an online, registered runner
+		const disablePool = vi.fn(async () => {});
+		const deps: ControllerDeps = {
+			...fake.deps(),
+			recentBootFailures: async () => 99,
+			disablePool,
+			bootFailureLimit: 5,
+		};
+		await reconcilePool(project({ warmMin: 1, minPerLocation: 0 }), fake, deps, new Map());
+		expect(disablePool).not.toHaveBeenCalled();
+	});
+});

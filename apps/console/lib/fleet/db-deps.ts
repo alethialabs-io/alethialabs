@@ -9,11 +9,13 @@ import {
 	backlogByProvider,
 	countInflightForProvider,
 	countLiveManagedInstances,
+	disableFleetPool,
 	dispatchableBacklogByProvider,
 	insertFleetAction,
 	latestReleaseVersion,
 	managedRunnersByInstance,
 	markRunnerDraining,
+	recentReapDeadCount,
 	retireRunner,
 	setRunnerObserved,
 	tryFleetScaleLock,
@@ -22,6 +24,13 @@ import { mintBootstrapToken } from "@/lib/runners/bootstrap-token";
 
 const BOOT_GRACE_SECONDS =
 	Number.parseInt(process.env.FLEET_BOOT_GRACE_SECONDS ?? "180", 10) || 180;
+
+// Circuit-breaker (INCIDENT 2026-07-22): pause a pool after this many `reap-dead` boot failures
+// within the look-back window — a zero-registration loop the scaler would otherwise churn forever.
+const BOOT_FAILURE_LIMIT =
+	Number.parseInt(process.env.FLEET_BOOT_FAILURE_LIMIT ?? "5", 10) || 5;
+const BOOT_FAILURE_WINDOW_MIN =
+	Number.parseInt(process.env.FLEET_BOOT_FAILURE_WINDOW_MIN ?? "30", 10) || 30;
 
 /** Global fleet instance ceiling (max total managed VMs across all pools) from the environment;
  *  null (unset / non-positive) = no ceiling. A COGS backstop above each pool's `max`. */
@@ -48,6 +57,10 @@ export function makeDbDeps(): ControllerDeps {
 		bootGraceSeconds: BOOT_GRACE_SECONDS,
 		mintBootstrapToken: () => mintBootstrapToken(),
 		recordAction: (record) => insertFleetAction(record),
+		recentBootFailures: (provider, windowMin) => recentReapDeadCount(provider, windowMin),
+		disablePool: (provider) => disableFleetPool(provider),
+		bootFailureLimit: BOOT_FAILURE_LIMIT,
+		bootFailureWindowMin: BOOT_FAILURE_WINDOW_MIN,
 		withScaleLock: (provider, apply) => tryFleetScaleLock(provider, apply),
 	};
 }
