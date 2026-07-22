@@ -52,6 +52,14 @@ module "eks" {
       # fresh apply — reproduced on real EKS). Standard fix for terraform-aws-modules/eks.
       before_compute           = true
       service_account_role_arn = module.vpc_cni_irsa.iam_role_arn
+      # Namespace-placement tenant isolation (#1012). Turn ON Kubernetes NetworkPolicy
+      # ENFORCEMENT in the VPC CNI (starts the aws-network-policy-agent). Without this the
+      # guardrail bundle's default-deny NetworkPolicy is a NO-OP on AWS — tenant namespaces
+      # have no network isolation. The value is a QUOTED STRING per the addon config schema.
+      # Requires VPC CNI >= 1.14.0 (satisfied by most_recent) and k8s >= 1.25 (Fabric runs 1.33+).
+      configuration_values = jsonencode({
+        enableNetworkPolicy = "true"
+      })
     }
   }
 
@@ -122,10 +130,17 @@ module "eks" {
 
       ebs_optimized = true
 
+      # Namespace-placement tenant isolation (#1012). Hop limit 1 (the IMDSv2 PUT-response IP
+      # TTL) means a token reply routed to a Pod on the pod network (one extra CNI hop) is
+      # dropped — a tenant Pod CANNOT reach 169.254.169.254 to assume the node IAM role
+      # (cluster-wide node creds: ECR, ENI/EC2). Host-network components (kubelet, aws-node,
+      # kube-proxy) sit at 0 hops so IMDS still works for them. Workloads that need cloud
+      # identity use IRSA/Pod Identity, never the node role. (Was 2 — which is exactly the
+      # value AWS says to set only when you WANT Pods to reach IMDS.)
       metadata_options = {
         http_endpoint               = "enabled"
         http_tokens                 = "required"
-        http_put_response_hop_limit = 2
+        http_put_response_hop_limit = 1
         instance_metadata_tags      = "disabled"
       }
 

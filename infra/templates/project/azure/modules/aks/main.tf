@@ -77,6 +77,14 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   # --- Network profile ----------------------------------------------------
+  # Namespace-placement tenant isolation (#1012 — cloud parity with the AWS Fabric fix).
+  # `network_policy = "calico"` turns on NetworkPolicy ENFORCEMENT, so the guardrail bundle's
+  # default-deny NetworkPolicy (incl. the metadata-egress-deny to 169.254.169.254 that blocks a
+  # tenant Pod from assuming the node/kubelet managed identity via IMDS) actually enforces —
+  # unlike the unconfigured VPC-CNI on AWS where the same NP was a no-op. Combined with Workload
+  # Identity (workload_identity_enabled/oidc_issuer_enabled above), tenant Pods get a scoped AAD
+  # identity instead of the node identity. (The metadata-deny NP itself is applied at deploy time
+  # by the guardrail bundle, not this tofu template.)
   network_profile {
     network_plugin    = "azure"
     network_policy    = "calico"
