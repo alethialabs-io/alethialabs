@@ -12,9 +12,12 @@
 import type {
 	CapabilityLaunchable,
 	CapabilityLaunchableReason,
+	CapabilityQuotaKind,
 	CapabilityServiceKind,
 	CloudCapabilityInstanceType,
 	CloudCapabilityInstanceTypeInsert,
+	CloudCapabilityQuota,
+	CloudCapabilityQuotaInsert,
 	CloudCapabilityRegion,
 	CloudCapabilityRegionInsert,
 	CloudCapabilityService,
@@ -25,9 +28,12 @@ import type {
 export type {
 	CapabilityLaunchable,
 	CapabilityLaunchableReason,
+	CapabilityQuotaKind,
 	CapabilityServiceKind,
 	CloudCapabilityInstanceType,
 	CloudCapabilityInstanceTypeInsert,
+	CloudCapabilityQuota,
+	CloudCapabilityQuotaInsert,
 	CloudCapabilityRegion,
 	CloudCapabilityRegionInsert,
 	CloudCapabilityService,
@@ -53,5 +59,14 @@ export type SyncCapabilities = (
  * `cloud_capability_services`. Same structural contract as `SyncCapabilities` — best-effort, never
  * throws; the services dispatcher stamps freshness only after it resolves. */
 export type SyncServiceCapabilities = (
+	identity: CapabilityIdentity,
+) => Promise<void>;
+
+/** The quota-axis method a cloud implements (#981): enumerates this account's networking service-quota
+ * HEADROOM (EIP / NAT-gateway / load-balancer / security-group limits + used/available) into
+ * `cloud_capability_quotas`. Same structural contract as `SyncCapabilities` — best-effort, never throws;
+ * the dispatcher stamps freshness only after it resolves. Seam pre-wired here (#1115); the lanes land in
+ * #981. */
+export type SyncQuotaCapabilities = (
 	identity: CapabilityIdentity,
 ) => Promise<void>;
