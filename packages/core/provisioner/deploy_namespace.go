@@ -32,7 +32,10 @@ const (
 	// mode shipped to the customer base. Empty PlacementMode maps here (legacy).
 	placementDedicated placementPath = iota
 	// placementNamespaceAWS deploys onto an EXISTING shared Fabric cluster via keyless re-mint (no
-	// tofu) — the activated `namespace` path, aws-first.
+	// tofu) — the activated `namespace` path. Named for the aws-first activation, it now routes EVERY
+	// cloud whose output-free re-mint is wired (see namespaceRemintProviders). The const name is kept
+	// because the RunDeployV2 dispatch in deploy.go (outside this file / this issue's scope) switches
+	// on it; renaming is a follow-up cleanup, not a behaviour change.
 	placementNamespaceAWS
 	// placementUnactivated is a placement the runner cannot deploy yet (namespace on a cloud whose
 	// keyless re-mint isn't wired, or vcluster) — fail closed rather than run the full-cluster tofu.
@@ -47,7 +50,10 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 	case "", types.PlacementModeDedicated:
 		return placementDedicated
 	case types.PlacementModeNamespace:
-		if provider == "aws" {
+		// namespace is activated per-cloud as each cloud's output-free re-mint seam lands. The
+		// allowlist (namespaceRemintProviders) is the SINGLE control — a cloud outside it fails closed
+		// with a documented, cloud-named reason rather than running the full-cluster tofu.
+		if namespaceRemintWired(provider) {
 			return placementNamespaceAWS
 		}
 		return placementUnactivated
@@ -68,6 +74,88 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster, wired for aws (EKS DescribeCluster) today; gcp/azure/alibaba need output-based kubeconfig mint helpers and hetzner-talos a Fabric-create-time kubeconfig (per-cloud follow-ups). 'dedicated' provisions on every cloud", pm, provider)
 	}
 	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud) and 'namespace' (aws) provision today; vcluster is tracked (#960)", pm)
+}
+
+// namespaceRemintProviders is the allowlist of clouds whose OUTPUT-FREE keyless re-mint (resolve an
+// EXISTING cluster by name from the cloud API, no tofu outputs) AND per-namespace identity are wired for
+// `namespace` placement. It is the SINGLE control that activates a cloud: selectPlacementPath routes to
+// the namespace path only for a cloud in this set, and runNamespaceDeploy fail-closes anything else.
+//
+// Parity follow-ups add their entry AS their per-cloud output-free mint + identity lands — cloud parity
+// is a hard rule, so each gap is a documented, fail-closed exclusion, never silent:
+//   - #1127 gcp     — GKE clusters.get + Workload Identity
+//   - #1128 azure   — AKS ManagedClusters.Get (+ listClusterUserCredentials CA) + federated identity
+//   - #1129 alibaba — ACK DescribeClusterUserKubeconfig + RRSA
+//
+// hetzner-talos is a PERMANENT exclusion here: Talos exposes no cloud API to re-mint kube access, so it
+// needs a Fabric-create-time persisted kubeconfig instead (a console-snapshot change, tracked separately).
+var namespaceRemintProviders = map[string]bool{
+	"aws": true,
+}
+
+// namespaceRemintWired reports whether provider's output-free namespace re-mint + identity are activated.
+func namespaceRemintWired(provider string) bool { return namespaceRemintProviders[provider] }
+
+// namespaceClusterNameOutputKey maps a provider to the output key its ConfigureKubeconfig reads the
+// cluster name from (mirrors cloud.ExtractClusterName's per-cloud keys). A namespace deploy runs no
+// tofu, so mintNamespaceKubeAccess synthesizes a one-key outputs map with just the cluster name and
+// relies on ConfigureKubeconfig to resolve endpoint+CA OUTPUT-FREE from the cloud API (each per-cloud
+// lane makes its ConfigureKubeconfig do so). Static lookup data — an entry is inert until the cloud is
+// activated in namespaceRemintProviders.
+var namespaceClusterNameOutputKey = map[string]string{
+	"aws":     "eks_cluster_name",
+	"gcp":     "gke_cluster_name",
+	"azure":   "aks_cluster_name",
+	"alibaba": "ack_cluster_name",
+}
+
+// namespaceRemintNotWired is the fail-closed error for a cloud whose namespace re-mint seam isn't wired —
+// an explicit, cloud-named exclusion (parity is documented, never a silent omission).
+func namespaceRemintNotWired(provider string) error {
+	return fmt.Errorf("namespace placement: output-free keyless re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster) today; gcp/azure/alibaba are per-cloud follow-ups (#1127/#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig)", provider)
+}
+
+// mintNamespaceKubeAccess mints keyless kube access to an EXISTING shared-Fabric cluster BY NAME, with no
+// tofu outputs — the per-cloud seam #1127/#1128/#1129 activate. It synthesizes the provider's cluster-name
+// output key and delegates to CloudProvider.ConfigureKubeconfig, which (for a wired cloud) resolves
+// endpoint+CA output-free from the cloud API and writes the in-process `kube-token` exec-plugin kubeconfig.
+// Fail-closed for any cloud not in namespaceRemintProviders (defence-in-depth behind selectPlacementPath).
+func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
+	if !namespaceRemintWired(providerSlug) {
+		return namespaceRemintNotWired(providerSlug)
+	}
+	outputKey, ok := namespaceClusterNameOutputKey[providerSlug]
+	if !ok {
+		return namespaceRemintNotWired(providerSlug)
+	}
+	mintOutputs := map[string]interface{}{outputKey: clusterName}
+	return provider.ConfigureKubeconfig(ctx, config, mintOutputs, stdout)
+}
+
+// provisionAndBindNamespaceIdentity provisions the namespace tenant's OWN least-priv cloud identity and
+// binds the namespace's default ServiceAccount to it, so a pod in this namespace assumes ONLY its
+// namespace identity — never the cluster-wide controller/node role (#957). Per-cloud: aws mints a
+// zero-perm per-namespace IRSA role (OIDC trust scoped to system:serviceaccount:<ns>:*) and annotates
+// the default SA; gcp/azure/alibaba (GCP Workload Identity, Azure federated identity, Alibaba RRSA) are
+// the #1127/#1128/#1129 seams. Fail-closed default — a cloud only reaches the default if it's activated
+// in namespaceRemintProviders but its identity case is unimplemented (parity is never a silent no-op).
+func provisionAndBindNamespaceIdentity(ctx context.Context, providerSlug, region, clusterName, ns string, stdout, stderr io.Writer) error {
+	switch providerSlug {
+	case "aws":
+		roleARN, idErr := coreaws.ProvisionNamespaceIdentity(ctx, region, clusterName, ns)
+		if idErr != nil {
+			return fmt.Errorf("failed to provision per-namespace identity for %q: %w", ns, idErr)
+		}
+		if !coreaws.IsValidRoleARN(roleARN) {
+			return fmt.Errorf("provisioned per-namespace role ARN %q is malformed", roleARN)
+		}
+		if err := bindNamespaceIdentity(ns, roleARN, stdout, stderr); err != nil {
+			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
+		}
+		return nil
+	default:
+		return namespaceRemintNotWired(providerSlug)
+	}
 }
 
 // runNamespaceDeploy deploys a `namespace`-placement env onto an EXISTING shared Fabric cluster
@@ -124,9 +212,9 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 		}
 	}()
 
-	// Belt-and-suspenders: the dispatcher already routed only aws-namespace here, but never run the
-	// namespace path for a cloud whose keyless re-mint isn't wired.
-	if params.Provider != "aws" {
+	// Belt-and-suspenders: selectPlacementPath already routed only a re-mint-wired cloud here, but never
+	// run the namespace path for a cloud whose keyless re-mint isn't wired (namespaceRemintProviders).
+	if !namespaceRemintWired(params.Provider) {
 		return nil, unactivatedPlacementError(vc.PlacementMode, params.Provider)
 	}
 
@@ -177,13 +265,12 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 		return nil, fmt.Errorf("preflight check failed: %w", err)
 	}
 
-	// Keyless kube access to the EXISTING named cluster. AWS ConfigureKubeconfig resolves
-	// endpoint/CA/ARN via EKS DescribeCluster on the ambient keyless session (no tofu outputs), then
-	// writes the in-process `kube-token` exec-plugin kubeconfig. Feed the cluster name via the same
-	// output key ExtractClusterName reads.
+	// Keyless kube access to the EXISTING named cluster, OUTPUT-FREE (no tofu). Per-cloud seam
+	// (mintNamespaceKubeAccess): aws ConfigureKubeconfig resolves endpoint/CA/ARN via EKS DescribeCluster
+	// on the ambient keyless session; gcp/azure/alibaba resolve the same from their cloud API once their
+	// lane (#1127/#1128/#1129) wires it. The provider is fed only its cluster-name output key.
 	setStage("kube_configure")
-	mintOutputs := map[string]interface{}{"eks_cluster_name": clusterName}
-	if err := provider.ConfigureKubeconfig(ctx, vc, mintOutputs, stdout); err != nil {
+	if err := mintNamespaceKubeAccess(ctx, provider, vc, params.Provider, clusterName, stdout); err != nil {
 		return nil, fmt.Errorf("kubeconfig mint failed for existing cluster %q — the namespace env is placed on a Fabric whose cluster is unreachable: %w", clusterName, err)
 	}
 	// Reachability probe: minting only proves DescribeCluster succeeded, not that the exec-plugin token
@@ -246,22 +333,15 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 		return &result, fmt.Errorf("failed to apply namespace guardrail bundle into %q: %w", ns, err)
 	}
 
-	// #957: provision the tenant's OWN least-priv cloud identity — a per-namespace IRSA role (zero-perm,
-	// OIDC trust scoped to system:serviceaccount:<ns>:*) — and bind the namespace's default ServiceAccount
-	// to it. Without this a namespace tenant has no distinct AWS identity; with it, a pod in this namespace
-	// assumes ONLY its namespace role, never the cluster-wide controller/node role. Runs AFTER the guardrail
-	// bundle (which creates the default SA) and BEFORE the app, so pods pick up the annotation on sync.
-	// AWS-only — the dispatcher fail-closes other clouds; per-cloud parity (GCP Workload-Identity, Azure
-	// federated, Alibaba) is the documented #1013 follow-up (cloud parity is a hard rule).
-	roleARN, idErr := coreaws.ProvisionNamespaceIdentity(ctx, vc.Region, clusterName, ns)
-	if idErr != nil {
-		return &result, fmt.Errorf("failed to provision per-namespace identity for %q: %w", ns, idErr)
-	}
-	if !coreaws.IsValidRoleARN(roleARN) {
-		return &result, fmt.Errorf("provisioned per-namespace role ARN %q is malformed", roleARN)
-	}
-	if err := bindNamespaceIdentity(ns, roleARN, stdout, stderr); err != nil {
-		return &result, fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
+	// #957: provision the tenant's OWN least-priv cloud identity and bind the namespace's default
+	// ServiceAccount to it, so a pod in this namespace assumes ONLY its namespace identity, never the
+	// cluster-wide controller/node role. Per-cloud seam (provisionAndBindNamespaceIdentity): aws mints a
+	// zero-perm per-namespace IRSA role (OIDC trust scoped to system:serviceaccount:<ns>:*); GCP Workload
+	// Identity / Azure federated / Alibaba RRSA are the #1127/#1128/#1129 follow-ups (cloud parity is a
+	// hard rule). Runs AFTER the guardrail bundle (which creates the default SA) and BEFORE the app, so
+	// pods pick up the binding on sync.
+	if err := provisionAndBindNamespaceIdentity(ctx, params.Provider, vc.Region, clusterName, ns, stdout, stderr); err != nil {
+		return &result, err
 	}
 
 	if manifests.App != "" {

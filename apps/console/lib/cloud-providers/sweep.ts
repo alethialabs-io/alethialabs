@@ -14,6 +14,16 @@ import {
 	registerLoop,
 	superviseLoop,
 } from "@/lib/observability/heartbeats";
+import {
+	gcRemovedQuotaCapabilities,
+	hasServerSideQuotaCapabilities,
+	syncCloudQuotaCapabilities,
+} from "./capabilities/quotas-index";
+import {
+	gcRemovedServiceCapabilities,
+	hasServerSideServiceCapabilities,
+	syncCloudServiceCapabilities,
+} from "./capabilities/services-index";
 import { canProbeHealth, probeHealth } from "./health";
 import {
 	gcRemovedInventory,
@@ -114,8 +124,11 @@ export async function runConnectionSweep(): Promise<{
 	checked: number;
 	disconnected: number;
 }> {
-	// Retention GC: drop soft-removed rows past the window (best-effort; never blocks the refresh).
+	// Retention GC: drop soft-removed rows past the window (best-effort; never blocks the refresh) —
+	// inventory + the Wave-2 capability projections (launchable services + service-quota headroom).
 	await gcRemovedInventory(RETENTION_DAYS).catch(() => 0);
+	await gcRemovedServiceCapabilities(RETENTION_DAYS).catch(() => 0);
+	await gcRemovedQuotaCapabilities(RETENTION_DAYS).catch(() => 0);
 
 	const due = await dueConnections();
 	let disconnected = 0;
@@ -144,6 +157,22 @@ export async function runConnectionSweep(): Promise<{
 						hasServerSideInventory(identity.provider)
 					) {
 						await syncCloudInventory(identity);
+					}
+					// Refresh the account-accurate capability projections while we still have access
+					// (Wave-2: launchable managed services + networking service-quota headroom). Each
+					// dispatcher is best-effort (swallows a lane error, never throws) and is gated on the
+					// provider having a lane — mirroring the inventory refresh above.
+					if (
+						result.status !== "disconnected" &&
+						hasServerSideServiceCapabilities(identity.provider)
+					) {
+						await syncCloudServiceCapabilities(identity);
+					}
+					if (
+						result.status !== "disconnected" &&
+						hasServerSideQuotaCapabilities(identity.provider)
+					) {
+						await syncCloudQuotaCapabilities(identity);
 					}
 				}
 			}),

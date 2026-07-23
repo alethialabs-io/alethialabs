@@ -3,8 +3,11 @@
 
 import { create } from "zustand";
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
-import { CACHE_TTL_HOURS, PROVIDERS } from "@/lib/cloud-providers/registry";
+import {
+	type CloudProviderSlug,
+	PROVIDERS,
+} from "@/lib/cloud-providers/generated/catalog";
+import { CACHE_TTL_HOURS } from "@/lib/cloud-providers/provider-slug";
 import type {
 	CachedResources,
 	GcpCachedResources,

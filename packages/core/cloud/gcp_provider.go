@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -80,9 +81,13 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// Memorystore
 		"create_memorystore": len(config.Caches) > 0,
 
-		// Firestore
-		"create_firestore":    len(config.NosqlTables) > 0,
-		"firestore_databases": buildFirestoreDatabases(config.NosqlTables),
+		// Firestore. The template's Firestore model is a SINGLE per-project database
+		// (create_firestore + firestore_database_type/location vars) — GCP allows one Firestore
+		// DB per project and NoSQL "tables" are collections within it, created by the app, not
+		// tofu. The old per-table `firestore_databases` list var was never declared in
+		// variables.tf, so it was silently dropped; dropped here too (buildFirestoreDatabases is
+		// retained only for its unit test, out of this issue's scope).
+		"create_firestore": len(config.NosqlTables) > 0,
 
 		// Artifact Registry (container registry)
 		"provision_artifact_registry": len(config.ContainerRegistries) > 0,
@@ -133,20 +138,26 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
+		// Map ProjectCacheConfig onto the ONLY Memorystore tfvars the GCP template declares:
+		// memorystore_tier (BASIC|STANDARD_HA), memorystore_memory_size_gb (whole GB), and
+		// memorystore_redis_version (the REDIS_x_y enum). The provider previously emitted
+		// memorystore_engine / memorystore_instance_type / memorystore_multi_az — none declared
+		// in variables.tf, so a customer's cache shape was silently dropped (this wiring gap).
+		//
+		// Tier: STANDARD_HA (replicated, high-availability) when the config asks for more than one
+		// node OR explicit multi-AZ; otherwise the template default (BASIC) stands.
+		if (cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1) || (cache.MultiAz != nil && *cache.MultiAz) {
 			tfvars["memorystore_tier"] = "STANDARD_HA"
 		}
-		if cache.Engine != "" {
-			tfvars["memorystore_engine"] = string(cache.Engine)
+		// Size: the cloud-indifferent MemoryGB is the memorystore_memory_size_gb number directly.
+		// GCP requires whole GB, so round. The M1..M4 NearestCacheTier labels are the console tier
+		// NAMES, not this template's size/tier model, so they are deliberately NOT used here.
+		if cache.MemoryGB > 0 {
+			tfvars["memorystore_memory_size_gb"] = int(math.Round(cache.MemoryGB))
 		}
-		if cache.EngineVersion != "" {
-			tfvars["memorystore_redis_version"] = cache.EngineVersion
-		}
-		if nt := resolveCacheNodeType("gcp", cache); nt != "" {
-			tfvars["memorystore_instance_type"] = nt
-		}
-		if cache.MultiAz != nil {
-			tfvars["memorystore_multi_az"] = *cache.MultiAz
+		// Version: the var accepts only the REDIS_x_y enum — passing a raw "7.1" fails the apply.
+		if v := gcpMemorystoreRedisVersion(cache.EngineVersion); v != "" {
+			tfvars["memorystore_redis_version"] = v
 		}
 	}
 
@@ -252,6 +263,46 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 		}
 	}
 	return result
+}
+
+// gcpMemorystoreRedisVersion maps a plain Redis version ("7.1", "6.2", "5") to the REDIS_x_y enum
+// that the GCP template's memorystore_redis_version variable (and the google_redis_instance API)
+// requires — a raw semver like "7.1" fails the apply. GCP offers REDIS_7_2, REDIS_7_0, REDIS_6_X,
+// REDIS_5_0, REDIS_4_0, REDIS_3_2; a version with no exact enum snaps to the nearest lower one in
+// its major (e.g. "7.1" -> REDIS_7_0). Returns "" for an empty or unmappable version, so the caller
+// leaves the template default. An already-enum value ("REDIS_7_0") passes through unchanged.
+func gcpMemorystoreRedisVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if strings.HasPrefix(v, "REDIS_") {
+		return v
+	}
+	major := v
+	minor := ""
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		major = v[:i]
+		minor = v[i+1:]
+	}
+	switch major {
+	case "7":
+		// GCP has REDIS_7_2 and REDIS_7_0 (no 7_1) — 7.2+ -> 7_2, everything else in the 7 line -> 7_0.
+		if len(minor) > 0 && minor[0] >= '2' {
+			return "REDIS_7_2"
+		}
+		return "REDIS_7_0"
+	case "6":
+		return "REDIS_6_X"
+	case "5":
+		return "REDIS_5_0"
+	case "4":
+		return "REDIS_4_0"
+	case "3":
+		return "REDIS_3_2"
+	default:
+		return ""
+	}
 }
 
 func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]interface{} {

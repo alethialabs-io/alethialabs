@@ -10,7 +10,7 @@ import { ADDON_CATALOG } from "@/lib/addons/catalog";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import type { RequirementSatisfaction } from "@/lib/addons/requirements";
 import type { AddOnRequirement } from "@/lib/addons/types";
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 
 const ALL_PROVIDERS: (CloudProviderSlug | null)[] = [
 	"aws",

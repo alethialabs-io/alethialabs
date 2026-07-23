@@ -12,7 +12,7 @@
 // construction — an adapter cannot opt out of them, because it never deletes anything itself on the
 // strength of its own list. It reports candidates; the core decides.
 
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 
 /** A live resource seen in the cloud under this environment's label selector. */
 export interface CloudResourceRef {
