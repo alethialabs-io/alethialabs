@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { notFound } from "next/navigation";
+import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -996,6 +997,19 @@ async function buildConfigSnapshot(
 			);
 		}
 
+		// ── Config-time compatibility gate (#1218) — WARN, never block ───────
+		// Run the compat engine over the cluster's Kubernetes minor + the fully
+		// resolved add-on set (incl. Hetzner data-service + BYO charts). The report
+		// rides the config snapshot for the UI to surface at design time (#1221/#1222);
+		// it NEVER blocks saving — the fail-closed block is the apply gate (#1215).
+		// An unset K8s version or an add-on id absent from the matrix → honest
+		// `not_evaluable` (non-blocking), so this is safe before a cluster resolves.
+		const compat = evaluate({
+			providers: [identity.provider],
+			k8sVersion: cluster?.cluster_version ?? undefined,
+			addons: addons.map((a) => ({ id: a.id })),
+		});
+
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits
 		// the project's primary identity. Resolve every component to a concrete
@@ -1213,6 +1227,9 @@ async function buildConfigSnapshot(
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
+			// Config-time compatibility report (#1218) — non-blocking; the UI surfaces
+			// its warnings (cluster inspector / add-on config sheet #1221, canvas chip #1222).
+			compat,
 			// Bring-your-own IaC (E3, replace mode): when present, the runner clones this repo at
 			// the PINNED commit_sha (never the moving ref — TOCTOU protection) and runs the
 			// customer's root module instead of the built-in template. Absent for template envs.
