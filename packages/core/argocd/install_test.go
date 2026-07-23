@@ -54,3 +54,50 @@ func TestEnsureExternalDNSSecretRefusesEmptyToken(t *testing.T) {
 		t.Fatalf("expected an error for an empty token")
 	}
 }
+
+func TestExternalSecretsStoreManifest(t *testing.T) {
+	cases := []struct {
+		name        string
+		facts       *InfraFacts
+		wantStore   string // "" ⇒ expect NO store (fail-closed / no cloud secret manager)
+		wantContain []string
+	}{
+		{"aws with IRSA", &InfraFacts{Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso"},
+			"secretstore-aws", []string{"service: SecretsManager", "region: us-east-1", "name: external-secrets-operator-sa"}},
+		{"gcp with GSA", &InfraFacts{Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com", GCPProjectID: "proj-1"},
+			"secretstore-gcp", []string{"gcpsm:", "projectID: proj-1"}},
+		{"azure with client + vault", &InfraFacts{Provider: "azure", AzureExternalSecretsClient: "cid", AzureKeyVaultURI: "https://kv.vault.azure.net/"},
+			"secretstore-azure", []string{"azurekv:", "authType: WorkloadIdentity", "vaultUrl: https://kv.vault.azure.net/"}},
+		{"alibaba with role", &InfraFacts{Provider: "alibaba", Region: "eu-central-1", AlibabaExternalSecretsRoleArn: "acs:ram::1:role/eso", AlibabaOIDCProviderArn: "acs:ram::1:oidc-provider/ack"},
+			"secretstore-alibaba", []string{"alibaba:", "regionID: eu-central-1", "rrsa:", "roleArn: acs:ram::1:role/eso"}},
+		{"hetzner has no cloud store", &InfraFacts{Provider: "hetzner", Region: "nbg1"}, "", nil},
+		{"aws without the IRSA fact is fail-closed empty", &InfraFacts{Provider: "aws", Region: "us-east-1"}, "", nil},
+		{"azure missing the vault URI is empty", &InfraFacts{Provider: "azure", AzureExternalSecretsClient: "cid"}, "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, err := externalSecretsStoreManifest(c.facts)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if c.wantStore == "" {
+				if m != "" {
+					t.Fatalf("expected NO store, got:\n%s", m)
+				}
+				return
+			}
+			if !strings.Contains(m, "kind: ClusterSecretStore") || !strings.Contains(m, "name: "+c.wantStore) {
+				t.Fatalf("expected a %s ClusterSecretStore, got:\n%s", c.wantStore, m)
+			}
+			for _, want := range c.wantContain {
+				if !strings.Contains(m, want) {
+					t.Errorf("store must contain %q:\n%s", want, m)
+				}
+			}
+			// Exactly one cloud's block renders — never a leaked doc separator from a sibling.
+			if strings.Contains(m, "---") {
+				t.Errorf("a single store must not contain a doc separator:\n%s", m)
+			}
+		})
+	}
+}
