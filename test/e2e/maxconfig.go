@@ -45,7 +45,11 @@ type MaxConfigKind struct {
 	// The nine optional kinds each carry a LOUD negative test instead (see the pure test).
 	Foundational bool
 	// Apply populates this kind on the shared max-config ProjectConfig (the typed source of truth).
-	Apply func(pc *types.ProjectConfig)
+	// It takes the target provider so the three shape-bearing kinds (cluster/database/cache) can emit
+	// provider-VALID literals — the cloud provider passes instance/tier/version values through
+	// verbatim, so AWS shapes (m5.large, db.r6g.large, 16.6) would fail a real GKE/Cloud SQL apply.
+	// The other eight kinds are provider-agnostic (names/booleans) and ignore the argument.
+	Apply func(pc *types.ProjectConfig, provider string)
 	// Populated reports whether Apply actually took — the fail-closed guard in MaxConfigSnapshot
 	// (a max-config run that silently drops a kind is the exact vacuous proof the bar forbids).
 	Populated func(pc *types.ProjectConfig) bool
@@ -58,6 +62,25 @@ type MaxConfigKind struct {
 	// infra/templates/project/aws/**; several kinds route through cloudposse/terraform-aws-modules
 	// registry modules, but the state carries the concrete type regardless of module nesting.)
 	AWSResource string
+	// GCPSignals are the GCP analogue of AWSSignals. NOTE: queue and topic share create_pubsub /
+	// pubsub_topics (both fold into the pubsub_topics map), so they are NOT kind-exclusive — the
+	// negative test discriminates those two via the pubsub_topics MAP KEY ("jobs"/"events"), not
+	// these signals. The other seven optional kinds' GCP signals ARE kind-exclusive.
+	GCPSignals []string
+	// GCPResource is the tofu resource type a real GCP apply must create for this kind (confirmed
+	// against infra/templates/project/gcp/**). NOTE: queue and topic both map to google_pubsub_topic,
+	// so the per-kind state count cannot distinguish them on GCP (both are always present ⇒ count 2).
+	GCPResource string
+	// AzureSignals are the Azure analogue of AWSSignals — kind-EXCLUSIVE (meaningful only when this
+	// kind is populated), so they double as the negative-test discriminators. UNLIKE GCP (where queue
+	// and topic fold into one pubsub_topics map), Azure emits DISTINCT service_bus_queues and
+	// service_bus_topics maps, so all nine optional kinds are cleanly isolable — the negative test is a
+	// plain drop-and-check with no map-key special case.
+	AzureSignals []string
+	// AzureResource is the tofu resource type a real Azure apply must create for this kind (confirmed
+	// against infra/templates/project/azure/**). nosql/bucket name the per-table / per-bucket child
+	// (azurerm_cosmosdb_sql_container / azurerm_storage_container); the account/db parents are shared.
+	AzureResource string
 }
 
 // MaxConfigKinds is the full 11-kind surface. Adding a cloud later is a per-cloud Signals/Resource
@@ -67,22 +90,39 @@ var MaxConfigKinds = []MaxConfigKind{
 		Kind:         "network",
 		Doc:          "the VPC/network the cluster lives in — provisioned in-template.",
 		Foundational: true,
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.Network = types.ProjectNetworkConfig{ProvisionNetwork: true, CIDRBlock: "10.0.0.0/16", SingleNatGateway: true}
 		},
 		Populated:   func(pc *types.ProjectConfig) bool { return pc.Network.ProvisionNetwork },
 		AWSSignals:  []string{"provision_vpc", "vpc_cidr"},
 		AWSResource: "aws_vpc",
+		GCPSignals:  []string{"provision_network", "network_cidr"},
+		GCPResource: "google_compute_network",
+		// Azure: provision_vnet is forced true when no NetworkID is brought; vnet_cidr always carries
+		// a value. Foundational ⇒ positive-only, so non-kind-exclusivity is fine.
+		AzureSignals:  []string{"provision_vnet", "vnet_cidr"},
+		AzureResource: "azurerm_virtual_network",
 	},
 	{
 		Kind:         "cluster",
 		Doc:          "the managed Kubernetes cluster (EKS/GKE/AKS/ACK).",
 		Foundational: true,
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			disk := 50
+			version, instanceTypes := "1.32", []string{"m5.large"}
+			switch provider {
+			case "gcp":
+				// m5.large is an EC2 type GKE rejects; 1.32 is delisted on GKE (1.33+ served).
+				version, instanceTypes = "1.33", []string{"e2-standard-2"}
+			case "azure":
+				// m5.large is an EC2 type AKS rejects; keep the k8s version in Azure's STANDARD
+				// support window (resolveK8sVersion tolerates a bare minor, but an aged version fails
+				// an AKS create with K8sVersionNotSupported — 1.35 is the catalog default).
+				version, instanceTypes = "1.35", []string{"Standard_D2s_v3"}
+			}
 			pc.Cluster = types.ProjectClusterConfig{
-				ClusterVersion:  "1.32",
-				InstanceTypes:   []string{"m5.large"},
+				ClusterVersion:  version,
+				InstanceTypes:   instanceTypes,
 				NodeMinSize:     2,
 				NodeMaxSize:     5,
 				NodeDesiredSize: 2,
@@ -96,43 +136,85 @@ var MaxConfigKinds = []MaxConfigKind{
 		},
 		AWSSignals:  []string{"eks_instance_types", "eks_ng_desired_size"},
 		AWSResource: "aws_eks_cluster",
+		GCPSignals:  []string{"provision_gke", "gke_instance_types"},
+		GCPResource: "google_container_cluster",
+		// Azure: aks_instance_types / aks_node_desired_size are added only when the cluster block is
+		// populated (kind-exclusive), unlike the always-true provision_aks bool.
+		AzureSignals:  []string{"aks_instance_types", "aks_node_desired_size"},
+		AzureResource: "azurerm_kubernetes_cluster",
 	},
 	{
 		Kind: "database",
 		Doc:  "a managed SQL database. NOTE: AWS reads only databases[0] — one entry exercises the kind.",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			min, max := 0.5, 4.0
 			port, backup := 5432, 7
 			iam := true
+			engineVersion, instanceClass := "16.6", "db.r6g.large"
+			switch provider {
+			case "gcp":
+				// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, "16.6" is not; and
+				// db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
+				engineVersion, instanceClass = "16", "db-f1-micro"
+			case "azure":
+				// PostgreSQL Flexible Server takes a bare major version ("16") and a B_/GP_/MO_ SKU
+				// name — "16.6" and the RDS class db.r6g.large are both rejected.
+				engineVersion, instanceClass = "16", "B_Standard_B1ms"
+			}
 			pc.Databases = []types.ProjectDatabaseConfig{{
-				Name: "appdb", EngineFamily: "postgres", EngineVersion: "16.6",
-				InstanceClass: "db.r6g.large", MinCapacity: &min, MaxCapacity: &max,
+				Name: "appdb", EngineFamily: "postgres", EngineVersion: engineVersion,
+				InstanceClass: instanceClass, MinCapacity: &min, MaxCapacity: &max,
 				Port: &port, BackupRetentionDays: &backup, IamAuth: &iam,
 			}}
 		},
-		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.Databases) > 0 },
-		AWSSignals:  []string{"create_rds", "rds_config"},
-		AWSResource: "aws_rds_cluster",
+		Populated:     func(pc *types.ProjectConfig) bool { return len(pc.Databases) > 0 },
+		AWSSignals:    []string{"create_rds", "rds_config"},
+		AWSResource:   "aws_rds_cluster",
+		GCPSignals:    []string{"create_cloud_sql"},
+		GCPResource:   "google_sql_database_instance",
+		AzureSignals:  []string{"create_azure_db"},
+		AzureResource: "azurerm_postgresql_flexible_server",
 	},
 	{
 		Kind: "cache",
 		Doc:  "a managed Redis/Valkey cache. NOTE: AWS reads only caches[0].",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			nodes := 2
 			multiAz := true
-			pc.Caches = []types.ProjectCacheConfig{{
+			cache := types.ProjectCacheConfig{
 				Name: "sessions", EngineVersion: "7.1", NodeType: "cache.t3.medium",
 				NumCacheNodes: &nodes, MultiAz: &multiAz,
-			}}
+			}
+			switch provider {
+			case "gcp":
+				// ElastiCache values break Memorystore (redis version "7.1" wants the enum
+				// REDIS_7_0; cache.t3.medium is not a Memorystore type). Leave both empty so the
+				// template's valid defaults apply; NumCacheNodes>1 ⇒ the STANDARD_HA tier. The
+				// ProjectConfig↔Memorystore shape wiring (memory-size/tier vs the emitted
+				// memorystore_instance_type) is a tracked gap — see #1085.
+				cache = types.ProjectCacheConfig{Name: "sessions", NumCacheNodes: &nodes, MultiAz: &multiAz}
+			case "azure":
+				// azurerm_managed_redis has no version/family/capacity args (default_database block),
+				// so redis "7.1" and cache.t3.medium have no mapping. Leave both empty: NumCacheNodes>1
+				// ⇒ azure_cache_sku="Standard" ⇒ the template resolves Balanced_B1 (a valid Managed-
+				// Redis SKU; floor Balanced_B0). The ProjectConfig NodeType↔Managed-Redis SKU wiring is
+				// a tracked gap — see #1091.
+				cache = types.ProjectCacheConfig{Name: "sessions", NumCacheNodes: &nodes, MultiAz: &multiAz}
+			}
+			pc.Caches = []types.ProjectCacheConfig{cache}
 		},
-		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.Caches) > 0 },
-		AWSSignals:  []string{"create_elasticache_redis"},
-		AWSResource: "aws_elasticache_replication_group",
+		Populated:     func(pc *types.ProjectConfig) bool { return len(pc.Caches) > 0 },
+		AWSSignals:    []string{"create_elasticache_redis"},
+		AWSResource:   "aws_elasticache_replication_group",
+		GCPSignals:    []string{"create_memorystore"},
+		GCPResource:   "google_redis_instance",
+		AzureSignals:  []string{"create_azure_cache"},
+		AzureResource: "azurerm_managed_redis",
 	},
 	{
 		Kind: "queue",
 		Doc:  "a message queue (SQS). Signal is sqs_queues (NOT provision_sqs — topics set that too).",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			ordered := true
 			vis, ret := 30, 345600
 			pc.Queues = []types.ProjectQueueConfig{{
@@ -143,11 +225,19 @@ var MaxConfigKinds = []MaxConfigKind{
 		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.Queues) > 0 },
 		AWSSignals:  []string{"sqs_queues"},
 		AWSResource: "aws_sqs_queue",
+		// GCP: the queue folds into pubsub_topics["jobs"]. create_pubsub/pubsub_topics are NOT
+		// kind-exclusive (topic sets them too), so the negative test keys off the "jobs" map entry.
+		GCPSignals:  []string{"create_pubsub", "pubsub_topics"},
+		GCPResource: "google_pubsub_topic",
+		// Azure: distinct service_bus_queues map (NOT the shared create_service_bus bool, which topics
+		// also set) — cleanly kind-exclusive, so the negative test needs no GCP-style discriminator.
+		AzureSignals:  []string{"service_bus_queues"},
+		AzureResource: "azurerm_servicebus_queue",
 	},
 	{
 		Kind: "topic",
 		Doc:  "a pub/sub topic (SNS) with a subscription.",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.Topics = []types.ProjectTopicConfig{{
 				Name: "events",
 				Subscriptions: []types.TopicSubscription{
@@ -158,11 +248,17 @@ var MaxConfigKinds = []MaxConfigKind{
 		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.Topics) > 0 },
 		AWSSignals:  []string{"sns_topics"},
 		AWSResource: "aws_sns_topic",
+		// GCP: the topic folds into pubsub_topics["events"] (same google_pubsub_topic type as queue).
+		GCPSignals:  []string{"create_pubsub", "pubsub_topics"},
+		GCPResource: "google_pubsub_topic",
+		// Azure: distinct service_bus_topics map (separate from the queue's service_bus_queues).
+		AzureSignals:  []string{"service_bus_topics"},
+		AzureResource: "azurerm_servicebus_topic",
 	},
 	{
 		Kind: "nosql",
 		Doc:  "a NoSQL table (DynamoDB).",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.NosqlTables = []types.ProjectNosqlConfig{{
 				Name: "items", PartitionKey: "pk", PartitionKeyType: "S",
 				SortKey: "sk", SortKeyType: "S", TableType: "standard",
@@ -172,23 +268,32 @@ var MaxConfigKinds = []MaxConfigKind{
 		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.NosqlTables) > 0 },
 		AWSSignals:  []string{"ddb_create", "ddb_table_configuration"},
 		AWSResource: "aws_dynamodb_table",
+		GCPSignals:  []string{"create_firestore"},
+		GCPResource: "google_firestore_database",
+		// Azure: the per-table container (account/db parents are shared, one each).
+		AzureSignals:  []string{"create_cosmos_db"},
+		AzureResource: "azurerm_cosmosdb_sql_container",
 	},
 	{
 		Kind: "secrets",
 		Doc:  "a generated secret in the cloud secret store (Secrets Manager).",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.Secrets = []types.ProjectSecretConfig{{
 				Name: "api-key", Generate: true, Length: 32, SpecialChars: true,
 			}}
 		},
-		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.Secrets) > 0 },
-		AWSSignals:  []string{"custom_secrets"},
-		AWSResource: "aws_secretsmanager_secret",
+		Populated:     func(pc *types.ProjectConfig) bool { return len(pc.Secrets) > 0 },
+		AWSSignals:    []string{"custom_secrets"},
+		AWSResource:   "aws_secretsmanager_secret",
+		GCPSignals:    []string{"custom_secrets"},
+		GCPResource:   "google_secret_manager_secret",
+		AzureSignals:  []string{"custom_secrets"},
+		AzureResource: "azurerm_key_vault_secret",
 	},
 	{
 		Kind: "bucket",
 		Doc:  "an object-storage bucket (S3).",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.StorageBuckets = []types.ProjectStorageBucketConfig{{
 				Name: "assets", Versioning: true, EncryptionEnabled: true, PublicAccess: false,
 				CorsOrigins: []string{"https://example.com"},
@@ -197,29 +302,42 @@ var MaxConfigKinds = []MaxConfigKind{
 		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.StorageBuckets) > 0 },
 		AWSSignals:  []string{"s3_create", "bucket_configuration"},
 		AWSResource: "aws_s3_bucket",
+		GCPSignals:  []string{"create_cloud_storage", "cloud_storage_buckets"},
+		GCPResource: "google_storage_bucket",
+		// Azure: the per-bucket container (the storage account parent is shared).
+		AzureSignals:  []string{"create_storage_account"},
+		AzureResource: "azurerm_storage_container",
 	},
 	{
 		Kind: "registry",
 		Doc:  "a container image registry (ECR). AWS emits provision_ecr as a boolean (name unused).",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: "app-images"}}
 		},
-		Populated:   func(pc *types.ProjectConfig) bool { return len(pc.ContainerRegistries) > 0 },
-		AWSSignals:  []string{"provision_ecr"},
-		AWSResource: "aws_ecr_repository",
+		Populated:     func(pc *types.ProjectConfig) bool { return len(pc.ContainerRegistries) > 0 },
+		AWSSignals:    []string{"provision_ecr"},
+		AWSResource:   "aws_ecr_repository",
+		GCPSignals:    []string{"provision_artifact_registry"},
+		GCPResource:   "google_artifact_registry_repository",
+		AzureSignals:  []string{"provision_acr"},
+		AzureResource: "azurerm_container_registry",
 	},
 	{
 		Kind: "dns",
 		Doc:  "cloud-native DNS (Route 53). cloud_dns_enabled fires only when enabled AND no zone_id is brought.",
-		Apply: func(pc *types.ProjectConfig) {
+		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.DNS = types.ProjectDNSConfig{
 				Enabled: true, DomainName: "example.com", ZoneID: "",
 				ProviderConfig: map[string]any{"acm_certificate": true},
 			}
 		},
-		Populated:   func(pc *types.ProjectConfig) bool { return pc.DNS.Enabled },
-		AWSSignals:  []string{"cloud_dns_enabled"},
-		AWSResource: "aws_route53_zone",
+		Populated:     func(pc *types.ProjectConfig) bool { return pc.DNS.Enabled },
+		AWSSignals:    []string{"cloud_dns_enabled"},
+		AWSResource:   "aws_route53_zone",
+		GCPSignals:    []string{"cloud_dns_enabled"},
+		GCPResource:   "google_dns_managed_zone",
+		AzureSignals:  []string{"azure_dns_enabled"},
+		AzureResource: "azurerm_dns_zone",
 	},
 }
 
@@ -242,7 +360,7 @@ func MaxConfigEnabled() bool {
 func MaxConfigProjectConfig(provider string) *types.ProjectConfig {
 	pc := &types.ProjectConfig{Provider: types.CloudProvider(provider)}
 	for _, k := range MaxConfigKinds {
-		k.Apply(pc)
+		k.Apply(pc, provider)
 	}
 	return pc
 }
@@ -285,11 +403,16 @@ func MaxConfigSnapshot(base map[string]any, provider string) error {
 }
 
 // ResourceFor returns the tofu resource type a real apply must create for this kind on the given
-// provider. Only AWS is wired today (AWS-first); other clouds return "" until their column lands, so
-// the real-apply assertion skips them rather than asserting a guessed type.
+// provider. AWS, GCP and Azure are wired; other clouds return "" until their column lands, so the
+// real-apply assertion reports them as unmapped rather than asserting a guessed type.
 func (k MaxConfigKind) ResourceFor(provider string) string {
-	if provider == "aws" {
+	switch provider {
+	case "aws":
 		return k.AWSResource
+	case "gcp":
+		return k.GCPResource
+	case "azure":
+		return k.AzureResource
 	}
 	return ""
 }

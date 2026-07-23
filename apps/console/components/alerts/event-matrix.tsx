@@ -83,12 +83,14 @@ export function EventMatrix({
                       </div>
                       {locked ? (
                         <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="inline-flex cursor-default items-center gap-1.5 font-mono text-[10px] uppercase text-muted-foreground/60">
-                              <Lock className="size-3" />
-                              Ent
-                            </span>
-                          </TooltipTrigger>
+                          <TooltipTrigger
+                            render={
+                              <span className="inline-flex cursor-default items-center gap-1.5 font-mono text-[10px] uppercase text-muted-foreground/60">
+                                <Lock className="size-3" />
+                                Ent
+                              </span>
+                            }
+                          />
                           <TooltipContent
                             side="left"
                             className="max-w-[200px] text-xs"

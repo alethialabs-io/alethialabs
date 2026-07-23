@@ -12,6 +12,7 @@ import { sealSensitive } from "@/lib/cloud-providers/inventory/upsert";
 import {
 	type CloudIdentity,
 	cloudDnsZones,
+	cloudIdentities,
 	cloudKubernetesClusters,
 	cloudNetworks,
 	cloudRegions,
@@ -19,17 +20,38 @@ import {
 } from "@/lib/db/schema";
 import type { CloudInventoryAttributes } from "@/types/jsonb.types";
 
-/** The inventory kinds the event ingester maps today (the canvas/elench hot path). */
-export type CloudEventKind =
+/** The inventory kinds the event ingester maps today (the canvas/elench hot path) — each carries the
+ * resource DATA and upserts / soft-removes the matching typed inventory row. */
+export type CloudInventoryEventKind =
 	| "region"
 	| "network"
 	| "subnet"
 	| "dns_zone"
 	| "kubernetes_cluster";
 
-/** A provider-agnostic change event — the shape each provider's webhook normalizes its raw event to. */
-export interface NormalizedCloudEvent {
-	kind: CloudEventKind;
+/** Tier-2 invalidation-SIGNAL kinds (epic #928 / #978) — these carry NO data. A signal marks a slice dirty
+ * by NULLing the matching freshness sentinel on the connection, so the authoritative backstop sweep
+ * re-checks JUST that connection on its next tick (keyless). `capability_dirty` → the capability refresh
+ * sweep (`capabilities_synced_at`). (The `connection_health` re-probe signal is added by #979.) */
+export type CloudSignalEventKind = "capability_dirty";
+
+/** The full set of normalized event kinds the ingester understands. */
+export type CloudEventKind = CloudInventoryEventKind | CloudSignalEventKind;
+
+/** The capability slice a `capability_dirty` signal invalidates — a bounded, provider-agnostic axis the
+ * forwarder derives from its raw source (a region enable/disable, a service-quota change, an offered
+ * instance-type change, or a service enablement). Advisory only: with no per-slice sentinel column the
+ * ingester NULLs the whole connection's `capabilities_synced_at`, and the sweep's per-region hash gate keeps
+ * the unchanged slices cheap to re-confirm. */
+export type CapabilityDirtyAxis =
+	| "regions"
+	| "instance_types"
+	| "quota"
+	| "services";
+
+/** An inventory change event — the shape each provider's forwarder normalizes a resource create/delete to. */
+export interface InventoryCloudEvent {
+	kind: CloudInventoryEventKind;
 	/** The provider-native resource id (vpc-…, /subscriptions/…/…, …). */
 	native_id: string;
 	region?: string | null;
@@ -38,6 +60,18 @@ export interface NormalizedCloudEvent {
 	/** True for a delete event → the row is soft-removed instead of upserted. */
 	deleted?: boolean;
 }
+
+/** A capability-invalidation SIGNAL — emitted when the customer account changes something that could alter
+ * WHAT it can launch (a region toggle, a service-quota change, a service enablement). Carries only the
+ * dirtied axis (+ optional region), never data — the sweep re-enumerates authoritatively. */
+export interface CapabilityDirtyEvent {
+	kind: "capability_dirty";
+	axis: CapabilityDirtyAxis;
+	region?: string | null;
+}
+
+/** A provider-agnostic normalized event — either an inventory change or a Tier-2 invalidation signal. */
+export type NormalizedCloudEvent = InventoryCloudEvent | CapabilityDirtyEvent;
 
 /**
  * Applies one normalized change event to a connection's inventory. Typed per-kind (concrete tables)
@@ -51,6 +85,28 @@ export async function applyCloudEvent(
 ): Promise<void> {
 	const db = getServiceDb();
 	const now = new Date();
+
+	// Tier-2 (#978) invalidation SIGNAL: carries no data, just NULLs the connection's capability freshness
+	// sentinel. `capabilities_synced_at IS NULL` counts as DUE in the capability sweep (sweep.ts), so the
+	// next tick re-enumerates this connection keyless — the sweep stays the authoritative enumerator. No
+	// per-slice sentinel column exists, so `axis`/`region` are advisory (the sweep's per-region hash gate
+	// keeps the unchanged slices cheap to re-confirm). This branches BEFORE the inventory-row payload below,
+	// which narrows `event` to an InventoryCloudEvent.
+	if (event.kind === "capability_dirty") {
+		// Filter by provider too (the standing cloud_identities rule) — defense-in-depth against a
+		// cross-provider verified_account_id collision at the route's resolve step.
+		await db
+			.update(cloudIdentities)
+			.set({ capabilities_synced_at: null })
+			.where(
+				and(
+					eq(cloudIdentities.id, cloudIdentityId),
+					eq(cloudIdentities.provider, provider),
+				),
+			);
+		return;
+	}
+
 	// Seal any reconnaissance-sensitive attr the event carries (e.g. a CIDR) into the encrypted blob;
 	// never persist raw attributes. Most forwarders send only {kind, native_id, region, name}.
 	const cidr = event.attributes?.cidr_block;

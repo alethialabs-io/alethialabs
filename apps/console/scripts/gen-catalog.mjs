@@ -19,7 +19,63 @@ const outPath = resolve(here, "../lib/cloud-providers/generated/catalog.ts");
 const raw = readFileSync(srcPath, "utf8");
 // Parse to validate it's well-formed before we emit; re-stringify for stable formatting.
 const data = JSON.parse(raw);
-const json = JSON.stringify(data, null, "\t").replace(/\n/g, "\n\t");
+
+// Emit a JS value as a TS literal, indented one level so it aligns under `export const ...`.
+const emit = (v) => JSON.stringify(v, null, "\t").replace(/\n/g, "\n\t");
+
+// The legacy snake_case `CATALOG` mirror carries ONLY the original core sections — the `live`
+// block (Catalog #2, #1126) is emitted separately as its own typed consts below, so keep it out
+// of the `Catalog`-typed object.
+const { live: _live, ...catalogCore } = data;
+const json = emit(catalogCore);
+
+// The `live` block (Catalog #2, #1126): the full 7-provider / native-region / cross-provider /
+// WAF-CERT-NOSQL-NETWORK-MESSAGING data, extracted VERBATIM from the hand-maintained constants so
+// the generated baseline is a byte-exact SUPERSET the #969 barrel-shim can re-export unchanged.
+const live = data.live;
+if (!live) throw new Error("catalog.json is missing the `live` block (#1126)");
+
+// Fail-fast shape guard: the `live` block must carry every Catalog #2 section, and every
+// provisioning-keyed map must cover the same slug set (so the emitted `Record<CloudProviderSlug, …>`
+// consts are total). A malformed catalog.json reds here with a clear message instead of emitting a
+// broken catalog.ts (type errors then surface far downstream). check-types is the deeper guard.
+const REQUIRED_LIVE_KEYS = [
+	"providers", "regionLabels", "defaultRegion", "regionMap", "instanceTypes",
+	"k8sVersions", "autoscaler", "defaultInstanceType", "defaultK8sVersion", "instanceTypeMap",
+	"dbEngines", "dbCapacity", "engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap",
+	"wafOptions", "certOptions", "nosql", "network", "messaging",
+];
+for (const k of REQUIRED_LIVE_KEYS) {
+	if (!(k in live)) throw new Error(`catalog.json live block is missing '${k}' (#1126)`);
+}
+const provisioningSlugs = Object.keys(live.instanceTypes).sort();
+for (const k of ["regionLabels", "defaultRegion", "regionMap", "k8sVersions", "autoscaler",
+	"defaultInstanceType", "defaultK8sVersion", "instanceTypeMap", "dbEngines", "dbCapacity",
+	"engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap", "wafOptions", "certOptions",
+	"nosql", "network", "messaging"]) {
+	const got = Object.keys(live[k]).sort();
+	if (got.join(",") !== provisioningSlugs.join(",")) {
+		throw new Error(
+			`catalog.json live.${k} slug set [${got}] != provisioning set [${provisioningSlugs}] (#1126)`,
+		);
+	}
+}
+
+// The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
+// live data's own coverage (the `instanceTypes` keys) so it can't drift from it. Still gated through
+// `Extract<CloudProvider, ...>` so an off-enum slug surfaces instead of being invented.
+const provisioningSlugUnion = Object.keys(live.instanceTypes)
+	.map((s) => JSON.stringify(s))
+	.join(" | ");
+
+// Derive the `ProviderSlug` union from the catalog's OWN provider coverage rather than
+// hardcoding it, so the type can never drift from the data (the whole point of this SSOT).
+// `Extract<CloudProvider, …>` still gates each slug against the generated `cloud_provider`
+// enum — a catalog provider that isn't a valid enum member resolves to `never` and drops out,
+// surfacing the mismatch instead of inventing an off-enum slug.
+const providerSlugUnion = data.providers
+	.map((p) => JSON.stringify(p.slug))
+	.join(" | ");
 
 const out = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
@@ -29,10 +85,11 @@ const out = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // Run \`pnpm -F console gen:catalog\` to regenerate.
 
 import type { CloudProvider } from "@/lib/db/schema/enums";
+import type { ClusterProviderConfig, DnsProviderConfig } from "@/types/jsonb.types";
 
 // The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
-// \`cloud_provider\` enum (derived so it can't drift).
-export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure">;
+// \`cloud_provider\` enum, derived from the catalog's own \`providers[]\` so it can't drift.
+export type ProviderSlug = Extract<CloudProvider, ${providerSlugUnion}>;
 export type InstanceFamily = "general" | "compute" | "memory" | "gpu";
 export type EngineFamily = "postgres" | "mysql";
 
@@ -190,6 +247,186 @@ export function nearestCacheTier(
 			: best,
 	);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Catalog #2 (the "live" surface) — the full, hand-maintained provisioning-option catalog, now
+// generated from the SAME source of truth (#1126). These exports are a byte-exact SUPERSET of the
+// former hand-written constants (apps/console/lib/cloud-providers/{registry,regions,compute,
+// database,cache,dns,nosql,network,messaging}.ts): all connectable providers (incl.
+// digitalocean/civo), native per-provider region labels + cross-provider conversion maps,
+// camelCase field names, and the WAF/CERT/NOSQL/NETWORK/MESSAGING maps the snake_case CATALOG above
+// does not carry. The #969 barrel-shim re-exports these verbatim (zero importer behaviour change);
+// #970 then deletes the hand-written source.
+
+// Every cloud a user can CONNECT (identity layer) — the full generated cloud_provider enum.
+export type ConnectableCloudSlug = CloudProvider;
+// The clouds with full provisioning-option catalogs — a curated subset, derived from the live
+// data's own coverage so it can't drift from it.
+export type CloudProviderSlug = Extract<CloudProvider, ${provisioningSlugUnion}>;
+
+/** High-level metadata and service-name mappings for a cloud provider (camelCase). */
+export interface CloudProviderMeta {
+	slug: ConnectableCloudSlug;
+	name: string;
+	shortName: string;
+	icon: string;
+	clusterService: string;
+	networkName: string;
+	dnsService: string;
+	certService: string;
+	dbService: string;
+	cacheService: string;
+	nosqlService: string;
+	queueService: string;
+	topicService: string;
+	registryService: string;
+	secretsService: string;
+	storageService: string;
+}
+
+/** Provider metadata keyed by slug (all connectable clouds). */
+export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = ${emit(live.providers)};
+
+export interface RegionMeta {
+	label: string;
+	group: string;
+}
+
+/** Human-readable region labels + geographic groupings per provider (native region codes). */
+export const REGION_LABELS: Record<CloudProviderSlug, Record<string, RegionMeta>> = ${emit(live.regionLabels)};
+
+/** Default region per provider (used when no cached regions are available). */
+export const DEFAULT_REGION: Record<CloudProviderSlug, string> = ${emit(live.defaultRegion)};
+
+/** Cross-provider region mapping for project conversion. */
+export const REGION_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = ${emit(live.regionMap)};
+
+export interface InstanceTypeOption {
+	value: string;
+	label: string;
+	vcpu: number;
+	memoryGb: number;
+	cost: string;
+}
+
+/** Instance/machine type options per provider. */
+export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = ${emit(live.instanceTypes)};
+
+/** Supported Kubernetes versions per provider (latest first). */
+export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = ${emit(live.k8sVersions)};
+
+export interface AutoscalerMeta {
+	providerConfigKey: keyof ClusterProviderConfig;
+	label: string;
+	description: string;
+}
+
+/** Provider-specific cluster autoscaler configuration. */
+export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = ${emit(live.autoscaler)};
+
+/** Default instance type per provider (used for new project forms). */
+export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = ${emit(live.defaultInstanceType)};
+
+/** Default K8s version per provider (new-project form seed). */
+export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = ${emit(live.defaultK8sVersion)};
+
+/** Cross-provider instance type mapping for project conversion. */
+export const INSTANCE_TYPE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = ${emit(live.instanceTypeMap)};
+
+export interface DbEngineOption {
+	value: string;
+	label: string;
+	defaultVersion: string;
+}
+
+/** Database engine options per provider. */
+export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = ${emit(live.dbEngines)};
+
+export interface CapacityModel {
+	unit: string;
+	min: number;
+	max: number;
+	step: number;
+	defaultMin: number;
+	defaultMax: number;
+}
+
+/** Capacity model (scaling units) per provider. */
+export const DB_CAPACITY: Record<CloudProviderSlug, CapacityModel> = ${emit(live.dbCapacity)};
+
+/** Cross-provider database engine mapping for project conversion. */
+export const ENGINE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = ${emit(live.engineMap)};
+
+export interface CacheNodeOption {
+	value: string;
+	label: string;
+	memoryGb: number;
+	cost: string;
+}
+
+/** Cache node type options per provider. */
+export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = ${emit(live.cacheNodeTypes)};
+
+/** Default cache node type per provider. */
+export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = ${emit(live.defaultCacheNode)};
+
+/** Cross-provider cache node mapping for project conversion. */
+export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = ${emit(live.cacheNodeMap)};
+
+export interface WafOption {
+	providerConfigKey: keyof DnsProviderConfig;
+	label: string;
+	description: string;
+	cost: string;
+}
+
+/** WAF options per provider (shown as toggles in the DNS section). */
+export const WAF_OPTIONS: Record<CloudProviderSlug, WafOption[]> = ${emit(live.wafOptions)};
+
+export interface CertOption {
+	providerConfigKey: keyof DnsProviderConfig;
+	label: string;
+	description: string;
+}
+
+/** Managed certificate options per provider. */
+export const CERT_OPTIONS: Record<CloudProviderSlug, CertOption> = ${emit(live.certOptions)};
+
+export interface NosqlConfig {
+	serviceName: string;
+	supportsRangeKey: boolean;
+	supportsGlobalTables: boolean;
+	billingModes: { value: string; label: string }[];
+	keyTypes: { value: string; label: string }[];
+	portabilityNote: string | null;
+}
+
+/** NoSQL service configuration per provider. */
+export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = ${emit(live.nosql)};
+
+export interface NetworkConfig {
+	networkLabel: string;
+	createLabel: string;
+	existingLabel: string;
+	cidrLabel: string;
+	natLabel: string;
+	natSingleLabel: string;
+	natMultiLabel: string;
+}
+
+/** Network/VPC terminology and labels per provider. */
+export const NETWORK: Record<CloudProviderSlug, NetworkConfig> = ${emit(live.network)};
+
+export interface MessagingConfig {
+	queueLabel: string;
+	topicLabel: string;
+	supportsFifo: boolean;
+	fifoLabel: string;
+	visibilityTimeoutLabel: string;
+}
+
+/** Messaging service configuration per provider. */
+export const MESSAGING: Record<CloudProviderSlug, MessagingConfig> = ${emit(live.messaging)};
 `;
 
 mkdirSync(dirname(outPath), { recursive: true });

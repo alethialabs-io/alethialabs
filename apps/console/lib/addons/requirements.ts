@@ -8,8 +8,10 @@
 // hcloud-volumes (infra/templates/project/hetzner/csi.tf), gcp/azure managed-K8s
 // built-ins; Alibaba's ACK template manages no StorageClass, so its hint is "verify".
 
-import { PROVIDERS } from "@/lib/cloud-providers/registry";
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import {
+	type CloudProviderSlug,
+	PROVIDERS,
+} from "@/lib/cloud-providers/generated/catalog";
 import type { AddOnRequirement } from "./types";
 
 /** How a requirement is met on the target cloud: provisioned by the platform template

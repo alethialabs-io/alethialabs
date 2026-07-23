@@ -60,3 +60,15 @@ func TestRunKubeToken_UnsupportedProvider(t *testing.T) {
 		t.Error("expected error for unsupported provider, got nil")
 	}
 }
+
+func TestRunKubeToken_AlibabaNotYetWired(t *testing.T) {
+	// alibaba is a recognized seam (#1129) — it must fail closed with a follow-up-naming error, not
+	// mint a token and not fall through to the opaque "unsupported provider" default.
+	err := RunKubeToken(context.Background(), []string{"--provider", "alibaba", "--cluster", "ack-fabric", "--region", "ap-southeast-1"})
+	if err == nil {
+		t.Fatal("expected fail-closed error for alibaba (namespace re-mint not yet wired), got nil")
+	}
+	if !strings.Contains(err.Error(), "#1129") {
+		t.Errorf("alibaba error %q should name the follow-up (#1129)", err.Error())
+	}
+}

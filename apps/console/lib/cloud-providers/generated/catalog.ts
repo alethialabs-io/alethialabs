@@ -6,10 +6,11 @@
 // Run `pnpm -F console gen:catalog` to regenerate.
 
 import type { CloudProvider } from "@/lib/db/schema/enums";
+import type { ClusterProviderConfig, DnsProviderConfig } from "@/types/jsonb.types";
 
 // The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
-// `cloud_provider` enum (derived so it can't drift).
-export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure">;
+// `cloud_provider` enum, derived from the catalog's own `providers[]` so it can't drift.
+export type ProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure" | "hetzner" | "alibaba">;
 export type InstanceFamily = "general" | "compute" | "memory" | "gpu";
 export type EngineFamily = "postgres" | "mysql";
 
@@ -1017,3 +1018,2131 @@ export function nearestCacheTier(
 			: best,
 	);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Catalog #2 (the "live" surface) — the full, hand-maintained provisioning-option catalog, now
+// generated from the SAME source of truth (#1126). These exports are a byte-exact SUPERSET of the
+// former hand-written constants (apps/console/lib/cloud-providers/{registry,regions,compute,
+// database,cache,dns,nosql,network,messaging}.ts): all connectable providers (incl.
+// digitalocean/civo), native per-provider region labels + cross-provider conversion maps,
+// camelCase field names, and the WAF/CERT/NOSQL/NETWORK/MESSAGING maps the snake_case CATALOG above
+// does not carry. The #969 barrel-shim re-exports these verbatim (zero importer behaviour change);
+// #970 then deletes the hand-written source.
+
+// Every cloud a user can CONNECT (identity layer) — the full generated cloud_provider enum.
+export type ConnectableCloudSlug = CloudProvider;
+// The clouds with full provisioning-option catalogs — a curated subset, derived from the live
+// data's own coverage so it can't drift from it.
+export type CloudProviderSlug = Extract<CloudProvider, "aws" | "gcp" | "azure" | "hetzner" | "alibaba">;
+
+/** High-level metadata and service-name mappings for a cloud provider (camelCase). */
+export interface CloudProviderMeta {
+	slug: ConnectableCloudSlug;
+	name: string;
+	shortName: string;
+	icon: string;
+	clusterService: string;
+	networkName: string;
+	dnsService: string;
+	certService: string;
+	dbService: string;
+	cacheService: string;
+	nosqlService: string;
+	queueService: string;
+	topicService: string;
+	registryService: string;
+	secretsService: string;
+	storageService: string;
+}
+
+/** Provider metadata keyed by slug (all connectable clouds). */
+export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
+		"aws": {
+			"slug": "aws",
+			"name": "Amazon Web Services",
+			"shortName": "AWS",
+			"icon": "/aws/favicon_64x64.png",
+			"clusterService": "EKS",
+			"networkName": "VPC",
+			"dnsService": "Route 53",
+			"certService": "ACM",
+			"dbService": "Aurora",
+			"cacheService": "ElastiCache",
+			"nosqlService": "DynamoDB",
+			"queueService": "SQS",
+			"topicService": "SNS",
+			"registryService": "ECR",
+			"secretsService": "Secrets Manager",
+			"storageService": "S3"
+		},
+		"gcp": {
+			"slug": "gcp",
+			"name": "Google Cloud Platform",
+			"shortName": "GCP",
+			"icon": "/gcp/favicon_64x64.png",
+			"clusterService": "GKE",
+			"networkName": "VPC Network",
+			"dnsService": "Cloud DNS",
+			"certService": "Managed Certificate",
+			"dbService": "Cloud SQL",
+			"cacheService": "Memorystore",
+			"nosqlService": "Firestore",
+			"queueService": "Pub/Sub",
+			"topicService": "Pub/Sub",
+			"registryService": "Artifact Registry",
+			"secretsService": "Secret Manager",
+			"storageService": "Cloud Storage"
+		},
+		"azure": {
+			"slug": "azure",
+			"name": "Microsoft Azure",
+			"shortName": "Azure",
+			"icon": "/azure/favicon_64x64.png",
+			"clusterService": "AKS",
+			"networkName": "VNet",
+			"dnsService": "Azure DNS",
+			"certService": "App Service Certificate",
+			"dbService": "Azure Database",
+			"cacheService": "Azure Cache for Redis",
+			"nosqlService": "Cosmos DB",
+			"queueService": "Service Bus",
+			"topicService": "Service Bus",
+			"registryService": "ACR",
+			"secretsService": "Key Vault",
+			"storageService": "Blob Storage"
+		},
+		"alibaba": {
+			"slug": "alibaba",
+			"name": "Alibaba Cloud",
+			"shortName": "Alibaba",
+			"icon": "/alibaba/favicon_64x64.png",
+			"clusterService": "ACK",
+			"networkName": "VPC",
+			"dnsService": "Alibaba DNS",
+			"certService": "SSL Certificates",
+			"dbService": "ApsaraDB RDS",
+			"cacheService": "ApsaraDB for Redis",
+			"nosqlService": "Tablestore",
+			"queueService": "MNS",
+			"topicService": "MNS",
+			"registryService": "Container Registry (ACR)",
+			"secretsService": "KMS",
+			"storageService": "OSS"
+		},
+		"digitalocean": {
+			"slug": "digitalocean",
+			"name": "DigitalOcean",
+			"shortName": "DO",
+			"icon": "/digitalocean/favicon_64x64.png",
+			"clusterService": "DOKS",
+			"networkName": "VPC",
+			"dnsService": "DigitalOcean DNS",
+			"certService": "Let's Encrypt",
+			"dbService": "Managed Databases",
+			"cacheService": "Managed Redis",
+			"nosqlService": "—",
+			"queueService": "—",
+			"topicService": "—",
+			"registryService": "Container Registry",
+			"secretsService": "—",
+			"storageService": "Spaces"
+		},
+		"hetzner": {
+			"slug": "hetzner",
+			"name": "Hetzner Cloud",
+			"shortName": "Hetzner",
+			"icon": "/hetzner/favicon_64x64.png",
+			"clusterService": "Talos Kubernetes",
+			"networkName": "Hetzner Network",
+			"dnsService": "ExternalDNS",
+			"certService": "Let's Encrypt",
+			"dbService": "CloudNativePG (in-cluster)",
+			"cacheService": "Valkey (in-cluster)",
+			"nosqlService": "—",
+			"queueService": "RabbitMQ (in-cluster)",
+			"topicService": "—",
+			"registryService": "Harbor (in-cluster)",
+			"secretsService": "Vault (in-cluster)",
+			"storageService": "Object Storage"
+		},
+		"civo": {
+			"slug": "civo",
+			"name": "Civo",
+			"shortName": "Civo",
+			"icon": "/civo/favicon_64x64.png",
+			"clusterService": "Civo K3s",
+			"networkName": "Network",
+			"dnsService": "Civo DNS",
+			"certService": "Let's Encrypt",
+			"dbService": "Managed Databases",
+			"cacheService": "—",
+			"nosqlService": "—",
+			"queueService": "—",
+			"topicService": "—",
+			"registryService": "—",
+			"secretsService": "—",
+			"storageService": "Object Store"
+		}
+	};
+
+export interface RegionMeta {
+	label: string;
+	group: string;
+}
+
+/** Human-readable region labels + geographic groupings per provider (native region codes). */
+export const REGION_LABELS: Record<CloudProviderSlug, Record<string, RegionMeta>> = {
+		"aws": {
+			"us-east-1": {
+				"label": "N. Virginia",
+				"group": "United States"
+			},
+			"us-east-2": {
+				"label": "Ohio",
+				"group": "United States"
+			},
+			"us-west-1": {
+				"label": "N. California",
+				"group": "United States"
+			},
+			"us-west-2": {
+				"label": "Oregon",
+				"group": "United States"
+			},
+			"eu-west-1": {
+				"label": "Ireland",
+				"group": "Europe"
+			},
+			"eu-west-2": {
+				"label": "London",
+				"group": "Europe"
+			},
+			"eu-west-3": {
+				"label": "Paris",
+				"group": "Europe"
+			},
+			"eu-central-1": {
+				"label": "Frankfurt",
+				"group": "Europe"
+			},
+			"eu-central-2": {
+				"label": "Zurich",
+				"group": "Europe"
+			},
+			"eu-north-1": {
+				"label": "Stockholm",
+				"group": "Europe"
+			},
+			"eu-south-1": {
+				"label": "Milan",
+				"group": "Europe"
+			},
+			"ap-southeast-1": {
+				"label": "Singapore",
+				"group": "Asia Pacific"
+			},
+			"ap-southeast-2": {
+				"label": "Sydney",
+				"group": "Asia Pacific"
+			},
+			"ap-northeast-1": {
+				"label": "Tokyo",
+				"group": "Asia Pacific"
+			},
+			"ap-northeast-2": {
+				"label": "Seoul",
+				"group": "Asia Pacific"
+			},
+			"ap-south-1": {
+				"label": "Mumbai",
+				"group": "Asia Pacific"
+			},
+			"sa-east-1": {
+				"label": "São Paulo",
+				"group": "South America"
+			}
+		},
+		"gcp": {
+			"us-central1": {
+				"label": "Iowa",
+				"group": "United States"
+			},
+			"us-east1": {
+				"label": "South Carolina",
+				"group": "United States"
+			},
+			"us-east4": {
+				"label": "N. Virginia",
+				"group": "United States"
+			},
+			"us-west1": {
+				"label": "Oregon",
+				"group": "United States"
+			},
+			"us-west2": {
+				"label": "Los Angeles",
+				"group": "United States"
+			},
+			"us-west4": {
+				"label": "Las Vegas",
+				"group": "United States"
+			},
+			"europe-west1": {
+				"label": "Belgium",
+				"group": "Europe"
+			},
+			"europe-west2": {
+				"label": "London",
+				"group": "Europe"
+			},
+			"europe-west3": {
+				"label": "Frankfurt",
+				"group": "Europe"
+			},
+			"europe-west4": {
+				"label": "Netherlands",
+				"group": "Europe"
+			},
+			"europe-west6": {
+				"label": "Zurich",
+				"group": "Europe"
+			},
+			"europe-north1": {
+				"label": "Finland",
+				"group": "Europe"
+			},
+			"asia-southeast1": {
+				"label": "Singapore",
+				"group": "Asia Pacific"
+			},
+			"asia-east1": {
+				"label": "Taiwan",
+				"group": "Asia Pacific"
+			},
+			"asia-northeast1": {
+				"label": "Tokyo",
+				"group": "Asia Pacific"
+			},
+			"asia-northeast2": {
+				"label": "Osaka",
+				"group": "Asia Pacific"
+			},
+			"asia-south1": {
+				"label": "Mumbai",
+				"group": "Asia Pacific"
+			},
+			"southamerica-east1": {
+				"label": "São Paulo",
+				"group": "South America"
+			}
+		},
+		"azure": {
+			"eastus": {
+				"label": "East US",
+				"group": "United States"
+			},
+			"eastus2": {
+				"label": "East US 2",
+				"group": "United States"
+			},
+			"centralus": {
+				"label": "Central US",
+				"group": "United States"
+			},
+			"westus": {
+				"label": "West US",
+				"group": "United States"
+			},
+			"westus2": {
+				"label": "West US 2",
+				"group": "United States"
+			},
+			"westus3": {
+				"label": "West US 3",
+				"group": "United States"
+			},
+			"westeurope": {
+				"label": "West Europe",
+				"group": "Europe"
+			},
+			"northeurope": {
+				"label": "North Europe",
+				"group": "Europe"
+			},
+			"uksouth": {
+				"label": "UK South",
+				"group": "Europe"
+			},
+			"ukwest": {
+				"label": "UK West",
+				"group": "Europe"
+			},
+			"germanywestcentral": {
+				"label": "Germany West Central",
+				"group": "Europe"
+			},
+			"swedencentral": {
+				"label": "Sweden Central",
+				"group": "Europe"
+			},
+			"francecentral": {
+				"label": "France Central",
+				"group": "Europe"
+			},
+			"switzerlandnorth": {
+				"label": "Switzerland North",
+				"group": "Europe"
+			},
+			"southeastasia": {
+				"label": "Southeast Asia",
+				"group": "Asia Pacific"
+			},
+			"eastasia": {
+				"label": "East Asia",
+				"group": "Asia Pacific"
+			},
+			"japaneast": {
+				"label": "Japan East",
+				"group": "Asia Pacific"
+			},
+			"koreacentral": {
+				"label": "Korea Central",
+				"group": "Asia Pacific"
+			},
+			"centralindia": {
+				"label": "Central India",
+				"group": "Asia Pacific"
+			},
+			"brazilsouth": {
+				"label": "Brazil South",
+				"group": "South America"
+			}
+		},
+		"hetzner": {
+			"fsn1": {
+				"label": "Falkenstein, Germany",
+				"group": "Europe"
+			},
+			"nbg1": {
+				"label": "Nuremberg, Germany",
+				"group": "Europe"
+			},
+			"hel1": {
+				"label": "Helsinki, Finland",
+				"group": "Europe"
+			},
+			"ash": {
+				"label": "Ashburn, VA",
+				"group": "United States"
+			},
+			"hil": {
+				"label": "Hillsboro, OR",
+				"group": "United States"
+			},
+			"sin": {
+				"label": "Singapore",
+				"group": "Asia Pacific"
+			}
+		},
+		"alibaba": {
+			"us-east-1": {
+				"label": "Virginia",
+				"group": "United States"
+			},
+			"us-west-1": {
+				"label": "Silicon Valley",
+				"group": "United States"
+			},
+			"eu-central-1": {
+				"label": "Frankfurt",
+				"group": "Europe"
+			},
+			"eu-west-1": {
+				"label": "London",
+				"group": "Europe"
+			},
+			"ap-southeast-1": {
+				"label": "Singapore",
+				"group": "Asia Pacific"
+			},
+			"ap-northeast-1": {
+				"label": "Tokyo",
+				"group": "Asia Pacific"
+			},
+			"ap-south-1": {
+				"label": "Mumbai",
+				"group": "Asia Pacific"
+			},
+			"cn-hangzhou": {
+				"label": "Hangzhou",
+				"group": "China"
+			},
+			"cn-shanghai": {
+				"label": "Shanghai",
+				"group": "China"
+			},
+			"cn-beijing": {
+				"label": "Beijing",
+				"group": "China"
+			},
+			"cn-shenzhen": {
+				"label": "Shenzhen",
+				"group": "China"
+			},
+			"cn-hongkong": {
+				"label": "Hong Kong",
+				"group": "China"
+			}
+		}
+	};
+
+/** Default region per provider (used when no cached regions are available). */
+export const DEFAULT_REGION: Record<CloudProviderSlug, string> = {
+		"aws": "eu-west-1",
+		"gcp": "europe-west1",
+		"azure": "westeurope",
+		"hetzner": "fsn1",
+		"alibaba": "ap-southeast-1"
+	};
+
+/** Cross-provider region mapping for project conversion. */
+export const REGION_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = {
+		"aws": {
+			"aws": {},
+			"gcp": {
+				"us-east-1": "us-east4",
+				"us-east-2": "us-central1",
+				"us-west-1": "us-west1",
+				"us-west-2": "us-west1",
+				"eu-west-1": "europe-west1",
+				"eu-west-2": "europe-west2",
+				"eu-west-3": "europe-west1",
+				"eu-central-1": "europe-west3",
+				"eu-north-1": "europe-north1",
+				"ap-southeast-1": "asia-southeast1",
+				"ap-northeast-1": "asia-northeast1",
+				"ap-south-1": "asia-south1",
+				"sa-east-1": "southamerica-east1"
+			},
+			"azure": {
+				"us-east-1": "eastus",
+				"us-east-2": "eastus2",
+				"us-west-1": "westus",
+				"us-west-2": "westus2",
+				"eu-west-1": "westeurope",
+				"eu-west-2": "uksouth",
+				"eu-central-1": "germanywestcentral",
+				"eu-north-1": "swedencentral",
+				"ap-southeast-1": "southeastasia",
+				"ap-northeast-1": "japaneast",
+				"ap-south-1": "centralindia",
+				"sa-east-1": "brazilsouth"
+			},
+			"hetzner": {
+				"us-east-1": "ash",
+				"us-east-2": "ash",
+				"us-west-1": "hil",
+				"us-west-2": "hil",
+				"eu-west-1": "fsn1",
+				"eu-west-2": "fsn1",
+				"eu-west-3": "fsn1",
+				"eu-central-1": "fsn1",
+				"eu-north-1": "hel1",
+				"ap-southeast-1": "sin",
+				"ap-northeast-1": "sin",
+				"ap-south-1": "sin",
+				"sa-east-1": "ash"
+			},
+			"alibaba": {
+				"us-east-1": "us-east-1",
+				"us-east-2": "us-east-1",
+				"us-west-1": "us-west-1",
+				"us-west-2": "us-west-1",
+				"eu-west-1": "eu-west-1",
+				"eu-west-2": "eu-west-1",
+				"eu-central-1": "eu-central-1",
+				"eu-north-1": "eu-central-1",
+				"ap-southeast-1": "ap-southeast-1",
+				"ap-northeast-1": "ap-northeast-1",
+				"ap-south-1": "ap-south-1",
+				"sa-east-1": "us-east-1"
+			}
+		},
+		"gcp": {
+			"gcp": {},
+			"aws": {
+				"us-east4": "us-east-1",
+				"us-central1": "us-east-2",
+				"us-west1": "us-west-2",
+				"europe-west1": "eu-west-1",
+				"europe-west2": "eu-west-2",
+				"europe-west3": "eu-central-1",
+				"europe-north1": "eu-north-1",
+				"asia-southeast1": "ap-southeast-1",
+				"asia-northeast1": "ap-northeast-1",
+				"asia-south1": "ap-south-1",
+				"southamerica-east1": "sa-east-1"
+			},
+			"azure": {
+				"us-east4": "eastus",
+				"us-central1": "centralus",
+				"us-west1": "westus2",
+				"europe-west1": "westeurope",
+				"europe-west2": "uksouth",
+				"europe-west3": "germanywestcentral",
+				"europe-north1": "swedencentral",
+				"asia-southeast1": "southeastasia",
+				"asia-northeast1": "japaneast",
+				"asia-south1": "centralindia",
+				"southamerica-east1": "brazilsouth"
+			},
+			"hetzner": {
+				"us-east4": "ash",
+				"us-central1": "ash",
+				"us-west1": "hil",
+				"europe-west1": "fsn1",
+				"europe-west2": "fsn1",
+				"europe-west3": "fsn1",
+				"europe-north1": "hel1",
+				"asia-southeast1": "sin",
+				"asia-northeast1": "sin",
+				"asia-south1": "sin",
+				"southamerica-east1": "ash"
+			},
+			"alibaba": {
+				"us-east4": "us-east-1",
+				"us-central1": "us-east-1",
+				"us-west1": "us-west-1",
+				"europe-west1": "eu-west-1",
+				"europe-west2": "eu-west-1",
+				"europe-west3": "eu-central-1",
+				"europe-north1": "eu-central-1",
+				"asia-southeast1": "ap-southeast-1",
+				"asia-northeast1": "ap-northeast-1",
+				"asia-south1": "ap-south-1",
+				"southamerica-east1": "us-east-1"
+			}
+		},
+		"azure": {
+			"azure": {},
+			"aws": {
+				"eastus": "us-east-1",
+				"eastus2": "us-east-2",
+				"centralus": "us-east-2",
+				"westus": "us-west-1",
+				"westus2": "us-west-2",
+				"westeurope": "eu-west-1",
+				"northeurope": "eu-west-1",
+				"uksouth": "eu-west-2",
+				"germanywestcentral": "eu-central-1",
+				"swedencentral": "eu-north-1",
+				"southeastasia": "ap-southeast-1",
+				"japaneast": "ap-northeast-1",
+				"centralindia": "ap-south-1",
+				"brazilsouth": "sa-east-1"
+			},
+			"gcp": {
+				"eastus": "us-east4",
+				"eastus2": "us-central1",
+				"centralus": "us-central1",
+				"westus": "us-west1",
+				"westus2": "us-west1",
+				"westeurope": "europe-west1",
+				"northeurope": "europe-north1",
+				"uksouth": "europe-west2",
+				"germanywestcentral": "europe-west3",
+				"swedencentral": "europe-north1",
+				"southeastasia": "asia-southeast1",
+				"japaneast": "asia-northeast1",
+				"centralindia": "asia-south1",
+				"brazilsouth": "southamerica-east1"
+			},
+			"hetzner": {
+				"eastus": "ash",
+				"eastus2": "ash",
+				"centralus": "ash",
+				"westus": "hil",
+				"westus2": "hil",
+				"westeurope": "fsn1",
+				"northeurope": "hel1",
+				"uksouth": "fsn1",
+				"germanywestcentral": "fsn1",
+				"swedencentral": "hel1",
+				"southeastasia": "sin",
+				"japaneast": "sin",
+				"centralindia": "sin",
+				"brazilsouth": "ash"
+			},
+			"alibaba": {
+				"eastus": "us-east-1",
+				"eastus2": "us-east-1",
+				"centralus": "us-east-1",
+				"westus": "us-west-1",
+				"westus2": "us-west-1",
+				"westeurope": "eu-west-1",
+				"northeurope": "eu-west-1",
+				"uksouth": "eu-west-1",
+				"germanywestcentral": "eu-central-1",
+				"swedencentral": "eu-central-1",
+				"southeastasia": "ap-southeast-1",
+				"japaneast": "ap-northeast-1",
+				"centralindia": "ap-south-1",
+				"brazilsouth": "us-east-1"
+			}
+		},
+		"hetzner": {
+			"hetzner": {},
+			"aws": {
+				"fsn1": "eu-central-1",
+				"nbg1": "eu-central-1",
+				"hel1": "eu-north-1",
+				"ash": "us-east-1",
+				"hil": "us-west-2",
+				"sin": "ap-southeast-1"
+			},
+			"gcp": {
+				"fsn1": "europe-west3",
+				"nbg1": "europe-west3",
+				"hel1": "europe-north1",
+				"ash": "us-east4",
+				"hil": "us-west1",
+				"sin": "asia-southeast1"
+			},
+			"azure": {
+				"fsn1": "germanywestcentral",
+				"nbg1": "germanywestcentral",
+				"hel1": "swedencentral",
+				"ash": "eastus",
+				"hil": "westus2",
+				"sin": "southeastasia"
+			},
+			"alibaba": {
+				"fsn1": "eu-central-1",
+				"nbg1": "eu-central-1",
+				"hel1": "eu-central-1",
+				"ash": "us-east-1",
+				"hil": "us-west-1",
+				"sin": "ap-southeast-1"
+			}
+		},
+		"alibaba": {
+			"alibaba": {},
+			"aws": {
+				"us-east-1": "us-east-1",
+				"us-west-1": "us-west-1",
+				"eu-central-1": "eu-central-1",
+				"eu-west-1": "eu-west-1",
+				"ap-southeast-1": "ap-southeast-1",
+				"ap-northeast-1": "ap-northeast-1",
+				"ap-south-1": "ap-south-1"
+			},
+			"gcp": {
+				"us-east-1": "us-east4",
+				"us-west-1": "us-west1",
+				"eu-central-1": "europe-west3",
+				"eu-west-1": "europe-west1",
+				"ap-southeast-1": "asia-southeast1",
+				"ap-northeast-1": "asia-northeast1",
+				"ap-south-1": "asia-south1"
+			},
+			"azure": {
+				"us-east-1": "eastus",
+				"us-west-1": "westus",
+				"eu-central-1": "germanywestcentral",
+				"eu-west-1": "westeurope",
+				"ap-southeast-1": "southeastasia",
+				"ap-northeast-1": "japaneast",
+				"ap-south-1": "centralindia"
+			},
+			"hetzner": {
+				"us-east-1": "ash",
+				"us-west-1": "hil",
+				"eu-central-1": "fsn1",
+				"eu-west-1": "fsn1",
+				"ap-southeast-1": "sin",
+				"ap-northeast-1": "sin",
+				"ap-south-1": "sin"
+			}
+		}
+	};
+
+export interface InstanceTypeOption {
+	value: string;
+	label: string;
+	vcpu: number;
+	memoryGb: number;
+	cost: string;
+}
+
+/** Instance/machine type options per provider. */
+export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = {
+		"aws": [
+			{
+				"value": "t3.medium",
+				"label": "t3.medium",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~$30/mo"
+			},
+			{
+				"value": "t3.large",
+				"label": "t3.large",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$60/mo"
+			},
+			{
+				"value": "t3.xlarge",
+				"label": "t3.xlarge",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$121/mo"
+			},
+			{
+				"value": "m5a.large",
+				"label": "m5a.large",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$63/mo"
+			},
+			{
+				"value": "m5a.xlarge",
+				"label": "m5a.xlarge",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$125/mo"
+			},
+			{
+				"value": "c5.large",
+				"label": "c5.large",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~$62/mo"
+			},
+			{
+				"value": "c5.xlarge",
+				"label": "c5.xlarge",
+				"vcpu": 4,
+				"memoryGb": 8,
+				"cost": "~$124/mo"
+			},
+			{
+				"value": "r5.large",
+				"label": "r5.large",
+				"vcpu": 2,
+				"memoryGb": 16,
+				"cost": "~$91/mo"
+			},
+			{
+				"value": "g4dn.xlarge",
+				"label": "g4dn.xlarge (GPU)",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$381/mo"
+			}
+		],
+		"gcp": [
+			{
+				"value": "e2-medium",
+				"label": "e2-medium",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~$25/mo"
+			},
+			{
+				"value": "e2-standard-2",
+				"label": "e2-standard-2",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$49/mo"
+			},
+			{
+				"value": "e2-standard-4",
+				"label": "e2-standard-4",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$98/mo"
+			},
+			{
+				"value": "n2-standard-2",
+				"label": "n2-standard-2",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$55/mo"
+			},
+			{
+				"value": "n2-standard-4",
+				"label": "n2-standard-4",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$110/mo"
+			},
+			{
+				"value": "c2-standard-4",
+				"label": "c2-standard-4",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$121/mo"
+			},
+			{
+				"value": "n2-highmem-2",
+				"label": "n2-highmem-2",
+				"vcpu": 2,
+				"memoryGb": 16,
+				"cost": "~$73/mo"
+			},
+			{
+				"value": "n1-standard-1",
+				"label": "n1-standard-1",
+				"vcpu": 1,
+				"memoryGb": 3.75,
+				"cost": "~$25/mo"
+			},
+			{
+				"value": "a2-highgpu-1g",
+				"label": "a2-highgpu-1g (GPU)",
+				"vcpu": 12,
+				"memoryGb": 85,
+				"cost": "~$2523/mo"
+			}
+		],
+		"azure": [
+			{
+				"value": "Standard_D2s_v5",
+				"label": "D2s v5",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$70/mo"
+			},
+			{
+				"value": "Standard_D4s_v5",
+				"label": "D4s v5",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$140/mo"
+			},
+			{
+				"value": "Standard_D8s_v5",
+				"label": "D8s v5",
+				"vcpu": 8,
+				"memoryGb": 32,
+				"cost": "~$281/mo"
+			},
+			{
+				"value": "Standard_D2as_v5",
+				"label": "D2as v5 (AMD)",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$63/mo"
+			},
+			{
+				"value": "Standard_D4as_v5",
+				"label": "D4as v5 (AMD)",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$125/mo"
+			},
+			{
+				"value": "Standard_F2s_v2",
+				"label": "F2s v2 (Compute)",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~$62/mo"
+			},
+			{
+				"value": "Standard_E2s_v5",
+				"label": "E2s v5 (Memory)",
+				"vcpu": 2,
+				"memoryGb": 16,
+				"cost": "~$91/mo"
+			},
+			{
+				"value": "Standard_NC4as_T4_v3",
+				"label": "NC4as T4 v3 (GPU)",
+				"vcpu": 4,
+				"memoryGb": 28,
+				"cost": "~$384/mo"
+			}
+		],
+		"hetzner": [
+			{
+				"value": "cax11",
+				"label": "CAX11 (Arm)",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~€4/mo"
+			},
+			{
+				"value": "cax21",
+				"label": "CAX21 (Arm)",
+				"vcpu": 4,
+				"memoryGb": 8,
+				"cost": "~€8/mo"
+			},
+			{
+				"value": "cax31",
+				"label": "CAX31 (Arm)",
+				"vcpu": 8,
+				"memoryGb": 16,
+				"cost": "~€21/mo"
+			},
+			{
+				"value": "cx23",
+				"label": "CX23 (x86)",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~€5/mo"
+			},
+			{
+				"value": "cx33",
+				"label": "CX33 (x86)",
+				"vcpu": 4,
+				"memoryGb": 8,
+				"cost": "~€8/mo"
+			}
+		],
+		"alibaba": [
+			{
+				"value": "ecs.c6.large",
+				"label": "c6.large",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~$35/mo"
+			},
+			{
+				"value": "ecs.g6.large",
+				"label": "g6.large",
+				"vcpu": 2,
+				"memoryGb": 8,
+				"cost": "~$50/mo"
+			},
+			{
+				"value": "ecs.g6.xlarge",
+				"label": "g6.xlarge",
+				"vcpu": 4,
+				"memoryGb": 16,
+				"cost": "~$100/mo"
+			},
+			{
+				"value": "ecs.c6.xlarge",
+				"label": "c6.xlarge",
+				"vcpu": 4,
+				"memoryGb": 8,
+				"cost": "~$70/mo"
+			},
+			{
+				"value": "ecs.r6.large",
+				"label": "r6.large",
+				"vcpu": 2,
+				"memoryGb": 16,
+				"cost": "~$75/mo"
+			},
+			{
+				"value": "ecs.g6.2xlarge",
+				"label": "g6.2xlarge",
+				"vcpu": 8,
+				"memoryGb": 32,
+				"cost": "~$200/mo"
+			}
+		]
+	};
+
+/** Supported Kubernetes versions per provider (latest first). */
+export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
+		"aws": [
+			"1.35",
+			"1.34",
+			"1.33"
+		],
+		"gcp": [
+			"1.35",
+			"1.34",
+			"1.33"
+		],
+		"azure": [
+			"1.35",
+			"1.34",
+			"1.33"
+		],
+		"hetzner": [
+			"1.35"
+		],
+		"alibaba": [
+			"1.35",
+			"1.34",
+			"1.33"
+		]
+	};
+
+export interface AutoscalerMeta {
+	providerConfigKey: keyof ClusterProviderConfig;
+	label: string;
+	description: string;
+}
+
+/** Provider-specific cluster autoscaler configuration. */
+export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = {
+		"aws": {
+			"providerConfigKey": "enable_karpenter",
+			"label": "Karpenter",
+			"description": "Just-in-time node provisioning based on pending pod requirements"
+		},
+		"gcp": {
+			"providerConfigKey": "enable_autopilot",
+			"label": "Autopilot",
+			"description": "Fully managed node auto-provisioning by GKE"
+		},
+		"azure": {
+			"providerConfigKey": "enable_cluster_autoscaler",
+			"label": "Cluster Autoscaler",
+			"description": "Automatic node pool scaling based on resource requests"
+		},
+		"hetzner": {
+			"providerConfigKey": "enable_cluster_autoscaler",
+			"label": "Cluster Autoscaler",
+			"description": "hcloud autoscaler adds/removes nodes based on pending pods"
+		},
+		"alibaba": {
+			"providerConfigKey": "enable_cluster_autoscaler",
+			"label": "Cluster Autoscaler",
+			"description": "ACK auto-scales node pools by pending pods"
+		}
+	};
+
+/** Default instance type per provider (used for new project forms). */
+export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
+		"aws": "t3.medium",
+		"gcp": "e2-medium",
+		"azure": "Standard_D2s_v5",
+		"hetzner": "cax11",
+		"alibaba": "ecs.g6.large"
+	};
+
+/** Default K8s version per provider (new-project form seed). */
+export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = {
+		"aws": "1.35",
+		"gcp": "1.35",
+		"azure": "1.35",
+		"hetzner": "1.35",
+		"alibaba": "1.35"
+	};
+
+/** Cross-provider instance type mapping for project conversion. */
+export const INSTANCE_TYPE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = {
+		"aws": {
+			"aws": {},
+			"gcp": {
+				"t3.medium": "e2-medium",
+				"t3.large": "e2-standard-2",
+				"t3.xlarge": "e2-standard-4",
+				"m5a.large": "n2-standard-2",
+				"m5a.xlarge": "n2-standard-4",
+				"c5.large": "c2-standard-4",
+				"c5.xlarge": "c2-standard-4",
+				"r5.large": "n2-highmem-2",
+				"g4dn.xlarge": "a2-highgpu-1g"
+			},
+			"azure": {
+				"t3.medium": "Standard_D2s_v5",
+				"t3.large": "Standard_D2s_v5",
+				"t3.xlarge": "Standard_D4s_v5",
+				"m5a.large": "Standard_D2as_v5",
+				"m5a.xlarge": "Standard_D4as_v5",
+				"c5.large": "Standard_F2s_v2",
+				"c5.xlarge": "Standard_F2s_v2",
+				"r5.large": "Standard_E2s_v5",
+				"g4dn.xlarge": "Standard_NC4as_T4_v3"
+			},
+			"hetzner": {
+				"t3.medium": "cax11",
+				"t3.large": "cax21",
+				"t3.xlarge": "cax31",
+				"m5a.large": "cax11",
+				"m5a.xlarge": "cax11",
+				"c5.large": "cax11",
+				"c5.xlarge": "cax11",
+				"r5.large": "cax11",
+				"g4dn.xlarge": "cax11"
+			},
+			"alibaba": {
+				"t3.medium": "ecs.g6.large",
+				"t3.large": "ecs.g6.large",
+				"t3.xlarge": "ecs.g6.xlarge",
+				"m5a.large": "ecs.g6.large",
+				"m5a.xlarge": "ecs.g6.xlarge",
+				"c5.large": "ecs.c6.large",
+				"c5.xlarge": "ecs.c6.xlarge",
+				"r5.large": "ecs.r6.large",
+				"g4dn.xlarge": "ecs.g6.2xlarge"
+			}
+		},
+		"gcp": {
+			"gcp": {},
+			"aws": {
+				"e2-medium": "t3.medium",
+				"e2-standard-2": "t3.large",
+				"e2-standard-4": "t3.xlarge",
+				"n2-standard-2": "m5a.large",
+				"n2-standard-4": "m5a.xlarge",
+				"c2-standard-4": "c5.xlarge",
+				"n2-highmem-2": "r5.large",
+				"n1-standard-1": "t3.medium"
+			},
+			"azure": {
+				"e2-medium": "Standard_D2s_v5",
+				"e2-standard-2": "Standard_D2s_v5",
+				"e2-standard-4": "Standard_D4s_v5",
+				"n2-standard-2": "Standard_D2as_v5",
+				"n2-standard-4": "Standard_D4as_v5",
+				"c2-standard-4": "Standard_F2s_v2",
+				"n2-highmem-2": "Standard_E2s_v5"
+			},
+			"hetzner": {
+				"e2-medium": "cax11",
+				"e2-standard-2": "cax21",
+				"e2-standard-4": "cax31",
+				"n2-standard-2": "cax21",
+				"n2-standard-4": "cax31",
+				"c2-standard-4": "cax31",
+				"n2-highmem-2": "cax11",
+				"n1-standard-1": "cax11"
+			},
+			"alibaba": {
+				"e2-medium": "ecs.g6.large",
+				"e2-standard-2": "ecs.g6.large",
+				"e2-standard-4": "ecs.g6.xlarge",
+				"n2-standard-2": "ecs.g6.large",
+				"n2-standard-4": "ecs.g6.xlarge",
+				"c2-standard-4": "ecs.c6.xlarge",
+				"n2-highmem-2": "ecs.r6.large",
+				"n1-standard-1": "ecs.c6.large"
+			}
+		},
+		"azure": {
+			"azure": {},
+			"aws": {
+				"Standard_D2s_v5": "t3.large",
+				"Standard_D4s_v5": "t3.xlarge",
+				"Standard_D8s_v5": "m5a.xlarge",
+				"Standard_D2as_v5": "m5a.large",
+				"Standard_D4as_v5": "m5a.xlarge",
+				"Standard_F2s_v2": "c5.large",
+				"Standard_E2s_v5": "r5.large",
+				"Standard_NC4as_T4_v3": "g4dn.xlarge"
+			},
+			"gcp": {
+				"Standard_D2s_v5": "e2-standard-2",
+				"Standard_D4s_v5": "e2-standard-4",
+				"Standard_D8s_v5": "n2-standard-4",
+				"Standard_D2as_v5": "n2-standard-2",
+				"Standard_D4as_v5": "n2-standard-4",
+				"Standard_F2s_v2": "c2-standard-4",
+				"Standard_E2s_v5": "n2-highmem-2",
+				"Standard_NC4as_T4_v3": "a2-highgpu-1g"
+			},
+			"hetzner": {
+				"Standard_D2s_v5": "cax11",
+				"Standard_D4s_v5": "cax21",
+				"Standard_D8s_v5": "cax31",
+				"Standard_D2as_v5": "cax11",
+				"Standard_D4as_v5": "cax21",
+				"Standard_F2s_v2": "cax11",
+				"Standard_E2s_v5": "cax11",
+				"Standard_NC4as_T4_v3": "cax11"
+			},
+			"alibaba": {
+				"Standard_D2s_v5": "ecs.g6.large",
+				"Standard_D4s_v5": "ecs.g6.xlarge",
+				"Standard_D8s_v5": "ecs.g6.2xlarge",
+				"Standard_D2as_v5": "ecs.g6.large",
+				"Standard_D4as_v5": "ecs.g6.xlarge",
+				"Standard_F2s_v2": "ecs.c6.large",
+				"Standard_E2s_v5": "ecs.r6.large",
+				"Standard_NC4as_T4_v3": "ecs.g6.2xlarge"
+			}
+		},
+		"hetzner": {
+			"hetzner": {},
+			"aws": {
+				"cax11": "t3.medium",
+				"cax21": "t3.large",
+				"cax31": "t3.xlarge",
+				"cx23": "t3.medium",
+				"cx33": "t3.large"
+			},
+			"gcp": {
+				"cax11": "e2-medium",
+				"cax21": "e2-standard-2",
+				"cax31": "e2-standard-4",
+				"cx23": "e2-medium",
+				"cx33": "e2-standard-2"
+			},
+			"azure": {
+				"cax11": "Standard_D2s_v5",
+				"cax21": "Standard_D4s_v5",
+				"cax31": "Standard_D8s_v5",
+				"cx23": "Standard_D2s_v5",
+				"cx33": "Standard_D4s_v5"
+			},
+			"alibaba": {
+				"cax11": "ecs.g6.large",
+				"cax21": "ecs.g6.xlarge",
+				"cax31": "ecs.g6.2xlarge",
+				"cx23": "ecs.g6.large",
+				"cx33": "ecs.g6.xlarge"
+			}
+		},
+		"alibaba": {
+			"alibaba": {},
+			"hetzner": {
+				"ecs.c6.large": "cx23",
+				"ecs.g6.large": "cax11",
+				"ecs.g6.xlarge": "cax21",
+				"ecs.c6.xlarge": "cx33",
+				"ecs.r6.large": "cax21",
+				"ecs.g6.2xlarge": "cax31"
+			},
+			"aws": {
+				"ecs.c6.large": "c5.large",
+				"ecs.g6.large": "t3.large",
+				"ecs.g6.xlarge": "t3.xlarge",
+				"ecs.c6.xlarge": "c5.xlarge",
+				"ecs.r6.large": "r5.large",
+				"ecs.g6.2xlarge": "m5a.xlarge"
+			},
+			"gcp": {
+				"ecs.c6.large": "c2-standard-4",
+				"ecs.g6.large": "e2-standard-2",
+				"ecs.g6.xlarge": "e2-standard-4",
+				"ecs.c6.xlarge": "c2-standard-4",
+				"ecs.r6.large": "n2-highmem-2",
+				"ecs.g6.2xlarge": "n2-standard-4"
+			},
+			"azure": {
+				"ecs.c6.large": "Standard_F2s_v2",
+				"ecs.g6.large": "Standard_D2s_v5",
+				"ecs.g6.xlarge": "Standard_D4s_v5",
+				"ecs.c6.xlarge": "Standard_F2s_v2",
+				"ecs.r6.large": "Standard_E2s_v5",
+				"ecs.g6.2xlarge": "Standard_D8s_v5"
+			}
+		}
+	};
+
+export interface DbEngineOption {
+	value: string;
+	label: string;
+	defaultVersion: string;
+}
+
+/** Database engine options per provider. */
+export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = {
+		"aws": [
+			{
+				"value": "aurora-postgresql",
+				"label": "Aurora PostgreSQL",
+				"defaultVersion": "16.6"
+			},
+			{
+				"value": "aurora-mysql",
+				"label": "Aurora MySQL",
+				"defaultVersion": "8.0"
+			}
+		],
+		"gcp": [
+			{
+				"value": "cloudsql-postgresql",
+				"label": "Cloud SQL PostgreSQL",
+				"defaultVersion": "15"
+			},
+			{
+				"value": "cloudsql-mysql",
+				"label": "Cloud SQL MySQL",
+				"defaultVersion": "8.0"
+			}
+		],
+		"azure": [
+			{
+				"value": "azure-postgresql",
+				"label": "Azure Database for PostgreSQL",
+				"defaultVersion": "16"
+			},
+			{
+				"value": "azure-mysql",
+				"label": "Azure Database for MySQL",
+				"defaultVersion": "8.0"
+			}
+		],
+		"hetzner": [
+			{
+				"value": "postgres",
+				"label": "PostgreSQL (CloudNativePG)",
+				"defaultVersion": "16"
+			}
+		],
+		"alibaba": [
+			{
+				"value": "postgres",
+				"label": "ApsaraDB RDS PostgreSQL",
+				"defaultVersion": "16.0"
+			},
+			{
+				"value": "mysql",
+				"label": "ApsaraDB RDS MySQL",
+				"defaultVersion": "8.0"
+			}
+		]
+	};
+
+export interface CapacityModel {
+	unit: string;
+	min: number;
+	max: number;
+	step: number;
+	defaultMin: number;
+	defaultMax: number;
+}
+
+/** Capacity model (scaling units) per provider. */
+export const DB_CAPACITY: Record<CloudProviderSlug, CapacityModel> = {
+		"aws": {
+			"unit": "ACU",
+			"min": 0.5,
+			"max": 128,
+			"step": 0.5,
+			"defaultMin": 0.5,
+			"defaultMax": 4
+		},
+		"gcp": {
+			"unit": "vCPU",
+			"min": 1,
+			"max": 96,
+			"step": 1,
+			"defaultMin": 1,
+			"defaultMax": 4
+		},
+		"azure": {
+			"unit": "vCores",
+			"min": 1,
+			"max": 64,
+			"step": 1,
+			"defaultMin": 2,
+			"defaultMax": 4
+		},
+		"hetzner": {
+			"unit": "GiB",
+			"min": 5,
+			"max": 500,
+			"step": 5,
+			"defaultMin": 10,
+			"defaultMax": 10
+		},
+		"alibaba": {
+			"unit": "vCPU",
+			"min": 1,
+			"max": 64,
+			"step": 1,
+			"defaultMin": 2,
+			"defaultMax": 4
+		}
+	};
+
+/** Cross-provider database engine mapping for project conversion. */
+export const ENGINE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = {
+		"aws": {
+			"aws": {},
+			"gcp": {
+				"aurora-postgresql": "cloudsql-postgresql",
+				"aurora-mysql": "cloudsql-mysql"
+			},
+			"azure": {
+				"aurora-postgresql": "azure-postgresql",
+				"aurora-mysql": "azure-mysql"
+			},
+			"hetzner": {
+				"aurora-postgresql": "postgres"
+			},
+			"alibaba": {
+				"aurora-postgresql": "postgres",
+				"aurora-mysql": "mysql"
+			}
+		},
+		"gcp": {
+			"gcp": {},
+			"aws": {
+				"cloudsql-postgresql": "aurora-postgresql",
+				"cloudsql-mysql": "aurora-mysql"
+			},
+			"azure": {
+				"cloudsql-postgresql": "azure-postgresql",
+				"cloudsql-mysql": "azure-mysql"
+			},
+			"hetzner": {
+				"cloudsql-postgresql": "postgres"
+			},
+			"alibaba": {
+				"cloudsql-postgresql": "postgres",
+				"cloudsql-mysql": "mysql"
+			}
+		},
+		"azure": {
+			"azure": {},
+			"aws": {
+				"azure-postgresql": "aurora-postgresql",
+				"azure-mysql": "aurora-mysql"
+			},
+			"gcp": {
+				"azure-postgresql": "cloudsql-postgresql",
+				"azure-mysql": "cloudsql-mysql"
+			},
+			"hetzner": {
+				"azure-postgresql": "postgres"
+			},
+			"alibaba": {
+				"azure-postgresql": "postgres",
+				"azure-mysql": "mysql"
+			}
+		},
+		"hetzner": {
+			"hetzner": {},
+			"aws": {
+				"postgres": "aurora-postgresql"
+			},
+			"gcp": {
+				"postgres": "cloudsql-postgresql"
+			},
+			"azure": {
+				"postgres": "azure-postgresql"
+			},
+			"alibaba": {
+				"postgres": "postgres"
+			}
+		},
+		"alibaba": {
+			"alibaba": {},
+			"aws": {
+				"postgres": "aurora-postgresql",
+				"mysql": "aurora-mysql"
+			},
+			"gcp": {
+				"postgres": "cloudsql-postgresql",
+				"mysql": "cloudsql-mysql"
+			},
+			"azure": {
+				"postgres": "azure-postgresql",
+				"mysql": "azure-mysql"
+			},
+			"hetzner": {
+				"postgres": "postgres"
+			}
+		}
+	};
+
+export interface CacheNodeOption {
+	value: string;
+	label: string;
+	memoryGb: number;
+	cost: string;
+}
+
+/** Cache node type options per provider. */
+export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = {
+		"aws": [
+			{
+				"value": "cache.t3.micro",
+				"label": "t3.micro",
+				"memoryGb": 0.5,
+				"cost": "~$12/mo"
+			},
+			{
+				"value": "cache.t3.small",
+				"label": "t3.small",
+				"memoryGb": 1.37,
+				"cost": "~$18/mo"
+			},
+			{
+				"value": "cache.t3.medium",
+				"label": "t3.medium",
+				"memoryGb": 3.09,
+				"cost": "~$25/mo"
+			},
+			{
+				"value": "cache.r6g.large",
+				"label": "r6g.large",
+				"memoryGb": 13.07,
+				"cost": "~$108/mo"
+			},
+			{
+				"value": "cache.r6g.xlarge",
+				"label": "r6g.xlarge",
+				"memoryGb": 26.32,
+				"cost": "~$216/mo"
+			}
+		],
+		"gcp": [
+			{
+				"value": "M1",
+				"label": "Basic 1 GB",
+				"memoryGb": 1,
+				"cost": "~$35/mo"
+			},
+			{
+				"value": "M2",
+				"label": "Basic 4 GB",
+				"memoryGb": 4,
+				"cost": "~$100/mo"
+			},
+			{
+				"value": "M3",
+				"label": "Standard 10 GB",
+				"memoryGb": 10,
+				"cost": "~$230/mo"
+			},
+			{
+				"value": "M4",
+				"label": "Standard 35 GB",
+				"memoryGb": 35,
+				"cost": "~$650/mo"
+			}
+		],
+		"azure": [
+			{
+				"value": "C0",
+				"label": "Basic C0",
+				"memoryGb": 0.25,
+				"cost": "~$15/mo"
+			},
+			{
+				"value": "C1",
+				"label": "Basic C1",
+				"memoryGb": 1,
+				"cost": "~$35/mo"
+			},
+			{
+				"value": "C2",
+				"label": "Standard C2",
+				"memoryGb": 2.5,
+				"cost": "~$80/mo"
+			},
+			{
+				"value": "C3",
+				"label": "Standard C3",
+				"memoryGb": 6,
+				"cost": "~$155/mo"
+			},
+			{
+				"value": "P1",
+				"label": "Premium P1",
+				"memoryGb": 6,
+				"cost": "~$210/mo"
+			}
+		],
+		"hetzner": [
+			{
+				"value": "1",
+				"label": "1 GiB",
+				"memoryGb": 1,
+				"cost": "~€2/mo"
+			},
+			{
+				"value": "2",
+				"label": "2 GiB",
+				"memoryGb": 2,
+				"cost": "~€4/mo"
+			},
+			{
+				"value": "4",
+				"label": "4 GiB",
+				"memoryGb": 4,
+				"cost": "~€8/mo"
+			}
+		],
+		"alibaba": [
+			{
+				"value": "redis.master.small.default",
+				"label": "1 GB",
+				"memoryGb": 1,
+				"cost": "~$25/mo"
+			},
+			{
+				"value": "redis.master.mid.default",
+				"label": "2 GB",
+				"memoryGb": 2,
+				"cost": "~$45/mo"
+			},
+			{
+				"value": "redis.master.large.default",
+				"label": "4 GB",
+				"memoryGb": 4,
+				"cost": "~$85/mo"
+			}
+		]
+	};
+
+/** Default cache node type per provider. */
+export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = {
+		"aws": "cache.t3.medium",
+		"gcp": "M1",
+		"azure": "C1",
+		"hetzner": "1",
+		"alibaba": "redis.master.small.default"
+	};
+
+/** Cross-provider cache node mapping for project conversion. */
+export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = {
+		"aws": {
+			"aws": {},
+			"gcp": {
+				"cache.t3.micro": "M1",
+				"cache.t3.small": "M1",
+				"cache.t3.medium": "M2",
+				"cache.r6g.large": "M3",
+				"cache.r6g.xlarge": "M4"
+			},
+			"azure": {
+				"cache.t3.micro": "C0",
+				"cache.t3.small": "C1",
+				"cache.t3.medium": "C2",
+				"cache.r6g.large": "C3",
+				"cache.r6g.xlarge": "P1"
+			},
+			"hetzner": {
+				"cache.t3.micro": "1",
+				"cache.t3.small": "1",
+				"cache.t3.medium": "2",
+				"cache.r6g.large": "4",
+				"cache.r6g.xlarge": "4"
+			},
+			"alibaba": {
+				"cache.t3.micro": "redis.master.small.default",
+				"cache.t3.small": "redis.master.small.default",
+				"cache.t3.medium": "redis.master.mid.default",
+				"cache.r6g.large": "redis.master.large.default",
+				"cache.r6g.xlarge": "redis.master.large.default"
+			}
+		},
+		"gcp": {
+			"gcp": {},
+			"aws": {
+				"M1": "cache.t3.small",
+				"M2": "cache.t3.medium",
+				"M3": "cache.r6g.large",
+				"M4": "cache.r6g.xlarge"
+			},
+			"azure": {
+				"M1": "C1",
+				"M2": "C2",
+				"M3": "C3",
+				"M4": "P1"
+			},
+			"hetzner": {
+				"M1": "1",
+				"M2": "2",
+				"M3": "4",
+				"M4": "4"
+			},
+			"alibaba": {
+				"M1": "redis.master.small.default",
+				"M2": "redis.master.large.default",
+				"M3": "redis.master.large.default",
+				"M4": "redis.master.large.default"
+			}
+		},
+		"azure": {
+			"azure": {},
+			"aws": {
+				"C0": "cache.t3.micro",
+				"C1": "cache.t3.small",
+				"C2": "cache.t3.medium",
+				"C3": "cache.r6g.large",
+				"P1": "cache.r6g.xlarge"
+			},
+			"gcp": {
+				"C0": "M1",
+				"C1": "M1",
+				"C2": "M2",
+				"C3": "M3",
+				"P1": "M4"
+			},
+			"hetzner": {
+				"C0": "1",
+				"C1": "1",
+				"C2": "2",
+				"C3": "4",
+				"P1": "4"
+			},
+			"alibaba": {
+				"C0": "redis.master.small.default",
+				"C1": "redis.master.small.default",
+				"C2": "redis.master.mid.default",
+				"C3": "redis.master.large.default",
+				"P1": "redis.master.large.default"
+			}
+		},
+		"hetzner": {
+			"hetzner": {},
+			"aws": {
+				"1": "cache.t3.small",
+				"2": "cache.t3.medium",
+				"4": "cache.r6g.large"
+			},
+			"gcp": {
+				"1": "M1",
+				"2": "M2",
+				"4": "M3"
+			},
+			"azure": {
+				"1": "C1",
+				"2": "C2",
+				"4": "C3"
+			},
+			"alibaba": {
+				"1": "redis.master.small.default",
+				"2": "redis.master.mid.default",
+				"4": "redis.master.large.default"
+			}
+		},
+		"alibaba": {
+			"alibaba": {},
+			"aws": {
+				"redis.master.small.default": "cache.t3.small",
+				"redis.master.mid.default": "cache.t3.medium",
+				"redis.master.large.default": "cache.r6g.large"
+			},
+			"gcp": {
+				"redis.master.small.default": "M1",
+				"redis.master.mid.default": "M2",
+				"redis.master.large.default": "M2"
+			},
+			"azure": {
+				"redis.master.small.default": "C1",
+				"redis.master.mid.default": "C2",
+				"redis.master.large.default": "C3"
+			},
+			"hetzner": {
+				"redis.master.small.default": "1",
+				"redis.master.mid.default": "2",
+				"redis.master.large.default": "4"
+			}
+		}
+	};
+
+export interface WafOption {
+	providerConfigKey: keyof DnsProviderConfig;
+	label: string;
+	description: string;
+	cost: string;
+}
+
+/** WAF options per provider (shown as toggles in the DNS section). */
+export const WAF_OPTIONS: Record<CloudProviderSlug, WafOption[]> = {
+		"aws": [
+			{
+				"providerConfigKey": "cloudfront_waf",
+				"label": "CloudFront WAF",
+				"description": "Web Application Firewall for CloudFront distributions",
+				"cost": "~$5/mo"
+			},
+			{
+				"providerConfigKey": "application_waf",
+				"label": "Application WAF",
+				"description": "Web Application Firewall for ALB/NLB",
+				"cost": "~$5/mo"
+			}
+		],
+		"gcp": [
+			{
+				"providerConfigKey": "cloud_armor",
+				"label": "Cloud Armor",
+				"description": "DDoS protection and WAF for load balancers",
+				"cost": "~$5/mo"
+			}
+		],
+		"azure": [
+			{
+				"providerConfigKey": "azure_waf",
+				"label": "Azure WAF",
+				"description": "Web Application Firewall on Application Gateway",
+				"cost": "~$13/mo"
+			}
+		],
+		"hetzner": [],
+		"alibaba": [
+			{
+				"providerConfigKey": "application_waf",
+				"label": "Alibaba Cloud WAF",
+				"description": "Web Application Firewall (WAF 3.0) for the ingress domain",
+				"cost": "usage-based"
+			}
+		]
+	};
+
+export interface CertOption {
+	providerConfigKey: keyof DnsProviderConfig;
+	label: string;
+	description: string;
+}
+
+/** Managed certificate options per provider. */
+export const CERT_OPTIONS: Record<CloudProviderSlug, CertOption> = {
+		"aws": {
+			"providerConfigKey": "acm_certificate",
+			"label": "ACM Certificate",
+			"description": "Free TLS certificate managed by AWS Certificate Manager"
+		},
+		"gcp": {
+			"providerConfigKey": "managed_certificate",
+			"label": "Google-Managed Certificate",
+			"description": "Free TLS certificate managed by Google Cloud"
+		},
+		"azure": {
+			"providerConfigKey": "managed_certificate",
+			"label": "App Service Certificate",
+			"description": "Managed TLS certificate from Azure"
+		},
+		"hetzner": {
+			"providerConfigKey": "managed_certificate",
+			"label": "cert-manager",
+			"description": "TLS via in-cluster cert-manager"
+		},
+		"alibaba": {
+			"providerConfigKey": "managed_certificate",
+			"label": "SSL Certificate",
+			"description": "Managed TLS certificate from Alibaba Cloud SSL Certificates Service"
+		}
+	};
+
+export interface NosqlConfig {
+	serviceName: string;
+	supportsRangeKey: boolean;
+	supportsGlobalTables: boolean;
+	billingModes: { value: string; label: string }[];
+	keyTypes: { value: string; label: string }[];
+	portabilityNote: string | null;
+}
+
+/** NoSQL service configuration per provider. */
+export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
+		"aws": {
+			"serviceName": "DynamoDB",
+			"supportsRangeKey": true,
+			"supportsGlobalTables": true,
+			"billingModes": [
+				{
+					"value": "on_demand",
+					"label": "On-Demand"
+				},
+				{
+					"value": "provisioned",
+					"label": "Provisioned"
+				}
+			],
+			"keyTypes": [
+				{
+					"value": "S",
+					"label": "String"
+				},
+				{
+					"value": "N",
+					"label": "Number"
+				},
+				{
+					"value": "B",
+					"label": "Binary"
+				}
+			],
+			"portabilityNote": null
+		},
+		"gcp": {
+			"serviceName": "Firestore",
+			"supportsRangeKey": false,
+			"supportsGlobalTables": false,
+			"billingModes": [
+				{
+					"value": "on_demand",
+					"label": "Native Mode"
+				}
+			],
+			"keyTypes": [
+				{
+					"value": "S",
+					"label": "String"
+				},
+				{
+					"value": "N",
+					"label": "Number"
+				}
+			],
+			"portabilityNote": "Firestore uses a document-collection model. DynamoDB key schemas will be adapted to Firestore document IDs."
+		},
+		"azure": {
+			"serviceName": "Cosmos DB",
+			"supportsRangeKey": true,
+			"supportsGlobalTables": true,
+			"billingModes": [
+				{
+					"value": "on_demand",
+					"label": "Serverless"
+				},
+				{
+					"value": "provisioned",
+					"label": "Provisioned Throughput"
+				}
+			],
+			"keyTypes": [
+				{
+					"value": "S",
+					"label": "String"
+				},
+				{
+					"value": "N",
+					"label": "Number"
+				}
+			],
+			"portabilityNote": "Cosmos DB partition keys cannot be changed after creation. Review the key strategy before provisioning."
+		},
+		"hetzner": {
+			"serviceName": "—",
+			"supportsRangeKey": false,
+			"supportsGlobalTables": false,
+			"billingModes": [],
+			"keyTypes": [],
+			"portabilityNote": "Not available on Hetzner"
+		},
+		"alibaba": {
+			"serviceName": "Tablestore",
+			"supportsRangeKey": true,
+			"supportsGlobalTables": false,
+			"billingModes": [
+				{
+					"value": "on_demand",
+					"label": "Pay-As-You-Go"
+				},
+				{
+					"value": "provisioned",
+					"label": "Reserved Throughput"
+				}
+			],
+			"keyTypes": [
+				{
+					"value": "S",
+					"label": "String"
+				},
+				{
+					"value": "N",
+					"label": "Integer"
+				},
+				{
+					"value": "B",
+					"label": "Binary"
+				}
+			],
+			"portabilityNote": "Tablestore primary keys are fixed at table creation. Review the key strategy before provisioning."
+		}
+	};
+
+export interface NetworkConfig {
+	networkLabel: string;
+	createLabel: string;
+	existingLabel: string;
+	cidrLabel: string;
+	natLabel: string;
+	natSingleLabel: string;
+	natMultiLabel: string;
+}
+
+/** Network/VPC terminology and labels per provider. */
+export const NETWORK: Record<CloudProviderSlug, NetworkConfig> = {
+		"aws": {
+			"networkLabel": "VPC",
+			"createLabel": "Create New VPC",
+			"existingLabel": "Use Existing VPC",
+			"cidrLabel": "VPC CIDR Block",
+			"natLabel": "NAT Gateway",
+			"natSingleLabel": "Single (cost-effective)",
+			"natMultiLabel": "Per-AZ (high availability)"
+		},
+		"gcp": {
+			"networkLabel": "VPC Network",
+			"createLabel": "Create New VPC Network",
+			"existingLabel": "Use Existing VPC Network",
+			"cidrLabel": "Subnet CIDR Range",
+			"natLabel": "Cloud NAT",
+			"natSingleLabel": "Single (cost-effective)",
+			"natMultiLabel": "Per-Region (high availability)"
+		},
+		"azure": {
+			"networkLabel": "VNet",
+			"createLabel": "Create New VNet",
+			"existingLabel": "Use Existing VNet",
+			"cidrLabel": "Address Space",
+			"natLabel": "NAT Gateway",
+			"natSingleLabel": "Single (cost-effective)",
+			"natMultiLabel": "Per-Subnet (high availability)"
+		},
+		"hetzner": {
+			"networkLabel": "Hetzner Network",
+			"createLabel": "Create a new private network",
+			"existingLabel": "Use an existing network",
+			"cidrLabel": "Network CIDR",
+			"natLabel": "NAT",
+			"natSingleLabel": "Single NAT",
+			"natMultiLabel": "NAT per zone"
+		},
+		"alibaba": {
+			"networkLabel": "Alibaba VPC",
+			"createLabel": "Create New VPC",
+			"existingLabel": "Use Existing VPC",
+			"cidrLabel": "VPC CIDR Block",
+			"natLabel": "NAT Gateway",
+			"natSingleLabel": "Single (cost-effective)",
+			"natMultiLabel": "Per-Zone (high availability)"
+		}
+	};
+
+export interface MessagingConfig {
+	queueLabel: string;
+	topicLabel: string;
+	supportsFifo: boolean;
+	fifoLabel: string;
+	visibilityTimeoutLabel: string;
+}
+
+/** Messaging service configuration per provider. */
+export const MESSAGING: Record<CloudProviderSlug, MessagingConfig> = {
+		"aws": {
+			"queueLabel": "SQS Queues",
+			"topicLabel": "SNS Topics",
+			"supportsFifo": true,
+			"fifoLabel": "FIFO Queue",
+			"visibilityTimeoutLabel": "Visibility Timeout"
+		},
+		"gcp": {
+			"queueLabel": "Pub/Sub Subscriptions",
+			"topicLabel": "Pub/Sub Topics",
+			"supportsFifo": false,
+			"fifoLabel": "Ordered Delivery",
+			"visibilityTimeoutLabel": "Ack Deadline"
+		},
+		"azure": {
+			"queueLabel": "Service Bus Queues",
+			"topicLabel": "Service Bus Topics",
+			"supportsFifo": true,
+			"fifoLabel": "Session-Based Ordering",
+			"visibilityTimeoutLabel": "Lock Duration"
+		},
+		"hetzner": {
+			"queueLabel": "RabbitMQ Queue",
+			"topicLabel": "RabbitMQ Exchange",
+			"supportsFifo": false,
+			"fifoLabel": "Ordered",
+			"visibilityTimeoutLabel": "Visibility timeout (s)"
+		},
+		"alibaba": {
+			"queueLabel": "MNS Queues",
+			"topicLabel": "MNS Topics",
+			"supportsFifo": false,
+			"fifoLabel": "Ordered Delivery",
+			"visibilityTimeoutLabel": "Visibility Timeout"
+		}
+	};

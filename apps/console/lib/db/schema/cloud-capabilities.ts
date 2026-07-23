@@ -19,6 +19,7 @@ import {
 	index,
 	integer,
 	numeric,
+	pgEnum,
 	pgTable,
 	text,
 	timestamp,
@@ -34,6 +35,33 @@ import {
 import { cloudIdentities } from "./identities";
 
 const ts = () => timestamp({ withTimezone: true }).defaultNow().notNull();
+
+// The managed-service axis a `cloud_capability_services` row describes (Wave-2, epic #928). A finite,
+// provider-neutral discriminator (per the finite-known-values-are-enums rule) — each row is exactly one
+// kind, and the queries fall back to the matching static Catalog #2 slice per kind. Kept inline here
+// (not enums.ts) because it is owned entirely by this Wave-2 seams extension; drizzle-kit scans every
+// schema file for enums, so an inline `pgEnum` registers the same as a centralized one.
+export const capabilityServiceKind = pgEnum("capability_service_kind", [
+	"database", // a managed relational DB engine + offered version (RDS/Aurora, Cloud SQL, Azure DB, ApsaraDB, CloudNativePG)
+	"cache", // a managed in-memory cache tier/node class (ElastiCache, Memorystore, Azure Cache, ApsaraDB Redis)
+	"kubernetes", // an offered managed-Kubernetes control-plane version (EKS/GKE/AKS/ACK; Hetzner = pinned Talos)
+	"nosql", // account availability of the cloud's NoSQL service (DynamoDB/Firestore/Cosmos DB/Tablestore)
+]);
+export type CapabilityServiceKind =
+	(typeof capabilityServiceKind.enumValues)[number];
+
+// The networking service-quota a `cloud_capability_quotas` row measures headroom for (#981 axis; seams
+// #1115). A finite, provider-neutral discriminator (per the finite-known-values-are-enums rule) — each
+// row measures exactly one kind, and the picker degrades to advisory when the used/available figures are
+// not knowable. Kept inline here (not enums.ts) for the same reason as capabilityServiceKind above.
+export const capabilityQuotaKind = pgEnum("capability_quota_kind", [
+	"elastic_ip", // account/region elastic-IP (EIP) address limit (AWS EIPs, GCP static IPs, Azure public IPs, Alibaba EIPs)
+	"nat_gateway", // NAT gateway count limit per region/VPC
+	"load_balancer", // load-balancer count limit (ELB/ALB/NLB, GCP forwarding rules, Azure LB, Alibaba SLB)
+	"security_group", // security-group (or equivalent firewall-policy) count limit
+]);
+export type CapabilityQuotaKind =
+	(typeof capabilityQuotaKind.enumValues)[number];
 
 /** The columns every capability row shares — a factory (not a shared object) so each table gets fresh
  * drizzle column builders. Mirrors inventoryBase() (cloud-inventory.ts) but WITHOUT the AES-GCM
@@ -106,6 +134,52 @@ export const cloudCapabilityInstanceTypes = pgTable(
 	],
 );
 
+// ── Managed-SERVICE offerings PER REGION (Wave-2) ───────────────────────────────────
+// One table for every managed-service axis (discriminated by `service_kind`): the DB engines+versions,
+// cache engines+tiers, managed-Kubernetes versions, and NoSQL availability THIS account can launch —
+// the service-level generalization of the instance-types table. `native_id` is the provider-native id
+// per kind: the engine value ("aurora-postgresql"), cache node class ("cache.t3.medium"), k8s version
+// string ("1.35"), or NoSQL service name ("DynamoDB"). The same offering recurs per region, so `region`
+// is part of the unique key (account-wide axes like NoSQL populate it with a real region code — never
+// NULL — so the unique key doesn't trip Postgres's "NULLs are distinct" rule on upsert, exactly as the
+// instance-types + sync-state tables do). `launchable`/`launchable_reason` carry the same tri-state
+// account-accurate verdict; availability is design-time GUIDANCE, never a hard gate (#918 fail-open).
+export const cloudCapabilityServices = pgTable(
+	"cloud_capability_services",
+	{
+		...capabilityBase(),
+		service_kind: capabilityServiceKind().notNull(),
+		// The engine/family this offering belongs to, where the kind has one: DB engine family
+		// ("aurora-postgresql", "postgres"), cache engine ("redis"). NULL for k8s/nosql (no engine axis).
+		engine: text(),
+		// The offered version, where the kind is versioned: DB engine version ("16.6") or managed-k8s
+		// control-plane version ("1.35"). NULL for cache/nosql.
+		version: text(),
+		// Coarse tier/capacity class for the `cache` kind (the node class label) — NULL for other kinds.
+		tier: text(),
+		// GB of memory for a `cache` tier where the provider reports it; numeric because some are fractional.
+		mem_gb: numeric({ precision: 8, scale: 2, mode: "number" }),
+		launchable: capabilityLaunchable().notNull().default("not_evaluable"),
+		launchable_reason: capabilityLaunchableReason(),
+	},
+	(t) => [
+		// (identity, provider, region, service-kind, native_id) — the same engine/version/tier is a
+		// distinct offering per region and per kind.
+		unique("cloud_capability_services_identity_region_kind_native_key").on(
+			t.cloud_identity_id,
+			t.provider,
+			t.region,
+			t.service_kind,
+			t.native_id,
+		),
+		index("idx_cloud_capability_services_identity").on(t.cloud_identity_id),
+		index("idx_cloud_capability_services_identity_kind").on(
+			t.cloud_identity_id,
+			t.service_kind,
+		),
+	],
+);
+
 // ── Change-detection state — the Tier-1 hash gate (#938) ────────────────────────────
 // One row per (identity, provider, axis, region): the hash of that slice's cheap SOURCE signal at its last
 // full enumeration. The refresh sweep re-runs a lane; the lane recomputes the cheap signature (offered-type
@@ -139,6 +213,40 @@ export const cloudCapabilitySyncState = pgTable(
 	],
 );
 
+// ── Service-quota HEADROOM offerable PER REGION — the quota axis (#981; seams #1115) ───────────────
+// The account-accurate "how many more can you launch" picture for the networking quotas a provision plan
+// consumes. One row per (identity, provider, region, quota_kind, native_id): `native_id` is the provider
+// quota code (e.g. AWS `L-0263D0A3` for EIPs); `quota_limit`/`used`/`available` carry the headroom, each
+// NULL when the plan/provider can't report it (honest `not_evaluable`, not a fabricated zero). Shares the
+// capabilityBase() shape (cloud_identity_id FK, soft-removal) so it rides the identical `owner_all` RLS
+// loop (programmables.sql) and the retention GC. Availability is GUIDANCE — the picker renders low headroom
+// as advisory, never a hard gate.
+export const cloudCapabilityQuotas = pgTable(
+	"cloud_capability_quotas",
+	{
+		...capabilityBase(),
+		quota_kind: capabilityQuotaKind().notNull(),
+		// The provider-reported quota ceiling for this kind in this region; NULL when not knowable.
+		quota_limit: integer(),
+		// Currently consumed against the ceiling; NULL when not knowable.
+		used: integer(),
+		// Remaining headroom (ceiling − used) where the provider reports it directly; NULL when not knowable.
+		available: integer(),
+	},
+	(t) => [
+		// quota_kind + native_id are BOTH in the key: a kind can span several provider quota codes, and the
+		// same code recurs per region as a distinct offering.
+		unique("cloud_capability_quotas_identity_region_kind_native_key").on(
+			t.cloud_identity_id,
+			t.provider,
+			t.region,
+			t.quota_kind,
+			t.native_id,
+		),
+		index("idx_cloud_capability_quotas_identity").on(t.cloud_identity_id),
+	],
+);
+
 export type CloudCapabilityRegion = typeof cloudCapabilityRegions.$inferSelect;
 export type CloudCapabilityRegionInsert =
 	typeof cloudCapabilityRegions.$inferInsert;
@@ -146,7 +254,14 @@ export type CloudCapabilityInstanceType =
 	typeof cloudCapabilityInstanceTypes.$inferSelect;
 export type CloudCapabilityInstanceTypeInsert =
 	typeof cloudCapabilityInstanceTypes.$inferInsert;
+export type CloudCapabilityService =
+	typeof cloudCapabilityServices.$inferSelect;
+export type CloudCapabilityServiceInsert =
+	typeof cloudCapabilityServices.$inferInsert;
 export type CloudCapabilitySyncState =
 	typeof cloudCapabilitySyncState.$inferSelect;
 export type CloudCapabilitySyncStateInsert =
 	typeof cloudCapabilitySyncState.$inferInsert;
+export type CloudCapabilityQuota = typeof cloudCapabilityQuotas.$inferSelect;
+export type CloudCapabilityQuotaInsert =
+	typeof cloudCapabilityQuotas.$inferInsert;

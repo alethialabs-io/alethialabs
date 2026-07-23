@@ -22,15 +22,23 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
-// clearArgoReposEnv blanks every A0.6 env var so a developer's ambient shell (or another
-// test) can't perturb the resolution under test.
+// clearArgoReposEnv blanks every A0.6 env var — the shared vars, the leg-selecting provider var, and
+// the per-provider override siblings for the clouds these tests exercise — so a developer's ambient
+// shell (or another test) can't perturb the resolution under test.
 func clearArgoReposEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{
+	bases := []string{
 		envArgoAppsRepo, envArgoByoChartRepo, envArgoByoChartPath, envArgoByoRevision,
-		envArgoByoNamespace, envArgoGitToken, envArgoReposRequire,
-	} {
+		envArgoByoNamespace,
+	}
+	for _, k := range append(bases, envArgoGitToken, envArgoReposRequire, envE2EProvider) {
 		t.Setenv(k, "")
+	}
+	// Per-provider override siblings for the clouds under test (AWS/GCP/AZURE).
+	for _, base := range bases {
+		for _, p := range []string{"AWS", "GCP", "AZURE"} {
+			t.Setenv(base+"_"+p, "")
+		}
 	}
 }
 
@@ -107,6 +115,49 @@ func TestT2ArgoReposDefaults(t *testing.T) {
 	}
 	if !cfg.tokenPresent {
 		t.Errorf("token should be detected present")
+	}
+}
+
+// TestT2ArgoReposPerProviderOverride proves the P2-D (#1066) per-cloud override precedence: with a
+// leg's provider set, a "<base>_<PROVIDER>" sibling wins over the shared cross-cloud var, and an
+// absent sibling falls back to the shared var — so gcp/azure point at cloud-appropriate charts (whose
+// #687 bindings resolve against per-cloud tofu outputs) while aws stays on the shared, proven repo.
+func TestT2ArgoReposPerProviderOverride(t *testing.T) {
+	const (
+		sharedApps  = "https://github.com/acme/apps"
+		sharedChart = "https://github.com/acme/charts"
+		gcpChart    = "https://github.com/acme/charts-gcp"
+	)
+
+	// GCP leg with a per-provider BYO chart override + a per-provider revision, but no per-provider
+	// apps repo ⇒ chart+revision come from the GCP siblings, apps repo falls back to the shared var.
+	clearArgoReposEnv(t)
+	t.Setenv(envE2EProvider, "gcp")
+	t.Setenv(envArgoAppsRepo, sharedApps)
+	t.Setenv(envArgoByoChartRepo, sharedChart)
+	t.Setenv(envArgoByoChartRepo+"_GCP", gcpChart)
+	t.Setenv(envArgoByoRevision+"_GCP", "gcp-branch")
+	t.Setenv(envArgoGitToken, "ghs_x")
+	cfg := t2ArgoReposFromEnv()
+	if cfg.byoChartRepo != gcpChart {
+		t.Errorf("gcp BYO chart = %q, want the per-provider override %q", cfg.byoChartRepo, gcpChart)
+	}
+	if cfg.byoRevision != "gcp-branch" {
+		t.Errorf("gcp BYO revision = %q, want the per-provider override %q", cfg.byoRevision, "gcp-branch")
+	}
+	if cfg.appsRepo != sharedApps {
+		t.Errorf("apps repo = %q, want the shared fallback %q (no gcp override set)", cfg.appsRepo, sharedApps)
+	}
+
+	// AWS leg with the SAME env: aws has no per-provider siblings, so every input is the shared var —
+	// the proven aws path must be byte-for-byte unchanged by the override mechanism.
+	t.Setenv(envE2EProvider, "aws")
+	awsCfg := t2ArgoReposFromEnv()
+	if awsCfg.byoChartRepo != sharedChart {
+		t.Errorf("aws BYO chart = %q, want the shared var %q (no aws override)", awsCfg.byoChartRepo, sharedChart)
+	}
+	if awsCfg.byoRevision != "HEAD" {
+		t.Errorf("aws BYO revision = %q, want the default HEAD (no aws override)", awsCfg.byoRevision)
 	}
 }
 

@@ -456,6 +456,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       ALETHIA_E2E_A05_ENFORCE; a no-op when A0.5 setup was disabled.
 	runA05ConsoleActive(t, ctx, cp, a05, root, jobID)
 
+	// (7.7) DAY-2 ACCESS surface (FULLY-TESTED P2-E). Opt-in via ALETHIA_E2E_DAY2_ACCESS — unset ⇒
+	//       a clean skip. Proves the SURFACED day-2 access path works: cluster_endpoint is surfaced in
+	//       the deploy metadata (what the console reads), the runner-written CLI-free kubeconfig
+	//       AUTHENTICATES and is AUTHORIZED for a real action (`kubectl auth can-i '*' '*'`) — distinct
+	//       from the soak's UNAUTHENTICATED /readyz liveness — over a real node read, and (AWS) the
+	//       ArgoCD URL resolves. Reuses the same kc + metaRaw; runs BEFORE the guaranteed teardown.
+	runT2Day2Access(t, ctx, kc, day2AccessParams{provider: provider, metaRaw: metaRaw})
+
 	// (8) SOAK / day-2 window (BYOC A0.3). Opt-in via ALETHIA_E2E_SOAK — unset ⇒ a clean
 	//     skip (everything above is the unchanged base T2 proof). Runs AFTER the readiness +
 	//     ArgoCD asserts and BEFORE this function returns, so the GUARANTEED t.Cleanup

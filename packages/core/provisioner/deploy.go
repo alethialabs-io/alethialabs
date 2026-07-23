@@ -1133,7 +1133,11 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/target-type=ip'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/listen-ports=[{\"HTTPS\":443}]'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn=%s'"+
-					" --set 'server.ingress.hosts[0]=%s'",
+					// argo-helm 8.x refactored the server ingress: the `hosts[]` list was replaced by a
+					// single `hostname` (+ `extraHosts` for additional records). We keep the default
+					// `controller: generic` and drive the ALB purely via the annotations + ingressClassName
+					// above, so only the host key changes across the 7.x→8.x bump (#1165).
+					" --set 'server.ingress.hostname=%s'",
 				certArn, argoHost)
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
 			// The URL is only real when the ingress above is actually configured (AWS
