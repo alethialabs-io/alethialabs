@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# capabilities-security — the AUTOMATED, fail-closed required check that replaces the dropped #982
+# CODEOWNERS review (a sole-owner human gate would deadlock the no-approval Mergify queue). It enforces
+# the deterministic `alethia-security-review` invariants on the capabilities / connector / keyless
+# surface: RLS registration of new tenant tables, the cross-provider-leak filter, typed JSONB / no unsafe
+# casts, and keyless-only (no static credentials).
+#
+# CRITICAL — no `paths:` filter. A path-filtered REQUIRED check never reports on an unrelated PR, which
+# deadlocks that PR forever. So this runs on EVERY PR and the script NO-OP-PASSES (green) when no relevant
+# path changed; it fails only when those paths changed AND an invariant is violated. Wired as a required
+# check on the protect-dev ruleset (infra/github).
+
+name: capabilities-security
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  capabilities-security:
+    name: capabilities-security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the gate can diff base..head to find the PR's changed files.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Capabilities security gate
+        env:
+          # The PR base commit — the gate diffs GATE_BASE_SHA...HEAD to detect changed paths.
+          GATE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/security/capabilities-gate.mjs
