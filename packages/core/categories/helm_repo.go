@@ -12,10 +12,6 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
-// helmRepoCredNamespace is the namespace the ArgoCD repository credential is seeded into. ArgoCD
-// reads repository/repo-creds Secrets only from its own namespace ("argocd").
-const helmRepoCredNamespace = "argocd"
-
 // RepoCred is the ArgoCD repository credential a helm_registry provider maps its connection to: the
 // chart-repo URL (oci://<host> for an OCI registry, https://… for an HTTPS chart repo), the
 // username/password ArgoCD authenticates a chart pull with, and whether the repo is OCI. It is the
