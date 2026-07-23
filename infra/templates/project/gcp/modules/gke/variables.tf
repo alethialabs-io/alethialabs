@@ -29,7 +29,7 @@ variable "cluster_name" {
 variable "cluster_version" {
   type        = string
   description = "Kubernetes version for the GKE cluster"
-  default     = "1.31"
+  default     = "1.35"
 }
 
 variable "enable_autopilot" {
