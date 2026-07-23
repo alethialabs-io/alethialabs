@@ -490,35 +490,47 @@ func TestRender_ESOStoresPerCloud(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.provider, func(t *testing.T) {
+			// The operator Application renders from the template; the per-cloud ClusterSecretStore
+			// now renders from Go (externalSecretsStoreManifest) and is applied separately AFTER the
+			// operator is up (#1208). Together they carry the same identity-gated shape as before.
 			files := renderAll(t, BuildFromOutputs(tc.withIdentity, cfg(tc.provider)))
 			eso, ok := files["external-secrets-operator.yaml"]
 			if !ok {
 				t.Fatalf("external-secrets operator should render on %s", tc.provider)
 			}
-			if !strings.Contains(eso, "name: "+tc.store) {
-				t.Errorf("%s should render with the identity fact present:\n%s", tc.store, eso)
+			// The store must NOT live inside the operator's own apply file anymore (#1208).
+			if strings.Contains(eso, "ClusterSecretStore") {
+				t.Errorf("ClusterSecretStore must not render inside the operator template (#1208):\n%s", eso)
 			}
+			store, err := externalSecretsStoreManifest(BuildFromOutputs(tc.withIdentity, cfg(tc.provider)))
+			if err != nil {
+				t.Fatalf("render store: %v", err)
+			}
+			if !strings.Contains(store, "name: "+tc.store) {
+				t.Errorf("%s should render from Go with the identity fact present:\n%s", tc.store, store)
+			}
+			combined := eso + "\n" + store
 			for _, want := range tc.want {
-				if !strings.Contains(eso, want) {
-					t.Errorf("%s render missing %q:\n%s", tc.provider, want, eso)
+				if !strings.Contains(combined, want) {
+					t.Errorf("%s render missing %q:\noperator:\n%s\nstore:\n%s", tc.provider, want, eso, store)
 				}
 			}
 			// Only THIS cloud's store may render.
 			for _, other := range []string{"secretstore-aws", "secretstore-gcp", "secretstore-azure", "secretstore-alibaba"} {
-				if other != tc.store && strings.Contains(eso, other) {
-					t.Errorf("%s must NOT render on %s:\n%s", other, tc.provider, eso)
+				if other != tc.store && strings.Contains(combined, other) {
+					t.Errorf("%s must NOT render on %s", other, tc.provider)
 				}
 			}
 
-			// Fail-closed: without the identity output the store (and the SA annotation)
-			// must be absent, while the operator itself still renders.
+			// Fail-closed: without the identity output the store must be empty and the SA annotation
+			// absent, while the cloud-agnostic operator chart still ships.
 			files = renderAll(t, BuildFromOutputs(tc.noIdentity, cfg(tc.provider)))
 			eso, ok = files["external-secrets-operator.yaml"]
 			if !ok {
 				t.Fatalf("external-secrets operator should render on %s even without identity", tc.provider)
 			}
-			if strings.Contains(eso, "ClusterSecretStore") {
-				t.Errorf("no ClusterSecretStore may render on %s without its identity fact:\n%s", tc.provider, eso)
+			if s, _ := externalSecretsStoreManifest(BuildFromOutputs(tc.noIdentity, cfg(tc.provider))); s != "" {
+				t.Errorf("no ClusterSecretStore may render on %s without its identity fact:\n%s", tc.provider, s)
 			}
 			for _, ann := range []string{"eks.amazonaws.com/role-arn", "iam.gke.io/gcp-service-account", "azure.workload.identity/client-id"} {
 				if strings.Contains(eso, ann) {
