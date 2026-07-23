@@ -174,8 +174,9 @@ export const MATRIX: Matrix = {
 		],
 		"addon_k8s": {
 			"kube-prometheus-stack": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.19",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=1.19.0-0' (kube-prometheus-stack@61.9.0); derived by derive-compat.mjs."
 			},
 			"loki": {
 				"k8s_min": "",
@@ -186,24 +187,29 @@ export const MATRIX: Matrix = {
 				"k8s_max": ""
 			},
 			"vault": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.20",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>= 1.20.0-0' (vault@0.28.1); derived by derive-compat.mjs."
 			},
 			"cert-manager": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.22",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>= 1.22.0-0' (cert-manager@v1.15.3); derived by derive-compat.mjs."
 			},
 			"ingress-nginx": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.21",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=1.21.0-0' (ingress-nginx@4.11.2); derived by derive-compat.mjs."
 			},
 			"velero": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.16",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=1.16.0-0' (velero@7.2.1); derived by derive-compat.mjs."
 			},
 			"kyverno": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.25",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=1.25.0-0' (kyverno@3.2.6); derived by derive-compat.mjs."
 			},
 			"tempo": {
 				"k8s_min": "",
@@ -214,24 +220,27 @@ export const MATRIX: Matrix = {
 				"k8s_max": ""
 			},
 			"goldilocks": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.22",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>= 1.22.0-0' (goldilocks@9.0.0); derived by derive-compat.mjs."
 			},
 			"falco": {
 				"k8s_min": "",
 				"k8s_max": ""
 			},
 			"sealed-secrets": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.16",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=1.16.0-0' (sealed-secrets@2.16.1); derived by derive-compat.mjs."
 			},
 			"reloader": {
 				"k8s_min": "",
 				"k8s_max": ""
 			},
 			"keda": {
-				"k8s_min": "",
-				"k8s_max": ""
+				"k8s_min": "1.23",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=v1.23.0-0' (keda@2.15.1); derived by derive-compat.mjs."
 			},
 			"argo-rollouts": {
 				"k8s_min": "",
