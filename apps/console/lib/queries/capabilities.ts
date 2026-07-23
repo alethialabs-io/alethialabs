@@ -23,12 +23,16 @@ import {
 	cloudCapabilityRegions,
 	cloudCapabilityServices,
 } from "@/lib/db/schema";
-import { CACHE_NODE_TYPES } from "@/lib/cloud-providers/cache";
-import { INSTANCE_TYPES, K8S_VERSIONS } from "@/lib/cloud-providers/compute";
-import { DB_CAPACITY, DB_ENGINES } from "@/lib/cloud-providers/database";
-import { NOSQL } from "@/lib/cloud-providers/nosql";
-import { REGION_LABELS } from "@/lib/cloud-providers/regions";
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import {
+	CACHE_NODE_TYPES,
+	type CloudProviderSlug,
+	DB_CAPACITY,
+	DB_ENGINES,
+	INSTANCE_TYPES,
+	K8S_VERSIONS,
+	NOSQL,
+	REGION_LABELS,
+} from "@/lib/cloud-providers/generated/catalog";
 import type {
 	CapabilityLaunchable,
 	CapabilityLaunchableReason,

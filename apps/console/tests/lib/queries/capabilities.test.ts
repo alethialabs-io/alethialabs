@@ -9,8 +9,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authorize } from "@/lib/authz/guard";
-import { INSTANCE_TYPES } from "@/lib/cloud-providers/compute";
-import { REGION_LABELS } from "@/lib/cloud-providers/regions";
+import {
+	INSTANCE_TYPES,
+	REGION_LABELS,
+} from "@/lib/cloud-providers/generated/catalog";
 import {
 	getInstanceTypeCapabilities,
 	getRegionCapabilities,
