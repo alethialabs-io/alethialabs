@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.2.0...runner-v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **fabric:** namespace-placement keyless-mint dispatch seam ([#1013](https://github.com/alethialabs-io/alethialabs/issues/1013)) ([#1138](https://github.com/alethialabs-io/alethialabs/issues/1138)) ([5b870e8](https://github.com/alethialabs-io/alethialabs/commit/5b870e8ea90ea8f4e7b29250c3f3508a967f89bd))
+* **fabric:** per-namespace cloud identity (AWS IRSA) for namespace placement (Closes [#957](https://github.com/alethialabs-io/alethialabs/issues/957)) ([#1029](https://github.com/alethialabs-io/alethialabs/issues/1029)) ([3cc73a7](https://github.com/alethialabs-io/alethialabs/commit/3cc73a7a62b2e5d1840ae08da9d46e664caa4635))
+* **runner:** `registry-token` cross-account keyless registry refresher (B2/PR B) (Part of [#925](https://github.com/alethialabs-io/alethialabs/issues/925)) ([#1036](https://github.com/alethialabs-io/alethialabs/issues/1036)) ([fb77a43](https://github.com/alethialabs-io/alethialabs/commit/fb77a43e95c30d477342815a2bd65ee8dfc8c8dc))
+
+
+### Bug Fixes
+
+* **core,runner:** make git clone/pull cancellable via context ([#987](https://github.com/alethialabs-io/alethialabs/issues/987)) ([#1025](https://github.com/alethialabs-io/alethialabs/issues/1025)) ([efc55fe](https://github.com/alethialabs-io/alethialabs/commit/efc55fe94aae926d15c6389dc5af73c33d6ee543))
+* **infracost:** checksum-verify, timeout, and config-driven version ([#983](https://github.com/alethialabs-io/alethialabs/issues/983)) ([3eca757](https://github.com/alethialabs-io/alethialabs/commit/3eca7570bef8478b977276db57e7959edcbbc968)), closes [#946](https://github.com/alethialabs-io/alethialabs/issues/946) [#950](https://github.com/alethialabs-io/alethialabs/issues/950)
+* **runner,console:** stop persisting live runner_token at rest; re-mint on update ([#945](https://github.com/alethialabs-io/alethialabs/issues/945)) ([#1014](https://github.com/alethialabs-io/alethialabs/issues/1014)) ([8d9fcb0](https://github.com/alethialabs-io/alethialabs/commit/8d9fcb04be5d886e59ce0ec10fa8b0f2add4edb4))
+* **runner:** ActivateTokenCloud restores a pre-existing token on cleanup ([#988](https://github.com/alethialabs-io/alethialabs/issues/988)) ([#1020](https://github.com/alethialabs-io/alethialabs/issues/1020)) ([f7cb0a7](https://github.com/alethialabs-io/alethialabs/commit/f7cb0a78cdd11829309ae8af984440574641241b))
+* **runner:** cross-compile the runner image for its target arch (multi-arch build bug) ([#1052](https://github.com/alethialabs-io/alethialabs/issues/1052)) ([17ab6d9](https://github.com/alethialabs-io/alethialabs/commit/17ab6d901481942b8849780a89e03adf80896962)), closes [#1050](https://github.com/alethialabs-io/alethialabs/issues/1050)
+* **runner:** fail the audit job when the verify verdict can't persist ([#991](https://github.com/alethialabs-io/alethialabs/issues/991)) ([cd2950c](https://github.com/alethialabs-io/alethialabs/commit/cd2950c7bf1a4a25de936b7e2d6d6a493495620d)), closes [#986](https://github.com/alethialabs-io/alethialabs/issues/986)
+* **runner:** nil-guard resolveAccountID ([#989](https://github.com/alethialabs-io/alethialabs/issues/989)) ([#1018](https://github.com/alethialabs-io/alethialabs/issues/1018)) ([d052776](https://github.com/alethialabs-io/alethialabs/commit/d05277650dca237a1e421e3c95e991e420750016))
+* **runner:** single config-driven tofu version + panic-safe id truncation ([#964](https://github.com/alethialabs-io/alethialabs/issues/964)) ([977396c](https://github.com/alethialabs-io/alethialabs/commit/977396ce5f00d0b51e0e136fe9a7477b2890f3bf)), closes [#947](https://github.com/alethialabs-io/alethialabs/issues/947) [#949](https://github.com/alethialabs-io/alethialabs/issues/949)
+* **runner:** StreamWake reuses the configured transport + gets an idle deadline ([#953](https://github.com/alethialabs-io/alethialabs/issues/953)) ([#1024](https://github.com/alethialabs-io/alethialabs/issues/1024)) ([d29cee5](https://github.com/alethialabs-io/alethialabs/commit/d29cee50212a71f971ddd3beb47ccf1cf6ac4ad4))
+* **security:** write secret-bearing files owner-only (0600) ([#961](https://github.com/alethialabs-io/alethialabs/issues/961)) ([e684a6a](https://github.com/alethialabs-io/alethialabs/commit/e684a6a0f034c3c84abfdbc371d773333e860a12))
+
 ## [0.2.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.1.0...runner-v0.2.0) (2026-07-19)
 
 
