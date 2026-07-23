@@ -19,6 +19,9 @@ func TestGetModulePath(t *testing.T) {
 	}{
 		{"cloudflare dns", "dns", "cloudflare", "categories/dns/cloudflare"},
 		{"vault secrets", "secrets", "vault", "categories/secrets/vault"},
+		{"doppler secrets", "secrets", "doppler", "categories/secrets/doppler"},
+		{"infisical secrets", "secrets", "infisical", "categories/secrets/infisical"},
+		{"onepassword secrets", "secrets", "onepassword", "categories/secrets/onepassword"},
 		// registry providers are runner-seeded (a dockerconfigjson imagePullSecret applied
 		// post-apply), so they carry NO tofu module → empty module_path.
 		{"dockerhub registry", "registry", "dockerhub", ""},
