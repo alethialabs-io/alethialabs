@@ -107,7 +107,10 @@ export function SaveArtifactButton({
       <PopoverContent
         align="end"
         container={bodyContainer()}
-        className="w-[240px] rounded-none p-2"
+        // z-[60] beats the enclosing fullscreen Elench Dialog's z-50 (dialogContentVariants): with the
+        // popup portaled to <body> it's a sibling of the dialog, so it must out-rank it to paint above
+        // the grid — otherwise the equal z-50 tie lets the later-painted grid swallow the Save click.
+        className="z-[60] w-[240px] rounded-none p-2"
       >
         <div className="vx-eyebrow pb-1.5 text-[9px]">
           {kind === "widget"
@@ -192,7 +195,9 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
       <PopoverContent
         align="end"
         container={bodyContainer()}
-        className="w-[260px] rounded-none p-2"
+        // Same reason as SaveArtifactButton: sit above the z-50 fullscreen dialog so the grid can't
+        // intercept clicks on artifact rows.
+        className="z-[60] w-[260px] rounded-none p-2"
       >
         <div className="vx-eyebrow pb-1.5 text-[9px]">Saved artifacts</div>
         {items === null ? (
