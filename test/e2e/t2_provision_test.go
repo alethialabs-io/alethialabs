@@ -601,6 +601,11 @@ func teardownT2Cluster(ctx context.Context, cpURL, jobID, project, env, provider
 		ProjectName:      project,
 		EnvironmentStage: types.EnvironmentStage(env),
 		Region:           region,
+		// Reconstruct the SAME account/project/subscription the deploy resolved from ambient
+		// env (the runner's resolveAmbientAccountID) so the destroy's ProviderTfvars resolve
+		// identically — else GCP's project_id (and AWS account-scoped ARNs) are empty and the
+		// teardown fails. Empty for account-less providers, matching the deploy.
+		CloudAccountID: t2AmbientAccountID(provider),
 	}
 	backend := &cloud.HTTPBackendConfig{ConsoleURL: cpURL, JobID: jobID, Token: "e2e-teardown"}
 	return provisioner.RunDestroy(ctx, provisioner.DestroyParams{

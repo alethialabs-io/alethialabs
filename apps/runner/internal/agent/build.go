@@ -66,6 +66,9 @@ func (w *Runner) executeBuild(ctx context.Context, job *Job, provider string, id
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
 
 	repoServices := repoSourcedServices(vc.Services)
 	if len(repoServices) == 0 {
