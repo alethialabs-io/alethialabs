@@ -158,9 +158,9 @@ func (s VClusterSpec) Validate() error {
 		return fmt.Errorf("vcluster: name %q is not a valid cluster name", s.Name)
 	}
 	for label, val := range map[string]string{
-		"host_namespace":      s.HostNamespace,
-		"service_account":     s.ServiceAccount,
-		"kubeconfig_secret":   s.KubeconfigSecret,
+		"host_namespace":       s.HostNamespace,
+		"service_account":      s.ServiceAccount,
+		"kubeconfig_secret":    s.KubeconfigSecret,
 		"kubeconfig_namespace": s.KubeconfigNamespace,
 	} {
 		if !isDNS1123Label(val) {
@@ -198,20 +198,20 @@ func renderVClusterValues(spec VClusterSpec) string {
 			b.WriteString("  distro:\n")
 			b.WriteString("    k8s:\n")
 			b.WriteString("      image:\n")
-			b.WriteString(fmt.Sprintf("        tag: v%s\n", version))
+			fmt.Fprintf(&b, "        tag: v%s\n", version)
 		}
 	}
 	// exportKubeConfig: emit a SCOPED service-account-token kubeconfig (not the admin cert) into the
 	// ArgoCD namespace on the host, with the API endpoint pinned to the address ArgoCD reaches it at
 	// (in-cluster Service by default; the explicit override when exposed off-host).
 	b.WriteString("exportKubeConfig:\n")
-	b.WriteString(fmt.Sprintf("  server: %s\n", spec.effectiveServer()))
+	fmt.Fprintf(&b, "  server: %s\n", spec.effectiveServer())
 	b.WriteString("  serviceAccount:\n")
-	b.WriteString(fmt.Sprintf("    name: %s\n", spec.ServiceAccount))
-	b.WriteString(fmt.Sprintf("    clusterRole: %s\n", spec.resolvedClusterRole()))
+	fmt.Fprintf(&b, "    name: %s\n", spec.ServiceAccount)
+	fmt.Fprintf(&b, "    clusterRole: %s\n", spec.resolvedClusterRole())
 	b.WriteString("  additionalSecrets:\n")
-	b.WriteString(fmt.Sprintf("    - name: %s\n", spec.KubeconfigSecret))
-	b.WriteString(fmt.Sprintf("      namespace: %s\n", spec.KubeconfigNamespace))
+	fmt.Fprintf(&b, "    - name: %s\n", spec.KubeconfigSecret)
+	fmt.Fprintf(&b, "      namespace: %s\n", spec.KubeconfigNamespace)
 	return b.String()
 }
 
