@@ -274,7 +274,7 @@ func TestInstallArgoCDBuildsIngressCommandOnlyWhenCertificateExists(t *testing.T
 	for _, want := range []string{
 		"helm upgrade --install argo-cd",
 		"server.ingress.enabled=true",
-		"server.ingress.hosts[0]=argocd.example.com",
+		"server.ingress.hostname=argocd.example.com",
 		"arn:aws:acm:region:acct:certificate/123",
 	} {
 		if !strings.Contains(install, want) {
