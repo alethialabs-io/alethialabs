@@ -31,6 +31,9 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
 
 	// E0 boundary: BYO IaC drift executes untrusted customer tofu (a refresh-only plan
 	// still runs provider plugins). Refuse on a managed runner without the egress-enforced

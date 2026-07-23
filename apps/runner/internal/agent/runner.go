@@ -624,6 +624,9 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
 	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
@@ -888,6 +891,9 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
 	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
@@ -1005,6 +1011,9 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
 	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
@@ -1090,6 +1099,31 @@ func resolveAccountID(identity *CloudIdentity) string {
 	default:
 		return identity.AccountID
 	}
+}
+
+// resolveAmbientAccountID derives the provider account identifier from the ambient environment
+// for a self-operator runner that has NO stored CloudIdentity (identity == nil) — a registered
+// BYO runner authenticating from ambient cloud credentials, and the T2 real-cloud harness. It
+// mirrors the ambient-CREDENTIAL path those same runners already use (AWS_*, GOOGLE_APPLICATION_
+// CREDENTIALS, ARM_*): the account identifier is read from the well-known SDK/tooling env vars.
+// Without it, ProviderTfvars emits an empty account/project/subscription, which breaks GCP (an
+// empty project_id fails every module) and AWS account-scoped ARNs (IRSA, ECR, RDS-IAM, the
+// DynamoDB assume-role). Returns "" when nothing is set, preserving prior behavior for callers
+// that legitimately have no account (e.g. hetzner, which is account-less at the tofu layer).
+func resolveAmbientAccountID(provider string) string {
+	switch provider {
+	case "gcp":
+		for _, k := range []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"} {
+			if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+				return v
+			}
+		}
+	case "azure":
+		return strings.TrimSpace(os.Getenv("ARM_SUBSCRIPTION_ID"))
+	case "aws":
+		return strings.TrimSpace(os.Getenv("AWS_ACCOUNT_ID"))
+	}
+	return ""
 }
 
 // deployPhaseFile is the path RunDeployV2 writes the provisioning phase to (under the
