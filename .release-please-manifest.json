@@ -1,4 +1,4 @@
 {
-  "apps/cli": "0.3.0",
+  "apps/cli": "0.3.1",
   "apps/runner": "0.2.0"
 }
