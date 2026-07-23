@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import type { AiProposalParsed } from "@/lib/ai/proposal";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
