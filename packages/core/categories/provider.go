@@ -53,6 +53,14 @@ type behavior struct {
 	// keyless registry gets a continuously-refreshed dockerconfigjson (the refresher Deployment), not a
 	// static one. nil → not a keyless registry.
 	keylessRegistry func(ComponentContext) KeylessRegistryTarget
+	// repoCred, when set (helm_registry category only), maps a private Helm/OCI chart-repo connection to
+	// the ArgoCD repository credential the runner seeds post-apply (argocd.EnsureHelmRepoCredential):
+	// the chart-repo URL (oci://host for an OCI registry, https://… for an HTTPS chart repo), the
+	// username/password ArgoCD authenticates the chart pull with, and whether the repo is OCI. Unlike
+	// pullAuth (a dockerconfigjson imagePullSecret for image pulls), this is an `argocd.argoproj.io/
+	// secret-type` repo credential ArgoCD matches to an Application by repoURL. nil → not a helm_registry
+	// provider (or a coming_soon one whose keyless resolution is a documented follow-up).
+	repoCred func(ComponentContext) RepoCred
 }
 
 var behaviors = map[string]behavior{}
@@ -144,6 +152,24 @@ func (p *CategoryProvider) KeylessRegistry(ctx ComponentContext) (KeylessRegistr
 func IsKeylessRegistry(slug string) bool {
 	b, ok := behaviors["registry/"+slug]
 	return ok && b.keylessRegistry != nil
+}
+
+// RepoCred returns the ArgoCD repository credential a private Helm/OCI chart-repo connection maps to
+// (helm_registry providers only). ok is false when the provider registered no repoCred — a
+// non-helm_registry provider, or a coming_soon slug whose keyless resolution is a documented follow-up.
+func (p *CategoryProvider) RepoCred(ctx ComponentContext) (RepoCred, bool) {
+	if p.b.repoCred == nil {
+		return RepoCred{}, false
+	}
+	return p.b.repoCred(ctx), true
+}
+
+// IsHelmRegistry reports whether a slug is a helm_registry provider with a seedable repo credential
+// (true only when repoCred is set — so a coming_soon keyless slug returns false and is skipped by
+// HelmRepoCredSpecs). Cheap lookup for routing without building a full ComponentContext.
+func IsHelmRegistry(slug string) bool {
+	b, ok := behaviors["helm_registry/"+slug]
+	return ok && b.repoCred != nil
 }
 
 // Get resolves a provider by (category, slug). The slug must exist both in the
