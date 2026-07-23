@@ -466,3 +466,26 @@ func t2Env(key, def string) string {
 	}
 	return def
 }
+
+// t2AmbientAccountID mirrors the runner's resolveAmbientAccountID for the IN-PROCESS teardown
+// path: teardownT2Cluster calls provisioner.RunDestroy directly (not via the runner binary), so
+// it must reconstruct the SAME account/project/subscription the deploy used — otherwise the
+// destroy's ProviderTfvars emit an empty project_id/account and the teardown fails (leaving the
+// cluster to the workflow's belt-and-suspenders sweeper). Reads the same ambient env vars the
+// self-operator runner authenticates from. Untagged + here so t2_providers_test can drive it
+// without a cloud. Returns "" for account-less providers (hetzner/alibaba-at-tofu-layer).
+func t2AmbientAccountID(provider string) string {
+	switch provider {
+	case "gcp":
+		for _, k := range []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"} {
+			if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+				return v
+			}
+		}
+	case "azure":
+		return strings.TrimSpace(os.Getenv("ARM_SUBSCRIPTION_ID"))
+	case "aws":
+		return strings.TrimSpace(os.Getenv("AWS_ACCOUNT_ID"))
+	}
+	return ""
+}

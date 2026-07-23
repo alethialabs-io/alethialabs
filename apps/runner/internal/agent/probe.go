@@ -48,6 +48,9 @@ func (w *Runner) executeProbeCluster(ctx context.Context, job *Job, provider str
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
 
 	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 		"phase": "probe", "progress": "Checking whether the cluster's API server answers...",
