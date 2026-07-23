@@ -74,10 +74,12 @@ function laneOf(o) {
 
 /**
  * The coordination state of a board unit, mirroring coordinate.sh's `st` jq:
- * CLAIMED (held) > BLOCKED (a blocker still open) > READY (claimable).
+ * EPIC (umbrella/tracker, never claimable) > CLAIMED (held) > BLOCKED (a blocker still open) >
+ * READY (claimable). Epics are surfaced but never counted as ready work.
  */
 function stateOf(o) {
 	const s = labelSet(o);
+	if (s.has("epic")) return "EPIC";
 	if (s.has("claimed")) return "CLAIMED";
 	if (s.has("blocked")) return "BLOCKED";
 	return "READY";
@@ -317,7 +319,7 @@ function holderCell(u) {
 
 /** One wave section (header counts + a scrolling unit table). */
 function waveSection(w) {
-	const c = { READY: 0, CLAIMED: 0, BLOCKED: 0 };
+	const c = { READY: 0, CLAIMED: 0, BLOCKED: 0, EPIC: 0 };
 	for (const u of w.units) c[u.state]++;
 	const rows = w.units
 		.map((u) => {
@@ -341,7 +343,7 @@ function waveSection(w) {
 		<span class="counts">
 			<span class="c-ready">${c.READY} ready</span>
 			<span class="c-claimed">${c.CLAIMED} claimed</span>
-			<span class="c-blocked">${c.BLOCKED} blocked</span>
+			<span class="c-blocked">${c.BLOCKED} blocked</span>${c.EPIC ? ` <span class="c-epic">${c.EPIC} epic</span>` : ""}
 		</span>
 	</h2>
 	<div class="tablewrap">
@@ -417,13 +419,13 @@ const html = `<!doctype html>
 <style>
 :root {
 	--bg: #ffffff; --fg: #111111; --dim: #6b7280; --line: #e5e7eb; --panel: #fafafa;
-	--ready: #0e7a2e; --claimed: #b45309; --blocked: #b91c1c; --human: #6d28d9; --warn: #b91c1c; --ok: #0e7a2e;
+	--ready: #0e7a2e; --claimed: #b45309; --blocked: #b91c1c; --human: #6d28d9; --epic: #7c3aed; --warn: #b91c1c; --ok: #0e7a2e;
 	--mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
 	:root {
 		--bg: #0a0a0a; --fg: #ededed; --dim: #8b8b8b; --line: #262626; --panel: #141414;
-		--ready: #4ade80; --claimed: #fbbf24; --blocked: #f87171; --human: #c4b5fd; --warn: #f87171; --ok: #4ade80;
+		--ready: #4ade80; --claimed: #fbbf24; --blocked: #f87171; --human: #c4b5fd; --epic: #a78bfa; --warn: #f87171; --ok: #4ade80;
 	}
 }
 * { box-sizing: border-box; }
@@ -460,6 +462,8 @@ td.tags, td.holder { white-space: nowrap; }
 .pill.state-ready { color: var(--ready); border-color: var(--ready); }
 .pill.state-claimed { color: var(--claimed); border-color: var(--claimed); }
 .pill.state-blocked { color: var(--blocked); border-color: var(--blocked); }
+.pill.state-epic { color: var(--epic); border-color: var(--epic); }
+.c-epic { color: var(--epic); }
 .pill.class-backend { color: var(--fg); }
 .pill.class-ui { color: var(--human); border-color: var(--human); }
 .pill.human { color: var(--human); border-color: var(--human); }
