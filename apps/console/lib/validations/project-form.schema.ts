@@ -11,6 +11,7 @@ import {
 	projectContainerRegistries,
 	projectDatabases,
 	projectDns,
+	projectHelmRegistries,
 	projectNetwork,
 	projectNosqlTables,
 	projectQueues,
@@ -27,6 +28,7 @@ import type {
 	ClusterProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
+	HelmRegistryProviderConfig,
 	NodeSize,
 	NosqlProviderConfig,
 	RegistryProviderConfig,
@@ -76,6 +78,9 @@ const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 });
 const registriesInsert = createInsertSchema(projectContainerRegistries, {
 	provider_config: z.custom<RegistryProviderConfig>().optional(),
+});
+const helmRegistriesInsert = createInsertSchema(projectHelmRegistries, {
+	provider_config: z.custom<HelmRegistryProviderConfig>().optional(),
 });
 
 // W1 — service/workload sub-shapes (validated, not passthrough): a service is the customer's own
@@ -284,6 +289,17 @@ const registryItemSchema = registriesInsert
 	})
 	.extend({ name: z.string().min(1, "Registry name is required") });
 
+// Private chart-repo selection (helm_registry connector). No output column — the seeded
+// ArgoCD repo-cred is runner-side state, not a design field.
+const helmRegistryItemSchema = helmRegistriesInsert
+	.omit({
+		...autoFields,
+		project_id: true,
+		status: true,
+		status_message: true,
+	})
+	.extend({ name: z.string().min(1, "Chart repo name is required") });
+
 // W1 — a first-class service/workload the customer designs on the canvas.
 const serviceItemSchema = servicesInsert
 	.omit({
@@ -313,6 +329,7 @@ export const projectFormSchema = z.object({
 	secrets: z.array(secretItemSchema).default([]),
 	storage_buckets: z.array(bucketItemSchema).default([]),
 	container_registries: z.array(registryItemSchema).default([]),
+	helm_registries: z.array(helmRegistryItemSchema).default([]),
 	services: z.array(serviceItemSchema).default([]),
 });
 
@@ -329,6 +346,7 @@ export {
 	secretItemSchema,
 	bucketItemSchema,
 	registryItemSchema,
+	helmRegistryItemSchema,
 	sourceRepoItemSchema,
 	// Singleton sub-schemas — consumed by the canvas for per-node validation.
 	projectSchema,

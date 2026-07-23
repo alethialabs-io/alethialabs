@@ -37,6 +37,7 @@ const DEFAULT_VALUES: ProjectFormData = {
 	secrets: [],
 	storage_buckets: [],
 	container_registries: [],
+	helm_registries: [],
 	services: [],
 };
 

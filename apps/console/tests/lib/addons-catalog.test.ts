@@ -166,6 +166,56 @@ describe("resolveByoChartInstall", () => {
 			resolveByoChartInstall({ addon_id: "x", mode: "managed", chart_repo: "https://x" }),
 		).toBeNull();
 	});
+
+	it("resolves an OCI-source spec: last path segment is the chart, the rest is the repoURL", () => {
+		const spec = resolveByoChartInstall({
+			addon_id: "payments",
+			mode: "managed",
+			chart_repo: "oci://ghcr.io/acme/team/mychart",
+			version: "1.2.3",
+			namespace: "payments",
+		});
+		expect(spec).toMatchObject({
+			id: "payments",
+			source: "helm",
+			// oci:// scheme kept so the Application repoURL is a prefix of the seeded cred url.
+			chartRepo: "oci://ghcr.io/acme/team",
+			chart: "mychart",
+			path: "",
+			version: "1.2.3",
+			namespace: "payments",
+		});
+	});
+
+	it("resolves an OCI chart with only host + chart (no namespace)", () => {
+		const spec = resolveByoChartInstall({
+			addon_id: "svc",
+			mode: "managed",
+			chart_repo: "oci://ghcr.io/mychart",
+		});
+		expect(spec).toMatchObject({
+			source: "helm",
+			chartRepo: "oci://ghcr.io",
+			chart: "mychart",
+			// OCI charts default to the latest version (ArgoCD-supported Helm targetRevision).
+			version: "*",
+		});
+	});
+
+	it("does NOT require chart_path for an OCI repo, but DOES need a chart segment", () => {
+		// OCI needs no chart_path (unlike git)…
+		expect(
+			resolveByoChartInstall({
+				addon_id: "ok",
+				mode: "managed",
+				chart_repo: "oci://ghcr.io/acme/chart",
+			}),
+		).not.toBeNull();
+		// …but a bare host with no chart segment can't address a chart.
+		expect(
+			resolveByoChartInstall({ addon_id: "x", mode: "managed", chart_repo: "oci://ghcr.io" }),
+		).toBeNull();
+	});
 });
 
 describe("parseValuesYaml", () => {

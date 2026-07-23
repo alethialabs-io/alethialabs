@@ -61,6 +61,7 @@ export function buildDefaultFormValues(
 			secrets: [],
 			storage_buckets: [],
 			container_registries: [],
+			helm_registries: [],
 			services: [],
 		}
 	);
