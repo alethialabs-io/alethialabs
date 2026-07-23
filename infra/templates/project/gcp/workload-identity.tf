@@ -57,7 +57,10 @@ resource "google_service_account" "external_secrets" {
 # provisioner to hold resourcemanager.projectIamAdmin (same rationale as the zone-scoped
 # external-dns binding above). Keyed by the secret's declared name (known at plan time).
 resource "google_secret_manager_secret_iam_member" "external_secrets_accessor" {
-  for_each = var.provision_gke ? { for s in var.custom_secrets : s.name => s } : {}
+  # Gated on secrets_provider == "native": when a pluggable provider takes over, the
+  # native secrets aren't created, so granting per-secret secretAccessor on them would
+  # fail the apply (parity with Alibaba's eso_rrsa_enabled gating).
+  for_each = var.provision_gke && var.secrets_provider == "native" ? { for s in var.custom_secrets : s.name => s } : {}
 
   project   = var.project_id
   secret_id = "${var.environment}-${var.project_name}-${each.key}"
