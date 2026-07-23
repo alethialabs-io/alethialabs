@@ -8,6 +8,7 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { MATRIX } from "@/lib/compat";
 import { asRecord } from "@/lib/records";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -49,10 +50,23 @@ export function deepMerge(
 	return out;
 }
 
-/** Identity helper that preserves each entry's Zod schema generic, so `toValues` receives a
- * properly-typed `config` (a plain `AddOnDef[]` annotation would erase it to `unknown`). */
-function defineAddOn<S extends z.ZodTypeAny>(def: AddOnDef<S>): AddOnDef<S> {
-	return def;
+/** Preserves each entry's Zod schema generic, so `toValues` receives a properly-typed `config`
+ * (a plain `AddOnDef[]` annotation would erase it to `unknown`), and attaches the add-on's
+ * Kubernetes support window from the compat matrix SSOT (`matrix.json` → `addon_k8s[id]`) — so
+ * `k8sRange` is derived, never hand-authored, and can't drift from the engine's source. Fails
+ * closed at module load if an add-on has no matrix entry (a new add-on must be added there
+ * first — currently every catalog id has an `addon_k8s` key). */
+function defineAddOn<S extends z.ZodTypeAny>(
+	def: Omit<AddOnDef<S>, "k8sRange">,
+): AddOnDef<S> {
+	const k8sRange = MATRIX.addon_k8s[def.id];
+	if (!k8sRange) {
+		throw new Error(
+			`AddOn "${def.id}" has no addon_k8s entry in the compat matrix ` +
+				"(packages/core/compat/matrix.json). Add it before shipping the add-on.",
+		);
+	}
+	return { ...def, k8sRange };
 }
 
 /** The curated catalog. Ordered for display; grouped by category in the UI.
