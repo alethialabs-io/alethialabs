@@ -12,7 +12,13 @@
 # Usage:
 #   scripts/coordinate.sh                 # reclaim + unblock + report
 #   scripts/coordinate.sh --report        # report only (no mutations)
+#   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR names in its TITLE
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
+#
+# --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
+# NOTHING, but for each open, still-claimable board unit whose number a MERGED PR carries in its
+# TITLE (a STRONG ref — the same `strong` heuristic the default report LIKELY-flags), it closes
+# the issue with a comment. Body-only refs stay advisory (a reference is not a delivery).
 #
 # Env: ALETHIA_LEASE_TTL (seconds, default 3600) — a lease older than this with no heartbeat
 #      is reclaimable.
@@ -26,9 +32,10 @@ LEASE_TTL="${ALETHIA_LEASE_TTL:-3600}"
 MODE="full"
 case "${1:-}" in
   --report) MODE="report" ;;
+  --close-shipped) MODE="close-shipped" ;;
   --init-labels) MODE="init" ;;
   "" ) MODE="full" ;;
-  -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac
 
@@ -59,6 +66,39 @@ fi
 # Pull the whole open board once.
 board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($n|tonumber))|.labels|map(.name)|index($l)' >/dev/null 2>&1; }
+
+# ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
+# Mutates NOTHING on leases/blocks. For each open, still-claimable board unit whose number a
+# MERGED PR carries in its TITLE (a STRONG ref — the exact same `strong` heuristic the default
+# report LIKELY-flags below), close the issue. Body-only refs stay advisory: a reference in a
+# PR body is not a delivery, so we never auto-close on those. Idempotent (only OPEN units are in
+# `board`). See .claude/COORDINATION.md.
+if [ "$MODE" = "close-shipped" ]; then
+  merged="$(gh pr list --state merged --limit 300 --json number,title 2>/dev/null || echo '[]')"
+  # Emit "<issue> <pr-list>" pairs for every claimable unit STRONG-referenced by a merged PR title.
+  strong="$(echo "$board" | jq -r --argjson merged "$merged" '
+    .[]
+    | select(.labels|map(.name)|any(startswith("class:")))                                 # board units only
+    | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "needs:human" or . == "needs:design")|not)
+    | .number as $n
+    | ($merged | map(select(.title|test("#\($n)\\b")))) as $refs                            # STRONG: named in a PR TITLE
+    | select($refs|length > 0)
+    | "\($n) \($refs|map("#\(.number)")|join(","))"
+  ' 2>/dev/null || true)"
+  if [ -z "$strong" ]; then
+    echo "close-shipped: no open board unit is title-referenced by a merged PR. Nothing to close."
+    exit 0
+  fi
+  closed=0
+  while read -r n prs; do
+    [ -z "$n" ] && continue
+    gh issue close "$n" --comment "Closed by merged PR(s) ${prs} (coordinate --close-shipped backstop)." >/dev/null \
+      && { echo "✓ closed #$n (shipped in ${prs})"; closed=$((closed+1)); } \
+      || echo "  (could not close #$n — skipped)"
+  done <<< "$strong"
+  echo "close-shipped: closed $closed shipped board unit(s)."
+  exit 0
+fi
 
 # ── reclaim stale leases ─────────────────────────────────────────────────────
 reclaimed=0

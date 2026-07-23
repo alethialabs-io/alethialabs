@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Close board issues the moment their PR merges into `dev`.
+#
+# GitHub's native "Closes #n" linkage only auto-closes an issue when the PR merges into the
+# repository's DEFAULT branch (`main`). Our integration branch is `dev`, so a PR that merges
+# into `dev` leaves its referenced issues OPEN — which is how >50% of the "open" board became
+# already-shipped work that later gets re-claimed (duplicate builds). This closes that gap: on
+# every merged PR into `dev`, parse the PR title + body for ALL closing refs and close each
+# referenced issue that is still open.
+#
+# It is the Action half of Stream A; `scripts/coordinate.sh --close-shipped` is the manual
+# backstop for refs this misses. See .claude/COORDINATION.md.
+#
+# Safety: plain `pull_request` (NEVER `pull_request_target`) — it checks out no untrusted code
+# and does nothing but close issues. Least privilege: `issues: write` only.
+
+name: Close on dev-merge
+
+on:
+  pull_request:
+    # `closed` fires on both merge and plain-close; the merged guard below keeps only merges.
+    types: [closed]
+    branches: [dev]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  close-referenced-issues:
+    name: Close issues referenced by the merged PR
+    runs-on: ubuntu-latest
+    # Only act on a real MERGE into dev — a PR closed without merging closes nothing.
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Close each referenced issue that is still open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Title + body carry the closing keywords; join them so multi-issue PRs that put
+          # refs in either place are all caught.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # Parse ALL closing refs from the title + body. GitHub only auto-closes on `main`, and
+          # multi-issue PRs frequently drop a per-issue keyword — so we deliberately match EVERY
+          # `<keyword> #<n>` occurrence (close/fix/resolve + tenses), case-insensitive.
+          refs="$(printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" \
+            | grep -oiE '\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]]+#[0-9]+' \
+            | grep -oE '#[0-9]+' | tr -d '#' | sort -un || true)"
+
+          if [ -z "$refs" ]; then
+            echo "PR #$PR_NUMBER: no closing refs in title/body — nothing to close."
+            exit 0
+          fi
+
+          echo "PR #$PR_NUMBER merged into dev; referenced issues: $(echo "$refs" | tr '\n' ' ')"
+          for n in $refs; do
+            # Idempotent: skip anything not currently OPEN (already closed, or not an issue —
+            # a #<n> that resolves to a PR returns non-OPEN/errors and is skipped).
+            state="$(gh issue view "$n" --json state --jq .state 2>/dev/null || echo "MISSING")"
+            if [ "$state" != "OPEN" ]; then
+              echo "  #$n: state=$state — skip."
+              continue
+            fi
+            gh issue close "$n" \
+              --comment "Closed by #${PR_NUMBER} merged into dev (close-on-dev-merge)." \
+              && echo "  #$n: closed."
+          done
