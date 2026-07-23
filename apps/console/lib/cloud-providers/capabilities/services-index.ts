@@ -22,32 +22,15 @@ import {
 	cloudCapabilityServices,
 } from "@/lib/db/schema";
 import { asRecord } from "@/lib/records";
-import type { CapabilityIdentity, SyncServiceCapabilities } from "./types";
-
-// ── Per-cloud stubs (SEAMS) ─────────────────────────────────────────────────────────
-// Each is a best-effort no-op until its enumeration lane is implemented. They live inline here rather
-// than in the per-cloud lane files so the Wave-2 seam is self-contained; a lane wave replaces the body
-// with the real keyless Describe/List → normalize → upsert into `cloud_capability_services`.
-
-/** AWS managed-service capabilities: RDS/Aurora engines+versions, ElastiCache node classes, EKS
- * versions, DynamoDB availability. Stub — enumeration lands in a follow-up lane. */
-const syncAwsServiceCapabilities: SyncServiceCapabilities = async () => {};
-
-/** Azure managed-service capabilities: Azure DB engines+versions, Azure Cache tiers, AKS versions,
- * Cosmos DB availability. Stub — enumeration lands in a follow-up lane. */
-const syncAzureServiceCapabilities: SyncServiceCapabilities = async () => {};
-
-/** GCP managed-service capabilities: Cloud SQL engines+versions, Memorystore tiers, GKE versions,
- * Firestore availability. Stub — enumeration lands in a follow-up lane. */
-const syncGcpServiceCapabilities: SyncServiceCapabilities = async () => {};
-
-/** Alibaba managed-service capabilities: ApsaraDB RDS engines+versions, ApsaraDB Redis tiers, ACK
- * versions, Tablestore availability. Stub — enumeration lands in a follow-up lane. */
-const syncAlibabaServiceCapabilities: SyncServiceCapabilities = async () => {};
-
-/** Hetzner managed-service capabilities: CloudNativePG Postgres, the pinned Talos-coupled Kubernetes
- * version (no managed cache/NoSQL). Stub — enumeration lands in a follow-up lane. */
-const syncHetznerServiceCapabilities: SyncServiceCapabilities = async () => {};
+// Per-cloud lanes (#972–976): each enumerates its account's launchable managed services keyless
+// (session → SDK/REST → normalize → upsert into `cloud_capability_services`) and is best-effort
+// (syncCloudServiceCapabilities below swallows a lane error; the refresh sweep retries).
+import { syncAlibabaServiceCapabilities } from "./services/alibaba";
+import { syncAwsServiceCapabilities } from "./services/aws";
+import { syncAzureServiceCapabilities } from "./services/azure";
+import { syncGcpServiceCapabilities } from "./services/gcp";
+import { syncHetznerServiceCapabilities } from "./services/hetzner";
+import type { CapabilityIdentity } from "./types";
 
 /** Whether a provider has a managed-service capability enumeration lane. Matches the Wave-1 lane set
  * (the five clouds with a `cloud_capability_*` lane); token clouds without one return false. */
