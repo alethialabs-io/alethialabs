@@ -891,6 +891,24 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 
 		setStage("addons")
+		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos
+		// (helm_registry connectors) BEFORE the add-on / BYO Applications sync — ArgoCD matches these
+		// to an Application by repoURL, so the credential must pre-exist its first sync. Runner-seeded
+		// post-apply (never in git); credentials come from the job's ConnectorCredentials, never
+		// logged. Non-fatal: a misconfigured repo surfaces as an OutOfSync Application and must not
+		// fail an otherwise-healthy cluster (a bad entry is skipped fail-closed, never half-seeded).
+		var desiredHelmRepoCreds []string
+		helmRepoSpecs, helmRepoErr := categories.HelmRepoCredSpecs(vc)
+		if helmRepoErr != nil {
+			fmt.Fprintf(stderr, "Warning: some Helm repo credentials were skipped: %v\n", helmRepoErr)
+		}
+		for _, s := range helmRepoSpecs {
+			if err := argocd.EnsureHelmRepoCredential(s.Name, s.URL, s.Username, s.Password, s.EnableOCI, stdout, stderr); err != nil {
+				fmt.Fprintf(stderr, "Warning: could not seed Helm repo credential %s: %v\n", s.Name, err)
+				continue
+			}
+			desiredHelmRepoCreds = append(desiredHelmRepoCreds, s.Name)
+		}
 		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
 		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
@@ -966,6 +984,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			desiredPullSecrets = []string{n}
 		}
 		argocd.PruneRegistryPullSecrets(desiredPullSecrets, stdout, stderr)
+		// And the runner-seeded ArgoCD repo credential of any deselected private Helm/OCI chart repo —
+		// likewise owned by no Application. Desired = the repos seeded above (empty when none connected),
+		// so switching or removing a helm_registry connector cleans up the stale credential.
+		argocd.PruneHelmRepoCredentials(desiredHelmRepoCreds, stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//

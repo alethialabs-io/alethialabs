@@ -40,13 +40,14 @@ export type GitTokenHealth = "healthy" | "expired" | "refresh_failed";
 /**
  * The presentation groups the connectors page renders. Each maps 1:1 to a connector category so the
  * page reflects what a connector actually IS (a credential to an external system we act through), with
- * no `apps` catch-all lumping git/observability/dns together. (`chart_repos` for the `helm_registry`
- * category lands with W-C.)
+ * no `apps` catch-all lumping git/observability/dns together. (`chart_repos` is the `helm_registry`
+ * category — private OCI/HTTPS chart-repo credentials.)
  */
 export type ConnectorGroup =
 	| "clouds"
 	| "source"
 	| "registries"
+	| "chart_repos"
 	| "secrets"
 	| "observability"
 	| "dns";
@@ -109,6 +110,8 @@ function groupForCategory(category: ConnectorCategory): ConnectorGroup {
 			return "source";
 		case "registry":
 			return "registries";
+		case "helm_registry":
+			return "chart_repos";
 		case "secrets":
 			return "secrets";
 		case "observability":
