@@ -95,6 +95,14 @@ func TestRenderAddOnServerSideApply(t *testing.T) {
 			if !strings.Contains(manifest, "- CreateNamespace=true") {
 				t.Errorf("%s manifest missing CreateNamespace=true\n---\n%s", tc.name, manifest)
 			}
+			// Under SSA the K8s 1.33+ Deployment .status.terminatingReplicas leaks into the diff and
+			// pins the app OutOfSync; ignore it (and RespectIgnoreDifferences so sync honors it).
+			if !strings.Contains(manifest, "/status/terminatingReplicas") {
+				t.Errorf("%s manifest missing the terminatingReplicas ignoreDifferences\n---\n%s", tc.name, manifest)
+			}
+			if !strings.Contains(manifest, "- RespectIgnoreDifferences=true") {
+				t.Errorf("%s manifest missing RespectIgnoreDifferences=true\n---\n%s", tc.name, manifest)
+			}
 		})
 	}
 }

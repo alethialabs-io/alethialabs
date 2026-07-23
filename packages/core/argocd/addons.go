@@ -63,11 +63,23 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ .Namespace }}
+  # Under ServerSideApply, ArgoCD's predicted-live carries the API-server-managed status, so the
+  # Kubernetes 1.33+ apps/Deployment .status.terminatingReplicas field (KEP-3973) shows up as a
+  # permanent SPURIOUS diff -> the Application is stuck OutOfSync, and selfHeal cannot fix it (you
+  # cannot apply status). Client-side apps strip status and stay Synced; SSA apps (all marketplace
+  # add-ons) do not. Ignore that status field so every Deployment-backed add-on reaches Synced (the
+  # floor's Healthy+Synced gate). RespectIgnoreDifferences makes the sync honor the ignore too.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /status/terminatingReplicas
   {{- if eq .Source "git" }}
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
   {{- else }}
   syncPolicy:
     automated:
@@ -76,6 +88,7 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+      - RespectIgnoreDifferences=true
   {{- end }}
   revisionHistoryLimit: 3
 `))
