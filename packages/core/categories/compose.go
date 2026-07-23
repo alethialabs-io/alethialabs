@@ -104,9 +104,10 @@ func Compose(
 			return 0, err
 		}
 		ctx := ComponentContext{
-			Project:     vc,
-			Credentials: vc.ConnectorCredentialFor("secrets", slug),
-			Items:       items,
+			Project:        vc,
+			Credentials:    vc.ConnectorCredentialFor("secrets", slug),
+			ProviderConfig: secretsProviderConfig(vc, slug),
+			Items:          items,
 		}
 		if err := add("secrets", p, ctx); err != nil {
 			return 0, err
@@ -185,6 +186,20 @@ func secretItems(vc *types.ProjectConfig) []providerItem {
 		})
 	}
 	return out
+}
+
+// secretsProviderConfig returns the CONNECTION-level provider_config for the dominant secrets provider
+// (the store's scope — Doppler project/config, Infisical workspace/env, 1Password vault — carried on the
+// selected secrets' provider_config, homogeneous across the project). Mirrors registryProviderConfig:
+// the secrets ComponentContext is otherwise Items-only, so a store that needs connection-level config
+// (unlike vault's per-connection mount) reads it from here. First matching entry wins.
+func secretsProviderConfig(vc *types.ProjectConfig, slug string) map[string]any {
+	for _, s := range vc.Secrets {
+		if s.Provider == slug {
+			return s.ProviderConfig
+		}
+	}
+	return nil
 }
 
 func registryItems(vc *types.ProjectConfig) []providerItem {

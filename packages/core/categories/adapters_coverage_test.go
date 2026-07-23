@@ -165,6 +165,70 @@ func TestObservabilityAndSecretsAdapters(t *testing.T) {
 			t.Fatalf("vault defaults = %+v", v)
 		}
 	})
+	t.Run("doppler", func(t *testing.T) {
+		p := mustGet(t, "secrets", "doppler")
+		// missing token → fail; token but missing project/config → fail (fail-closed on scope).
+		if err := p.Validate(ComponentContext{ProviderConfig: map[string]any{"project": "p", "config": "c"}}); err == nil {
+			t.Fatal("missing token should fail")
+		}
+		if err := p.Validate(ComponentContext{Credentials: map[string]string{"token": "t"}}); err == nil {
+			t.Fatal("missing project/config should fail")
+		}
+		ok := ComponentContext{
+			Credentials:    map[string]string{"token": "t"},
+			ProviderConfig: map[string]any{"project": "myproj", "config": "prod"},
+			Items:          []ComponentItem{{Name: "API_KEY"}},
+		}
+		if err := p.Validate(ok); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		v := p.Tfvars(ok)
+		if v["doppler_project"] != "myproj" || v["doppler_config"] != "prod" {
+			t.Fatalf("doppler scope not mapped: %+v", v)
+		}
+		if names, _ := v["secret_names"].([]string); len(names) != 1 || names[0] != "API_KEY" {
+			t.Fatalf("secret_names not mapped: %+v", v["secret_names"])
+		}
+	})
+	t.Run("infisical", func(t *testing.T) {
+		p := mustGet(t, "secrets", "infisical")
+		if err := p.Validate(ComponentContext{Credentials: map[string]string{"client_id": "i"}}); err == nil {
+			t.Fatal("missing client_secret should fail")
+		}
+		if err := p.Validate(ComponentContext{Credentials: map[string]string{"client_id": "i", "client_secret": "s"}}); err == nil {
+			t.Fatal("missing workspace_id should fail")
+		}
+		ok := ComponentContext{
+			Credentials:    map[string]string{"client_id": "i", "client_secret": "s"},
+			ProviderConfig: map[string]any{"workspace_id": "ws"},
+		}
+		if err := p.Validate(ok); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		v := p.Tfvars(ok)
+		if v["infisical_host"] != "https://app.infisical.com" || v["infisical_env_slug"] != "dev" || v["infisical_folder_path"] != "/" {
+			t.Fatalf("infisical defaults = %+v", v)
+		}
+	})
+	t.Run("onepassword", func(t *testing.T) {
+		p := mustGet(t, "secrets", "onepassword")
+		if err := p.Validate(ComponentContext{ProviderConfig: map[string]any{"vault": "v"}}); err == nil {
+			t.Fatal("missing token should fail")
+		}
+		if err := p.Validate(ComponentContext{Credentials: map[string]string{"service_account_token": "t"}}); err == nil {
+			t.Fatal("missing vault should fail")
+		}
+		ok := ComponentContext{
+			Credentials:    map[string]string{"service_account_token": "t"},
+			ProviderConfig: map[string]any{"vault": "vault-uuid"},
+		}
+		if err := p.Validate(ok); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		if p.Tfvars(ok)["op_vault"] != "vault-uuid" {
+			t.Fatal("op_vault not mapped")
+		}
+	})
 	t.Run("dockerhub is runner-seeded (pullAuth, no module tfvars)", func(t *testing.T) {
 		p := mustGet(t, "registry", "dockerhub")
 		ok := ComponentContext{Credentials: map[string]string{"username": "acme", "access_token": "t"}}
