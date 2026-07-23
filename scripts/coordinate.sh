@@ -60,6 +60,7 @@ if [ "$MODE" = "init" ]; then
   mklabel "mutex:migration" "e99695" "generates a drizzle migration — serialized, one at a time"
   mklabel "needs:design"  "d4c5f9" "UI unit awaiting the Claude-Design build"
   mklabel "needs:human"   "d4c5f9" "awaiting a human decision/gate"
+  mklabel "epic"          "8b5cf6" "umbrella/tracking issue — decomposed into sub-issues, never directly built/claimed"
   echo "✓ label set ready"
   exit 0
 fi
@@ -157,17 +158,20 @@ echo "──────── BOARD ($(date -u +%H:%MZ)) ───────�
 echo "$board" | jq -r '
   def waveof: (.labels|map(.name)|map(select(startswith("wave:")))|(.[0]//"wave:—"));
   def st:
-    (if (.labels|map(.name)|index("claimed")) then "CLAIMED"
+    (if (.labels|map(.name)|index("epic")) then "EPIC"
+     elif (.labels|map(.name)|index("claimed")) then "CLAIMED"
      elif (.labels|map(.name)|index("blocked")) then "blocked"
      else "READY" end);
   sort_by(waveof, .number)[]
   | "  \(waveof|ltrimstr("wave:")|(.+"      ")[0:8]) #\(.number|tostring|(.+"    ")[0:5]) \(st|(.+"       ")[0:8]) \(.title[0:56]) \(if .assignees|length>0 then "→ "+.assignees[0].login else "" end)"
 '
 echo "  ─────"
+# READY excludes epics: an umbrella/tracking issue is never claimable (it decomposes into sub-issues).
 echo "$board" | jq -r '
-  "  ready:   \(map(select((.labels|map(.name)|index("claimed")|not) and (.labels|map(.name)|index("blocked")|not)))|length)"
+  "  ready:   \(map(select((.labels|map(.name)|index("claimed")|not) and (.labels|map(.name)|index("blocked")|not) and (.labels|map(.name)|index("epic")|not)))|length)"
   + "   claimed: \(map(select(.labels|map(.name)|index("claimed")))|length)"
   + "   blocked: \(map(select(.labels|map(.name)|index("blocked")))|length)"
+  + "   epics: \(map(select(.labels|map(.name)|index("epic")))|length)"
 '
 
 # Collisions to eyeball: >1 claimed mutex:migration.
