@@ -119,6 +119,8 @@ func applyRangeResult(c *ControlResult, status Status, detail, address, k8s, min
 		}}
 	case StatusNotEvaluable:
 		c.Coverage = detail
+	case StatusPass, StatusWarn:
+		// A clean pass carries no finding/coverage; a range check never emits warn.
 	}
 }
 
