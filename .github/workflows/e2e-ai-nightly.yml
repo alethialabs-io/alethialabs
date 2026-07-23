@@ -79,13 +79,13 @@ jobs:
       AI_EXECUTOR_MODEL: anthropic/claude-haiku-4-5
       AI_ADVISOR_MODEL_PLUS: anthropic/claude-haiku-4-5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || 'dev' }}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -107,7 +107,7 @@ jobs:
         run: pnpm -F console test:ai-eval
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-elench-live
           path: apps/console/playwright-report/
