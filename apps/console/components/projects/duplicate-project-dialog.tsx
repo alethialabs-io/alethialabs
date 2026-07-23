@@ -14,7 +14,7 @@ import {
 	Info,
 	Loader2,
 } from "lucide-react";
-import { isCloudProviderSlug } from "@/lib/cloud-providers/registry";
+import { getProvider, isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -32,9 +32,8 @@ import { groupRegions, REGION_LABELS } from "@/lib/cloud-providers";
 import {
 	type CloudProviderMeta,
 	type CloudProviderSlug,
-	getProvider,
 	PROVIDERS,
-} from "@/lib/cloud-providers/registry";
+} from "@/lib/cloud-providers/generated/catalog";
 import { projectHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
 import {
