@@ -43,7 +43,7 @@
 		"@ai-sdk/anthropic": "3.0.95",
 		"@ai-sdk/openai": "3.0.82",
 		"@ai-sdk/provider": "3.0.13",
-		"@ai-sdk/react": "^3.0.210",
+		"@ai-sdk/react": "^4.0.38",
 		"@alicloud/cs20151215": "^7.0.4",
 		"@alicloud/ecs20140526": "^7.9.2",
 		"@alicloud/openapi-client": "^0.4.15",
