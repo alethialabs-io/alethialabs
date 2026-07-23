@@ -69,6 +69,7 @@ import {
 	Globe,
 	KeyRound,
 	Loader2,
+	Package,
 	Search,
 	Unplug,
 } from "lucide-react";
@@ -136,6 +137,14 @@ const GROUP_META: {
 		description:
 			"Container registries clusters pull from. Pull credentials are injected & rotated automatically.",
 		icon: Container,
+		docsHref: "/docs/console/connectors/pluggable",
+	},
+	{
+		id: "chart_repos",
+		label: "Chart Repos",
+		description:
+			"Private Helm chart repositories (OCI or HTTPS) ArgoCD pulls add-on & BYO charts from. Repo credentials are seeded automatically at deploy.",
+		icon: Package,
 		docsHref: "/docs/console/connectors/pluggable",
 	},
 	{

@@ -85,10 +85,15 @@ function chartSlug(raw: string): string {
 	return s || "chart";
 }
 
-/** Basic sanity on a git repo URL — an https:// or git@ remote. Deep validation happens when the
- * runner clones it; this just rejects obvious garbage at save time. */
+/** Basic sanity on a chart-repo URL — a git remote (https:// or git@), or an `oci://` reference to
+ * a private OCI Helm registry (the whole `oci://<host>/<ns>/<chart>` path). Deep validation happens
+ * when the runner clones/pulls it; this just rejects obvious garbage at save time. */
 function isPlausibleRepoUrl(url: string): boolean {
-	return /^https:\/\/\S+$/.test(url) || /^git@\S+:\S+$/.test(url);
+	return (
+		/^https:\/\/\S+$/.test(url) ||
+		/^git@\S+:\S+$/.test(url) ||
+		/^oci:\/\/\S+$/.test(url)
+	);
 }
 
 /**
@@ -101,8 +106,13 @@ export async function attachByoChart(input: {
 	environmentId?: string | null;
 	/** Display name / node id → slugified into the addon_id (unique per env). */
 	id: string;
+	/** A git remote (https://…/git@…) OR an `oci://<host>/<ns>/<chart>` reference to a private
+	 * OCI Helm registry. For git the chart lives at `chartPath`; for OCI the chart name is the
+	 * last URL path segment (no `chartPath`) and `ref` is the chart version. */
 	repoUrl: string;
-	chartPath: string;
+	/** Chart directory within a git repo — required for git, unused (omit) for an `oci://` repo. */
+	chartPath?: string;
+	/** Git ref for a git repo (default HEAD); the chart VERSION for an `oci://` repo (default `*`). */
 	ref?: string;
 	namespace?: string;
 	values?: AddOnValues;
@@ -114,11 +124,16 @@ export async function attachByoChart(input: {
 
 	const id = chartSlug(input.id);
 	const repoUrl = input.repoUrl.trim();
-	const chartPath = input.chartPath.trim().replace(/^\/+/, "");
+	const isOci = repoUrl.startsWith("oci://");
+	// git charts live at a path within the repo; OCI charts are named by the URL's last segment.
+	const chartPath = isOci ? null : (input.chartPath ?? "").trim().replace(/^\/+/, "");
 	if (!isPlausibleRepoUrl(repoUrl)) {
-		throw new Error("Enter a valid git repository URL (https:// or git@…).");
+		throw new Error(
+			"Enter a valid chart repository URL (https://, git@…, or oci://…).",
+		);
 	}
-	if (!chartPath) throw new Error("Enter the chart path within the repository.");
+	if (!isOci && !chartPath)
+		throw new Error("Enter the chart path within the repository.");
 
 	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
@@ -126,7 +141,9 @@ export async function attachByoChart(input: {
 	}
 
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
-	const ref = input.ref?.trim() || "HEAD";
+	// `version` holds the git ref for a git chart, or the chart version for an OCI chart
+	// (`*` = latest, an ArgoCD-supported Helm targetRevision).
+	const ref = input.ref?.trim() || (isOci ? "*" : "HEAD");
 	const namespace = input.namespace?.trim() || "default";
 	const values = input.values ?? {};
 

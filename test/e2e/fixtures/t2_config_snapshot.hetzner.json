@@ -63,6 +63,7 @@
 	"nosql_tables": [],
 	"secrets": [],
 	"container_registries": [],
+	"helm_registries": [],
 	"storage_buckets": [],
 	"services": [],
 	"addons": [
