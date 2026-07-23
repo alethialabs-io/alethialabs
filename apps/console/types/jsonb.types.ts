@@ -435,6 +435,19 @@ export interface RegistryProviderConfig {
 	namespace?: string;
 }
 
+// Helm chart-repo connector (helm_registry category) — non-secret knobs only; the
+// username/password/token credential lives in connector_credentials, never here. The
+// keys mirror what the Go providers read from ProviderConfig (packages/core/categories/
+// helm_registry_*.go): `repo_url` for the HTTPS repo (helm-https), `registry_host` for
+// the OCI registries (generic/gitlab/scaleway CR). Fixed-host OCI providers
+// (github_cr → oci://ghcr.io, docker_hub → oci://registry-1.docker.io) need neither.
+export interface HelmRegistryProviderConfig {
+	// HTTPS chart repository URL, e.g. "https://charts.example.com" (helm-https).
+	repo_url?: string;
+	// OCI registry host, e.g. "registry.example.com" (generic/gitlab/scaleway CR).
+	registry_host?: string;
+}
+
 // Vault (pluggable secrets provider) — non-secret knobs only; the address/token
 // credential lives in connector_credentials, never here.
 export interface SecretsProviderConfig {

@@ -37,6 +37,7 @@ import type {
 	IacScanReport,
 	IacVarValues,
 	NodeSize,
+	HelmRegistryProviderConfig,
 	NosqlProviderConfig,
 	ObservabilityProviderConfig,
 	ProviderOutputs,
@@ -696,6 +697,40 @@ export const projectContainerRegistries = pgTable(
 	},
 	(t) => [
 		unique("project_container_registries_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+// Private chart-repo (helm_registry connector) selected per project/environment. Mirrors
+// projectContainerRegistries, but has NO cloud-native form and thus no `repository_url`
+// output column — its downstream artifact is an ArgoCD repository-credential Secret (seeded
+// by the runner via ConnectorCredentialFor("helm_registry", provider)), not a dockerconfigjson
+// pull secret. `provider` = the chosen connectors.slug; the non-secret repo URL/host lives in
+// provider_config, the username/password/token in connector_credentials (never on the snapshot).
+export const projectHelmRegistries = pgTable(
+	"project_helm_registries",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		// Pluggable provider selector (connectors.slug) — no cloud-native form for helm.
+		provider: text(),
+		// Provider-specific non-secret knobs (repo_url / registry_host) — neutral JSONB.
+		provider_config: jsonb().$type<HelmRegistryProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_helm_registries_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
 			t.name,
