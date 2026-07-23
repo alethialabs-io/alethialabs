@@ -31,9 +31,14 @@ import (
 
 const (
 	// EKS presigned-STS token: prefix + the base64url-no-pad presigned GetCallerIdentity URL.
-	eksTokenPrefix    = "k8s-aws-v1."
-	eksClusterHeader  = "x-k8s-aws-id"
-	eksTokenTTL       = 14 * time.Minute // presign is valid ~15m; refresh a minute early
+	eksTokenPrefix   = "k8s-aws-v1."
+	eksClusterHeader = "x-k8s-aws-id"
+	eksTokenTTL      = 14 * time.Minute // presign is valid 15m (eksPresignExpires); refresh a minute early
+	// eksPresignExpires is the X-Amz-Expires (seconds) stamped on the presigned GetCallerIdentity
+	// URL. The v4 presigner sets NO default expiry, and EKS rejects a token whose presign carries no
+	// valid X-Amz-Expires (#1040 — a green apply then a hard 401). 900s is the EKS maximum and covers
+	// the ~14m token TTL so a cached token never outlives its presign window.
+	eksPresignExpires = "900"
 	gkeScope          = "https://www.googleapis.com/auth/cloud-platform"
 	aksAADServerScope = "6dae42f8-4368-4678-94ff-3960e28e3630/.default" // the AKS AAD server app
 )
@@ -96,10 +101,13 @@ func RunKubeToken(ctx context.Context, args []string) error {
 	return json.NewEncoder(os.Stdout).Encode(cred)
 }
 
-// eksClusterHeaderMiddleware injects the x-k8s-aws-id header into the request during the
-// Build step, BEFORE SigV4 presigning, so the header is part of the signed SignedHeaders —
-// which is exactly what the EKS token validator requires. Setting the header after presign
-// (or on the output request) would leave it unsigned and the token would be rejected.
+// eksClusterHeaderMiddleware prepares the request for EKS presigning during the Build step, BEFORE
+// SigV4 presigning, so both mutations are part of the signature the EKS token validator checks:
+//   - injects the x-k8s-aws-id header (must be a signed SignedHeader — binds the token to the cluster);
+//   - sets the X-Amz-Expires query parameter, because the v4 presigner adds NO expiry by default and
+//     EKS rejects a presign without a valid X-Amz-Expires (#1040).
+//
+// Doing either after presign (or on the output request) would leave it unsigned and the token rejected.
 type eksClusterHeaderMiddleware struct{ clusterID string }
 
 func (m *eksClusterHeaderMiddleware) ID() string { return "AlethiaEKSClusterHeader" }
@@ -109,6 +117,9 @@ func (m *eksClusterHeaderMiddleware) HandleBuild(
 ) (middleware.BuildOutput, middleware.Metadata, error) {
 	if req, ok := in.Request.(*smithyhttp.Request); ok {
 		req.Header.Set(eksClusterHeader, m.clusterID)
+		q := req.URL.Query()
+		q.Set("X-Amz-Expires", eksPresignExpires)
+		req.URL.RawQuery = q.Encode()
 	}
 	return next.HandleBuild(ctx, in)
 }
@@ -127,6 +138,10 @@ func mintAWSEKSToken(ctx context.Context, clusterName, region string) (string, t
 	}
 	presign := sts.NewPresignClient(sts.NewFromConfig(cfg))
 	out, err := presign.PresignGetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}, func(o *sts.PresignOptions) {
+		// eksClusterHeaderMiddleware runs in the Build phase (before Finalize presigning) and sets
+		// BOTH the signed x-k8s-aws-id header AND X-Amz-Expires — the two things EKS's token
+		// validator requires. The presign client exposes no expiry option, so the expiry is set as
+		// a request query param the same way (see the middleware + #1040).
 		o.ClientOptions = append(o.ClientOptions, func(so *sts.Options) {
 			so.APIOptions = append(so.APIOptions, func(stack *middleware.Stack) error {
 				return stack.Build.Add(&eksClusterHeaderMiddleware{clusterID: clusterName}, middleware.After)
