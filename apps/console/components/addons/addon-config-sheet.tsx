@@ -44,7 +44,7 @@ import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 import { useDisableAddon, useEnableAddon } from "@/lib/query/use-addons-query";
 import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 

@@ -2,22 +2,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import type { CloudProviderSlug } from "./registry";
-import { PROVIDERS } from "./registry";
-import { REGION_MAP, DEFAULT_REGION } from "./regions";
 import {
-	INSTANCE_TYPE_MAP,
+	AUTOSCALER,
+	CACHE_NODE_MAP,
+	type CloudProviderSlug,
+	DB_CAPACITY,
+	DEFAULT_CACHE_NODE,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
-	AUTOSCALER,
-} from "./compute";
-import { ENGINE_MAP, DB_CAPACITY } from "./database";
-import { CACHE_NODE_MAP, DEFAULT_CACHE_NODE } from "./cache";
+	DEFAULT_REGION,
+	ENGINE_MAP,
+	INSTANCE_TYPE_MAP,
+	NOSQL,
+	PROVIDERS,
+	REGION_MAP,
+} from "./generated/catalog";
 import {
 	HETZNER_CACHE_ENGINES,
 	HETZNER_DB_ENGINES,
 } from "./hetzner-services";
-import { NOSQL } from "./nosql";
 
 /** Engine families / cache engines Hetzner's in-cluster charts can back. */
 const HETZNER_DB_ENGINE_SET = new Set<string>(HETZNER_DB_ENGINES);
