@@ -12,13 +12,14 @@
 # Usage:
 #   scripts/coordinate.sh                 # reclaim + unblock + report
 #   scripts/coordinate.sh --report        # report only (no mutations)
-#   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR names in its TITLE
+#   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
 #
 # --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
-# NOTHING, but for each open, still-claimable board unit whose number a MERGED PR carries in its
-# TITLE (a STRONG ref — the same `strong` heuristic the default report LIKELY-flags), it closes
-# the issue with a comment. Body-only refs stay advisory (a reference is not a delivery).
+# NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
+# keyword (close|fix|resolve + tenses) directly before `#<n>`, in the PR TITLE or BODY — it closes
+# the issue with a comment. Mirrors the Action's parser, so it retroactively catches the body-only
+# `Closes #n` cases. A bare mention without a closing keyword is not a delivery and is left open.
 #
 # Env: ALETHIA_LEASE_TTL (seconds, default 3600) — a lease older than this with no heartbeat
 #      is reclaimable.
@@ -68,25 +69,30 @@ board="$(gh issue list --state open --limit 300 --json number,title,labels,body,
 have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($n|tonumber))|.labels|map(.name)|index($l)' >/dev/null 2>&1; }
 
 # ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
-# Mutates NOTHING on leases/blocks. For each open, still-claimable board unit whose number a
-# MERGED PR carries in its TITLE (a STRONG ref — the exact same `strong` heuristic the default
-# report LIKELY-flags below), close the issue. Body-only refs stay advisory: a reference in a
-# PR body is not a delivery, so we never auto-close on those. Idempotent (only OPEN units are in
-# `board`). See .claude/COORDINATION.md.
+# Mutates NOTHING on leases/blocks. For each open, still-claimable board unit that a MERGED PR
+# CLOSES — a closing keyword (`close|fix|resolve` + tenses) directly before `#<n>`, in the PR
+# TITLE or BODY — close the issue. This mirrors the `close-on-dev-merge` Action's parser exactly,
+# so it's the retroactive backstop for units the Action didn't fire on (PRs merged before it
+# existed, incl. the body-only `Closes #n` a title-only heuristic used to miss). A bare mention
+# without a closing keyword is NOT a delivery and is never auto-closed. Idempotent (only OPEN
+# units are in `board`). See .claude/COORDINATION.md.
 if [ "$MODE" = "close-shipped" ]; then
-  merged="$(gh pr list --state merged --limit 300 --json number,title 2>/dev/null || echo '[]')"
-  # Emit "<issue> <pr-list>" pairs for every claimable unit STRONG-referenced by a merged PR title.
+  merged="$(gh pr list --state merged --limit 300 --json number,title,body 2>/dev/null || echo '[]')"
+  # Emit "<issue> <pr-list>" pairs for every claimable unit a merged PR CLOSES (keyword + #n in
+  # title or body — the same signal GitHub honours and the Action parses).
   strong="$(echo "$board" | jq -r --argjson merged "$merged" '
     .[]
     | select(.labels|map(.name)|any(startswith("class:")))                                 # board units only
     | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "needs:human" or . == "needs:design")|not)
     | .number as $n
-    | ($merged | map(select(.title|test("#\($n)\\b")))) as $refs                            # STRONG: named in a PR TITLE
+    | ($merged | map(select(                                                                # CLOSING keyword + #n, title OR body
+        (((.title // "") + " " + (.body // ""))
+         | test("(?i)\\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\\s+#\($n)\\b"))))) as $refs
     | select($refs|length > 0)
     | "\($n) \($refs|map("#\(.number)")|join(","))"
   ' 2>/dev/null || true)"
   if [ -z "$strong" ]; then
-    echo "close-shipped: no open board unit is title-referenced by a merged PR. Nothing to close."
+    echo "close-shipped: no open board unit is closed by a merged PR (keyword + #n in title/body). Nothing to close."
     exit 0
   fi
   closed=0
