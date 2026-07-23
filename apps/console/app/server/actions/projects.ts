@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { notFound } from "next/navigation";
-import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
+import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
