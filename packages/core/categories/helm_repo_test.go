@@ -139,8 +139,8 @@ func helmProject(slug string, pc map[string]any, creds map[string]string) *types
 func TestHelmRepoCredSpecs(t *testing.T) {
 	// None / native → no specs, no error.
 	for _, tt := range []struct {
-		name  string
-		regs  []types.ProjectHelmRegistryConfig
+		name string
+		regs []types.ProjectHelmRegistryConfig
 	}{
 		{"no helm registries", nil},
 		{"native/empty is skipped", []types.ProjectHelmRegistryConfig{{Name: "x", Provider: ""}}},
