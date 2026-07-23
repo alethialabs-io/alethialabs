@@ -19,6 +19,10 @@ terraform {
       # Floor 0.11: v0.11.0 is the first release that vendors Talos v1.13 machinery, so it is
       # the minimum that can generate valid v1.13.6 machine config. Ceiling < 0.13 keeps Terraform
       # on the 0.11.x line (0.12.x-alpha vendors Talos 1.14 machinery — not what we pin).
+      # Talos-provider↔Talos coupling: this range is chosen to vendor the machinery for
+      # var.talos_version (v1.13.6), whose SSOT is packages/core/compat/matrix.json → components[talos].
+      # The matrix records no provider version (it is not a k8s-windowed component); bump this range
+      # only when moving talos_version, keeping the two in lockstep (#1214).
       version = ">= 0.11, < 0.13"
     }
     # Uploads the Talos disk image (raw.xz) into Hetzner and snapshots it.

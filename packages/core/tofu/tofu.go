@@ -35,6 +35,10 @@ var (
 // snapshot doesn't pin one. OpenTofu (MPL-2.0) replaces Terraform (BUSL); it is
 // state- and CLI-compatible with the Terraform 1.6 line, so terraform-exec drives
 // it unchanged.
+//
+// SSOT: packages/core/compat/matrix.json → static_couplings[tofu].value. This const and the
+// apps/runner/Dockerfile.base ARG TOFU_VERSION must both equal that value; the compat couplings
+// drift test asserts it (#1214).
 const DefaultIaCVersion = "1.9.0"
 
 // IaCVersionEnv overrides DefaultIaCVersion for the runner-lifecycle provisioning path — deploy /

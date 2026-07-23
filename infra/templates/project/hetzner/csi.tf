@@ -30,6 +30,8 @@ locals {
   #
   # Raising this ceiling REQUIRES moving Talos + var.kubernetes_version in lockstep so the target
   # k8s stays inside the driver's latest-3-minors window — bump them together, never the chart alone.
+  # SSOT for the CSI↔k8s window: packages/core/compat/matrix.json → components[hcloud-csi]; the
+  # compat couplings drift test asserts this version + window against the pinned k8s (#1214).
   hcloud_csi_version = "2.22.0"
 }
 
