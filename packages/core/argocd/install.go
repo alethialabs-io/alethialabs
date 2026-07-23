@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -22,13 +23,12 @@ var applyCRDRaceMaxWait = 5 * time.Minute
 func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 	cmd := fmt.Sprintf("kubectl apply -f %s", renderedDir)
 	fmt.Fprintln(stdout, "Applying ArgoCD infrastructure applications...")
-	// The rendered dir mixes ArgoCD Applications — which install their CRDs + admission webhooks
-	// ASYNCHRONOUSLY via ArgoCD sync (e.g. external-secrets-operator) — with CRD-INSTANCES in the same
-	// file (the per-cloud ClusterSecretStore). On a FRESH cluster the instance races the operator in
-	// two stages: (1) the CRD isn't registered yet ("no matches for kind"), then (2) the CRD exists
-	// but the operator's validating webhook has no ready endpoints yet ("failed calling webhook … no
-	// endpoints available"). The Applications DO apply on the first pass; ArgoCD then brings the
-	// operator up, so retry the (idempotent) apply through BOTH stages until the instances land.
+	// ArgoCD Applications install their CRDs + admission webhooks ASYNCHRONOUSLY via ArgoCD sync
+	// (e.g. external-secrets-operator). The infra dir now contains ONLY Applications — the per-cloud
+	// ClusterSecretStore CR that used to share the operator's file was pulled out because mixing a
+	// CR-instance into this client-side apply deadlocked it on a fresh cluster (see
+	// EnsureExternalSecretsStore / #1208). The retry below is kept as a harmless backstop for the
+	// "an operator isn't fully up yet" markers, should a future template mix a CR-instance in again.
 	deadline := time.Now().Add(applyCRDRaceMaxWait)
 	for attempt := 1; ; attempt++ {
 		var captured bytes.Buffer
@@ -95,6 +95,128 @@ func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Wr
 	}
 	fmt.Fprintf(stdout, "Seeding external-dns credential secret %s...\n", secretName)
 	return ApplyManifest(externalDNSSecretManifest(secretName, key, token), stdout, stderr)
+}
+
+// externalSecretsStoreMaxWait bounds how long EnsureExternalSecretsStore retries while ArgoCD
+// installs the external-secrets operator (asynchronously) and its validating webhook becomes ready.
+// Generous on purpose: on a fresh managed cluster the FULL chain — ArgoCD reconcile → Helm install →
+// CRD registered → webhook pod scheduled + Ready — routinely runs past 10m (the old 5m mixed-file
+// retry #784, and a first 10m attempt, both timed out on real EKS — #1208). The caller treats a
+// timeout as NON-fatal, so this is an upper bound on the wait, not a hard requirement.
+var externalSecretsStoreMaxWait = 15 * time.Minute
+
+// externalSecretsStoreTemplate renders the per-cloud ClusterSecretStore. It carries the SAME
+// per-cloud, workload-identity-gated conditions the operator's Application template used to embed —
+// now separated so the store is applied on its OWN, AFTER the operator is up (see #1208). Exactly
+// one branch renders (the `eq .Provider` guards are mutually exclusive); hetzner renders none.
+const externalSecretsStoreTemplate = `
+{{- if and (eq .Provider "aws") .IRSAExternalSecretsArn }}
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-aws
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: {{ .Region }}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets-operator-sa
+            namespace: external-secrets-operator
+{{- end }}
+{{- if and (eq .Provider "gcp") .GCPExternalSecretsSA }}
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-gcp
+spec:
+  provider:
+    gcpsm:
+      projectID: {{ .GCPProjectID }}
+{{- end }}
+{{- if and (eq .Provider "azure") .AzureExternalSecretsClient .AzureKeyVaultURI }}
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-azure
+spec:
+  provider:
+    azurekv:
+      authType: WorkloadIdentity
+      vaultUrl: {{ .AzureKeyVaultURI }}
+{{- end }}
+{{- if and (eq .Provider "alibaba") .AlibabaExternalSecretsRoleArn }}
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-alibaba
+spec:
+  provider:
+    alibaba:
+      regionID: {{ .Region }}
+      auth:
+        rrsa:
+          oidcProviderArn: {{ .AlibabaOIDCProviderArn }}
+          oidcTokenFilePath: /var/run/secrets/tokens/oidc-token
+          roleArn: {{ .AlibabaExternalSecretsRoleArn }}
+          sessionName: external-secrets
+{{- end }}
+`
+
+var externalSecretsStoreTmpl = template.Must(template.New("external-secrets-store").Parse(externalSecretsStoreTemplate))
+
+// externalSecretsStoreManifest renders the per-cloud ClusterSecretStore for the given facts, or ""
+// when the provider/identity fact means there is no cloud secret store (e.g. hetzner).
+func externalSecretsStoreManifest(facts *InfraFacts) (string, error) {
+	var buf bytes.Buffer
+	if err := externalSecretsStoreTmpl.Execute(&buf, facts); err != nil {
+		return "", fmt.Errorf("render ClusterSecretStore: %w", err)
+	}
+	return strings.TrimSpace(buf.String()), nil
+}
+
+// EnsureExternalSecretsStore applies the per-cloud ClusterSecretStore AFTER ApplyApplications has
+// applied the external-secrets operator's ArgoCD Application. The store is a custom resource whose
+// kind + validating webhook the operator provides, so on a fresh cluster it races the operator in
+// two stages ("no matches for kind", then "no endpoints available" for the webhook). Applying it
+// here — on its own, server-side, retrying ONLY the transient operator-not-ready markers until the
+// operator (installed asynchronously by ArgoCD) is up — fixes the #1208 bootstrap deadlock: mixing
+// the store into the operator's client-side apply file could poison that file so the operator never
+// installed and the retry could never converge. No-op when no store renders. Returns a timeout error
+// after externalSecretsStoreMaxWait, which the caller treats as NON-fatal (the store is idempotent
+// and reconciles on the next deploy — see deploy.go), so a slow operator webhook on a fresh cluster
+// never fails an otherwise-healthy deploy.
+func EnsureExternalSecretsStore(facts *InfraFacts, stdout, stderr io.Writer) error {
+	manifest, err := externalSecretsStoreManifest(facts)
+	if err != nil {
+		return err
+	}
+	if manifest == "" {
+		return nil
+	}
+	fmt.Fprintln(stdout, "Ensuring external-secrets ClusterSecretStore (waiting for the operator's CRD + webhook)...")
+	deadline := time.Now().Add(externalSecretsStoreMaxWait)
+	for attempt := 1; ; attempt++ {
+		var captured bytes.Buffer
+		applyErr := applyManifestServerSide(manifest, stdout, io.MultiWriter(stderr, &captured))
+		if applyErr == nil {
+			fmt.Fprintln(stdout, "ClusterSecretStore applied.")
+			return nil
+		}
+		if !isOperatorNotReady(captured.String()) || time.Now().After(deadline) {
+			if time.Now().After(deadline) {
+				// The operator didn't become ready within the window — dump its pods so a recurrence
+				// is diagnosable (slow install vs a stuck/unschedulable/crash-looping webhook pod).
+				_ = utils.ExecuteCommand("kubectl get pods -n external-secrets-operator -o wide", ".", nil, stderr, stderr)
+			}
+			return fmt.Errorf("apply ClusterSecretStore: %w", applyErr)
+		}
+		fmt.Fprintf(stdout, "  external-secrets operator (CRD/webhook) isn't ready yet (attempt %d) — "+
+			"waiting 15s for ArgoCD to finish installing it...\n", attempt)
+		time.Sleep(15 * time.Second)
+	}
 }
 
 // CleanupSkippedInfraServices removes infra-service objects that earlier deploys applied but

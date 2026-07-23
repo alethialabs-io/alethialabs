@@ -854,6 +854,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, applyErr)
 			return &result, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
+		// The per-cloud external-secrets ClusterSecretStore is a CR of the operator applied just
+		// above; apply it separately AFTER, once the operator's ArgoCD-synced CRD + validating
+		// webhook are up, so it never races/poisons the operator's own apply on a fresh cluster
+		// (#1208 — mixing it into the operator's client-side apply file could deadlock the whole
+		// deploy). Non-fatal, like the Karpenter node class below: the store is NOT an ArgoCD app and
+		// is NOT required for a healthy cluster (cluster_ready + the ArgoCD apps already converged),
+		// so a slow ArgoCD-installed operator webhook must not fail an otherwise-healthy deploy — the
+		// apply is idempotent and reconciles on the next deploy once the operator is ready.
+		if esErr := argocd.EnsureExternalSecretsStore(facts, stdout, stderr); esErr != nil {
+			fmt.Fprintf(stderr, "Warning: external-secrets ClusterSecretStore not applied yet "+
+				"(will reconcile once the operator webhook is ready): %v\n", esErr)
+		}
 		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
 		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
 		// EC2NodeClass spec.tags (from the karpenter_node_tags output) is the ONLY lever that
