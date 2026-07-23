@@ -11,6 +11,11 @@ import (
 // The ArgoCD Helm chart repo + version the installer uses. Kept config-driven (env override with the
 // current literals as defaults) so a runner can pin/bump them without a code change and so they don't
 // silently drift from what CI/templates expect (#951). Mirrors infracost.ResolvedInfracostVersion.
+//
+// SSOT for the chart↔Kubernetes coupling: packages/core/compat/matrix.json → components[argocd].
+// The compat couplings drift test (packages/core/compat/couplings_drift_test.go) fails if
+// DefaultArgoChartVersion is not a recorded matrix release or is incompatible with the templates'
+// default Kubernetes minor (#1214).
 const (
 	// DefaultArgoHelmRepo is the argo-helm chart repository.
 	DefaultArgoHelmRepo = "https://argoproj.github.io/argo-helm"
