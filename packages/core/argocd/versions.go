@@ -14,8 +14,13 @@ import (
 const (
 	// DefaultArgoHelmRepo is the argo-helm chart repository.
 	DefaultArgoHelmRepo = "https://argoproj.github.io/argo-helm"
-	// DefaultArgoChartVersion is the pinned argo-cd chart version.
-	DefaultArgoChartVersion = "7.1.3"
+	// DefaultArgoChartVersion is the pinned argo-cd chart version. 8.6.4 bundles ArgoCD v3.1.8, whose
+	// gitops-engine carries the Kubernetes 1.33+ OpenAPI schema (Deployment/ReplicaSet
+	// `.status.terminatingReplicas`, KEP-3973). The prior 7.1.3 (v2.11) predated that field, so its
+	// structured-merge-diff failed to build a typed value for ANY live Deployment on a 1.33+ cluster
+	// → `sync=Unknown` and GitOps never converged. All project templates default to K8s 1.35, so this
+	// affected every cloud (#1165).
+	DefaultArgoChartVersion = "8.6.4"
 	// ArgoHelmRepoEnv overrides DefaultArgoHelmRepo.
 	ArgoHelmRepoEnv = "ALETHIA_ARGOCD_HELM_REPO"
 	// ArgoChartVersionEnv overrides DefaultArgoChartVersion.
