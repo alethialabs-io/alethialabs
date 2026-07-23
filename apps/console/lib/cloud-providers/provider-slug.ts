@@ -1,27 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #940b (#969): barrel shim over the generated catalog baseline (#1126). The provider slug types,
-// the CloudProviderMeta interface, and the PROVIDERS metadata map are now generated from the single
-// source of truth (packages/core/catalog/catalog.json → generated/catalog.ts) and re-exported here
-// verbatim — same paths + symbols, ZERO behaviour change. The runtime narrows/helpers + CACHE_TTL_HOURS
-// (which are NOT catalog data) still live here. #940c deletes this shim + repoints importers straight
-// at the generated module.
-import { cloudProvider } from "@/lib/db/schema/enums";
-import type {
-	CloudProviderSlug,
-	ConnectableCloudSlug,
-	CloudProviderMeta,
-} from "./generated/catalog";
-import { PROVIDERS } from "./generated/catalog";
+// Runtime provider-slug narrows + helpers + the resource-cache TTL — the NON-catalog logic that used
+// to live in the registry.ts barrel shim (deleted in #940c). The provider DATA (PROVIDERS, the slug
+// types, CloudProviderMeta) is the generated catalog SSOT (./generated/catalog); this module holds only
+// the runtime helpers over it, which depend on the DB `cloud_provider` enum and so are kept OUT of the
+// generated file (that file is regenerated from catalog.json — hand-authored logic there would be lost).
 
-/**
- * Clouds with full provisioning templates today — a curated SUBSET of the generated `cloud_provider`
- * enum. Every cloud a user can CONNECT (identity layer) is the full enum (`ConnectableCloudSlug`).
- */
-export type { CloudProviderSlug, ConnectableCloudSlug, CloudProviderMeta };
-/** Provider display + service-name metadata, keyed by slug (all connectable clouds). */
-export { PROVIDERS };
+import { cloudProvider } from "@/lib/db/schema/enums";
+import {
+	type CloudProviderMeta,
+	type CloudProviderSlug,
+	type ConnectableCloudSlug,
+	PROVIDERS,
+} from "./generated/catalog";
 
 /** The provisioning-slug values as a runtime set, kept in lockstep with the type via `satisfies`. */
 const CLOUD_PROVIDER_SLUGS = [

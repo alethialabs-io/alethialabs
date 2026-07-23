@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { asCloudProviderSlug } from "@/lib/cloud-providers/registry";
+import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
 import {
 	Select,
