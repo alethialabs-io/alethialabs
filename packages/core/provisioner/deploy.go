@@ -99,7 +99,23 @@ type DeployParams struct {
 	// ConfigureKubeconfig resolves endpoint/CA via the in-core EKS SDK from the name alone)
 	// and for every dedicated deploy. See mintClusterOutputs.
 	KubeConn KubeConnResolver
+	// NamespaceIdentity provisions a per-namespace tenant cloud identity LIVE at deploy time
+	// (#957) for a `namespace` placement, returning a shell-safe identity handle the deploy path
+	// binds to the namespace default ServiceAccount. INJECTED by the runner for clouds whose
+	// identity provisioning is an IAM-WRITE the runner performs keyless (gcp Workload Identity /
+	// azure federated / alibaba RRSA), keeping those auth SDKs out of packages/core. Nil for aws
+	// (its identity is provisioned in-core via the AWS IAM SDK — coreaws.ProvisionNamespaceIdentity)
+	// and for every dedicated deploy. See provisionAndBindNamespaceIdentity.
+	NamespaceIdentity NamespaceIdentityProvisioner
 }
+
+// NamespaceIdentityProvisioner provisions a per-namespace tenant cloud identity (a zero-perm identity
+// the namespace's default ServiceAccount may assume, never the cluster node/controller role) and returns
+// a shell-safe handle (gcp GSA email / azure UAMI client-id / alibaba RAM role arn). It is a live
+// IAM-WRITE, so the runner injects it (it holds the keyless token + does the stdlib REST call), keeping
+// the gcp/azure/alibaba auth SDKs out of packages/core. Returns a non-nil error (never a partial handle)
+// on failure. The deploy path then binds the handle to the KSA with the per-cloud annotation.
+type NamespaceIdentityProvisioner func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) (handle string, err error)
 
 // KubeConnResolver resolves an EXISTING shared-Fabric cluster's control-plane connection (endpoint +
 // base64 CA) OUTPUT-FREE — by name, from the cloud API, using a keyless token the RUNNER mints. The
