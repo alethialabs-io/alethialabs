@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	latestSqlVersionByFamily,
+	sqlVersionsByFamily,
 	normalizeGcpServices,
 	offeredK8sMinors,
 	parseSqlVersion,
@@ -82,17 +82,20 @@ describe("parseSqlVersion", () => {
 	});
 });
 
-describe("latestSqlVersionByFamily", () => {
-	it("picks the highest offered version per family across all flags", () => {
-		const m = latestSqlVersionByFamily(SQL_FLAGS_FIXTURE);
-		expect(m.get("POSTGRES")).toBe("16");
-		expect(m.get("MYSQL")).toBe("8.0");
-		// SQL Server was dropped.
+// Inverted by #1351: this was `latestSqlVersionByFamily`, asserting ONE version per family. The full
+// version set was always present in the flags' `appliesTo` union — it was simply being discarded.
+describe("sqlVersionsByFamily", () => {
+	it("collects EVERY offered version per family, newest-first, deduped across flags", () => {
+		const m = sqlVersionsByFamily(SQL_FLAGS_FIXTURE);
+		// POSTGRES_15 and _16 both appear, and 16 appears in two flags — one entry each, newest first.
+		expect(m.get("POSTGRES")).toEqual(["16", "15"]);
+		expect(m.get("MYSQL")).toEqual(["8.0", "5.7"]);
+		// SQL Server is not a family the picker models.
 		expect(m.has("SQLSERVER")).toBe(false);
 	});
 
 	it("returns an empty map for null flags", () => {
-		expect(latestSqlVersionByFamily(null).size).toBe(0);
+		expect(sqlVersionsByFamily(null).size).toBe(0);
 	});
 });
 
@@ -119,14 +122,19 @@ describe("normalizeGcpServices", () => {
 		expect(k8s.every((r) => r.launchable === "launchable")).toBe(true);
 
 		const db = rows.filter((r) => r.service_kind === "database");
+		// One row per (engine, version) now — every offered major, not just the newest (#1351).
 		expect(db.map((r) => r.native_id).sort()).toEqual([
-			"cloudsql-mysql",
-			"cloudsql-postgresql",
+			"cloudsql-mysql-5.7",
+			"cloudsql-mysql-8.0",
+			"cloudsql-postgresql-15",
+			"cloudsql-postgresql-16",
 		]);
-		const pg = db.find((r) => r.native_id === "cloudsql-postgresql");
+		const pg = db.find((r) => r.native_id === "cloudsql-postgresql-16");
 		expect(pg?.version).toBe("16");
 		expect(pg?.name).toBe("Cloud SQL PostgreSQL");
-		expect(pg?.engine).toBe("postgres");
+		// The CATALOG value, not the lowercased family — synced rows and the static DB_ENGINES
+		// fallback must share one value space or the fail-open path swaps the engine identity.
+		expect(pg?.engine).toBe("cloudsql-postgresql");
 		// tiers present ⇒ launchable.
 		expect(db.every((r) => r.launchable === "launchable")).toBe(true);
 

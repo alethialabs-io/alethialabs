@@ -54,6 +54,7 @@ import {
 } from "@/lib/cloud-providers/generated/catalog";
 import { assumeAwsRole } from "../../session/aws";
 import { softRemoveUnseen } from "../../inventory/upsert";
+import { dedupeVersionsDesc } from "./version";
 import type { CapabilityIdentity } from "../types";
 
 const TIMEOUT_MS = 15_000;
@@ -93,19 +94,6 @@ function serviceRow(
 	};
 }
 
-/** Compare two dotted numeric version strings ("16" vs "8.0" vs "15.4"). Returns >0 if a is newer. */
-function compareVersion(a: string, b: string): number {
-	const pa = a.split(".").map((n) => Number.parseInt(n, 10));
-	const pb = b.split(".").map((n) => Number.parseInt(n, 10));
-	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-		const x = pa[i] ?? 0;
-		const y = pb[i] ?? 0;
-		if (Number.isNaN(x) || Number.isNaN(y)) return 0;
-		if (x !== y) return x - y;
-	}
-	return 0;
-}
-
 // ── Pure normalizers (unit-tested against recorded SDK fixtures) ──────────────────────
 
 /** EKS DescribeClusterVersions → one `kubernetes` row per offerable, still-supported control-plane
@@ -137,38 +125,50 @@ export function normalizeK8sVersionRows(
 	return rows;
 }
 
-/** RDS DescribeDBEngineVersions → one `database` row per PLATFORM engine (the Catalog #2 AWS engine set:
- * Aurora PG/MySQL) at its latest offered major version. Engines the platform doesn't provision are
- * ignored; the engine label comes from the catalog so the picker copy is stable. */
+/** RDS DescribeDBEngineVersions → one `database` row per PLATFORM engine AND offered major version
+ * (the Catalog #2 AWS engine set: Aurora PG/MySQL). Engines the platform doesn't provision are
+ * ignored; the engine label comes from the catalog so the picker copy is stable.
+ *
+ * One row per (engine, major) rather than per engine: the version is an axis the picker offers, so
+ * collapsing to the latest here makes an engine-version selector impossible (#1351). `native_id` is
+ * the composite `<engine>-<version>` — the convention the Azure and Alibaba lanes already use —
+ * because the unique key is (identity, provider, region, kind, native_id) and `version` is NOT in it,
+ * so per-version rows under a bare-engine id would silently overwrite one another.
+ *
+ * The API returns one row per MINOR, so we key on `MajorEngineVersion`: "16.4" and "16.6" collapse to
+ * a single offered "16", which is the grain the platform provisions at. */
 export function normalizeDatabaseRows(
 	engineVersions: DBEngineVersion[],
 	ctx: ServiceNormalizeCtx,
 ): CloudCapabilityServiceInsert[] {
 	// The engines the platform actually provisions on AWS (Catalog #2), keyed by RDS engine value.
 	const catalog = new Map(DB_ENGINES.aws.map((e) => [e.value, e]));
-	const latestByEngine = new Map<string, string>();
+	const versionsByEngine = new Map<string, string[]>();
 	for (const ev of engineVersions) {
 		const engine = ev.Engine;
 		if (!engine || !catalog.has(engine)) continue;
 		const ver = ev.MajorEngineVersion ?? ev.EngineVersion;
 		if (!ver) continue;
-		const prev = latestByEngine.get(engine);
-		if (prev === undefined || compareVersion(ver, prev) > 0) latestByEngine.set(engine, ver);
+		const seen = versionsByEngine.get(engine);
+		if (seen) seen.push(ver);
+		else versionsByEngine.set(engine, [ver]);
 	}
 	const rows: CloudCapabilityServiceInsert[] = [];
-	for (const [engine, version] of latestByEngine) {
+	for (const [engine, versions] of versionsByEngine) {
 		const meta = catalog.get(engine);
-		rows.push(
-			serviceRow(ctx, {
-				service_kind: "database",
-				native_id: engine,
-				name: meta?.label ?? engine,
-				engine,
-				version,
-				tier: null,
-				mem_gb: null,
-			}),
-		);
+		for (const version of dedupeVersionsDesc(versions)) {
+			rows.push(
+				serviceRow(ctx, {
+					service_kind: "database",
+					native_id: `${engine}-${version}`,
+					name: meta?.label ?? engine,
+					engine,
+					version,
+					tier: null,
+					mem_gb: null,
+				}),
+			);
+		}
 	}
 	return rows;
 }

@@ -20,6 +20,10 @@ export {
 	DB_ENGINES,
 	DB_CAPACITY,
 	ENGINE_MAP,
+	// Resolves an abstract engine family (postgres/mysql) to the provider's engine row. The canvas
+	// stores the FAMILY in `engine_family` while capability rows are keyed on the engine VALUE, so
+	// the version picker needs this to join the two.
+	dbEngine,
 	CACHE_NODE_TYPES,
 	DEFAULT_CACHE_NODE,
 	CACHE_NODE_MAP,

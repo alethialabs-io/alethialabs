@@ -35,6 +35,7 @@ import {
 } from "@/lib/db/schema";
 import { softRemoveUnseen } from "../../inventory/upsert";
 import { externalAccountClientFromWif } from "../../session/gcp";
+import { dedupeVersionsDesc, sortVersionsDesc } from "./version";
 import type { CapabilityIdentity, SyncServiceCapabilities } from "../types";
 
 const TIMEOUT_MS = 15_000;
@@ -99,20 +100,7 @@ export function offeredK8sMinors(cfg: GkeServerConfig | null): string[] {
 		const minor = k8sMinor(v);
 		if (minor) minors.add(minor);
 	}
-	return [...minors].sort(compareVersionsDesc);
-}
-
-/** Order two dotted-numeric versions descending ("1.35" before "1.34"; "8.0" before "5.7"). Non-numeric
- * segments compare as 0, so it degrades gracefully rather than throwing. */
-function compareVersionsDesc(a: string, b: string): number {
-	const pa = a.split(".");
-	const pb = b.split(".");
-	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-		const na = Number.parseInt(pa[i] ?? "0", 10) || 0;
-		const nb = Number.parseInt(pb[i] ?? "0", 10) || 0;
-		if (na !== nb) return nb - na;
-	}
-	return 0;
+	return sortVersionsDesc([...minors]);
 }
 
 /** Parse a Cloud SQL databaseVersion token ("POSTGRES_16", "MYSQL_8_0") into { family, version }, or null
@@ -129,23 +117,29 @@ export function parseSqlVersion(
 	return { family, version };
 }
 
-/** The latest offered version per Cloud SQL engine family, from the union of every flag's `appliesTo`.
- * Returns a map keyed by the family token ("POSTGRES"/"MYSQL"). Empty when flags is null/absent. */
-export function latestSqlVersionByFamily(
+/** EVERY offered version per Cloud SQL engine family, newest-first, from the union of every flag's
+ * `appliesTo`. Keyed by the family token ("POSTGRES"/"MYSQL"); empty when flags is null/absent.
+ *
+ * This replaced a latest-only reduce (#1351). The version is an axis the picker offers, so collapsing
+ * to the newest here made an engine-version selector impossible — and the full list was always in
+ * hand, since `flags.list` returns per-FLAG rows whose `appliesTo` carries the whole version set. */
+export function sqlVersionsByFamily(
 	flags: GcpSqlFlagsList | null,
-): Map<string, string> {
-	const latest = new Map<string, string>();
+): Map<string, string[]> {
+	const byFamily = new Map<string, string[]>();
 	for (const flag of flags?.items ?? []) {
 		for (const token of flag.appliesTo ?? []) {
 			const parsed = parseSqlVersion(token);
 			if (!parsed) continue;
-			const prev = latest.get(parsed.family);
-			if (prev === undefined || compareVersionsDesc(parsed.version, prev) < 0) {
-				latest.set(parsed.family, parsed.version);
-			}
+			const seen = byFamily.get(parsed.family);
+			if (seen) seen.push(parsed.version);
+			else byFamily.set(parsed.family, [parsed.version]);
 		}
 	}
-	return latest;
+	for (const [family, versions] of byFamily) {
+		byFamily.set(family, dedupeVersionsDesc(versions));
+	}
+	return byFamily;
 }
 
 /** Pure: the recorded GCP API responses → the `cloud_capability_services` rows for this identity. No I/O,
@@ -179,8 +173,12 @@ export function normalizeGcpServices(
 		});
 	}
 
-	// database — one row per Cloud SQL engine family at its latest offered version. `tiers.list` returning
-	// tiers proves the project can launch Cloud SQL (launchable); absent tiers ⇒ availability unknown.
+	// database — one row per (Cloud SQL engine family, offered version). `tiers.list` returning tiers
+	// proves the project can launch Cloud SQL (launchable); absent tiers ⇒ availability unknown.
+	// `native_id` is the composite `<engine>-<version>` because the unique key carries native_id but
+	// NOT version, so per-version rows under a bare-engine id would overwrite each other. `engine` is
+	// the CATALOG value (not the lowercased family) so synced rows and the static DB_ENGINES fallback
+	// share one value space — otherwise the fail-open path (#918) swaps the engine identity.
 	const hasTiers = (src.sqlTiers?.items ?? []).length > 0;
 	const dbVerdict: {
 		launchable: CapabilityLaunchable;
@@ -188,19 +186,21 @@ export function normalizeGcpServices(
 	} = hasTiers
 		? { launchable: "launchable", reason: "available" }
 		: { launchable: "not_evaluable", reason: "quota_unknown" };
-	for (const [family, version] of latestSqlVersionByFamily(src.sqlFlags)) {
+	for (const [family, versions] of sqlVersionsByFamily(src.sqlFlags)) {
 		const engine = GCP_DB_ENGINES[family];
 		if (!engine) continue;
-		rows.push({
-			...base,
-			service_kind: "database",
-			native_id: engine.value,
-			name: engine.label,
-			engine: family.toLowerCase(),
-			version,
-			launchable: dbVerdict.launchable,
-			launchable_reason: dbVerdict.reason,
-		});
+		for (const version of versions) {
+			rows.push({
+				...base,
+				service_kind: "database",
+				native_id: `${engine.value}-${version}`,
+				name: engine.label,
+				engine: engine.value,
+				version,
+				launchable: dbVerdict.launchable,
+				launchable_reason: dbVerdict.reason,
+			});
+		}
 	}
 
 	// nosql — Firestore is a GCP-wide offering; the probe distinguishes "confirmed reachable" (launchable)

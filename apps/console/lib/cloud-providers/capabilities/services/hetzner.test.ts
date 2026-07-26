@@ -27,12 +27,26 @@ describe("normalizeHetznerServiceRows", () => {
 	it("records the CloudNativePG database engine from the catalog", () => {
 		const db = rows.filter((r) => r.service_kind === "database");
 		expect(db).toHaveLength(DB_ENGINES.hetzner.length);
-		const pg = db.find((r) => r.native_id === "postgres");
+		// Composite native_id like every other cloud (#1351), so the read path treats all five
+		// identically — Hetzner just contributes a one-element version list.
+		const pg = db.find((r) => r.native_id === "postgres-16");
 		expect(pg?.engine).toBe("postgres");
 		expect(pg?.name).toBe("PostgreSQL (CloudNativePG)");
 		expect(pg?.version).toBe("16");
 		expect(pg?.launchable).toBe("launchable");
 		expect(pg?.launchable_reason).toBe("available");
+	});
+
+	// DOCUMENTED SINGLE-VERSION EXCLUSION (cloud-parity rule): Hetzner's engine is a Helm chart with no
+	// enumeration API, so it can only ever offer the chart's default. Pinned so the exclusion stays a
+	// deliberate decision rather than something that quietly looks like a bug in the picker.
+	it("offers exactly one version per engine — the chart default, not an enumeration", () => {
+		const db = rows.filter((r) => r.service_kind === "database");
+		for (const engine of DB_ENGINES.hetzner) {
+			const forEngine = db.filter((r) => r.engine === engine.value);
+			expect(forEngine).toHaveLength(1);
+			expect(forEngine[0].version).toBe(engine.defaultVersion);
+		}
 	});
 
 	it("records every in-cluster Valkey cache tier with memory from the catalog", () => {
