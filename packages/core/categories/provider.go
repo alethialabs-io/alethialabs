@@ -76,6 +76,15 @@ type behavior struct {
 	// secret-type` repo credential ArgoCD matches to an Application by repoURL. nil → not a helm_registry
 	// provider (or a coming_soon one whose keyless resolution is a documented follow-up).
 	repoCred func(ComponentContext) RepoCred
+	// keylessRepoCred, when set (helm_registry ECR providers only), describes a cross-account OCI Helm
+	// chart registry (Amazon ECR / ECR Public) whose repo credential CANNOT be statically seeded — ECR
+	// issues a ~12h token, not a stable password. Instead an in-cluster refresher (the `helm-repo-token`
+	// Deployment running the runner image under the cluster Workload Identity) mints + refreshes the
+	// token and patches username=AWS / password=<token> into the pre-seeded `repo-helm-<hash>` ArgoCD
+	// repo-cred Secret. Mutually exclusive with repoCred: an ECR helm registry is keyless-refreshed,
+	// never statically seeded — repoCred stays nil so IsHelmRegistry is false and HelmRepoCredSpecs skips
+	// it, and this routes the keyless path instead. nil → not a keyless helm registry.
+	keylessRepoCred func(ComponentContext) KeylessHelmRepoTarget
 }
 
 var behaviors = map[string]behavior{}
@@ -225,6 +234,24 @@ func (p *CategoryProvider) RepoCred(ctx ComponentContext) (RepoCred, bool) {
 func IsHelmRegistry(slug string) bool {
 	b, ok := behaviors["helm_registry/"+slug]
 	return ok && b.repoCred != nil
+}
+
+// KeylessRepoCred returns the cross-account keyless OCI Helm registry target (Amazon ECR / ECR Public),
+// or ok=false when the provider is not a keyless helm registry. A keyless helm registry has no repoCred;
+// its repo-cred Secret is minted + refreshed in-cluster by the `helm-repo-token` refresher.
+func (p *CategoryProvider) KeylessRepoCred(ctx ComponentContext) (KeylessHelmRepoTarget, bool) {
+	if p.b.keylessRepoCred == nil {
+		return KeylessHelmRepoTarget{}, false
+	}
+	return p.b.keylessRepoCred(ctx), true
+}
+
+// IsKeylessHelmRegistry reports whether a helm_registry slug is a cross-account keyless provider (its
+// repo-cred Secret is refreshed in-cluster, not seeded statically — the ECR case). Cheap lookup for
+// routing in KeylessHelmRepoTargets / Compose without building a full ComponentContext.
+func IsKeylessHelmRegistry(slug string) bool {
+	b, ok := behaviors["helm_registry/"+slug]
+	return ok && b.keylessRepoCred != nil
 }
 
 // Get resolves a provider by (category, slug). The slug must exist both in the

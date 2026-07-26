@@ -123,3 +123,62 @@ func PruneHelmRepoCredentials(desiredNames []string, stdout, stderr io.Writer) {
 		}
 	}
 }
+
+// helmRepoRefresherLabelKey marks the Deployment/Role/RoleBinding of a keyless OCI Helm chart-repo
+// refresher (#1185). MUST match manifests.helmRepoRefresherLabelKey (the render side). The shared KSA
+// (alethia-helm-repo-pull) deliberately does NOT carry it, so a per-refresher prune never sweeps it.
+const helmRepoRefresherLabelKey = "alethia.io/helm-repo-refresher"
+
+// PruneHelmRepoRefreshers deletes the Deployment/Role/RoleBinding of any keyless OCI Helm chart-repo
+// refresher (#1185) no longer desired — a deselected ECR helm_registry connector. Mirrors
+// PruneHelmRepoCredentials (which GCs the placeholder Secret): together they fully clean up a removed
+// keyless repo. The shared KSA is left in place (harmless when unused; reused if another ECR repo
+// remains). Runs even when desiredNames is empty so the last refresher is cleaned up. Best-effort +
+// idempotent.
+func PruneHelmRepoRefreshers(desiredNames []string, stdout, stderr io.Writer) {
+	desired := make(map[string]struct{}, len(desiredNames))
+	for _, n := range desiredNames {
+		desired[n] = struct{}{}
+	}
+	// The Deployment, Role and RoleBinding of a refresher all share the same name (<secret>-refresher),
+	// so one desired-name set covers all three kinds.
+	for _, kind := range []string{"deployment", "role", "rolebinding"} {
+		raw, err := utils.ExecuteCommandWithOutput(
+			fmt.Sprintf("kubectl get %s -n argocd -l %s -o json", kind, helmRepoRefresherLabelKey),
+			".",
+			nil,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "Warning: could not list %s to prune Helm repo refreshers: %v\n", kind, err)
+			continue
+		}
+		var list struct {
+			Items []struct {
+				Metadata struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+				} `json:"metadata"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not parse %s list to prune Helm repo refreshers: %v\n", kind, err)
+			continue
+		}
+		for _, item := range list.Items {
+			if _, keep := desired[item.Metadata.Name]; keep {
+				continue
+			}
+			if !k8sNameRe.MatchString(item.Metadata.Name) || !k8sNameRe.MatchString(item.Metadata.Namespace) {
+				fmt.Fprintf(stderr, "Warning: skipping prune of oddly-named Helm repo refresher %s %q/%q\n", kind, item.Metadata.Namespace, item.Metadata.Name)
+				continue
+			}
+			fmt.Fprintf(stdout, "Pruning deselected Helm repo refresher %s: %s/%s\n", kind, item.Metadata.Namespace, item.Metadata.Name)
+			cmd := fmt.Sprintf("kubectl delete %s -n %s %s --ignore-not-found=true",
+				kind, item.Metadata.Namespace, item.Metadata.Name)
+			if delErr := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); delErr != nil {
+				fmt.Fprintf(stderr, "Warning: failed to prune Helm repo refresher %s %s/%s: %v\n",
+					kind, item.Metadata.Namespace, item.Metadata.Name, delErr)
+			}
+		}
+	}
+}
