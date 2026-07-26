@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -161,7 +162,7 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 			}},
 		}},
 	}
-	stores := secretStoreRefs(vc)
+	stores := secretStoreRefs(vc, nil)
 	if stores["stripe-key"].StoreName != "secretstore-vault" || stores["stripe-key"].ValueProperty != "value" {
 		t.Fatalf("secretStoreRefs wrong: %+v", stores)
 	}
@@ -183,7 +184,7 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 
 	// A native-provider secret has no readable store → fail-closed (nothing written, reported).
 	vc.Secrets[0].Provider = ""
-	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc), io.Discard)
+	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc, nil), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestSecretStoreRefs_Classification(t *testing.T) {
 		{Name: "d", Provider: "onepassword"}, // runtime-read excluded on ESO 0.9.12
 		{Name: "e", Provider: ""},            // native
 	}}
-	refs := secretStoreRefs(vc)
+	refs := secretStoreRefs(vc, nil)
 	if refs["a"] != (manifests.SecretStoreRef{StoreName: "secretstore-vault", ValueProperty: "value"}) {
 		t.Errorf("vault ref wrong: %+v", refs["a"])
 	}
@@ -273,7 +274,7 @@ func TestGenerateAppManifests_ReturnsWarnings(t *testing.T) {
 			// No ResolvedImage → unbuilt → FromServices skips it → apps empty → returns before git.
 		}},
 	}
-	warnings, err := generateAppManifests(context.Background(), vc, map[string]interface{}{}, "token", io.Discard, io.Discard)
+	warnings, err := generateAppManifests(context.Background(), vc, map[string]interface{}{}, "token", nil, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,5 +314,215 @@ func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
 	// The reason is also RETURNED (for GitopsStatus.ManifestWarnings), not only logged.
 	if len(skips) == 0 {
 		t.Errorf("an unsatisfiable facet must be returned as a skip reason, got none")
+	}
+}
+
+// xacctFacts are AWS facts whose cross-account gate is OPEN (both the cluster's own ESO identity and
+// the target are present), i.e. the deploy really did apply secretstore-aws-xacct.
+func xacctFacts() *argocd.InfraFacts {
+	return &argocd.InfraFacts{
+		Provider:               "aws",
+		IRSAExternalSecretsArn: "arn:aws:iam::111111111111:role/eso",
+		SecretsXacctRef:        "arn:aws:iam::222222222222:role/AlethiaSecretsReadRole",
+		SecretsXacctRegion:     "us-east-1",
+		SecretsXacctSlug:       "aws-sm-xacct",
+	}
+}
+
+// A project secret backed by the DOMINANT cross-account manager resolves to that cloud's *-xacct
+// store, with NO remoteRef property: the whole remote value IS the secret on all four clouds.
+func TestSecretStoreRefs_Xacct(t *testing.T) {
+	vc := &types.ProjectConfig{Provider: "aws", Secrets: []types.ProjectSecretConfig{
+		{Name: "stripe-key", Provider: "aws-sm-xacct"},
+		{Name: "sendgrid-key", Provider: "aws-sm-xacct"},
+	}}
+	refs := secretStoreRefs(vc, xacctFacts())
+	for _, n := range []string{"stripe-key", "sendgrid-key"} {
+		if refs[n] != (manifests.SecretStoreRef{StoreName: "secretstore-aws-xacct"}) {
+			t.Errorf("%s ref wrong: %+v (want secretstore-aws-xacct with no property)", n, refs[n])
+		}
+	}
+}
+
+// The cross-account store is DOMINANT per project — only ONE renders. A secret selecting a different
+// *-xacct slug has no store of its own, so it must be ABSENT rather than silently read the dominant
+// account's target (a cross-account read of the wrong account).
+func TestSecretStoreRefs_XacctNonDominantSlugAbsent(t *testing.T) {
+	vc := &types.ProjectConfig{Provider: "aws", Secrets: []types.ProjectSecretConfig{
+		{Name: "a", Provider: "aws-sm-xacct"},
+		{Name: "b", Provider: "gcp-sm-xacct"}, // not the dominant slug
+	}}
+	refs := secretStoreRefs(vc, xacctFacts())
+	if refs["a"].StoreName != "secretstore-aws-xacct" {
+		t.Errorf("the dominant-slug secret must resolve: %+v", refs["a"])
+	}
+	if _, ok := refs["b"]; ok {
+		t.Errorf("a non-dominant *-xacct slug must have NO store ref, got %+v", refs["b"])
+	}
+}
+
+// Fail-closed: the store is applied by the runner, so when the render gate is CLOSED (here: the
+// cluster's own IRSA fact is missing) nothing was applied and no secret may resolve.
+func TestSecretStoreRefs_XacctFailClosedWhenGateClosed(t *testing.T) {
+	vc := &types.ProjectConfig{Provider: "aws", Secrets: []types.ProjectSecretConfig{
+		{Name: "a", Provider: "aws-sm-xacct"},
+	}}
+	f := xacctFacts()
+	f.IRSAExternalSecretsArn = "" // gate closed — the store never rendered
+	if refs := secretStoreRefs(vc, f); len(refs) != 0 {
+		t.Errorf("gate closed ⇒ no refs, got %+v", refs)
+	}
+	// nil facts (a caller with no post-apply facts) is equally fail-closed.
+	if refs := secretStoreRefs(vc, nil); len(refs) != 0 {
+		t.Errorf("nil facts ⇒ no refs, got %+v", refs)
+	}
+}
+
+// The most dangerous failure mode: falling back to the NATIVE store. That would silently read the
+// CLUSTER's own account instead of the customer's target account — same secret name, wrong tenant.
+func TestSecretStoreRefs_XacctNeverFallsBackToNative(t *testing.T) {
+	vc := &types.ProjectConfig{Provider: "aws", Secrets: []types.ProjectSecretConfig{
+		{Name: "a", Provider: "aws-sm-xacct"},
+		{Name: "b", Provider: "gcp-sm-xacct"},
+	}}
+	native := manifests.StoreNameFor("aws")
+	if native == "" {
+		t.Fatal("expected a native store name for aws")
+	}
+	for _, f := range []*argocd.InfraFacts{xacctFacts(), nil, {Provider: "aws", SecretsXacctSlug: "aws-sm-xacct"}} {
+		for name, ref := range secretStoreRefs(vc, f) {
+			if ref.StoreName == native {
+				t.Errorf("%s resolved to the NATIVE store %q — a cross-account secret must never fall back to the cluster's own account", name, native)
+			}
+		}
+	}
+}
+
+// #1306: every *-xacct store denies namespaces labelled alethia.io/placement=namespace, so a PLACED
+// tenant must never be handed an ExternalSecret against a foreign-account store — it could not sync
+// anyway, and offering it would leak the target's existence into a shared Fabric.
+func TestSecretStoreRefs_XacctSkippedOnPlacedNamespace(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Provider:      "aws",
+		PlacementMode: types.PlacementModeNamespace,
+		Secrets:       []types.ProjectSecretConfig{{Name: "a", Provider: "aws-sm-xacct"}},
+	}
+	if refs := secretStoreRefs(vc, xacctFacts()); len(refs) != 0 {
+		t.Errorf("placed tenant ⇒ no cross-account refs, got %+v", refs)
+	}
+	// ...but a SaaS store is unaffected: it is in-cluster and carries no such condition.
+	vc.Secrets = []types.ProjectSecretConfig{{Name: "a", Provider: "vault"}}
+	if refs := secretStoreRefs(vc, xacctFacts()); refs["a"].StoreName != "secretstore-vault" {
+		t.Errorf("a SaaS store must still resolve for a placed tenant, got %+v", refs["a"])
+	}
+}
+
+// End-to-end through the writer: a secret-kind binding on a cross-account secret writes an
+// ExternalSecret naming the *-xacct store, keyed by the project secret's own name, with NO
+// `property:` line (the conditional-property template is what makes this renderable).
+func TestWriteBindingExternalSecrets_Xacct(t *testing.T) {
+	target := types.ServiceBindingTarget{Kind: "secret", Name: "stripe-key"}
+	vc := &types.ProjectConfig{
+		Provider: "aws",
+		Secrets:  []types.ProjectSecretConfig{{Name: "stripe-key", Provider: "aws-sm-xacct"}},
+		Services: []types.ProjectServiceConfig{{
+			Name: "api",
+			Bindings: []types.ServiceBinding{{
+				Target: target,
+				Inject: []types.ServiceBindingInjection{{Env: "STRIPE_KEY", From: "value"}},
+			}},
+		}},
+	}
+	dir := t.TempDir()
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, secretStoreRefs(vc, xacctFacts()), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || len(skips) != 0 {
+		t.Fatalf("xacct secret binding → 1 ExternalSecret, no skips; got n=%d skips=%v", n, skips)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, manifests.BindingSecretName("api", target)+"-externalsecret.yaml"))
+	if err != nil {
+		t.Fatalf("ExternalSecret not written: %v", err)
+	}
+	y := string(b)
+	if !strings.Contains(y, "name: secretstore-aws-xacct") || !strings.Contains(y, "key: stripe-key") {
+		t.Errorf("xacct ExternalSecret wrong:\n%s", y)
+	}
+	if strings.Contains(y, "property:") {
+		t.Errorf("a cross-account remoteRef must carry NO property sub-selector:\n%s", y)
+	}
+}
+
+// A gate-closed cross-account secret is REPORTED, never silently dropped — and the skip reason must
+// carry names only (service / secret), never a secret value.
+func TestWriteBindingExternalSecrets_XacctSkipReasonCarriesNoValue(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Provider: "aws",
+		Secrets:  []types.ProjectSecretConfig{{Name: "stripe-key", Provider: "aws-sm-xacct"}},
+		Services: []types.ProjectServiceConfig{{
+			Name: "api",
+			Bindings: []types.ServiceBinding{{
+				Target: types.ServiceBindingTarget{Kind: "secret", Name: "stripe-key"},
+				Inject: []types.ServiceBindingInjection{{Env: "STRIPE_KEY", From: "value"}},
+			}},
+		}},
+	}
+	f := xacctFacts()
+	f.IRSAExternalSecretsArn = "" // gate closed
+	skips, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc, f), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(skips) != 1 {
+		t.Fatalf("gate closed ⇒ 0 written + 1 reported; got n=%d skips=%v", n, skips)
+	}
+	for _, s := range skips {
+		if !strings.Contains(s, "api") || !strings.Contains(s, "stripe-key") {
+			t.Errorf("skip reason should name the service and secret: %q", s)
+		}
+		if strings.Contains(s, "arn:aws:iam::222222222222") {
+			t.Errorf("skip reason must not echo the cross-account target: %q", s)
+		}
+	}
+}
+
+// A NATIVE secret carries Provider "". If facts.SecretsXacctSlug were ever empty while a store
+// rendered, gate 3's `s.Provider == facts.SecretsXacctSlug` would be ""=="" and every native secret
+// would silently resolve to the CROSS-ACCOUNT store — reading the customer's foreign account for a
+// secret that never should have left the cluster's own. Unreachable today (all four providers
+// hardcode their slug); asserted because the failure is silent and cross-tenant.
+func TestSecretStoreRefs_XacctEmptySlugNeverMatchesNativeSecret(t *testing.T) {
+	vc := &types.ProjectConfig{Provider: "aws", Secrets: []types.ProjectSecretConfig{
+		{Name: "native-secret", Provider: ""},
+	}}
+	f := xacctFacts()
+	f.SecretsXacctSlug = "" // a lane that forgot to set Slug
+	if refs := secretStoreRefs(vc, f); len(refs) != 0 {
+		t.Errorf("a native secret must NEVER resolve to a cross-account store, got %+v", refs)
+	}
+}
+
+// The skip reason must name the ACTUAL cause. Reporting "native/excluded provider" for a
+// cross-account secret whose store simply didn't render sends the operator to change a provider that
+// is already correct — and the honest-N/A contract is what the decision records exist to uphold.
+func TestSecretStoreSkipCause_DistinguishesXacctFromNative(t *testing.T) {
+	vc := &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{
+		{Name: "xa", Provider: "aws-sm-xacct"},
+		{Name: "nat", Provider: ""},
+	}}
+	xa := secretStoreSkipCause(vc, "xa")
+	if !strings.Contains(xa, "cross-account") || !strings.Contains(xa, "aws-sm-xacct") {
+		t.Errorf("cross-account cause should name the manager: %q", xa)
+	}
+	if strings.Contains(xa, "native/excluded") {
+		t.Errorf("cross-account cause must not blame the provider choice: %q", xa)
+	}
+	if nat := secretStoreSkipCause(vc, "nat"); !strings.Contains(nat, "native/excluded") {
+		t.Errorf("native cause wrong: %q", nat)
+	}
+	// An unknown secret name falls back to the generic cause rather than panicking.
+	if got := secretStoreSkipCause(vc, "nope"); got == "" {
+		t.Error("unknown secret must still yield a cause")
 	}
 }

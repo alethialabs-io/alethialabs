@@ -62,6 +62,36 @@ type KeylessSecretTarget struct {
 	TargetExternalID string
 }
 
+// XacctStoreName is the NAME of the cross-account ClusterSecretStore rendered for a cloud —
+// "secretstore-<cloud>-xacct", matching externalSecretsStoreTemplate's *-xacct branches. Returns ""
+// for a cloud with no cross-account store (hetzner, unknown), so callers fail closed.
+//
+// Keyed on the CLOUD, never the connector slug: the slug is "aws-sm-xacct" but the store is
+// "secretstore-aws-xacct", so the tempting "secretstore-"+slug is wrong on every lane.
+func XacctStoreName(cloud string) string {
+	switch cloud {
+	case "aws", "gcp", "azure", "alibaba":
+		return "secretstore-" + cloud + "-xacct"
+	default:
+		return ""
+	}
+}
+
+// AllXacctStoreNames returns every cross-account ClusterSecretStore name the template can render.
+// Callers that reap stale stores enumerate this instead of re-listing the clouds, so a new lane
+// cannot be added to the template and silently forgotten by the cleanup.
+func AllXacctStoreNames() []string {
+	return []string{
+		XacctStoreName("aws"),
+		XacctStoreName("gcp"),
+		XacctStoreName("azure"),
+		XacctStoreName("alibaba"),
+	}
+}
+
+// StoreName is the cross-account ClusterSecretStore this target is read through.
+func (t KeylessSecretTarget) StoreName() string { return XacctStoreName(t.Provider) }
+
 // DominantKeylessSecretTarget returns the cross-account keyless secret-manager target for the project's
 // dominant secrets selection, or nil when the dominant secrets provider is native / none or a
 // credential-based (Vault / Doppler / Infisical / 1Password) store. Parallels
