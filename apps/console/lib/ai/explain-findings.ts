@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { asRecord } from "@/lib/records";
+import type { CompatControlResult, CompatReport } from "@/types/compat.types";
 import type { VerifyControlResult, VerifyReport } from "@/types/jsonb.types";
 
 /**
@@ -11,7 +12,17 @@ import type { VerifyControlResult, VerifyReport } from "@/types/jsonb.types";
  * any proposed fix is separately re-validated by `verify.ReVerify` before it could
  * ever be offered. The model call is injected so this orchestration is unit-tested
  * without a live model; the server action supplies the real AI-gateway call.
+ *
+ * Handles both gate reports uniformly: the elench verify report (packages/core/verify)
+ * and the version-compatibility report (packages/core/compat, #1219). Both expose the
+ * same explainable surface — controls with `{ id, title, status, findings }` — so the
+ * orchestration is report-agnostic.
  */
+
+/** A report the explainer can consume: either gate's report shares this control surface. */
+type ExplainableReport = VerifyReport | CompatReport;
+/** A control from either gate — only the shared fields are read below. */
+type ExplainableControl = VerifyControlResult | CompatControlResult;
 
 export interface ControlExplanation {
 	id: string;
@@ -26,14 +37,17 @@ export interface ControlExplanation {
 export type GenerateText = (prompt: string) => Promise<string>;
 
 /** Controls worth explaining: hard fails and warnings (not pass / not_evaluable). */
-export function explainableControls(report: VerifyReport): VerifyControlResult[] {
-	return report.controls.filter(
-		(c) => c.status === "fail" || c.status === "warn",
-	);
+export function explainableControls(
+	report: ExplainableReport,
+): ExplainableControl[] {
+	// Widen to the shared control surface first — `report.controls` is a union of the
+	// two gates' arrays, and the intermediate binding lets `.filter` narrow cleanly.
+	const controls: ExplainableControl[] = report.controls;
+	return controls.filter((c) => c.status === "fail" || c.status === "warn");
 }
 
 /** Build the explanation prompt for a set of failing controls. */
-export function buildExplainPrompt(controls: VerifyControlResult[]): string {
+export function buildExplainPrompt(controls: ExplainableControl[]): string {
 	const lines = controls.map((c) => {
 		const findings = (c.findings ?? [])
 			.map((f) => `    - ${f.address}: ${f.message}`)
@@ -57,7 +71,7 @@ export function buildExplainPrompt(controls: VerifyControlResult[]): string {
  */
 export function parseExplanations(
 	raw: string,
-	controls: VerifyControlResult[],
+	controls: ExplainableControl[],
 ): ControlExplanation[] {
 	const byId = new Map<string, { explanation?: string; remediation?: string }>();
 	try {
@@ -95,11 +109,11 @@ export function parseExplanations(
 }
 
 /**
- * Explain a verification report's failing controls via the injected model call.
- * Returns [] when nothing needs explaining.
+ * Explain a gate report's failing controls via the injected model call — works for
+ * either the verify or the compat report. Returns [] when nothing needs explaining.
  */
 export async function explainFindings(
-	report: VerifyReport,
+	report: ExplainableReport,
 	generate: GenerateText,
 ): Promise<ControlExplanation[]> {
 	const controls = explainableControls(report);
