@@ -925,6 +925,13 @@
       "when": 1785089682289,
       "tag": "0131_heavy_moondragon",
       "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1785091603527,
+      "tag": "0132_yielding_goliath",
+      "breakpoints": true
     }
   ]
 }

@@ -10,7 +10,10 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
-import { topicSubscriptionsByTopic } from "@/lib/db/normalized-reads";
+import {
+	clusterAdminsByCluster,
+	topicSubscriptionsByTopic,
+} from "@/lib/db/normalized-reads";
 import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
 import {
 	auditLog,
@@ -79,7 +82,7 @@ import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import type { TopicSubscription } from "@/types/jsonb.types";
+import type { ClusterAdmin, TopicSubscription } from "@/types/jsonb.types";
 import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
 import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
@@ -186,7 +189,11 @@ export interface CreateProjectInput {
 	cluster: Omit<
 		ComponentInsert<typeof projectCluster.$inferInsert>,
 		"cluster_name" | "cluster_endpoint"
-	>;
+	> & {
+		// Form-only field (not a project_cluster column since the contract phase): admins persist to
+		// the cluster_admins child table via the dual-child insert below.
+		cluster_admins?: ClusterAdmin[];
+	};
 	dns: ComponentInsert<typeof projectDns.$inferInsert>;
 	repositories: Omit<
 		typeof projectRepositories.$inferInsert,
@@ -634,9 +641,14 @@ export async function getProject(
 				tx,
 				topics.map((t) => t.id),
 			);
+			const clusterAdminsList = cluster
+				? await clusterAdminsByCluster(tx, cluster.id)
+				: [];
 			return {
 				network: network ?? null,
-				cluster: cluster ?? null,
+				cluster: cluster
+					? { ...cluster, cluster_admins: clusterAdminsList }
+					: null,
 				dns: dns ?? null,
 				repositories: repos ?? null,
 				source_repos: sourceRepos,
@@ -790,6 +802,9 @@ async function buildConfigSnapshot(
 		// Byte-identical for `dedicated` (env↔cluster == env↔Fabric↔cluster). See cluster-for-env.ts.
 		const cluster =
 			(await resolveServingCluster(tx, projectId, envId)) ?? undefined;
+		const clusterAdminsList = cluster
+			? await clusterAdminsByCluster(tx, cluster.id)
+			: [];
 		const [dns] = await tx
 			.select()
 			.from(projectDns)
@@ -1233,7 +1248,7 @@ async function buildConfigSnapshot(
 				node_max_size: cluster?.node_max_size ?? 5,
 				node_desired_size: cluster?.node_desired_size ?? 2,
 				node_disk_size_gb: cluster?.node_disk_size_gb ?? null,
-				cluster_admins: cluster?.cluster_admins ?? [],
+				cluster_admins: clusterAdminsList,
 				provider_config: cluster?.provider_config ?? {},
 			},
 			dns: {

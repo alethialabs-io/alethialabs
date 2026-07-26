@@ -13,10 +13,10 @@
 // (stableStringify, sorted keys) are all key-order-independent, so only element *values* and array
 // *order* must match the old JSONB — both of which `ordinal` guarantees.
 
-import { inArray } from "drizzle-orm";
-import { topicSubscriptions } from "@/lib/db/schema";
+import { eq, inArray } from "drizzle-orm";
+import { clusterAdmins, topicSubscriptions } from "@/lib/db/schema";
 import type { Db, Tx } from "@/lib/db";
-import type { TopicSubscription } from "@/types/jsonb.types";
+import type { ClusterAdmin, TopicSubscription } from "@/types/jsonb.types";
 
 /**
  * Load the subscriptions for a set of topics, keyed by topic id, ordered by `ordinal`. Topics with no
@@ -44,4 +44,20 @@ export async function topicSubscriptionsByTopic(
 		else map.set(r.topic_id, [sub]);
 	}
 	return map;
+}
+
+/**
+ * Load a single cluster's day-2 admins, ordered by `ordinal`. Returns `[]` when the cluster has none.
+ * (project_cluster is a per-env singleton, so this reads one cluster's rows.)
+ */
+export async function clusterAdminsByCluster(
+	db: Db | Tx,
+	clusterId: string,
+): Promise<ClusterAdmin[]> {
+	const rows = await db
+		.select({ username: clusterAdmins.username, groups: clusterAdmins.groups })
+		.from(clusterAdmins)
+		.where(eq(clusterAdmins.cluster_id, clusterId))
+		.orderBy(clusterAdmins.ordinal);
+	return rows.map((r) => ({ username: r.username, groups: r.groups }));
 }
