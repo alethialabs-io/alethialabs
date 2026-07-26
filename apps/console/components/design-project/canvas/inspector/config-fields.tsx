@@ -30,19 +30,18 @@ import { RepositorySelector } from "@/components/repository-selector";
 import { ListField } from "./list-field";
 import { SubresourceField } from "./subresource-field";
 import { BindingsField, type ServiceBinding } from "./bindings-field";
+import { groupRegions, type CloudProviderSlug } from "@/lib/cloud-providers";
 import {
-	REGION_LABELS,
-	groupRegions,
-	type CloudProviderSlug,
-} from "@/lib/cloud-providers";
-import type {
-	FieldCtx,
-	FieldDef,
-	FieldOption,
-	KindConfig,
-	Resolvable,
-	SectionDef,
+	NO_CAPABILITIES,
+	type CapabilityBag,
+	type FieldCtx,
+	type FieldDef,
+	type FieldOption,
+	type KindConfig,
+	type Resolvable,
+	type SectionDef,
 } from "./config-schema";
+import { regionCodes, withSelected } from "./capability-options";
 import { RadioCardGroup } from "./radio-card-group";
 
 type Config = Record<string, unknown>;
@@ -57,20 +56,23 @@ function resolve<T>(
 	return r(ctx);
 }
 
-/** The grouped region dropdown, keyed by the effective provider. */
+/**
+ * The grouped region dropdown. Takes the whole ctx rather than just `provider` so the account-aware
+ * source lives in `capability-options.regionCodes` alongside every other picker, instead of this
+ * file growing a second, divergent notion of "which regions exist".
+ */
 function RegionSelect({
+	ctx,
 	provider,
 	value,
 	onChange,
 }: {
+	ctx: FieldCtx;
 	provider: CloudProviderSlug;
 	value: string;
 	onChange: (v: string) => void;
 }) {
-	const groups = groupRegions(
-		Object.keys(REGION_LABELS[provider] ?? {}),
-		provider,
-	);
+	const groups = groupRegions(regionCodes(ctx), provider);
 	return (
 		<Select value={value || ""} onValueChange={onChange}>
 			<SelectTrigger className="h-9 text-sm">
@@ -86,6 +88,61 @@ function RegionSelect({
 							</SelectItem>
 						))}
 					</SelectGroup>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
+/**
+ * The one select that renders `FieldOption[]` — shared by the inspector's `select` fields and by
+ * subresource rows, which previously carried their own copy and drifted from it.
+ *
+ * Advisory is INK ONLY. A `not_launchable` option stays selectable, because availability is
+ * design-time guidance and the deploy is the authority (#918) — never pass `disabled`.
+ */
+export function OptionSelect({
+	id,
+	options,
+	value,
+	onChange,
+	placeholder,
+	className,
+}: {
+	id?: string;
+	options: FieldOption[];
+	value: string;
+	onChange: (v: string) => void;
+	placeholder?: string;
+	className?: string;
+}) {
+	// Pin the stored value in, so a value the account can't launch (or one left over from a provider
+	// change) can't vanish and leave a blank trigger silently disagreeing with the saved config.
+	const opts = withSelected(options, value);
+	return (
+		<Select value={value || opts[0]?.value || ""} onValueChange={onChange}>
+			<SelectTrigger id={id} className={className ?? "h-9 text-sm"}>
+				<SelectValue placeholder={placeholder} />
+			</SelectTrigger>
+			<SelectContent>
+				{opts.map((o) => (
+					<SelectItem key={o.value} value={o.value}>
+						<span className="flex items-center gap-2">
+							<span
+								className={cn(o.advisory?.level === "unavailable" && "text-muted-foreground")}
+							>
+								{o.label}
+							</span>
+							{o.advisory ? (
+								<span
+									className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground"
+									title={o.advisory.note}
+								>
+									{o.advisory.level === "unavailable" ? "unavailable" : "unverified"}
+								</span>
+							) : null}
+						</span>
+					</SelectItem>
 				))}
 			</SelectContent>
 		</Select>
@@ -163,26 +220,16 @@ function FieldControl({
 			);
 		}
 
-		case "select": {
-			const options = resolve(field.options, ctx) ?? [];
+		case "select":
 			return (
-				<Select
-					value={toStr(raw) || options[0]?.value || ""}
-					onValueChange={patch}
-				>
-					<SelectTrigger id={id} className="h-9 text-sm">
-						<SelectValue placeholder={resolve(field.placeholder, ctx)} />
-					</SelectTrigger>
-					<SelectContent>
-						{options.map((o) => (
-							<SelectItem key={o.value} value={o.value}>
-								{o.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<OptionSelect
+					id={id}
+					options={resolve(field.options, ctx) ?? []}
+					value={toStr(raw)}
+					onChange={patch}
+					placeholder={resolve(field.placeholder, ctx)}
+				/>
 			);
-		}
 
 		case "radio-card": {
 			const options = resolve(field.options, ctx) ?? [];
@@ -204,6 +251,7 @@ function FieldControl({
 		case "region":
 			return provider ? (
 				<RegionSelect
+					ctx={ctx}
 					provider={provider}
 					value={toStr(raw)}
 					onChange={patch}
@@ -237,7 +285,7 @@ function FieldControl({
 			return field.sub ? (
 				<SubresourceField
 					spec={field.sub}
-					provider={ctx.provider}
+					ctx={ctx}
 					value={Array.isArray(raw) ? raw : []}
 					onChange={patch}
 				/>
@@ -464,6 +512,7 @@ export function ConfigFields({
 	provider,
 	onChange,
 	kind,
+	capabilities,
 }: {
 	schema: KindConfig;
 	config: Config;
@@ -472,8 +521,11 @@ export function ConfigFields({
 	/** When set, each field is validated inline against this kind's zod item schema (W4). Omit for
 	 * surfaces that don't want inline errors. */
 	kind?: NodeKind;
+	/** Account-scoped options for this node's effective identity. OPTIONAL and defaulted, so every
+	 * existing mount point and test keeps working and simply resolves the static catalog. */
+	capabilities?: CapabilityBag;
 }) {
-	const ctx: FieldCtx = { provider, config };
+	const ctx: FieldCtx = { provider, config, caps: capabilities ?? NO_CAPABILITIES };
 	// W4 — validate against the DB-derived per-node schema so what the form accepts conforms to what
 	// the DB stores. Draft→Save is unchanged; this only surfaces per-field errors as you edit.
 	const errors = useMemo(
