@@ -3,11 +3,19 @@
 #
 # Automated dependency updates — npm (pnpm workspace), Go modules, GitHub Actions,
 # and the app Dockerfiles. Minor/patch grouped to keep PR noise down.
+#
+# `target-branch: dev` on every ecosystem: dependabot defaults to the repository's DEFAULT
+# branch (`main`), which put every bump straight onto the production branch and bypassed the
+# `feature → dev → staging → main` flow the rest of the repo follows (the `branch-flow-guard`
+# required check exists precisely to stop that). Targeting `dev` runs bumps through the same
+# Mergify queue and the same dev → staging → main promotion as any other change, so a
+# dependency reaches production only after it has been integrated on `dev`.
 
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
@@ -20,6 +28,7 @@ updates:
       - /apps/cli
       - /apps/runner
       - /packages/core
+    target-branch: dev
     schedule:
       interval: weekly
     groups:
@@ -28,6 +37,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     groups:
@@ -39,5 +49,6 @@ updates:
       - /apps/console
       - /apps/docs
       - /apps/runner
+    target-branch: dev
     schedule:
       interval: weekly
