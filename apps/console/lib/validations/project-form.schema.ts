@@ -5,6 +5,8 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { slugify } from "@/lib/slug";
 import {
+	environmentLifecycle,
+	environmentStage,
 	placementMode,
 	projectCaches,
 	projectCluster,
@@ -194,6 +196,37 @@ const projectSchema = projectsInsert
 		// The default (Production) env's placement onto its first Fabric. Optional — createProject
 		// defaults it to `dedicated` (the new Fabric's owner). The placement selector (#844) sets it.
 		placement_mode: z.enum(placementMode.enumValues).optional(),
+		// The full environment matrix from the placement selector (#844). When present, createProject
+		// fans it out (a Fabric per `dedicated` env + one shared Fabric for the shared placements);
+		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept. Exactly one is_default.
+		environments: z
+			.array(
+				z.object({
+					// Slug-safe (DNS-1123 label): the env name feeds the tofu state-path segment and the
+					// Fabric name, so it must never carry path separators or other unsafe characters.
+					name: z
+						.string()
+						.min(1)
+						.max(40)
+						.regex(
+							/^[a-z][a-z0-9-]*$/,
+							"Environment name must be lower-case alphanumeric or hyphen.",
+						),
+					stage: z.enum(environmentStage.enumValues),
+					placement_mode: z.enum(placementMode.enumValues),
+					lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
+					// The k8s destination namespace — DNS-1123 label when present.
+					namespace: z
+						.string()
+						.max(63)
+						.regex(/^[a-z][a-z0-9-]*$/)
+						.nullish(),
+					is_default: z.boolean().optional(),
+				}),
+			)
+			// At most the four-env matrix; exactly one default is enforced in the core fan-out.
+			.max(8)
+			.optional(),
 	});
 
 const networkSchema = networkInsert

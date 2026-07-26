@@ -55,7 +55,10 @@ import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
 import { listAssignmentsFor } from "@/lib/queries/classification";
-import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
+import {
+	type EnvironmentSpec,
+	insertProjectWithDefaultFabric,
+} from "@/lib/queries/projects";
 import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
@@ -169,8 +172,13 @@ export interface CreateProjectInput {
 		iac_version: string;
 		// The default (Production) env's placement onto its first Fabric. Optional — defaults to
 		// `dedicated` (the new Fabric's owner). Threaded so the placement selector (#844) can set it
-		// instead of it being a literal; see insertProjectWithDefaultFabric.
+		// instead of it being a literal; see insertProjectWithDefaultFabric. Ignored when
+		// `environments` is present (the matrix carries its own per-env placement).
 		placement_mode?: PlacementMode;
+		// The full environment matrix from the placement selector (#844). When present, createProject
+		// fans it out into a Fabric per `dedicated` env + one shared Fabric for the shared placements;
+		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept (see the core helper).
+		environments?: EnvironmentSpec[];
 	};
 	network: ComponentInsert<typeof projectNetwork.$inferInsert>;
 	cluster: Omit<
@@ -421,6 +429,7 @@ export async function createProject(data: CreateProjectInput) {
 			iac_version: projectFields.iac_version,
 			environment_stage,
 			placement_mode: projectFields.placement_mode,
+			environments: projectFields.environments,
 			owner,
 			orgId,
 		});
