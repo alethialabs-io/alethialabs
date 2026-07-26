@@ -932,6 +932,13 @@
       "when": 1785091603527,
       "tag": "0132_yielding_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1785093766573,
+      "tag": "0133_square_solo",
+      "breakpoints": true
     }
   ]
 }
