@@ -1,11 +1,11 @@
 ---
 title: Pluggable Connectors
-description: Bring your own DNS, secrets, registry, and observability tools via API-key connectors.
+description: Bring your own DNS, secrets, registry, chart repository, and observability tools via API-key connectors.
 ---
 
 # Pluggable Connectors
 
-Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, and Datadog / Grafana Cloud for observability.
+Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, a private Helm or OCI source for charts, and Datadog / Grafana Cloud for observability.
 
 These connectors authenticate with an **API key / token** (`auth_method = api_key`) rather than cloud federation or OAuth.
 
@@ -16,6 +16,7 @@ These connectors authenticate with an **API key / token** (`auth_method = api_ke
 | **DNS** | Route 53 / Cloud DNS / Azure DNS | **Cloudflare** | API token |
 | **Secrets** | Secrets Manager / Secret Manager / Key Vault | **HashiCorp Vault** | Address, token |
 | **Registry** | ECR / Artifact Registry / ACR | **Docker Hub** | Username, access token |
+| **Chart repositories** | — (public charts need no credential) | **[GitHub Container Registry, Docker Hub, GitLab, Scaleway, generic OCI, HTTPS](/console/connectors/chart-repositories)** | Username, password / token |
 | **Observability** | — (none) | **Datadog** | API key, app key |
 | **Observability** | — | **Grafana Cloud** | Instance ID, API token |
 
@@ -42,6 +43,7 @@ Once connected, pick the provider per component in the [Project designer](/conso
 - [DNS & WAF](/console/design-project/dns) — choose **Cloudflare** instead of cloud-native DNS.
 - [Secrets](/console/design-project/secrets) — choose **Vault**.
 - [Container Registry](/console/design-project/container-registry) — choose **Docker Hub**.
+- [Chart repositories](/console/connectors/chart-repositories) — add one per environment so Alethia can read your private charts.
 - [Observability](/console/design-project/observability) — choose **Datadog / Grafana Cloud**.
 
 At provision time the runner composes the chosen provider's module into the plan and **skips** the cloud-native resource for that category.
