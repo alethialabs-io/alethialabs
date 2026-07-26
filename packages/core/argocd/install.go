@@ -13,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
@@ -462,19 +463,21 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
 		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
 		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
-		// Cross-account (*-xacct) stores — same gates as the render template above; a store whose
-		// cross-account target was deselected (or whose identity fact disappeared) stops rendering and
-		// would otherwise be orphaned.
-		"secretstore-aws-xacct":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "" && facts.SecretsXacctRef != "",
-		"secretstore-gcp-xacct":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "" && facts.SecretsXacctProjectID != "",
-		"secretstore-azure-xacct":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.SecretsXacctRef != "",
-		"secretstore-alibaba-xacct": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "" && facts.SecretsXacctRef != "" && facts.SecretsXacctOIDCProviderRef != "",
 		// Pluggable SaaS stores (cloud-agnostic): each renders only when it is the currently-selected
 		// SaaS store, so switching the connector (e.g. vault → doppler) or de-selecting it reaps the
 		// stale store instead of orphaning it. The name gates match externalSecretsStoreTemplate.
 		"secretstore-vault":   facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-vault",
 		"secretstore-doppler": facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-doppler",
 		"secretstore-generic": facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-generic",
+	}
+	// Cross-account (*-xacct) stores: exactly one can render per deploy (the store is dominant), so
+	// enumerate every name the template knows and mark all but the current one for reaping. Reading
+	// the render gate itself — rather than re-listing the per-cloud conditions here, as this map did
+	// until they drifted — means a new *-xacct lane cannot be added to the template and silently
+	// forgotten by the cleanup.
+	currentXacct, _ := facts.XacctSecretStore()
+	for _, name := range categories.AllXacctStoreNames() {
+		esoStores[name] = name == currentXacct
 	}
 	for name, renders := range esoStores {
 		if renders {

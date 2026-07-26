@@ -203,3 +203,117 @@ func TestInfraServiceDecisions_AppsRepo(t *testing.T) {
 		t.Errorf("apps-repo (no repo): want skipped, got %s (%s)", without.Status, without.Reason)
 	}
 }
+
+// hasDecision reports whether a service was recorded at all (the *-xacct decision is
+// CONDITIONALLY appended, so absence is a meaningful outcome, not a test failure).
+func hasDecision(decisions []InfraServiceDecision, service string) bool {
+	for _, d := range decisions {
+		if d.Service == service {
+			return true
+		}
+	}
+	return false
+}
+
+const xacctSvc = "external-secrets-store-xacct"
+
+// The cross-account store is OPT-IN: with no cross-account target selected, no decision is recorded
+// at all — the common-case list must stay uncluttered rather than carry a permanent "skipped" row.
+func TestInfraServiceDecisions_XacctNotSelected(t *testing.T) {
+	for name, f := range map[string]*InfraFacts{
+		"zero value":                      {},
+		"aws with only the native store":  {Provider: "aws", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso"},
+		"gcp with only the native store":  {Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com"},
+		"hetzner (no cloud secret store)": {Provider: "hetzner"},
+	} {
+		if hasDecision(InfraServiceDecisions(f), xacctSvc) {
+			t.Errorf("%s: recorded a %s decision without a cross-account target selected", name, xacctSvc)
+		}
+	}
+}
+
+// Selected + the cluster's own external-secrets identity present ⇒ installed on every cloud, with a
+// reason that names the backend so the console can render it truthfully.
+func TestInfraServiceDecisions_XacctInstalled(t *testing.T) {
+	cases := map[string]struct {
+		facts       *InfraFacts
+		wantBackend string
+	}{
+		"aws": {&InfraFacts{Provider: "aws", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
+			SecretsXacctRef: "arn:aws:iam::999:role/read"}, "AWS Secrets Manager"},
+		"gcp": {&InfraFacts{Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com",
+			SecretsXacctProjectID: "secrets-project-b"}, "GCP Secret Manager"},
+		"azure": {&InfraFacts{Provider: "azure", AzureExternalSecretsClient: "cid",
+			SecretsXacctRef: "https://target.vault.azure.net/"}, "Azure Key Vault"},
+		"alibaba": {&InfraFacts{Provider: "alibaba", AlibabaExternalSecretsRoleArn: "acs:ram::1:role/eso",
+			SecretsXacctRef: "acs:ram::999:role/read", SecretsXacctOIDCProviderRef: "acs:ram::999:oidc-provider/ack"}, "Alibaba KMS"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := decisionFor(t, InfraServiceDecisions(c.facts), xacctSvc)
+			if d.Status != infraStatusInstalled {
+				t.Fatalf("want installed, got %s (%s)", d.Status, d.Reason)
+			}
+			if !strings.Contains(d.Reason, c.wantBackend) {
+				t.Errorf("reason should name the backend %q, got %q", c.wantBackend, d.Reason)
+			}
+		})
+	}
+}
+
+// FAIL-CLOSED: a target selected but the CLUSTER's own external-secrets identity missing ⇒ skipped
+// with a reason, never installed. ESO would have nothing to authenticate the cross-account read as.
+func TestInfraServiceDecisions_XacctSkippedFailClosed(t *testing.T) {
+	cases := map[string]*InfraFacts{
+		"aws without IRSA":                {Provider: "aws", SecretsXacctRef: "arn:aws:iam::999:role/read"},
+		"gcp without the ESO GSA":         {Provider: "gcp", SecretsXacctProjectID: "secrets-project-b"},
+		"azure without the MI client id":  {Provider: "azure", SecretsXacctRef: "https://target.vault.azure.net/"},
+		"alibaba without the RRSA role":   {Provider: "alibaba", SecretsXacctRef: "acs:ram::999:role/read", SecretsXacctOIDCProviderRef: "acs:ram::999:oidc-provider/ack"},
+		"alibaba without the target OIDC": {Provider: "alibaba", AlibabaExternalSecretsRoleArn: "acs:ram::1:role/eso", SecretsXacctRef: "acs:ram::999:role/read"},
+		"a cloud with no xacct store":     {Provider: "hetzner", SecretsXacctRef: "whatever"},
+	}
+	for name, f := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := decisionFor(t, InfraServiceDecisions(f), xacctSvc)
+			if d.Status != infraStatusSkipped {
+				t.Fatalf("want skipped (fail-closed), got %s (%s)", d.Status, d.Reason)
+			}
+			if d.Reason == "" {
+				t.Error("a skip must carry a reason — the honest-N/A contract")
+			}
+		})
+	}
+}
+
+// The decision and the render must agree: "installed" ⟺ the template actually emitted the store.
+// They used to be independent hand-written condition lists and had already diverged — facts with an
+// IRSA role and a GCP-shaped target satisfied the decision's aws branch (which checked only IRSA)
+// and reported installed, while the template's aws branch, which also requires SecretsXacctRef,
+// rendered nothing. A workload could then be pointed at a store that was never applied.
+func TestInfraServiceDecisions_XacctMirrorsRenderGate(t *testing.T) {
+	factMatrix := []*InfraFacts{
+		{Provider: "aws", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso", SecretsXacctRef: "arn:aws:iam::999:role/read"},
+		{Provider: "aws", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso", SecretsXacctProjectID: "p"}, // the divergence case
+		{Provider: "aws", SecretsXacctRef: "arn:aws:iam::999:role/read"},
+		{Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com", SecretsXacctProjectID: "b"},
+		{Provider: "gcp", SecretsXacctProjectID: "b"},
+		{Provider: "azure", AzureExternalSecretsClient: "cid", SecretsXacctRef: "https://t.vault.azure.net/"},
+		{Provider: "azure", SecretsXacctRef: "https://t.vault.azure.net/"},
+		{Provider: "alibaba", AlibabaExternalSecretsRoleArn: "acs:ram::1:role/eso", SecretsXacctRef: "acs:ram::999:role/read", SecretsXacctOIDCProviderRef: "acs:ram::999:oidc-provider/ack"},
+		{Provider: "alibaba", AlibabaExternalSecretsRoleArn: "acs:ram::1:role/eso", SecretsXacctRef: "acs:ram::999:role/read"},
+		{Provider: "hetzner", SecretsXacctRef: "x"},
+	}
+	for i, f := range factMatrix {
+		m, err := externalSecretsStoreManifest(f)
+		if err != nil {
+			t.Fatalf("case %d: render: %v", i, err)
+		}
+		rendered := strings.Contains(m, "-xacct")
+		d := decisionFor(t, InfraServiceDecisions(f), xacctSvc)
+		installed := d.Status == infraStatusInstalled
+		if installed != rendered {
+			t.Errorf("case %d (%s): decision installed=%v but the template rendered a store=%v — decision and render have diverged\nreason: %s\nmanifest:\n%s",
+				i, f.Provider, installed, rendered, d.Reason, m)
+		}
+	}
+}
