@@ -45,11 +45,30 @@ resource "google_service_account_iam_member" "external_dns_wi" {
 # gcpsm ClusterSecretStore reads Secret Manager with NO static key. Exported as
 # `external_secrets_service_account` and rendered onto the operator's ServiceAccount
 # (iam.gke.io/gcp-service-account annotation) by the ArgoCD Application.
+#
+# ADOPTION (var.external_secrets_service_account_email): when set, this template does NOT create the
+# GSA — it uses the caller's pre-existing one instead. The reason is cross-project reads. A
+# cross-project grant in the TARGET project names this GSA by email, and GCP does not treat a
+# same-named recreation as the same identity: destroying the SA rewrites the binding to
+# `deleted:serviceAccount:…?uid=<old-uid>`, which the new SA does not inherit. GCP IAM also has no
+# principal-pattern condition (no `aws:PrincipalArn` analogue), so there is no way to write a
+# durable grant against a per-run identity. Adopting a stable GSA is what lets the target-project
+# grant be applied ONCE instead of on every provision.
+#
+# Empty (the default) keeps the create-our-own behavior byte-identical — this is opt-in.
 resource "google_service_account" "external_secrets" {
-  count        = var.provision_gke ? 1 : 0
+  count        = var.provision_gke && var.external_secrets_service_account_email == "" ? 1 : 0
   project      = var.project_id
   account_id   = "extsec-${substr(sha256(local.gke_name), 0, 8)}"
   display_name = "external-secrets (${var.project_name})"
+}
+
+# The adopted GSA. Read rather than created, so a wrong/absent email fails the plan loudly instead
+# of silently provisioning a cluster whose ESO can authenticate to nothing.
+data "google_service_account" "external_secrets_adopted" {
+  count      = var.provision_gke && var.external_secrets_service_account_email != "" ? 1 : 0
+  project    = var.project_id
+  account_id = var.external_secrets_service_account_email
 }
 
 # Least-privilege: secretAccessor is granted PER SECRET (the ones this template creates via
@@ -65,7 +84,7 @@ resource "google_secret_manager_secret_iam_member" "external_secrets_accessor" {
   project   = var.project_id
   secret_id = "${var.environment}-${var.project_name}-${each.key}"
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.external_secrets[0].email}"
+  member    = "serviceAccount:${local.external_secrets_sa_email}"
 
   depends_on = [module.secret_manager]
 }
@@ -80,12 +99,12 @@ resource "google_secret_manager_secret_iam_member" "external_secrets_sql_accesso
   project   = var.project_id
   secret_id = module.cloud_sql[0].credentials_secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.external_secrets[0].email}"
+  member    = "serviceAccount:${local.external_secrets_sa_email}"
 }
 
 resource "google_service_account_iam_member" "external_secrets_wi" {
   count              = var.provision_gke ? 1 : 0
-  service_account_id = google_service_account.external_secrets[0].name
+  service_account_id = local.external_secrets_sa_name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]"
 

@@ -132,8 +132,8 @@ output "external_dns_client_id" {
 }
 
 output "external_secrets_client_id" {
-  description = "external-secrets operator managed identity client id (Workload Identity; gates the azurekv ClusterSecretStore render)"
-  value       = var.provision_aks ? azurerm_user_assigned_identity.external_secrets[0].client_id : null
+  description = "external-secrets operator managed identity client id (Workload Identity; gates the azurekv ClusterSecretStore render). The adopted identity when external_secrets_identity_name/_resource_group are set, otherwise the one this template created."
+  value       = var.provision_aks ? local.external_secrets_client_id : null
 }
 
 output "key_vault_uri" {
