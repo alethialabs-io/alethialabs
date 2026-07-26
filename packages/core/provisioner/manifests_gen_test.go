@@ -58,7 +58,7 @@ func TestWriteBindingExternalSecrets(t *testing.T) {
 	}
 	outputs := map[string]string{"rds_master_credentials_secret_name": "alethia/proj/rds-maindb"}
 
-	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, false, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, false, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestWriteBindingExternalSecrets_BYOIaC(t *testing.T) {
 	}
 	// Customer-named output — NOT rds_master_credentials_secret_name.
 	dir := t.TempDir()
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{"db_master_secret": "acme/db/master"}, false, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{"db_master_secret": "acme/db/master"}, false, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,12 +135,88 @@ func TestWriteBindingExternalSecrets_BYOIaC(t *testing.T) {
 	byoNoCred := byo
 	byoNoCred.OutputKeys = &types.ServiceBindingOutputKeys{Endpoint: "db_endpoint"}
 	vc.Services[0].Bindings[0].Target = byoNoCred
-	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{"db_endpoint": "x"}, false, io.Discard)
+	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{"db_endpoint": "x"}, false, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n2 != 0 || len(skips2) == 0 {
 		t.Errorf("BYO-IaC credential with no secret output → 0 written + reported; got n=%d skips=%v", n2, skips2)
+	}
+}
+
+// TestWriteBindingExternalSecrets_Secret locks the secret-kind binding path (#1207): a service bound
+// to a project secret backed by a pluggable SaaS store writes an ExternalSecret pointing at
+// secretstore-<slug>; a secret with no readable store (native/excluded provider) is fail-closed
+// (nothing written, reported) — in lock-step with resolveBindings.
+func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
+	target := types.ServiceBindingTarget{Kind: "secret", Name: "stripe-key"}
+	vc := &types.ProjectConfig{
+		Provider: "hetzner", // cloud-agnostic: the SaaS store works even with no native store
+		Secrets:  []types.ProjectSecretConfig{{Name: "stripe-key", Provider: "vault"}},
+		Services: []types.ProjectServiceConfig{{
+			Name: "api",
+			Bindings: []types.ServiceBinding{{
+				Target: target,
+				Inject: []types.ServiceBindingInjection{{Env: "STRIPE_KEY", From: "value"}},
+			}},
+		}},
+	}
+	stores := secretStoreRefs(vc)
+	if stores["stripe-key"].StoreName != "secretstore-vault" || stores["stripe-key"].ValueProperty != "value" {
+		t.Fatalf("secretStoreRefs wrong: %+v", stores)
+	}
+	dir := t.TempDir()
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, stores, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || len(skips) != 0 {
+		t.Fatalf("vault-backed secret binding → 1 ExternalSecret, no skips; got n=%d skips=%v", n, skips)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, manifests.BindingSecretName("api", target)+"-externalsecret.yaml"))
+	if err != nil {
+		t.Fatalf("ExternalSecret not written: %v", err)
+	}
+	if y := string(b); !strings.Contains(y, "name: secretstore-vault") || !strings.Contains(y, "key: stripe-key") || !strings.Contains(y, "property: value") {
+		t.Errorf("secret ExternalSecret wrong:\n%s", y)
+	}
+
+	// A native-provider secret has no readable store → fail-closed (nothing written, reported).
+	vc.Secrets[0].Provider = ""
+	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 || len(skips2) == 0 {
+		t.Errorf("native secret → 0 written + reported; got n=%d skips=%v", n2, skips2)
+	}
+}
+
+// TestSecretStoreRefs_Classification: only first-class runtime-read stores (vault/doppler/generic) get
+// an entry; doppler is flat (no property); native/excluded providers are absent (fail-closed).
+func TestSecretStoreRefs_Classification(t *testing.T) {
+	vc := &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{
+		{Name: "a", Provider: "vault"},
+		{Name: "b", Provider: "doppler"},
+		{Name: "c", Provider: "generic"},
+		{Name: "d", Provider: "onepassword"}, // runtime-read excluded on ESO 0.9.12
+		{Name: "e", Provider: ""},            // native
+	}}
+	refs := secretStoreRefs(vc)
+	if refs["a"] != (manifests.SecretStoreRef{StoreName: "secretstore-vault", ValueProperty: "value"}) {
+		t.Errorf("vault ref wrong: %+v", refs["a"])
+	}
+	if refs["b"] != (manifests.SecretStoreRef{StoreName: "secretstore-doppler", ValueProperty: ""}) {
+		t.Errorf("doppler ref must be flat (no property): %+v", refs["b"])
+	}
+	if refs["c"].StoreName != "secretstore-generic" || refs["c"].ValueProperty != "value" {
+		t.Errorf("generic ref wrong: %+v", refs["c"])
+	}
+	if _, ok := refs["d"]; ok {
+		t.Error("onepassword (excluded runtime-read) must have no store ref")
+	}
+	if _, ok := refs["e"]; ok {
+		t.Error("native secret must have no store ref")
 	}
 }
 
@@ -162,7 +238,7 @@ func TestWriteBindingExternalSecrets_KeylessSkips(t *testing.T) {
 	}
 
 	// Flag ON + iam_auth db → skipped (no ExternalSecret).
-	_, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, true, io.Discard)
+	_, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, true, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +248,7 @@ func TestWriteBindingExternalSecrets_KeylessSkips(t *testing.T) {
 
 	// Flag OFF → the password path still runs (here fail-closed: no master-secret output on GCP, so it
 	// reports a skip rather than writing — but crucially it does NOT skip via the keyless branch).
-	skips, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, io.Discard)
+	skips, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +300,7 @@ func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
 		}},
 	}
 	var log strings.Builder
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, &log)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, nil, &log)
 	if err != nil {
 		t.Fatal(err)
 	}

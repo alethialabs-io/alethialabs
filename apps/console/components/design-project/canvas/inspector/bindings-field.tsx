@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { coerceEnum } from "@/lib/coerce";
+import type { z } from "zod";
+import type { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 import { ArrowRight, Plus, X } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -27,12 +29,12 @@ import { type NodeKind, nodeOfKind } from "../graph/types";
  */
 const BINDING_TARGET_KINDS = ["database", "cache", "queue", "secret"] as const;
 export type BindingTargetKind = (typeof BINDING_TARGET_KINDS)[number];
-export type BindingFrom =
-	| "endpoint"
-	| "port"
-	| "username"
-	| "password"
-	| "connection_string";
+// DERIVED from serviceBindingSchema, not re-listed. This union was hand-maintained and drifted the
+// moment the `value` facet was added to the zod schema + the service_binding_facet pgEnum — a
+// type-only import keeps it honest with zero runtime cost, so the next facet cannot half-land again.
+export type BindingFrom = z.infer<
+	typeof serviceBindingSchema
+>["inject"][number]["from"];
 /**
  * A BYO-IaC target's facet→output mapping: which of the customer module's tofu outputs carries each
  * facet's value. Only set when the target is a BYO-IaC resource (`target.address`). Mirrors
@@ -69,6 +71,10 @@ const FROM_FACETS: { value: BindingFrom; label: string; secret: boolean }[] = [
 	{ value: "username", label: "username", secret: true },
 	{ value: "password", label: "password", secret: true },
 	{ value: "connection_string", label: "connection string", secret: true },
+	// value — a `secret`-kind binding's single opaque value (a project secret resolved from a
+	// pluggable SaaS store via ESO). Always a credential: delivered as a secretKeyRef, never
+	// templated into the manifest.
+	{ value: "value", label: "value", secret: true },
 ];
 
 const isSecretFacet = (from: BindingFrom): boolean =>
