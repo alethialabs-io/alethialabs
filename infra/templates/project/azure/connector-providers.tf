@@ -30,3 +30,9 @@ variable "registry_pull_provider" {
   type        = string
   default     = "native"
 }
+
+variable "secrets_xacct_provider" {
+  description = "Cross-account keyless cloud-secret-manager provider slug (azure-kv-xacct); \"native\" means no cross-subscription Key Vault. SEPARATE from secrets_provider so the cluster keeps its native store AND reads a Key Vault in another SUBSCRIPTION (same tenant; an additional ClusterSecretStore). No cluster-side resource: the read grant lives entirely on the target vault (see infra/connector/azure/secrets-xacct). Cross-TENANT is excluded (Azure managed/workload identity can't cross tenants)."
+  type        = string
+  default     = "native"
+}
