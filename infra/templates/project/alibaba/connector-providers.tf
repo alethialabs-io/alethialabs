@@ -33,3 +33,14 @@ variable "registry_pull_provider" {
   type        = string
   default     = "native"
 }
+
+# Unlike the registry (a token-cloud exclusion), Alibaba DOES support cross-account keyless secrets: KMS
+# Secrets Manager + RRSA. No cluster-side resource is wired here — the seams renders the alibaba
+# ClusterSecretStore whose RRSA auth exchanges the projected token directly for the TARGET account's role
+# via that account's OIDC provider (see infra/connector/alibaba/secrets-xacct). This guard stays "native"
+# unless the alibaba-kms-xacct connector is selected.
+variable "secrets_xacct_provider" {
+  description = "Cross-account keyless cloud-secret-manager provider slug (alibaba-kms-xacct); \"native\" means no cross-account KMS. SEPARATE from secrets_provider so the cluster keeps its native store AND reads a foreign-account KMS Secrets Manager (an additional ClusterSecretStore)."
+  type        = string
+  default     = "native"
+}
