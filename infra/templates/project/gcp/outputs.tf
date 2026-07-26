@@ -87,14 +87,25 @@ output "custom_secret_names" {
 ##                     Memorystore Outputs                             ##
 #########################################################################
 
+# ONE pair of cache outputs for both engines: `endpointOutputKey` (packages/core/manifests) maps
+# cloud+kind to a single output name, so a service bound to "the cache" reads `memorystore_host`
+# whichever engine backs it. A separate `valkey_*` key would force every consumer to learn the engine,
+# and one that forgot would resolve to null — which is the failure this lane exists to remove.
+# The two toggles are mutually exclusive, so at most one side is non-null.
 output "memorystore_host" {
   description = "Hostname or IP of the Memorystore Redis instance"
-  value       = var.create_memorystore ? module.memorystore[0].host : null
+  value = try(coalesce(
+    var.create_memorystore ? module.memorystore[0].host : null,
+    var.create_memorystore_valkey ? module.memorystore_valkey[0].host : null,
+  ), null)
 }
 
 output "memorystore_port" {
   description = "Port of the Memorystore Redis instance"
-  value       = var.create_memorystore ? module.memorystore[0].port : null
+  value = try(coalesce(
+    var.create_memorystore ? module.memorystore[0].port : null,
+    var.create_memorystore_valkey ? module.memorystore_valkey[0].port : null,
+  ), null)
 }
 
 #########################################################################
