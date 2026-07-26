@@ -35,6 +35,7 @@ import {
 	HETZNER_DB_ENGINES,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { helmRegistryUrl } from "@/lib/connectors/helm-registry-derive";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
@@ -52,6 +53,7 @@ export type SchemaKey =
 	| "secrets"
 	| "storage_buckets"
 	| "container_registries"
+	| "helm_registries"
 	| "services"
 	// Chart / add-on / external nodes are OUT-OF-BAND (project_addons, project_iac_sources) and are
 	// never written into ProjectFormData — this key exists only to satisfy the exhaustive registry;
@@ -614,6 +616,34 @@ export const NODE_REGISTRY: NodeRegistry = {
 		palette: { group: "DevOps", subtitle: "Private container images" },
 		defaultData: () => ({
 			name: "apps",
+			provider_config: {},
+		}),
+	},
+	// A private chart repo (helm_registry connector) the environment pulls Helm charts from. Unlike
+	// `registry` this provisions NOTHING — it names a connector whose credential the runner turns into
+	// an ArgoCD repository-credential Secret. So it is OFF-BOARD (absent from ADDABLE_KINDS, dropped
+	// from the drawn set in canvas-flow) and edited in the Chart Repos sheet, the same treatment
+	// cluster/network get. `cloudScoped: false`: the columns exist but nothing places into a cloud,
+	// and the design round-trip (projects.ts sourceProject mapping) drops region/cloud_identity_id —
+	// offering a placement picker here would silently lose the value.
+	helm_registry: {
+		kind: "helm_registry",
+		schemaKey: "helm_registries",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Chart repo",
+		label: "Chart repository",
+		icon: Package,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Provider", value: config.provider ?? "" },
+				{ label: "URL", value: helmRegistryUrl(config) },
+			],
+		},
+		// No `palette` entry — chart repos are never added from the board.
+		defaultData: () => ({
+			name: "charts",
 			provider_config: {},
 		}),
 	},

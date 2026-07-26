@@ -3,6 +3,7 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-derive";
 import { slugify } from "@/lib/slug";
 import {
 	environmentLifecycle,
@@ -328,6 +329,12 @@ const registryItemSchema = registriesInsert
 
 // Private chart-repo selection (helm_registry connector). No output column — the seeded
 // ArgoCD repo-cred is runner-side state, not a design field.
+//
+// The refinement is what makes the selection FAIL-CLOSED. `provider` and `provider_config` are
+// nullable columns, so the generated schema alone would happily persist a row with no provider or
+// no host — the runner would then skip it (`HelmRepoCredSpecs` joins the error and moves on) and
+// the chart would fail to pull at deploy with no design-time signal. These mirror the `Validate`
+// implementations in packages/core/categories/helm_registry_*.go.
 const helmRegistryItemSchema = helmRegistriesInsert
 	.omit({
 		...autoFields,
@@ -335,7 +342,38 @@ const helmRegistryItemSchema = helmRegistriesInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Chart repo name is required") });
+	.extend({ name: z.string().min(1, "Chart repo name is required") })
+	.superRefine((value, ctx) => {
+		const rule = value.provider ? HELM_REGISTRY_HOST_RULES[value.provider] : undefined;
+		if (!value.provider || !rule) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected chart repository provider",
+			});
+			return;
+		}
+		if (rule.comingSoon) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This chart repository provider isn't available yet",
+			});
+			return;
+		}
+		// A classic Helm repo is addressed by its full URL; an "any host" OCI provider needs the host.
+		const key = !rule.oci ? "repo_url" : rule.wildcard ? "registry_host" : null;
+		if (key && !value.provider_config?.[key]?.trim()) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider_config"],
+				message:
+					key === "repo_url"
+						? "Repository URL is required"
+						: "Registry host is required",
+			});
+		}
+	});
 
 // W1 — a first-class service/workload the customer designs on the canvas.
 const serviceItemSchema = servicesInsert

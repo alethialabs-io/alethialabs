@@ -61,6 +61,14 @@ function sampleForm(): ProjectFormData {
 		container_registries: [
 			{ name: "apps", provider_config: { immutable_tags: true } },
 		],
+		helm_registries: [
+			{ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} },
+			{
+				name: "harbor-acme-io",
+				provider: "oci-generic-cr",
+				provider_config: { registry_host: "harbor.acme.io" },
+			},
+		],
 		services: [
 			{
 				name: "api",
@@ -143,5 +151,61 @@ describe("formToGraph / graphToForm round-trip", () => {
 		});
 		expect(parsed.data.services[0].env).toEqual([{ name: "LOG_LEVEL", value: "info" }]);
 		expect(parsed.data.services[0].ports[0].container_port).toBe(8080);
+	});
+
+	// REGRESSION: graphToForm used to omit `helm_registries` entirely. Because the field carries a
+	// zod `.default([])`, the omission parsed clean as an EMPTY array — and updateProjectDesign
+	// reconciles components by delete-then-insert, so every canvas deploy silently dropped the
+	// environment's chart repos (and with them the ArgoCD repo-credentials that let private charts
+	// pull). The kind is never drawn on the board, which is exactly why nothing caught it.
+	it("carries chart repos through the round-trip so a deploy can't wipe them", () => {
+		const form = sampleForm();
+		const { nodes } = formToGraph(form, IDENTITIES);
+		// Off-board: the chart repos exist as store nodes but are not part of the drawn design.
+		expect(nodes.filter((n) => n.data.kind === "helm_registry")).toHaveLength(2);
+
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.helm_registries).toHaveLength(2);
+		expect(parsed.data.helm_registries).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ name: "ghcr-io", provider: "oci-github-cr" }),
+				expect.objectContaining({
+					name: "harbor-acme-io",
+					provider: "oci-generic-cr",
+					provider_config: { registry_host: "harbor.acme.io" },
+				}),
+			]),
+		);
+	});
+});
+
+describe("helm registry selection validation", () => {
+	const parseRow = (row: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...sampleForm(), helm_registries: [row] });
+
+	it("rejects a selection with no provider — the runner would skip it silently", () => {
+		const res = parseRow({ name: "charts" });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects an any-host provider with no registry host", () => {
+		const res = parseRow({ name: "charts", provider: "oci-generic-cr", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a classic HTTPS repo with no repository URL", () => {
+		const res = parseRow({ name: "charts", provider: "helm-https", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a coming_soon provider", () => {
+		const res = parseRow({ name: "charts", provider: "oci-ecr", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("accepts a fixed-host provider with no config at all", () => {
+		const res = parseRow({ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} });
+		expect(res.success).toBe(true);
 	});
 });
