@@ -19,6 +19,10 @@ locals {
   eks_k8s_major = can(tonumber(split(".", var.eks_cluster_version)[0])) ? tonumber(split(".", var.eks_cluster_version)[0]) : -1
   eks_k8s_minor = can(tonumber(split(".", var.eks_cluster_version)[1])) ? tonumber(split(".", var.eks_cluster_version)[1]) : -1
 }
+#
+# CONVENTION: this file holds only the CORE, rarely-touched invariants. A new feature's checks
+# go in their own checks_<feature>.tf — OpenTofu loads every *.tf in the directory, and a single
+# shared append-point is what made concurrent feature branches conflict here repeatedly.
 
 # project_name is the root of every naming convention and must be non-empty.
 check "project_name_non_empty" {
@@ -28,6 +32,7 @@ check "project_name_non_empty" {
   }
 }
 
+
 # The derived EKS cluster name must stay within the AWS 100-char cluster-name limit.
 check "eks_cluster_name_within_limit" {
   assert {
@@ -36,227 +41,11 @@ check "eks_cluster_name_within_limit" {
   }
 }
 
-# When a VPC is provisioned in-template, vpc_cidr must be a valid IPv4 CIDR.
-check "vpc_cidr_valid_when_provisioned" {
-  assert {
-    condition     = !var.provision_vpc || can(cidrhost(var.vpc_cidr, 0))
-    error_message = "provision_vpc is true but vpc_cidr is not a valid IPv4 CIDR (e.g. 10.0.0.0/16)."
-  }
-}
-
-# When an external VPC is used (provision_vpc = false) its id must be supplied.
-check "external_vpc_id_present" {
-  assert {
-    condition     = var.provision_vpc || length(trimspace(var.vpc_id)) > 0
-    error_message = "provision_vpc is false (external VPC) but vpc_id is empty; supply the existing VPC id."
-  }
-}
-
-# When an external VPC is used, its private subnets must be resolved (either the user's subnet
-# selection or auto-discovery in deploy.go). WARN companion to the fail-closed guard below (#1352) —
-# catches the "subnet lookup failed → default [\"\"]" case that otherwise fails deep in apply.
-check "external_vpc_subnets_present" {
-  assert {
-    condition     = var.provision_vpc || (length(var.vpc_private_subnet_ids) > 0 && length(trimspace(var.vpc_private_subnet_ids[0])) > 0)
-    error_message = "provision_vpc is false but no private subnets resolved for vpc_id '${var.vpc_id}' — select subnets, or ensure the VPC's subnets are discoverable."
-  }
-}
 
 # An EKS Kubernetes cluster version must be set when EKS is provisioned.
 check "eks_cluster_version_present" {
   assert {
     condition     = !var.provision_eks || length(trimspace(var.eks_cluster_version)) > 0
     error_message = "provision_eks is true but eks_cluster_version is empty."
-  }
-}
-
-# When an RDS cluster is created, a database name must be supplied.
-check "rds_db_name_present_when_created" {
-  assert {
-    condition     = !var.create_rds || length(trimspace(var.rds_config.db_name)) > 0
-    error_message = "create_rds is true but rds_config.db_name is empty; set a database name."
-  }
-}
-
-# Keyless RDS IAM auth (#722): when the RDS engine flag is on, the app IRSA role must also be created
-# (one iam_auth toggle drives both, via the provider tfvars) — otherwise the DB accepts IAM tokens but
-# no workload identity can mint one and the keyless binding fails closed.
-check "keyless_rds_iam_irsa_wired" {
-  assert {
-    condition     = !var.rds_iam_auth_enabled || length(module.rds_iam_auth) == 1
-    error_message = "rds_iam_auth_enabled is on but the app RDS-IAM IRSA role is missing; set rds_iam_irsa (the iam_auth toggle should drive both)."
-  }
-}
-
-# Every S3 bucket must keep public access blocked (block_public_acls / restrict_public_buckets must
-# not be explicitly false). null is allowed — the module defaults those to a blocked posture.
-check "s3_buckets_block_public_access" {
-  assert {
-    condition = alltrue([
-      for b in var.bucket_configuration :
-      b.block_public_acls != false && b.restrict_public_buckets != false
-    ])
-    error_message = "Every S3 bucket must keep block_public_acls and restrict_public_buckets non-false (public access blocked)."
-  }
-}
-
-# Platform base tags must WIN over classification_tags: for every base key, the merged
-# aws_default_tags must carry the base value (never a classification override). This guards the
-# merge direction so a renamed classification dimension can never shadow platform bookkeeping.
-check "classification_base_tags_win" {
-  assert {
-    condition = alltrue([
-      for k, v in local.aws_base_tags : local.aws_default_tags[k] == v
-    ])
-    error_message = "A classification_tags entry overrode a platform base tag in aws_default_tags; base tags must sit on the merge RHS and win."
-  }
-}
-
-# No classification tag may be silently dropped: every key in var.classification_tags must survive
-# into the merged map verbatim, unless a platform base key legitimately overrode it. This lands the
-# mandatory alethia:project-id / alethia:environment-id sweep handles on the tagged resources.
-check "classification_tags_present" {
-  assert {
-    condition = alltrue([
-      for k, v in var.classification_tags :
-      local.aws_default_tags[k] == v || contains(keys(local.aws_base_tags), k)
-    ])
-    error_message = "A classification_tags entry was dropped from aws_default_tags; classification/sweep-handle tags must reach tagged resources."
-  }
-}
-
-# Karpenter-launched EC2 do NOT inherit the provider default_tags (Karpenter creates them via its
-# own AWS API calls), so they only carry the sweep handle if the EC2NodeClass spec.tags is stamped
-# from the `karpenter_node_tags` output (= local.aws_default_tags). Assert here that when Karpenter
-# is enabled the classification/sweep-handle tags are all present in aws_default_tags, so the output
-# can never ship without them and Karpenter EC2 can never escape the environment-scoped sweeper.
-# (This is the plan-time invariant; whether the renderer actually applies spec.tags is proven by the
-# A1.3 sweeper / A0.3-style cloud-side check on a real apply.)
-check "karpenter_node_tags_carry_sweep_handle" {
-  assert {
-    condition = !var.enable_karpenter || alltrue([
-      for k, v in var.classification_tags :
-      local.aws_default_tags[k] == v || contains(keys(local.aws_base_tags), k)
-    ])
-    error_message = "Karpenter is enabled but classification/sweep-handle tags are not fully present in aws_default_tags (the karpenter_node_tags output); Karpenter-launched EC2 would escape the environment-scoped sweeper."
-  }
-}
-
-# The external-secrets operator's IRSA role must exist whenever EKS is provisioned — without it
-# the AWS ClusterSecretStore is (correctly) not rendered and ExternalSecrets can never sync.
-check "eks_irsa_external_secrets_arn_present" {
-  assert {
-    condition     = !var.provision_eks || length(trimspace(try(module.eks[0].eks_irsa_external_secrets_arn, ""))) > 0
-    error_message = "provision_eks is true but the external-secrets IRSA role reported no ARN — the ESO ClusterSecretStore cannot authenticate."
-  }
-}
-
-# ECR provisioning must be REAL (W2): provision_ecr=true with an empty ecr_names_map used to
-# create NOTHING — the module's for_each resolved to {} while the flag read true. The emitter
-# (packages/core/cloud/aws_provider.go buildECRNamesMap) supplies one repo per native registry
-# component / repo-sourced service; a true flag with no names is a broken caller.
-check "ecr_names_present_when_provisioned" {
-  assert {
-    condition     = !var.provision_ecr || length(var.ecr_names_map) > 0
-    error_message = "provision_ecr is true but ecr_names_map is empty — no repository would be created; the tfvars emitter must supply one entry per native registry / repo-sourced service."
-  }
-}
-
-# Every ECR repo base name must be valid for the composed "<project_name>-<base>" repository
-# (lowercase alphanumerics with ._- separators), or the apply fails mid-flight.
-check "ecr_repo_base_names_valid" {
-  assert {
-    condition = alltrue([
-      for k, v in var.ecr_names_map : can(regex("^[a-z0-9]+([._-][a-z0-9]+)*$", v))
-    ])
-    error_message = "ecr_names_map contains an invalid repo base name (must be lowercase alphanumerics with single ._- separators)."
-  }
-}
-
-# The build IRSA role name must fit IAM's 64-char role-name limit (it embeds the EKS name).
-check "ecr_build_role_name_within_limit" {
-  assert {
-    condition     = !var.provision_ecr || length("ecr-build-${local.eks_name}") <= 64
-    error_message = "Derived build IRSA role name (ecr-build-<eks_name>) exceeds IAM's 64-character limit; shorten environment/project_name."
-  }
-}
-
-# Cross-account ECR pull (PR B): if ecr-xacct is selected, the refresher needs a target-account role
-# to assume — a missing ARN is a misconfigured connector, so fail the plan loudly.
-check "ecr_pull_xacct_target_configured" {
-  assert {
-    condition     = !local.enable_ecr_pull || var.registry_pull_target_role_arn != ""
-    error_message = "registry_pull_provider = ecr-xacct requires registry_pull_target_role_arn (the target-account role the refresher assumes for cross-account ECR pull)."
-  }
-}
-
-# The cross-account pull IRSA role name must fit IAM's 64-char role-name limit (it embeds the EKS name).
-check "ecr_pull_xacct_role_name_within_limit" {
-  assert {
-    condition     = !local.enable_ecr_pull || length("ecr-pull-xacct-${local.eks_name}") <= 64
-    error_message = "Derived ecr-pull-xacct-<eks_name> role name exceeds IAM's 64-character limit; shorten environment/project_name."
-  }
-}
-
-# COMPAT-001 (epic #1186, block-at-apply): the EKS Kubernetes minor must sit inside the AWS support
-# window (matrix.json k8s_cloud.aws = 1.33-1.35). A `check` block only WARNS, so the hard gate is the
-# terraform_data precondition below; this check surfaces the same violation loudly at plan time.
-check "compat_k8s_supported" {
-  assert {
-    condition     = !var.provision_eks || (local.eks_k8s_major == 1 && local.eks_k8s_minor >= 33 && local.eks_k8s_minor <= 35)
-    error_message = "COMPAT: EKS Kubernetes '${var.eks_cluster_version}' is outside the AWS-supported window 1.33-1.35 (packages/core/compat/matrix.json k8s_cloud.aws); terraform_data.compat_k8s_guard blocks apply."
-  }
-}
-
-# Fail-closed apply gate (COMPAT-001): an out-of-window Kubernetes minor hard-fails the plan here, so an
-# incompatible cluster (the #1165 ArgoCD-on-1.35 class of break) can never be provisioned. `check` blocks
-# only warn — a `terraform_data` lifecycle precondition is the actual gate. No bypass variable: waivers
-# are a runner-layer concern (compat.Override / COMPAT-001), deliberately not exposed in the template.
-resource "terraform_data" "compat_k8s_guard" {
-  lifecycle {
-    precondition {
-      condition     = !var.provision_eks || (local.eks_k8s_major == 1 && local.eks_k8s_minor >= 33 && local.eks_k8s_minor <= 35)
-      error_message = "COMPAT-001: EKS Kubernetes '${var.eks_cluster_version}' is outside the AWS-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.aws). Apply blocked fail-closed — align eks_cluster_version and the matrix in lockstep."
-    }
-  }
-}
-
-# Fail-closed brownfield-subnet gate (#1352): on an external VPC the private subnet list MUST be
-# non-empty and real (not the `[""]` default). deploy.go resolves it from the user's subnet
-# selection (filtered) or auto-discovery; a failed lookup previously left `[""]` and blew up mid
-# `tofu apply`. This precondition turns that into a hard plan-time block.
-resource "terraform_data" "brownfield_subnet_guard" {
-  lifecycle {
-    precondition {
-      condition     = var.provision_vpc || (length(var.vpc_private_subnet_ids) > 0 && length(trimspace(var.vpc_private_subnet_ids[0])) > 0)
-      error_message = "provision_vpc is false but no private subnets resolved for VPC '${var.vpc_id}'. Select subnets, or ensure the VPC's subnets are discoverable. Apply blocked fail-closed."
-    }
-  }
-}
-
-# Cross-account Secrets Manager (#1262): if aws-sm-xacct is selected, the external-secrets IRSA role
-# needs a target-account role to assume — a missing ARN is a misconfigured connector, so fail loudly.
-check "secrets_xacct_target_configured" {
-  assert {
-    condition     = var.secrets_xacct_provider != "aws-sm-xacct" || var.secrets_xacct_target_role_arn != ""
-    error_message = "secrets_xacct_provider = aws-sm-xacct requires secrets_xacct_target_role_arn (the target-account role the external-secrets operator assumes for cross-account Secrets Manager read)."
-  }
-}
-
-# Keyless OCI ECR Helm chart-repo pull (#1185): the pull identity must be scoped — if it is enabled, at
-# least one grant source (a private target role or the public flag) must be present, so an enabled-but-
-# empty policy (which would be a bug) fails the plan loudly rather than provisioning a do-nothing role.
-check "helm_repo_pull_grant_present_when_enabled" {
-  assert {
-    condition     = !local.enable_helm_repo_pull || length(var.helm_repo_pull_target_role_arns) > 0 || var.helm_repo_pull_public_enabled
-    error_message = "helm_repo_pull is enabled but neither a target role ARN nor the public flag is set (the pull policy would be empty)."
-  }
-}
-
-# The keyless Helm pull IRSA role name must fit IAM's 64-char role-name limit (it embeds the EKS name).
-check "helm_repo_pull_role_name_within_limit" {
-  assert {
-    condition     = !local.enable_helm_repo_pull || length("helm-repo-pull-${local.eks_name}") <= 64
-    error_message = "Derived helm-repo-pull-<eks_name> role name exceeds IAM's 64-character limit; shorten environment/project_name."
   }
 }
