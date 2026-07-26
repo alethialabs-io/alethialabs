@@ -97,19 +97,44 @@ done
 # ── R-LEASE, Bash ───────────────────────────────────────────────────────────────────────────────
 cmd="$(payload_field command)"
 
-# Read-only ⇔ EVERY `;|&`-separated segment is a git READ. Deliberately git-only: the set of git
-# read subcommands is small, well-known and stable, whereas a general read allowlist
+# Does this ONE segment reference <root>? Re-runs the same path extraction the target loop uses, so
+# a segment can never be judged by a different notion of "which paths does this touch".
+seg_touches_root() { # <segment> <base> <root>
+	local seg="$1" base="$2" root="$3" tok
+	while IFS= read -r tok; do
+		[ -n "$tok" ] || continue
+		[ "$(wt_root_of "$(wt_abs "$tok" "$base")")" = "$root" ] && return 0
+	done <<EOF
+$(
+		printf '%s' "$seg" | grep -oE '(^|[^[:alnum:]_-])git[[:space:]]+-[Cc][[:space:]]+[^[:space:];&|]+' | sed -E 's/.*-[Cc][[:space:]]+//'
+		printf '%s' "$seg" | tr '[:space:]=' '\n' | grep -E '/' | grep -vE '^-'
+	)
+EOF
+	return 1
+}
+
+# Read-only ⇔ every segment that TOUCHES the foreign worktree is a git READ. Deliberately git-only:
+# the set of git read subcommands is small, well-known and stable, whereas a general read allowlist
 # (cat/grep/find/…) drifts with tooling and every gap in it is a false block anyway. So any NON-git
 # command aimed at a foreign live worktree is treated as write-ish.
+#
+# SCOPE (<root>): when the foreign tree was reached by an explicit path, a segment that never
+# mentions it cannot harm it — so `git -C ../wt-x log | head -3` is a read, and only `head` being
+# absent from a git allowlist used to block it. Piping a git read to a pager is routine, and a guard
+# that cries wolf is one people learn to override. Pass an EMPTY root for residency (payload cwd or
+# a `cd` into the tree): there the whole command runs INSIDE the worktree, so every segment counts,
+# and `cd ../wt-x && rm -rf .` must still be refused even though it names no path.
 #
 # Consulted ONLY after a target is known to be a foreign live worktree, where a non-read command
 # has no legitimate purpose — so it is deny-by-default and every misclassification is a recoverable
 # false block, never a false allow.
-cmd_is_git_read() { # <command>
+cmd_is_git_read() { # <command> <base> <scope-root|"">
 	local seg had=0
 	while IFS= read -r seg; do
 		seg="$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
 		[ -z "$seg" ] && continue
+		# Scoped: a segment that doesn't touch the foreign tree is a neutral formatting sink.
+		if [ -n "$3" ] && ! seg_touches_root "$seg" "$2" "$3"; then continue; fi
 		had=1
 		printf '%s' "$seg" | grep -qE '(\$\(|`|(^|[^0-9<>&])>|<\()' && return 1 # subst / redirect
 		printf '%s' "$seg" | grep -qE '^git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)*[[:space:]]+(status|log|show|diff|difftool|blame|annotate|shortlog|describe|rev-parse|rev-list|cat-file|ls-files|ls-tree|ls-remote|for-each-ref|show-ref|symbolic-ref|name-rev|merge-base|grep|count-objects|whatchanged|version)([[:space:]]|$)' && continue
@@ -130,20 +155,31 @@ if [ -n "$cmd" ]; then
 	# is what catches `sed -i ../wt-x/f`, `cp a ../wt-x/b`, `rm -rf ../wt-x`.
 	scan="$(printf '%s' "$cmd" | tr -d '\42\47\134')" # drop  "  '  \  — repo paths have none
 
+	# Targets are tagged by PROVENANCE, because it changes how strictly the command is judged:
+	#   R = residency — the session cwd, or a `cd` into the tree. The whole command runs INSIDE it.
+	#   P = an explicit path — `git -C <p>`, or a bare token. Only the segments naming it can touch it.
 	targets="$(
-		printf '%s\n' "$base"
-		printf '%s' "$scan" | grep -oE '(^|[^[:alnum:]_-])git[[:space:]]+-[Cc][[:space:]]+[^[:space:];&|]+' | sed -E 's/.*-[Cc][[:space:]]+//'
-		printf '%s' "$scan" | grep -oE '(^|[^[:alnum:]_])cd[[:space:]]+[^[:space:];&|]+' | sed -E 's/.*cd[[:space:]]+//'
-		printf '%s' "$scan" | tr '[:space:];&|=' '\n' | grep -E '/' | grep -vE '^-'
+		printf 'R\t%s\n' "$base"
+		printf '%s' "$scan" | grep -oE '(^|[^[:alnum:]_])cd[[:space:]]+[^[:space:];&|]+' | sed -E 's/.*cd[[:space:]]+/R\t/'
+		printf '%s' "$scan" | grep -oE '(^|[^[:alnum:]_-])git[[:space:]]+-[Cc][[:space:]]+[^[:space:];&|]+' | sed -E 's/.*-[Cc][[:space:]]+/P\t/'
+		printf '%s' "$scan" | tr '[:space:];&|=' '\n' | grep -E '/' | grep -vE '^-' | sed -E 's/^/P\t/'
 	)"
 
-	while IFS= read -r t; do
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		kind="${line%%	*}"
+		t="${line#*	}"
 		[ -n "$t" ] || continue
 		root="$(wt_root_of "$(wt_abs "$t" "$base")")"
 		[ -n "$root" ] || continue
 		wt_lease_acquire "$root"
 		if [ "$?" = 1 ]; then
-			cmd_is_git_read "$cmd" && continue # reads into another tree stay allowed
+			# Residency judges the whole command; an explicit path judges only the segments naming it.
+			if [ "$kind" = "R" ]; then
+				cmd_is_git_read "$cmd" "$base" "" && continue
+			else
+				cmd_is_git_read "$cmd" "$base" "$root" && continue
+			fi
 			deny "$root" "running commands"
 		fi
 	done <<EOF
