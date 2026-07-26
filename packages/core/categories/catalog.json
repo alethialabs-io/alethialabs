@@ -1260,6 +1260,59 @@
 		},
 		{
 			"category": "secrets",
+			"slug": "generic",
+			"name": "Generic (Vault-compatible)",
+			"description": "Manage application secrets in a Vault-KV-API-compatible endpoint (HashiCorp Vault, OpenBao, or any server exposing the Vault KV v2 HTTP API). Workloads resolve values in-cluster via the External Secrets Operator.",
+			"organization": "Alethia",
+			"auth_method": "api_key",
+			"icon_url": "/icons/vault/vault-32x32.png",
+			"docs_url": "https://external-secrets.io/latest/provider/hashicorp-vault/",
+			"status": "active",
+			"sort_order": 48,
+			"module_path": "categories/secrets/vault",
+			"credential": {
+				"fields": [
+					{
+						"key": "address",
+						"label": "Endpoint Address",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Base URL of the Vault-KV-API-compatible server, e.g. https://secrets.example.com:8200"
+					},
+					{
+						"key": "token",
+						"label": "API Token",
+						"type": "password",
+						"secret": true,
+						"required": true
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "mount_path",
+						"label": "KV Mount Path",
+						"type": "text",
+						"default": "secret",
+						"required": true
+					},
+					{
+						"key": "kv_version",
+						"label": "KV Version",
+						"type": "select",
+						"options": [
+							"1",
+							"2"
+						],
+						"default": "2"
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
 			"slug": "aws-sm-xacct",
 			"name": "AWS Secrets Manager (cross-account)",
 			"description": "Read secrets from a Secrets Manager in a different AWS account — keyless, no stored key. The External Secrets Operator assumes a role the target account trusts and reads across the account boundary.",
