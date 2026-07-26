@@ -20,6 +20,12 @@ import {
 } from "@/lib/cloud-providers";
 import { coerceEnum } from "@/lib/coerce";
 import { toStrArray } from "@/lib/coerce";
+import {
+	cacheTierOptions,
+	instanceTypeOptions,
+	k8sVersionOptions,
+	nosqlKeyTypeOptions,
+} from "./capability-options";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
@@ -33,19 +39,141 @@ import type { NodeConfigMap, NodeKind } from "../graph/types";
  */
 type AnyConfig = Record<string, unknown>;
 
+/**
+ * Account-scoped option data, ALREADY RESOLVED to plain arrays and pushed in by the mount point.
+ *
+ * Never a promise, never a hook, never a fetch: `resolve()` runs on every render — and a second time
+ * from `sectionSummary`, to label a collapsed section — so this has to be a cheap immutable
+ * snapshot. Making the resolver async instead would infect ConfigFields → every mount point, and
+ * would refetch once per mounted select, which is the mistake `repository-context.tsx` exists to
+ * avoid.
+ *
+ * Populated by `use-node-capabilities`; until that lands it is `NO_CAPABILITIES` and every picker
+ * resolves to the static catalog exactly as before.
+ */
+export interface CapabilityBag {
+	/** The identity this bag describes. null ⇒ nothing resolved (create flow / no core identity). */
+	identityId: string | null;
+	/** The provider this bag describes. Compared against `ctx.provider`: a node's effective provider
+	 * can diverge from the bag's, and showing another cloud's SKUs is worse than showing none. */
+	provider: CloudProviderSlug | null;
+	/** The region the region-SCOPED axes were read at (instance types, cache tiers). */
+	region: string | null;
+	/** Why the bag looks the way it does. Drives a field footnote — NEVER a gate. */
+	state: "idle" | "loading" | "syncing" | "ready" | "error";
+	/** Per-axis provenance. Some readers collapse their own fail-open, so the client cannot infer
+	 * this from the payload — the server reports it. */
+	axisSource: Readonly<Record<CapabilityAxis, "account" | "catalog">>;
+
+	regions: string[];
+	instanceTypes: CapabilityOption[];
+	k8sVersions: CapabilityOption[];
+	dbEngines: CapabilityOption[];
+	cacheTiers: CapabilityOption[];
+	nosqlKeyTypes: CapabilityOption[];
+	/** Already-HAS placement inventory (#980) — not a capability axis, no federation involved. */
+	networks: PlacementOption[];
+	subnets: PlacementSubnetOption[];
+}
+
+/**
+ * One account-reported option, normalized across axes. `launchable === undefined` is the sentinel
+ * for "static fallback row — no per-account signal at all", which must read differently from
+ * "synced, and we could not evaluate the quota".
+ */
+export interface CapabilityOption {
+	value: string;
+	label: string;
+	launchable?: "launchable" | "not_launchable" | "not_evaluable";
+	launchableReason?: string | null;
+}
+
+export interface PlacementOption {
+	/** The NATIVE id (`vpc-…`) — project_network.network_id stores this, not the row uuid. */
+	nativeId: string;
+	name: string | null;
+	region: string | null;
+	cidrBlock: string | null;
+	isDefault: boolean;
+}
+
+export interface PlacementSubnetOption extends PlacementOption {
+	availabilityZone: string | null;
+	isPublic: boolean;
+	/** The owning network's row id, for filtering subnets by the selected network. */
+	networkRowId: string | null;
+}
+
+export type CapabilityAxis =
+	| "region"
+	| "instance_type"
+	| "k8s_version"
+	| "database"
+	| "cache_tier"
+	| "nosql"
+	| "placement";
+
+const ALL_CATALOG: Readonly<Record<CapabilityAxis, "account" | "catalog">> = Object.freeze({
+	region: "catalog",
+	instance_type: "catalog",
+	k8s_version: "catalog",
+	database: "catalog",
+	cache_tier: "catalog",
+	nosql: "catalog",
+	placement: "catalog",
+});
+
+/**
+ * The frozen "no signal" bag. `FieldCtx.caps` is REQUIRED on the type but DEFAULTED to this at
+ * construction, so no resolver ever writes `ctx.caps?.x ?? STATIC` — the fail-open rule lives in
+ * exactly one place (`capability-options.ts`) instead of being re-implemented per field.
+ */
+export const NO_CAPABILITIES: CapabilityBag = Object.freeze({
+	identityId: null,
+	provider: null,
+	region: null,
+	state: "idle",
+	axisSource: ALL_CATALOG,
+	regions: [],
+	instanceTypes: [],
+	k8sVersions: [],
+	dbEngines: [],
+	cacheTiers: [],
+	nosqlKeyTypes: [],
+	networks: [],
+	subnets: [],
+});
+
 /** Context handed to every resolvable field attribute. */
 export interface FieldCtx<C = AnyConfig> {
 	provider: CloudProviderSlug | null;
 	config: C;
+	/** Always present — `NO_CAPABILITIES` when nothing is loaded. */
+	caps: CapabilityBag;
 }
 
-/** A value that's either static or derived from the field context (provider/config). */
+/** A value that's either static or derived from the field context (provider/config/capabilities). */
 export type Resolvable<T, C = AnyConfig> = T | ((ctx: FieldCtx<C>) => T);
+
+/**
+ * Advisory on an option. GUIDANCE, never a gate (#918) — the renderer must never map this to
+ * `disabled`.
+ *
+ * There is deliberately NO positive level: "available" is the ABSENCE of ink. That makes
+ * "`not_evaluable` must never render as available" a structural property rather than a review rule
+ * — no code path exists that can paint an affirmative marker, so a quota we merely could not check
+ * can never be mistaken for one we verified.
+ */
+export interface OptionAdvisory {
+	level: "unavailable" | "unverified";
+	note: string;
+}
 
 export interface FieldOption {
 	value: string;
 	label: string;
 	description?: string;
+	advisory?: OptionAdvisory;
 }
 
 export type FieldType =
@@ -113,6 +241,10 @@ export interface FieldDef<C = AnyConfig> {
 	item?: { placeholder?: string; mono?: boolean };
 	/** `subresource` only: the row editor's definition. */
 	sub?: SubresourceSpec;
+	/** Which capability axis backs this field's options. Declared rather than inferred from the
+	 * resolver's identity, and used ONLY to render the per-field provenance footnote ("12 of 340
+	 * available to this account" / "showing the full catalog"). Never affects what is selectable. */
+	capabilityAxis?: CapabilityAxis;
 }
 
 /**
@@ -685,25 +817,18 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "select",
 						label: "Kubernetes version",
 						requiresProvider: true,
-						options: ({ provider }) =>
-							provider
-								? K8S_VERSIONS[provider].map((v) => ({ value: v, label: v }))
-								: [],
+						capabilityAxis: "k8s_version",
+						options: k8sVersionOptions,
 					},
 					{
 						key: "instance_types",
 						type: "select",
 						label: "Instance type",
 						requiresProvider: true,
+						capabilityAxis: "instance_type",
 						get: (c) => c.instance_types?.[0] ?? "",
 						set: (v) => ({ instance_types: [String(v)] }),
-						options: ({ provider }) =>
-							provider
-								? INSTANCE_TYPES[provider].map((it) => ({
-										value: it.value,
-										label: `${it.label} · ${it.vcpu} vCPU / ${it.memoryGb} GB`,
-									}))
-								: [],
+						options: instanceTypeOptions,
 					},
 				],
 			},
@@ -983,13 +1108,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// No managed cache SKUs on Hetzner — the in-cluster Valkey chart sizes
 						// via storage_gb below.
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",
-						options: ({ provider }) =>
-							provider
-								? CACHE_NODE_TYPES[provider].map((n) => ({
-										value: n.value,
-										label: `${n.label} · ${n.memoryGb} GB (${n.cost})`,
-									}))
-								: [],
+						capabilityAxis: "cache_tier",
+						options: cacheTierOptions,
 					},
 				],
 			},
@@ -1220,10 +1340,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "partition_key_type",
 						type: "select",
 						label: "Key type",
-						options: ({ provider }) =>
-							(provider ? NOSQL[provider].keyTypes : [{ value: "S", label: "String" }]).map(
-								(k) => ({ value: k.value, label: k.label }),
-							),
+						capabilityAxis: "nosql",
+						options: nosqlKeyTypeOptions,
 					},
 					{
 						key: "sort_key",
@@ -1240,10 +1358,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "sort_key_type",
 						type: "select",
 						label: "Sort key type",
-						options: ({ provider }) =>
-							(provider ? NOSQL[provider].keyTypes : [{ value: "S", label: "String" }]).map(
-								(k) => ({ value: k.value, label: k.label }),
-							),
+						capabilityAxis: "nosql",
+						options: nosqlKeyTypeOptions,
 						visibleWhen: (c, { provider }) =>
 							!!c.sort_key &&
 							(!provider || NOSQL[provider].supportsRangeKey !== false),

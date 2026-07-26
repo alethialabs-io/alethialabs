@@ -8,16 +8,9 @@ import { useId } from "react";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@repo/ui/select";
 import { cn } from "@repo/ui/utils";
-import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import type { FieldDef, FieldOption, SubresourceSpec } from "./config-schema";
+import { OptionSelect } from "./config-fields";
+import type { FieldCtx, FieldDef, SubresourceSpec } from "./config-schema";
 
 type Row = Record<string, unknown>;
 
@@ -32,12 +25,15 @@ type Row = Record<string, unknown>;
 export function SubresourceField({
 	spec,
 	value,
-	provider,
+	ctx,
 	onChange,
 }: {
 	spec: SubresourceSpec;
 	value: Row[];
-	provider: CloudProviderSlug | null;
+	/** The PARENT field's context, threaded through rather than rebuilt. A locally-constructed ctx
+	 * silently loses whatever the parent carries (today: account capabilities), so row selects would
+	 * resolve against different data than the fields beside them. */
+	ctx: FieldCtx;
 	onChange: (next: Row[]) => void;
 }) {
 	const rows = value ?? [];
@@ -73,13 +69,13 @@ export function SubresourceField({
 
 							<div className="grid grid-cols-2 gap-2">
 								{spec.fields
-									.filter((f) => !f.visibleWhen || f.visibleWhen(row, { provider, config: row }))
+									.filter((f) => !f.visibleWhen || f.visibleWhen(row, { ...ctx, config: row }))
 									.map((field) => (
 										<RowField
 											key={field.key}
 											field={field}
 											row={row}
-											provider={provider}
+											ctx={ctx}
 											onChange={(patch) => patchRow(i, patch)}
 										/>
 									))}
@@ -104,20 +100,21 @@ export function SubresourceField({
 function RowField({
 	field,
 	row,
-	provider,
+	ctx,
 	onChange,
 }: {
 	field: FieldDef<Row>;
 	row: Row;
-	provider: CloudProviderSlug | null;
+	ctx: FieldCtx;
 	onChange: (patch: Row) => void;
 }) {
 	const fieldId = useId();
 	const raw = row[field.key];
+	// The parent's context with the ROW as config — same capabilities, same provider, row-scoped
+	// config. Never a fresh ctx: that is how this file used to drift from config-fields.tsx.
+	const rowCtx: FieldCtx = { ...ctx, config: row };
 	const options =
-		typeof field.options === "function"
-			? field.options({ provider, config: row })
-			: field.options;
+		typeof field.options === "function" ? field.options(rowCtx) : field.options;
 
 	const full = field.full || field.type === "text";
 
@@ -127,21 +124,13 @@ function RowField({
 				{field.label}
 			</Label>
 			{field.type === "select" && options ? (
-				<Select
-					value={toStr(raw) || options[0]?.value || ""}
-					onValueChange={(v) => onChange({ [field.key]: v })}
-				>
-					<SelectTrigger id={fieldId} className="h-8 text-xs">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{options.map((o) => (
-							<SelectItem key={o.value} value={o.value}>
-								{o.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<OptionSelect
+					id={fieldId}
+					options={options}
+					value={toStr(raw)}
+					onChange={(v) => onChange({ [field.key]: v })}
+					className="h-8 text-xs"
+				/>
 			) : field.type === "number" ? (
 				<Input
 					id={fieldId}

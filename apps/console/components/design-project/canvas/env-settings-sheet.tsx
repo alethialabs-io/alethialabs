@@ -15,6 +15,7 @@ import {
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { ConfigFields } from "./inspector/config-fields";
 import { getKindConfig } from "./inspector/config-schema";
+import { useNodeCapabilities } from "./inspector/use-node-capabilities";
 
 /**
  * W2 — the cluster + network are no longer cards on the board (one environment IS one cluster inside
@@ -32,6 +33,11 @@ export function EnvSettingsSheet() {
 	const network = nodes.find((n) => n.data.kind === "network");
 	const clusterSchema = getKindConfig("cluster");
 	const networkSchema = getKindConfig("network");
+
+	// Cluster and network are env-level singletons, but each resolves through its OWN node so a
+	// per-resource placement override is honoured rather than silently reading the project's account.
+	const clusterCaps = useNodeCapabilities(cluster?.id ?? null);
+	const networkCaps = useNodeCapabilities(network?.id ?? null);
 
 	return (
 		<>
@@ -64,6 +70,7 @@ export function EnvSettingsSheet() {
 									config={cluster.data.config}
 									provider={provider}
 									kind="cluster"
+									capabilities={clusterCaps}
 									onChange={(patch) => updateNodeConfig(cluster.id, patch)}
 								/>
 							</section>
@@ -76,6 +83,7 @@ export function EnvSettingsSheet() {
 									config={network.data.config}
 									provider={provider}
 									kind="network"
+									capabilities={networkCaps}
 									onChange={(patch) => updateNodeConfig(network.id, patch)}
 								/>
 							</section>

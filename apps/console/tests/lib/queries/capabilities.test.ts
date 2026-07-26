@@ -56,14 +56,18 @@ describe("getRegionCapabilities", () => {
 	it("fails open to the static Catalog #2 region set when nothing has synced", async () => {
 		state.rows = [];
 		const regions = await getRegionCapabilities("ci-1", "aws");
-		expect(regions).toEqual(Object.keys(REGION_LABELS.aws));
-		expect(regions).toContain("us-east-1");
+		expect(regions.codes).toEqual(Object.keys(REGION_LABELS.aws));
+		expect(regions.codes).toContain("us-east-1");
+		// The fail-open must be VISIBLE to the caller: both branches return plain codes, so without
+		// `source` the picker cannot tell this account's regions from the whole catalog.
+		expect(regions.source).toBe("catalog");
 	});
 
 	it("returns the account's enabled regions when rows exist (overriding the fallback)", async () => {
 		state.rows = [{ code: "eu-west-1" }, { code: "eu-central-1" }];
 		const regions = await getRegionCapabilities("ci-1", "aws");
-		expect(regions).toEqual(["eu-west-1", "eu-central-1"]);
+		expect(regions.codes).toEqual(["eu-west-1", "eu-central-1"]);
+		expect(regions.source).toBe("account");
 	});
 });
 
