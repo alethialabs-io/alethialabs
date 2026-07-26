@@ -49,10 +49,12 @@ describe("setByPath", () => {
 });
 
 describe("isCredentialFacet", () => {
-	it("marks username/password/connection_string secret; endpoint/port not", () => {
+	it("marks username/password/connection_string/value secret; endpoint/port not", () => {
 		expect(isCredentialFacet("password")).toBe(true);
 		expect(isCredentialFacet("username")).toBe(true);
 		expect(isCredentialFacet("connection_string")).toBe(true);
+		// value — a secret-kind binding's opaque project-secret value (#1207).
+		expect(isCredentialFacet("value")).toBe(true);
 		expect(isCredentialFacet("endpoint")).toBe(false);
 		expect(isCredentialFacet("port")).toBe(false);
 	});
