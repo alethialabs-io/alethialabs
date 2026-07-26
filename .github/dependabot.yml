@@ -10,6 +10,19 @@
 # required check exists precisely to stop that). Targeting `dev` runs bumps through the same
 # Mergify queue and the same dev → staging → main promotion as any other change, so a
 # dependency reaches production only after it has been integrated on `dev`.
+#
+# MAJORS ARE IGNORED on npm / gomod / docker — do not "helpfully" re-enable them. Targeting `dev`
+# means Mergify auto-queues these PRs (it matches every non-draft `dev` PR, with no author or
+# version-range condition), so a major bump would squash-merge the moment the required checks go
+# green. Green CI is not evidence for a major: the clearest case is the test runner itself
+# (a vitest 2 -> 4 jump), where changed runner behaviour can make tests pass for the WRONG reason —
+# precisely the failure CI cannot catch. Minor/patch stay grouped and auto-merge as before; a major
+# becomes a deliberate, reviewed upgrade done by hand.
+#
+# github-actions is EXEMPT from that rule, deliberately. Majors are how actions advance
+# (actions/checkout v4 -> v5) and they arrive batched in the `actions` group. Their blast radius is
+# CI-only: a bad action major fails the build loudly and cannot ship anything to production, so
+# silencing them would freeze the CI toolchain on stale majors for no safety gain.
 
 version: 2
 updates:
@@ -19,6 +32,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
@@ -31,6 +47,9 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       go-minor-patch:
         update-types: [minor, patch]
@@ -50,5 +69,8 @@ updates:
       - /apps/docs
       - /apps/runner
     target-branch: dev
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     schedule:
       interval: weekly
