@@ -92,16 +92,4 @@ data "hcloud_location" "selected" {
 }
 
 locals {
-  # Primary IPs are datacenter-scoped and DC names don't follow a fixed suffix,
-  # so map each location to its default datacenter. Falls back to "<region>-dc1"
-  # for any location not in the map (correct for ash/hil/sin).
-  region_datacenter_map = {
-    fsn1 = "fsn1-dc14"
-    nbg1 = "nbg1-dc3"
-    hel1 = "hel1-dc2"
-    ash  = "ash-dc1"
-    hil  = "hil-dc1"
-    sin  = "sin-dc1"
-  }
-  region_datacenter = lookup(local.region_datacenter_map, var.region, "${var.region}-dc1")
 }
