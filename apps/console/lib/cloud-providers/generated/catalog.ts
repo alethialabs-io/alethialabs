@@ -59,6 +59,9 @@ export interface DBEngine {
 	value: string;
 	label: string;
 	default_version: string;
+	/** Offline version baseline, newest-first; always contains `default_version`. Guidance, not a
+	 * gate — an account offering something newer must still be able to pick it (#918). */
+	versions: string[];
 }
 
 export interface Capacity {
@@ -692,13 +695,24 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "aurora-postgresql",
 						"label": "Aurora PostgreSQL",
-						"default_version": "16.6"
+						"default_version": "16",
+						"versions": [
+							"18",
+							"17",
+							"16",
+							"15",
+							"14"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "aurora-mysql",
 						"label": "Aurora MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0",
+						"versions": [
+							"8.4",
+							"8.0"
+						]
 					}
 				]
 			},
@@ -716,13 +730,25 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "cloudsql-postgresql",
 						"label": "Cloud SQL PostgreSQL",
-						"default_version": "15"
+						"default_version": "15",
+						"versions": [
+							"18",
+							"17",
+							"16",
+							"15",
+							"14"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "cloudsql-mysql",
 						"label": "Cloud SQL MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0",
+						"versions": [
+							"8.4",
+							"8.0",
+							"5.7"
+						]
 					}
 				]
 			},
@@ -740,13 +766,25 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "azure-postgresql",
 						"label": "Azure Database for PostgreSQL",
-						"default_version": "16"
+						"default_version": "16",
+						"versions": [
+							"18",
+							"17",
+							"16",
+							"15",
+							"14"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "azure-mysql",
 						"label": "Azure Database for MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0.21",
+						"versions": [
+							"8.4",
+							"8.0.21",
+							"5.7"
+						]
 					}
 				]
 			},
@@ -764,7 +802,10 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "postgres",
 						"label": "PostgreSQL (CloudNativePG)",
-						"default_version": "16"
+						"default_version": "16",
+						"versions": [
+							"16"
+						]
 					}
 				]
 			},
@@ -782,13 +823,23 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "PostgreSQL",
 						"label": "ApsaraDB RDS PostgreSQL",
-						"default_version": "16.0"
+						"default_version": "16.0",
+						"versions": [
+							"17.0",
+							"16.0",
+							"15.0",
+							"14.0"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "MySQL",
 						"label": "ApsaraDB RDS MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0",
+						"versions": [
+							"8.0",
+							"5.7"
+						]
 					}
 				]
 			}
@@ -2333,6 +2384,8 @@ export interface DbEngineOption {
 	value: string;
 	label: string;
 	defaultVersion: string;
+	/** Offline version baseline, newest-first; always contains `defaultVersion`. */
+	versions: string[];
 }
 
 /** Database engine options per provider. */
@@ -2341,55 +2394,103 @@ export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = {
 			{
 				"value": "aurora-postgresql",
 				"label": "Aurora PostgreSQL",
-				"defaultVersion": "16.6"
+				"defaultVersion": "16",
+				"versions": [
+					"18",
+					"17",
+					"16",
+					"15",
+					"14"
+				]
 			},
 			{
 				"value": "aurora-mysql",
 				"label": "Aurora MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0",
+				"versions": [
+					"8.4",
+					"8.0"
+				]
 			}
 		],
 		"gcp": [
 			{
 				"value": "cloudsql-postgresql",
 				"label": "Cloud SQL PostgreSQL",
-				"defaultVersion": "15"
+				"defaultVersion": "15",
+				"versions": [
+					"18",
+					"17",
+					"16",
+					"15",
+					"14"
+				]
 			},
 			{
 				"value": "cloudsql-mysql",
 				"label": "Cloud SQL MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0",
+				"versions": [
+					"8.4",
+					"8.0",
+					"5.7"
+				]
 			}
 		],
 		"azure": [
 			{
 				"value": "azure-postgresql",
 				"label": "Azure Database for PostgreSQL",
-				"defaultVersion": "16"
+				"defaultVersion": "16",
+				"versions": [
+					"18",
+					"17",
+					"16",
+					"15",
+					"14"
+				]
 			},
 			{
 				"value": "azure-mysql",
 				"label": "Azure Database for MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0.21",
+				"versions": [
+					"8.4",
+					"8.0.21",
+					"5.7"
+				]
 			}
 		],
 		"hetzner": [
 			{
 				"value": "postgres",
 				"label": "PostgreSQL (CloudNativePG)",
-				"defaultVersion": "16"
+				"defaultVersion": "16",
+				"versions": [
+					"16"
+				]
 			}
 		],
 		"alibaba": [
 			{
 				"value": "postgres",
 				"label": "ApsaraDB RDS PostgreSQL",
-				"defaultVersion": "16.0"
+				"defaultVersion": "16.0",
+				"versions": [
+					"17.0",
+					"16.0",
+					"15.0",
+					"14.0"
+				]
 			},
 			{
 				"value": "mysql",
 				"label": "ApsaraDB RDS MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0",
+				"versions": [
+					"8.0",
+					"5.7"
+				]
 			}
 		]
 	};
