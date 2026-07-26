@@ -71,13 +71,7 @@ exclusions:
 # Delete the entry in the same PR that fixes the gap.
 
 baseline:
-  # GCP offers BOTH cache engines and the provider reads neither, so the choice is dropped: picking
-  # Valkey silently provisions Redis. Memorystore Valkey is a different resource entirely
-  # (`google_memorystore_instance`, engine_version VALKEY_7_2), so this is a build, not a wiring fix.
-  - offer: cache:redis
-    cloud: gcp
-    issue: "#1420"
-  - offer: cache:valkey
-    cloud: gcp
-    issue: "#1420"
+  # Empty. Every offer the canvas makes either builds on the cloud it is offered for, or is a
+  # documented exclusion above with the reason it cannot. Keep it that way: an entry here is debt
+  # with a tracking issue, and the guard fails the moment one stops reproducing.
 

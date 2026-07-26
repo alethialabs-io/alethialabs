@@ -634,3 +634,90 @@ func assertOptional(t *testing.T, tfvars map[string]interface{}, key string, wan
 		t.Errorf("tfvars[%q] = %v, want %v", key, got, want)
 	}
 }
+
+// TestGCPProvider_CacheEngineSelectsTheProduct pins the GCP half of #1420. The canvas has offered
+// redis|valkey on GCP the whole time and the provider read neither, so picking Valkey silently
+// provisioned Redis and the apply succeeded.
+//
+// On GCP this is a real fork, not a flag: Valkey is `google_memorystore_instance` (cluster-shaped,
+// sized by shards) and Redis is `google_redis_instance` (sized by a memory figure). Both toggles on
+// would create two caches for one node; both off would create none while reporting converged.
+func TestGCPProvider_CacheEngineSelectsTheProduct(t *testing.T) {
+	tests := []struct {
+		name       string
+		engine     types.CacheEngine
+		wantRedis  bool
+		wantValkey bool
+	}{
+		{"valkey selects the Memorystore instance", types.CacheEngineValkey, false, true},
+		{"redis selects the Redis instance", types.CacheEngineRedis, true, false},
+		{"an engine-less config stays on redis", "", true, false},
+	}
+
+	p := &gcpProvider{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &types.ProjectConfig{
+				Cluster: types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+				DNS:     types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+				Caches:  []types.ProjectCacheConfig{{Name: "main", Engine: tt.engine, MemoryGB: 4}},
+			}
+			tfvars := p.ProviderTfvars(cfg)
+
+			if got := tfvars["create_memorystore"]; got != tt.wantRedis {
+				t.Errorf("create_memorystore = %v, want %v", got, tt.wantRedis)
+			}
+			if got := tfvars["create_memorystore_valkey"]; got != tt.wantValkey {
+				t.Errorf("create_memorystore_valkey = %v, want %v", got, tt.wantValkey)
+			}
+		})
+	}
+}
+
+// The two products are sized by different models, so the cloud-indifferent MemoryGB has to land on
+// the right tfvar. Sending a memory figure to the shard-shaped product (or vice versa) is silently
+// wrong: the plan succeeds against the template default and the user's sizing is dropped.
+func TestGCPProvider_CacheSizingFollowsTheProduct(t *testing.T) {
+	p := &gcpProvider{}
+	cfg := func(engine types.CacheEngine, gb float64) *types.ProjectConfig {
+		return &types.ProjectConfig{
+			Cluster: types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+			DNS:     types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+			Caches:  []types.ProjectCacheConfig{{Name: "main", Engine: engine, MemoryGB: gb}},
+		}
+	}
+
+	valkey := p.ProviderTfvars(cfg(types.CacheEngineValkey, 4))
+	if _, ok := valkey["memorystore_memory_size_gb"]; ok {
+		t.Error("a valkey cache emitted the redis memory-size tfvar")
+	}
+	// 4 GB over ~1.4 GB per shard rounds UP to 3 — never below what was asked for.
+	if got := valkey["memorystore_valkey_shard_count"]; got != 3 {
+		t.Errorf("memorystore_valkey_shard_count = %v, want 3 for a 4 GB request", got)
+	}
+
+	redis := p.ProviderTfvars(cfg(types.CacheEngineRedis, 4))
+	if got := redis["memorystore_memory_size_gb"]; got != 4 {
+		t.Errorf("memorystore_memory_size_gb = %v, want 4", got)
+	}
+	if _, ok := redis["memorystore_valkey_shard_count"]; ok {
+		t.Error("a redis cache emitted a valkey shard count")
+	}
+}
+
+// The resource takes an ENUM; a raw semver fails the apply, which is the same trap the Redis side
+// already documents.
+func TestGCPValkeyVersionEnum(t *testing.T) {
+	cases := map[string]string{
+		"7.2":        "VALKEY_7_2",
+		"8.0":        "VALKEY_8_0",
+		"VALKEY_7_2": "VALKEY_7_2",
+		"":           "",
+		"7":          "", // no minor — the template default stands rather than a guess
+	}
+	for in, want := range cases {
+		if got := gcpMemorystoreValkeyVersion(in); got != want {
+			t.Errorf("gcpMemorystoreValkeyVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
