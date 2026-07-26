@@ -13,7 +13,8 @@ import "fmt"
 // the console/CLI can render it truthfully instead of leaving the operator guessing.
 type InfraServiceDecision struct {
 	// Service is the infra service the decision is about.
-	// One of: "external-dns" | "external-secrets-store" | "ingress" | "storage-class" | "argocd-url" | "apps-repo".
+	// One of: "external-dns" | "external-secrets-store" | "external-secrets-store-xacct" | "ingress" |
+	// "storage-class" | "argocd-url" | "apps-repo".
 	Service string `json:"service"`
 	// Status is "installed" or "skipped".
 	Status string `json:"status"`
@@ -32,7 +33,7 @@ const (
 // than re-deriving them loosely, so the recorded decisions can never drift from what
 // actually shipped. Every decision carries a non-empty reason.
 func InfraServiceDecisions(f *InfraFacts) []InfraServiceDecision {
-	return []InfraServiceDecision{
+	decisions := []InfraServiceDecision{
 		externalDNSDecision(f),
 		externalSecretsStoreDecision(f),
 		ingressDecision(f),
@@ -40,6 +41,12 @@ func InfraServiceDecisions(f *InfraFacts) []InfraServiceDecision {
 		argocdURLDecision(f),
 		appsRepoDecision(f),
 	}
+	// The cross-account (*-xacct) secret store is an OPT-IN additional read source — record its decision
+	// only when the project selected one, so the common-case list stays uncluttered.
+	if d, ok := externalSecretsXacctStoreDecision(f); ok {
+		decisions = append(decisions, d)
+	}
+	return decisions
 }
 
 // appsRepoDecision mirrors the user-apps.yaml render gate ({{- if .AppsDestinationRepo }}):
@@ -134,6 +141,42 @@ func externalSecretsStoreDecision(f *InfraFacts) InfraServiceDecision {
 		return skippedStore(d, "Hetzner has no cloud secret store — use the Vault connector to source secrets.")
 	default:
 		return skippedStore(d, "no cloud secret store for this provider — the ClusterSecretStore is skipped.")
+	}
+}
+
+// externalSecretsXacctStoreDecision records the ADDITIONAL cross-account (*-xacct) ClusterSecretStore
+// when the project selected one — an honest install/skip mirroring the *-xacct render gates in
+// install.go. Returns ok=false when no cross-account secret manager is selected (the common case), so
+// the decision list stays uncluttered. When selected but the cluster's own external-secrets identity
+// is absent, it is a FAIL-CLOSED skip: no foreign store is applied.
+func externalSecretsXacctStoreDecision(f *InfraFacts) (InfraServiceDecision, bool) {
+	if f.SecretsXacctRef == "" && f.SecretsXacctProjectID == "" {
+		return InfraServiceDecision{}, false
+	}
+	d := InfraServiceDecision{Service: "external-secrets-store-xacct"}
+	switch f.Provider {
+	case "aws":
+		if f.IRSAExternalSecretsArn != "" {
+			return installedStore(d, "cross-account AWS Secrets Manager (assumes the target-account role)"), true
+		}
+		return skippedStore(d, "the external-secrets IRSA role output is not present — the cross-account ClusterSecretStore is skipped."), true
+	case "gcp":
+		if f.GCPExternalSecretsSA != "" {
+			return installedStore(d, "cross-project GCP Secret Manager (reads the target project)"), true
+		}
+		return skippedStore(d, "the external-secrets service-account output is not present — the cross-account ClusterSecretStore is skipped."), true
+	case "azure":
+		if f.AzureExternalSecretsClient != "" {
+			return installedStore(d, "cross-subscription Azure Key Vault (reads the target vault)"), true
+		}
+		return skippedStore(d, "the external-secrets managed-identity client id output is not present — the cross-account ClusterSecretStore is skipped."), true
+	case "alibaba":
+		if f.AlibabaExternalSecretsRoleArn != "" && f.SecretsXacctOIDCProviderRef != "" {
+			return installedStore(d, "cross-account Alibaba KMS Secrets Manager (RRSA via the target OIDC provider)"), true
+		}
+		return skippedStore(d, "the external-secrets RRSA role output or the target OIDC provider ARN is not present — the cross-account ClusterSecretStore is skipped."), true
+	default:
+		return skippedStore(d, "no cross-account cloud secret store for this provider — skipped."), true
 	}
 }
 
