@@ -9,6 +9,15 @@ locals {
   # The EKS cluster name derived in locals.tf: "eks-<region-short>-<environment>-<project_name>".
   # AWS caps the EKS cluster name at 100 characters.
   eks_cluster_name_len = length("eks-xxx-${var.environment}-${var.project_name}")
+
+  # Kubernetes major/minor parsed from eks_cluster_version ("1.35" -> 1 / 35). -1 when unparseable, so a
+  # missing/garbage version fails the COMPAT-001 guard closed rather than passing vacuously. The window
+  # literals below are the AWS supported minors from the compat matrix
+  # (packages/core/compat/matrix.json -> k8s_cloud.aws = 1.33-1.35). These are the SSOT mirror at the
+  # IaC layer: keep them in lockstep with matrix.json (the Go/TS drift guards
+  # packages/core/compat/couplings_drift_test.go + apps/console check:compat keep the code side honest).
+  eks_k8s_major = can(tonumber(split(".", var.eks_cluster_version)[0])) ? tonumber(split(".", var.eks_cluster_version)[0]) : -1
+  eks_k8s_minor = can(tonumber(split(".", var.eks_cluster_version)[1])) ? tonumber(split(".", var.eks_cluster_version)[1]) : -1
 }
 
 # project_name is the root of every naming convention and must be non-empty.
@@ -176,5 +185,28 @@ check "ecr_pull_xacct_role_name_within_limit" {
   assert {
     condition     = !local.enable_ecr_pull || length("ecr-pull-xacct-${local.eks_name}") <= 64
     error_message = "Derived ecr-pull-xacct-<eks_name> role name exceeds IAM's 64-character limit; shorten environment/project_name."
+  }
+}
+
+# COMPAT-001 (epic #1186, block-at-apply): the EKS Kubernetes minor must sit inside the AWS support
+# window (matrix.json k8s_cloud.aws = 1.33-1.35). A `check` block only WARNS, so the hard gate is the
+# terraform_data precondition below; this check surfaces the same violation loudly at plan time.
+check "compat_k8s_supported" {
+  assert {
+    condition     = !var.provision_eks || (local.eks_k8s_major == 1 && local.eks_k8s_minor >= 33 && local.eks_k8s_minor <= 35)
+    error_message = "COMPAT: EKS Kubernetes '${var.eks_cluster_version}' is outside the AWS-supported window 1.33-1.35 (packages/core/compat/matrix.json k8s_cloud.aws); terraform_data.compat_k8s_guard blocks apply."
+  }
+}
+
+# Fail-closed apply gate (COMPAT-001): an out-of-window Kubernetes minor hard-fails the plan here, so an
+# incompatible cluster (the #1165 ArgoCD-on-1.35 class of break) can never be provisioned. `check` blocks
+# only warn — a `terraform_data` lifecycle precondition is the actual gate. No bypass variable: waivers
+# are a runner-layer concern (compat.Override / COMPAT-001), deliberately not exposed in the template.
+resource "terraform_data" "compat_k8s_guard" {
+  lifecycle {
+    precondition {
+      condition     = !var.provision_eks || (local.eks_k8s_major == 1 && local.eks_k8s_minor >= 33 && local.eks_k8s_minor <= 35)
+      error_message = "COMPAT-001: EKS Kubernetes '${var.eks_cluster_version}' is outside the AWS-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.aws). Apply blocked fail-closed — align eks_cluster_version and the matrix in lockstep."
+    }
   }
 }

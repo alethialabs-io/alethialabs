@@ -15,6 +15,14 @@ locals {
   # stem). modules/key-vault derives "<project_name>-<environment>-kv"; assert its length here.
   azure_key_vault_name     = "${var.project_name}-${var.environment}-kv"
   azure_key_vault_name_len = length(local.azure_key_vault_name)
+
+  # Kubernetes major/minor parsed from aks_cluster_version ("1.35" -> 1 / 35). -1 when unparseable, so a
+  # missing/garbage version fails the COMPAT-001 guard closed rather than passing vacuously. The window
+  # literals below are the Azure supported minors from the compat matrix
+  # (packages/core/compat/matrix.json -> k8s_cloud.azure = 1.33-1.35). Keep them in lockstep with
+  # matrix.json (the Go/TS drift guards couplings_drift_test.go + apps/console check:compat keep code honest).
+  aks_k8s_major = can(tonumber(split(".", var.aks_cluster_version)[0])) ? tonumber(split(".", var.aks_cluster_version)[0]) : -1
+  aks_k8s_minor = can(tonumber(split(".", var.aks_cluster_version)[1])) ? tonumber(split(".", var.aks_cluster_version)[1]) : -1
 }
 
 # project_name is the root of every naming convention and must be non-empty.
@@ -195,5 +203,28 @@ check "acr_pull_xacct_identity_present" {
   assert {
     condition     = !local.enable_acr_pull || length(azurerm_user_assigned_identity.acr_pull) == 1
     error_message = "registry_pull_provider = acr-xacct but the cross-subscription ACR pull identity was not created."
+  }
+}
+
+# COMPAT-001 (epic #1186, block-at-apply): the AKS Kubernetes minor must sit inside the Azure support
+# window (matrix.json k8s_cloud.azure = 1.33-1.35). A `check` block only WARNS, so the hard gate is the
+# terraform_data precondition below; this check surfaces the same violation loudly at plan time.
+check "compat_k8s_supported" {
+  assert {
+    condition     = !var.provision_aks || (local.aks_k8s_major == 1 && local.aks_k8s_minor >= 33 && local.aks_k8s_minor <= 35)
+    error_message = "COMPAT: AKS Kubernetes '${var.aks_cluster_version}' is outside the Azure-supported window 1.33-1.35 (packages/core/compat/matrix.json k8s_cloud.azure); terraform_data.compat_k8s_guard blocks apply."
+  }
+}
+
+# Fail-closed apply gate (COMPAT-001): an out-of-window Kubernetes minor hard-fails the plan here, so an
+# incompatible cluster (the #1165 ArgoCD-on-1.35 class of break) can never be provisioned. `check` blocks
+# only warn — a `terraform_data` lifecycle precondition is the actual gate. No bypass variable: waivers
+# are a runner-layer concern (compat.Override / COMPAT-001), deliberately not exposed in the template.
+resource "terraform_data" "compat_k8s_guard" {
+  lifecycle {
+    precondition {
+      condition     = !var.provision_aks || (local.aks_k8s_major == 1 && local.aks_k8s_minor >= 33 && local.aks_k8s_minor <= 35)
+      error_message = "COMPAT-001: AKS Kubernetes '${var.aks_cluster_version}' is outside the Azure-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.azure). Apply blocked fail-closed — align aks_cluster_version and the matrix in lockstep."
+    }
   }
 }
