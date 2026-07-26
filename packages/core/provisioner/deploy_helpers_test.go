@@ -37,6 +37,25 @@ func TestDeployHelperPolicyFunctions(t *testing.T) {
 		}
 	})
 
+	t.Run("compat add-on refs carry id + pinned version, nil for empty", func(t *testing.T) {
+		if got := compatAddOnRefs(nil); got != nil {
+			t.Fatalf("compatAddOnRefs(nil) = %#v, want nil (no add-ons → empty subject slice)", got)
+		}
+		got := compatAddOnRefs([]types.AddOnInstall{
+			{ID: "kube-prometheus-stack", Version: "58.1.0"},
+			{ID: "cnpg"}, // version may be empty (git-ref add-ons); the ref must still carry the id
+		})
+		if len(got) != 2 {
+			t.Fatalf("compatAddOnRefs len = %d, want 2", len(got))
+		}
+		if got[0].ID != "kube-prometheus-stack" || got[0].Version != "58.1.0" {
+			t.Errorf("ref[0] = %#v", got[0])
+		}
+		if got[1].ID != "cnpg" || got[1].Version != "" {
+			t.Errorf("ref[1] = %#v", got[1])
+		}
+	})
+
 	t.Run("phase marker is best effort and optional", func(t *testing.T) {
 		writePhase("", "apply")
 		path := filepath.Join(t.TempDir(), "phase")
