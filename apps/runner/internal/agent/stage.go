@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/drift"
 	"github.com/alethialabs-io/alethialabs/packages/core/iacsafety"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
@@ -45,6 +46,7 @@ type stageDeployPayload struct {
 	CategoriesDir        string                      `json:"categories_dir"`
 	InfracostToken       string                      `json:"infracost_token,omitempty"`
 	VerifyOverride       *verify.Override            `json:"verify_override,omitempty"`
+	CompatOverride       *compat.Override            `json:"compat_override,omitempty"`
 	// CostCeilingMonthlyUSD fail-closes a real apply whose Infracost estimate exceeds it
 	// (0 ⇒ disabled). Read from ALETHIA_COST_CEILING_MONTHLY_USD in the parent and carried
 	// in the payload so it survives the sandbox boundary (the container child sees no env).
@@ -159,7 +161,7 @@ func newStage(kind sandbox.StageKind, payload any) (*sandbox.Stage, error) {
 // the git token (it crosses via env) and carrying the json:"-" fields explicitly.
 func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, planFile,
 	templatesDir, categoriesDir, infracostToken string, override *verify.Override,
-	stateConsoleURL, jobID string) stageDeployPayload {
+	compatOverride *compat.Override, stateConsoleURL, jobID string) stageDeployPayload {
 	cfg := *vc // shallow copy — don't mutate the caller's config
 	cfg.GitAccessToken = ""
 	return stageDeployPayload{
@@ -173,6 +175,7 @@ func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, p
 		CategoriesDir:         categoriesDir,
 		InfracostToken:        infracostToken,
 		VerifyOverride:        override,
+		CompatOverride:        compatOverride,
 		CostCeilingMonthlyUSD: costCeilingFromEnv(),
 		StateConsoleURL:       stateConsoleURL,
 		JobID:                 jobID,
@@ -237,6 +240,7 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		Stdout:         stdout,
 		Stderr:         stderr,
 		VerifyOverride: p.VerifyOverride,
+		CompatOverride: p.CompatOverride,
 		// Add-on secret-knob values (W4.5 #640) — sourced from stageSecrets (parent scope
 		// or the allowlisted child env), never from the persisted payload.
 		AddOnSecretValues: sec.AddonSecrets,
