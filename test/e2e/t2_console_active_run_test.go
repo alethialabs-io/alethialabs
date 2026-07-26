@@ -77,7 +77,7 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 // (with per-run dynamic overrides) under ALETHIA_E2E_A05_REAL_SNAPSHOT. `full` clones `base` and
 // layers the A0.6 apps/BYO repo wiring + the per-cloud cluster-json override — the exact snapshot
 // the runner consumes. Cloning keeps `base` pristine so fidelity is judged on the un-mutated shape.
-func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, s *a05Session) (base, full map[string]any, err error) {
+func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, s *a05Session) (base, full map[string]any, err error) {
 	t.Helper()
 	if s.enabled && a05RealSnapshotEnabled() {
 		envID := ""
@@ -111,6 +111,15 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	// is NOT written into the snapshot — it crosses via the control plane's git-token handler.
 	if reposEnabled {
 		repos.applyToSnapshot(full)
+	}
+	// #1268: layer the cross-account secret + the service binding that consumes it. MUST come AFTER
+	// MaxConfigSnapshot, which assigns whole snapshot keys (base[key] = decoded) and would otherwise
+	// overwrite the `secrets`/`services` this adds — a full-bar Sunday run would then silently drop
+	// the cross-account secret and still report green. applyToSnapshot appends for the same reason.
+	// On `full` ONLY (never `base`, the A0.5 fidelity target).
+	if xacctEnabled {
+		xacct.applyToSnapshot(full)
+		t.Logf("#1268: seeding the DEPLOY job with a %s secret + a secret-kind binding on service %q", xacct.connectorSlug(), xacct.serviceName)
 	}
 	// Merge the per-cloud cluster shape override into the `cluster` block. Malformed JSON is a loud
 	// failure — a workflow typo must not silently provision the wrong shape.

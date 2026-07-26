@@ -558,6 +558,46 @@ jobs:
           #    exercises meaningfully only from `main`. Set the repo VARIABLE E2E_NAMESPACE_TENANT
           #    (truthy) to enable once the apps repo is wired. ──
           ALETHIA_E2E_NAMESPACE_TENANT: ${{ vars.E2E_NAMESPACE_TENANT }}
+          # ── VCLUSTER-PLACEMENT layer (#1308/#1341). Same shape as the namespace tenant above: a
+          #    second DEPLOY with placement_mode=vcluster onto the SAME Fabric, then a DESTROY that
+          #    deregisters it. Its harness shipped WITHOUT this line, so the scenario was
+          #    unreachable from the nightly and silently never ran — see the guard test
+          #    TestScenarioEnablesReachTheNightly, which now fails if that happens again. Referenced
+          #    here so a maintainer can turn it on; UNSET ⇒ empty ⇒ a clean skip, so adding the line
+          #    changes nothing until E2E_VCLUSTER is set. ──
+          ALETHIA_E2E_VCLUSTER: ${{ vars.E2E_VCLUSTER }}
+          # ── DAY-2 ACCESS layer (BYOC A0.2). Same story as vcluster: harness present, never
+          #    referenced by the nightly. Off unless E2E_DAY2_ACCESS is set. ──
+          ALETHIA_E2E_DAY2_ACCESS: ${{ vars.E2E_DAY2_ACCESS }}
+          ALETHIA_E2E_DAY2_ACCESS_SUMMARY: ${{ runner.temp }}/day2-access-summary.json
+          # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
+          #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
+          #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
+          #    layer then asserts the account-B value materialized in-cluster (compared by SHA-256,
+          #    so the value never enters CI config, logs or the proof bundle) and that a placed
+          #    tenant is still refused (#1306).
+          #
+          #    AWS-ONLY today. gcp/azure/alibaba resolve to a recorded BLOCKED reason and skip —
+          #    their ESO identity cannot be pre-trusted (see docs/testing/xacct-secrets-parity.md).
+          #    Account B's read grant is applied ONCE, out of band, by infra/aws-secrets-e2e.
+          #
+          #    All plain VARIABLES, not secrets: a role ARN, an account id, a region, a secret name
+          #    and a digest are not sensitive — which is exactly why the canary is compared by hash.
+          #    Unset ⇒ a clean skip. ──
+          ALETHIA_E2E_SECRETS_XACCT: ${{ vars.E2E_SECRETS_XACCT }}
+          ALETHIA_E2E_SECRETS_XACCT_ACCOUNT: ${{ vars.E2E_SECRETS_XACCT_ACCOUNT }}
+          ALETHIA_E2E_SECRETS_XACCT_REGION: ${{ vars.E2E_SECRETS_XACCT_REGION }}
+          ALETHIA_E2E_SECRETS_XACCT_ROLE_ARN: ${{ vars.E2E_SECRETS_XACCT_ROLE_ARN }}
+          ALETHIA_E2E_SECRETS_XACCT_PROJECT_ID: ${{ vars.E2E_SECRETS_XACCT_PROJECT_ID }}
+          ALETHIA_E2E_SECRETS_XACCT_VAULT_URL: ${{ vars.E2E_SECRETS_XACCT_VAULT_URL }}
+          ALETHIA_E2E_SECRETS_XACCT_OIDC_ARN: ${{ vars.E2E_SECRETS_XACCT_OIDC_ARN }}
+          ALETHIA_E2E_SECRETS_XACCT_EXTERNAL_ID: ${{ vars.E2E_SECRETS_XACCT_EXTERNAL_ID }}
+          ALETHIA_E2E_SECRETS_XACCT_REMOTE_KEY: ${{ vars.E2E_SECRETS_XACCT_REMOTE_KEY }}
+          ALETHIA_E2E_SECRETS_XACCT_SECRET_NAME: ${{ vars.E2E_SECRETS_XACCT_SECRET_NAME }}
+          ALETHIA_E2E_SECRETS_XACCT_SERVICE: ${{ vars.E2E_SECRETS_XACCT_SERVICE }}
+          ALETHIA_E2E_SECRETS_XACCT_PROBE_NAMESPACE: ${{ vars.E2E_SECRETS_XACCT_PROBE_NAMESPACE }}
+          ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256: ${{ vars.E2E_SECRETS_XACCT_EXPECT_SHA256 }}
+          ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -593,6 +633,7 @@ jobs:
           # Day-2 soak summary (BYOC A0.3), written by the T2 test; folded into the bundle +
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
+          ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
