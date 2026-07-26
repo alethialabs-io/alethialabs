@@ -35,6 +35,18 @@ locals {
     MYSQL    = "MYSQL"
   }
 
+  # `database_version` is a Cloud SQL ENUM token (POSTGRES_16, MYSQL_8_0, MYSQL_5_7), so the version
+  # segment separates its parts with UNDERSCORES. Every producer we have emits the human/API form with
+  # a DOT — the offline catalog ships "8.0", and the federated picker's parseSqlVersion explicitly
+  # converts "8_0" → "8.0" so the console can display it — which composed the invalid "MYSQL_8.0" and
+  # made Cloud SQL MySQL unprovisionable by any path (#1381).
+  #
+  # Normalizing HERE rather than in the tfvars builder makes the module correct for EVERY caller (the
+  # console, the e2e harness, a hand-written tfvars), instead of only the path that happens to funnel
+  # through Go. The rewrite is safe for both engines: PostgreSQL versions are bare integers today, so
+  # it is a no-op, and were a dotted one to appear ("9.6") POSTGRES_9_6 is its correct token too.
+  engine_version_token = replace(var.engine_version, ".", "_")
+
   default_port = {
     POSTGRES = 5432
     MYSQL    = 3306
@@ -59,7 +71,9 @@ resource "google_sql_database_instance" "this" {
   # engine_map[engine] already yields "POSTGRES"/"MYSQL", so engine_version must be the BARE
   # version ("16"), not "POSTGRES_16" — otherwise this composes "POSTGRES_POSTGRES_16" and the
   # API rejects it: Invalid value at 'body.database_version'. (Cloud SQL had never provisioned.)
-  database_version    = "${local.engine_map[var.engine]}_${var.engine_version}"
+  # The version's own separator is normalized to the enum's underscore grain — see
+  # local.engine_version_token.
+  database_version    = "${local.engine_map[var.engine]}_${local.engine_version_token}"
   deletion_protection = var.environment == "production" ? true : false
 
   settings {
