@@ -6,12 +6,16 @@
 // project_chart_workloads row). Proves against real Postgres: (1) the migration BACKFILL unnests the
 // JSONB `bindings` from BOTH owners into rows + their nested injections, preserving ordinal; (2) the
 // two-path join-through RLS scopes a binding to its owner's project's org; (3) ON DELETE CASCADE from
-// EITHER parent drops the binding rows AND their injections. Seeded via the service connection.
+// EITHER parent drops the binding rows AND their injections; (4) the expand-complete BYO-IaC target
+// columns (#824: target_address + output_*) are captured by BOTH the dual-write and the migration
+// backfill — guarded to run only once those columns exist (CI's fresh migrated DB). Seeded via the
+// service connection.
 
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, withScope } from "@/lib/db";
+import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
 import {
 	projectAddons,
 	projectChartWorkloads,
@@ -21,7 +25,16 @@ import {
 	serviceBindingInjections,
 	serviceBindings,
 } from "@/lib/db/schema";
+import type { ServiceBinding } from "@/types/jsonb.types";
 import { describeIfDb } from "./db";
+
+/** True when the BYO-IaC target columns exist (post the expand-complete migration). */
+async function hasByoTargetCols(): Promise<boolean> {
+	const rows = await getServiceDb().execute<{ present: boolean }>(sql`
+		SELECT EXISTS(SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'service_bindings' AND column_name = 'target_address') AS present`);
+	return rows[0]?.present === true;
+}
 
 const ORG = randomUUID();
 const USER = randomUUID();
@@ -76,6 +89,19 @@ async function backfill(): Promise<void> {
 		WHERE sb.chart_workload_id = ${CW} AND (b.ord - 1) = sb.ordinal AND COALESCE(inj.elem->>'env','') <> ''
 		  AND (inj.elem->>'from') IN ('endpoint','port','username','password','connection_string')
 	`);
+	// Backfill the BYO-IaC target fields (the expand-complete migration's new columns) from the JSONB.
+	// Only exist post-migration (CI's fresh DB) — skip on a pre-migration shared dev DB.
+	if (!(await hasByoTargetCols())) return;
+	await db.execute(sql`
+		UPDATE service_bindings sb
+		SET target_address = e.elem->'target'->>'address',
+		    output_endpoint = e.elem->'target'->'output_keys'->>'endpoint',
+		    output_port = e.elem->'target'->'output_keys'->>'port',
+		    output_credential_secret = e.elem->'target'->'output_keys'->>'credential_secret'
+		FROM project_services s
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.bindings, '[]'::jsonb)) WITH ORDINALITY AS e(elem, ord)
+		WHERE sb.service_id = s.id AND sb.ordinal = (e.ord - 1)::int AND s.id = ${SVC}
+	`);
 }
 
 describeIfDb("service_bindings — polymorphic backfill, RLS, cascade", () => {
@@ -104,7 +130,17 @@ describeIfDb("service_bindings — polymorphic backfill, RLS, cascade", () => {
 			source: { kind: "image", image: "nginx" },
 			bindings: [
 				{
-					target: { kind: "database", name: "db" },
+					// A BYO-IaC target (#824) — exercises target_address + the output_* columns.
+					target: {
+						kind: "database",
+						name: "db",
+						address: "module.rds.this",
+						output_keys: {
+							endpoint: "rds_endpoint",
+							port: "rds_port",
+							credential_secret: "rds_secret_arn",
+						},
+					},
 					inject: [
 						{ env: "DB_URL", from: "connection_string" },
 						{ env: "DB_HOST", from: "endpoint" },
@@ -210,5 +246,61 @@ describeIfDb("service_bindings — polymorphic backfill, RLS, cascade", () => {
 			.from(serviceBindings)
 			.where(eq(serviceBindings.service_id, SVC));
 		expect(svcBindings.length).toBe(2);
+	});
+
+	it("backfills the BYO-IaC target address + output_keys onto the service binding", async () => {
+		if (!(await hasByoTargetCols())) return; // pre-migration shared dev DB — columns not added yet
+		const db = getServiceDb();
+		const [dbBinding] = await db
+			.select()
+			.from(serviceBindings)
+			.where(eq(serviceBindings.service_id, SVC))
+			.orderBy(serviceBindings.ordinal);
+		expect([
+			dbBinding.target_address,
+			dbBinding.output_endpoint,
+			dbBinding.output_port,
+			dbBinding.output_credential_secret,
+		]).toEqual(["module.rds.this", "rds_endpoint", "rds_port", "rds_secret_arn"]);
+	});
+
+	it("dual-write persists the BYO-IaC target fields to the child table", async () => {
+		if (!(await hasByoTargetCols())) return;
+		const db = getServiceDb();
+		const svc2 = randomUUID();
+		await db.insert(projectServices).values({
+			id: svc2,
+			project_id: PROJ,
+			environment_id: ENV,
+			name: "byo-svc",
+			source: { kind: "image", image: "nginx" },
+			bindings: [],
+		});
+		const bindings: ServiceBinding[] = [
+			{
+				target: {
+					kind: "database",
+					name: "customer-db",
+					address: "module.db.this",
+					output_keys: {
+						endpoint: "db_endpoint",
+						port: "db_port",
+						credential_secret: "db_secret",
+					},
+				},
+				inject: [{ env: "URL", from: "connection_string" }],
+			},
+		];
+		await db.transaction((tx) => insertServiceBindings(tx, { service_id: svc2 }, bindings));
+		const [row] = await db
+			.select()
+			.from(serviceBindings)
+			.where(eq(serviceBindings.service_id, svc2));
+		expect([
+			row.target_address,
+			row.output_endpoint,
+			row.output_port,
+			row.output_credential_secret,
+		]).toEqual(["module.db.this", "db_endpoint", "db_port", "db_secret"]);
 	});
 });
