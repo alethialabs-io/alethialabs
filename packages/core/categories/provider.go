@@ -60,6 +60,14 @@ type behavior struct {
 	// ClusterSecretStore), NOT a replacement of the native store, so it never flips the native secrets
 	// gate. nil → not a keyless secret store.
 	keylessSecretStore func(ComponentContext) KeylessSecretTarget
+	// saasSecretStore, when set (credential-based external secret stores: HashiCorp Vault / OpenBao,
+	// Doppler, or a generic Vault-KV-API-compatible endpoint), describes the in-cluster ESO
+	// ClusterSecretStore that reads that store with a STATIC API token seeded into an in-cluster
+	// Secret. Unlike keylessSecretStore (which ESO reads keylessly via the cluster's workload
+	// identity), a SaaS store has no cloud identity to federate — its token is seeded out-of-band and
+	// referenced by the store's auth.secretRef. Returns NON-SECRET connection config + the seed-Secret
+	// NAME only; the token itself never crosses this seam. nil → not a runtime-read SaaS secret store.
+	saasSecretStore func(ComponentContext) SecretsSaaSStore
 	// repoCred, when set (helm_registry category only), maps a private Helm/OCI chart-repo connection to
 	// the ArgoCD repository credential the runner seeds post-apply (argocd.EnsureHelmRepoCredential):
 	// the chart-repo URL (oci://host for an OCI registry, https://… for an HTTPS chart repo), the
@@ -178,6 +186,27 @@ func (p *CategoryProvider) KeylessSecretStore(ctx ComponentContext) (KeylessSecr
 func IsKeylessSecretStore(slug string) bool {
 	b, ok := behaviors["secrets/"+slug]
 	return ok && b.keylessSecretStore != nil
+}
+
+// SaaSSecretStore returns the credential-based external secret store (Vault / OpenBao / Doppler /
+// generic Vault-compatible) the ESO ClusterSecretStore reads with a static seeded token, or ok=false
+// when the provider is not a runtime-read SaaS secret store. It replaces the native store as the
+// project's secret source (unlike the keyless cross-account store, which is additive).
+func (p *CategoryProvider) SaaSSecretStore(ctx ComponentContext) (SecretsSaaSStore, bool) {
+	if p.b.saasSecretStore == nil {
+		return SecretsSaaSStore{}, false
+	}
+	return p.b.saasSecretStore(ctx), true
+}
+
+// IsSaaSSecretStore reports whether a secrets slug is a credential-based external secret store with a
+// first-class in-cluster ESO runtime-read path on the pinned chart (vault / generic / doppler). It is
+// true only when saasSecretStore is registered — so infisical / 1Password (whose runtime-read is an
+// explicit documented exclusion on ESO 0.9.12) return false and render no ClusterSecretStore. Cheap
+// lookup for routing in DominantSecretsSaaSStore without building a full ComponentContext.
+func IsSaaSSecretStore(slug string) bool {
+	b, ok := behaviors["secrets/"+slug]
+	return ok && b.saasSecretStore != nil
 }
 
 // RepoCred returns the ArgoCD repository credential a private Helm/OCI chart-repo connection maps to

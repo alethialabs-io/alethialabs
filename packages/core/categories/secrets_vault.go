@@ -23,5 +23,10 @@ func init() {
 			}
 			return nil
 		},
+		// Runtime-read: ESO reads this Vault (KV v2) via spec.provider.vault with a token seeded
+		// into an in-cluster Secret, so workloads resolve real values (not just the tofu placeholder).
+		saasSecretStore: func(ctx ComponentContext) SecretsSaaSStore {
+			return vaultSaaSStore(ctx, "vault")
+		},
 	})
 }
