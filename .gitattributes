@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Derived artifacts. `linguist-generated` collapses them in review (they are noise, not code) and,
+# more importantly, marks them as machine-owned so nobody tries to resolve a conflict line-by-line.
+#
+# THE RULE: a conflict in any file below is resolved by RE-RUNNING ITS GENERATOR, never by hand.
+# Hand-merging them produces output that no longer corresponds to its source — a lockfile with
+# broken checksums, a catalog that disagrees with the adapters that produced it, or (worst) a
+# drizzle snapshot chain that silently forks and jams `db:generate` for every worktree.
+
+# ── drizzle migration chain ────────────────────────────────────────────────────────────────────
+# NOT merely generated: the snapshots are a LINEAR chain keyed on prevId, so a textual merge can
+# produce a file that parses but is structurally invalid. If two branches both generated a
+# migration, delete yours (.sql AND snapshot), take dev's, rebase, and re-run `db:generate` — see
+# apps/console/scripts/check-migrations.mjs, which fails the PR when two branches claim one index.
+apps/console/lib/db/migrations/meta/*.json  linguist-generated=true
+
+# ── connector / capability catalogs (pnpm gen:connectors, gen:catalog) ─────────────────────────
+apps/console/lib/connectors/registry.generated.ts  linguist-generated=true
+apps/console/lib/db/seed/connectors.generated.sql  linguist-generated=true
+packages/core/categories/catalog.json              linguist-generated=true
+packages/core/catalog/catalog.json                 linguist-generated=true
+
+# ── compat matrix (pnpm gen:matrix — matrix.json is the SSOT, these are its projections) ───────
+apps/console/lib/compat/generated/matrix.ts  linguist-generated=true
+
+# ── lockfile: regenerate with `pnpm install`, never hand-merge ─────────────────────────────────
+pnpm-lock.yaml  linguist-generated=true
