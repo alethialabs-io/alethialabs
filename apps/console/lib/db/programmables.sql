@@ -818,7 +818,14 @@ SELECT
   -- Cluster (provider-specific knobs travel in cluster_provider_config)
   cl.cluster_version,
   cl.provider_config AS cluster_provider_config,
-  cl.cluster_admins,
+  -- cluster_admins was normalized out of project_cluster into the cluster_admins child table
+  -- (contract phase — the JSONB column is dropped). Reconstruct the same {username, groups} array in
+  -- author `ordinal` order so the view column stays byte-shape identical for the CLI config endpoints.
+  COALESCE(
+    (SELECT jsonb_agg(jsonb_build_object('username', ca.username, 'groups', ca.groups) ORDER BY ca.ordinal)
+     FROM public.cluster_admins ca WHERE ca.cluster_id = cl.id),
+    '[]'::jsonb
+  ) AS cluster_admins,
   cl.instance_types,
   cl.node_min_size, cl.node_max_size, cl.node_desired_size,
   cl.cluster_name, cl.cluster_endpoint,
