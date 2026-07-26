@@ -30,13 +30,13 @@ jobs:
       # installed on THIS repo (alethialabs-io/alethialabs) with contents+pull-requests+issues write.
       - name: Mint release-please token (GitHub App)
         id: rp_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
           owner: alethialabs-io
           repositories: alethialabs
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           token: ${{ steps.rp_token.outputs.token }}

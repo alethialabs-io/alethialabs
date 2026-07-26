@@ -23,8 +23,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
@@ -49,15 +49,15 @@ jobs:
       contents: read
       id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
       # Same least-priv OIDC role as cp-hetzner (infra/aws-oidc → alethia-cp-deployer);
       # it grants S3 state on status/* too.
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.CP_HETZNER_DEPLOYER_ROLE_ARN }}
           aws-region: ${{ env.ASM_REGION }}
