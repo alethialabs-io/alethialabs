@@ -1,0 +1,1 @@
+ALTER TABLE "project_topics" DROP COLUMN "subscriptions";

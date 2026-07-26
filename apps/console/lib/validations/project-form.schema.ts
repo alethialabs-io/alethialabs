@@ -68,7 +68,9 @@ const cachesInsert = createInsertSchema(projectCaches, {
 const queuesInsert = createInsertSchema(projectQueues, {
 	storage_gb: z.number().int().min(1).max(256).nullable().optional(),
 });
-const topicsInsert = createInsertSchema(projectTopics, {
+// `subscriptions` is no longer a project_topics column (contract phase — it persists to the
+// topic_subscriptions child table), so it's a form-only field extended onto the insert shape.
+const topicsInsert = createInsertSchema(projectTopics).extend({
 	subscriptions: z.custom<TopicSubscription[]>().optional(),
 });
 const nosqlInsert = createInsertSchema(projectNosqlTables, {
