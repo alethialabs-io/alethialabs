@@ -332,6 +332,42 @@ func TestFromServices_ResolvesBindings(t *testing.T) {
 	}
 }
 
+// TestFromServices_ResolvesSecretBinding locks the secret-kind binding consume path (#1207): a service
+// bound (kind: secret, from: value) to a project secret backed by a readable SaaS store gets a
+// secretKeyRef into the shared BindingSecretName (key "value", lock-step with the ExternalSecret
+// lane); a secret with no readable store (native/excluded provider) is fail-closed — no env emitted.
+func TestFromServices_ResolvesSecretBinding(t *testing.T) {
+	svc := []types.ProjectServiceConfig{{
+		Name:   "api",
+		Type:   "deployment",
+		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+		Bindings: []types.ServiceBinding{{
+			Target: types.ServiceBindingTarget{Kind: "secret", Name: "stripe-key"},
+			Inject: []types.ServiceBindingInjection{{Env: "STRIPE_KEY", From: "value"}},
+		}},
+	}}
+
+	// Readable store → secretKeyRef emitted (key "value").
+	apps, skipped := FromServices(svc, Options{
+		Provider:     "hetzner", // cloud-agnostic
+		SecretStores: map[string]SecretStoreRef{"stripe-key": {StoreName: "secretstore-vault", ValueProperty: "value"}},
+	})
+	if len(skipped) != 0 {
+		t.Fatalf("nothing should skip, got %v", skipped)
+	}
+	secretName := BindingSecretName("api", types.ServiceBindingTarget{Kind: "secret", Name: "stripe-key"})
+	want := AppSecretEnv{Env: "STRIPE_KEY", SecretName: secretName, SecretKey: "value"}
+	if len(apps[0].SecretEnv) != 1 || apps[0].SecretEnv[0] != want {
+		t.Fatalf("secretEnv = %+v, want [%+v]", apps[0].SecretEnv, want)
+	}
+
+	// No readable store (empty SecretStores → native/excluded provider) → fail-closed: no secretKeyRef.
+	apps2, _ := FromServices(svc, Options{Provider: "hetzner"})
+	if len(apps2[0].SecretEnv) != 0 {
+		t.Errorf("an unreadable secret must emit NO secretKeyRef, got %+v", apps2[0].SecretEnv)
+	}
+}
+
 // TestFromServices_ResolvesBindings_PerCloud locks the per-cloud endpoint output-key map (#711): a
 // service's endpoint facet resolves from the RIGHT tofu output for the provision's cloud — Cloud SQL
 // / Memorystore on GCP, the DB FQDN / Cache hostname on Azure — not only the AWS keys. Ports stay on

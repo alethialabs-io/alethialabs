@@ -58,6 +58,10 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	if s := categories.DominantRegistryPullSecret(vc); s != "" {
 		pullSecrets = []string{s}
 	}
+	// The single source of truth for secret-kind bindings: project secret name → its pluggable SaaS
+	// store. Shared by BOTH binding lanes below (resolveBindings via mopts, writeBindingExternalSecrets
+	// directly) so they never disagree about which secret bindings are satisfiable (fail-closed).
+	secretStores := secretStoreRefs(vc)
 	mopts := manifests.Options{
 		Namespace:        appNamespace,
 		Domain:           vc.DNS.DomainName,
@@ -67,6 +71,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		Databases:        vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
 		RunnerImage:      os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
 		ImagePullSecrets: pullSecrets,
+		SecretStores:     secretStores, // secret-kind binding → pluggable SaaS store (runtime-read, #1207)
 	}
 	apps, skipped := manifests.FromServices(vc.Services, mopts)
 	for _, reason := range skipped {
@@ -102,7 +107,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// ClusterSecretStore) materializes the k8s Secret the workload's secretKeyRef reads. The Secret
 	// name matches BindingSecretName(s.Name, target) — exactly the secretKeyRef.name the renderer
 	// emitted for this service (per-service, so no two ExternalSecrets fight over one Secret).
-	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, stdout)
+	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, secretStores, stdout)
 	if err != nil {
 		return warnings, err
 	}
@@ -357,15 +362,76 @@ func credentialRemoteOutputKey(t types.ServiceBindingTarget) string {
 	return credentialSecretOutputKey(string(t.Kind))
 }
 
+// secretStoreRefs maps each project secret NAME → its pluggable SaaS store (secretstore-<slug> + the
+// remoteRef property the value lives under) for secret-kind bindings. Only secrets whose connector has
+// a first-class ESO runtime-read path on the pinned chart (categories.IsSaaSSecretStore — vault /
+// doppler / generic) get an entry; native / cross-account / excluded (infisical, 1Password) providers
+// are absent, so a binding to them is reported unsatisfiable (fail-closed) by BOTH binding lanes.
+// Doppler secrets are flat (no property); Vault-KV-compatible stores read the value under "value".
+func secretStoreRefs(vc *types.ProjectConfig) map[string]manifests.SecretStoreRef {
+	if len(vc.Secrets) == 0 {
+		return nil
+	}
+	out := make(map[string]manifests.SecretStoreRef, len(vc.Secrets))
+	for _, s := range vc.Secrets {
+		if !categories.IsSaaSSecretStore(s.Provider) {
+			continue
+		}
+		prop := "value"
+		if s.Provider == "doppler" {
+			prop = "" // Doppler is flat key→value — no sub-property
+		}
+		out[s.Name] = manifests.SecretStoreRef{
+			StoreName:     "secretstore-" + s.Provider,
+			ValueProperty: prop,
+		}
+	}
+	return out
+}
+
 // writeBindingExternalSecrets renders an ExternalSecret per service credential-facet binding and
 // writes it into dir (alongside the app manifests) for ArgoCD to apply. It passes ServiceName:
 // s.Name so the materialized Secret's name equals the renderer's per-service secretKeyRef target.
 // Unsatisfiable facets (no store for the cloud, no provisioned secret, a facet the secret lacks)
 // are reported to stdout AND returned as `skips`, never dropped silently. Returns those skip reasons
 // + the count written. The skip reasons carry no secret values (facet/kind/provider names only).
-func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, keylessOn bool, stdout io.Writer) (skips []string, count int, err error) {
+func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, keylessOn bool, secretStores map[string]manifests.SecretStoreRef, stdout io.Writer) (skips []string, count int, err error) {
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
+			// A secret-kind binding materializes a PROJECT SECRET from its pluggable SaaS store
+			// (Vault/Doppler/generic), not a cloud master secret — route it to the SaaS renderer.
+			// Fail-closed + lock-step with resolveBindings: skip when the secret has no readable store
+			// (native/excluded provider is absent from secretStores) so no workload references a Secret
+			// this lane won't create.
+			if b.Target.Kind == types.ServiceBindingKindSecret {
+				if len(manifests.CredentialFacetNames(b)) == 0 {
+					continue // no `value` facet to materialize
+				}
+				ref := secretStores[b.Target.Name]
+				if ref.StoreName == "" {
+					reason := fmt.Sprintf("%s→secret/%s: the project secret has no readable pluggable store (native/excluded provider) — ExternalSecret not written", s.Name, b.Target.Name)
+					fmt.Fprintf(stdout, "ExternalSecret skipped %s\n", reason)
+					skips = append(skips, reason)
+					continue
+				}
+				yaml, renderErr := manifests.RenderSecretBindingExternalSecret(manifests.SecretBindingExternalSecretParams{
+					ServiceName: s.Name,
+					Namespace:   appNamespace,
+					Target:      b.Target,
+					StoreName:   ref.StoreName,
+					RemoteKey:   b.Target.Name, // the project secret's own name is its KV path / Doppler key
+					Property:    ref.ValueProperty,
+				})
+				if renderErr != nil {
+					return skips, count, fmt.Errorf("render secret ExternalSecret for %s→secret/%s: %w", s.Name, b.Target.Name, renderErr)
+				}
+				file := filepath.Join(dir, manifests.BindingSecretName(s.Name, b.Target)+"-externalsecret.yaml")
+				if writeErr := os.WriteFile(file, []byte(yaml), 0o644); writeErr != nil {
+					return skips, count, writeErr
+				}
+				count++
+				continue
+			}
 			facets := manifests.CredentialFacetNames(b)
 			if len(facets) == 0 {
 				continue // endpoint/port-only binding needs no Secret
