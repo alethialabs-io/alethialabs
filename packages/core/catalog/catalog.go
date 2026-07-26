@@ -80,12 +80,24 @@ type DatabaseProvider struct {
 	Engines  []DBEngine `json:"engines"`
 }
 
-// DBEngine maps an abstract engine family to a concrete provider engine + default version.
+// DBEngine maps an abstract engine family to a concrete provider engine + the versions it offers.
+//
+// Versions is the OFFLINE baseline the picker falls back to when an account's capabilities haven't
+// synced, newest-first, and DefaultVersion is always a member of it. Every entry is substitutable
+// for DefaultVersion in the provider's own tofu variable — same value space, same grain — because
+// that is where these strings end up (resolveDBEngine → ProviderTfvars → engine_version). The grain
+// therefore differs per provider by necessity: AWS/GCP/Azure take a bare major ("16"), Alibaba takes
+// "<major>.0", and Azure MySQL takes the azurerm-accepted "8.0.21".
+//
+// It is GUIDANCE, never a gate: resolveDBEngine does not reject an unlisted version. A customer
+// whose account offers something this static list hasn't caught up with must still be able to
+// provision it (the #918 fail-open principle) — a stale catalog must never become a hard failure.
 type DBEngine struct {
-	Family         string `json:"family"`
-	Value          string `json:"value"`
-	Label          string `json:"label"`
-	DefaultVersion string `json:"default_version"`
+	Family         string   `json:"family"`
+	Value          string   `json:"value"`
+	Label          string   `json:"label"`
+	DefaultVersion string   `json:"default_version"`
+	Versions       []string `json:"versions"`
 }
 
 // Capacity describes the provider's scaling-unit model.
