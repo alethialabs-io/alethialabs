@@ -27,13 +27,9 @@ const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-backgro
 function scanChip(
 	scanStatus?: string,
 	report?: VerifyReport | null,
-	repoUrl?: string,
 ): { label: string; cls: string; Icon: typeof ShieldCheck; spin?: boolean } {
-	// The scanner clones a git repo, so a chart pulled from an OCI registry can't be scanned today.
-	// Say "unavailable" rather than leaving it forever "Not scanned", which reads as a chart nobody
-	// got round to checking.
-	if (repoUrl?.startsWith("oci://"))
-		return { label: "Scan n/a (OCI)", cls: "text-muted-foreground/60", Icon: ShieldQuestion };
+	// Both chart sources scan: the runner resolves a git chart by cloning and an OCI chart by pulling
+	// it from the registry (#1300), so the chip is driven purely by the scan lifecycle.
 	if (scanStatus === "scanning")
 		return { label: "Scanning…", cls: "text-muted-foreground", Icon: Loader2, spin: true };
 	if (scanStatus === "failed")
@@ -77,7 +73,7 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	if (!node) return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
-	const chip = scanChip(c.scanStatus, c.scanReport, c.repoUrl);
+	const chip = scanChip(c.scanStatus, c.scanReport);
 	const ChipIcon = chip.Icon;
 
 	const detach = async () => {

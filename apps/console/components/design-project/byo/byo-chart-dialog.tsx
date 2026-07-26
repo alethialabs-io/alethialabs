@@ -405,12 +405,6 @@ export function ByoChartDialog({
 								</div>
 								<div>namespace {effectiveNs} · manual sync</div>
 							</div>
-							{isOci ? (
-								<p className="text-xs text-muted-foreground">
-									Chart-safety scanning isn&apos;t available for OCI charts yet — the scanner
-									clones a git repo. The chart still deploys and is governed like any other.
-								</p>
-							) : null}
 						</div>
 					)}
 				</div>

@@ -60,9 +60,7 @@ You need one only for a **private** repository. Public charts, including everyth
 
 To use a private chart, attach it with **Add → Bring your own Helm chart**, choose **OCI registry**, and give the whole reference including the chart name (`oci://ghcr.io/acme/payments`) plus a chart version (`*` for the latest). The dialog tells you whether a chart repository on the environment covers that host.
 
-<Callout type="info">
-Chart-safety scanning is not available for charts pulled from an OCI registry. The scanner clones a Git repository, so it cannot reach a registry artifact. An OCI chart still deploys and is governed like any other chart — it is reported as unscanned rather than as passing.
-</Callout>
+A chart pulled from an OCI registry is scanned exactly like one in a Git repository, and the same credential authenticates both the safety scan and ArgoCD's deploy-time pull. See [Chart repositories](/console/connectors/chart-repositories) for the full provider list and how a chart's host is matched to a credential.
 
 ## Adding a new provider
 

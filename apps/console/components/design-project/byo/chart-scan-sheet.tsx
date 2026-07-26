@@ -233,17 +233,6 @@ export function ChartScanSheet({
 								become a hard admission gate when untrusted charts open up.
 							</p>
 						</div>
-					) : repoUrl.startsWith("oci://") ? (
-						/* Documented exclusion: the CHART_SCAN job clones a git repo, so a chart pulled from
-						   an OCI registry can't be scanned until the runner grows a `helm pull`. Offering a
-						   Scan button here would just produce an error toast. */
-						<div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-							<EvIcon name="shield-question" size={20} className={TONE_TEXT.muted} />
-							<div className="max-w-[320px] text-[13px] text-text-secondary">
-								Chart scanning isn&apos;t available for OCI charts yet — the scanner clones a git
-								repository. The chart still deploys and is governed like any other.
-							</div>
-						</div>
 					) : (
 						/* Unscanned / failed empty state */
 						<div className="flex flex-col items-center justify-center gap-3 py-16 text-center">

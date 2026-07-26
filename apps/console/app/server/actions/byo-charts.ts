@@ -154,16 +154,12 @@ export async function attachByoChart(
 	});
 
 	// Auto-queue a safety scan so the user sees any issues right after attaching (best-effort — a
-	// scan-queue failure must never fail the attach itself). SKIPPED for an OCI chart: the CHART_SCAN
-	// job clones a git repo with a git token, so scanning a registry artifact would need a runner-side
-	// `helm pull` (a Go change, tracked separately). Skipping explicitly rather than letting
-	// scanByoChart throw into the catch below keeps the exclusion visible instead of silent.
-	if (!isOci) {
-		try {
-			await scanByoChart({ projectId: parsed.projectId, environmentId: envId, id });
-		} catch {
-			/* ignore — the chart is attached; the user can re-run the scan from the node */
-		}
+	// scan-queue failure must never fail the attach itself). Both chart sources scan: the runner
+	// resolves a git chart by cloning and an OCI chart by pulling it from the registry (#1300).
+	try {
+		await scanByoChart({ projectId: parsed.projectId, environmentId: envId, id });
+	} catch {
+		/* ignore — the chart is attached; the user can re-run the scan from the node */
 	}
 	return { ok: true, id };
 }

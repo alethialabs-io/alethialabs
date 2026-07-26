@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The OCI half of the BYO-chart actions (#1247). Two things worth pinning:
-//   - attachByoChart persists an OCI chart as chart_repo + version with chart_path NULL (the shape
-//     resolveByoChartInstall turns into an ArgoCD helm source), and does NOT queue a safety scan.
-//   - scanByoChart refuses an OCI chart with an explicit message. The scanner clones a git repo, so
-//     this is a documented exclusion; before the guard it fell through the `!row.chart_path` branch
-//     and reported the chart as MISSING, which reads as a bug rather than a limitation.
+//   - attachByoChart persists an OCI chart as chart_repo + version with chart_path NULL — the shape
+//     resolveByoChartInstall turns into an ArgoCD helm source.
+//   - scanByoChart queues a CHART_SCAN for it. The runner resolves an OCI chart by pulling it from
+//     the registry (#1300), so a null chart_path must NOT be mistaken for a missing chart, which is
+//     how it read before that landed.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -126,9 +126,9 @@ describe("attachByoChart — OCI", () => {
 	});
 });
 
-describe("scanByoChart — OCI exclusion", () => {
-	it("refuses an OCI chart with a reason, not a not-found", async () => {
-		setupDb([
+describe("scanByoChart — OCI", () => {
+	it("queues a scan for an OCI chart, which has no chart path", async () => {
+		const { inserted } = setupDb([
 			{
 				addon_id: "payments",
 				chart_repo: "oci://ghcr.io/acme/payments",
@@ -139,7 +139,18 @@ describe("scanByoChart — OCI exclusion", () => {
 
 		await expect(
 			scanByoChart({ projectId: "proj-1", environmentId: "env-1", id: "payments" }),
-		).rejects.toThrow(/isn't available for OCI charts/i);
+		).resolves.toMatchObject({ ok: true });
+
+		// The runner resolves an OCI chart by pulling it from the registry (#1300), so chart_path
+		// stays null and `ref` carries the chart version rather than a git ref.
+		const job = inserted.find((i) => Object(i.payload) && "job_type" in Object(i.payload))
+			?.payload as { job_type: string; config_snapshot: Record<string, unknown> };
+		expect(job.job_type).toBe("CHART_SCAN");
+		expect(job.config_snapshot).toMatchObject({
+			repo_url: "oci://ghcr.io/acme/payments",
+			chart_path: null,
+			ref: "1.4.2",
+		});
 	});
 
 	it("still queues a scan for a git chart", async () => {

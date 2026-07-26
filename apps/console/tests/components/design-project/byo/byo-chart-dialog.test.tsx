@@ -132,7 +132,7 @@ describe("ByoChartDialog — OCI source", () => {
 		expect(await screen.findByLabelText(/chart version/i)).toBeInTheDocument();
 	});
 
-	it("warns that OCI charts can't be safety-scanned", async () => {
+	it("does not claim OCI charts are unscannable — the runner pulls and scans them (#1300)", async () => {
 		const user = userEvent.setup();
 		renderDialog();
 
@@ -145,7 +145,7 @@ describe("ByoChartDialog — OCI source", () => {
 		await user.click(next());
 		await user.click(next());
 
-		expect(screen.getByText(/isn't available for OCI charts/i)).toBeInTheDocument();
+		expect(screen.queryByText(/isn't available for OCI charts/i)).not.toBeInTheDocument();
 	});
 });
 
