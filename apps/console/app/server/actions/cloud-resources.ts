@@ -7,6 +7,7 @@ import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { openSensitive } from "@/lib/cloud-providers/inventory/upsert";
 import {
+	cloudIdentities,
 	cloudNetworks,
 	cloudRegions,
 	cloudSubnets,
@@ -25,12 +26,24 @@ export async function getCloudIdentityInventory(cloudIdentityId: string) {
 		id: cloudIdentityId,
 	});
 	return withActorScope(actor, async (tx) => {
+		// Defence in depth: every inventory row for an identity is that identity's provider by
+		// construction, so this predicate should never change a result — which is exactly why it is
+		// worth having. A mis-scoped sweeper write would otherwise surface another cloud's networks in
+		// this account's picker, and the standing rule is that provider is always in the predicate.
+		const [identity] = await tx
+			.select({ provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, cloudIdentityId))
+			.limit(1);
+		if (!identity) return { networks: [], subnets: [], regions: [] };
+
 		const networks = await tx
 			.select()
 			.from(cloudNetworks)
 			.where(
 				and(
 					eq(cloudNetworks.cloud_identity_id, cloudIdentityId),
+					eq(cloudNetworks.provider, identity.provider),
 					isNull(cloudNetworks.removed_at),
 				),
 			)
@@ -41,6 +54,7 @@ export async function getCloudIdentityInventory(cloudIdentityId: string) {
 			.where(
 				and(
 					eq(cloudSubnets.cloud_identity_id, cloudIdentityId),
+					eq(cloudSubnets.provider, identity.provider),
 					isNull(cloudSubnets.removed_at),
 				),
 			);
@@ -50,6 +64,7 @@ export async function getCloudIdentityInventory(cloudIdentityId: string) {
 			.where(
 				and(
 					eq(cloudRegions.cloud_identity_id, cloudIdentityId),
+					eq(cloudRegions.provider, identity.provider),
 					isNull(cloudRegions.removed_at),
 				),
 			)

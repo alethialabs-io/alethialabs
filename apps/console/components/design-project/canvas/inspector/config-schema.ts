@@ -22,6 +22,8 @@ import { coerceEnum } from "@/lib/coerce";
 import { toStrArray } from "@/lib/coerce";
 import {
 	cacheTierOptions,
+	dbEngineOptions,
+	existingNetworkOptions,
 	instanceTypeOptions,
 	k8sVersionOptions,
 	nosqlKeyTypeOptions,
@@ -776,10 +778,17 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 					},
 					{
 						key: "network_id",
-						type: "text",
-						label: "Existing network ID",
+						type: "select",
+						label: "Existing network",
 						mono: true,
-						placeholder: "vpc-…",
+						placeholder: "Select a network",
+						// The already-synced inventory, not a free-text box. `networkSchema`'s refine has
+						// said "Select a VPC when using an existing network" since before a picker existed.
+						// The option VALUE is the provider-native id (`vpc-…`) because that is what this
+						// column stores and what the tofu templates read — never the cloud_networks row
+						// uuid. `withSelected` keeps an id typed before this change from vanishing.
+						capabilityAxis: "placement",
+						options: existingNetworkOptions,
 						visibleWhen: (c) => c.provision_network === false,
 					},
 					{
@@ -948,8 +957,11 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "radio-card",
 						label: "Engine",
 						// Provider-filtered via the registry's shared variant gate (Hetzner runs
-						// databases in-cluster via CloudNativePG → postgres only).
-						options: ({ provider }) => variantOptionsFor("database", provider),
+						// databases in-cluster via CloudNativePG → postgres only), then narrowed to what
+						// this account reports. The gate stays the FLOOR: it encodes what the chart
+						// mapper can actually deploy, which account capability must not override.
+						capabilityAxis: "database",
+						options: dbEngineOptions,
 					},
 					{
 						key: "port",

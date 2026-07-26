@@ -41,7 +41,7 @@ import {
 	type Resolvable,
 	type SectionDef,
 } from "./config-schema";
-import { regionCodes, withSelected } from "./capability-options";
+import { provenanceNote, regionCodes, withSelected } from "./capability-options";
 import { RadioCardGroup } from "./radio-card-group";
 
 type Config = Record<string, unknown>;
@@ -321,6 +321,12 @@ function FieldRow({
 	const raw = field.get ? field.get(ctx.config) : ctx.config[field.key];
 	const unit = resolve(field.unit, ctx);
 	const label = unit ? `${field.label} (${unit})` : field.label;
+	// Resolved here (not inside FieldControl) so the count reflects exactly what the control renders.
+	const provenance = provenanceNote(
+		ctx,
+		field.capabilityAxis,
+		(resolve(field.options, ctx) ?? []).length,
+	);
 
 	if (field.type === "switch") {
 		return (
@@ -381,6 +387,12 @@ function FieldRow({
 				field.type !== "radio-card" && (
 					<p className="text-xs text-muted-foreground">{field.description}</p>
 				)
+			)}
+			{/* Provenance, once per field rather than per option: is this list THIS account's, or the
+			    whole catalog? The fail-open is invisible in the options by design, so without this the
+			    two read identically. Informational only — it gates nothing. */}
+			{provenance && (
+				<p className="vx-eyebrow text-[10px] text-muted-foreground">{provenance}</p>
 			)}
 		</div>
 	);

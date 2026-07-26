@@ -9,12 +9,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	advisoryFor,
+	dbEngineOptions,
 	cacheTierOptions,
 	existingNetworkOptions,
 	instanceTypeOptions,
 	intersectWithFloor,
 	k8sVersionOptions,
 	nosqlKeyTypeOptions,
+	provenanceNote,
 	regionCodes,
 	subnetOptions,
 	withSelected,
@@ -252,5 +254,73 @@ describe("placement inventory (#980)", () => {
 
 	it("lists every subnet when no network is selected", () => {
 		expect(subnetOptions(ctxWith("aws", bag)).length).toBe(2);
+	});
+});
+
+describe("provenanceNote — the fail-open must be legible", () => {
+	const withState = (
+		state: CapabilityBag["state"],
+		source: "account" | "catalog",
+	): FieldCtx => ({
+		provider: "aws",
+		config: {},
+		caps: {
+			...NO_CAPABILITIES,
+			provider: "aws",
+			state,
+			axisSource: { ...NO_CAPABILITIES.axisSource, instance_type: source },
+		},
+	});
+
+	it("says nothing for a field with no capability axis", () => {
+		expect(provenanceNote(withState("ready", "account"), undefined, 5)).toBeNull();
+	});
+
+	it("counts the options when the list IS this account's", () => {
+		expect(provenanceNote(withState("ready", "account"), "instance_type", 12)).toBe(
+			"12 available to this account.",
+		);
+	});
+
+	it("distinguishes still-enumerating from asked-and-got-nothing", () => {
+		// These resolve differently: one fixes itself, the other doesn't. Saying "checking…" forever
+		// would be the worst of both.
+		expect(provenanceNote(withState("syncing", "catalog"), "instance_type", 340)).toMatch(
+			/checking/i,
+		);
+		expect(provenanceNote(withState("ready", "catalog"), "instance_type", 340)).toBe(
+			"Showing the full catalog.",
+		);
+	});
+
+	it("owns up when the read failed", () => {
+		expect(provenanceNote(withState("error", "catalog"), "instance_type", 340)).toMatch(
+			/couldn't read your account/i,
+		);
+	});
+});
+
+describe("dbEngineOptions — the deploy-time floor is not negotiable", () => {
+	it("narrows the floor to the account's engines", () => {
+		const ctx = ctxWith("aws", {
+			dbEngines: [{ value: "postgres", label: "PostgreSQL 16", launchable: "launchable" }],
+		});
+		expect(dbEngineOptions(ctx).map((o) => o.value)).toEqual(["postgres"]);
+	});
+
+	it("returns the full floor when the account reports nothing", () => {
+		const values = dbEngineOptions(ctxStatic("aws")).map((o) => o.value);
+		expect(values).toContain("postgres");
+		expect(values.length).toBeGreaterThan(0);
+	});
+
+	it("keeps the floor when the account reports only engines the mapper can't deploy", () => {
+		// Hetzner runs databases in-cluster via CloudNativePG — postgres only, whatever the account
+		// says. An empty engine radio would be a #918 violation.
+		const ctx = ctxWith("hetzner", {
+			dbEngines: [{ value: "oracle", label: "Oracle", launchable: "launchable" }],
+		});
+		const values = dbEngineOptions(ctx).map((o) => o.value);
+		expect(values).toEqual(["postgres"]);
 	});
 });
