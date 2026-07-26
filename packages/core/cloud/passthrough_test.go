@@ -144,6 +144,8 @@ func TestProviderTfvars_ParityKnobs(t *testing.T) {
 		assertEq(t, tf, "eks_disk_size", 120)
 		assertEq(t, tf, "rds_instance_type", "db.r6g.large")
 		assertEq(t, tf, "redis_engine_version", "7.0")
+		// The parameter-group family tracks the picked version's major (#977).
+		assertEq(t, tf, "redis_family", "redis7")
 	})
 
 	t.Run("gcp", func(t *testing.T) {
@@ -168,6 +170,33 @@ func TestProviderTfvars_ParityKnobs(t *testing.T) {
 		assertEq(t, tf, "aks_disk_size_gb", 120)
 		assertEq(t, tf, "azure_db_sku_name", "GP_Standard_D2s_v3")
 		assertEq(t, tf, "azure_cache_redis_version", "6")
+	})
+}
+
+// A picked cache engine version keeps redis_family in lock-step with the version's major, and a
+// valkey pick routes to the valkey var instead of corrupting redis_engine_version (#977).
+func TestProviderTfvars_CacheEngineVersionRouting(t *testing.T) {
+	t.Run("redis version derives the family", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", Engine: types.CacheEngineRedis, EngineVersion: "6.2"},
+			},
+		}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		assertEq(t, tf, "redis_engine_version", "6.2")
+		assertEq(t, tf, "redis_family", "redis6")
+	})
+
+	t.Run("valkey version routes to the valkey var, leaving redis at its base default", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", Engine: types.CacheEngineValkey, EngineVersion: "8.0"},
+			},
+		}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		assertEq(t, tf, "valkey_engine_version", "8.0")
+		// The valkey version must NOT land in redis_engine_version — it stays at the base default.
+		assertEq(t, tf, "redis_engine_version", "7.1")
 	})
 }
 
