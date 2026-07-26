@@ -133,3 +133,72 @@ func TestAWSProviderECRNamesMap(t *testing.T) {
 		t.Fatalf("buildECRNamesMap() = %#v, want %#v", got, want)
 	}
 }
+
+// TestAWSProvider_CacheEngineSelectsTheModule pins the fix for the defect this lane exists for: the
+// canvas offers a cache ENGINE, and until now no provider read it. Picking Valkey provisioned Redis,
+// silently, and the apply succeeded.
+//
+// The two toggles must be mutually exclusive — both on would run two ElastiCache modules for one
+// cache node, and both off would provision nothing while the environment reported converged.
+func TestAWSProvider_CacheEngineSelectsTheModule(t *testing.T) {
+	tests := []struct {
+		name       string
+		engine     types.CacheEngine
+		wantRedis  bool
+		wantValkey bool
+	}{
+		{"valkey selects the serverless module", types.CacheEngineValkey, false, true},
+		{"redis selects the replication group", types.CacheEngineRedis, true, false},
+		{"an engine-less config stays on redis", "", true, false},
+	}
+
+	p := &awsProvider{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &types.ProjectConfig{
+				Cluster: types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+				DNS:     types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+				Caches:  []types.ProjectCacheConfig{{Name: "main", Engine: tt.engine, MemoryGB: 4}},
+			}
+			tfvars := p.ProviderTfvars(cfg)
+
+			if got := tfvars["create_elasticache_redis"]; got != tt.wantRedis {
+				t.Errorf("create_elasticache_redis = %v, want %v", got, tt.wantRedis)
+			}
+			if got := tfvars["create_elasticache_valkey"]; got != tt.wantValkey {
+				t.Errorf("create_elasticache_valkey = %v, want %v", got, tt.wantValkey)
+			}
+			if tfvars["create_elasticache_redis"] == true && tfvars["create_elasticache_valkey"] == true {
+				t.Error("both cache modules enabled for one cache node")
+			}
+		})
+	}
+}
+
+// The two engines are sized by different models — a node type for the replication group, usage limits
+// for the serverless cache — so the cloud-indifferent MemoryGB has to land on the right tfvar. Sending
+// a serverless size to `redis_instance_type` (or vice versa) is silently wrong: the plan succeeds
+// against the template default and the user's sizing is dropped.
+func TestAWSProvider_CacheSizingFollowsTheEngine(t *testing.T) {
+	p := &awsProvider{}
+	base := func(engine types.CacheEngine) *types.ProjectConfig {
+		return &types.ProjectConfig{
+			Cluster: types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+			DNS:     types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+			Caches:  []types.ProjectCacheConfig{{Name: "main", Engine: engine, MemoryGB: 8}},
+		}
+	}
+
+	valkey := p.ProviderTfvars(base(types.CacheEngineValkey))
+	if valkey["valkey_data_storage_max"] != float64(8) && valkey["valkey_data_storage_max"] != 8.0 {
+		t.Errorf("valkey_data_storage_max = %v, want the 8 GB the user asked for", valkey["valkey_data_storage_max"])
+	}
+
+	redis := p.ProviderTfvars(base(types.CacheEngineRedis))
+	if _, ok := redis["valkey_data_storage_max"]; ok {
+		t.Error("a redis cache emitted a valkey sizing tfvar")
+	}
+	if redis["redis_instance_type"] == nil || redis["redis_instance_type"] == "" {
+		t.Error("redis_instance_type was not resolved for a redis cache")
+	}
+}
