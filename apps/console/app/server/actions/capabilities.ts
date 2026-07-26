@@ -151,9 +151,12 @@ export async function getIdentityCapabilities(
 			launchable: r.launchable,
 			launchableReason: r.launchableReason ?? null,
 		})),
+		// The engine's OWN label, not a composite with the version (#1351): the version is its own
+		// picker now, so folding it into the engine label would make the two axes disagree.
 		dbEngines: database.engines.map((r) => ({
 			value: r.value,
-			label: r.version ? `${r.label} ${r.version}` : r.label,
+			label: r.label,
+			versions: r.versions,
 			launchable: r.launchable,
 			launchableReason: r.launchableReason ?? null,
 		})),

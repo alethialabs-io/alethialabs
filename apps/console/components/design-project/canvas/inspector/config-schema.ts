@@ -23,6 +23,7 @@ import { toStrArray } from "@/lib/coerce";
 import {
 	cacheTierOptions,
 	dbEngineOptions,
+	dbVersionOptions,
 	existingNetworkOptions,
 	instanceTypeOptions,
 	k8sVersionOptions,
@@ -70,7 +71,7 @@ export interface CapabilityBag {
 	regions: string[];
 	instanceTypes: CapabilityOption[];
 	k8sVersions: CapabilityOption[];
-	dbEngines: CapabilityOption[];
+	dbEngines: DbEngineCapabilityOption[];
 	cacheTiers: CapabilityOption[];
 	nosqlKeyTypes: CapabilityOption[];
 	/** Already-HAS placement inventory (#980) — not a capability axis, no federation involved. */
@@ -88,6 +89,18 @@ export interface CapabilityOption {
 	label: string;
 	launchable?: "launchable" | "not_launchable" | "not_evaluable";
 	launchableReason?: string | null;
+}
+
+/**
+ * A managed-database engine option carrying EVERY version the account can launch it at (#1351).
+ *
+ * The version is its own axis rather than part of the engine's label: the engine is chosen by the
+ * `engine_family` radio-card and the version by a separate select, so a single composite
+ * "PostgreSQL 16" option cannot serve both. `versions` is newest-first and never empty — the static
+ * fallback contributes the catalog's default version as a one-element list.
+ */
+export interface DbEngineCapabilityOption extends CapabilityOption {
+	versions: string[];
 }
 
 export interface PlacementOption {
@@ -1067,10 +1080,16 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{
 						key: "engine_version",
-						type: "text",
+						type: "select",
 						label: "Engine version",
 						mono: true,
-						placeholder: "cloud default",
+						// Capability-backed since #1351: the lanes enumerate every version the account
+						// can launch this engine at, instead of the user having to know them. Still
+						// fail-open — with nothing synced the catalog's default is the only option, and
+						// `withSelected` keeps a previously pinned free-text version representable.
+						requiresProvider: true,
+						capabilityAxis: "database",
+						options: dbVersionOptions,
 						description: "Pin an exact engine version. Empty tracks the template's default.",
 					},
 					{

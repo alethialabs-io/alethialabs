@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
 	advisoryFor,
 	dbEngineOptions,
+	dbVersionOptions,
 	cacheTierOptions,
 	existingNetworkOptions,
 	instanceTypeOptions,
@@ -303,7 +304,9 @@ describe("provenanceNote — the fail-open must be legible", () => {
 describe("dbEngineOptions — the deploy-time floor is not negotiable", () => {
 	it("narrows the floor to the account's engines", () => {
 		const ctx = ctxWith("aws", {
-			dbEngines: [{ value: "postgres", label: "PostgreSQL 16", launchable: "launchable" }],
+			dbEngines: [
+				{ value: "postgres", label: "PostgreSQL", versions: ["16"], launchable: "launchable" },
+			],
 		});
 		expect(dbEngineOptions(ctx).map((o) => o.value)).toEqual(["postgres"]);
 	});
@@ -318,9 +321,115 @@ describe("dbEngineOptions — the deploy-time floor is not negotiable", () => {
 		// Hetzner runs databases in-cluster via CloudNativePG — postgres only, whatever the account
 		// says. An empty engine radio would be a #918 violation.
 		const ctx = ctxWith("hetzner", {
-			dbEngines: [{ value: "oracle", label: "Oracle", launchable: "launchable" }],
+			dbEngines: [
+				{ value: "oracle", label: "Oracle", versions: ["19"], launchable: "launchable" },
+			],
 		});
 		const values = dbEngineOptions(ctx).map((o) => o.value);
 		expect(values).toEqual(["postgres"]);
+	});
+});
+
+describe("dbVersionOptions — the engine-version axis (#1351)", () => {
+	/** A ctx with a chosen engine family, which is what this resolver keys on. */
+	const dbCtx = (
+		provider: CloudProviderSlug,
+		family: string | null,
+		bag: Partial<CapabilityBag> = {},
+	): FieldCtx => ({
+		provider,
+		config: family === null ? {} : { engine_family: family },
+		caps: { ...NO_CAPABILITIES, provider, identityId: "id-1", state: "ready", ...bag },
+	});
+
+	it("offers every version the account reports for the selected engine, newest-first", () => {
+		const ctx = dbCtx("aws", "postgres", {
+			dbEngines: [
+				{
+					value: "aurora-postgresql",
+					label: "Aurora PostgreSQL",
+					versions: ["16", "15", "14"],
+					launchable: "launchable",
+				},
+			],
+		});
+		expect(dbVersionOptions(ctx).map((o) => o.value)).toEqual(["16", "15", "14"]);
+	});
+
+	// The join this resolver exists for: the canvas stores the FAMILY, capability rows are keyed on
+	// the provider's engine VALUE, and getting that backwards silently yields an empty picker.
+	it("joins the abstract family to the provider's engine value", () => {
+		const ctx = dbCtx("gcp", "mysql", {
+			dbEngines: [
+				{ value: "cloudsql-mysql", label: "Cloud SQL MySQL", versions: ["8.0"], launchable: "launchable" },
+				{ value: "cloudsql-postgresql", label: "Cloud SQL PostgreSQL", versions: ["16"], launchable: "launchable" },
+			],
+		});
+		expect(dbVersionOptions(ctx).map((o) => o.value)).toEqual(["8.0"]);
+	});
+
+	it("falls open to the catalog default when the account reports nothing (#918)", () => {
+		const opts = dbVersionOptions(dbCtx("aws", "postgres"));
+		expect(opts).toHaveLength(1);
+		expect(opts[0].value).toBeTruthy();
+		// A static row carries NO advisory — absence of signal must not read as a verdict.
+		expect(opts[0].advisory).toBeUndefined();
+	});
+
+	it("falls open when the account reports OTHER engines but not this one", () => {
+		const ctx = dbCtx("aws", "postgres", {
+			dbEngines: [
+				{ value: "aurora-mysql", label: "Aurora MySQL", versions: ["8.0"], launchable: "launchable" },
+			],
+		});
+		// Never empty: the selected engine still needs a version to pin.
+		expect(dbVersionOptions(ctx).length).toBeGreaterThan(0);
+	});
+
+	it("carries the engine's advisory onto each of its versions", () => {
+		const ctx = dbCtx("aws", "postgres", {
+			dbEngines: [
+				{
+					value: "aurora-postgresql",
+					label: "Aurora PostgreSQL",
+					versions: ["16", "15"],
+					launchable: "not_evaluable",
+					launchableReason: "quota_unknown",
+				},
+			],
+		});
+		const opts = dbVersionOptions(ctx);
+		expect(opts).toHaveLength(2);
+		for (const o of opts) expect(o.advisory?.level).toBe("unverified");
+	});
+
+	it("ignores a bag that describes a DIFFERENT provider", () => {
+		const ctx: FieldCtx = {
+			provider: "aws",
+			config: { engine_family: "postgres" },
+			caps: {
+				...NO_CAPABILITIES,
+				provider: "gcp", // another cloud's rows must never leak in
+				identityId: "id-1",
+				state: "ready",
+				dbEngines: [
+					{ value: "cloudsql-postgresql", label: "PG", versions: ["99"], launchable: "launchable" },
+				],
+			},
+		};
+		expect(dbVersionOptions(ctx).map((o) => o.value)).not.toContain("99");
+	});
+
+	it("returns nothing when no engine is chosen yet, rather than guessing one", () => {
+		expect(dbVersionOptions(dbCtx("aws", null))).toEqual([]);
+	});
+
+	it("returns nothing without a provider", () => {
+		const ctx: FieldCtx = {
+			provider: null,
+			config: { engine_family: "postgres" },
+			caps: NO_CAPABILITIES,
+		};
+		expect(dbVersionOptions(ctx)).toEqual([]);
 	});
 });

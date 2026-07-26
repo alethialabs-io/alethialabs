@@ -60,15 +60,24 @@ describe("normalizeFlexibleServerVersions", () => {
 		},
 	];
 
-	it("dedups versions and namespaces native_id by engine (postgres)", () => {
+	// #1351 changed the VALUE SPACE here, not the grain — this lane already emitted one row per
+	// version. The engine is now the catalog value (`azure-postgresql`), so synced rows and the static
+	// DB_ENGINES fallback are substitutable; otherwise the fail-open path (#918) hands the picker a
+	// different engine identity than the synced rows use.
+	it("dedups versions and namespaces native_id by the CATALOG engine value (postgres)", () => {
 		const rows = normalizeFlexibleServerVersions("eastus", "postgres", pgFixture);
-		expect(rows.map((r) => r.native_id)).toEqual(["postgres-16", "postgres-15"]);
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"azure-postgresql-16",
+			"azure-postgresql-15",
+		]);
 		for (const r of rows) {
 			expect(r.service_kind).toBe("database");
-			expect(r.engine).toBe("postgres");
+			expect(r.engine).toBe("azure-postgresql");
 			expect(r.launchable).toBe("launchable");
 		}
-		expect(rows[0].name).toBe("PostgreSQL 16");
+		// The version has its own column; `name` is the engine's stable label, not a composite.
+		expect(rows[0].name).toBe("Azure Database for PostgreSQL");
+		expect(rows[0].version).toBe("16");
 	});
 
 	it("handles the mysql shape identically (versions path is shared)", () => {
@@ -80,9 +89,13 @@ describe("normalizeFlexibleServerVersions", () => {
 			},
 		];
 		const rows = normalizeFlexibleServerVersions("westus", "mysql", myFixture);
-		expect(rows.map((r) => r.native_id)).toEqual(["mysql-8.0.21", "mysql-5.7"]);
-		expect(rows[0].engine).toBe("mysql");
-		expect(rows[0].name).toBe("MySQL 8.0.21");
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"azure-mysql-8.0.21",
+			"azure-mysql-5.7",
+		]);
+		expect(rows[0].engine).toBe("azure-mysql");
+		expect(rows[0].name).toBe("Azure Database for MySQL");
+		expect(rows[0].version).toBe("8.0.21");
 	});
 
 	it("returns [] when there are no editions/versions", () => {

@@ -52,7 +52,10 @@ describe("normalizeK8sVersionRows", () => {
 });
 
 describe("normalizeDatabaseRows", () => {
-	it("emits one row per PLATFORM engine at its latest major, ignoring non-platform engines", () => {
+	// Inverted by #1351: this used to assert one row per engine AT ITS LATEST major. That collapse is
+	// what made an engine-version picker impossible, so the lane now emits every offered major and the
+	// read layer groups them back into one engine with a version list.
+	it("emits one row per PLATFORM engine AND major, ignoring non-platform engines", () => {
 		const fixture: DBEngineVersion[] = [
 			{ Engine: "aurora-postgresql", MajorEngineVersion: "15", EngineVersion: "15.4" },
 			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.6" },
@@ -61,19 +64,41 @@ describe("normalizeDatabaseRows", () => {
 			{ Engine: "oracle-ee", MajorEngineVersion: "19" }, // not a platform engine → ignored
 		];
 		const rows = normalizeDatabaseRows(fixture, ctx);
-		const byEngine = new Map(rows.map((r) => [r.engine, r]));
-		expect([...byEngine.keys()].sort()).toEqual(["aurora-mysql", "aurora-postgresql"]);
 
-		const pg = byEngine.get("aurora-postgresql");
-		expect(pg?.service_kind).toBe("database");
-		expect(pg?.native_id).toBe("aurora-postgresql");
-		expect(pg?.version).toBe("16"); // 16 > 15 by numeric major compare
-		expect(pg?.name).toBe("Aurora PostgreSQL"); // label from the catalog
-		expect(pg?.launchable).toBe("launchable");
+		// Both PG majors survive, newest-first, each under a composite native_id — the unique key
+		// carries native_id but not version, so a bare-engine id would overwrite the older major.
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"aurora-postgresql-16",
+			"aurora-postgresql-15",
+			"aurora-mysql-8.0",
+		]);
 
-		const mysql = byEngine.get("aurora-mysql");
+		const pg16 = rows.find((r) => r.native_id === "aurora-postgresql-16");
+		expect(pg16?.service_kind).toBe("database");
+		expect(pg16?.engine).toBe("aurora-postgresql"); // the catalog value, not the composite
+		expect(pg16?.version).toBe("16");
+		expect(pg16?.name).toBe("Aurora PostgreSQL"); // label from the catalog
+		expect(pg16?.launchable).toBe("launchable");
+
+		// The older major is a peer row, not a casualty.
+		expect(rows.find((r) => r.native_id === "aurora-postgresql-15")?.version).toBe("15");
+
+		const mysql = rows.find((r) => r.engine === "aurora-mysql");
 		expect(mysql?.version).toBe("8.0");
 		expect(mysql?.name).toBe("Aurora MySQL");
+	});
+
+	it("collapses the many MINORS the API returns into one row per major", () => {
+		// DescribeDBEngineVersions returns a row per minor; the platform provisions at major grain, so
+		// 16.4/16.6/16.8 must not become three separate offerings.
+		const fixture: DBEngineVersion[] = [
+			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.4" },
+			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.6" },
+			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.8" },
+		];
+		const rows = normalizeDatabaseRows(fixture, ctx);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].native_id).toBe("aurora-postgresql-16");
 	});
 
 	it("returns no rows when the account offers no platform engines", () => {
