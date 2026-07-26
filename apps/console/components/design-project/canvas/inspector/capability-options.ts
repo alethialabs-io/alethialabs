@@ -27,7 +27,9 @@ import {
 	NOSQL,
 	REGION_LABELS,
 } from "@/lib/cloud-providers";
+import { variantOptionsFor } from "../graph/node-registry";
 import type {
+	CapabilityAxis,
 	CapabilityOption,
 	FieldCtx,
 	FieldOption,
@@ -116,6 +118,35 @@ export function withSelected(options: FieldOption[], raw: unknown): FieldOption[
 	];
 }
 
+/**
+ * The one-line provenance note under a capability-backed field: is this list THIS ACCOUNT's, or the
+ * whole catalog?
+ *
+ * Without it the two are indistinguishable — the fail-open is deliberately invisible in the options
+ * themselves — so a user cannot tell "my account can launch 12 of these" from "here is everything
+ * the cloud offers". Returns null when the field has no capability axis. Pure and React-free so the
+ * wording is unit-testable.
+ */
+export function provenanceNote(
+	ctx: FieldCtx,
+	axis: CapabilityAxis | undefined,
+	optionCount: number,
+): string | null {
+	if (!axis) return null;
+	if (ctx.caps.state === "error") {
+		return "Couldn't read your account — showing the full catalog.";
+	}
+	if (ctx.caps.axisSource[axis] === "account") {
+		return `${optionCount} available to this account.`;
+	}
+	// Not account data. Distinguish "still enumerating" from "we asked and got nothing" — the first
+	// resolves itself, the second does not, and telling a user to wait for neither is the worst case.
+	if (ctx.caps.state === "syncing" || ctx.caps.state === "loading") {
+		return "Checking your account…";
+	}
+	return "Showing the full catalog.";
+}
+
 // ── region ──────────────────────────────────────────────────────────────────────────────────────
 
 /** Region CODES for the grouped region select. `groupRegions` handles unknown codes gracefully. */
@@ -200,6 +231,25 @@ export function intersectWithFloor(
 		account.map((a) => [a.value, advisoryFor(a.launchable, a.launchableReason)]),
 	);
 	return kept.map((f) => ({ ...f, advisory: advisoryByValue.get(f.value) }));
+}
+
+/**
+ * Managed-database engines, narrowed to what this account reports.
+ *
+ * The floor is `variantOptionsFor("database", provider)` — deploy-time truth, not account
+ * capability: on Hetzner the chart mapper only knows CloudNativePG, so offering MySQL because the
+ * account "could" run it would produce an unbuildable node. Hence intersect, never replace.
+ *
+ * NOTE the engine VERSION is deliberately not wired. `getDatabaseCapabilities` returns a version per
+ * engine, but AWS/GCP collapse to "latest per engine" and Azure/Alibaba fuse the version into
+ * `native_id` (`postgres-16`), so there is no orthogonal version axis to offer yet — see the
+ * follow-up on splitting engine from version in the enumeration lanes.
+ */
+export function dbEngineOptions(ctx: FieldCtx): FieldOption[] {
+	return intersectWithFloor(
+		variantOptionsFor("database", ctx.provider),
+		accountRows(ctx, ctx.caps.dbEngines),
+	);
 }
 
 // ── placement inventory (#980) ──────────────────────────────────────────────────────────────────
