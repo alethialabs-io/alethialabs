@@ -54,7 +54,6 @@ import type {
 	ServiceSource,
 	StagedChangePayload,
 	StorageProviderConfig,
-	TopicSubscription,
 	VerifyReport,
 } from "@/types/jsonb.types";
 import {
@@ -609,7 +608,6 @@ export const projectTopics = pgTable(
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
-		subscriptions: jsonb().$type<TopicSubscription[]>().default([]),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),
@@ -625,9 +623,10 @@ export const projectTopics = pgTable(
 	],
 );
 
-// A topic's delivery subscriptions, normalized out of project_topics.subscriptions JSONB (the
-// finite `protocol` is a real enum column + `topic_id` gives FK integrity). `ordinal` preserves the
-// author-order the JSONB array had, so buildConfigSnapshot re-embeds a byte-identical array.
+// A topic's delivery subscriptions — the sole source since the contract phase dropped the
+// project_topics.subscriptions JSONB (the finite `protocol` is a real enum column + `topic_id` gives
+// FK integrity). `ordinal` preserves author order, so buildConfigSnapshot (which reads these back via
+// lib/db/normalized-reads.ts) re-embeds a byte-identical array.
 // Tenancy flows through the parent topic → project (join-through RLS in programmables.sql, like the
 // support-case child tables). ON DELETE CASCADE: clearing a topic drops its subscriptions.
 export const topicSubscriptions = pgTable(

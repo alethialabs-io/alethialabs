@@ -1,17 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Integration: the normalized topic_subscriptions child table (Phase C). Proves three things against
-// real Postgres: (1) the migration BACKFILL faithfully unnests project_topics.subscriptions JSONB
-// into rows with the right protocol enum + author `ordinal`; (2) the join-through RLS policy scopes
+// Integration: the normalized topic_subscriptions child table + its contract-phase reader
+// (lib/db/normalized-reads.ts), now that the project_topics.subscriptions JSONB column is dropped.
+// Proves three things against real Postgres: (1) topicSubscriptionsByTopic reconstructs a topic's
+// subscription array in author `ordinal` order with the right protocol enum + endpoint — the
+// byte-stability guarantee buildConfigSnapshot / getProjectAsFormData / deployedStructuralHash rely on,
+// and an owner with no rows is absent (callers default to `[]`); (2) the join-through RLS policy scopes
 // a subscription to its topic's project's org (a different org sees nothing); (3) ON DELETE CASCADE
-// removes a topic's subscriptions when the topic is cleared (the delete+reinsert save path). Seeded
-// via the service connection (bypasses RLS); read back through the RLS-enforced app connection.
+// removes a topic's subscriptions when the topic is cleared (the delete+reinsert save path). Seeded via
+// the service connection (bypasses RLS); read back through the RLS-enforced app connection.
 
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, withScope } from "@/lib/db";
+import { topicSubscriptionsByTopic } from "@/lib/db/normalized-reads";
 import {
 	projectEnvironments,
 	projects,
@@ -32,7 +36,7 @@ const APP_ROLE_DISTINCT =
 	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
 	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
-describeIfDb("topic_subscriptions — backfill, RLS, cascade", () => {
+describeIfDb("topic_subscriptions — reader parity, RLS, cascade", () => {
 	beforeAll(async () => {
 		const db = getServiceDb();
 		await db.insert(projects).values({
@@ -50,17 +54,17 @@ describeIfDb("topic_subscriptions — backfill, RLS, cascade", () => {
 			name: "production",
 			is_default: true,
 		});
-		// A topic carrying the legacy JSONB — the backfill's input. Two subscriptions, distinct order.
 		await db.insert(projectTopics).values({
 			id: TOPIC,
 			project_id: PROJ,
 			environment_id: ENV,
 			name: "events",
-			subscriptions: [
-				{ protocol: "https", endpoint: "https://a.example/hook" },
-				{ protocol: "sqs", endpoint: "arn:aws:sqs:::q" },
-			],
 		});
+		// Two subscriptions in the child table, distinct author order.
+		await db.insert(topicSubscriptions).values([
+			{ topic_id: TOPIC, protocol: "https", endpoint: "https://a.example/hook", ordinal: 0 },
+			{ topic_id: TOPIC, protocol: "sqs", endpoint: "arn:aws:sqs:::q", ordinal: 1 },
+		]);
 	});
 
 	afterAll(async () => {
@@ -68,30 +72,28 @@ describeIfDb("topic_subscriptions — backfill, RLS, cascade", () => {
 		await db.delete(projects).where(eq(projects.id, PROJ)); // cascades to env/topic/subs
 	});
 
-	it("backfill unnests the JSONB into ordered rows with the enum protocol", async () => {
+	it("the reader reconstructs the subscription array in ordinal order, byte-identically", async () => {
 		const db = getServiceDb();
-		// The EXACT backfill from migration 0107, scoped to the seeded topic.
-		await db.execute(sql`
-			INSERT INTO topic_subscriptions (topic_id, protocol, endpoint, ordinal)
-			SELECT t.id,
-			       (e.elem->>'protocol')::topic_subscription_protocol,
-			       e.elem->>'endpoint',
-			       (e.ord - 1)::int
-			FROM project_topics t
-			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(t.subscriptions, '[]'::jsonb)) WITH ORDINALITY AS e(elem, ord)
-			WHERE t.id = ${TOPIC}
-			  AND COALESCE(e.elem->>'endpoint', '') <> ''
-			  AND (e.elem->>'protocol') IN ('https','sqs','email','lambda')
-		`);
-		const rows = await db
-			.select()
-			.from(topicSubscriptions)
-			.where(eq(topicSubscriptions.topic_id, TOPIC))
-			.orderBy(topicSubscriptions.ordinal);
-		expect(rows.map((r) => [r.ordinal, r.protocol, r.endpoint])).toEqual([
-			[0, "https", "https://a.example/hook"],
-			[1, "sqs", "arn:aws:sqs:::q"],
+		const map = await topicSubscriptionsByTopic(db, [TOPIC]);
+		// Exact array + element shape ({protocol, endpoint}) + author order — what the old JSONB held.
+		expect(map.get(TOPIC)).toEqual([
+			{ protocol: "https", endpoint: "https://a.example/hook" },
+			{ protocol: "sqs", endpoint: "arn:aws:sqs:::q" },
 		]);
+	});
+
+	it("a topic with no subscriptions is absent from the map (callers default to [])", async () => {
+		const db = getServiceDb();
+		const empty = randomUUID();
+		await db.insert(projectTopics).values({
+			id: empty,
+			project_id: PROJ,
+			environment_id: ENV,
+			name: "empty",
+		});
+		const map = await topicSubscriptionsByTopic(db, [empty]);
+		expect(map.has(empty)).toBe(false);
+		expect(map.get(empty) ?? []).toEqual([]);
 	});
 
 	it("RLS scopes subscriptions to the owning org (join-through the topic)", async () => {

@@ -10,6 +10,7 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
+import { topicSubscriptionsByTopic } from "@/lib/db/normalized-reads";
 import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
 import {
 	auditLog,
@@ -78,6 +79,7 @@ import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
+import type { TopicSubscription } from "@/types/jsonb.types";
 import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
 import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
@@ -203,7 +205,11 @@ export interface CreateProjectInput {
 		"endpoint"
 	>[];
 	queues?: ComponentInsert<typeof projectQueues.$inferInsert>[];
-	topics?: ComponentInsert<typeof projectTopics.$inferInsert>[];
+	topics?: (ComponentInsert<typeof projectTopics.$inferInsert> & {
+		// Form-only field (not a project_topics column since the contract phase): subscriptions
+		// persist to the topic_subscriptions child table via the dual-child insert below.
+		subscriptions?: TopicSubscription[];
+	})[];
 	nosql_tables?: ComponentInsert<typeof projectNosqlTables.$inferInsert>[];
 	secrets?: ComponentInsert<typeof projectSecrets.$inferInsert>[];
 	storage_buckets?: ComponentInsert<
@@ -624,6 +630,10 @@ export async function getProject(
 				.select()
 				.from(projectServices)
 				.where(envScope(projectServices, projectId, envId));
+			const topicSubs = await topicSubscriptionsByTopic(
+				tx,
+				topics.map((t) => t.id),
+			);
 			return {
 				network: network ?? null,
 				cluster: cluster ?? null,
@@ -633,7 +643,10 @@ export async function getProject(
 				databases,
 				caches,
 				queues,
-				topics,
+				topics: topics.map((t) => ({
+					...t,
+					subscriptions: topicSubs.get(t.id) ?? [],
+				})),
 				nosql_tables: nosqlTables,
 				secrets,
 				storage_buckets: storageBuckets,
@@ -807,6 +820,10 @@ async function buildConfigSnapshot(
 			.select()
 			.from(projectTopics)
 			.where(envScope(projectTopics, projectId, envId));
+		const topicSubs = await topicSubscriptionsByTopic(
+			tx,
+			topics.map((t) => t.id),
+		);
 		const nosqlTables = await tx
 			.select()
 			.from(projectNosqlTables)
@@ -1248,7 +1265,11 @@ async function buildConfigSnapshot(
 			databases: databases.map((d) => ({ ...d, ...resolvePlacement(d) })),
 			caches: caches.map((c) => ({ ...c, ...resolvePlacement(c) })),
 			queues: queues.map((q) => ({ ...q, ...resolvePlacement(q) })),
-			topics: topics.map((t) => ({ ...t, ...resolvePlacement(t) })),
+			topics: topics.map((t) => ({
+				...t,
+				...resolvePlacement(t),
+				subscriptions: topicSubs.get(t.id) ?? [],
+			})),
 			nosql_tables: nosqlTables.map((n) => ({ ...n, ...resolvePlacement(n) })),
 			secrets: secrets.map((s) => ({ ...s, ...resolvePlacement(s) })),
 			container_registries: containerRegistries.map((r) => ({
@@ -2060,7 +2081,7 @@ export async function getProjectAsFormData(
 		})),
 		topics: source.components.topics.map((t) => ({
 			name: t.name,
-			subscriptions: t.subscriptions ?? undefined,
+			subscriptions: t.subscriptions ?? [],
 		})),
 		nosql_tables: source.components.nosql_tables.map((t) => ({
 			name: t.name,
