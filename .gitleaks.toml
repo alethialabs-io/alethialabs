@@ -24,6 +24,15 @@ regexes = [
   # secret value — it's public config in the deploy/infra workflows. generic-api-key
   # flags the `ASM_SECRET_ID: alethia/prod/env` assignment; allowlist the marker.
   '''ASM_SECRET_ID''',
+  # ALETHIA_E2E_SECRETS_XACCT_* are the NAMES of the cross-account-secrets e2e's env vars, declared
+  # as Go string constants (test/e2e/t2_secrets_xacct.go) — the value IS the variable name, never a
+  # value read from one. generic-api-key fires because the identifier contains "Secrets" and the
+  # string is long. The harness must declare them as LITERALS: TestScenarioEnablesReachTheNightly
+  # greps the source for `ALETHIA_E2E_*` literals to prove every scenario is reachable from the
+  # nightly, so building the names by concatenation would silently disable that guard. The file is
+  # deliberately not `_test.go` (the untagged pure half is used by the e2e_t2 half), so the
+  # test-path allowlist below does not cover it.
+  '''ALETHIA_E2E_SECRETS_XACCT[A-Z_]*''',
   # An OpenTofu variable reference (`var.<name>`) is a reference, never a literal
   # secret. generic-api-key flags idioms like `minio_password = var.hetzner_s3_secret_key`
   # in the templates; a `var.` value is safe by construction.

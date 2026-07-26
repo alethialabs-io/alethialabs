@@ -166,6 +166,20 @@ if [ -n "$soak_summary" ] && [ -f "$soak_summary" ]; then
 	[ -n "$soak_verdict" ] && echo "  · soak: $soak_verdict"
 fi
 
+# ── Cross-account keyless secrets summary (#1268). The T2 layer writes verdicts + a digest to
+#    ALETHIA_E2E_SECRETS_XACCT_SUMMARY — names, booleans and a SHA-256, never the canary value
+#    (the whole point of comparing digests). Fold it in (scrubbed as a backstop) and surface a
+#    one-line verdict. Absent ⇒ the scenario was disabled/blocked and the capture is unchanged. ──
+xacct_summary="${ALETHIA_E2E_SECRETS_XACCT_SUMMARY:-}"
+xacct_verdict=""
+if [ -n "$xacct_summary" ] && [ -f "$xacct_summary" ]; then
+	scrub_stream <"$xacct_summary" >"$out/secrets-xacct-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/secrets-xacct-summary.json" ]; then
+		xacct_verdict="$(jq -r '.verdict // empty' "$out/secrets-xacct-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$xacct_verdict" ] && echo "  · xacct-secrets: $xacct_verdict"
+fi
+
 # ── Wall-clock. ──
 duration_s=""
 if [ -n "$start_epoch" ]; then
