@@ -372,6 +372,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	switch selectPlacementPath(vc.PlacementMode, params.Provider) {
 	case placementNamespaceAWS:
 		return runNamespaceDeploy(ctx, params)
+	case placementVcluster:
+		return runVClusterDeploy(ctx, params)
 	case placementUnactivated:
 		return nil, unactivatedPlacementError(vc.PlacementMode, params.Provider)
 	case placementDedicated:
