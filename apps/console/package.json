@@ -20,6 +20,7 @@
 		"gen:cli-fixtures": "tsx scripts/gen-cli-fixtures.ts",
 		"gen:go-enums": "tsx scripts/gen-go-enums.ts",
 		"gen:matrix": "node scripts/gen-matrix.mjs",
+		"derive:catalog": "node scripts/derive-catalog.mjs",
 		"derive:compat": "node scripts/derive-compat.mjs",
 		"db:generate": "bash ../../scripts/db-generate.sh",
 		"db:migrate": "node scripts/migrate.mjs",

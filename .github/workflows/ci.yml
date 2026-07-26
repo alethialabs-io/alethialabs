@@ -457,6 +457,17 @@ jobs:
           pnpm -F console gen:matrix
           git diff --exit-code -- apps/console/lib/compat/generated/matrix.ts \
             || { echo "::error::Compat matrix.ts is stale — run 'pnpm -F console gen:matrix' and commit (source of truth: packages/core/compat/matrix.json)."; exit 1; }
+      # gen-catalog.mjs has claimed "CI re-runs it and fails on drift" since it was written; until
+      # #1373 nothing did. It also re-runs the generator's fail-fast shape guards (every engine has a
+      # non-empty versions[] containing its default, and the snake + camel surfaces agree), so a
+      # malformed catalog.json reds here rather than at someone's next apply.
+      - name: Cloud catalog mirror is in sync with the SSOT (catalog.json → catalog.ts)
+        run: |
+          pnpm -F console gen:catalog
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/catalog.ts \
+            || { echo "::error::Generated catalog.ts is stale — run 'pnpm -F console gen:catalog' and commit (source of truth: packages/core/catalog/catalog.json)."; exit 1; }
+      - name: Catalog drift scout's pure parsers/differ hold (derive:catalog --self-test)
+        run: pnpm -F console derive:catalog -- --self-test
       - name: Tests exercise real source (anti-vacuous-test tripwire)
         run: node scripts/check-test-imports.mjs
       - name: Go tests exercise real source (anti-vacuous-test tripwire, verify + runner)

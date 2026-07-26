@@ -61,6 +61,50 @@ for (const k of ["regionLabels", "defaultRegion", "regionMap", "k8sVersions", "a
 	}
 }
 
+// The offline engine-version baseline (#1373). These strings are what the picker falls back to when
+// an account's capabilities haven't synced, AND what flows into the provider's tofu `engine_version`
+// variable — so a malformed list is a bad apply, not a cosmetic UI bug. The same invariants are
+// checked in Go (`TestDBEngineVersions`): the two consumers read this JSON by different paths, and
+// each must fail on its own rather than relying on the other having run.
+const assertVersions = (where, engine, versions, defaultVersion) => {
+	if (!Array.isArray(versions) || versions.length === 0) {
+		throw new Error(`catalog.json ${where} '${engine}' has no versions[] (#1373)`);
+	}
+	if (!versions.includes(defaultVersion)) {
+		throw new Error(
+			`catalog.json ${where} '${engine}' default version '${defaultVersion}' is not in versions ${JSON.stringify(versions)} (#1373)`,
+		);
+	}
+	if (new Set(versions).size !== versions.length) {
+		throw new Error(`catalog.json ${where} '${engine}' repeats a version (#1373)`);
+	}
+};
+for (const [provider, dp] of Object.entries(catalogCore.database)) {
+	const liveEngines = live.dbEngines[provider];
+	if (!liveEngines || liveEngines.length !== dp.engines.length) {
+		throw new Error(
+			`catalog.json live.dbEngines.${provider} does not mirror database.${provider}.engines (#1373)`,
+		);
+	}
+	dp.engines.forEach((e, i) => {
+		assertVersions(`database.${provider}`, e.value, e.versions, e.default_version);
+		assertVersions(
+			`live.dbEngines.${provider}`,
+			liveEngines[i].value,
+			liveEngines[i].versions,
+			liveEngines[i].defaultVersion,
+		);
+		// The two surfaces are separate JSON (snake `database`, camel `live.dbEngines`) describing the
+		// SAME engine — the canvas picker reads one, the Go resolver the other. They already disagree
+		// on Alibaba's engine `value`; the version axis must not be allowed to fork the same way.
+		if (JSON.stringify(e.versions) !== JSON.stringify(liveEngines[i].versions)) {
+			throw new Error(
+				`catalog.json versions drift for ${provider}/${e.value}: database ${JSON.stringify(e.versions)} vs live ${JSON.stringify(liveEngines[i].versions)} (#1373)`,
+			);
+		}
+	});
+}
+
 // The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
 // live data's own coverage (the `instanceTypes` keys) so it can't drift from it. Still gated through
 // `Extract<CloudProvider, ...>` so an off-enum slug surfaces instead of being invented.
@@ -138,6 +182,9 @@ export interface DBEngine {
 	value: string;
 	label: string;
 	default_version: string;
+	/** Offline version baseline, newest-first; always contains \`default_version\`. Guidance, not a
+	 * gate — an account offering something newer must still be able to pick it (#918). */
+	versions: string[];
 }
 
 export interface Capacity {
@@ -337,6 +384,8 @@ export interface DbEngineOption {
 	value: string;
 	label: string;
 	defaultVersion: string;
+	/** Offline version baseline, newest-first; always contains \`defaultVersion\`. */
+	versions: string[];
 }
 
 /** Database engine options per provider. */

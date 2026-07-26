@@ -191,9 +191,14 @@ export function k8sVersionOptions(ctx: FieldCtx): FieldOption[] {
  * catalog resolves one to the other. This field was free text before — a user had to already know
  * which versions their account offered.
  *
- * Fail-open like every other resolver (#918): with no account rows it returns the catalog's default
- * version, so the list is never empty. It returns [] only when no provider or no engine is chosen
- * yet, where an empty list is the honest answer rather than a wrong one.
+ * Fail-open like every other resolver (#918): with no account rows it returns the catalog's whole
+ * offline baseline, so the list is never empty. It returns [] only when no provider or no engine is
+ * chosen yet, where an empty list is the honest answer rather than a wrong one.
+ *
+ * That fallback used to be the single `default_version`, which made the unsynced case a "picker"
+ * with exactly one option — a fresh connect or a failed sync silently lost the axis rather than
+ * degrading it. The catalog now carries the offerable list per engine (#1373). Account rows still
+ * win whenever present: only they carry a per-version `launchable` verdict.
  */
 export function dbVersionOptions(ctx: FieldCtx): FieldOption[] {
 	const { provider } = ctx;
@@ -212,7 +217,7 @@ export function dbVersionOptions(ctx: FieldCtx): FieldOption[] {
 		const advisory = advisoryFor(match.launchable, match.launchableReason);
 		return match.versions.map((v) => ({ value: v, label: v, advisory }));
 	}
-	return [{ value: engine.default_version, label: engine.default_version }];
+	return engine.versions.map((v) => ({ value: v, label: v }));
 }
 
 export function cacheTierOptions(ctx: FieldCtx): FieldOption[] {
