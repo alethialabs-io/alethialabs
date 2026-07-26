@@ -181,6 +181,9 @@ spec:
       service: SecretsManager
       region: {{ .SecretsXacctRegion }}
       role: {{ .SecretsXacctRef }}
+{{- if .SecretsXacctExternalID }}
+      externalID: {{ .SecretsXacctExternalID }}
+{{- end }}
       auth:
         jwt:
           serviceAccountRef:
