@@ -101,25 +101,68 @@ func TestHelmRegistryRepoCred(t *testing.T) {
 	}
 }
 
-// TestHelmRegistryComingSoonExclusion asserts the ECR slugs are an explicit, honest exclusion: no
-// seedable repoCred (IsHelmRegistry false), and Validate returns a clear "not yet supported" error.
-func TestHelmRegistryComingSoonExclusion(t *testing.T) {
+// TestHelmRegistryKeylessECR asserts the ECR slugs route to the KEYLESS path (#1185), not the static
+// one: no seedable repoCred (IsHelmRegistry false → HelmRepoCredSpecs skips them), a keylessRepoCred
+// present (IsKeylessHelmRegistry true), and a Validate that enforces the cross-account provider_config.
+func TestHelmRegistryKeylessECR(t *testing.T) {
 	for _, slug := range []string{"oci-ecr", "oci-public-ecr"} {
 		t.Run(slug, func(t *testing.T) {
 			if IsHelmRegistry(slug) {
-				t.Errorf("%s should NOT be a seedable helm_registry (coming_soon, keyless follow-up)", slug)
+				t.Errorf("%s must NOT be a static/seedable helm_registry (it is keyless)", slug)
+			}
+			if !IsKeylessHelmRegistry(slug) {
+				t.Errorf("%s must be a keyless helm_registry", slug)
 			}
 			p, err := Get("helm_registry", slug)
 			if err != nil {
-				t.Fatalf("Get should still resolve %q (meta+behavior present): %v", slug, err)
+				t.Fatalf("Get should resolve %q (meta+behavior present): %v", slug, err)
 			}
 			if _, ok := p.RepoCred(ComponentContext{}); ok {
-				t.Errorf("%s must register no repoCred", slug)
+				t.Errorf("%s must register no static repoCred", slug)
 			}
-			if err := p.Validate(ComponentContext{}); err == nil {
-				t.Errorf("%s Validate should return an explicit not-yet-supported error", slug)
+			if _, ok := p.KeylessRepoCred(ComponentContext{}); !ok {
+				t.Errorf("%s must register a keylessRepoCred", slug)
 			}
 		})
+	}
+
+	// oci-ecr (private): Validate requires the full cross-account provider_config; empty errors.
+	pEcr, _ := Get("helm_registry", "oci-ecr")
+	if err := pEcr.Validate(ComponentContext{}); err == nil {
+		t.Error("oci-ecr Validate should error on empty provider_config")
+	}
+	fullEcr := map[string]any{
+		"target_account_id": "111122223333",
+		"region":            "us-east-1",
+		"registry_host":     "111122223333.dkr.ecr.us-east-1.amazonaws.com",
+		"target_role_arn":   "arn:aws:iam::111122223333:role/ecr-helm-pull",
+	}
+	if err := pEcr.Validate(ComponentContext{ProviderConfig: fullEcr}); err != nil {
+		t.Errorf("oci-ecr Validate should pass with full config: %v", err)
+	}
+	tgt, ok := pEcr.KeylessRepoCred(ComponentContext{ProviderConfig: fullEcr})
+	if !ok {
+		t.Fatal("oci-ecr KeylessRepoCred missing")
+	}
+	if tgt.Provider != "aws" || tgt.Public || tgt.TargetRoleArn == "" || tgt.RegistryHost == "" || tgt.Region == "" || tgt.TargetAccountID == "" {
+		t.Errorf("oci-ecr target = %+v, want a populated aws private target", tgt)
+	}
+	if want := "oci://" + fullEcr["registry_host"].(string); tgt.RepoURL() != want {
+		t.Errorf("RepoURL = %q, want %q", tgt.RepoURL(), want)
+	}
+
+	// oci-public-ecr: no target role/account; fixed host + us-east-1; Public true; Validate passes on
+	// defaults (nothing required).
+	pPub, _ := Get("helm_registry", "oci-public-ecr")
+	if err := pPub.Validate(ComponentContext{}); err != nil {
+		t.Errorf("oci-public-ecr Validate should pass with defaults: %v", err)
+	}
+	pt, ok := pPub.KeylessRepoCred(ComponentContext{})
+	if !ok {
+		t.Fatal("oci-public-ecr KeylessRepoCred missing")
+	}
+	if !pt.Public || pt.RegistryHost != "public.ecr.aws" || pt.Region != "us-east-1" || pt.TargetRoleArn != "" {
+		t.Errorf("oci-public-ecr target = %+v, want a public us-east-1 no-role target", pt)
 	}
 }
 
@@ -165,13 +208,20 @@ func TestHelmRepoCredSpecs(t *testing.T) {
 		t.Fatalf("a failed-validation entry must not yield a spec, got %+v", specs)
 	}
 
-	// A coming_soon slug in the snapshot is skipped silently (no repoCred).
-	specs, err = HelmRepoCredSpecs(helmProject("oci-ecr", nil, nil))
+	// A keyless ECR slug is excluded from the STATIC path structurally (no repoCred) — even with a fully
+	// valid provider_config, HelmRepoCredSpecs yields no spec and no error (it routes to the keyless
+	// refresher instead, not the static seed).
+	specs, err = HelmRepoCredSpecs(helmProject("oci-ecr", map[string]any{
+		"target_account_id": "111122223333",
+		"region":            "us-east-1",
+		"registry_host":     "111122223333.dkr.ecr.us-east-1.amazonaws.com",
+		"target_role_arn":   "arn:aws:iam::111122223333:role/ecr-helm-pull",
+	}, nil))
 	if err != nil {
-		t.Fatalf("coming_soon slug should skip silently, got error: %v", err)
+		t.Fatalf("keyless slug should skip the static path silently, got error: %v", err)
 	}
 	if len(specs) != 0 {
-		t.Fatalf("coming_soon slug must yield no spec, got %+v", specs)
+		t.Fatalf("keyless slug must yield no static spec, got %+v", specs)
 	}
 
 	// Fully connected → one spec with a deterministic name derived from the URL.
