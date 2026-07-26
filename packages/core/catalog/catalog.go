@@ -112,8 +112,20 @@ type Capacity struct {
 
 // CacheProvider is the per-provider in-memory-cache inventory.
 type CacheProvider struct {
-	DefaultTier string      `json:"default_tier"`
-	Tiers       []CacheTier `json:"tiers"`
+	DefaultTier string `json:"default_tier"`
+	// Engines this cloud can actually back. The database side has carried a per-provider engine list
+	// from the start (`DatabaseProvider.Engines`); the cache side did not — so "which cache engines
+	// does this cloud offer" lived hardcoded in two OTHER places instead, the canvas floor and the
+	// cross-cloud converter, neither aware of the other. Making it catalog data is what lets both
+	// derive it, and what turns "Azure has no Valkey" from a comment into something enforceable.
+	Engines []CacheEngineOption `json:"engines"`
+	Tiers   []CacheTier         `json:"tiers"`
+}
+
+// CacheEngineOption is one cache engine a provider offers.
+type CacheEngineOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 // CacheTier is one concrete cache SKU with its memory size.

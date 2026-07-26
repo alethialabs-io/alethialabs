@@ -42,8 +42,8 @@ if (!live) throw new Error("catalog.json is missing the `live` block (#1126)");
 const REQUIRED_LIVE_KEYS = [
 	"providers", "regionLabels", "defaultRegion", "regionMap", "instanceTypes",
 	"k8sVersions", "autoscaler", "defaultInstanceType", "defaultK8sVersion", "instanceTypeMap",
-	"dbEngines", "dbCapacity", "engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap",
-	"wafOptions", "certOptions", "nosql", "network", "messaging",
+	"dbEngines", "dbCapacity", "engineMap", "cacheNodeTypes", "cacheEngines", "defaultCacheNode",
+	"cacheNodeMap", "wafOptions", "certOptions", "nosql", "network", "messaging",
 ];
 for (const k of REQUIRED_LIVE_KEYS) {
 	if (!(k in live)) throw new Error(`catalog.json live block is missing '${k}' (#1126)`);
@@ -51,8 +51,8 @@ for (const k of REQUIRED_LIVE_KEYS) {
 const provisioningSlugs = Object.keys(live.instanceTypes).sort();
 for (const k of ["regionLabels", "defaultRegion", "regionMap", "k8sVersions", "autoscaler",
 	"defaultInstanceType", "defaultK8sVersion", "instanceTypeMap", "dbEngines", "dbCapacity",
-	"engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap", "wafOptions", "certOptions",
-	"nosql", "network", "messaging"]) {
+	"engineMap", "cacheNodeTypes", "cacheEngines", "defaultCacheNode", "cacheNodeMap", "wafOptions",
+	"certOptions", "nosql", "network", "messaging"]) {
 	const got = Object.keys(live[k]).sort();
 	if (got.join(",") !== provisioningSlugs.join(",")) {
 		throw new Error(
@@ -103,6 +103,24 @@ for (const [provider, dp] of Object.entries(catalogCore.database)) {
 			);
 		}
 	});
+}
+
+// Cache engines get the same dual-surface mirror check as DB engines. They are a NEW axis (#1420):
+// "which cache engines does this cloud offer" used to live hardcoded in the canvas floor and again in
+// the cross-cloud converter, so the two could disagree and nothing noticed. Now it is catalog data,
+// which means it can fork between the snake and camel surfaces the same way — so it is checked.
+for (const [provider, cp] of Object.entries(catalogCore.cache)) {
+	const liveEngines = live.cacheEngines[provider];
+	const snake = (cp.engines ?? []).map((e) => e.value);
+	const camel = (liveEngines ?? []).map((e) => e.value);
+	if (snake.length === 0) {
+		throw new Error(`catalog.json cache.${provider}.engines is empty — every cloud offers at least one (#1420)`);
+	}
+	if (JSON.stringify(snake) !== JSON.stringify(camel)) {
+		throw new Error(
+			`catalog.json cache engines drift for ${provider}: cache ${JSON.stringify(snake)} vs live ${JSON.stringify(camel)} (#1420)`,
+		);
+	}
 }
 
 // The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
@@ -208,8 +226,14 @@ export interface CacheTier {
 	cost: string;
 }
 
+export interface CacheEngine {
+	value: string;
+	label: string;
+}
+
 export interface CacheProvider {
 	default_tier: string;
+	engines: CacheEngine[];
 	tiers: CacheTier[];
 }
 
@@ -279,6 +303,11 @@ export function dbEngine(
 /** Cache SKU inventory for a provider. */
 export function cacheTiers(provider: string): CacheTier[] {
 	return CATALOG.cache[provider]?.tiers ?? [];
+}
+
+/** Cache ENGINES a provider can back — the cache-side twin of \`dbEngines\`. */
+export function cacheEngines(provider: string): CacheEngine[] {
+	return CATALOG.cache[provider]?.engines ?? [];
 }
 
 /** Pick the provider cache SKU whose memory is closest to the requested size. */
@@ -415,6 +444,21 @@ export interface CacheNodeOption {
 
 /** Cache node type options per provider. */
 export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = ${emit(live.cacheNodeTypes)};
+
+export interface CacheEngineOption {
+	value: string;
+	label: string;
+}
+
+/**
+ * Cache ENGINES per provider — what each cloud can actually back.
+ *
+ * The database side has had this since the beginning (\`DB_ENGINES\`). The cache side didn't, so the
+ * same knowledge lived hardcoded in the canvas floor and again in the cross-cloud converter, and the
+ * two could disagree with nothing to catch it. Deriving both from here is what makes "Azure has no
+ * Valkey" a fact the product enforces rather than a comment someone has to remember.
+ */
+export const CACHE_ENGINES: Record<CloudProviderSlug, CacheEngineOption[]> = ${emit(live.cacheEngines)};
 
 /** Default cache node type per provider. */
 export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = ${emit(live.defaultCacheNode)};
