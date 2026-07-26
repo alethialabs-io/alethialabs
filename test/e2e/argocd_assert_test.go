@@ -195,6 +195,28 @@ func TestDeriveExpectedArgoApps_InstalledInfraServicesMap(t *testing.T) {
 	}
 }
 
+func TestDeriveExpectedArgoApps_XacctStore(t *testing.T) {
+	// REGRESSION (#1268): externalSecretsXacctStoreDecision records an
+	// "external-secrets-store-xacct" decision whenever the project selects a cross-account
+	// secret manager. Before that service was mapped, this metadata hard-errored — so every
+	// T2 run that enabled the connector went RED here, before reaching any xacct assertion.
+	meta := []byte(`{
+		"infra_services": [
+			{"service":"external-secrets-store","status":"installed","reason":"AWS Secrets Manager"},
+			{"service":"external-secrets-store-xacct","status":"installed","reason":"cross-account AWS Secrets Manager"}
+		]
+	}`)
+	got, err := DeriveExpectedArgoApps(meta)
+	if err != nil {
+		t.Fatalf("DeriveExpectedArgoApps: %v", err)
+	}
+	// The cross-account store ships no Application of its own — it rides the operator's.
+	want := []string{"external-secrets-operator", "metrics-server"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("derived = %v, want %v", got, want)
+	}
+}
+
 func TestDeriveExpectedArgoApps_LeanPathStillAssertsPlatformApps(t *testing.T) {
 	// All app-shipping services skipped + no add-ons: the derivation must still expect
 	// the always-rendered platform Applications (they have no render gate), so the
@@ -235,20 +257,41 @@ func TestDeriveExpectedArgoApps_UnrecognizedInstalledServiceFails(t *testing.T) 
 	}
 }
 
+// ssotFactVariants are the InfraFacts inputs TestInfraServiceMapsCoverDecisionsSSOT
+// enumerates to reach every service InfraServiceDecisions can record.
+//
+// Zero-value facts are NOT sufficient. Most decisions are unconditional (the service
+// name is emitted whatever the facts say, only status/reason vary), but a decision may
+// be CONDITIONALLY APPENDED — externalSecretsXacctStoreDecision returns ok=false unless
+// the project selected a cross-account secret manager, so it is invisible to a
+// zero-value enumeration and the "stale service" check below would reject its map entry
+// as unrecognized. A new conditionally-appended decision must add a variant here that
+// turns it on, or this guard silently stops covering it.
+var ssotFactVariants = map[string]*argocd.InfraFacts{
+	"zero value": {},
+	// turns on externalSecretsXacctStoreDecision (any provider — the service name is
+	// the same on all of them; only the reason differs)
+	"cross-account secret store selected": {
+		Provider:               "aws",
+		IRSAExternalSecretsArn: "arn:aws:iam::111111111111:role/eks-ue1-dev-x-secrets-operator",
+		SecretsXacctRef:        "arn:aws:iam::222222222222:role/AlethiaSecretsReadRole",
+	},
+}
+
 func TestInfraServiceMapsCoverDecisionsSSOT(t *testing.T) {
 	// Tie infraServiceArgoApps + infraServiceNoApp to the REAL decision list: every
 	// service InfraServiceDecisions can record must be in exactly one of the two maps,
 	// and the maps must contain nothing else — so a rename/add/remove in decisions.go
-	// breaks this test instead of silently shrinking the assertion. The service NAMES
-	// are static (independent of facts), so zero-value facts enumerate them all.
-	decisions := argocd.InfraServiceDecisions(&argocd.InfraFacts{})
+	// breaks this test instead of silently shrinking the assertion.
 	seen := map[string]struct{}{}
-	for _, d := range decisions {
-		seen[d.Service] = struct{}{}
-		_, hasApp := infraServiceArgoApps[d.Service]
-		_, noApp := infraServiceNoApp[d.Service]
-		if hasApp == noApp { // neither, or both
-			t.Errorf("service %q must be in exactly one of infraServiceArgoApps / infraServiceNoApp (hasApp=%v noApp=%v)", d.Service, hasApp, noApp)
+	for name, facts := range ssotFactVariants {
+		for _, d := range argocd.InfraServiceDecisions(facts) {
+			seen[d.Service] = struct{}{}
+			_, hasApp := infraServiceArgoApps[d.Service]
+			_, noApp := infraServiceNoApp[d.Service]
+			if hasApp == noApp { // neither, or both
+				t.Errorf("service %q (facts: %s) must be in exactly one of infraServiceArgoApps / infraServiceNoApp (hasApp=%v noApp=%v)", d.Service, name, hasApp, noApp)
+			}
 		}
 	}
 	for s := range infraServiceArgoApps {

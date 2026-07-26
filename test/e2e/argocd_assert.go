@@ -67,6 +67,11 @@ var infraServiceArgoApps = map[string]string{
 	// the ClusterSecretStore renders inside the operator's template — an installed
 	// store implies the external-secrets-operator Application must be healthy.
 	"external-secrets-store": "external-secrets-operator",
+	// the cross-account (*-xacct) ClusterSecretStore is applied by the RUNNER
+	// (argocd.EnsureExternalSecretsStore), not by an Application of its own — but it is a
+	// CR whose CRD and admission webhook ship with the operator, so exactly like the
+	// native store above, an installed one implies external-secrets-operator is healthy.
+	"external-secrets-store-xacct": "external-secrets-operator",
 	// ingressDecision is "installed" only on AWS, where it means the ALB controller.
 	"ingress": "aws-load-balancer-controller",
 	// appsRepoDecision is "installed" when the project wired an apps-destination repo: the
