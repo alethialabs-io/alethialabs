@@ -66,4 +66,29 @@ locals {
   service_bus_name     = "sb-${local.location_short}-${var.environment}-${var.project_name}"
   cosmos_db_name       = "cosmos-${local.location_short}-${var.environment}-${var.project_name}"
   storage_account_name = "st${local.location_short}${var.environment}${var.project_name}"
+
+  # The external-secrets managed identity this deploy uses: the caller's adopted one, or the one we
+  # created. Everything that federates, grants to, or exports the ESO identity reads these — never
+  # the resource directly — so adoption cannot be honoured in one place and missed in another. A
+  # half-adopted deploy would grant Key Vault access to the created identity while the target
+  # subscription trusts the adopted one, and ESO would authenticate as a principal with no read grant.
+  #
+  # Adoption requires BOTH inputs (the data source is keyed on name + resource group, not a resource
+  # id); a check block rejects supplying only one rather than silently falling back to create.
+  external_secrets_adopted = var.provision_aks && var.external_secrets_identity_name != "" && var.external_secrets_identity_resource_group != ""
+  external_secrets_identity_id = var.provision_aks ? (
+    local.external_secrets_adopted
+    ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].id
+    : azurerm_user_assigned_identity.external_secrets[0].id
+  ) : ""
+  external_secrets_client_id = var.provision_aks ? (
+    local.external_secrets_adopted
+    ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].client_id
+    : azurerm_user_assigned_identity.external_secrets[0].client_id
+  ) : ""
+  external_secrets_principal_id = var.provision_aks ? (
+    local.external_secrets_adopted
+    ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].principal_id
+    : azurerm_user_assigned_identity.external_secrets[0].principal_id
+  ) : ""
 }
