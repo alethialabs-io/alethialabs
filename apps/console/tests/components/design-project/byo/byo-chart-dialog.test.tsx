@@ -111,7 +111,7 @@ describe("ByoChartDialog — OCI source", () => {
 		expect(attachByoChart.mock.calls[0][0].ref).toBe("*");
 	});
 
-	it("blocks advancing on a reference that names no chart", async () => {
+	it("blocks advancing on a reference that names no chart, and says why", async () => {
 		const user = userEvent.setup();
 		renderDialog();
 
@@ -120,10 +120,16 @@ describe("ByoChartDialog — OCI source", () => {
 
 		// Host only — resolveByoChartInstall needs a host AND a chart segment to address a chart.
 		await user.type(screen.getByLabelText(/chart reference/i), "oci://ghcr.io");
-		expect(next()).toBeDisabled();
+		await user.click(next());
+
+		// Still on the Registry step, with the reason on screen — not a dead Next button that never
+		// explains itself.
+		expect(await screen.findByText(/including the chart name/i)).toBeInTheDocument();
+		expect(screen.getByLabelText(/chart reference/i)).toBeInTheDocument();
 
 		await user.type(screen.getByLabelText(/chart reference/i), "/acme/payments");
-		expect(next()).toBeEnabled();
+		await user.click(next());
+		expect(await screen.findByLabelText(/chart version/i)).toBeInTheDocument();
 	});
 
 	it("warns that OCI charts can't be safety-scanned", async () => {

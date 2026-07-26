@@ -17,6 +17,8 @@
 // speak both; this is the surface that could only ever produce the git one.
 
 import { useCallback, useMemo, useState } from "react";
+import { Controller, useForm, type FieldPath } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
 	ArrowLeft,
@@ -51,6 +53,11 @@ import {
 import { nodeOfKind } from "@/components/design-project/canvas/graph/types";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
+import {
+	byoChartFormSchema,
+	type ByoChartFormValues,
+	type ChartSource,
+} from "@/lib/validations/byo-charts";
 
 interface ByoChartDialogProps {
 	open: boolean;
@@ -61,7 +68,6 @@ interface ByoChartDialogProps {
 	onAttached?: (chartId: string) => void;
 }
 
-type ChartSource = "git" | "oci";
 
 const SOURCE_OPTIONS = [
 	{
@@ -89,13 +95,13 @@ function defaultNameFromRepo(repoUrl: string): string {
 	return tail || "chart";
 }
 
-/** Mirrors the server's isPlausibleRepoUrl OCI branch — the whole `oci://host/ns/chart` path. */
-function isPlausibleOciChart(url: string): boolean {
-	const trimmed = url.trim();
-	if (!/^oci:\/\/\S+$/.test(trimmed)) return false;
-	// Needs a host AND at least one more segment, or resolveByoChartInstall can't name the chart.
-	return trimmed.slice("oci://".length).replace(/\/+$/, "").split("/").filter(Boolean).length >= 2;
-}
+/** The fields each step owns, so advancing validates exactly what is on screen. */
+const STEP_FIELDS: Record<string, FieldPath<ByoChartFormValues>[]> = {
+	Source: ["source"],
+	Repository: ["repoUrl"],
+	Registry: ["repoUrl"],
+	"Chart path": ["chartPath"],
+};
 
 /** The "attach a Helm chart" dialog. Self-contained: it owns the wizard state and resets on close. */
 export function ByoChartDialog({
@@ -105,99 +111,114 @@ export function ByoChartDialog({
 	environmentId,
 	onAttached,
 }: ByoChartDialogProps) {
+	const form = useForm<ByoChartFormValues>({
+		resolver: zodResolver(byoChartFormSchema),
+		mode: "onChange",
+		defaultValues: {
+			source: "git",
+			repoUrl: "",
+			chartPath: "",
+			ref: "",
+			name: "",
+			namespace: "",
+			valuesYaml: "",
+		},
+	});
+	const {
+		control,
+		register,
+		handleSubmit,
+		trigger,
+		reset,
+		setValue,
+		watch,
+		formState: { errors, isSubmitting },
+	} = form;
+
+	// The wizard step lives in plain component state (not a schema field).
 	const [step, setStep] = useState(0);
-	const [source, setSource] = useState<ChartSource>("git");
-	const [repoUrl, setRepoUrl] = useState<string>("");
-	const [ociUrl, setOciUrl] = useState("");
-	const [chartPath, setChartPath] = useState("");
-	const [ref, setRef] = useState("");
-	const [name, setName] = useState("");
-	const [namespace, setNamespace] = useState("");
-	const [valuesYaml, setValuesYaml] = useState("");
-	const [submitting, setSubmitting] = useState(false);
+
+	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
+	// (which differ per source) are rebuilt when it changes.
+	const source = watch("source");
+	const repoUrl = watch("repoUrl");
+	const chartPath = watch("chartPath");
+	const name = watch("name");
+	const namespace = watch("namespace");
+	const ref = watch("ref");
 
 	const isOci = source === "oci";
 	const steps = STEPS[source];
 	const lastStep = steps.length - 1;
 
-	const reset = useCallback(() => {
-		setStep(0);
-		setSource("git");
-		setRepoUrl("");
-		setOciUrl("");
-		setChartPath("");
-		setRef("");
-		setName("");
-		setNamespace("");
-		setValuesYaml("");
-		setSubmitting(false);
-	}, []);
+	const effectiveUrl = (repoUrl ?? "").trim();
+	const effectiveName = (name ?? "").trim() || defaultNameFromRepo(effectiveUrl);
+	const effectiveNs = (namespace ?? "").trim() || "default";
+	// A git ref defaults to HEAD; an OCI chart version defaults to `*` (ArgoCD for "latest").
+	const effectiveRef = (ref ?? "").trim() || (isOci ? "*" : "HEAD");
 
 	const close = useCallback(
 		(next: boolean) => {
-			if (!next) reset();
+			if (!next) {
+				reset();
+				setStep(0);
+			}
 			onOpenChange(next);
 		},
 		[onOpenChange, reset],
 	);
 
-	const effectiveUrl = (isOci ? ociUrl : repoUrl).trim();
-	const effectiveName = name.trim() || defaultNameFromRepo(effectiveUrl);
-	const effectiveNs = namespace.trim() || "default";
-	// A git ref defaults to HEAD; an OCI chart version defaults to `*` (ArgoCD for "latest").
-	const effectiveRef = ref.trim() || (isOci ? "*" : "HEAD");
+	/** Validate the current step's fields before advancing. Steps differ per source, so they are
+	 * keyed by NAME rather than by index. */
+	const next = useCallback(async () => {
+		const fields = STEP_FIELDS[steps[step]];
+		if (fields && !(await trigger(fields))) return;
+		setStep((s) => s + 1);
+	}, [steps, step, trigger]);
 
-	// Per-step gating for the Next/Confirm button. Indices differ per source, so gate on the step's
-	// NAME rather than its number.
-	const canAdvance = useMemo(() => {
-		switch (steps[step]) {
-			case "Source":
-				return true;
-			case "Repository":
-				return repoUrl.trim().length > 0;
-			case "Registry":
-				return isPlausibleOciChart(ociUrl);
-			case "Chart path":
-				return chartPath.trim().length > 0;
-			default:
-				return true; // ref/version + review always advance (defaults fill in)
-		}
-	}, [steps, step, repoUrl, ociUrl, chartPath]);
+	/** Switching source invalidates the URL that was typed for the other one — an `oci://` reference
+	 * is not a git remote and vice versa — so clear it rather than carry a value that can only fail. */
+	const changeSource = useCallback(
+		(value: string) => {
+			const nextSource: ChartSource = value === "oci" ? "oci" : "git";
+			setValue("source", nextSource, { shouldValidate: false });
+			setValue("repoUrl", "", { shouldValidate: false });
+			setValue("chartPath", "", { shouldValidate: false });
+		},
+		[setValue],
+	);
 
-	const submit = useCallback(async () => {
-		setSubmitting(true);
-		try {
-			const res = await attachByoChart({
-				projectId,
-				environmentId,
-				id: effectiveName,
-				repoUrl: effectiveUrl,
-				// An OCI chart has no path — the chart name is the URL's last segment.
-				...(isOci ? {} : { chartPath: chartPath.trim() }),
-				ref: effectiveRef,
-				namespace: effectiveNs,
-				valuesYaml: valuesYaml.trim() ? valuesYaml : null,
-			});
-			toast.success(`Chart "${res.id}" attached — deploys on the next sync.`);
-			onAttached?.(res.id);
-			close(false);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not attach the chart.");
-			setSubmitting(false);
-		}
-	}, [
-		projectId,
-		environmentId,
-		effectiveName,
-		effectiveUrl,
-		isOci,
-		chartPath,
-		effectiveRef,
-		effectiveNs,
-		valuesYaml,
-		onAttached,
-		close,
-	]);
+	const onSubmit = useCallback(
+		async (values: ByoChartFormValues) => {
+			try {
+				const res = await attachByoChart({
+					projectId,
+					environmentId,
+					id: effectiveName,
+					repoUrl: values.repoUrl,
+					// An OCI chart has no path — the chart name is the URL's last segment.
+					...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
+					ref: effectiveRef,
+					namespace: effectiveNs,
+					valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
+				});
+				toast.success(`Chart "${res.id}" attached — deploys on the next sync.`);
+				onAttached?.(res.id);
+				close(false);
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Could not attach the chart.");
+			}
+		},
+		[
+			projectId,
+			environmentId,
+			effectiveName,
+			effectiveRef,
+			effectiveNs,
+			onAttached,
+			close,
+		],
+	);
 
 	return (
 		<Dialog open={open} onOpenChange={close}>
@@ -244,7 +265,7 @@ export function ByoChartDialog({
 						<div className="flex flex-col gap-3">
 							<RadioCardGroup
 								value={source}
-								onChange={(v) => setSource(v === "oci" ? "oci" : "git")}
+								onChange={changeSource}
 								options={SOURCE_OPTIONS}
 								ariaLabel="Chart source"
 							/>
@@ -253,17 +274,27 @@ export function ByoChartDialog({
 
 					{steps[step] === "Repository" && (
 						<div className="flex flex-col gap-3">
-							<RepositorySelector
-								value={repoUrl}
-								onChange={setRepoUrl}
-								label="Chart repository"
-								placeholder="https://github.com/acme/payments-helm"
-								required
+							<Controller
+								control={control}
+								name="repoUrl"
+								render={({ field }) => (
+									<RepositorySelector
+										value={field.value}
+										onChange={field.onChange}
+										label="Chart repository"
+										placeholder="https://github.com/acme/payments-helm"
+										required
+									/>
+								)}
 							/>
-							<p className="text-xs text-muted-foreground">
-								From the git providers you&apos;ve linked. No provider yet? The selector offers a
-								connect step — identity comes from your existing connectors, no new login.
-							</p>
+							{errors.repoUrl ? (
+								<p className="text-xs text-destructive">{errors.repoUrl.message}</p>
+							) : (
+								<p className="text-xs text-muted-foreground">
+									From the git providers you&apos;ve linked. No provider yet? The selector offers
+									a connect step — identity comes from your existing connectors, no new login.
+								</p>
+							)}
 						</div>
 					)}
 
@@ -272,16 +303,20 @@ export function ByoChartDialog({
 							<Label htmlFor="byo-chart-oci">Chart reference</Label>
 							<Input
 								id="byo-chart-oci"
-								value={ociUrl}
-								onChange={(e) => setOciUrl(e.target.value)}
+								{...register("repoUrl")}
 								placeholder="oci://ghcr.io/acme/payments"
 								className="font-mono"
+								aria-invalid={errors.repoUrl ? true : undefined}
 								autoFocus
 							/>
-							<p className="text-xs text-muted-foreground">
-								The whole path including the chart name — host, namespace, chart.
-							</p>
-							<OciCredentialNote url={ociUrl} />
+							{errors.repoUrl ? (
+								<p className="text-xs text-destructive">{errors.repoUrl.message}</p>
+							) : (
+								<p className="text-xs text-muted-foreground">
+									The whole path including the chart name — host, namespace, chart.
+								</p>
+							)}
+							<OciCredentialNote url={repoUrl} />
 						</div>
 					)}
 
@@ -290,15 +325,19 @@ export function ByoChartDialog({
 							<Label htmlFor="byo-chart-path">Chart path</Label>
 							<Input
 								id="byo-chart-path"
-								value={chartPath}
-								onChange={(e) => setChartPath(e.target.value)}
+								{...register("chartPath")}
 								placeholder="charts/payments"
 								className="font-mono"
+								aria-invalid={errors.chartPath ? true : undefined}
 								autoFocus
 							/>
-							<p className="text-xs text-muted-foreground">
-								The directory inside the repo that contains <code>Chart.yaml</code>.
-							</p>
+							{errors.chartPath ? (
+								<p className="text-xs text-destructive">{errors.chartPath.message}</p>
+							) : (
+								<p className="text-xs text-muted-foreground">
+									The directory inside the repo that contains <code>Chart.yaml</code>.
+								</p>
+							)}
 						</div>
 					)}
 
@@ -307,8 +346,7 @@ export function ByoChartDialog({
 							<Label htmlFor="byo-chart-ref">{isOci ? "Chart version" : "Git ref"}</Label>
 							<Input
 								id="byo-chart-ref"
-								value={ref}
-								onChange={(e) => setRef(e.target.value)}
+								{...register("ref")}
 								placeholder={isOci ? "1.4.2 (default: * = latest)" : "main (default: HEAD)"}
 								className="font-mono"
 								autoFocus
@@ -335,8 +373,7 @@ export function ByoChartDialog({
 									<Label htmlFor="byo-chart-name">Name</Label>
 									<Input
 										id="byo-chart-name"
-										value={name}
-										onChange={(e) => setName(e.target.value)}
+										{...register("name")}
 										placeholder={defaultNameFromRepo(effectiveUrl)}
 										className="font-mono"
 									/>
@@ -345,8 +382,7 @@ export function ByoChartDialog({
 									<Label htmlFor="byo-chart-ns">Namespace</Label>
 									<Input
 										id="byo-chart-ns"
-										value={namespace}
-										onChange={(e) => setNamespace(e.target.value)}
+										{...register("namespace")}
 										placeholder="default"
 										className="font-mono"
 									/>
@@ -356,8 +392,7 @@ export function ByoChartDialog({
 								<Label htmlFor="byo-chart-values">Helm values (optional)</Label>
 								<Textarea
 									id="byo-chart-values"
-									value={valuesYaml}
-									onChange={(e) => setValuesYaml(e.target.value)}
+									{...register("valuesYaml")}
 									placeholder={"replicaCount: 2\nimage:\n  tag: v1.2.3"}
 									className="h-24 font-mono text-xs"
 								/>
@@ -382,10 +417,11 @@ export function ByoChartDialog({
 
 				<div className="flex items-center justify-between">
 					<Button
+						type="button"
 						variant="ghost"
 						size="sm"
 						onClick={() => (step === 0 ? close(false) : setStep((s) => s - 1))}
-						disabled={submitting}
+						disabled={isSubmitting}
 					>
 						{step === 0 ? (
 							"Cancel"
@@ -396,12 +432,17 @@ export function ByoChartDialog({
 						)}
 					</Button>
 					{step < lastStep ? (
-						<Button size="sm" onClick={() => setStep((s) => s + 1)} disabled={!canAdvance}>
+						<Button type="button" size="sm" onClick={next}>
 							Next <ArrowRight className="h-3.5 w-3.5" />
 						</Button>
 					) : (
-						<Button size="sm" onClick={submit} disabled={submitting}>
-							{submitting ? (
+						<Button
+							type="button"
+							size="sm"
+							onClick={handleSubmit(onSubmit)}
+							disabled={isSubmitting}
+						>
+							{isSubmitting ? (
 								<Loader2 className="h-3.5 w-3.5 animate-spin" />
 							) : (
 								<Check className="h-3.5 w-3.5" />
