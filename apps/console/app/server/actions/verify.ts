@@ -14,12 +14,14 @@ import { withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 
 /**
- * Explain a job's failing verification controls in plain English (elench, A6§7).
- * The deterministic gate already decided pass/fail; this only adds advisory
- * explanation/remediation via the model — it is never the gate and writes nothing.
- * Returns [] when AI is unconfigured or there is nothing to explain. The
- * orchestration is unit-tested via lib/ai/explain-findings (injected model); this
- * wrapper supplies the real direct-to-provider call, mirroring the agent route.
+ * Explain a job's failing gate controls in plain English (elench, A6§7). Covers
+ * whichever gate blocked — the elench verify report, or the version-compatibility
+ * report (#1219) when no verify report is present. The deterministic gate already
+ * decided pass/fail; this only adds advisory explanation/remediation via the model —
+ * it is never the gate and writes nothing. Returns [] when AI is unconfigured or
+ * there is nothing to explain. The orchestration is unit-tested via
+ * lib/ai/explain-findings (injected model); this wrapper supplies the real
+ * direct-to-provider call, mirroring the agent route.
  */
 export async function explainJobFindings(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
@@ -31,7 +33,9 @@ export async function explainJobFindings(jobId: string) {
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
 			.limit(1);
-		return job?.md?.verify_result ?? null;
+		// Explain whichever gate blocked: the verify report if present, else the
+		// version-compatibility report (a DEPLOY blocked at COMPAT-001 carries only the latter).
+		return job?.md?.verify_result ?? job?.md?.compat_result ?? null;
 	});
 	if (!report) return [];
 
