@@ -8,7 +8,7 @@
 // and closes. Mounted once by the AppShell.
 
 import { Box, ClipboardList, type LucideIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
 import {
 	CommandDialog,
@@ -19,14 +19,17 @@ import {
 	CommandList,
 } from "@repo/ui/command";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { SETTINGS_NAV_ITEMS } from "@/components/settings/settings-nav-items";
-import { buildDrills, buildSidebarNav } from "@/components/shell/nav-config";
-import { globalHref } from "@/lib/routing";
+import { settingsNavItemsForScope } from "@/components/settings/settings-nav-items";
+import {
+	buildDrills,
+	buildSidebarNav,
+	projectScope,
+} from "@/components/shell/nav-config";
+import { globalHref, projectHref, projectSettingsHref } from "@/lib/routing";
 import { useCommandPalette } from "@/lib/stores/use-command-palette";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
-import { projectHref } from "@/lib/routing";
 
 /** A flat, navigable palette entry. */
 interface PaletteEntry {
@@ -55,6 +58,7 @@ function isTypingTarget(t: EventTarget | null): boolean {
  */
 export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean }) {
 	const router = useRouter();
+	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
 	const open = useCommandPalette((s) => s.open);
 	const setOpen = useCommandPalette((s) => s.setOpen);
@@ -108,7 +112,7 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 			}
 		}
 
-		for (const item of SETTINGS_NAV_ITEMS) {
+		for (const item of settingsNavItemsForScope("org")) {
 			push(
 				`Settings / ${item.label}`,
 				globalHref(orgSlug, `settings/${item.sub}`),
@@ -116,8 +120,19 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 			);
 		}
 
+		const project = projectScope(pathname);
+		if (project) {
+			for (const item of settingsNavItemsForScope("project")) {
+				push(
+					`Project settings / ${item.label}`,
+					projectSettingsHref(orgSlug, project.projectSlug, item.sub),
+					item.icon,
+				);
+			}
+		}
+
 		return out;
-	}, [orgSlug, selfRunners]);
+	}, [orgSlug, pathname, selfRunners]);
 
 	// Live projects (projects), flat under the org.
 	const projectEntries = useMemo<PaletteEntry[]>(() => {
