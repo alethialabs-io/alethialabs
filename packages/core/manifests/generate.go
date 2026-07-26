@@ -406,6 +406,24 @@ type Options struct {
 	// (public image or own-account ECR/GAR/AR via node auth). The provisioner derives this from the
 	// project's selected pluggable registry (categories.DominantRegistryPullSecret).
 	ImagePullSecrets []string
+	// SecretStores maps a project secret's NAME → the pluggable SaaS ClusterSecretStore that can read
+	// it (the runtime-read lane's secretstore-<slug> + the value property). It is the single source of
+	// truth shared by BOTH binding lanes: resolveBindings emits a workload secretKeyRef for a
+	// secret-kind binding ONLY when its target secret has a readable store here, and
+	// writeBindingExternalSecrets renders the matching ExternalSecret from the SAME entry — so the two
+	// never disagree about which secret bindings are satisfiable. A secret whose provider is
+	// native/excluded (no read path) is ABSENT here, so its binding is reported unresolved (fail-closed).
+	// The provisioner builds it from vc.Secrets + categories.IsSaaSSecretStore. Nil/empty is fine.
+	SecretStores map[string]SecretStoreRef
+}
+
+// SecretStoreRef is the pluggable secret store that materializes one project secret: the ESO
+// ClusterSecretStore name (secretstore-<slug>) and the remoteRef property the value lives under
+// ("value" for a Vault-KV-compatible store; "" for Doppler, which is flat). StoreName == "" means no
+// readable store (a native/excluded provider) — a secret-kind binding to it stays fail-closed.
+type SecretStoreRef struct {
+	StoreName     string
+	ValueProperty string
 }
 
 // endpointOutputKey maps a (provider, backing-kind) to the tofu output holding that resource's
@@ -583,6 +601,33 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 						}
 						r.env = append(r.env, types.ServiceEnvVar{Name: inj.Env, Value: user})
 					}
+					continue
+				}
+				// A secret-kind binding resolves a PROJECT SECRET from a pluggable SaaS store
+				// (Vault/Doppler/generic), not a cloud master secret. Fail-closed + lock-step with
+				// writeBindingExternalSecrets: emit the secretKeyRef ONLY when the target secret has a
+				// readable store (opts.SecretStores) — a native/excluded provider is absent there, so the
+				// workload never references a Secret no ExternalSecret will materialize. The single
+				// supported facet is `value`; the materialized Secret key is "value" (RenderSecretBinding-
+				// ExternalSecret writes the same), so the two lanes agree on the key.
+				if b.Target.Kind == types.ServiceBindingKindSecret {
+					if string(inj.From) != "value" {
+						r.unresolved = append(r.unresolved, fmt.Sprintf(
+							"secret binding facet %q (env %s) for %s→secret/%s: only the `value` facet is supported — env omitted",
+							inj.From, inj.Env, serviceName, b.Target.Name))
+						continue
+					}
+					if opts.SecretStores[b.Target.Name].StoreName == "" {
+						r.unresolved = append(r.unresolved, fmt.Sprintf(
+							"secret binding (env %s) for %s→secret/%s: the project secret has no readable pluggable store (native/excluded provider) — env omitted (fail-closed)",
+							inj.Env, serviceName, b.Target.Name))
+						continue
+					}
+					r.secretEnv = append(r.secretEnv, AppSecretEnv{
+						Env:        inj.Env,
+						SecretName: BindingSecretName(serviceName, b.Target),
+						SecretKey:  "value",
+					})
 					continue
 				}
 				// BYO-IaC credential facets are fail-closed: emit the secretKeyRef ONLY when the

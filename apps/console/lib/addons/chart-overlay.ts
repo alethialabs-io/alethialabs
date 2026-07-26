@@ -43,6 +43,8 @@ const CREDENTIAL_FACETS: ReadonlySet<ServiceBindingFacet> = new Set([
 	"username",
 	"password",
 	"connection_string",
+	// value — a secret-kind binding's opaque project-secret value (resolved from a SaaS store).
+	"value",
 ]);
 
 /** Whether a binding facet resolves to a secret (ref), not a templated literal. */

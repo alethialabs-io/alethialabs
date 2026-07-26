@@ -148,6 +148,8 @@ export const serviceBindingSchema = z.object({
 				"username",
 				"password",
 				"connection_string",
+				// value — a `secret`-kind binding's opaque value (project secret via a SaaS store).
+				"value",
 			]),
 		}),
 	),

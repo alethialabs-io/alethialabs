@@ -24,7 +24,10 @@ resource "vault_kv_secret_v2" "secret" {
   for_each = var.vault_kv_version == "2" ? toset(var.secret_names) : toset([])
   mount    = var.vault_mount_path
   name     = each.value
-  # Placeholder payload — applications/operators populate the real value. Keeping
-  # the entry under management lets the platform track and rotate it.
-  data_json = jsonencode({ managed_by = "alethia" })
+  # Placeholder payload — applications/operators populate the real value. Keeping the entry under
+  # management lets the platform track and rotate it. The value lives under the `value` field: a
+  # secret-kind service binding reads it back via an ExternalSecret whose remoteRef.property is
+  # `value` (the pinned convention; Doppler is flat and needs no property). See
+  # packages/core/manifests/externalsecret.go (RenderSecretBindingExternalSecret).
+  data_json = jsonencode({ value = "managed-by-alethia" })
 }

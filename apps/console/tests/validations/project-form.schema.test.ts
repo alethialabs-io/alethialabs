@@ -345,6 +345,16 @@ describe("projectFormSchema", () => {
 			expect(projectFormSchema.safeParse(data).success).toBe(true);
 		});
 
+		it("accepts a secret-kind binding with the value facet (#1207)", () => {
+			const data = serviceWith([
+				{
+					target: { kind: "secret", name: "stripe-key" },
+					inject: [{ env: "STRIPE_KEY", from: "value" }],
+				},
+			]);
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
 		it("rejects an unknown injection facet", () => {
 			const data = serviceWith([
 				{ target: { kind: "database", name: "db" }, inject: [{ env: "X", from: "bogus" }] },
