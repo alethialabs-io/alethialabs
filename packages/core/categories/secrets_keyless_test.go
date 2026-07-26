@@ -45,14 +45,21 @@ func TestComposeKeylessSecretSetsXacctGuard(t *testing.T) {
 }
 
 func TestComposeKeylessSecretGCPAzureNoAssumeLeg(t *testing.T) {
-	// GCP and Azure need NO cluster-side assume leg — the read grant lives entirely in the target
-	// project/subscription (Model B), so secrets_xacct_target_role_arn must stay unset.
+	// GCP, Azure and Alibaba need NO cluster-side assume leg — the read grant lives entirely in the
+	// target account (Model B): GCP/Azure bind our workload identity in the target project/subscription;
+	// Alibaba exchanges the RRSA OIDC token directly for the target role. So secrets_xacct_target_role_arn
+	// must stay unset for all three.
 	for _, tc := range []struct {
 		slug string
 		pc   map[string]any
 	}{
 		{"gcp-sm-xacct", map[string]any{"target_project_id": "acme-secrets"}},
 		{"azure-kv-xacct", map[string]any{"target_subscription_id": "sub-b", "vault_url": "https://acme.vault.azure.net"}},
+		{"alibaba-kms-xacct", map[string]any{
+			"target_account_id": "5551234", "region": "cn-hangzhou",
+			"target_role_arn":          "acs:ram::5551234:role/read",
+			"target_oidc_provider_arn": "acs:ram::5551234:oidc-provider/ack",
+		}},
 	} {
 		t.Run(tc.slug, func(t *testing.T) {
 			tfvars := map[string]any{}

@@ -118,10 +118,12 @@ func Compose(
 				return 0, fmt.Errorf("secrets/%s validation failed: %w", slug, err)
 			}
 			tfvars["secrets_xacct_provider"] = slug
-			if t, ok := p.KeylessSecretStore(ctx); ok && (t.Provider == "aws" || t.Provider == "alibaba") {
-				// AWS / Alibaba: the cluster-side ESO identity must be allowed to assume the target-account
-				// role. GCP/Azure need no cluster-side leg — the read grant lives entirely in the target
-				// project/subscription, bound to our workload identity by the customer bootstrap (Model B).
+			if t, ok := p.KeylessSecretStore(ctx); ok && t.Provider == "aws" {
+				// AWS only: the cluster-side ESO IRSA role must be allowed to assume the target-account role
+				// (spec.provider.aws.role). GCP/Azure/Alibaba need no cluster-side leg — the read grant lives
+				// entirely in the target account (Model B): GCP/Azure bind our workload identity in the target
+				// project/subscription; Alibaba exchanges the RRSA OIDC token directly for the target role via
+				// the target account's own OIDC provider (no role chaining).
 				tfvars["secrets_xacct_target_role_arn"] = t.TargetRef
 			}
 			fmt.Fprintf(log, "Cross-account keyless secret manager %s: ESO reads the foreign account via ClusterSecretStore (native store untouched)\n", slug)
