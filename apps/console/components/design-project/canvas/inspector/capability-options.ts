@@ -275,10 +275,10 @@ export function intersectWithFloor(
  * capability: on Hetzner the chart mapper only knows CloudNativePG, so offering MySQL because the
  * account "could" run it would produce an unbuildable node. Hence intersect, never replace.
  *
- * NOTE the engine VERSION is deliberately not wired. `getDatabaseCapabilities` returns a version per
- * engine, but AWS/GCP collapse to "latest per engine" and Azure/Alibaba fuse the version into
- * `native_id` (`postgres-16`), so there is no orthogonal version axis to offer yet — see the
- * follow-up on splitting engine from version in the enumeration lanes.
+ * The engine's VERSION is a sibling axis, resolved by `dbVersionOptions` from the same
+ * `caps.dbEngines` rows. It became offerable in #1351: the lanes now emit one row per
+ * (engine, version) and the reader folds them into a per-engine version list, where they used to
+ * collapse to "latest per engine" (AWS/GCP) or fuse the version into `native_id` (Azure/Alibaba).
  */
 export function dbEngineOptions(ctx: FieldCtx): FieldOption[] {
 	return intersectWithFloor(

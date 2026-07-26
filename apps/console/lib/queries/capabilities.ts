@@ -172,8 +172,8 @@ export interface CapabilityK8sVersionOption {
  *
  * `versions` is the engine-version axis the picker offers (#1351). It is never empty: a federated row
  * always carries a version, and the static fallback contributes the catalog's default as a
- * one-element list. `version` remains as the default/most-recent offering so existing callers that
- * want a single value keep working. */
+ * one-element list. `version` is the NEWEST offered version — a convenience mirror of `versions[0]`,
+ * kept because a single-value caller shouldn't have to know that the list is sorted newest-first. */
 export interface CapabilityDbEngineOption {
 	value: string;
 	label: string;
