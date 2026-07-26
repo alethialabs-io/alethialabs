@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { CreateProjectInput } from "@/app/server/actions/projects";
+import type { EnvironmentSpec } from "@/lib/queries/projects";
 import {
 	AUTOSCALER,
 	DEFAULT_INSTANCE_TYPE,
@@ -51,8 +52,12 @@ export function buildCreateInput(args: {
 	provider: CloudProviderSlug;
 	cloudIdentityId: string;
 	defaultEnvironment: QuickEnvironment;
+	/** The placement matrix from the selector (#844). Omitted → createProject keeps the legacy
+	 *  Prod(dedicated)+Preview(namespace) shape. */
+	environments?: EnvironmentSpec[];
 }): CreateProjectInput {
-	const { projectName, template, provider, cloudIdentityId, defaultEnvironment } = args;
+	const { projectName, template, provider, cloudIdentityId, defaultEnvironment, environments } =
+		args;
 	const autoscalerKey = AUTOSCALER[provider].providerConfigKey;
 
 	return {
@@ -62,6 +67,7 @@ export function buildCreateInput(args: {
 			region: defaultEnvironment.region,
 			cloud_identity_id: cloudIdentityId,
 			iac_version: "1.11.4",
+			...(environments?.length ? { environments } : {}),
 		},
 		network: {
 			provision_network: true,
@@ -101,8 +107,10 @@ export function buildCreateInput(args: {
 export function buildEmptyCreateInput(args: {
 	projectName: string;
 	defaultEnvironment: QuickEnvironment;
+	/** The placement matrix from the selector (#844). Omitted → the legacy Prod+Preview shape. */
+	environments?: EnvironmentSpec[];
 }): CreateProjectInput {
-	const { projectName, defaultEnvironment } = args;
+	const { projectName, defaultEnvironment, environments } = args;
 
 	return {
 		project: {
@@ -111,6 +119,7 @@ export function buildEmptyCreateInput(args: {
 			region: defaultEnvironment.region || DEFAULT_REGION.aws,
 			cloud_identity_id: null,
 			iac_version: "1.11.4",
+			...(environments?.length ? { environments } : {}),
 		},
 		network: {
 			provision_network: true,

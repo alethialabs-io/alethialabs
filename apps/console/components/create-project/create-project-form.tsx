@@ -4,18 +4,10 @@
 
 import { lookup } from "@/lib/typed-object";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-	ArrowRight,
-	Boxes,
-	Check,
-	GitBranch,
-	Loader2,
-	Sparkles,
-	Users,
-} from "lucide-react";
+import { ArrowRight, Check, Loader2, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -45,6 +37,16 @@ import { Label } from "@repo/ui/label";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 
+import type { EnvironmentSpec } from "@/lib/queries/projects";
+import {
+	DEFAULT_ENVIRONMENT_MATRIX,
+	PlacementSelector,
+} from "@/components/design-project/placement-selector";
+import { RepoImportPanel } from "./repo-import-panel";
+import {
+	StartFromScratchCards,
+	type ScratchKind,
+} from "./start-from-scratch-cards";
 import {
 	buildCreateInput,
 	buildEmptyCreateInput,
@@ -108,11 +110,11 @@ interface CreateProjectFormProps {
 }
 
 /**
- * The quick create-project page: an agent prompt hero on top, then a short single-column manual
- * path (project name → template → cloud) with the create actions at the bottom. Templates reuse
- * {@link ContainerPlatformSelector}; the cloud picker uses the connectors connect sheet
- * ({@link useCloudConnect}). Every project is created with Production + Preview environments
- * automatically (no env UI). No pricing shown.
+ * The `~/new` front door: an agent prompt hero on top, then the two first-class on-ramps — import a
+ * repository ({@link RepoImportPanel}, scan→canvas) and start from scratch ({@link
+ * StartFromScratchCards}) — then the manual configure path (project name → template → cloud →
+ * environments). The {@link PlacementSelector} chooses how the seeded environments are placed onto
+ * Fabrics; the chosen matrix threads through the builders into `createProject`. No pricing shown.
  */
 export function CreateProjectForm({
 	orgSlug,
@@ -134,6 +136,11 @@ export function CreateProjectForm({
 	const [creatingFromChart, setCreatingFromChart] = useState(false);
 	const [creatingFromIac, setCreatingFromIac] = useState(false);
 	const [launching, setLaunching] = useState(false);
+	// The environment matrix the placement selector (#844) edits — seeds every create path so the
+	// project is fanned out into prod/staging/dev/preview Fabrics (all DRAFT until a deploy).
+	const [environments, setEnvironments] = useState<EnvironmentSpec[]>(
+		DEFAULT_ENVIRONMENT_MATRIX,
+	);
 
 	const cloudConnect: CloudConnectResult = useCloudConnect({
 		integrations,
@@ -210,6 +217,7 @@ export function CreateProjectForm({
 						stage: "production",
 						region,
 					},
+					environments,
 				}),
 			);
 			track("project_created", { provider, template: values.template });
@@ -238,6 +246,7 @@ export function CreateProjectForm({
 						stage: "production",
 						region,
 					},
+					environments,
 				}),
 			);
 			toast.success("Empty project created — start designing.");
@@ -270,6 +279,7 @@ export function CreateProjectForm({
 						stage: "production",
 						region,
 					},
+					environments,
 				}),
 			);
 			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachChart=1`);
@@ -301,6 +311,7 @@ export function CreateProjectForm({
 						stage: "production",
 						region,
 					},
+					environments,
 				}),
 			);
 			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachIac=1`);
@@ -312,8 +323,43 @@ export function CreateProjectForm({
 		}
 	};
 
+	/** The manual configure block, so the "Start from a template" card can scroll it into view. */
+	const configureRef = useRef<HTMLDivElement>(null);
+
+	/** Routes a start-from-scratch card to the right motion. Template reveals the manual configure
+	 * block (cloud + template + placement); the others create straight away (they need only a name). */
+	const onScratchSelect = (kind: ScratchKind) => {
+		switch (kind) {
+			case "template":
+				configureRef.current?.scrollIntoView({
+					behavior: "smooth",
+					block: "start",
+				});
+				void form.trigger("project_name");
+				form.setFocus("project_name");
+				break;
+			case "byo-helm":
+				void onCreateFromChart();
+				break;
+			case "byo-iac":
+				void onCreateFromIac();
+				break;
+			case "blank":
+				void onCreateEmpty();
+				break;
+		}
+	};
+
 	const slugPreview = slugify(name) || "project";
 	const busy = creating || creatingEmpty || creatingFromChart || creatingFromIac;
+	/** Which scratch card is mid-create (drives the card's spinner). */
+	const scratchPending: ScratchKind | null = creatingFromChart
+		? "byo-helm"
+		: creatingFromIac
+			? "byo-iac"
+			: creatingEmpty
+				? "blank"
+				: null;
 
 	return (
 		<div className="mx-auto w-full max-w-3xl space-y-8 pb-20">
@@ -399,70 +445,31 @@ export function CreateProjectForm({
 				</div>
 			</section>
 
-			{/* ===== start from a Helm chart (repo-first on-ramp) ===== */}
-			{byoHelmEnabled && (
-				<button
-					type="button"
-					onClick={() => void onCreateFromChart()}
-					disabled={busy}
-					className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
-				>
-					<span className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
-						{creatingFromChart ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<GitBranch className="size-4" />
-						)}
-					</span>
-					<span className="min-w-0 flex-1">
-						<span className="flex items-center gap-2 text-[14px] font-medium text-foreground">
-							Bring your own Helm chart
-							<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">
-								New
-							</span>
-						</span>
-						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
-							Start from a git repo — Alethia deploys and governs it on your
-							cluster via ArgoCD.
-						</span>
-					</span>
-					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-				</button>
-			)}
+			{/* ===== import a repository (repo-first on-ramp) ===== */}
+			<RepoImportPanel />
 
-			{/* ===== start from an OpenTofu module (repo-first on-ramp) ===== */}
-			{byoIacEnabled && (
-				<button
-					type="button"
-					onClick={() => void onCreateFromIac()}
-					disabled={busy}
-					className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
-				>
-					<span className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
-						{creatingFromIac ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<Boxes className="size-4" />
-						)}
+			{/* ===== start from scratch ===== */}
+			<section className="space-y-3">
+				<div className="flex items-center gap-4">
+					<span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+						Or start from scratch
 					</span>
-					<span className="min-w-0 flex-1">
-						<span className="flex items-center gap-2 text-[14px] font-medium text-foreground">
-							Bring your own IaC
-							<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">
-								New
-							</span>
-						</span>
-						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
-							Start from a git repo — Alethia plans, verifies, and applies your
-							OpenTofu module on your cluster.
-						</span>
-					</span>
-					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-				</button>
-			)}
+					<span className="h-px flex-1 bg-border" />
+				</div>
+				<StartFromScratchCards
+					byoHelmEnabled={byoHelmEnabled ?? false}
+					byoIacEnabled={byoIacEnabled ?? false}
+					busy={busy}
+					pending={scratchPending}
+					onSelect={onScratchSelect}
+				/>
+			</section>
 
 			{/* ===== divider ===== */}
-			<div className="flex items-center gap-4 py-2">
+			<div
+				ref={configureRef}
+				className="flex items-center gap-4 py-2 scroll-mt-6"
+			>
 				<span className="h-px flex-1 bg-border" />
 				<span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
 					Or configure manually
@@ -529,6 +536,17 @@ export function CreateProjectForm({
 						{form.formState.errors.cloud.message}
 					</p>
 				)}
+			</section>
+
+			{/* ===== 04 environments (placement) ===== */}
+			<section className="space-y-4">
+				<BlockHead num="04" title="Environments" hint="placed on Fabrics" />
+				<p className="-mt-1 text-[12.5px] text-muted-foreground">
+					Each environment is placed onto a Fabric — its own cluster
+					(dedicated) or a namespace on a shared one. Everything starts as a
+					draft; nothing is provisioned until you deploy.
+				</p>
+				<PlacementSelector value={environments} onChange={setEnvironments} />
 			</section>
 
 			{/* ===== actions ===== */}
