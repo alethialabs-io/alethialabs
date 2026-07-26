@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -46,6 +47,14 @@ func MintTalosKubeconfig(ctx context.Context, talosconfigYAML string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("talos kubeconfig mint: parse talosconfig: %w", err)
 	}
+	// SSRF guard (runner-parent-ssrf rule): the endpoints come from a persisted talosconfig, which for a
+	// BYO-IaC hetzner Fabric could be customer-influenced. Refuse to dial a link-local/loopback address
+	// from the (trusted) runner — 169.254.169.254 (cloud metadata) is link-local, so this blocks the
+	// metadata-SSRF vector. RFC-1918 is deliberately allowed (a self-hosted runner legitimately reaches a
+	// private control-plane on its own network); the boundary that matters here is link-local + loopback.
+	if err := assertSafeTalosEndpoints(cfg); err != nil {
+		return nil, fmt.Errorf("talos kubeconfig mint: %w", err)
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, talosMintTimeout)
 	defer cancel()
@@ -69,6 +78,42 @@ func MintTalosKubeconfig(ctx context.Context, talosconfigYAML string) ([]byte, e
 		return nil, fmt.Errorf("talos kubeconfig mint: apid returned an empty kubeconfig")
 	}
 	return kubeconfig, nil
+}
+
+// assertSafeTalosEndpoints rejects a talosconfig whose active-context endpoints resolve to a link-local
+// (incl. the 169.254.169.254 cloud-metadata address), loopback, or unspecified address — the SSRF vectors
+// a customer-influenced (BYO-IaC) talosconfig could point the trusted runner at. It resolves hostnames so
+// the check is on the RESOLVED ip (per the runner-parent-ssrf rule). RFC-1918/private is allowed.
+func assertSafeTalosEndpoints(cfg *talosconfig.Config) error {
+	ctxCfg, ok := cfg.Contexts[cfg.Context]
+	if !ok || ctxCfg == nil {
+		return fmt.Errorf("talosconfig has no active context %q", cfg.Context)
+	}
+	if len(ctxCfg.Endpoints) == 0 {
+		return fmt.Errorf("talosconfig context %q carries no endpoints", cfg.Context)
+	}
+	for _, ep := range ctxCfg.Endpoints {
+		host := ep
+		if h, _, splitErr := net.SplitHostPort(ep); splitErr == nil {
+			host = h
+		}
+		var ips []net.IP
+		if ip := net.ParseIP(host); ip != nil {
+			ips = []net.IP{ip}
+		} else {
+			resolved, err := net.LookupIP(host)
+			if err != nil {
+				return fmt.Errorf("talos endpoint %q does not resolve: %w", ep, err)
+			}
+			ips = resolved
+		}
+		for _, ip := range ips {
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				return fmt.Errorf("talos endpoint %q resolves to disallowed address %s (link-local/loopback) — refusing to dial from the runner (SSRF guard)", ep, ip)
+			}
+		}
+	}
+	return nil
 }
 
 // newTalosKubeconfigMinter returns the provisioner.TalosKubeconfigMinter for a hetzner placement job,

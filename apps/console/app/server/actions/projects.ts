@@ -1449,7 +1449,12 @@ async function resolveTargetEnvironment(
 				),
 			)
 			.limit(1);
-		fabric = row ?? null;
+		// Strip the at-rest talosconfig credential (#1389): placement resolution needs the Fabric's
+		// identity/region/status, never its admin credential. Nulling it here keeps the EncryptedSecret
+		// envelope out of any downstream config_snapshot/response (the scrub denylist keys on `talosconfig`,
+		// which would NOT match the `talos_admin_config` column name). The credential is read only via the
+		// authenticated /jobs/[id]/talosconfig claim route.
+		fabric = row ? { ...row, talos_admin_config: null } : null;
 	}
 
 	// Effective ArgoCD destination namespace. `dedicated` owns the whole Fabric → no namespace
