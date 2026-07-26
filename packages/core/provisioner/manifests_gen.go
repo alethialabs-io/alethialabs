@@ -283,6 +283,55 @@ func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[str
 	return nil, nil
 }
 
+// keylessHelmResult is the outcome of rendering the keyless OCI ECR Helm chart-repo refreshers (#1185).
+type keylessHelmResult struct {
+	Manifest          string   // the multi-doc YAML to apply post-apply (empty ⇒ nothing to apply)
+	DesiredSecrets    []string // placeholder repo-cred Secret names (kept by PruneHelmRepoCredentials)
+	DesiredRefreshers []string // refresher Deployment/Role/RoleBinding names (for PruneHelmRepoRefreshers)
+	Skip              string   // fail-closed reason (missing pull identity / render error) — no manifest
+	SkippedTargets    error    // partial: some connected ECR repos were misconfigured (non-fatal)
+}
+
+// renderKeylessHelmRefreshers decides + renders the keyless OCI ECR Helm chart-repo refreshers for a
+// project (#1185): the shared KSA + per-repo placeholder Secret + name-scoped Role/RoleBinding +
+// Deployment, which the caller applies post-apply into the argocd namespace. It does NOT gate on the
+// feature flag (the caller does) and does NOT apply — pure, so it is unit-testable. Fail-closed: keyless
+// targets present but an empty irsaRoleArn (or a render error) yields Skip set + no Manifest — a
+// refresher is never rendered without its pull identity. A misconfigured connected repo is skipped with
+// its error surfaced via SkippedTargets (non-fatal; mirrors categories.KeylessHelmRepoTargets).
+func renderKeylessHelmRefreshers(vc *types.ProjectConfig, irsaRoleArn, runnerImage string) keylessHelmResult {
+	targets, tErr := categories.KeylessHelmRepoTargets(vc)
+	res := keylessHelmResult{SkippedTargets: tErr}
+	if len(targets) == 0 {
+		return res
+	}
+	if irsaRoleArn == "" {
+		res.Skip = "keyless Helm ECR: missing tofu output \"helm_repo_pull_irsa_arn\" — refreshers not applied (fail-closed)"
+		return res
+	}
+	refreshers := make([]manifests.HelmRepoRefresher, 0, len(targets))
+	for _, t := range targets {
+		refreshers = append(refreshers, manifests.HelmRepoRefresher{
+			SecretName:    t.SecretName(),
+			RepoURL:       t.RepoURL(),
+			Region:        t.Region,
+			TargetRoleArn: t.TargetRoleArn,
+			Public:        t.Public,
+		})
+	}
+	y, rErr := manifests.RenderHelmRepoRefreshers(refreshers, irsaRoleArn, runnerImage)
+	if rErr != nil {
+		res.Skip = fmt.Sprintf("keyless Helm ECR refresher not rendered (fail-closed): %v", rErr)
+		return res
+	}
+	res.Manifest = y
+	for _, r := range refreshers {
+		res.DesiredSecrets = append(res.DesiredSecrets, r.SecretName)
+		res.DesiredRefreshers = append(res.DesiredRefreshers, r.DeploymentName())
+	}
+	return res
+}
+
 // credentialSecretOutputKey maps a binding kind to the tofu output holding the resource's
 // provisioned master-credentials secret name. AWS-first; "" → no provisioned credential secret for
 // that kind, so RenderExternalSecret reports the facet unsatisfiable (never silently dropped).
