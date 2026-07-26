@@ -53,29 +53,27 @@ describe("helmRegistryUrl", () => {
 	// Must equal what packages/core/categories/helm_registry_*.go seeds — ArgoCD matches an
 	// Application to its credential by repoURL prefix, so a mismatch here is an auth failure there.
 	it("resolves the URL the runner will seed", () => {
-		expect(helmRegistryUrl({ name: "a", provider: "oci-github-cr" })).toBe("oci://ghcr.io");
-		expect(helmRegistryUrl({ name: "a", provider: "oci-docker-hub" })).toBe(
+		expect(helmRegistryUrl({ provider: "oci-github-cr" })).toBe("oci://ghcr.io");
+		expect(helmRegistryUrl({ provider: "oci-docker-hub" })).toBe(
 			"oci://registry-1.docker.io",
 		);
-		expect(helmRegistryUrl({ name: "a", provider: "oci-gitlab-cr" })).toBe(
+		expect(helmRegistryUrl({ provider: "oci-gitlab-cr" })).toBe(
 			"oci://registry.gitlab.com",
 		);
 		expect(
 			helmRegistryUrl({
-				name: "a",
 				provider: "oci-gitlab-cr",
 				provider_config: { registry_host: "gitlab.acme.io" },
 			}),
 		).toBe("oci://gitlab.acme.io");
 		expect(
 			helmRegistryUrl({
-				name: "a",
 				provider: "helm-https",
 				provider_config: { repo_url: "https://charts.acme.io" },
 			}),
 		).toBe("https://charts.acme.io");
-		expect(helmRegistryUrl({ name: "a", provider: "oci-generic-cr" })).toBe("");
-		expect(helmRegistryUrl({ name: "a", provider: null })).toBe("");
+		expect(helmRegistryUrl({ provider: "oci-generic-cr" })).toBe("");
+		expect(helmRegistryUrl({ provider: null })).toBe("");
 	});
 });
 

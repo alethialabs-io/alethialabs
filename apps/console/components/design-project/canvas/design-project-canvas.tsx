@@ -56,6 +56,7 @@ import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
+import { ChartReposSheet } from "./chart-repos-sheet";
 import { EnvSettingsSheet } from "./env-settings-sheet";
 import { useDropPosition } from "./use-drop-position";
 import { PendingChangesBar } from "./pending-changes-bar";
@@ -513,6 +514,11 @@ function CanvasInner({
 				{/* Cluster + network are env settings now (W2), not board cards — one env is one cluster.
 				    Meaningless while a BYO-IaC source governs the env (the module owns the substrate). */}
 				{!iacGoverned && <EnvSettingsSheet />}
+				{/* Which private Helm repos this env pulls charts from. Off-board like the cluster — a
+				    chart repo is a credential, not architecture. Mostly auto-derived from the charts'
+				    oci:// hosts; the sheet is where that inference is reviewed and overridden. Only
+				    meaningful with BYO charts on (marketplace charts come from public repos). */}
+				{!iacGoverned && byoHelmEnabled && <ChartReposSheet />}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
 					<Button

@@ -31,7 +31,7 @@ import type { HelmRegistryProviderConfig } from "@/types/jsonb.types";
 export interface HelmRegistryItem {
 	name: string;
 	provider?: string | null;
-	provider_config?: HelmRegistryProviderConfig | null;
+	provider_config?: HelmRegistryProviderConfig;
 }
 
 /** How a chart-repo provider's effective host is determined. */
