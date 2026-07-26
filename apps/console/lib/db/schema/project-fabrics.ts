@@ -12,7 +12,16 @@
 // lanes re-parent tofu-state + the cluster/network components onto the Fabric (#838) and move the
 // BYO-IaC attach point here (#839).
 
-import { index, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+	index,
+	jsonb,
+	pgTable,
+	text,
+	timestamp,
+	unique,
+	uuid,
+} from "drizzle-orm/pg-core";
+import type { EncryptedSecret } from "@/types/jsonb.types";
 import { projectStatus } from "./enums";
 import { cloudIdentities } from "./identities";
 import { projects } from "./projects";
@@ -38,6 +47,14 @@ export const projectFabrics = pgTable(
 		// Per-Fabric infra provisioning lifecycle (mirrors project_environments.status semantics).
 		status: projectStatus().default("DRAFT").notNull(),
 		status_message: text(),
+		// hetzner-talos ONLY: the Fabric's admin talosconfig, AES-256-GCM encrypted at rest (#1389).
+		// Talos exposes no cloud API to re-mint kube access, so — unlike the managed clouds — a
+		// namespace/vcluster placement can't resolve a kubeconfig by cluster name; the runner captures the
+		// talosconfig at Fabric creation (encrypted by the runner, never seen in plaintext by the console)
+		// and this delivers it on the placement job's secret claim, where the runner mints a fresh
+		// short-lived kubeconfig from it via the Talos machine API. NULL for every non-hetzner Fabric and
+		// until the Fabric's first apply. Decrypted only on the runner at claim (never client-side).
+		talos_admin_config: jsonb().$type<EncryptedSecret>(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
