@@ -4,6 +4,16 @@
 # Plan-time assertions on the template's invariants. `check` blocks surface a
 # warning during plan/apply without blocking, keeping drift/misconfig loud.
 
+locals {
+  # Kubernetes major/minor parsed from ack_cluster_version ("1.35" -> 1 / 35). -1 when unparseable, so a
+  # missing/garbage version fails the COMPAT-001 guard closed rather than passing vacuously. The window
+  # literals below are the Alibaba supported minors from the compat matrix
+  # (packages/core/compat/matrix.json -> k8s_cloud.alibaba = 1.33-1.35). Keep them in lockstep with
+  # matrix.json (the Go/TS drift guards couplings_drift_test.go + apps/console check:compat keep code honest).
+  ack_k8s_major = can(tonumber(split(".", var.ack_cluster_version)[0])) ? tonumber(split(".", var.ack_cluster_version)[0]) : -1
+  ack_k8s_minor = can(tonumber(split(".", var.ack_cluster_version)[1])) ? tonumber(split(".", var.ack_cluster_version)[1]) : -1
+}
+
 check "project_name_present" {
   assert {
     condition     = length(trimspace(var.project_name)) > 0
@@ -78,5 +88,28 @@ check "vswitch_count_static_and_sane" {
   assert {
     condition     = var.vswitch_count >= 1 && var.vswitch_count <= 8
     error_message = "vswitch_count must be a static number between 1 and 8 (a zones-data-source-derived count is unknown at plan and fails the runner's plan-out)."
+  }
+}
+
+# COMPAT-001 (epic #1186, block-at-apply): the ACK Kubernetes minor must sit inside the Alibaba support
+# window (matrix.json k8s_cloud.alibaba = 1.33-1.35). A `check` block only WARNS, so the hard gate is the
+# terraform_data precondition below; this check surfaces the same violation loudly at plan time.
+check "compat_k8s_supported" {
+  assert {
+    condition     = !var.provision_ack || (local.ack_k8s_major == 1 && local.ack_k8s_minor >= 33 && local.ack_k8s_minor <= 35)
+    error_message = "COMPAT: ACK Kubernetes '${var.ack_cluster_version}' is outside the Alibaba-supported window 1.33-1.35 (packages/core/compat/matrix.json k8s_cloud.alibaba); terraform_data.compat_k8s_guard blocks apply."
+  }
+}
+
+# Fail-closed apply gate (COMPAT-001): an out-of-window Kubernetes minor hard-fails the plan here, so an
+# incompatible cluster (the #1165 ArgoCD-on-1.35 class of break) can never be provisioned. `check` blocks
+# only warn — a `terraform_data` lifecycle precondition is the actual gate. No bypass variable: waivers
+# are a runner-layer concern (compat.Override / COMPAT-001), deliberately not exposed in the template.
+resource "terraform_data" "compat_k8s_guard" {
+  lifecycle {
+    precondition {
+      condition     = !var.provision_ack || (local.ack_k8s_major == 1 && local.ack_k8s_minor >= 33 && local.ack_k8s_minor <= 35)
+      error_message = "COMPAT-001: ACK Kubernetes '${var.ack_cluster_version}' is outside the Alibaba-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.alibaba). Apply blocked fail-closed — align ack_cluster_version and the matrix in lockstep."
+    }
   }
 }
