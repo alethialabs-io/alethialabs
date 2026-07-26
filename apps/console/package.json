@@ -12,6 +12,8 @@
 		"check:ee-boundary": "node scripts/check-ee-boundary.mjs",
 		"check:authz-scope": "node scripts/check-authz-scope.mjs",
 		"check:marketing-routes": "node scripts/check-marketing-routes.mjs",
+		"check:offer-parity": "node scripts/check-offer-parity.mjs",
+		"gen:offer-parity": "node scripts/check-offer-parity.mjs --matrix",
 		"check:migrations": "node scripts/check-migrations.mjs",
 		"check:compat": "node scripts/check-compat.mjs",
 		"gen:connectors": "node scripts/gen-connectors.mjs",
