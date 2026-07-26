@@ -447,6 +447,9 @@ export {
 	bucketItemSchema,
 	registryItemSchema,
 	helmRegistryItemSchema,
+	// The chart-repo provider_config validator — parsed again server-side at the write seam so a
+	// crafted request can't persist an unknown/secret knob the inspector never offered.
+	helmRegistryProviderConfigSchema,
 	sourceRepoItemSchema,
 	// Singleton sub-schemas — consumed by the canvas for per-node validation.
 	projectSchema,
