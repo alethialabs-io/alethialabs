@@ -19,6 +19,11 @@ module "azure_db" {
   iam_auth              = var.azure_db_iam_auth
   subnet_id             = var.provision_vnet ? module.vnet[0].database_subnet_id : var.vnet_id
 
+  # MySQL validates Entra tokens with an identity attached to the SERVER (PostgreSQL takes an inline
+  # authentication block instead). The dedicated db_admin identity doubles as it, so no third identity
+  # exists and the app identity still never holds admin rights. Empty ⇒ Entra auth stays off.
+  aad_identity_id = local.enable_mysql_entra ? azurerm_user_assigned_identity.db_admin[0].id : ""
+
   # BYOC B4.1 DB CIDR allow-list (default-empty = behavior-preserving)
   allowed_cidrs = var.azure_db_allowed_cidrs
 
