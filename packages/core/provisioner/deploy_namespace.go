@@ -194,6 +194,10 @@ func provisionAndBindNamespaceIdentity(ctx context.Context, providerSlug, region
 //     NetworkPolicy enforcement (parity: Calico/Cilium equivalents on the other clouds) AND node IMDS
 //     hop-limit 1 (or an explicit metadata-egress deny), AND per-namespace IRSA/WI (#957). Until then
 //     the honest isolation level is "soft, and not a cloud-credential boundary."
+//   - Secret stores: CLOSED (#1306). The Fabric's ExternalSecrets ClusterSecretStores (native + the
+//     cross-account -xacct foreign-account stores) are scoped via spec.conditions
+//     (namespaceSelector NotIn alethia.io/placement=namespace, see argocd/install.go), so a placed
+//     tenant namespace cannot reference another environment's — or the Fabric owner's — secret store.
 func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult, retErr error) {
 	vc := params.ProjectConfig
 

@@ -94,6 +94,9 @@ func TestExternalSecretsStoreManifest(t *testing.T) {
 					t.Errorf("store must contain %q:\n%s", want, m)
 				}
 			}
+			// #1306: every rendered store is scoped away from placed tenant namespaces via
+			// spec.conditions, so a `placement=namespace` tenant on a shared Fabric can't reach it.
+			assertScopedAwayFromTenants(t, m)
 			// Exactly one cloud's block renders — never a leaked doc separator from a sibling.
 			if strings.Contains(m, "---") {
 				t.Errorf("a single store must not contain a doc separator:\n%s", m)
@@ -168,7 +171,26 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 					t.Errorf("%s must contain %q:\n%s", c.wantStore, want, m)
 				}
 			}
+			// #1306: the -xacct store (and the native store beside it) are both scoped away from
+			// placed tenant namespaces — a shared-Fabric tenant must not reach a FOREIGN-account store.
+			assertScopedAwayFromTenants(t, m)
 		})
+	}
+}
+
+// assertScopedAwayFromTenants verifies the rendered manifest carries the #1306 spec.conditions guard
+// that keeps every ClusterSecretStore out of reach of placed tenant namespaces (labeled
+// alethia.io/placement=namespace). It also guards the ESO footgun that an EMPTY namespaceSelector ({})
+// means match-ALL — the matchExpressions form must actually render.
+func assertScopedAwayFromTenants(t *testing.T, m string) {
+	t.Helper()
+	for _, want := range []string{"conditions:", "key: alethia.io/placement", "operator: NotIn", `values: ["namespace"]`} {
+		if !strings.Contains(m, want) {
+			t.Errorf("store must be scoped away from tenant namespaces (missing %q):\n%s", want, m)
+		}
+	}
+	if strings.Contains(m, "namespaceSelector: {}") {
+		t.Errorf("an empty namespaceSelector means match-ALL — the scope guard is missing:\n%s", m)
 	}
 }
 
