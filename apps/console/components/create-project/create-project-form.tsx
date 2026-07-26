@@ -2,66 +2,23 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { lookup } from "@/lib/typed-object";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Check, Loader2, Sparkles, Users } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useState } from "react";
 import { toast } from "sonner";
-import { z } from "zod";
 
-import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { createProject } from "@/app/server/actions/projects";
-import { track } from "@/lib/analytics/track";
-import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { ContainerPlatformSelector } from "@/components/design-project/container-platform-selector";
-import {
-	useCloudConnect,
-	type CloudConnectResult,
-} from "@/components/cloud-connect/use-cloud-connect";
-import {
-	DEFAULT_REGION,
-	PROVIDERS,
-	type CloudProviderSlug,
-	type ConnectableCloudSlug,
-} from "@/lib/cloud-providers";
-import { globalHref, projectHref, slugify } from "@/lib/routing";
+import { globalHref } from "@/lib/routing";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
-import { arrayIncludes } from "@/lib/type-guards";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
-import { Input } from "@repo/ui/input";
-import { Label } from "@repo/ui/label";
 import { Textarea } from "@repo/ui/textarea";
-import { cn } from "@repo/ui/utils";
 
-import type { EnvironmentSpec } from "@/lib/queries/projects";
-import {
-	DEFAULT_ENVIRONMENT_MATRIX,
-	PlacementSelector,
-} from "@/components/design-project/placement-selector";
 import { RepoImportPanel } from "./repo-import-panel";
 import {
 	StartFromScratchCards,
 	type ScratchKind,
 } from "./start-from-scratch-cards";
-import {
-	buildCreateInput,
-	buildEmptyCreateInput,
-	type TemplateId,
-} from "./templates";
-
-/** Clouds with full provisioning templates today — the only ones a project can target. */
-const PROVISIONABLE: CloudProviderSlug[] = ["aws", "gcp", "azure", "alibaba"];
-
-/** Maps the platform-selector id to the template preset id used by buildCreateInput. */
-const TEMPLATE_BY_PLATFORM: Record<string, TemplateId> = {
-	standard: "standard",
-	"ai-workloads": "ai",
-	custom: "custom",
-};
 
 /** Example prompts seeding the agent hero. */
 const EXAMPLE_PROMPTS = [
@@ -70,300 +27,54 @@ const EXAMPLE_PROMPTS = [
 	"Postgres + pgvector, Redis, and an object store wired into a small cluster for a RAG backend.",
 ];
 
-const formSchema = z.object({
-	prompt: z.string().optional(),
-	// Free-text name; the URL slug is derived from it (slugPreview / createProject).
-	project_name: z
-		.string()
-		.min(1, "Project name is required")
-		.max(50)
-		.refine(
-			(v) => slugify(v).length > 0,
-			"Enter at least one letter or number",
-		),
-	template: z.string().min(1),
-	// The selected cloud provider slug; connectedness/provisionability enforced at submit.
-	cloud: z.string().min(1, "Select a connected cloud"),
-});
-
-type FormValues = z.infer<typeof formSchema>;
-
-interface CreateProjectFormProps {
+interface CreateProjectChooserProps {
 	orgSlug: string;
-	canManage: boolean;
-	/** Whether the org can invite collaborators (Pro). Drives the Collaborate pill. */
+	/** Whether the member can invite others (drives the Collaborate pill vs an upgrade nudge). */
 	canCollaborate: boolean;
-	integrations: ConnectorWithConnection[];
-	awsSetup: { identityId: string } | null;
-	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string } | null;
-	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
-	/** Per-connector-slug: whether this instance has the platform creds a cloud's connect needs
-	 * (e.g. Azure's app id). A cloud missing them can only fail to connect, so its tile says
-	 * "not enabled on this instance" instead of offering a doomed Connect (mirrors the board). */
-	platformConfigured: Record<string, boolean>;
-	/** Whether bring-your-own Helm charts are enabled (server flag) — shows the "start from a chart" path. */
+	/** Server flag — shows the BYO Helm scratch card. */
 	byoHelmEnabled?: boolean;
-	/** Whether bring-your-own IaC is enabled (server flag) — shows the "start from an OpenTofu
-	 * module" on-ramp (create → land on the canvas with the ByoIacDialog open). */
+	/** Server flag — shows the BYO IaC scratch card. */
 	byoIacEnabled?: boolean;
 }
 
 /**
- * The `~/new` front door: an agent prompt hero on top, then the two first-class on-ramps — import a
- * repository ({@link RepoImportPanel}, scan→canvas) and start from scratch ({@link
- * StartFromScratchCards}) — then the manual configure path (project name → template → cloud →
- * environments). The {@link PlacementSelector} chooses how the seeded environments are placed onto
- * Fabrics; the chosen matrix threads through the builders into `createProject`. No pricing shown.
+ * The `~/new` front door — **step 1: choose a source**. An Elench prompt hero on top, then two
+ * first-class on-ramps side by side: **Import a repository** ({@link RepoImportPanel}, which scans →
+ * `?scan=<jobId>`) and **Start from scratch** ({@link StartFromScratchCards}). Every source hands off
+ * to the Configure screen (`?scan=` for import, `?scratch=<kind>` for the cards) where the project is
+ * named, placed on a cloud, and its environments chosen before it's created.
  */
 export function CreateProjectForm({
 	orgSlug,
-	canManage,
 	canCollaborate,
-	integrations,
-	awsSetup,
-	gcpSetup,
-	azureSetup,
-	extraSetup,
-	platformConfigured,
 	byoHelmEnabled,
 	byoIacEnabled,
-}: CreateProjectFormProps) {
+}: CreateProjectChooserProps) {
 	const router = useRouter();
 	const { openUpgrade } = useUpgradeSheet();
-	const [creating, setCreating] = useState(false);
-	const [creatingEmpty, setCreatingEmpty] = useState(false);
-	const [creatingFromChart, setCreatingFromChart] = useState(false);
-	const [creatingFromIac, setCreatingFromIac] = useState(false);
+	const [prompt, setPrompt] = useState("");
 	const [launching, setLaunching] = useState(false);
-	// The environment matrix the placement selector (#844) edits — seeds every create path so the
-	// project is fanned out into prod/staging/dev/preview Fabrics (all DRAFT until a deploy).
-	const [environments, setEnvironments] = useState<EnvironmentSpec[]>(
-		DEFAULT_ENVIRONMENT_MATRIX,
-	);
 
-	const cloudConnect: CloudConnectResult = useCloudConnect({
-		integrations,
-		awsSetup,
-		gcpSetup,
-		azureSetup,
-		extraSetup,
-	});
-
-	const cloudIntegrations = useMemo(
-		() => integrations.filter((i) => i.category === "cloud"),
-		[integrations],
-	);
-
-	const form = useForm<FormValues>({
-		resolver: zodResolver(formSchema),
-		mode: "onChange",
-		defaultValues: {
-			prompt: "",
-			project_name: "",
-			template: "ai-workloads",
-			cloud: "",
-		},
-	});
-
-	const name = form.watch("project_name");
-	const template = form.watch("template");
-	const cloud = form.watch("cloud");
-
-	const provider = arrayIncludes(PROVISIONABLE, cloud) ? cloud : null;
-
-	/** Hands the hero prompt to the global Elench surface as a seed (auto-sent on open) and
-	 * opens it as a fullscreen modal in org context — no route hop; the thread is created
-	 * lazily on that first send. */
+	/** Hands the hero prompt to the global Elench surface as a seed and opens it in org context. */
 	const onAskAgent = () => {
-		const prompt = form.getValues("prompt")?.trim();
-		if (!prompt) {
+		const seed = prompt.trim();
+		if (!seed) {
 			toast.error("Describe what you want to run first.");
 			return;
 		}
 		setLaunching(true);
-		useElenchStore.getState().setSeedPrompt(prompt);
+		useElenchStore.getState().setSeedPrompt(seed);
 		useElenchStore.getState().openModal({ kind: "org" });
 	};
 
-	/** Creates the project from the manual path (Production + Preview envs) and opens its design page. */
-	const onCreate = form.handleSubmit(async (values) => {
-		if (!provider) {
-			toast.error(
-				"Pick a connected cloud that supports provisioning (AWS, GCP or Azure).",
-			);
-			return;
-		}
-		const selected = cloudIntegrations.find((i) => i.slug === values.cloud);
-		const cloudIdentityId =
-			selected?.accounts?.[0]?.identityId ??
-			selected?.connection_details?.cloud_identity_id;
-		if (!cloudIdentityId) {
-			toast.error("That cloud isn't connected. Connect it first.");
-			return;
-		}
-
-		const region = DEFAULT_REGION[provider];
-		setCreating(true);
-		try {
-			const { project } = await createProject(
-				buildCreateInput({
-					projectName: values.project_name,
-					template: TEMPLATE_BY_PLATFORM[values.template] ?? "standard",
-					provider,
-					cloudIdentityId,
-					defaultEnvironment: {
-						name: "production",
-						stage: "production",
-						region,
-					},
-					environments,
-				}),
-			);
-			track("project_created", { provider, template: values.template });
-			toast.success("Project created — start designing.");
-			router.push(projectHref(orgSlug, project.slug ?? ""));
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to create project.",
-			);
-			setCreating(false);
-		}
-	});
-
-	/** Creates a blank project (name only, no cloud/template) with Production + Preview envs. */
-	const onCreateEmpty = async () => {
-		if (!(await form.trigger("project_name"))) return;
-		const projectName = form.getValues("project_name");
-		const region = DEFAULT_REGION.aws;
-		setCreatingEmpty(true);
-		try {
-			const { project } = await createProject(
-				buildEmptyCreateInput({
-					projectName,
-					defaultEnvironment: {
-						name: "production",
-						stage: "production",
-						region,
-					},
-					environments,
-				}),
-			);
-			toast.success("Empty project created — start designing.");
-			router.push(projectHref(orgSlug, project.slug ?? ""));
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to create project.",
-			);
-			setCreatingEmpty(false);
-		}
-	};
-
-	/** Creates a blank project, then lands on its canvas with the "attach a Helm chart" flow open —
-	 * the repo-first on-ramp (seed a project from a chart). The chart coords are collected on the
-	 * canvas via the shared ByoChartDialog (which the ?attachChart param auto-opens). */
-	const onCreateFromChart = async () => {
-		if (!(await form.trigger("project_name"))) {
-			form.setFocus("project_name");
-			return;
-		}
-		const projectName = form.getValues("project_name");
-		const region = DEFAULT_REGION.aws;
-		setCreatingFromChart(true);
-		try {
-			const { project } = await createProject(
-				buildEmptyCreateInput({
-					projectName,
-					defaultEnvironment: {
-						name: "production",
-						stage: "production",
-						region,
-					},
-					environments,
-				}),
-			);
-			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachChart=1`);
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to create project.",
-			);
-			setCreatingFromChart(false);
-		}
-	};
-
-	/** Creates a blank project, then lands on its canvas with the "attach an IaC source" flow open —
-	 * the repo-first on-ramp (seed a project from an OpenTofu module). The source coords are collected
-	 * on the canvas via the shared ByoIacDialog (which the ?attachIac param auto-opens). */
-	const onCreateFromIac = async () => {
-		if (!(await form.trigger("project_name"))) {
-			form.setFocus("project_name");
-			return;
-		}
-		const projectName = form.getValues("project_name");
-		const region = DEFAULT_REGION.aws;
-		setCreatingFromIac(true);
-		try {
-			const { project } = await createProject(
-				buildEmptyCreateInput({
-					projectName,
-					defaultEnvironment: {
-						name: "production",
-						stage: "production",
-						region,
-					},
-					environments,
-				}),
-			);
-			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachIac=1`);
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to create project.",
-			);
-			setCreatingFromIac(false);
-		}
-	};
-
-	/** The manual configure block, so the "Start from a template" card can scroll it into view. */
-	const configureRef = useRef<HTMLDivElement>(null);
-
-	/** Routes a start-from-scratch card to the right motion. Template reveals the manual configure
-	 * block (cloud + template + placement); the others create straight away (they need only a name). */
+	/** A scratch card hands off to the Configure screen for that source kind. */
 	const onScratchSelect = (kind: ScratchKind) => {
-		switch (kind) {
-			case "template":
-				configureRef.current?.scrollIntoView({
-					behavior: "smooth",
-					block: "start",
-				});
-				void form.trigger("project_name");
-				form.setFocus("project_name");
-				break;
-			case "byo-helm":
-				void onCreateFromChart();
-				break;
-			case "byo-iac":
-				void onCreateFromIac();
-				break;
-			case "blank":
-				void onCreateEmpty();
-				break;
-		}
+		router.push(`${globalHref(orgSlug, "new")}?scratch=${kind}`);
 	};
-
-	const slugPreview = slugify(name) || "project";
-	const busy = creating || creatingEmpty || creatingFromChart || creatingFromIac;
-	/** Which scratch card is mid-create (drives the card's spinner). */
-	const scratchPending: ScratchKind | null = creatingFromChart
-		? "byo-helm"
-		: creatingFromIac
-			? "byo-iac"
-			: creatingEmpty
-				? "blank"
-				: null;
 
 	return (
-		<div className="mx-auto w-full max-w-3xl space-y-8 pb-20">
-			{/* ===== agent hero ===== */}
+		<div className="mx-auto w-full max-w-5xl space-y-9 pb-20">
+			{/* ===== agent hero (full width) ===== */}
 			<section className="space-y-5">
 				<div className="flex items-center justify-between gap-4">
 					<h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -398,14 +109,15 @@ export function CreateProjectForm({
 							<Sparkles className="size-4" />
 						</span>
 						<Textarea
-							{...form.register("prompt")}
+							value={prompt}
+							onChange={(e) => setPrompt(e.target.value)}
 							rows={2}
 							placeholder="Ask the design agent to design your infrastructure — e.g. an EKS cluster for an AI inference API, with a Postgres + pgvector store…"
 							className="min-h-0 resize-none border-0 bg-transparent p-0 pt-1 text-[15px] shadow-none focus-visible:ring-0"
 							onKeyDown={(e) => {
 								if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
 									e.preventDefault();
-									void onAskAgent();
+									onAskAgent();
 								}
 							}}
 						/>
@@ -418,7 +130,7 @@ export function CreateProjectForm({
 							type="button"
 							size="icon"
 							className="size-9"
-							onClick={() => void onAskAgent()}
+							onClick={onAskAgent}
 							disabled={launching}
 							aria-label="Design with the agent"
 						>
@@ -436,7 +148,7 @@ export function CreateProjectForm({
 						<button
 							key={ex}
 							type="button"
-							onClick={() => form.setValue("prompt", ex, { shouldDirty: true })}
+							onClick={() => setPrompt(ex)}
 							className="rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 						>
 							{ex.split(" — ")[0]}
@@ -445,263 +157,31 @@ export function CreateProjectForm({
 				</div>
 			</section>
 
-			{/* ===== import a repository (repo-first on-ramp) ===== */}
-			<RepoImportPanel />
-
-			{/* ===== start from scratch ===== */}
-			<section className="space-y-3">
-				<div className="flex items-center gap-4">
-					<span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-						Or start from scratch
-					</span>
-					<span className="h-px flex-1 bg-border" />
+			{/* ===== the two source on-ramps ===== */}
+			<div className="grid gap-6 lg:grid-cols-2">
+				<div className="space-y-3">
+					<ColHead>Import Git Repository</ColHead>
+					<RepoImportPanel />
 				</div>
-				<StartFromScratchCards
-					byoHelmEnabled={byoHelmEnabled ?? false}
-					byoIacEnabled={byoIacEnabled ?? false}
-					busy={busy}
-					pending={scratchPending}
-					onSelect={onScratchSelect}
-				/>
-			</section>
-
-			{/* ===== divider ===== */}
-			<div
-				ref={configureRef}
-				className="flex items-center gap-4 py-2 scroll-mt-6"
-			>
-				<span className="h-px flex-1 bg-border" />
-				<span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-					Or configure manually
-				</span>
-				<span className="h-px flex-1 bg-border" />
-			</div>
-
-			{/* ===== 01 project ===== */}
-			<section className="space-y-4">
-				<BlockHead num="01" title="Project" />
-				<div className="space-y-2">
-					<Label
-						htmlFor="project_name"
-						className="text-xs text-muted-foreground"
-					>
-						Project name
-					</Label>
-					<Input
-						id="project_name"
-						autoComplete="off"
-						placeholder="My Project"
-						{...form.register("project_name")}
+				<div className="space-y-3">
+					<ColHead>Start from scratch</ColHead>
+					<StartFromScratchCards
+						byoHelmEnabled={byoHelmEnabled ?? false}
+						byoIacEnabled={byoIacEnabled ?? false}
+						onSelect={onScratchSelect}
 					/>
-					{form.formState.errors.project_name ? (
-						<p className="text-xs text-destructive">
-							{form.formState.errors.project_name.message}
-						</p>
-					) : (
-						<p className="font-mono text-[11px] text-muted-foreground">
-							{orgSlug}/<span className="text-foreground">{slugPreview}</span>
-						</p>
-					)}
 				</div>
-			</section>
-
-			{/* ===== 02 template ===== */}
-			<section className="space-y-4">
-				<BlockHead num="02" title="Template" />
-				<ContainerPlatformSelector
-					selected={template}
-					onSelect={(p) => form.setValue("template", p)}
-				/>
-			</section>
-
-			{/* ===== 03 cloud ===== */}
-			<section className="space-y-4">
-				<BlockHead num="03" title="Cloud" hint="one per project" />
-				<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
-					{cloudIntegrations.map((integration) => (
-						<CloudTile
-							key={integration.id}
-							integration={integration}
-							canManage={canManage}
-							platformConfigured={platformConfigured[integration.slug] ?? true}
-							selected={cloud === integration.slug}
-							isConnecting={cloudConnect.connectingSlug === integration.slug}
-							onSelect={() => form.setValue("cloud", integration.slug)}
-							onConnect={() => cloudConnect.openConnect(integration)}
-						/>
-					))}
-				</div>
-				{form.formState.errors.cloud && (
-					<p className="text-xs text-destructive">
-						{form.formState.errors.cloud.message}
-					</p>
-				)}
-			</section>
-
-			{/* ===== 04 environments (placement) ===== */}
-			<section className="space-y-4">
-				<BlockHead num="04" title="Environments" hint="placed on Fabrics" />
-				<p className="-mt-1 text-[12.5px] text-muted-foreground">
-					Each environment is placed onto a Fabric — its own cluster
-					(dedicated) or a namespace on a shared one. Everything starts as a
-					draft; nothing is provisioned until you deploy.
-				</p>
-				<PlacementSelector value={environments} onChange={setEnvironments} />
-			</section>
-
-			{/* ===== actions ===== */}
-			<div className="flex flex-col gap-3 border-t border-border pt-6 sm:flex-row sm:justify-end">
-				<Button
-					type="button"
-					variant="outline"
-					onClick={() => void onCreateEmpty()}
-					disabled={busy}
-				>
-					{creatingEmpty ? (
-						<Loader2 className="size-4 animate-spin" />
-					) : (
-						"Create empty project"
-					)}
-				</Button>
-				<Button
-					type="button"
-					className="cta-shine sm:min-w-44"
-					onClick={() => void onCreate()}
-					disabled={busy}
-				>
-					{creating ? (
-						<Loader2 className="size-4 animate-spin" />
-					) : (
-						<>
-							Create project
-							<ArrowRight className="size-4" />
-						</>
-					)}
-				</Button>
 			</div>
-
-			{cloudConnect.sheets}
 		</div>
 	);
 }
 
-/** A numbered section heading ("01 · Project") with a trailing rule and optional hint. */
-function BlockHead({
-	num,
-	title,
-	hint,
-}: {
-	num: string;
-	title: string;
-	hint?: string;
-}) {
+/** A small column heading with a trailing hairline rule. */
+function ColHead({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="flex items-baseline gap-3">
-			<span className="font-mono text-[11px] text-muted-foreground">{num}</span>
-			<h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-			<span className="h-px flex-1 self-center bg-border" />
-			{hint && (
-				<span className="text-[11px] text-muted-foreground">{hint}</span>
-			)}
-		</div>
-	);
-}
-
-interface CloudTileProps {
-	integration: ConnectorWithConnection;
-	canManage: boolean;
-	/** Whether this instance has the platform creds this cloud's connect needs (e.g. Azure's app id). */
-	platformConfigured: boolean;
-	selected: boolean;
-	isConnecting: boolean;
-	onSelect: () => void;
-	onConnect: () => void;
-}
-
-/**
- * A compact cloud tile (matches the design's `.cloud`): a connected + provisionable cloud is a
- * radio-style pick; a not-connected cloud shows a Connect affordance that opens the connect sheet;
- * connected-but-not-provisionable clouds (alibaba/DO/hetzner/civo) read "Provisioning soon".
- */
-function CloudTile({
-	integration,
-	canManage,
-	platformConfigured,
-	selected,
-	isConnecting,
-	onSelect,
-	onConnect,
-}: CloudTileProps) {
-	const connected = integration.connected;
-	const provisionable = arrayIncludes(PROVISIONABLE, integration.slug);
-	const selectable = connected && provisionable;
-	// Missing platform creds (e.g. Azure's app id) → a connect can only fail, so offer no Connect.
-	const platformUnavailable = !connected && !platformConfigured;
-	const label =
-		lookup(PROVIDERS, integration.slug)?.shortName ?? integration.name;
-	const status = platformUnavailable
-		? "Not enabled on this instance"
-		: !connected
-			? "Not connected"
-			: provisionable
-				? "Connected"
-				: "Provisioning soon";
-
-	return (
-		<div
-			className={cn(
-				"relative flex min-h-[104px] flex-col gap-3 rounded-lg border p-3.5 transition-colors",
-				selected
-					? "border-foreground bg-accent ring-1 ring-foreground"
-					: connected
-						? "border-border bg-card hover:bg-accent/40"
-						: "border-dashed border-border bg-card",
-				selectable && "cursor-pointer",
-			)}
-			onClick={selectable ? onSelect : undefined}
-		>
-			{selectable ? (
-				<span
-					className={cn(
-						"absolute right-3 top-3 grid size-[18px] place-items-center rounded-full border",
-						selected
-							? "border-foreground bg-foreground text-background"
-							: "border-border text-transparent",
-					)}
-					aria-hidden
-				>
-					<Check className="size-3" />
-				</span>
-			) : !connected && canManage && !platformUnavailable ? (
-				<button
-					type="button"
-					onClick={onConnect}
-					disabled={isConnecting}
-					className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 font-mono text-[9px] uppercase tracking-wide text-muted-foreground transition-colors hover:bg-foreground hover:text-background"
-				>
-					{isConnecting && <Loader2 className="size-3 animate-spin" />}
-					Connect
-				</button>
-			) : null}
-
-			<ConnectorIcon
-				src={integration.icon_url}
-				name={label}
-				size={26}
-				mono={!connected}
-			/>
-			<div>
-				<div className="text-sm font-medium">{label}</div>
-				<div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-					<span
-						className={cn(
-							"size-1.5 rounded-full",
-							connected ? "bg-foreground" : "border-[1.5px] border-border",
-						)}
-					/>
-					{status}
-				</div>
-			</div>
+		<div className="flex items-center gap-3">
+			<span className="text-[13px] font-semibold tracking-tight">{children}</span>
+			<span className="h-px flex-1 bg-border" />
 		</div>
 	);
 }
