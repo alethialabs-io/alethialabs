@@ -34,7 +34,10 @@
 		"sync:connector-assets": "node scripts/sync-connector-assets.mjs",
 		"wt": "bash scripts/worktree.sh",
 		"wt:ls": "git worktree list",
+		"wt:who": "bash scripts/worktree.sh --who",
 		"wt:rm": "bash scripts/worktree.sh --remove",
+		"wt:release": "bash scripts/worktree.sh --release",
+		"wt:steal": "bash scripts/worktree.sh --steal",
 		"prepare": "git config core.hooksPath .githooks || true"
 	},
 	"devDependencies": {

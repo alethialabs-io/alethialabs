@@ -41,9 +41,12 @@ case "${1:-}" in
 esac
 
 # Portable ISO-8601(Z) → epoch seconds (macOS BSD date vs GNU date).
+# Prints NOTHING on a parse failure — deliberately not `echo 0`, which made `now - 0` ≈ now, so an
+# unparseable stamp looked infinitely old and its lease was reclaimed INSTANTLY. A timestamp we
+# can't read is a reason to leave the claim alone, not to take it.
 to_epoch() {
   local ts="$1"
-  date -u -d "$ts" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || echo 0
+  date -u -d "$ts" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || true
 }
 now="$(date -u +%s)"
 
@@ -68,6 +71,20 @@ fi
 # Pull the whole open board once.
 board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($n|tonumber))|.labels|map(.name)|index($l)' >/dev/null 2>&1; }
+
+# Does an OPEN or MERGED PR close this issue? Used by the reclaim below as evidence that a holder
+# is alive despite a stale lease. Fails CLOSED (a gh failure reads as "yes, taken") — mirrors
+# claim-work.sh's guard, and here a false "no" would strip a live instance's claim.
+has_closing_pr() { # <n>
+  local n="$1" out
+  if ! out="$(gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
+    --jq "[.[] | select(.state==\"OPEN\" or .state==\"MERGED\")
+               | select((.body + \" \" + .title) | test(\"(?i)(close|fix|resolve)(s|d)? +#$n\\\\b\"))] | length" \
+    2>/dev/null)"; then
+    return 0
+  fi
+  [ "${out:-0}" -gt 0 ]
+}
 
 # ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
 # Mutates NOTHING on leases/blocks. For each open, still-claimable board unit that a MERGED PR
@@ -117,8 +134,21 @@ if [ "$MODE" = "full" ]; then
     [ -z "$stamp" ] && stamp="$(gh issue view "$n" --json comments \
       --jq '[.comments[].body|select(startswith("```lease"))]|last // ""' | sed -n 's/^claimed_at: //p' | tail -1)"
     if [ -z "$stamp" ]; then continue; fi
-    age=$(( now - $(to_epoch "$stamp") ))
+    stamp_epoch="$(to_epoch "$stamp")"
+    # Unparseable stamp → leave it alone (see to_epoch).
+    if [ -z "$stamp_epoch" ]; then
+      echo "· #$n has an unreadable lease timestamp ('$stamp') — leaving the claim in place." >&2
+      continue
+    fi
+    age=$(( now - stamp_epoch ))
     if [ "$age" -gt "$LEASE_TTL" ]; then
+      # The docs promised this checked "PR/branch activity" and it never did — it reclaimed purely
+      # on elapsed time, so a unit being actively built for over an hour without a heartbeat was
+      # handed to a second instance. An open PR closing the issue is proof of a live holder.
+      if has_closing_pr "$n"; then
+        echo "· #$n lease is stale (${age}s) but a PR already closes it — not reclaiming." >&2
+        continue
+      fi
       who="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.assignees[0].login // ""')"
       [ -n "$who" ] && gh issue edit "$n" --remove-assignee "$who" >/dev/null 2>&1 || true
       gh issue edit "$n" --remove-label claimed >/dev/null 2>&1 || true

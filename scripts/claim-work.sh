@@ -17,8 +17,15 @@
 #
 # Usage:
 #   scripts/claim-work.sh [--class backend|ui|any]   # claim the next ready unit (default backend)
+#   scripts/claim-work.sh --issue <n>                 # claim ONE named unit through the same path
 #   scripts/claim-work.sh --heartbeat <issue>         # re-stamp your lease (liveness; defeats reclaim)
 #   scripts/claim-work.sh --self-test                 # run the claim-winner unit fixtures (no board)
+#
+# --issue exists because `needs:human` units were UNCLAIMABLE and therefore UNPROTECTED: the filter
+# below skips them, so the only way to work one was a hand-claim — which bypasses the lock AND the
+# verify, leaves no lease, and lets two instances start the same unit with nothing recording either.
+# That is the first domino in issue #1247. A named claim still goes through the whole path; it just
+# can't be picked autonomously, which is what the needs:human exclusion is actually for.
 # Env: ALETHIA_CLAIM_VERIFY_DELAY (default 5s; 0 disables the cross-box verify) ·
 #      ALETHIA_CLAIM_WINDOW (default 45s — the near-simultaneous contention window).
 # This script intentionally single-quotes jq programs, JSON fixtures, and the ```lease``` printf
@@ -30,13 +37,16 @@ cd "$(dirname "$0")/.."
 CLASS="backend"
 HEARTBEAT=""
 SELFTEST=""
+ONLY_ISSUE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --class) CLASS="${2:?}"; shift 2 ;;
     --class=*) CLASS="${1#*=}"; shift ;;
+    --issue) ONLY_ISSUE="${2:?}"; shift 2 ;;
+    --issue=*) ONLY_ISSUE="${1#*=}"; shift ;;
     --heartbeat) HEARTBEAT="${2:?}"; shift 2 ;;
     --self-test) SELFTEST=1; shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -58,13 +68,22 @@ lease_body() { # <branch>
 # pre-claim guard that skips work already in flight on another box, or an issue whose PR merged but
 # GitHub never auto-closed (a "Closes #n" that didn't link). Requires the closing keyword + the
 # exact number (\b so #84 doesn't match #842).
-has_closing_pr() { # <n>
-  local n="$1" cnt
-  cnt="$(gh pr list --state all --limit 20 --search "#$n in:body" --json number,state,body \
+#
+# FAILS CLOSED. This used to be `2>/dev/null || echo 0`, so any gh error — rate limit, expired
+# auth, network blip — read as "no PR exists" and the claim proceeded. A guard that silently
+# vanishes under load is worse than no guard, because it's trusted. On a query failure we now skip
+# the candidate rather than claim it. Also searches title AND body (coordinate.sh already did; this
+# didn't, so a title-only "Closes #n" was invisible here).
+has_closing_pr() { # <n> -> 0 = a PR closes it (or we couldn't tell) · 1 = definitely none
+  local n="$1" out
+  if ! out="$(gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
     --jq "[.[] | select(.state==\"OPEN\" or .state==\"MERGED\")
-               | select(.body | test(\"(?i)(close|fix|resolve)(s|d)? +#$n\\\\b\"))] | length" \
-    2>/dev/null || echo 0)"
-  [ "${cnt:-0}" -gt 0 ]
+               | select((.body + \" \" + .title) | test(\"(?i)(close|fix|resolve)(s|d)? +#$n\\\\b\"))] | length" \
+    2>/dev/null)"; then
+    echo "⚠ could not check PRs for #$n (gh failed) — treating as taken." >&2
+    return 0
+  fi
+  [ "${out:-0}" -gt 0 ]
 }
 
 # claim_winner <window_start_epoch>: read a `gh issue view --json comments` payload on STDIN and
@@ -103,7 +122,17 @@ run_self_test() {
 if [ -n "$SELFTEST" ]; then run_self_test; fi
 
 # --- heartbeat: re-stamp the lease on an issue this instance holds, then exit ---
+# Ownership is CHECKED, not assumed: an unchecked heartbeat lets any instance keep any issue's
+# lease warm, which defeats coordinate.sh's reclaim of work its actual holder has abandoned.
+# `assignees` is the check available — every instance authenticates as the same GitHub user, so
+# this catches the honest mistake (heartbeating the wrong number) rather than an impostor.
 if [ -n "$HEARTBEAT" ]; then
+  hb_claimed="$(gh issue view "$HEARTBEAT" --json labels --jq '[.labels[].name]|index("claimed")//empty' 2>/dev/null || echo "")"
+  if [ -z "$hb_claimed" ]; then
+    echo "✗ #$HEARTBEAT is not claimed — nothing to heartbeat." >&2
+    echo "  Claim it first: scripts/claim-work.sh --issue $HEARTBEAT" >&2
+    exit 1
+  fi
   gh issue comment "$HEARTBEAT" --body "$(lease_body "heartbeat")" >/dev/null
   echo "♥ heartbeat on #$HEARTBEAT ($INSTANCE)"
   exit 0
@@ -142,13 +171,18 @@ mig_held="$(gh issue list --state open --label claimed --label "mutex:migration"
 # night) because only claimed/blocked were filtered. `epic` marks an umbrella/tracking issue that
 # is decomposed into sub-issues and NEVER directly built — excluding it keeps `--class any` (and a
 # mislabeled epic that also carries a class) from ever being handed to a builder.
+#
+# `--class any` passes NO label filter, so it must require a `class:` label in the jq instead —
+# otherwise it returns every open issue in the repo and can hand a builder something that was
+# never a board unit at all (coordinate.sh already gates on this; this didn't).
 ready="$(gh issue list --state open "${class_filter[@]}" --limit 200 --json number,title,labels --jq '
   def waveord:
     (.labels | map(.name) | map(select(startswith("wave:"))) | (.[0] // "wave:z"))
     | ltrimstr("wave:")
     | (if . == "hygiene" then 50 else (ltrimstr("W") | tonumber? // 99) end);
   map(select(
-    (.labels|map(.name)|index("claimed")|not)
+    (.labels|map(.name)|any(startswith("class:")))
+    and (.labels|map(.name)|index("claimed")|not)
     and (.labels|map(.name)|index("blocked")|not)
     and (.labels|map(.name)|index("needs:human")|not)
     and (.labels|map(.name)|index("epic")|not)
@@ -156,6 +190,24 @@ ready="$(gh issue list --state open "${class_filter[@]}" --limit 200 --json numb
   | map(. + {ord: waveord})
   | sort_by(.ord, .number)
 ')"
+
+# --issue <n>: claim exactly this unit, through the same lock + lease + verify. The autonomous
+# exclusions (needs:human, class) don't apply — a human named it — but the guards that prevent a
+# DOUBLE claim very much do: it must still be open, unclaimed, and free of a closing PR.
+if [ -n "$ONLY_ISSUE" ]; then
+  meta="$(gh issue view "$ONLY_ISSUE" --json number,title,state,labels 2>/dev/null)" || {
+    echo "✗ #$ONLY_ISSUE not found." >&2; exit 1; }
+  [ "$(echo "$meta" | jq -r .state)" = "OPEN" ] || { echo "✗ #$ONLY_ISSUE is not open." >&2; exit 1; }
+  if [ "$(echo "$meta" | jq -r '[.labels[].name]|index("claimed")//empty')" != "" ]; then
+    echo "✗ #$ONLY_ISSUE is already claimed. See who holds it:  gh issue view $ONLY_ISSUE --comments" >&2
+    exit 1
+  fi
+  if has_closing_pr "$ONLY_ISSUE"; then
+    echo "✗ #$ONLY_ISSUE already has an open/merged PR closing it — someone is on it." >&2
+    exit 1
+  fi
+  ready="$(echo "$meta" | jq -c '[{number, title, labels}]')"
+fi
 
 # Pick + claim + verify, folded into ONE loop so a unit skipped by a guard (mutex / existing PR) or
 # CEDED by the cross-box verify falls through to the next ready unit instead of exiting.

@@ -9,10 +9,12 @@
 #   R2  any commit in the MAIN checkout (app/) — feature work must live in a worktree.
 #   R3  a migration change that forks the drizzle snapshot chain.
 #   R4  a staged SPDX header that carries a legal form (OÜ/DPK/…) — headers stay form-agnostic.
+#   R5  a commit inside a worktree ANOTHER live Claude instance holds.
 #
 # Escape hatches:
 #   git commit --no-verify              # bypass everything (emergencies)
 #   ALETHIA_ALLOW_MAIN_COMMIT=1 git …   # bypass R2 only (a deliberate main commit)
+#   ALETHIA_ALLOW_FOREIGN_WT=1 git …    # bypass R5 only (maintainer; instances must not)
 set -euo pipefail
 
 branch="$(git symbolic-ref --short -q HEAD || echo DETACHED)"
@@ -38,6 +40,33 @@ if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ] &&
 	echo "  Create your own worktree:  pnpm wt <name>   →   ../wt-<name>, then work there." >&2
 	echo "  (deliberate main commit: ALETHIA_ALLOW_MAIN_COMMIT=1 git commit … · or --no-verify)" >&2
 	exit 1
+fi
+
+# R5 — never commit inside a worktree another LIVE Claude instance is working in. This is the
+# SOUND layer: unlike the PreToolUse hook (which parses command text and can be fooled by a `cd`
+# in an earlier turn) this runs with the REAL cwd, at the moment the commit actually happens. It
+# is what would have stopped #1247, where one instance's `git add` + `git commit` swept another's
+# uncommitted work into its own commit.
+#
+# Helper lookup: the MAIN checkout's copy first, so a branch cut before this landed still gets the
+# current protocol; then this worktree's own copy, so the guard is live on the branch that
+# introduces it rather than only after merge. [ -f ] fails open — under `set -e` a missing helper
+# must never break commits.
+wt_lib="$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/lib/wt-lease.sh"
+[ -f "$wt_lib" ] || wt_lib="$(git rev-parse --show-toplevel)/scripts/lib/wt-lease.sh"
+if [ -f "$wt_lib" ] && [ "${ALETHIA_ALLOW_FOREIGN_WT:-}" != "1" ]; then
+	# shellcheck source=/dev/null
+	. "$wt_lib"
+	wt_rc=0
+	wt_lease_acquire "$(git rev-parse --show-toplevel)" || wt_rc=$?
+	if [ "$wt_rc" = 1 ]; then
+		echo "✗ pre-commit: this worktree is leased to another LIVE Claude instance." >&2
+		echo "    holder  pid ${WT_L_PID:-?} (started ${WT_L_PS:-?}) on ${WT_L_HOST:-?} · session ${WT_L_SESSION:-?}" >&2
+		echo "  Committing here would sweep their uncommitted work into your commit (issue #1247)." >&2
+		echo "  Work in your own worktree:  pnpm wt <name>   ·   see holders:  pnpm wt:who" >&2
+		echo "  (override: ALETHIA_ALLOW_FOREIGN_WT=1 git commit … · or --no-verify)" >&2
+		exit 1
+	fi
 fi
 
 # R3 — migration-chain integrity, only when a migration file is staged. Uses the

@@ -18,6 +18,16 @@
             "statusMessage": "Checking worktree guard"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-worktree.sh\"",
+            "statusMessage": "Checking worktree ownership"
+          }
+        ]
       }
     ]
   }

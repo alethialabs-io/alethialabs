@@ -36,15 +36,29 @@ same checkout tangle: a single `git add -A` once swept three features into one m
   `../wt-<name>` on `feat/<name>` off `dev`, and prints the `cd` + a free `PORT`
   (`PORT=3100 pnpm dev:up` — one console per worktree; separate `.next` = no lock clash).
   `pnpm wt:ls` lists them, `pnpm wt:rm <name>` removes one. Commit there, push, PR into `dev`.
+- **A worktree is OWNED while you work in it.** Creating one, reusing one, or writing into one takes
+  a **lease** (`scripts/lib/wt-lease.sh`) keyed on your Claude process. Another instance then cannot
+  reuse it, remove it, edit files in it, or commit/push from it — it gets told who holds it.
+  **`pnpm wt:who`** shows every worktree and its holder (`live` / `stale` / `free`); `pnpm wt:release`
+  hands yours back; `pnpm wt:steal <name>` takes one whose holder is genuinely gone. A lease is
+  released automatically when the instance exits — there is nothing to clean up, and a dead holder's
+  worktree is reclaimed on next use. **Reads into another instance's worktree stay allowed**
+  (`git -C ../wt-other status|log|diff`); everything else there is blocked.
+  *Why:* on 2026-07-26 a second instance ran `pnpm wt <name>`, was handed a live tree ("already
+  exists … Reusing it"), and its `git add`+`git commit` swept the first instance's **uncommitted**
+  work into a commit under its own message (#1247).
 - **This is enforced**, not just advised:
   - `.githooks/pre-commit` (wired via `core.hooksPath`, set by the root `prepare` script) blocks
-    commits on `dev`/`staging`/`main`, blocks any commit in the main checkout, and runs the
-    migration-chain guard when a migration is staged. `.githooks/pre-push` blocks direct pushes to
-    protected branches.
-  - `.claude/hooks/guard-worktree.sh` (a `PreToolUse` Bash hook) blocks a Claude instance from
-    `git commit` / `git add -A` while it's launched in the main checkout.
-  - **Escape hatch** (emergencies only): `git commit --no-verify` (all), or
-    `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only). These are for the
+    commits on `dev`/`staging`/`main`, blocks any commit in the main checkout, blocks a commit in a
+    worktree another live instance holds, and runs the migration-chain guard when a migration is
+    staged. `.githooks/pre-push` blocks direct pushes to protected branches and pushes from a
+    foreign worktree.
+  - `.claude/hooks/guard-worktree.sh` (a `PreToolUse` hook on **Bash and Write/Edit/EnterWorktree**)
+    blocks `git commit` / `git add -A` in the main checkout, and any write into a worktree another
+    live instance holds.
+  - **Escape hatches** (emergencies only): `git commit --no-verify` (all),
+    `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only), or
+    `ALETHIA_ALLOW_FOREIGN_WT=1 …` (the worktree-lease rule only). These are for the
     maintainer — **instances must not use them.**
 - **Merging into `dev` — the Mergify queue (NOT direct merge):** the `protect-dev` ruleset (`infra/github`)
   requires **green CI** and **no approval**, and the merge queue is **Mergify** (`.mergify.yml`), not GitHub's
