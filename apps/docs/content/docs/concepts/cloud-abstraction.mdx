@@ -84,6 +84,38 @@ Compute instance types are mapped for Project conversion:
 
 Capacity units differ: AWS uses **ACUs** (Aurora Capacity Units, 0.5–128), GCP uses **vCPUs** (1–96), Azure uses **vCores** (1–64). When converting across providers, the platform maps equivalent capacity ranges and warns when units change.
 
+## Cache Engine Availability
+
+The abstraction has a limit, and the cache engine is where you meet it. Not every cloud sells every
+engine, so this axis is **narrowed per cloud** rather than mapped across them.
+
+| Cloud | Redis | Valkey | Service |
+|-------|:-----:|:------:|---------|
+| AWS | yes | yes | ElastiCache — replication group for Redis, Serverless for Valkey |
+| GCP | yes | yes | Memorystore — separate products, sized differently |
+| Azure | yes | — | Azure Managed Redis |
+| Alibaba | yes | — | ApsaraDB for Redis (KVStore) |
+| Hetzner | — | yes | in-cluster Valkey chart |
+
+Azure and Alibaba have no Valkey product, so the canvas does not offer it there. Hetzner is the
+mirror image: its data services run as in-cluster charts, and the cache chart is Valkey.
+
+Two consequences follow, and both are visible in the product rather than left implicit:
+
+- The engine picker shows only what the selected cloud can build. You cannot choose an engine that
+  would provision nothing.
+- Converting a project to a cloud that lacks its engine **switches the engine and tells you**. A
+  Valkey cache moving to Azure becomes Redis, with a warning naming the change.
+
+The same rule governs databases. Hetzner runs PostgreSQL in-cluster through CloudNativePG and offers
+no MySQL, so a MySQL database converted to Hetzner switches to PostgreSQL.
+
+<Callout type="info">
+Engine availability comes from the cloud catalog, which is also what the canvas, the converter, and
+the CI parity check read. A cloud that cannot back an offer is recorded as a documented exclusion —
+never a silent gap.
+</Callout>
+
 ## The `provider_config` JSONB Column
 
 Provider-specific configuration that doesn't fit the shared schema is stored in a `provider_config` JSONB column on component tables. For example:
