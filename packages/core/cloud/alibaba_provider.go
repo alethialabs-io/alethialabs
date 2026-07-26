@@ -153,6 +153,13 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	if !provisionNetwork && config.Network.NetworkID != "" {
 		tfvars["network_id"] = config.Network.NetworkID
 	}
+	// Brownfield subnet selection (#1352): the user-picked vSwitch ids. Written only on an
+	// existing VPC and only when non-empty; the template prefers these (ordered) over the
+	// unordered data.alicloud_vswitches.existing[0] discovery. Empty selection leaves the
+	// key absent (today's behaviour).
+	if !provisionNetwork && len(config.Network.SubnetIDs) > 0 {
+		tfvars["subnet_ids"] = config.Network.SubnetIDs
+	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved DNS keys are
 	// consumed above under a different tfvar name.

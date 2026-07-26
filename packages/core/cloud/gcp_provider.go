@@ -180,6 +180,13 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	if !provisionNetwork && config.Network.NetworkID != "" {
 		tfvars["network_id"] = config.Network.NetworkID
 	}
+	// Brownfield subnet selection (#1352): the user-picked subnet self-links. Written only
+	// on an existing network and only when non-empty, so an empty selection leaves the key
+	// absent (auto-discover, today's behaviour) and gcp_provider_test's absence assertions
+	// stay green. The template prefers this over its region-regex subnet scan.
+	if !provisionNetwork && len(config.Network.SubnetIDs) > 0 {
+		tfvars["subnet_ids"] = config.Network.SubnetIDs
+	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
 	// are consumed above under a different tfvar name.

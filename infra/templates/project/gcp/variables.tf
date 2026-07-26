@@ -60,10 +60,10 @@ variable "network_id" {
   description = "Self-link of an existing VPC network (used when provision_network = false)"
 }
 
-variable "subnetwork_id" {
-  type        = string
-  default     = ""
-  description = "Self-link of an existing subnetwork (used when provision_network = false)"
+variable "subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Self-links of user-selected existing subnetworks for a brownfield network (provision_network = false, #1352). Empty = auto-discover the subnetwork in var.region. Only the first entry is used (GKE attaches to one subnetwork). Replaces the former write-only subnetwork_id variable."
 }
 
 variable "single_cloud_nat" {

@@ -60,6 +60,12 @@ variable "vnet_id" {
   description = "Resource ID of an existing Virtual Network (used when provision_vnet = false)"
 }
 
+variable "subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "User-selected subnets within the existing VNet — bare names or full ARM subnet ids (brownfield, provision_vnet = false, #1352). Empty = use the VNet's first (arbitrary) subnet. Only the first entry is used (AKS attaches to one subnet)."
+}
+
 variable "single_nat_gateway" {
   type        = bool
   default     = false

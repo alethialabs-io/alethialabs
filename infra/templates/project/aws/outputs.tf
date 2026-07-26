@@ -59,16 +59,21 @@ output "node_security_group" {
   value = module.eks[0].node_security_group_id
 }
 
+# AZ outputs are the greenfield subnet AZs (local.azs = region+a/b/c). On brownfield (provision_vpc
+# = false) the cluster attaches to the user's existing subnets, which may live in OTHER AZs — so
+# emitting the hardcoded region+a/b/c would LIE (#1352). We gate on provision_vpc and emit null
+# there rather than a wrong AZ; the real per-subnet AZ is surfaced from cloud inventory in the UI,
+# not computed here (data.aws_availability_zones is unknown at plan under assume-role — #551).
 output "az1" {
-  value = local.azs[0]
+  value = var.provision_vpc ? local.azs[0] : null
 }
 
 output "az2" {
-  value = local.azs[1]
+  value = var.provision_vpc ? local.azs[1] : null
 }
 
 output "az3" {
-  value = local.azs[2]
+  value = var.provision_vpc ? local.azs[2] : null
 }
 
 output "subnet1" {

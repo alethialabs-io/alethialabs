@@ -15,14 +15,18 @@ data "google_compute_network" "existing" {
 }
 
 locals {
-  # The existing network's subnetwork in this region (self-links look like
-  # .../regions/<region>/subnetworks/<name>).
-  existing_subnet_self_link = var.provision_network ? "" : try(
-    [
-      for s in data.google_compute_network.existing[0].subnetworks_self_links : s
-      if length(regexall("/regions/${var.region}/", s)) > 0
-    ][0],
-    "",
+  # The existing network's subnetwork (self-links look like
+  # .../regions/<region>/subnetworks/<name>). Prefer the user's explicit selection
+  # (var.subnet_ids, #1352); otherwise fall back to auto-discovering the one subnetwork that
+  # lives in var.region. The explicit selection removes the region-regex guess.
+  existing_subnet_self_link = var.provision_network ? "" : (
+    length(var.subnet_ids) > 0 ? var.subnet_ids[0] : try(
+      [
+        for s in data.google_compute_network.existing[0].subnetworks_self_links : s
+        if length(regexall("/regions/${var.region}/", s)) > 0
+      ][0],
+      "",
+    )
   )
 }
 

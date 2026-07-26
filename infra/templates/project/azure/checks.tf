@@ -228,3 +228,15 @@ resource "terraform_data" "compat_k8s_guard" {
     }
   }
 }
+
+# Fail-closed brownfield-subnet gate (#1352): on an existing VNet a subnet MUST resolve — from the
+# user's var.subnet_ids selection or the VNet's first subnet. An empty subnet name previously fell
+# through to AKS and failed inside `tofu apply`; this precondition blocks it at plan time.
+resource "terraform_data" "brownfield_subnet_guard" {
+  lifecycle {
+    precondition {
+      condition     = var.provision_vnet || length(trimspace(local.existing_subnet_name)) > 0
+      error_message = "provision_vnet is false but no subnet resolved in VNet '${var.vnet_id}'. Select subnet_ids, or ensure the VNet has at least one subnet. Apply blocked fail-closed."
+    }
+  }
+}

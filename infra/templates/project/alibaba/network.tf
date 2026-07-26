@@ -35,9 +35,13 @@ module "network" {
 }
 
 locals {
-  # Vswitch ids used by ACK / RDS / KVStore — from the new VPC when greenfield,
-  # otherwise from the existing VPC's vswitches (brownfield).
-  vswitch_ids = var.provision_network ? try(module.network[0].vswitch_ids, []) : data.alicloud_vswitches.existing[0].ids
+  # Vswitch ids used by ACK / RDS / KVStore — from the new VPC when greenfield, otherwise from the
+  # existing VPC. On brownfield prefer the user's explicit, ORDERED selection (var.subnet_ids,
+  # #1352); RDS/KVStore take [0], so an ordered selection makes that deterministic instead of
+  # arbitrary. With no selection, fall back to the (unordered) discovered vswitches.
+  vswitch_ids = var.provision_network ? try(module.network[0].vswitch_ids, []) : (
+    length(var.subnet_ids) > 0 ? var.subnet_ids : data.alicloud_vswitches.existing[0].ids
+  )
 }
 
 # Brownfield: discover vswitches belonging to an existing VPC.
