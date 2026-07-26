@@ -913,6 +913,10 @@ export const projectChartWorkloads = pgTable(
 // exactly-one CHECK (both ON DELETE CASCADE). `target_kind` is a real enum; `ordinal` preserves
 // author order so buildConfigSnapshot re-embeds a byte-identical array. Tenancy flows through the
 // owner → project (2-path join-through RLS in programmables.sql).
+// BYO-IaC target fields (#824): `target_address` = the customer module's Terraform address, and the
+// three `output_*` columns are the ServiceBinding.target.output_keys facet→output-name map. All
+// nullable — a first-class component target leaves them NULL. (These complete the child table so a
+// later contract PR can drop the JSONB `bindings` columns without losing BYO-IaC data.)
 export const serviceBindings = pgTable(
 	"service_bindings",
 	{
@@ -925,6 +929,10 @@ export const serviceBindings = pgTable(
 		}),
 		target_kind: serviceBindingKind().notNull(),
 		target_name: text().notNull(),
+		target_address: text(),
+		output_endpoint: text(),
+		output_port: text(),
+		output_credential_secret: text(),
 		ordinal: integer().notNull(),
 		created_at: ts(),
 	},

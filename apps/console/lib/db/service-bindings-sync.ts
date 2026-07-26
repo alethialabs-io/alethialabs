@@ -33,6 +33,11 @@ export async function insertServiceBindings(
 				...owner,
 				target_kind: b.target.kind,
 				target_name: b.target.name,
+				// BYO-IaC target (#824) — NULL for a first-class component target.
+				target_address: b.target.address ?? null,
+				output_endpoint: b.target.output_keys?.endpoint ?? null,
+				output_port: b.target.output_keys?.port ?? null,
+				output_credential_secret: b.target.output_keys?.credential_secret ?? null,
 				ordinal: i,
 			})),
 		)
