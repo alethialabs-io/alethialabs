@@ -30,3 +30,9 @@ variable "registry_pull_provider" {
   type        = string
   default     = "native"
 }
+
+variable "secrets_xacct_provider" {
+  description = "Cross-account keyless cloud-secret-manager provider slug (gcp-sm-xacct); \"native\" means no cross-project secret manager. SEPARATE from secrets_provider so the cluster keeps its native store AND reads a foreign-PROJECT Secret Manager (an additional ClusterSecretStore). No cluster-side resource: the read grant lives entirely in the target project (see infra/connector/gcp/secrets-xacct)."
+  type        = string
+  default     = "native"
+}
