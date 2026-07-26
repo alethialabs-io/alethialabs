@@ -28,5 +28,19 @@ func init() {
 			}
 			return nil
 		},
+		// Runtime-read: ESO reads Doppler via spec.provider.doppler with the same API token seeded
+		// into an in-cluster Secret (auth.secretRef.dopplerToken), scoped to project+config.
+		saasSecretStore: func(ctx ComponentContext) SecretsSaaSStore {
+			return SecretsSaaSStore{
+				Slug:       "doppler",
+				Kind:       "doppler",
+				StoreName:  "secretstore-doppler",
+				CredSecret: "secretstore-doppler-creds",
+				CredKey:    "dopplerToken",
+				Namespace:  secretsSaaSNamespace,
+				Project:    pcString(ctx.ProviderConfig, "project", ""),
+				Config:     pcString(ctx.ProviderConfig, "config", ""),
+			}
+		},
 	})
 }
