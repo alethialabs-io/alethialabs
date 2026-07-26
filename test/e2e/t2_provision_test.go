@@ -496,6 +496,23 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		owner:       owner,
 		appsRepo:    repos.appsRepo,
 	})
+
+	// (10) VCLUSTER-PLACEMENT scenario (#1308). Opt-in via ALETHIA_E2E_VCLUSTER — layers a SECOND DEPLOY
+	//      onto the SAME cluster with placement_mode=vcluster (cluster.cluster_name = this Fabric) and
+	//      asserts the virtual cluster was provisioned + registered with the host ArgoCD + the app
+	//      delivered onto it by destination.name: no new cloud cluster, ArgoCD not reinstalled; then a
+	//      DESTROY job deregisters it cleanly (no orphaned registration). aws-first (a clean skip
+	//      elsewhere). The e2e-vc-* env is disjoint from #959's e2e-ns-*, so the two never collide.
+	//      Runs BEFORE the guaranteed teardown (registered earlier), reusing the still-running runner.
+	runT2VClusterTenant(t, ctx, cp, kc, vclusterTenantParams{
+		project:     project,
+		env:         env,
+		provider:    provider,
+		region:      region,
+		fabricClust: meta.ClusterName,
+		owner:       owner,
+		appsRepo:    repos.appsRepo,
+	})
 }
 
 // assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least
