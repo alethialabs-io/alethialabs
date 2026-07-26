@@ -49,6 +49,7 @@ const PROVIDERS = `${ROOT}/packages/core/cloud`;
 const EXCLUSIONS = `${ROOT}/infra/offer-exclusions.yaml`;
 const MATRIX_OUT = `${ROOT}/docs/testing/offer-parity.md`;
 const NODE_REGISTRY = "components/design-project/canvas/graph/node-registry.ts";
+const CATALOG = `${ROOT}/packages/core/catalog/catalog.json`;
 
 const writeMatrix = process.argv.includes("--matrix");
 
@@ -126,35 +127,43 @@ function offeredVariants() {
 
 const AXES = offeredVariants();
 
-/** The per-cloud floor the canvas itself applies (`variantOptionsFor` → HETZNER_VARIANT_VALUES).
+/** The per-cloud floor the canvas itself applies, read from the SAME source the canvas reads.
  *
- * Read rather than reimplemented, so this guard asks about exactly what the product offers. Without
- * it the matrix would carry a "documented exclusion" for Hetzner MySQL — an engine the canvas never
- * shows on Hetzner — which is worse than useless: it implies we considered offering it. */
+ * This first parsed a `HETZNER_VARIANT_VALUES` constant out of node-registry.ts. #1420 deleted that
+ * constant — the floor now derives from the catalog for every cloud — and the guard silently kept
+ * passing while measuring the wrong thing: it went on believing Valkey was offered on Azure and
+ * Alibaba after the canvas had stopped offering it.
+ *
+ * Reading `catalog.json` removes the class of failure rather than the instance. It is the SSOT both
+ * the canvas floor and the cross-cloud converter derive from, it is plain JSON rather than TypeScript
+ * to pattern-match, and a guard that reads a DIFFERENT source than the thing it guards is exactly how
+ * the drift it exists to catch gets in.
+ */
 function cloudFloor() {
-	const src = readFileSync(NODE_REGISTRY, "utf8");
-	// The floor names the engine lists; the lists themselves live with the Hetzner chart mapper that
-	// owns that truth (HETZNER_DB_ENGINES / HETZNER_CACHE_ENGINES), so both files are read.
-	const sources = src + readFileSync("lib/cloud-providers/hetzner-services.ts", "utf8");
+	const catalog = JSON.parse(readFileSync(CATALOG, "utf8"));
 	const floors = {};
-	const block = src.match(/HETZNER_VARIANT_VALUES[^=]*=\s*\{([\s\S]*?)\n\};/);
-	if (!block) return floors;
-	for (const m of block[1].matchAll(/(\w+):\s*new Set<string>\((\w+)\)/g)) {
-		const decl = sources.match(new RegExp(`${m[2]}\\s*=\\s*\\[([^\\]]+)\\]`));
-		if (decl) {
-			floors.hetzner ??= {};
-			floors.hetzner[m[1]] = new Set([...decl[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]));
-		}
+	for (const [cloud, provider] of Object.entries(catalog.database ?? {})) {
+		floors[cloud] ??= {};
+		floors[cloud].database = new Set((provider.engines ?? []).map((e) => e.family));
+	}
+	for (const [cloud, provider] of Object.entries(catalog.cache ?? {})) {
+		floors[cloud] ??= {};
+		floors[cloud].cache = new Set((provider.engines ?? []).map((e) => e.value));
 	}
 	return floors;
 }
 
 const FLOOR = cloudFloor();
 
-/** Is this variant offered at all on this cloud? */
+/** Is this variant offered at all on this cloud?
+ *
+ * An EMPTY floor means the catalog has no slice for this cloud/kind — treated as "offered", matching
+ * `variantOptionsFor`, which shows everything rather than an empty picker (#918). A missing slice is
+ * not evidence that nothing is offered. */
 function offeredOn(cloud, kind, variant) {
 	const allowed = FLOOR[cloud]?.[kind];
-	return allowed ? allowed.has(variant) : true;
+	if (!allowed || allowed.size === 0) return true;
+	return allowed.has(variant);
 }
 
 // ── exclusions ──────────────────────────────────────────────────────────────────────

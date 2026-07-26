@@ -32,6 +32,18 @@ exclusions:
     cloud: hetzner
     reason: Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine.
 
+  # ── Valkey on the clouds that have no Valkey product ────────────────────────────────
+  # Checked against the pinned providers, not assumed: azurerm exposes `azurerm_managed_redis`
+  # (Redis only), and `alicloud_kvstore_instance.instance_type` accepts Redis or Memcache. Neither
+  # cloud sells Valkey, so the canvas no longer offers it there (#1420 made the floor catalog-derived).
+  # These entries keep the decision visible in the matrix rather than leaving a blank.
+  - offer: cache:valkey
+    cloud: azure
+    reason: Azure Cache/Managed Redis has no Valkey engine — the product does not exist.
+  - offer: cache:valkey
+    cloud: alibaba
+    reason: ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine.
+
   # ── local — the kind-cluster development template ───────────────────────────────────
   # `infra/templates/project/local` stands up a kind cluster for development. It has no cloud behind
   # it, so there are no managed services to provision at all; data services come from the same
@@ -63,12 +75,6 @@ baseline:
   # selecting Valkey silently provisions Redis. AWS's Valkey module is written and stranded behind a
   # toggle the cache path never sets.
   - offer: cache:redis
-    cloud: aws
-    issue: "#1420"
-  - offer: cache:valkey
-    cloud: aws
-    issue: "#1420"
-  - offer: cache:redis
     cloud: gcp
     issue: "#1420"
   - offer: cache:valkey
@@ -77,13 +83,7 @@ baseline:
   - offer: cache:redis
     cloud: azure
     issue: "#1420"
-  - offer: cache:valkey
-    cloud: azure
-    issue: "#1420"
   - offer: cache:redis
-    cloud: alibaba
-    issue: "#1420"
-  - offer: cache:valkey
     cloud: alibaba
     issue: "#1420"
 

@@ -31,8 +31,8 @@ nightly can promote a cell, and it does so in the e2e parity board.
 
 | Offer | alibaba | aws | azure | gcp | hetzner | local |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| `redis` | 🚫 #1420 | 🚫 #1420 | 🚫 #1420 | 🚫 #1420 | · | — |
-| `valkey` | 🚫 #1420 | 🚫 #1420 | 🚫 #1420 | 🚫 #1420 | — | — |
+| `redis` | 🚫 #1420 | 🟡 | 🚫 #1420 | 🚫 #1420 | · | — |
+| `valkey` | · | 🟡 | · | 🚫 #1420 | — | — |
 
 ## Documented exclusions
 
@@ -40,6 +40,8 @@ nightly can promote a cell, and it does so in the e2e parity board.
 |---|---|---|
 | `database:postgres` | hetzner | Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine. |
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
+| `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
+| `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
 | `database:postgres` | local | A local kind cluster has no managed services — data services run in-cluster. |
 | `database:mysql` | local | A local kind cluster has no managed services — data services run in-cluster. |
 | `cache:redis` | local | A local kind cluster has no managed services — data services run in-cluster. |
