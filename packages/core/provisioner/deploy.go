@@ -107,6 +107,14 @@ type DeployParams struct {
 	// (its identity is provisioned in-core via the AWS IAM SDK — coreaws.ProvisionNamespaceIdentity)
 	// and for every dedicated deploy. See provisionAndBindNamespaceIdentity.
 	NamespaceIdentity NamespaceIdentityProvisioner
+	// TalosKubeconfig mints a fresh short-lived kubeconfig for an EXISTING hetzner-talos Fabric cluster
+	// from its PERSISTED talosconfig (there is no cloud API to re-mint — the talos admin credential is
+	// captured at Fabric creation and delivered, encrypted, on the placement job's claim). INJECTED by the
+	// runner (which holds the decrypted talosconfig + the Talos machine-API client), so packages/core takes
+	// on no Talos gRPC dependency. Nil for every non-hetzner cloud and every dedicated deploy. The minted
+	// kubeconfig is handed to hetznerProvider.ConfigureKubeconfig under the `kubeconfig` output key (its
+	// existing path). See mintClusterOutputs.
+	TalosKubeconfig TalosKubeconfigMinter
 }
 
 // NamespaceIdentityProvisioner provisions a per-namespace tenant cloud identity (a zero-perm identity
@@ -124,6 +132,15 @@ type NamespaceIdentityProvisioner func(ctx context.Context, providerSlug string,
 // packages/core taking on that cloud's auth SDK. Returns a non-nil error (never partial values) when
 // the cluster can't be resolved.
 type KubeConnResolver func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName string) (endpoint, caData string, err error)
+
+// TalosKubeconfigMinter mints a fresh, short-lived Kubernetes kubeconfig for an EXISTING hetzner-talos
+// Fabric cluster from its persisted admin talosconfig, via the Talos machine API (talosctl kubeconfig
+// equivalent). Talos exposes no cloud API to re-mint kube access, so — unlike the managed clouds'
+// output-free-by-name resolve — the talos admin credential is persisted at Fabric creation and this mints
+// from it. The runner injects it (it holds the decrypted talosconfig from the job claim and the Talos gRPC
+// client), so packages/core stays free of the Talos dependency. Returns a non-nil error (never a partial
+// kubeconfig) on failure.
+type TalosKubeconfigMinter func(ctx context.Context, config *types.ProjectConfig, clusterName string) (kubeconfig string, err error)
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
 type PlanResult struct {

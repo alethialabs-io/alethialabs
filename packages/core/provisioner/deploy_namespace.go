@@ -81,10 +81,10 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 // silent omission). namespace is activated on aws; other clouds + vcluster are tracked follow-ups.
 func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 	if pm == types.PlacementModeNamespace {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA) and gcp (GKE + Workload Identity) today; azure/alibaba are per-cloud follow-ups and hetzner-talos needs a Fabric-create-time kubeconfig. 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA), gcp (GKE + Workload Identity) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure/alibaba are per-cloud follow-ups. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	if pm == types.PlacementModeVcluster {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get) and azure (AKS ManagedClusters) host re-mint today; alibaba is a per-cloud follow-up (#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters) and hetzner (Talos-API kubeconfig from the persisted talosconfig) host re-mint today; alibaba is a per-cloud follow-up (#1129). 'dedicated' provisions on every cloud", pm, provider)
 	}
 	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud), 'namespace' (aws) and 'vcluster' (aws) provision today", pm)
 }
@@ -100,11 +100,16 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 //   - #1128 azure   — AKS ManagedClusters.Get (+ listClusterUserCredentials CA) + federated identity
 //   - #1129 alibaba — ACK DescribeClusterUserKubeconfig + RRSA
 //
-// hetzner-talos is a PERMANENT exclusion here: Talos exposes no cloud API to re-mint kube access, so it
-// needs a Fabric-create-time persisted kubeconfig instead (a console-snapshot change, tracked separately).
+// hetzner-talos is activated via a DIFFERENT mechanism (Talos has no cloud API to re-mint kube access):
+// the admin talosconfig is persisted at Fabric creation and the runner-injected TalosKubeconfigMinter mints
+// a fresh short-lived kubeconfig from it per placement (mintClusterOutputs). It has NO cloud IAM, so a
+// hetzner namespace tenant gets k8s-native isolation only — no per-namespace cloud identity (an explicit,
+// documented exclusion in provisionAndBindNamespaceIdentity; cloud parity is a hard rule, so the gap is
+// never silent).
 var namespaceRemintProviders = map[string]bool{
-	"aws": true,
-	"gcp": true,
+	"aws":     true,
+	"gcp":     true,
+	"hetzner": true,
 }
 
 // namespaceRemintWired reports whether provider's output-free namespace re-mint + identity are activated.
@@ -121,12 +126,15 @@ var namespaceClusterNameOutputKey = map[string]string{
 	"gcp":     "gke_cluster_name",
 	"azure":   "aks_cluster_name",
 	"alibaba": "ack_cluster_name",
+	// hetzner mints the kubeconfig from the persisted talosconfig (mintClusterOutputs), not a cloud API;
+	// the name key still identifies the cluster on the synthesized outputs map.
+	"hetzner": "talos_cluster_name",
 }
 
 // namespaceRemintNotWired is the fail-closed error for a cloud whose namespace re-mint seam isn't wired —
 // an explicit, cloud-named exclusion (parity is documented, never a silent omission).
 func namespaceRemintNotWired(provider string) error {
-	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA) and gcp (GKE clusters.get + Workload Identity) today; azure/alibaba are per-cloud follow-ups (#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig)", provider)
+	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA), gcp (GKE clusters.get + Workload Identity) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure/alibaba are per-cloud follow-ups (#1128/#1129)", provider)
 }
 
 // namespaceClusterConnKeys maps a provider whose ConfigureKubeconfig reads the control-plane endpoint +
@@ -151,8 +159,28 @@ var namespaceClusterConnKeys = map[string]struct{ endpoint, ca string }{
 // resolver (its ConfigureKubeconfig resolves endpoint/CA from the name via the in-core EKS SDK).
 // Fail-closed: a cloud that needs a conn but was given no resolver, or a resolver that returns empty
 // values, is surfaced as an error rather than silently producing an unusable kubeconfig.
-func mintClusterOutputs(ctx context.Context, resolver KubeConnResolver, providerSlug string, config *types.ProjectConfig, clusterName, nameKey string) (map[string]interface{}, error) {
+func mintClusterOutputs(ctx context.Context, resolver KubeConnResolver, talosMinter TalosKubeconfigMinter, providerSlug string, config *types.ProjectConfig, clusterName, nameKey string) (map[string]interface{}, error) {
 	outputs := map[string]interface{}{nameKey: clusterName}
+
+	// hetzner-talos: no cloud API to re-mint. Mint a fresh short-lived kubeconfig from the PERSISTED
+	// talosconfig via the runner-injected minter and hand it to ConfigureKubeconfig under the `kubeconfig`
+	// output key (its existing path — hetznerProvider.ConfigureKubeconfig reads `kubeconfig`). Fail-closed:
+	// a missing minter (runner wiring bug) or an empty kubeconfig is an error, never an unusable config.
+	if providerSlug == "hetzner" {
+		if talosMinter == nil {
+			return nil, fmt.Errorf("placement mint: hetzner-talos needs an injected Talos kubeconfig minter (persisted talosconfig) but none was provided — this is a runner wiring bug")
+		}
+		kubeconfig, err := talosMinter(ctx, config, clusterName)
+		if err != nil {
+			return nil, fmt.Errorf("mint talos kubeconfig for %q (keyless, from persisted talosconfig): %w", clusterName, err)
+		}
+		if strings.TrimSpace(kubeconfig) == "" {
+			return nil, fmt.Errorf("mint talos kubeconfig for %q: minter returned an empty kubeconfig", clusterName)
+		}
+		outputs["kubeconfig"] = kubeconfig
+		return outputs, nil
+	}
+
 	keys, needsConn := namespaceClusterConnKeys[providerSlug]
 	if !needsConn {
 		return outputs, nil
@@ -177,7 +205,7 @@ func mintClusterOutputs(ctx context.Context, resolver KubeConnResolver, provider
 // output key (plus, for a cloud that needs it, the endpoint+CA from the injected resolver) and delegates
 // to CloudProvider.ConfigureKubeconfig, which writes the in-process `kube-token` exec-plugin kubeconfig.
 // Fail-closed for any cloud not in namespaceRemintProviders (defence-in-depth behind selectPlacementPath).
-func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, resolver KubeConnResolver, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
+func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, resolver KubeConnResolver, talosMinter TalosKubeconfigMinter, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
 	if !namespaceRemintWired(providerSlug) {
 		return namespaceRemintNotWired(providerSlug)
 	}
@@ -185,7 +213,7 @@ func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, 
 	if !ok {
 		return namespaceRemintNotWired(providerSlug)
 	}
-	mintOutputs, err := mintClusterOutputs(ctx, resolver, providerSlug, config, clusterName, nameKey)
+	mintOutputs, err := mintClusterOutputs(ctx, resolver, talosMinter, providerSlug, config, clusterName, nameKey)
 	if err != nil {
 		return err
 	}
@@ -230,6 +258,15 @@ func provisionAndBindNamespaceIdentity(ctx context.Context, identity NamespaceId
 		if err := bindGKENamespaceIdentity(ns, gsaEmail, stdout, stderr); err != nil {
 			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
 		}
+		return nil
+	case "hetzner":
+		// hetzner-talos has NO cloud IAM — there is no cloud identity provider to mint a zero-perm
+		// per-namespace role against (unlike EKS IRSA / GKE WI / AKS federated / ACK RRSA). So a hetzner
+		// namespace tenant's isolation is k8s-native ONLY (the namespace + the guardrail bundle's default-SA
+		// RBAC with token automount off + default-deny NetworkPolicy where the CNI enforces it — Cilium does
+		// on the Talos template). This is an EXPLICIT, documented per-cloud exclusion (cloud parity is a hard
+		// rule: the gap is named, never a silent no-op), reviewed as such. No cloud-identity binding to apply.
+		fmt.Fprintf(stdout, "Namespace %q on hetzner-talos: k8s-native isolation only (no cloud IAM to bind a per-namespace identity).\n", ns)
 		return nil
 	default:
 		return namespaceRemintNotWired(providerSlug)
@@ -352,7 +389,7 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	// on the ambient keyless session; gcp/azure/alibaba resolve the same from their cloud API once their
 	// lane (#1127/#1128/#1129) wires it. The provider is fed only its cluster-name output key.
 	setStage("kube_configure")
-	if err := mintNamespaceKubeAccess(ctx, provider, params.KubeConn, vc, params.Provider, clusterName, stdout); err != nil {
+	if err := mintNamespaceKubeAccess(ctx, provider, params.KubeConn, params.TalosKubeconfig, vc, params.Provider, clusterName, stdout); err != nil {
 		return nil, fmt.Errorf("kubeconfig mint failed for existing cluster %q — the namespace env is placed on a Fabric whose cluster is unreachable: %w", clusterName, err)
 	}
 	// Reachability probe: minting only proves DescribeCluster succeeded, not that the exec-plugin token
