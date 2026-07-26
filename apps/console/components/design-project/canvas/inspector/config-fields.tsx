@@ -149,6 +149,113 @@ export function OptionSelect({
 	);
 }
 
+/**
+ * A free-text field that SUGGESTS the account's offerings — the control for a value the cloud may
+ * never list back.
+ *
+ * `instance_class` and a cache `engine_version` are the escape hatches: they override the portable
+ * model with a provider-specific string, and a user must be able to pin one the enumeration lanes
+ * have not reported (an account that hasn't synced, a SKU only orderable on an older version, a
+ * region the anchor didn't cover). A `<Select>` structurally cannot hold such a value, so these keep
+ * a real input — the suggestions are additive, never a gate.
+ *
+ * The input IS the value: typing patches the config exactly as the plain text control does, so the
+ * list never has to open for the field to work. Suggestions filter on what has been typed.
+ *
+ * Deliberately NOT a base-ui Popover, for the reason `@repo/ui/multi-combobox` documents: an
+ * input-is-the-trigger typeahead fights that trigger/dismiss model (opening on focus vs its
+ * outside-press dismiss). This mirrors that component instead — controlled `open`, closed on blur,
+ * rows `preventDefault` their mousedown so a click doesn't blur the input out from under itself.
+ *
+ * Advisory is INK ONLY here as well (#918): a `not_launchable` suggestion stays pickable.
+ */
+export function OptionCombobox({
+	id,
+	options,
+	value,
+	onChange,
+	placeholder,
+	mono,
+}: {
+	id?: string;
+	options: FieldOption[];
+	value: string;
+	onChange: (v: string) => void;
+	placeholder?: string;
+	mono?: boolean;
+}) {
+	const [open, setOpen] = useState(false);
+	const q = value.trim().toLowerCase();
+	// Filter on the typed text, but never hide everything just because the value matches one option
+	// exactly — after picking a suggestion the list would otherwise collapse to that single row.
+	const filtered = q
+		? options.filter((o) => `${o.value} ${o.label}`.toLowerCase().includes(q))
+		: options;
+
+	return (
+		<div className="relative">
+			<Input
+				id={id}
+				value={value}
+				placeholder={placeholder}
+				autoComplete="off"
+				role="combobox"
+				aria-expanded={open}
+				className={cn("h-9 text-sm", mono && "font-mono")}
+				onChange={(e) => {
+					onChange(e.target.value);
+					setOpen(true);
+				}}
+				onFocus={() => setOpen(true)}
+				onBlur={() => setOpen(false)}
+			/>
+			{open && options.length > 0 ? (
+				<div className="absolute top-full left-0 z-50 mt-1 w-full rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+					<div className="max-h-56 overflow-y-auto">
+						{filtered.length === 0 ? (
+							// Not an error: an unlisted value is a legitimate pin, so the input keeps it.
+							<div className="px-2 py-3 text-center text-xs text-muted-foreground">
+								No matches — your value is kept as typed.
+							</div>
+						) : (
+							filtered.map((o) => (
+								<button
+									key={o.value}
+									type="button"
+									// Keep focus in the input so the click lands before the blur closes us.
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => {
+										onChange(o.value);
+										setOpen(false);
+									}}
+									className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+								>
+									<span
+										className={cn(
+											"min-w-0 flex-1 truncate",
+											o.advisory?.level === "unavailable" && "text-muted-foreground",
+										)}
+									>
+										{o.label}
+									</span>
+									{o.advisory ? (
+										<span
+											className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground"
+											title={o.advisory.note}
+										>
+											{o.advisory.level === "unavailable" ? "unavailable" : "unverified"}
+										</span>
+									) : null}
+								</button>
+							))
+						)}
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
 /** Render one field's control. */
 function FieldControl({
 	field,
@@ -228,6 +335,20 @@ function FieldControl({
 					value={toStr(raw)}
 					onChange={patch}
 					placeholder={resolve(field.placeholder, ctx)}
+				/>
+			);
+
+		// A value the cloud may never list back (a SKU, an engine version) has to stay TYPEABLE — a
+		// select can only hold what is in its list. The suggestions are the account's real offerings.
+		case "combobox":
+			return (
+				<OptionCombobox
+					id={id}
+					options={resolve(field.options, ctx) ?? []}
+					value={toStr(raw)}
+					onChange={patch}
+					placeholder={resolve(field.placeholder, ctx)}
+					mono={field.mono}
 				/>
 			);
 

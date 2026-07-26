@@ -15,6 +15,11 @@ const state = vi.hoisted(() => ({
 	regionCalls: [] as unknown[][],
 	instanceCalls: [] as unknown[][],
 	cacheCalls: [] as unknown[][],
+	instanceClassCalls: [] as unknown[][],
+	// The two catalog-less axes default to EMPTY — an unsynced account genuinely has nothing here,
+	// and that is the case the provenance wording has to get right.
+	instanceClasses: [] as unknown[],
+	cacheVersions: [] as unknown[],
 }));
 
 vi.mock("@/lib/authz/guard", () => ({
@@ -43,10 +48,15 @@ vi.mock("@/lib/queries/capabilities", () => ({
 	}),
 	getK8sVersionCapabilities: vi.fn(async () => [{ version: "1.35" }]),
 	getDatabaseCapabilities: vi.fn(async () => ({ engines: [], capacity: {} })),
+	getDbInstanceClassCapabilities: vi.fn(async (...a: unknown[]) => {
+		state.instanceClassCalls.push(a);
+		return state.instanceClasses;
+	}),
 	getCacheTierCapabilities: vi.fn(async (...a: unknown[]) => {
 		state.cacheCalls.push(a);
 		return [];
 	}),
+	getCacheVersionCapabilities: vi.fn(async () => state.cacheVersions),
 	getNosqlCapability: vi.fn(async () => ({
 		serviceName: "DynamoDB",
 		available: true,
@@ -90,6 +100,9 @@ beforeEach(() => {
 	state.regionCalls = [];
 	state.instanceCalls = [];
 	state.cacheCalls = [];
+	state.instanceClassCalls = [];
+	state.instanceClasses = [];
+	state.cacheVersions = [];
 	vi.clearAllMocks();
 });
 
@@ -136,6 +149,42 @@ describe("getIdentityCapabilities", () => {
 		expect(bag.axisSource.instance_type).toBe("account"); // rows carry a launchable verdict
 		// k8s rows came back WITHOUT a verdict → a static fallback, not account data.
 		expect(bag.axisSource.k8s_version).toBe("catalog");
+	});
+
+	// The catalog-less axes report provenance by row COUNT, because their readers return [] instead of
+	// static rows — there is no `launchable === undefined` sentinel to read.
+	it("reports the SKU + cache-version axes as catalog when the account reported none", async () => {
+		const bag = await getIdentityCapabilities("ci-1", "eu-west-1");
+		expect(bag.axisSource.db_instance_class).toBe("catalog");
+		expect(bag.axisSource.cache_version).toBe("catalog");
+		expect(bag.dbInstanceClasses).toEqual([]);
+	});
+
+	it("reports them as account data once rows exist, labelling a SKU with its memory", async () => {
+		state.instanceClasses = [
+			{
+				value: "db.r6g.large",
+				label: "db.r6g.large",
+				engine: "aurora-postgresql",
+				memoryGb: 16,
+				launchable: "launchable",
+				launchableReason: "available",
+			},
+		];
+		state.cacheVersions = [{ version: "7.1", launchable: "launchable" }];
+		const bag = await getIdentityCapabilities("ci-1", "eu-west-1");
+		expect(bag.axisSource.db_instance_class).toBe("account");
+		expect(bag.axisSource.cache_version).toBe("account");
+		expect(bag.dbInstanceClasses[0].label).toBe("db.r6g.large · 16 GB");
+		expect(bag.dbInstanceClasses[0].engine).toBe("aurora-postgresql");
+		expect(bag.cacheVersions[0].value).toBe("7.1");
+	});
+
+	it("does NOT engine-filter the SKU read — the bag outlives the engine choice", async () => {
+		// One fetch per (identity, region) serves the node for as long as it is open, and the engine
+		// can change without a refetch, so narrowing server-side would strand the picker.
+		await getIdentityCapabilities("ci-1", "eu-west-1");
+		expect(state.instanceClassCalls.at(-1)).toEqual(["ci-1", "aws"]);
 	});
 
 	it("maps placement inventory onto NATIVE ids and resolves the subnet's parent", async () => {

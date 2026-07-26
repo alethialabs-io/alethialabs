@@ -7,11 +7,13 @@
 
 import type { CacheEngineVersion } from "@aws-sdk/client-elasticache";
 import type { ClusterVersionInformation } from "@aws-sdk/client-eks";
-import type { DBEngineVersion } from "@aws-sdk/client-rds";
+import type { DBEngineVersion, OrderableDBInstanceOption } from "@aws-sdk/client-rds";
 import { describe, expect, it } from "vitest";
 import {
 	normalizeCacheTierRows,
+	normalizeCacheVersionRows,
 	normalizeDatabaseRows,
+	normalizeDbInstanceClassRows,
 	normalizeK8sVersionRows,
 	normalizeNosqlRows,
 	type ServiceNormalizeCtx,
@@ -121,6 +123,81 @@ describe("normalizeCacheTierRows", () => {
 
 	it("returns no rows (fail-open) when ElastiCache exposes no engines", () => {
 		expect(normalizeCacheTierRows([], ctx)).toEqual([]);
+	});
+});
+
+describe("normalizeCacheVersionRows", () => {
+	it("emits one row per (engine, version), newest-first, from the SAME gating response", () => {
+		const engines: CacheEngineVersion[] = [
+			{ Engine: "redis", EngineVersion: "7.1" },
+			{ Engine: "redis", EngineVersion: "6.2" },
+			{ Engine: "redis", EngineVersion: "7.1" }, // dup → collapsed
+			{ Engine: "valkey", EngineVersion: "8.0" },
+			{ Engine: "memcached" }, // no version → skipped
+		];
+		const rows = normalizeCacheVersionRows(engines, ctx);
+		expect(rows.map((r) => r.native_id)).toEqual(["redis-7.1", "redis-6.2", "valkey-8.0"]);
+		const redis71 = rows[0];
+		expect(redis71.service_kind).toBe("cache_version");
+		expect(redis71.engine).toBe("redis");
+		expect(redis71.version).toBe("7.1");
+		expect(redis71.tier).toBeNull();
+		expect(redis71.launchable).toBe("launchable");
+	});
+
+	it("never collides with the cache TIER rows built from the same response", () => {
+		const engines: CacheEngineVersion[] = [{ Engine: "redis", EngineVersion: "7.1" }];
+		const tiers = normalizeCacheTierRows(engines, ctx);
+		const versions = normalizeCacheVersionRows(engines, ctx);
+		// Both kinds land in one table and the sweep soft-removes by native_id across kinds, so an
+		// overlap would let one axis retire the other's rows.
+		const overlap = tiers
+			.map((t) => t.native_id)
+			.filter((id) => versions.some((v) => v.native_id === id));
+		expect(overlap).toEqual([]);
+	});
+
+	it("returns no rows (fail-open) for an empty response", () => {
+		expect(normalizeCacheVersionRows([], ctx)).toEqual([]);
+	});
+});
+
+describe("normalizeDbInstanceClassRows", () => {
+	it("dedupes the (version × AZ) repeats into one row per (engine, SKU)", () => {
+		const fixture: OrderableDBInstanceOption[] = [
+			{ Engine: "aurora-postgresql", EngineVersion: "16.6", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "aurora-postgresql", EngineVersion: "15.4", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "aurora-postgresql", EngineVersion: "16.6", DBInstanceClass: "db.r6g.xlarge" },
+			{ Engine: "aurora-mysql", EngineVersion: "8.0", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "postgres", DBInstanceClass: "db.t4g.micro" }, // not a platform engine → ignored
+			{ Engine: "aurora-postgresql" }, // no class → skipped
+		];
+		const rows = normalizeDbInstanceClassRows(fixture, ctx);
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"aurora-postgresql-db.r6g.large",
+			"aurora-postgresql-db.r6g.xlarge",
+			"aurora-mysql-db.r6g.large",
+		]);
+		const first = rows[0];
+		expect(first.service_kind).toBe("database_instance_class");
+		expect(first.engine).toBe("aurora-postgresql");
+		// The bare SKU lives in `tier` — that is what the picker offers; native_id is only the key.
+		expect(first.tier).toBe("db.r6g.large");
+		expect(first.version).toBeNull();
+	});
+
+	it("keeps the same SKU under two engines as two offerings", () => {
+		const fixture: OrderableDBInstanceOption[] = [
+			{ Engine: "aurora-postgresql", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "aurora-mysql", DBInstanceClass: "db.r6g.large" },
+		];
+		const rows = normalizeDbInstanceClassRows(fixture, ctx);
+		expect(rows).toHaveLength(2);
+		expect(new Set(rows.map((r) => r.native_id)).size).toBe(2);
+	});
+
+	it("returns no rows (fail-open) for an empty response", () => {
+		expect(normalizeDbInstanceClassRows([], ctx)).toEqual([]);
 	});
 });
 
