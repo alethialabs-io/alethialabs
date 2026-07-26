@@ -114,6 +114,8 @@ These are not per-cloud gates, but legs depend on them:
 | `E2E_ARGO_APPS_REPO`, `E2E_ARGO_BYO_CHART_*` | vars | the A0.6 BYO-IaC + services proof |
 | `E2E_ARGO_APPS_REPO_GCP` / `_AZURE`, `E2E_ARGO_BYO_CHART_*_GCP` / `_AZURE` | vars | per-cloud repo overrides so that proof runs on gcp + azure too (#1136) |
 | `E2E_NAMESPACE_TENANT`, `E2E_SOAK` | vars | opt-in namespace-placement and soak scenarios |
+| `E2E_VCLUSTER`, `E2E_DAY2_ACCESS` | vars | opt-in vcluster-placement and day-2-access scenarios (their harnesses existed but were never referenced by the workflow, so they could not run at all until #1268 wired them) |
+| `E2E_SECRETS_XACCT*` | vars | opt-in cross-account keyless secret-manager read — see below |
 
 ## Dimensions and cost
 
@@ -132,6 +134,71 @@ concurrency group serializes same-cloud runs.
 Per the workflow's own note, extend all five places or the leg will half-work: the dispatch
 `options:`, the matrix `provider:` array, the gate `case`, the credential step, and the sweeper `case`
 in teardown. Then add a row to the coverage-issue table in the rollup step and to this document.
+
+## Cross-account keyless secret managers (#1268)
+
+Proves a workload in the e2e cluster (account A) reads a secret from a **different** account (B) with
+no credential anywhere. **AWS only** — the other three clouds record BLOCKED with a reason
+([parity board](./xacct-secrets-parity.md)).
+
+### 1. Apply the account-B stack, once
+
+With an admin identity in the **target** account:
+
+```bash
+cd infra/aws-secrets-e2e
+cp backend.hcl.example backend.hcl && cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars              # cluster_account_id = the account the e2e provisions in
+tofu init -backend-config=backend.hcl
+TF_VAR_canary_value="$(openssl rand -hex 24)" tofu apply
+```
+
+`canary_value` is generated inline and never written to a file. Only its SHA-256 becomes a variable —
+which is why the canary never reaches CI config, job logs or the proof bundle.
+
+### 2. Set the repo variables
+
+All **variables**, not secrets (a role ARN, an account id, a region, a secret name and a digest):
+
+| Variable | From |
+|---|---|
+| `E2E_SECRETS_XACCT` | `1` to enable |
+| `E2E_SECRETS_XACCT_ACCOUNT` | `tofu output target_account_id` |
+| `E2E_SECRETS_XACCT_REGION` | `tofu output region` |
+| `E2E_SECRETS_XACCT_ROLE_ARN` | `tofu output target_role_arn` |
+| `E2E_SECRETS_XACCT_REMOTE_KEY` | `tofu output secret_name` |
+| `E2E_SECRETS_XACCT_EXPECT_SHA256` | `tofu output canary_sha256` |
+
+Optional: `E2E_SECRETS_XACCT_EXTERNAL_ID` (only if you set `external_id` on the stack),
+`E2E_SECRETS_XACCT_SERVICE` / `_SECRET_NAME` / `_PROBE_NAMESPACE` (defaults are fine).
+
+The region is **account B's**, where the canary lives — it need not match the cluster's, and is
+required explicitly rather than defaulted so a mismatch cannot surface as a puzzling
+`ResourceNotFound` at sync time.
+
+### 3. Dispatch from `main`
+
+Real applies are main-gated (the AWS OIDC subject is pinned to `refs/heads/main` with
+`StringEquals`), so a dispatch from `dev` provisions nothing. Run the workflow with
+`provider: aws` from `main`, then record the run:
+
+```bash
+scripts/e2e/secrets-e2e.sh aws cluster
+```
+
+### 4. Close the trust-shape divergence
+
+The nightly's account-B trust is pattern-bound because the cluster is ephemeral, while the shipped
+customer module is exact-ARN. Once, by hand, apply `infra/connector/aws/secrets-xacct` against a live
+run's real IRSA ARN and record it:
+
+```bash
+scripts/e2e/secrets-e2e.sh aws strict
+```
+
+Adding the timing to your budget: this layer adds roughly 5–8 minutes of polling on top of
+soak + namespace + vcluster. The step timeout is 75 min, `go test` 80 min, job cap 90 min — do not
+raise them pre-emptively; watch the first three runs.
 
 ## Related
 
