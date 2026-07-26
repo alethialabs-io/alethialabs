@@ -124,10 +124,8 @@ export function formToGraph(
 	pushItems("secret", form.secrets ?? [], 5);
 	pushItems("bucket", form.storage_buckets ?? [], 6);
 	pushItems("registry", form.container_registries ?? [], 7);
-	// Off-board: chart repos never render as cards (canvas-flow drops them), but they must exist as
-	// store nodes so graphToForm can project them back onto the form.
-	pushItems("helm_registry", form.helm_registries ?? [], 9);
 	pushItems("service", form.services ?? [], 8);
+	pushItems("helm_registry", form.helm_registries ?? [], 9);
 
 	return { nodes };
 }

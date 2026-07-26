@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { toNum, toStr, toStrArray } from "@/lib/coerce";
+import { toNum, toRecord, toStr, toStrArray } from "@/lib/coerce";
 import { ChevronDown } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import type { NodeKind } from "../graph/types";
@@ -43,6 +43,7 @@ import {
 } from "./config-schema";
 import { provenanceNote, regionCodes, withSelected } from "./capability-options";
 import { RadioCardGroup } from "./radio-card-group";
+import { ConnectorSelect } from "./connector-select";
 
 type Config = Record<string, unknown>;
 
@@ -301,6 +302,19 @@ function FieldControl({
 					enableIacTargets
 				/>
 			);
+
+		case "connector":
+			// Writes two keys at once, so it bypasses the single-key `patch` helper above — the
+			// provider's knobs are only meaningful alongside the slug that declares them.
+			return field.category ? (
+				<ConnectorSelect
+					id={id}
+					category={field.category}
+					value={toStr(raw) || null}
+					providerConfig={toRecord(config.provider_config)}
+					onChange={onChange}
+				/>
+			) : null;
 	}
 }
 

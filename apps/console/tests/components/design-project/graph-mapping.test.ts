@@ -157,11 +157,10 @@ describe("formToGraph / graphToForm round-trip", () => {
 	// zod `.default([])`, the omission parsed clean as an EMPTY array — and updateProjectDesign
 	// reconciles components by delete-then-insert, so every canvas deploy silently dropped the
 	// environment's chart repos (and with them the ArgoCD repo-credentials that let private charts
-	// pull). The kind is never drawn on the board, which is exactly why nothing caught it.
+	// pull). A silent `.default([])` is the trap: nothing errors, the rows just leave.
 	it("carries chart repos through the round-trip so a deploy can't wipe them", () => {
 		const form = sampleForm();
 		const { nodes } = formToGraph(form, IDENTITIES);
-		// Off-board: the chart repos exist as store nodes but are not part of the drawn design.
 		expect(nodes.filter((n) => n.data.kind === "helm_registry")).toHaveLength(2);
 
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
@@ -207,5 +206,43 @@ describe("helm registry selection validation", () => {
 	it("accepts a fixed-host provider with no config at all", () => {
 		const res = parseRow({ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} });
 		expect(res.success).toBe(true);
+	});
+
+	// Both knobs are concatenated into the seeded credential's URL, so a value that merely "looks
+	// filled in" still breaks the repoURL prefix match ArgoCD authenticates by. Catch the shape here,
+	// where the field is on screen, rather than at deploy.
+	it("rejects a registry host carrying a scheme or a path", () => {
+		for (const registry_host of [
+			"https://harbor.acme.io",
+			"harbor.acme.io/charts",
+			"oci://harbor.acme.io",
+		]) {
+			const res = parseRow({
+				name: "charts",
+				provider: "oci-generic-cr",
+				provider_config: { registry_host },
+			});
+			expect(res.success, `${registry_host} should be rejected`).toBe(false);
+		}
+	});
+
+	it("accepts a registry host with a port", () => {
+		const res = parseRow({
+			name: "charts",
+			provider: "oci-generic-cr",
+			provider_config: { registry_host: "harbor.acme.io:5000" },
+		});
+		expect(res.success).toBe(true);
+	});
+
+	it("rejects a non-https repository URL", () => {
+		for (const repo_url of ["charts.acme.io", "http://charts.acme.io"]) {
+			const res = parseRow({
+				name: "charts",
+				provider: "helm-https",
+				provider_config: { repo_url },
+			});
+			expect(res.success, `${repo_url} should be rejected`).toBe(false);
+		}
 	});
 });

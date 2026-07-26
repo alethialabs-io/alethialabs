@@ -29,6 +29,8 @@ import {
 	k8sVersionOptions,
 	nosqlKeyTypeOptions,
 } from "./capability-options";
+import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
+import type { PluggableCategory } from "@/lib/connectors/registry.generated";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
@@ -206,7 +208,13 @@ export type FieldType =
 	| "subresource"
 	// A service's edges to its backing infrastructure (`service.bindings`). Unlike `subresource`,
 	// each row nests a variable-length `inject[]`, so it has its own editor (bindings-field.tsx).
-	| "bindings";
+	| "bindings"
+	// Which CONNECTED pluggable connector this component uses, plus that provider's non-secret knobs
+	// (`providerConfigFields`) — the per-project half of a connector, whose secret half lives once on
+	// the org's `connector_credentials` row. Writes `provider` (a connectors.slug) and
+	// `provider_config` together, since the knobs are meaningless without the slug that defines them.
+	// `helm_registry` is the first consumer; `registry`, `secrets` and `dns` have the same shape.
+	| "connector";
 
 /** A row editor over a JSONB array of objects. */
 export interface SubresourceSpec {
@@ -260,6 +268,8 @@ export interface FieldDef<C = AnyConfig> {
 	 * resolver's identity, and used ONLY to render the per-field provenance footnote ("12 of 340
 	 * available to this account" / "showing the full catalog"). Never affects what is selectable. */
 	capabilityAxis?: CapabilityAxis;
+	/** `connector` only: which pluggable category's connected connectors to offer. */
+	category?: PluggableCategory;
 }
 
 /**
@@ -1586,6 +1596,34 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 		// The provider's registry service name (ECR / Artifact Registry / ACR / …).
 		summary: (c, provider) =>
 			provider ? getProvider(provider).registryService : c.name || "registry",
+	},
+
+	// A private Helm chart repository. Only two things are per-project — WHICH connector authenticates
+	// the pull, and (for the providers that serve any host) WHERE. Everything else about the repo is
+	// the org-level credential, so this schema is deliberately one field plus a name.
+	helm_registry: {
+		sections: [
+			{
+				id: "general",
+				title: "General",
+				defaultOpen: true,
+				fields: [
+					nameField((v) => v.toLowerCase().replace(/[^a-z0-9-]/g, "")),
+					{
+						key: "provider",
+						type: "connector",
+						category: "helm_registry",
+						label: "Chart repository",
+						description:
+							"The connected chart-repo connector ArgoCD authenticates with. Its credential is seeded as a repository credential at deploy — it never enters the project's config snapshot.",
+						full: true,
+					},
+				],
+			},
+		],
+		// The URL the runner will actually seed, so the header answers "which repo is this?" rather
+		// than restating the row's name.
+		summary: (c) => helmRegistryUrl(c) || c.name || "chart repo",
 	},
 
 	dns: {

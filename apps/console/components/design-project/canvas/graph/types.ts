@@ -147,9 +147,8 @@ export type NodeConfigMap = {
 	bucket: ProjectFormData["storage_buckets"][number];
 	registry: ProjectFormData["container_registries"][number];
 	// A private chart repo (helm_registry connector) this environment pulls charts from. A form
-	// fragment like the infra kinds — it round-trips `graphToForm` — but it is never DRAWN: chart
-	// repos are credential plumbing, not architecture, so they live in the Chart Repos sheet the
-	// same way cluster/network live in the env-settings sheet (see canvas-flow's never-drawn list).
+	// fragment like the infra kinds, but it provisions nothing: its `provider` names a connector
+	// whose credential the runner seeds as an ArgoCD repository credential.
 	helm_registry: ProjectFormData["helm_registries"][number];
 	// W1 — a first-class application workload (the customer's own code), form-fragment like the
 	// infra kinds so it round-trips the form graph. Infra-binding edges are W3.

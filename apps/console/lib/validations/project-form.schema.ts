@@ -84,8 +84,33 @@ const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 const registriesInsert = createInsertSchema(projectContainerRegistries, {
 	provider_config: z.custom<RegistryProviderConfig>().optional(),
 });
+// Both knobs flow into the ArgoCD repository-credential `url`, so they are shape-checked rather than
+// waved through as opaque JSONB: a stray scheme or a trailing path in `registry_host` yields a
+// credential URL that no Application repoURL prefix-matches, which surfaces at deploy as an
+// unauthenticated chart pull rather than as a bad value here.
+// Annotated with the column's own JSONB interface so the two can't drift: add a knob to
+// HelmRegistryProviderConfig and this stops compiling until the validator learns about it.
+const helmRegistryProviderConfigSchema: z.ZodType<HelmRegistryProviderConfig> = z
+	.object({
+		repo_url: z
+			.string()
+			.trim()
+			.url("Enter a full repository URL (https://…)")
+			.startsWith("https://", "The repository URL must use https://")
+			.optional(),
+		registry_host: z
+			.string()
+			.trim()
+			.regex(
+				/^[a-z0-9.-]+(:\d+)?$/i,
+				"Enter a bare registry host (no scheme, no path) — e.g. registry.acme.io",
+			)
+			.optional(),
+	})
+	.strip();
+
 const helmRegistriesInsert = createInsertSchema(projectHelmRegistries, {
-	provider_config: z.custom<HelmRegistryProviderConfig>().optional(),
+	provider_config: helmRegistryProviderConfigSchema.optional(),
 });
 
 // W1 — service/workload sub-shapes (validated, not passthrough): a service is the customer's own

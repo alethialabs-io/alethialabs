@@ -17,6 +17,7 @@ import {
 	projectCaches,
 	projectCluster,
 	projectContainerRegistries,
+	projectHelmRegistries,
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
@@ -74,6 +75,7 @@ const ARRAY_TABLES = [
 	["secret", projectSecrets],
 	["bucket", projectStorageBuckets],
 	["registry", projectContainerRegistries],
+	["helm_registry", projectHelmRegistries],
 	["service", projectServices],
 ] as const;
 
