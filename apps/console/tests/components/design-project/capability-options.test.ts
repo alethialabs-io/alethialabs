@@ -27,7 +27,7 @@ import {
 	type CapabilityBag,
 	type FieldCtx,
 } from "@/components/design-project/canvas/inspector/config-schema";
-import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { dbEngine, type CloudProviderSlug } from "@/lib/cloud-providers";
 
 /** A ctx whose bag describes the SAME provider as the node — the happy path. */
 const ctxWith = (
@@ -368,12 +368,15 @@ describe("dbVersionOptions — the engine-version axis (#1351)", () => {
 		expect(dbVersionOptions(ctx).map((o) => o.value)).toEqual(["8.0"]);
 	});
 
-	it("falls open to the catalog default when the account reports nothing (#918)", () => {
+	it("falls open to the catalog's whole version baseline when the account reports nothing (#918)", () => {
 		const opts = dbVersionOptions(dbCtx("aws", "postgres"));
-		expect(opts).toHaveLength(1);
-		expect(opts[0].value).toBeTruthy();
-		// A static row carries NO advisory — absence of signal must not read as a verdict.
-		expect(opts[0].advisory).toBeUndefined();
+		const catalogEngine = dbEngine("aws", "postgres");
+		expect(opts.map((o) => o.value)).toEqual(catalogEngine?.versions);
+		// The point of #1373: an unsynced account gets a real axis, not a one-option "picker".
+		expect(opts.length).toBeGreaterThan(1);
+		expect(opts.map((o) => o.value)).toContain(catalogEngine?.default_version);
+		// Static rows carry NO advisory — absence of signal must not read as a verdict.
+		for (const o of opts) expect(o.advisory).toBeUndefined();
 	});
 
 	it("falls open when the account reports OTHER engines but not this one", () => {
