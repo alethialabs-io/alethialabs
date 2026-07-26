@@ -84,6 +84,7 @@ type InfraFacts struct {
 	SecretsXacctRegion          string // aws, alibaba
 	SecretsXacctProjectID       string // gcp: the target project the store reads
 	SecretsXacctOIDCProviderRef string // alibaba only: the target-account RAM OIDC provider ARN (see KeylessSecretTarget)
+	SecretsXacctExternalID      string // aws only, OPTIONAL: the sts:ExternalId the target role's trust policy requires (see KeylessSecretTarget)
 }
 
 // DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
@@ -220,6 +221,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.SecretsXacctRegion = t.Region
 		f.SecretsXacctProjectID = t.TargetProjectID
 		f.SecretsXacctOIDCProviderRef = t.TargetOIDCProviderRef
+		f.SecretsXacctExternalID = t.TargetExternalID
 	}
 
 	return f

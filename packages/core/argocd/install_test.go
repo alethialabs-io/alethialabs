@@ -116,6 +116,13 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 			&InfraFacts{Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
 				SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1"},
 			"secretstore-aws-xacct", []string{"role: arn:aws:iam::999:role/read", "region: eu-west-1", "service: SecretsManager"}},
+		// An sts:ExternalId condition on the target trust policy must reach the store or STS rejects every
+		// assume — the dangling-control bug (the bootstrap module offered external_id while nothing carried
+		// it through to ESO). Absent id ⇒ field omitted, asserted separately below.
+		{"aws xacct forwards the external id when the trust policy requires one",
+			&InfraFacts{Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
+				SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1", SecretsXacctExternalID: "acme-7f3c"},
+			"secretstore-aws-xacct", []string{"role: arn:aws:iam::999:role/read", "externalID: acme-7f3c"}},
 		{"gcp xacct reads target project",
 			&InfraFacts{Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com", GCPProjectID: "proj-1",
 				SecretsXacctProjectID: "secrets-project-b"},
@@ -162,5 +169,24 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The external id is OPTIONAL: a target role whose trust policy has NO sts:ExternalId condition is the
+// common case, and sending one anyway would make STS reject the assume. So the field must be absent from
+// the rendered store — not empty-valued — when the connector doesn't set it.
+func TestExternalSecretsStoreManifest_XacctOmitsAbsentExternalID(t *testing.T) {
+	m, err := externalSecretsStoreManifest(&InfraFacts{
+		Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
+		SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(m, "secretstore-aws-xacct") {
+		t.Fatalf("expected the xacct store to render:\n%s", m)
+	}
+	if strings.Contains(m, "externalID") {
+		t.Fatalf("externalID must be omitted when unset, got:\n%s", m)
 	}
 }

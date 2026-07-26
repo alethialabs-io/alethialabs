@@ -38,9 +38,13 @@ variable "external_secrets_sa_subject" {
 }
 
 variable "kms_secret_resources" {
-  description = "KMS Secrets Manager resource ARNs the cluster may read. Default '*' allows any secret in this account — SCOPE THIS to the specific secrets you share (least-privilege)."
+  description = "KMS Secrets Manager resource ARNs the cluster may read. Name exactly the secrets you share (least-privilege) — deliberately no default, because a '*' fallback silently grants read on EVERY secret in this account."
   type        = list(string)
-  default     = ["*"]
+
+  validation {
+    condition     = length(var.kms_secret_resources) > 0
+    error_message = "Name at least one KMS secret resource ARN — grant read per-secret rather than account-wide."
+  }
 }
 
 # The cluster ACK issuer's TLS CA fingerprints — Alibaba pins them on the OIDC provider. Pin the CA

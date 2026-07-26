@@ -96,6 +96,11 @@ func TestKeylessSecretStoreValidateAndTarget(t *testing.T) {
 					tgt.Region != "us-east-1" || tgt.TargetRef != "arn:aws:iam::123456789012:role/alethia-secrets-read" {
 					t.Fatalf("aws target = %+v", tgt)
 				}
+				// external_id is OPTIONAL — a trust policy without an sts:ExternalId condition is the
+				// default and must stay valid, carrying an empty id (the store then omits the field).
+				if tgt.TargetExternalID != "" {
+					t.Fatalf("aws target external id = %q, want empty when provider_config omits it", tgt.TargetExternalID)
+				}
 			},
 		},
 		{
@@ -193,5 +198,32 @@ func TestDominantKeylessSecretTargetRouting(t *testing.T) {
 	// A selected-but-misconfigured keyless secret store fails closed.
 	if _, err := DominantKeylessSecretTarget(keylessSecretProject("aws-sm-xacct", nil)); err == nil {
 		t.Fatal("expected fail-closed error for aws-sm-xacct with no provider_config")
+	}
+}
+
+// An sts:ExternalId condition on the target role's trust policy is OPTIONAL defense-in-depth, but when
+// the customer's bootstrap sets one the same value must reach the store or STS rejects every assume —
+// which is exactly the dangling-control bug this covers (the module offered external_id while nothing
+// carried it through). AWS-only: the other lanes bind the grant to a concrete principal instead.
+func TestKeylessSecretTargetCarriesAWSExternalID(t *testing.T) {
+	p, err := Get("secrets", "aws-sm-xacct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := map[string]any{
+		"target_account_id": "123456789012", "region": "us-east-1",
+		"target_role_arn": "arn:aws:iam::123456789012:role/alethia-secrets-read",
+		"external_id":     "acme-7f3c",
+	}
+	ctx := ComponentContext{ProviderConfig: pc}
+	if err := p.Validate(ctx); err != nil {
+		t.Fatalf("external_id must not affect validation: %v", err)
+	}
+	tgt, ok := p.KeylessSecretStore(ctx)
+	if !ok {
+		t.Fatal("aws-sm-xacct: KeylessSecretStore not ok")
+	}
+	if tgt.TargetExternalID != "acme-7f3c" {
+		t.Fatalf("TargetExternalID = %q, want acme-7f3c", tgt.TargetExternalID)
 	}
 }

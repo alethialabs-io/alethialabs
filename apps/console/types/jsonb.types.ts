@@ -468,6 +468,11 @@ export interface SecretsProviderConfig {
 	target_role_arn?: string; // aws / alibaba — the role the ESO identity assumes
 	vault_url?: string; // azure — the target Key Vault URL
 	target_oidc_provider_arn?: string; // alibaba — the target-account RAM OIDC provider ARN
+	// aws ONLY, optional: the sts:ExternalId the target role's trust policy requires, when the customer's
+	// bootstrap set one. Omitted = the trust policy has no ExternalId condition (the default). The other
+	// lanes have no equivalent — they bind the grant to a concrete principal instead. See
+	// categories.KeylessSecretTarget for why this is an explicit per-cloud exclusion, not an oversight.
+	external_id?: string;
 }
 
 // Datadog / Grafana Cloud — non-secret knobs only.
