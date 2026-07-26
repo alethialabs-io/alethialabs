@@ -102,6 +102,9 @@ export const serviceBindingFacet = pgEnum("service_binding_facet", [
 	"username",
 	"password",
 	"connection_string",
+	// value — the single opaque value of a `secret`-kind binding (a project secret resolved from a
+	// pluggable SaaS store — Vault/Doppler/generic — via ESO). Credential (secretKeyRef), not templated.
+	"value",
 ]);
 
 // Delivery protocol of a topic subscription (topic.subscriptions JSONB / topic_subscriptions table).

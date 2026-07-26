@@ -1,0 +1,1 @@
+ALTER TYPE "public"."service_binding_facet" ADD VALUE 'value';
