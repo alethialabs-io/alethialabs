@@ -472,3 +472,54 @@ describe("convertProjectConfig — messaging", () => {
 		expect(byComponent(warnings, "Messaging")).toEqual([]);
 	});
 });
+
+// #1420 — the target cloud's engine ceiling now comes from the catalog, so it covers every cloud
+// rather than only Hetzner. Azure Managed Redis and ApsaraDB KVStore have no Valkey: converting a
+// project carrying `engine: "valkey"` to either used to keep the value, and the deploy quietly
+// produced Redis because no provider read the field at all.
+describe("convertProjectConfig — cache engines the target cannot run", () => {
+	const valkeyCache = makeConfig({ caches: [{ name: "sessions", engine: "valkey" }] });
+
+	it("remaps to Redis on the clouds with no Valkey product, and says why", () => {
+		for (const cloud of ["azure", "alibaba"] as const) {
+			const { data: config, warnings } = convertProjectConfig(valkeyCache, "aws", cloud);
+			expect(config.caches?.[0]?.engine).toBe("redis");
+			expect(
+				byComponent(warnings, "Caches").some((w) => /does not offer/i.test(w.message)),
+			).toBe(true);
+		}
+	});
+
+	it("leaves it alone where the engine really is offered", () => {
+		const { data: config, warnings } = convertProjectConfig(valkeyCache, "aws", "gcp");
+		expect(config.caches?.[0]?.engine).toBe("valkey");
+		expect(byComponent(warnings, "Caches").some((w) => /does not offer/i.test(w.message))).toBe(
+			false,
+		);
+	});
+
+	it("keeps Hetzner's own wording — the reason there is in-cluster, not a missing product", () => {
+		const redisCache = makeConfig({ caches: [{ name: "sessions", engine: "redis" }] });
+		const { data: config, warnings } = convertProjectConfig(redisCache, "aws", "hetzner");
+		expect(config.caches?.[0]?.engine).toBe("valkey");
+		expect(byComponent(warnings, "Caches").some((w) => /in-cluster/i.test(w.message))).toBe(true);
+	});
+});
+
+// The database side gained the same generalization. Its Hetzner behaviour must not change.
+describe("convertProjectConfig — database families the target cannot run", () => {
+	it("still switches MySQL to PostgreSQL on Hetzner, in Hetzner's words", () => {
+		const mysql = makeConfig({ databases: [{ name: "main", engine_family: "mysql" }] });
+		const { data: config, warnings } = convertProjectConfig(mysql, "aws", "hetzner");
+		expect(config.databases?.[0]?.engine_family).toBe("postgres");
+		expect(byComponent(warnings, "Databases").some((w) => /CloudNativePG/i.test(w.message))).toBe(
+			true,
+		);
+	});
+
+	it("leaves MySQL alone on a cloud whose catalog offers it", () => {
+		const mysql = makeConfig({ databases: [{ name: "main", engine_family: "mysql" }] });
+		const { data: config } = convertProjectConfig(mysql, "aws", "gcp");
+		expect(config.databases?.[0]?.engine_family).toBe("mysql");
+	});
+});

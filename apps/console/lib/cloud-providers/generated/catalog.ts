@@ -85,8 +85,14 @@ export interface CacheTier {
 	cost: string;
 }
 
+export interface CacheEngine {
+	value: string;
+	label: string;
+}
+
 export interface CacheProvider {
 	default_tier: string;
+	engines: CacheEngine[];
 	tiers: CacheTier[];
 }
 
@@ -847,6 +853,16 @@ export const CATALOG: Catalog = {
 		"cache": {
 			"aws": {
 				"default_tier": "cache.t3.medium",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "Redis (ElastiCache)"
+					},
+					{
+						"value": "valkey",
+						"label": "Valkey (ElastiCache Serverless)"
+					}
+				],
 				"tiers": [
 					{
 						"value": "cache.t3.micro",
@@ -882,6 +898,16 @@ export const CATALOG: Catalog = {
 			},
 			"gcp": {
 				"default_tier": "M1",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "Redis (Memorystore)"
+					},
+					{
+						"value": "valkey",
+						"label": "Valkey (Memorystore)"
+					}
+				],
 				"tiers": [
 					{
 						"value": "M1",
@@ -911,6 +937,12 @@ export const CATALOG: Catalog = {
 			},
 			"azure": {
 				"default_tier": "C1",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "Azure Managed Redis"
+					}
+				],
 				"tiers": [
 					{
 						"value": "C0",
@@ -946,6 +978,12 @@ export const CATALOG: Catalog = {
 			},
 			"hetzner": {
 				"default_tier": "1",
+				"engines": [
+					{
+						"value": "valkey",
+						"label": "Valkey (in-cluster chart)"
+					}
+				],
 				"tiers": [
 					{
 						"value": "1",
@@ -969,6 +1007,12 @@ export const CATALOG: Catalog = {
 			},
 			"alibaba": {
 				"default_tier": "redis.master.small.default",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "ApsaraDB for Redis"
+					}
+				],
 				"tiers": [
 					{
 						"value": "redis.master.small.default",
@@ -1054,6 +1098,11 @@ export function dbEngine(
 /** Cache SKU inventory for a provider. */
 export function cacheTiers(provider: string): CacheTier[] {
 	return CATALOG.cache[provider]?.tiers ?? [];
+}
+
+/** Cache ENGINES a provider can back — the cache-side twin of `dbEngines`. */
+export function cacheEngines(provider: string): CacheEngine[] {
+	return CATALOG.cache[provider]?.engines ?? [];
 }
 
 /** Pick the provider cache SKU whose memory is closest to the requested size. */
@@ -2776,6 +2825,60 @@ export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = {
 				"label": "4 GB",
 				"memoryGb": 4,
 				"cost": "~$85/mo"
+			}
+		]
+	};
+
+export interface CacheEngineOption {
+	value: string;
+	label: string;
+}
+
+/**
+ * Cache ENGINES per provider — what each cloud can actually back.
+ *
+ * The database side has had this since the beginning (`DB_ENGINES`). The cache side didn't, so the
+ * same knowledge lived hardcoded in the canvas floor and again in the cross-cloud converter, and the
+ * two could disagree with nothing to catch it. Deriving both from here is what makes "Azure has no
+ * Valkey" a fact the product enforces rather than a comment someone has to remember.
+ */
+export const CACHE_ENGINES: Record<CloudProviderSlug, CacheEngineOption[]> = {
+		"aws": [
+			{
+				"value": "redis",
+				"label": "Redis (ElastiCache)"
+			},
+			{
+				"value": "valkey",
+				"label": "Valkey (ElastiCache Serverless)"
+			}
+		],
+		"gcp": [
+			{
+				"value": "redis",
+				"label": "Redis (Memorystore)"
+			},
+			{
+				"value": "valkey",
+				"label": "Valkey (Memorystore)"
+			}
+		],
+		"azure": [
+			{
+				"value": "redis",
+				"label": "Azure Managed Redis"
+			}
+		],
+		"hetzner": [
+			{
+				"value": "valkey",
+				"label": "Valkey (in-cluster chart)"
+			}
+		],
+		"alibaba": [
+			{
+				"value": "redis",
+				"label": "ApsaraDB for Redis"
 			}
 		]
 	};
