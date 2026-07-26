@@ -450,9 +450,24 @@ export interface HelmRegistryProviderConfig {
 
 // Vault (pluggable secrets provider) — non-secret knobs only; the address/token
 // credential lives in connector_credentials, never here.
+//
+// Also carries the cross-account keyless cloud-secret-manager (*-xacct) target: AWS Secrets Manager /
+// GCP Secret Manager / Azure Key Vault / Alibaba KMS in a DIFFERENT account than the cluster. These are
+// KEYLESS — no credential; the target account/project/subscription and the customer-created trust
+// anchor (an identity/resource REFERENCE, never a key) live here and are read by
+// categories.KeylessSecretTarget on the runner. Exactly one provider's field set applies per store.
 export interface SecretsProviderConfig {
+	// Vault (credential-based)
 	mount_path?: string;
 	kv_version?: string;
+	// Cross-account keyless cloud secret managers (*-xacct)
+	target_account_id?: string; // aws-sm-xacct / alibaba-kms-xacct (target RAM account)
+	target_project_id?: string; // gcp-sm-xacct
+	target_subscription_id?: string; // azure-kv-xacct
+	region?: string; // aws / alibaba (required), gcp (optional regional secrets)
+	target_role_arn?: string; // aws / alibaba — the role the ESO identity assumes
+	vault_url?: string; // azure — the target Key Vault URL
+	target_oidc_provider_arn?: string; // alibaba — the target-account RAM OIDC provider ARN
 }
 
 // Datadog / Grafana Cloud — non-secret knobs only.
