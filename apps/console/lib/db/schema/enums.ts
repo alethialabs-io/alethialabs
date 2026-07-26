@@ -490,6 +490,8 @@ export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type AddonMode = (typeof addonMode.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PlacementMode = (typeof placementMode.enumValues)[number];
+export type EnvironmentLifecycle =
+	(typeof environmentLifecycle.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
