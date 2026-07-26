@@ -12,6 +12,7 @@ import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import { getKindConfig, type KindConfig } from "./config-schema";
 import { ConfigFields } from "./config-fields";
+import { useNodeCapabilities } from "./use-node-capabilities";
 
 /**
  * The portable slice of a kind's config: its non-`advanced` sections, forced open. These are the
@@ -61,6 +62,8 @@ export function NodeQuickConfig({
 		() => (schema ? essentialsSchema(schema) : undefined),
 		[schema],
 	);
+	// Above the early return — hooks must run in the same order on every render.
+	const capabilities = useNodeCapabilities(node?.id ?? null);
 
 	if (!node || !def) return null;
 
@@ -109,6 +112,7 @@ export function NodeQuickConfig({
 						config={node.data.config}
 						provider={provider}
 						kind={node.data.kind}
+						capabilities={capabilities}
 						onChange={(patch) => updateNodeConfig(node.id, patch)}
 					/>
 				)}
