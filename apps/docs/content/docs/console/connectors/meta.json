@@ -10,6 +10,7 @@
     "health-and-inventory",
     "managing-connections",
     "git-providers",
-    "pluggable"
+    "pluggable",
+    "cross-account-secret-managers"
   ]
 }
