@@ -5,6 +5,7 @@
 // OCI registry should wire up its chart repo without the user selecting anything, and should stay
 // quiet (not guess) when the pairing is genuinely ambiguous.
 
+import { useEffect } from "react";
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
@@ -26,7 +27,7 @@ function chartRepoConnector(
 		category: "helm_registry",
 		auth_method: "api_key",
 		organization: "",
-		icon_url: null,
+		icon_url: "",
 		docs_url: null,
 		support_url: null,
 		privacy_url: null,
@@ -50,11 +51,15 @@ function seedChart(repoUrl: string, id = "payments") {
 			chartPath: "",
 			ref: "*",
 			namespace: "default",
+			values: {},
+			valuesYaml: null,
 			status: "PENDING",
 			health: null,
 			sync: null,
+			lastSyncedAt: null,
 			scanStatus: "unscanned",
 			scanReport: null,
+			scannedAt: null,
 		},
 	]);
 }
@@ -63,7 +68,12 @@ function seedChart(repoUrl: string, id = "payments") {
 function renderReconcile(connectors: ConnectorWithConnection[]) {
 	const captured: { unresolved: UnresolvedChartHost[] } = { unresolved: [] };
 	function Probe() {
-		captured.unresolved = useHelmRegistryReconcile().unresolved;
+		const { unresolved } = useHelmRegistryReconcile();
+		// Reported from an effect, not during render — a render-phase write is exactly the pattern the
+		// React Compiler lint rejects.
+		useEffect(() => {
+			captured.unresolved = unresolved;
+		}, [unresolved]);
 		return null;
 	}
 	render(
