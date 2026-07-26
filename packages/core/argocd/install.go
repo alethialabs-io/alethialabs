@@ -163,6 +163,74 @@ spec:
           roleArn: {{ .AlibabaExternalSecretsRoleArn }}
           sessionName: external-secrets
 {{- end }}
+{{- /* ── Cross-account keyless secret managers (*-xacct) ──────────────────────────────────────────
+       An ADDITIONAL foreign-account ClusterSecretStore, layered on the native store above (rendered as
+       a SEPARATE YAML document, hence the leading '---'). Each is fail-closed: it renders only when the
+       cluster's own external-secrets identity fact AND the cross-account target (from the connector
+       provider_config) are BOTH present. The cross-account read is ESO-native — no in-cluster refresher.
+       Named secretstore-<cloud>-xacct so workloads reference a foreign source explicitly. */}}
+{{- if and (eq .Provider "aws") .IRSAExternalSecretsArn .SecretsXacctRef }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-aws-xacct
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: {{ .SecretsXacctRegion }}
+      role: {{ .SecretsXacctRef }}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets-operator-sa
+            namespace: external-secrets-operator
+{{- end }}
+{{- if and (eq .Provider "gcp") .GCPExternalSecretsSA .SecretsXacctProjectID }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-gcp-xacct
+spec:
+  provider:
+    gcpsm:
+      projectID: {{ .SecretsXacctProjectID }}
+{{- end }}
+{{- if and (eq .Provider "azure") .AzureExternalSecretsClient .SecretsXacctRef }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-azure-xacct
+spec:
+  provider:
+    azurekv:
+      authType: WorkloadIdentity
+      vaultUrl: {{ .SecretsXacctRef }}
+{{- end }}
+{{- /* Alibaba: ESO RRSA does a single AssumeRoleWithOIDC (no role chaining), so cross-account uses the
+       TARGET account's OIDC provider ARN (trusting this cluster's ACK issuer) + target role. The Alibaba
+       lane (#1265) confirms the exact ESO alibaba cross-account CRD shape via a primary-source research
+       pass + a real apply. */}}
+{{- if and (eq .Provider "alibaba") .AlibabaExternalSecretsRoleArn .SecretsXacctRef .SecretsXacctOIDCProviderRef }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: secretstore-alibaba-xacct
+spec:
+  provider:
+    alibaba:
+      regionID: {{ .SecretsXacctRegion }}
+      auth:
+        rrsa:
+          oidcProviderArn: {{ .SecretsXacctOIDCProviderRef }}
+          oidcTokenFilePath: /var/run/secrets/tokens/oidc-token
+          roleArn: {{ .SecretsXacctRef }}
+          sessionName: external-secrets-xacct
+{{- end }}
 `
 
 var externalSecretsStoreTmpl = template.Must(template.New("external-secrets-store").Parse(externalSecretsStoreTemplate))
@@ -242,6 +310,13 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
 		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
 		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
+		// Cross-account (*-xacct) stores — same gates as the render template above; a store whose
+		// cross-account target was deselected (or whose identity fact disappeared) stops rendering and
+		// would otherwise be orphaned.
+		"secretstore-aws-xacct":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "" && facts.SecretsXacctRef != "",
+		"secretstore-gcp-xacct":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "" && facts.SecretsXacctProjectID != "",
+		"secretstore-azure-xacct":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.SecretsXacctRef != "",
+		"secretstore-alibaba-xacct": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "" && facts.SecretsXacctRef != "" && facts.SecretsXacctOIDCProviderRef != "",
 	}
 	for name, renders := range esoStores {
 		if renders {
