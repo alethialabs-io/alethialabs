@@ -17,7 +17,11 @@ about *understanding* and *connecting* that chart, not re-authoring it.
 
 ## Attaching a chart
 
-A bring-your-own chart is attached from a [connected Git provider](/console/connectors/git-providers):
+A chart comes from one of two places: a Git repository, or an OCI registry.
+
+### From a Git repository
+
+Attach the chart from a [connected Git provider](/console/connectors/git-providers):
 
 | Field | Description |
 |-------|-------------|
@@ -26,6 +30,28 @@ A bring-your-own chart is attached from a [connected Git provider](/console/conn
 | **Ref** | The branch, tag, or commit to deploy |
 | **Namespace** | The Kubernetes namespace to install into |
 | **Values** | Your chart values (schema-validated knobs, or raw `values.yaml`) |
+
+### From an OCI registry
+
+Attach the chart by its `oci://` reference. There is no chart path — the repository path *is* the
+chart:
+
+| Field | Description |
+|-------|-------------|
+| **Chart reference** | `oci://<host>/<namespace>/<chart>` (e.g. `oci://ghcr.io/acme/charts/payments`) |
+| **Chart version** | The chart version to deploy. `*` deploys the latest release |
+| **Namespace** | The Kubernetes namespace to install into |
+| **Values** | Your chart values (schema-validated knobs, or raw `values.yaml`) |
+
+To use a **private** registry, connect it as a
+[chart repository](/console/connectors/chart-repositories) on the environment. Alethia matches your
+chart's host against the chart repositories you connected and authenticates with that credential —
+both when it scans the chart and when ArgoCD pulls it at deploy time. A public chart needs no
+connector.
+
+If your registry sits on an internal network rather than the public internet, the Runner needs an
+opt-in as well — see
+[`ALETHIA_HELM_REGISTRY_ALLOW_PRIVATE`](/runner/self-hosted#environment-variables).
 
 At deploy time the Runner renders the chart into a hardened, per-project ArgoCD `AppProject` locked to
 your repo and namespace. See [GitOps & ArgoCD](/concepts/gitops-argocd) for how the Application is
@@ -39,6 +65,18 @@ the resulting Kubernetes manifests — checking for privileged containers, host 
 missing resource limits, and mutable image tags. The result is attached to the chart as a verify
 report you can read on the canvas. The render holds **no secrets and has no network egress** — it only
 reads the local chart.
+
+This works the same way for both chart sources. The Runner fetches the chart first — cloning the Git
+repo, or pulling it from the OCI registry — and only then renders it in the isolated sandbox. Fetching
+happens outside that sandbox, so your registry credential is never exposed to the chart being
+rendered.
+
+<Callout type="info">
+Charts hosted in **Amazon ECR** cannot be scanned yet. ECR issues a short-lived token rather than a
+stored password, so it is served by a different mechanism that is still in progress. Charts in every
+other supported registry — GitHub Container Registry, GitLab, Docker Hub, Scaleway, and generic OCI
+registries — scan normally.
+</Callout>
 
 ## Described workloads
 
@@ -122,8 +160,10 @@ roll out behind the same gate. Ask your operator whether it's enabled on your in
 
 ## How it fits together
 
-1. **Attach** the chart from a connected repo (repo · chart path · ref · values).
-2. **Scan** — the Runner renders it in the sandbox and Elench verifies the manifests.
+1. **Attach** the chart from a connected repo (repo · chart path · ref · values) or an OCI registry
+   (chart reference · version · values).
+2. **Scan** — the Runner fetches the chart, renders it in the sandbox, and Elench verifies the
+   manifests.
 3. **Describe** — from that render, each workload the chart deploys becomes a canvas node.
 4. **Bind & override** — from a workload's inspector, connect it to your provisioned infrastructure and
    set its replicas/environment overlay; bindings and overrides are written into the chart's values

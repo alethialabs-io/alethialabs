@@ -5,7 +5,7 @@ description: Connect cloud providers and Git accounts to enable infrastructure p
 
 # Connectors
 
-The **connector** catalog is the registry of provider *types* you can connect. Each account you actually connect becomes a **cloud identity** (`cloud_identities`) — the credential anchor a project provisions against. The catalog spans the **federated clouds** (AWS, GCP, Azure, Alibaba) and the **token clouds** (Hetzner, DigitalOcean, Civo), plus Git providers (GitHub, GitLab, Bitbucket) and **pluggable per-category providers** (DNS, secrets, registry, observability). At least one cloud identity and one Git provider must be connected before provisioning; pluggable providers are optional — they let a project use a tool you already run instead of the cloud-native default.
+The **connector** catalog is the registry of provider *types* you can connect. Each account you actually connect becomes a **cloud identity** (`cloud_identities`) — the credential anchor a project provisions against. The catalog spans the **federated clouds** (AWS, GCP, Azure, Alibaba) and the **token clouds** (Hetzner, DigitalOcean, Civo), plus Git providers (GitHub, GitLab, Bitbucket) and **pluggable per-category providers** (DNS, secrets, registry, chart repositories, observability). At least one cloud identity and one Git provider must be connected before provisioning; pluggable providers are optional — they let a project use a tool you already run instead of the cloud-native default.
 
 ## How It Works
 
@@ -19,6 +19,7 @@ Connectors are displayed as cards organized by category:
 | **DNS** | Cloudflare | API key |
 | **Secrets** | HashiCorp Vault | API key |
 | **Registry** | Docker Hub | API key |
+| **Chart repositories** | GitHub Container Registry, Docker Hub, GitLab, Scaleway, generic OCI, HTTPS | API key |
 | **Observability** | Datadog, Grafana Cloud | API key |
 
 Each card shows:
@@ -61,10 +62,11 @@ Git connections use standard OAuth. See [Git Providers](/console/connectors/git-
 
 ## Pluggable Connectors
 
-DNS, secrets, registry, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
+DNS, secrets, registry, chart repository, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
 
 <Cards>
   <Card title="Pluggable Connectors" href="/console/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana Cloud</Card>
+  <Card title="Chart Repositories" href="/console/connectors/chart-repositories">Private Helm and OCI chart sources</Card>
 </Cards>
 
 ## Disconnecting

@@ -464,7 +464,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 	case types.JobTypeAudit:
 		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeChartScan:
-		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
+		execErr = w.executeChartScan(ctx, job, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
 	case types.JobTypeIacScan:
 		execErr = w.executeIacScan(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeStateSurgery:

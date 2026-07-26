@@ -23,6 +23,7 @@ import {
 	jobs,
 	projectAddons,
 	projectChartWorkloads,
+	projectHelmRegistries,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
@@ -438,12 +439,24 @@ export async function setChartWorkloadBindings(input: {
 	return { ok: true };
 }
 
+/** Reports whether a chart_repo value addresses an OCI registry rather than a git repository. */
+function isOciChartRepo(chartRepo: string): boolean {
+	return chartRepo.trim().toLowerCase().startsWith("oci://");
+}
+
 /**
- * Queues a CHART_SCAN job for an attached BYO chart: the runner clones the repo, `helm template`s
- * it, and runs verify.EvaluateManifests over the rendered manifests, posting a verify.Report that
+ * Queues a CHART_SCAN job for an attached BYO chart: the runner resolves the chart to a local
+ * directory (git clone, or an OCI registry pull), `helm template`s it, and runs
+ * verify.EvaluateManifests over the rendered manifests, posting a verify.Report that
  * finalizeChartScan writes back onto the row. Marks the row `scanning` immediately so the UI can
  * show progress. The job's config_snapshot carries the chart coords (repo_url so the runner's
  * git-token route resolves a token) + the row identity so the result maps back.
+ *
+ * For an OCI chart there is no chart_path (the repository path IS the chart), and the pull may need
+ * the project's private chart-repo credential. The snapshot therefore carries the environment's
+ * `helm_registries` selections — their non-secret provider config only. The claim route reads that
+ * same key to attach the DECRYPTED credential out-of-band, so the secret half never touches the
+ * snapshot (and so never reaches the job row, the logs, or the sandbox).
  */
 export async function scanByoChart(input: {
 	projectId: string;
@@ -469,9 +482,40 @@ export async function scanByoChart(input: {
 				),
 			)
 			.limit(1);
-		if (!row || !row.chart_repo || !row.chart_path) {
+		if (!row || !row.chart_repo) {
 			throw new Error("Chart not found (attach it before scanning).");
 		}
+		const isOci = isOciChartRepo(row.chart_repo);
+		// A git chart needs a directory inside the repo; an OCI chart's repository path IS the chart.
+		if (!isOci && !row.chart_path) {
+			throw new Error("Chart not found (attach it before scanning).");
+		}
+
+		// The environment's connected chart repos — non-secret provider config only. The runner
+		// matches the chart's host against these the same way ArgoCD matches an Application to a
+		// repository credential, so the scan authenticates against exactly the repo the deploy will.
+		const helmRegistries = isOci
+			? (
+					await tx
+						.select({
+							name: projectHelmRegistries.name,
+							provider: projectHelmRegistries.provider,
+							provider_config: projectHelmRegistries.provider_config,
+						})
+						.from(projectHelmRegistries)
+						.where(
+							and(
+								eq(projectHelmRegistries.project_id, input.projectId),
+								eq(projectHelmRegistries.environment_id, envId),
+							),
+						)
+				).map((r) => ({
+					name: r.name,
+					provider: r.provider,
+					provider_config: r.provider_config ?? {},
+				}))
+			: [];
+
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({
@@ -484,8 +528,12 @@ export async function scanByoChart(input: {
 					// repo_url (not chart_repo) so the runner's FetchGitToken route resolves a token.
 					repo_url: row.chart_repo,
 					chart_path: row.chart_path,
-					ref: row.version ?? "HEAD",
+					// Carries a git ref for a git chart and a chart version for an OCI one. "*" is
+					// Helm's "latest release", which is also what the deploy path sends ArgoCD.
+					ref: row.version ?? (isOci ? "*" : "HEAD"),
 					values: row.values ?? {},
+					// Read by the claim route to attach the decrypted chart-repo credential.
+					...(isOci ? { helm_registries: helmRegistries } : {}),
 					// Row identity for finalizeChartScan → the result maps back to this chart.
 					project_id: input.projectId,
 					environment_id: envId,
