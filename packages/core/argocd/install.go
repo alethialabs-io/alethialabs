@@ -106,9 +106,25 @@ func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Wr
 var externalSecretsStoreMaxWait = 15 * time.Minute
 
 // externalSecretsStoreTemplate renders the per-cloud ClusterSecretStore. It carries the SAME
-// per-cloud, workload-identity-gated conditions the operator's Application template used to embed —
+// per-cloud, workload-identity-gated render guards the operator's Application template used to embed —
 // now separated so the store is applied on its OWN, AFTER the operator is up (see #1208). Exactly
 // one branch renders (the `eq .Provider` guards are mutually exclusive); hetzner renders none.
+//
+// spec.conditions (#1306) scopes every store (native + cross-account -xacct) away from placed tenant
+// namespaces: an ESO ClusterSecretStore with no conditions is referenceable from ANY namespace, so on
+// a shared Fabric a `placement=namespace` tenant could read the Fabric owner's (foreign-account, for
+// -xacct) secrets. `namespaceSelector NotIn alethia.io/placement=namespace` denies placed tenant
+// namespaces (namespace_tenant.go always stamps that label, and the tenant AppProject's empty
+// clusterResourceWhitelist makes it un-forgeable) while a NotIn requirement matches label-ABSENT
+// namespaces — so the live dedicated path (whose customer namespaces carry no such label) is
+// unchanged. This is the documented prerequisite gate for activating namespace placement.
+//
+// SCOPE ASSUMPTION: this denies bare `placement=namespace` tenants. vcluster tenants are isolated by
+// their own API server — the vcluster's host namespace (vcluster-<env>) is Alethia-managed, carries no
+// placement label (so this selector allows it), and is NOT a customer-reachable path to an
+// ExternalSecret against these stores (vcluster syncs no ExternalSecret CRD to the host by default). If
+// vcluster ever syncs ExternalSecret CRDs host-ward, extend this selector to also exclude vcluster host
+// namespaces (deploy_vcluster.go).
 const externalSecretsStoreTemplate = `
 {{- if and (eq .Provider "aws") .IRSAExternalSecretsArn }}
 apiVersion: external-secrets.io/v1beta1
@@ -116,6 +132,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     aws:
       service: SecretsManager
@@ -132,6 +154,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     gcpsm:
       projectID: {{ .GCPProjectID }}
@@ -142,6 +170,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -153,6 +187,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     alibaba:
       regionID: {{ .Region }}
@@ -176,6 +216,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     aws:
       service: SecretsManager
@@ -197,6 +243,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     gcpsm:
       projectID: {{ .SecretsXacctProjectID }}
@@ -208,6 +260,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -224,6 +282,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     alibaba:
       regionID: {{ .SecretsXacctRegion }}
