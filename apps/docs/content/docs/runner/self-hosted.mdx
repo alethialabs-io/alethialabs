@@ -79,6 +79,7 @@ The runner will:
 | `ALETHIA_RUNNER_PROVIDERS` | No | Comma-separated clouds this runner serves (e.g. `aws`); unset = any |
 | `ALETHIA_RUNNER_SLOTS` | No | Concurrent jobs per runner (default `1`). Above `1`, the runner supervises N isolated worker subprocesses — run the container with an init (`docker --init` / compose `init: true`) so orphaned tools are reaped |
 | `ALETHIA_RUNNER_INSTANCE_ID` | No | Distinct self-registration id when several runners share a host |
+| `ALETHIA_HELM_REGISTRY_ALLOW_PRIVATE` | No | Set to `1` to let Helm chart pulls reach a registry on a private network — a self-hosted Harbor or JFrog on RFC1918 space. Off by default, so a chart URL cannot be used to reach inside your network. Loopback and link-local (cloud metadata) addresses stay blocked either way. See [Chart repositories](/console/connectors/chart-repositories) |
 | `INFRACOST_API_KEY` | No | Enables cost estimation |
 | `HCLOUD_TOKEN` | No | Hetzner API token — set it to run **self-managed** Hetzner jobs (token stays here, never in Alethia) |
 | `CIVO_TOKEN` | No | Civo API token — same self-managed token-cloud path |

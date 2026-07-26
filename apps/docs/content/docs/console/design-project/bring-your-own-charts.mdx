@@ -43,10 +43,15 @@ chart:
 | **Namespace** | The Kubernetes namespace to install into |
 | **Values** | Your chart values (schema-validated knobs, or raw `values.yaml`) |
 
-To use a **private** registry, connect it as a chart repository on the environment (see
-[Connectors](/console/connectors)). Alethia matches your chart's host against the chart repositories
-you connected and authenticates with that credential — both when it scans the chart and when ArgoCD
-pulls it at deploy time. A public chart needs no connector.
+To use a **private** registry, connect it as a
+[chart repository](/console/connectors/chart-repositories) on the environment. Alethia matches your
+chart's host against the chart repositories you connected and authenticates with that credential —
+both when it scans the chart and when ArgoCD pulls it at deploy time. A public chart needs no
+connector.
+
+If your registry sits on an internal network rather than the public internet, the Runner needs an
+opt-in as well — see
+[`ALETHIA_HELM_REGISTRY_ALLOW_PRIVATE`](/runner/self-hosted#environment-variables).
 
 At deploy time the Runner renders the chart into a hardened, per-project ArgoCD `AppProject` locked to
 your repo and namespace. See [GitOps & ArgoCD](/concepts/gitops-argocd) for how the Application is
