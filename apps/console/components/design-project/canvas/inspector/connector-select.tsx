@@ -80,6 +80,15 @@ export function ConnectorSelect({
 	);
 
 	const selected = value ? getConnectorProviderBySlug(value) : undefined;
+	// Whatever this control writes lands in the component row's `provider_config`, which
+	// `buildConfigSnapshot` spreads WHOLE into the Postgres-persisted `config_snapshot`. So a knob
+	// flagged `secret` is dropped rather than rendered: a secret belongs in `connector_credentials`
+	// (encrypted, attached out-of-band at job claim), never on a snapshot. No catalog entry declares
+	// one today — this keeps it that way when `secrets`/`registry`/`dns` adopt this field.
+	const knobs = useMemo(
+		() => (selected?.providerConfigFields ?? []).filter((f) => !f.secret),
+		[selected],
+	);
 	// The stored connector may have been disconnected since this was configured. Showing it (marked)
 	// beats rendering an empty Select that reads as "nothing chosen" — the row is still pointing at
 	// it, and the deploy will still try to use it.
@@ -110,7 +119,11 @@ export function ConnectorSelect({
 					// Carry over only the knobs the NEW provider actually declares. Otherwise switching
 					// (say) an HTTPS repo to a GHCR one leaves a stale `repo_url` behind in the JSONB,
 					// which then rides into the config snapshot and the seeded credential.
-					const keep = new Set((next?.providerConfigFields ?? []).map((f) => f.key));
+					const keep = new Set(
+						(next?.providerConfigFields ?? [])
+							.filter((f) => !f.secret)
+							.map((f) => f.key),
+					);
 					const carried: Record<string, unknown> = {};
 					for (const [key, v] of Object.entries(providerConfig)) {
 						if (keep.has(key)) carried[key] = v;
@@ -157,7 +170,7 @@ export function ConnectorSelect({
 
 			{selected ? (
 				<ProviderConfigFields
-					fields={selected.providerConfigFields}
+					fields={knobs}
 					values={toKnobValues(providerConfig)}
 					onChange={(key, next) =>
 						onChange({
