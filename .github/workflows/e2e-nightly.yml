@@ -235,49 +235,18 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME ($PROVIDER, region $REGION)"
 
-      # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
-      #    (AWS m5a.4xlarge×2 SPOT ≈ $0.30/run); the harness cost guard HARD-FAILS a managed run
-      #    that inherits that default, so we pin a small node shape per provider here. Merged
-      #    into the snapshot `cluster` block (t2MergeClusterJSON): small instance ×1, min disk.
-      #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
-      #    are validated in each cloud's wave. ──
-      - name: Compute cheapest cluster shape
-        if: steps.gate.outputs.run == 'true'
-        env:
-          PROVIDER: ${{ matrix.provider }}
-        run: |
-          # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
-          # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
-          # the run's NAT cost); the A0.5 fidelity base is untouched. Other clouds leave it unset.
-          NET=""
-          case "$PROVIDER" in
-            hetzner) SHAPE="" ;;
-            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
-            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
-            # Standard_B2s (v1) is NOT offered by AKS on a modern subscription: a real apply fails with
-            # "The VM size of Standard_B2s is not allowed in your subscription" — only the v2/v3+
-            # generations are served. (`az vm list-skus` disagrees and reports B2s unrestricted; AKS is
-            # authoritative.) D2s_v3 = 2 vCPU/8GiB, DSv3 family, broadly available. Verified on a real AKS apply.
-            azure)   SHAPE='{"instance_types":["Standard_D2s_v3"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
-            alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
-            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
-          esac
-          if [ -n "$SHAPE" ]; then
-            echo "ALETHIA_E2E_CLUSTER_JSON=$SHAPE" >> "$GITHUB_ENV"
-            echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
-          fi
-          if [ -n "$NET" ]; then
-            echo "ALETHIA_E2E_NETWORK_JSON=$NET" >> "$GITHUB_ENV"
-            echo "::notice::T2 network override for $PROVIDER: $NET"
-          fi
-
       # ── Resolve the FULL-BAR dimension (P2-F, #1068). Off by default (the nightly stays the cheap
       #    green-floor smoke); ON for the weekly Sunday cron OR a workflow_dispatch with full_bar=true.
       #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
       #    proves all 11 resource kinds land in tofu state AND all 19 marketplace add-ons converge.
       #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
-      #    row (full vs floor). Both are also read by the rollup job, which recomputes the same way. ──
+      #    row (full vs floor). Both are also read by the rollup job, which recomputes the same way.
+      #
+      #    This MUST resolve BEFORE the cluster shape is chosen: the two are coupled, because the
+      #    full-bar surface needs a bigger node pool than the cheap floor (see the next step). It used
+      #    to run after, so a full-bar run kept the 1-node floor shape and died on the FT-5 guard
+      #    before provisioning anything (#1259). ──
       - name: Resolve full-bar dimension
         if: steps.gate.outputs.run == 'true'
         env:
@@ -303,6 +272,62 @@ jobs:
               echo "E2E_DIMENSION=floor"
             } >> "$GITHUB_ENV"
             echo "::notice::green-floor dimension (base provision + ArgoCD Healthy; + A0.6 repos when wired)."
+          fi
+
+      # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
+      #    (AWS m5a.4xlarge×2 SPOT ≈ $0.30/run); the harness cost guard HARD-FAILS a managed run
+      #    that inherits that default, so we pin a small node shape per provider here. Merged
+      #    into the snapshot `cluster` block (t2MergeClusterJSON): small instance ×1, min disk.
+      #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
+      #    are validated in each cloud's wave.
+      #
+      #    On a FULL-BAR run the floor shape is the WRONG shape: max-config + all-add-ons need >= 3
+      #    nodes / 12 vCPU / 48 GB to schedule the 7 heavy charts + 11 kinds' controllers, which the
+      #    FT-5 guard (test/e2e/t2_providers.go) enforces before any spend. So full-bar loads the
+      #    per-provider heavy profile instead — the fixtures the guard's own error message names. ──
+      - name: Compute cluster shape
+        if: steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
+          # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
+          # the run's NAT cost); the A0.5 fidelity base is untouched. Other clouds leave it unset.
+          NET=""
+          case "$PROVIDER" in
+            hetzner) SHAPE="" ;;
+            aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
+            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            # Standard_B2s (v1) is NOT offered by AKS on a modern subscription: a real apply fails with
+            # "The VM size of Standard_B2s is not allowed in your subscription" — only the v2/v3+
+            # generations are served. (`az vm list-skus` disagrees and reports B2s unrestricted; AKS is
+            # authoritative.) D2s_v3 = 2 vCPU/8GiB, DSv3 family, broadly available. Verified on a real AKS apply.
+            azure)   SHAPE='{"instance_types":["Standard_D2s_v3"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":32}' ;;
+            alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixtures are the ones
+          # the FT-5 guard names in its own failure message, so guard and workflow cannot drift.
+          if [ "${E2E_FULL_BAR:-false}" = "true" ]; then
+            HEAVY="test/e2e/fixtures/cluster_json.heavy.${PROVIDER}.json"
+            if [ ! -f "$HEAVY" ]; then
+              # Documented exclusion, not a silent gap (cloud-parity rule): a cloud without a heavy
+              # profile cannot host the full bar, and must say so rather than trip the guard later
+              # with a message about node counts.
+              echo "::error::full-bar requested for '$PROVIDER' but $HEAVY does not exist — that cloud has no heavy profile. Add the fixture (>= 3 nodes / 12 vCPU / 48 GB total) or exclude the cloud from full-bar runs."
+              exit 1
+            fi
+            SHAPE="$(jq -c . "$HEAVY")"
+            echo "::notice::T2 FULL-BAR heavy shape for $PROVIDER (from $HEAVY): $SHAPE"
+          elif [ -n "$SHAPE" ]; then
+            echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
+          fi
+          if [ -n "$SHAPE" ]; then
+            echo "ALETHIA_E2E_CLUSTER_JSON=$SHAPE" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$NET" ]; then
+            echo "ALETHIA_E2E_NETWORK_JSON=$NET" >> "$GITHUB_ENV"
+            echo "::notice::T2 network override for $PROVIDER: $NET"
           fi
 
       - uses: pnpm/action-setup@v6
@@ -806,7 +831,12 @@ jobs:
               printf '%s\n' "See the run's step-summary rollup + the \`e2e-proof-${cloud}-${RUN_ID}\` artifact for the failing stage (deploy stage / cost / leak / stale sweep)."
               printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title — close it once \`${cloud}\` is green again._"
             } > "$body_file"
+            # LABEL what we file. An unlabelled issue is invisible to scripts/claim-work.sh (which
+            # filters on class:), so a bot-filed red sat unclaimable and unworked — #1259 went nine
+            # nights that way. These three exist in the repo's label set; the `||` below still keeps a
+            # label problem from breaking the rollup.
             gh issue create --title "$title" --body-file "$body_file" \
+              --label class:backend --label lane:tests --label wave:hygiene \
               && echo "::notice::filed tracking issue: ${title}" \
               || echo "::warning::could not create issue '${title}' (continuing)."
           done
