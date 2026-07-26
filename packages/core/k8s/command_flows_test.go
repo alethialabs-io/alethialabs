@@ -96,13 +96,50 @@ func TestWaitClusterReadyCommandFlows(t *testing.T) {
 		}
 	})
 
-	t.Run("auth rejection is classified", func(t *testing.T) {
+	t.Run("401 is classified as authentication, not authorization", func(t *testing.T) {
 		executeCommandWithOutput = func(string, string, []string) (string, error) {
 			return "Unauthorized", errors.New("you must be logged in")
 		}
 		err := WaitClusterReady(context.Background(), 0, false, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "AUTH REJECTED") {
-			t.Fatalf("WaitClusterReady error = %v", err)
+		if err == nil {
+			t.Fatal("WaitClusterReady returned nil for a 401")
+		}
+		// The #1259 regression: this exact probe output was reported as an RBAC problem for nine
+		// nights while the real bug sat in the token minter.
+		if !strings.Contains(err.Error(), "AUTHENTICATION REJECTED") {
+			t.Fatalf("want an authentication verdict, got: %v", err)
+		}
+		if strings.Contains(err.Error(), "AUTHORIZATION REJECTED") {
+			t.Fatalf("a 401 must not be reported as an authorization failure: %v", err)
+		}
+	})
+
+	t.Run("403 is classified as authorization", func(t *testing.T) {
+		executeCommandWithOutput = func(string, string, []string) (string, error) {
+			return "", errors.New(`Error from server (Forbidden): nodes is forbidden: User "x" cannot list`)
+		}
+		err := WaitClusterReady(context.Background(), 0, false, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "AUTHORIZATION REJECTED") {
+			t.Fatalf("want an authorization verdict, got: %v", err)
+		}
+	})
+
+	t.Run("reports elapsed separately from the configured timeout", func(t *testing.T) {
+		executeCommandWithOutput = func(string, string, []string) (string, error) {
+			return "Unauthorized", errors.New("you must be logged in")
+		}
+		err := WaitClusterReady(context.Background(), 0, false, io.Discard)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		// #1259: the old message quoted the BUDGET as if it were elapsed ("did not become reachable
+		// within 15m0s"), so a ~60s fast-fail read as a 15-minute hang. Elapsed and budget are now
+		// two distinct fields.
+		if !strings.Contains(err.Error(), "after ") || !strings.Contains(err.Error(), "(timeout ") {
+			t.Fatalf("want elapsed AND budget reported separately, got: %v", err)
+		}
+		if strings.Contains(err.Error(), "reachable within") {
+			t.Fatalf("the old budget-as-elapsed phrasing is back: %v", err)
 		}
 	})
 
