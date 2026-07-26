@@ -459,3 +459,27 @@ variable "azure_cache_sku_name" {
   # Basic C0. Set this to choose the tier (and therefore the cost) explicitly.
   description = "Exact Azure Managed Redis sku. Null = map from azure_cache_sku. NOTE: Managed Redis has no low tier; the floor is Enterprise_E1 (~5x the retired Basic C0)."
 }
+
+# ── external-secrets identity adoption ─────────────────────────────────────────
+# Set BOTH to run the external-secrets operator as a PRE-EXISTING user-assigned managed identity
+# instead of the per-deploy one this template creates.
+#
+# Why this exists: a cross-subscription Key Vault role assignment in the TARGET subscription binds
+# the identity's OBJECT ID, which Azure regenerates on every create — so a pre-applied grant dies
+# the moment the identity is recreated, and a stable name does not help. Adopting a standing
+# identity lets the target-subscription grant be applied ONCE.
+#
+# Both empty (the default) preserves the existing behavior exactly. When adopting, the identity must
+# already exist and the caller owns its lifecycle: this template federates a credential onto it and
+# grants it Key Vault read, but never creates, modifies or destroys the identity itself.
+variable "external_secrets_identity_name" {
+  description = "OPTIONAL. Name of a pre-existing user-assigned managed identity for the external-secrets operator. Requires external_secrets_identity_resource_group."
+  type        = string
+  default     = ""
+}
+
+variable "external_secrets_identity_resource_group" {
+  description = "OPTIONAL. Resource group holding external_secrets_identity_name. Requires external_secrets_identity_name."
+  type        = string
+  default     = ""
+}
