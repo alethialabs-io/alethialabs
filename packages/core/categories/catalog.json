@@ -1,1253 +1,1419 @@
 {
-  "$comment": "SSOT — declarative registry of connectors. `providers` are the pluggable per-category backends (DNS/secrets/registry/observability): consumed by Go (go:embed, packages/core/categories) for module composition AND by the console codegen (apps/console/scripts/gen-connectors.mjs → lib/connectors/registry.generated.ts) for the Project selectors. `builtin` are the first-class cloud + git connectors (cloud federation / OAuth, handled outside the category module system): catalog rows only — seeded into the `connectors` table but NOT emitted to the TS registry. Both arrays are emitted into lib/db/seed/connectors.generated.sql. Go ignores `builtin`. Adding a pluggable provider = a `providers` row + a Go impl + an OpenTofu module under infra/templates/<module_path> — EXCEPT registry providers, whose only artifact is a dockerconfigjson imagePullSecret the runner seeds post-apply (no module; module_path is \"\"), because the in-tofu kubernetes provider is host+CA-only on AWS and can't create it.",
-  "builtin": [
-    {
-      "category": "cloud",
-      "slug": "aws",
-      "name": "Amazon Web Services",
-      "description": "Provision EKS, networking, databases, and more in your AWS account via a cross-account IAM role.",
-      "organization": "Amazon Web Services, Inc.",
-      "auth_method": "iam_role",
-      "icon_url": "/aws/favicon_64x64.png",
-      "docs_url": "https://docs.aws.amazon.com/",
-      "status": "active",
-      "sort_order": 10
-    },
-    {
-      "category": "cloud",
-      "slug": "gcp",
-      "name": "Google Cloud",
-      "description": "Provision GKE and managed services in your GCP project via Workload Identity Federation.",
-      "organization": "Google LLC",
-      "auth_method": "service_account",
-      "icon_url": "/gcp/favicon_64x64.png",
-      "docs_url": "https://cloud.google.com/docs",
-      "status": "active",
-      "sort_order": 11
-    },
-    {
-      "category": "cloud",
-      "slug": "azure",
-      "name": "Microsoft Azure",
-      "description": "Provision AKS and managed services in your Azure subscription via federated identity credentials.",
-      "organization": "Microsoft Corporation",
-      "auth_method": "service_principal",
-      "icon_url": "/azure/favicon_64x64.png",
-      "docs_url": "https://learn.microsoft.com/azure/",
-      "status": "active",
-      "sort_order": 12
-    },
-    {
-      "category": "cloud",
-      "slug": "alibaba",
-      "name": "Alibaba Cloud",
-      "description": "Provision ACK and managed services on Alibaba Cloud via a RAM role (zero stored credentials).",
-      "organization": "Alibaba Cloud",
-      "auth_method": "ram_role",
-      "icon_url": "/alibaba/favicon_64x64.png",
-      "docs_url": "https://www.alibabacloud.com/help",
-      "status": "active",
-      "sort_order": 13
-    },
-    {
-      "category": "cloud",
-      "slug": "digitalocean",
-      "name": "DigitalOcean",
-      "description": "Connect DigitalOcean with a scoped API token to provision DOKS and managed services. Provisioning templates coming soon.",
-      "organization": "DigitalOcean, LLC",
-      "auth_method": "api_key",
-      "icon_url": "/digitalocean/favicon_64x64.png",
-      "docs_url": "https://docs.digitalocean.com/reference/api/",
-      "status": "coming_soon",
-      "sort_order": 14
-    },
-    {
-      "category": "cloud",
-      "slug": "hetzner",
-      "name": "Hetzner Cloud",
-      "description": "Connect Hetzner Cloud with a scoped API token to provision a self-managed Talos Linux Kubernetes cluster on cheap VMs, with in-cluster data services via Helm.",
-      "organization": "Hetzner Online GmbH",
-      "auth_method": "api_key",
-      "icon_url": "/hetzner/favicon_64x64.png",
-      "docs_url": "https://docs.hetzner.cloud/",
-      "status": "active",
-      "sort_order": 15
-    },
-    {
-      "category": "cloud",
-      "slug": "civo",
-      "name": "Civo",
-      "description": "Connect Civo with a scoped API token to provision managed K3s clusters. Provisioning templates coming soon.",
-      "organization": "Civo Ltd",
-      "auth_method": "api_key",
-      "icon_url": "/civo/favicon_64x64.png",
-      "docs_url": "https://www.civo.com/docs",
-      "status": "coming_soon",
-      "sort_order": 16
-    },
-    {
-      "category": "git",
-      "slug": "github",
-      "name": "GitHub",
-      "description": "Connect repositories and wire GitOps deployments from GitHub.",
-      "organization": "GitHub, Inc.",
-      "auth_method": "oauth",
-      "icon_url": "/icons/github/github-32x32.png",
-      "docs_url": "https://docs.github.com/",
-      "status": "active",
-      "sort_order": 20
-    },
-    {
-      "category": "git",
-      "slug": "gitlab",
-      "name": "GitLab",
-      "description": "Connect repositories and wire GitOps deployments from GitLab.",
-      "organization": "GitLab Inc.",
-      "auth_method": "oauth",
-      "icon_url": "/icons/gitlab/gitlab-32x32.png",
-      "docs_url": "https://docs.gitlab.com/",
-      "status": "active",
-      "sort_order": 21
-    },
-    {
-      "category": "git",
-      "slug": "bitbucket",
-      "name": "Bitbucket",
-      "description": "Connect repositories and wire GitOps deployments from Bitbucket.",
-      "organization": "Atlassian",
-      "auth_method": "oauth",
-      "icon_url": "/icons/bitbucket/bitbucket-32x32.png",
-      "docs_url": "https://support.atlassian.com/bitbucket-cloud/",
-      "status": "active",
-      "sort_order": 22
-    }
-  ],
-  "providers": [
-    {
-      "category": "dns",
-      "slug": "cloudflare",
-      "name": "Cloudflare",
-      "description": "Manage DNS records and certificates on Cloudflare instead of the cluster cloud's native DNS.",
-      "organization": "Cloudflare, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/cloudflare/cloudflare-32x32.png",
-      "docs_url": "https://developers.cloudflare.com/dns/",
-      "status": "active",
-      "sort_order": 30,
-      "module_path": "categories/dns/cloudflare",
-      "credential": {
-        "fields": [
-          {
-            "key": "api_token",
-            "label": "API Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A scoped Cloudflare API token with Zone:DNS:Edit permission."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "zone_id",
-            "label": "Zone ID",
-            "type": "text",
-            "required": true,
-            "help": "The Cloudflare Zone ID for the domain."
-          },
-          {
-            "key": "proxied",
-            "label": "Proxy records through Cloudflare",
-            "type": "boolean",
-            "default": false
-          }
-        ]
-      }
-    },
-    {
-      "category": "secrets",
-      "slug": "vault",
-      "name": "HashiCorp Vault",
-      "description": "Manage application secrets in HashiCorp Vault, an external secrets store.",
-      "organization": "HashiCorp",
-      "auth_method": "api_key",
-      "icon_url": "/icons/vault/vault-32x32.png",
-      "docs_url": "https://developer.hashicorp.com/vault/docs",
-      "status": "active",
-      "sort_order": 40,
-      "module_path": "categories/secrets/vault",
-      "credential": {
-        "fields": [
-          {
-            "key": "address",
-            "label": "Vault Address",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "Base URL of the Vault server, e.g. https://vault.example.com:8200"
-          },
-          {
-            "key": "token",
-            "label": "Vault Token",
-            "type": "password",
-            "secret": true,
-            "required": true
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "mount_path",
-            "label": "KV Mount Path",
-            "type": "text",
-            "default": "secret",
-            "required": true
-          },
-          {
-            "key": "kv_version",
-            "label": "KV Version",
-            "type": "select",
-            "options": ["1", "2"],
-            "default": "2"
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "dockerhub",
-      "name": "Docker Hub",
-      "description": "Use a Docker Hub repository as the container registry instead of the cloud-native one.",
-      "organization": "Docker, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/dockerhub/dockerhub-32x32.png",
-      "docs_url": "https://docs.docker.com/docker-hub/",
-      "status": "active",
-      "sort_order": 50,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "access_token",
-            "label": "Access Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A Docker Hub personal access token (Account Settings → Security)."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "namespace",
-            "label": "Namespace / Organization",
-            "type": "text",
-            "required": false,
-            "help": "Defaults to the username if left blank."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "generic-cr",
-      "name": "Generic Registry",
-      "description": "Authenticate to any OCI/Docker registry with a URL, username, and password.",
-      "organization": "Self-hosted / any",
-      "auth_method": "api_key",
-      "icon_url": "/icons/generic-cr/generic-cr-32x32.png",
-      "docs_url": "https://distribution.github.io/distribution/",
-      "status": "active",
-      "sort_order": 51,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "password",
-            "label": "Password / Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "The password or access token for the registry."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_url",
-            "label": "Registry URL",
-            "type": "text",
-            "required": true,
-            "help": "The registry endpoint, e.g. https://registry.example.com."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "ghcr",
-      "name": "GitHub Container Registry",
-      "description": "Pull images from GitHub Container Registry (ghcr.io).",
-      "organization": "GitHub, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/github/github-32x32.png",
-      "docs_url": "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry",
-      "status": "active",
-      "sort_order": 52,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "Your GitHub username."
-          },
-          {
-            "key": "password",
-            "label": "Personal Access Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A GitHub PAT with the read:packages scope."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": []
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "ghcr-enterprise",
-      "name": "GitHub Enterprise Container Registry",
-      "description": "Pull images from a GitHub Enterprise Server container registry.",
-      "organization": "GitHub, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/github/github-32x32.png",
-      "docs_url": "https://docs.github.com/en/enterprise-server@latest/packages/working-with-a-github-packages-registry/working-with-the-container-registry",
-      "status": "active",
-      "sort_order": 53,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "Your GitHub Enterprise username."
-          },
-          {
-            "key": "password",
-            "label": "Personal Access Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A PAT with the read:packages scope on your GitHub Enterprise instance."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_url",
-            "label": "Registry URL",
-            "type": "text",
-            "required": true,
-            "help": "Your GitHub Enterprise container registry host, e.g. https://containers.github.example.com."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "gitlab-cr",
-      "name": "GitLab Container Registry",
-      "description": "Pull images from the GitLab container registry.",
-      "organization": "GitLab B.V.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/gitlab/gitlab-32x32.png",
-      "docs_url": "https://docs.gitlab.com/ee/user/packages/container_registry/",
-      "status": "active",
-      "sort_order": 54,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "A GitLab username or deploy-token username."
-          },
-          {
-            "key": "password",
-            "label": "Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A deploy token or PAT with the read_registry scope."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_url",
-            "label": "Registry URL",
-            "type": "text",
-            "required": false,
-            "help": "Defaults to https://registry.gitlab.com; set for self-managed GitLab."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "quay",
-      "name": "Quay",
-      "description": "Pull images from Quay.io or a self-hosted Quay registry.",
-      "organization": "Red Hat, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/quay/quay-32x32.png",
-      "docs_url": "https://docs.quay.io/",
-      "status": "active",
-      "sort_order": 55,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "A Quay username or robot account name."
-          },
-          {
-            "key": "password",
-            "label": "Token / Password",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "The robot account token or account password."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_url",
-            "label": "Registry URL",
-            "type": "text",
-            "required": false,
-            "help": "Defaults to https://quay.io; set for a self-hosted Quay."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "harbor",
-      "name": "Harbor",
-      "description": "Pull images from a self-hosted Harbor registry.",
-      "organization": "CNCF / Harbor",
-      "auth_method": "api_key",
-      "icon_url": "/icons/harbor/harbor-32x32.png",
-      "docs_url": "https://goharbor.io/docs/",
-      "status": "active",
-      "sort_order": 56,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "A Harbor username or robot account name."
-          },
-          {
-            "key": "password",
-            "label": "Password / Secret",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "The account password or robot account secret."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_url",
-            "label": "Registry URL",
-            "type": "text",
-            "required": true,
-            "help": "Your Harbor registry host, e.g. https://harbor.example.com."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "docr",
-      "name": "DigitalOcean Container Registry",
-      "description": "Pull images from the DigitalOcean container registry.",
-      "organization": "DigitalOcean, LLC",
-      "auth_method": "api_key",
-      "icon_url": "/icons/docr/docr-32x32.png",
-      "docs_url": "https://docs.digitalocean.com/products/container-registry/",
-      "status": "active",
-      "sort_order": 57,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "token",
-            "label": "API Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A DigitalOcean API token with registry read access. Used as both username and password."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": []
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "scaleway-cr",
-      "name": "Scaleway Container Registry",
-      "description": "Pull images from the Scaleway container registry.",
-      "organization": "Scaleway",
-      "auth_method": "api_key",
-      "icon_url": "/icons/scaleway-cr/scaleway-cr-32x32.png",
-      "docs_url": "https://www.scaleway.com/en/docs/container-registry/",
-      "status": "active",
-      "sort_order": 58,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "secret_key",
-            "label": "Secret Key",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A Scaleway secret key. The registry username is fixed to 'nologin'."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_url",
-            "label": "Registry URL",
-            "type": "text",
-            "required": true,
-            "help": "Your Scaleway registry endpoint, e.g. https://rg.fr-par.scw.cloud."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "ecr-xacct",
-      "name": "Amazon ECR (cross-account)",
-      "description": "Pull from an ECR registry in a different AWS account — keyless, no stored key. The cluster mints a short-lived pull token in-cluster from a role the target account trusts.",
-      "organization": "Amazon Web Services",
-      "auth_method": "iam_role",
-      "icon_url": "/icons/aws/aws-32x32.png",
-      "docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/repository-policy-examples.html",
-      "status": "coming_soon",
-      "sort_order": 60,
-      "module_path": "",
-      "credential": {
-        "fields": []
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "target_account_id",
-            "label": "Target AWS Account ID",
-            "type": "text",
-            "required": true,
-            "help": "The AWS account that owns the ECR registry (the account the cluster pulls from cross-account)."
-          },
-          {
-            "key": "region",
-            "label": "Region",
-            "type": "text",
-            "required": true,
-            "help": "The ECR registry region, e.g. us-east-1."
-          },
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": true,
-            "help": "The registry endpoint, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com."
-          },
-          {
-            "key": "target_role_arn",
-            "label": "Target Role ARN",
-            "type": "text",
-            "required": true,
-            "help": "An IAM role in the target account that trusts this cluster's workload identity and grants ECR pull (GetAuthorizationToken + BatchGetImage). You create this in the registry account."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "gar-xacct",
-      "name": "Google Artifact Registry (cross-project)",
-      "description": "Pull from an Artifact Registry repository in a different GCP project — keyless, no stored key. The cluster mints a short-lived token in-cluster from a service account the target project granted reader.",
-      "organization": "Google Cloud",
-      "auth_method": "service_account",
-      "icon_url": "/icons/gcp/gcp-32x32.png",
-      "docs_url": "https://cloud.google.com/artifact-registry/docs/access-control",
-      "status": "coming_soon",
-      "sort_order": 61,
-      "module_path": "",
-      "credential": {
-        "fields": []
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "target_project_id",
-            "label": "Target GCP Project ID",
-            "type": "text",
-            "required": true,
-            "help": "The GCP project that owns the Artifact Registry repository."
-          },
-          {
-            "key": "region",
-            "label": "Region",
-            "type": "text",
-            "required": true,
-            "help": "The Artifact Registry location, e.g. us-central1."
-          },
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": true,
-            "help": "The registry endpoint, e.g. us-central1-docker.pkg.dev."
-          },
-          {
-            "key": "target_service_account",
-            "label": "Reader Service Account",
-            "type": "text",
-            "required": true,
-            "help": "The service account the target project granted roles/artifactregistry.reader on the repository. You grant this in the registry project."
-          }
-        ]
-      }
-    },
-    {
-      "category": "registry",
-      "slug": "acr-xacct",
-      "name": "Azure Container Registry (cross-subscription)",
-      "description": "Pull from an ACR in a different Azure subscription — keyless, no stored key. The cluster mints a short-lived token in-cluster from an identity the target ACR granted AcrPull.",
-      "organization": "Microsoft Azure",
-      "auth_method": "service_principal",
-      "icon_url": "/icons/azure/azure-32x32.png",
-      "docs_url": "https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication",
-      "status": "coming_soon",
-      "sort_order": 62,
-      "module_path": "",
-      "credential": {
-        "fields": []
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "target_subscription_id",
-            "label": "Target Subscription ID",
-            "type": "text",
-            "required": true,
-            "help": "The Azure subscription that owns the ACR."
-          },
-          {
-            "key": "region",
-            "label": "Region",
-            "type": "text",
-            "required": false,
-            "help": "The ACR region (optional)."
-          },
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": true,
-            "help": "The registry endpoint, e.g. myregistry.azurecr.io."
-          },
-          {
-            "key": "target_identity_client_id",
-            "label": "Pull Identity Client ID",
-            "type": "text",
-            "required": true,
-            "help": "The client id of the identity the target ACR granted AcrPull. You grant this in the registry subscription."
-          }
-        ]
-      }
-    },
-    {
-      "category": "observability",
-      "slug": "datadog",
-      "name": "Datadog",
-      "description": "Ship cluster metrics, logs, and traces to Datadog.",
-      "organization": "Datadog, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/datadog/datadog-32x32.png",
-      "docs_url": "https://docs.datadoghq.com/",
-      "status": "active",
-      "sort_order": 60,
-      "module_path": "categories/observability/datadog",
-      "credential": {
-        "fields": [
-          {
-            "key": "api_key",
-            "label": "API Key",
-            "type": "password",
-            "secret": true,
-            "required": true
-          },
-          {
-            "key": "app_key",
-            "label": "Application Key",
-            "type": "password",
-            "secret": true,
-            "required": true
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "site",
-            "label": "Datadog Site",
-            "type": "select",
-            "options": ["datadoghq.com", "datadoghq.eu", "us3.datadoghq.com", "us5.datadoghq.com", "ap1.datadoghq.com"],
-            "default": "datadoghq.com"
-          }
-        ]
-      }
-    },
-    {
-      "category": "observability",
-      "slug": "grafana",
-      "name": "Grafana Cloud",
-      "description": "Remote-write metrics to Grafana Cloud's managed Prometheus.",
-      "organization": "Grafana Labs",
-      "auth_method": "api_key",
-      "icon_url": "/icons/grafana/grafana-32x32.png",
-      "docs_url": "https://grafana.com/docs/grafana-cloud/",
-      "status": "active",
-      "sort_order": 70,
-      "module_path": "categories/observability/grafana",
-      "credential": {
-        "fields": [
-          {
-            "key": "instance_id",
-            "label": "Instance ID / Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "api_token",
-            "label": "API Token",
-            "type": "password",
-            "secret": true,
-            "required": true
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "remote_write_url",
-            "label": "Remote Write URL",
-            "type": "text",
-            "required": true,
-            "help": "The Grafana Cloud Prometheus remote_write endpoint."
-          }
-        ]
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "helm-https",
-      "name": "HTTPS Helm Repository",
-      "description": "Authenticate to a classic index.yaml Helm chart repository (https://charts.example.com) with HTTP basic auth.",
-      "organization": "Self-hosted / any",
-      "auth_method": "api_key",
-      "icon_url": "/icons/generic-cr/generic-cr-32x32.png",
-      "docs_url": "https://helm.sh/docs/topics/chart_repository/",
-      "status": "active",
-      "sort_order": 71,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "password",
-            "label": "Password / Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "The password or access token for the chart repository."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "repo_url",
-            "label": "Repository URL",
-            "type": "text",
-            "required": true,
-            "help": "The chart repository URL, e.g. https://charts.example.com."
-          }
-        ]
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-docker-hub",
-      "name": "Docker Hub (OCI Helm)",
-      "description": "Pull Helm charts from Docker Hub's OCI registry (registry-1.docker.io).",
-      "organization": "Docker, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/dockerhub/dockerhub-32x32.png",
-      "docs_url": "https://docs.docker.com/docker-hub/oci-artifacts/",
-      "status": "active",
-      "sort_order": 72,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "access_token",
-            "label": "Access Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A Docker Hub access token."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": []
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-github-cr",
-      "name": "GitHub Container Registry (OCI Helm)",
-      "description": "Pull Helm charts from GitHub Container Registry (ghcr.io).",
-      "organization": "GitHub, Inc.",
-      "auth_method": "api_key",
-      "icon_url": "/icons/github/github-32x32.png",
-      "docs_url": "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry",
-      "status": "active",
-      "sort_order": 73,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "Your GitHub username."
-          },
-          {
-            "key": "password",
-            "label": "Password / Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A GitHub PAT with the read:packages scope."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": []
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-gitlab-cr",
-      "name": "GitLab Container Registry (OCI Helm)",
-      "description": "Pull Helm charts from a GitLab container registry (registry.gitlab.com or a self-managed host).",
-      "organization": "GitLab",
-      "auth_method": "api_key",
-      "icon_url": "/icons/gitlab/gitlab-32x32.png",
-      "docs_url": "https://docs.gitlab.com/user/packages/container_registry/",
-      "status": "active",
-      "sort_order": 74,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "password",
-            "label": "Password / Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A GitLab deploy or personal access token."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": false,
-            "help": "The registry host (optional; defaults to registry.gitlab.com)."
-          }
-        ]
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-generic-cr",
-      "name": "Generic OCI Registry (Helm)",
-      "description": "Pull Helm charts from any OCI-compliant registry (Harbor, JFrog, a self-hosted distribution) with a host, username, and password.",
-      "organization": "Self-hosted / any",
-      "auth_method": "api_key",
-      "icon_url": "/icons/generic-cr/generic-cr-32x32.png",
-      "docs_url": "https://helm.sh/docs/topics/registries/",
-      "status": "active",
-      "sort_order": 75,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "username",
-            "label": "Username",
-            "type": "text",
-            "secret": false,
-            "required": true
-          },
-          {
-            "key": "password",
-            "label": "Password / Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "The password or access token for the registry."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": true,
-            "help": "The OCI registry host, e.g. registry.example.com."
-          }
-        ]
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-scaleway-cr",
-      "name": "Scaleway Container Registry (OCI Helm)",
-      "description": "Pull Helm charts from the Scaleway container registry. The username is fixed to 'nologin'.",
-      "organization": "Scaleway",
-      "auth_method": "api_key",
-      "icon_url": "/icons/scaleway-cr/scaleway-cr-32x32.png",
-      "docs_url": "https://www.scaleway.com/en/docs/container-registry/",
-      "status": "active",
-      "sort_order": 76,
-      "module_path": "",
-      "credential": {
-        "fields": [
-          {
-            "key": "secret_key",
-            "label": "Secret Key",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A Scaleway secret key. The registry username is fixed to 'nologin'."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": true,
-            "help": "Your Scaleway registry host, e.g. rg.fr-par.scw.cloud."
-          }
-        ]
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-ecr",
-      "name": "Amazon ECR (OCI Helm)",
-      "description": "Pull Helm charts from Amazon ECR. Coming soon: ECR uses a 12-hour ephemeral token, so its keyless in-cluster token refresh (from the connected AWS account) is a documented follow-up.",
-      "organization": "Amazon Web Services",
-      "auth_method": "api_key",
-      "icon_url": "/icons/aws/aws-32x32.png",
-      "docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/push-oci-artifact.html",
-      "status": "coming_soon",
-      "sort_order": 77,
-      "module_path": "",
-      "credential": {
-        "fields": []
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": false,
-            "help": "The ECR registry host, e.g. 1234.dkr.ecr.us-east-1.amazonaws.com."
-          },
-          {
-            "key": "region",
-            "label": "Region",
-            "type": "text",
-            "required": false,
-            "help": "The ECR region."
-          }
-        ]
-      }
-    },
-    {
-      "category": "helm_registry",
-      "slug": "oci-public-ecr",
-      "name": "Amazon ECR Public (OCI Helm)",
-      "description": "Pull Helm charts from Amazon ECR Public (public.ecr.aws). Coming soon: keyless in-cluster token refresh is a documented follow-up.",
-      "organization": "Amazon Web Services",
-      "auth_method": "api_key",
-      "icon_url": "/icons/aws/aws-32x32.png",
-      "docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/public/public-registries.html",
-      "status": "coming_soon",
-      "sort_order": 78,
-      "module_path": "",
-      "credential": {
-        "fields": []
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "registry_host",
-            "label": "Registry Host",
-            "type": "text",
-            "required": false,
-            "help": "The ECR Public registry host (public.ecr.aws)."
-          }
-        ]
-      }
-    },
-    {
-      "category": "secrets",
-      "slug": "doppler",
-      "name": "Doppler",
-      "description": "Manage application secrets in Doppler, an external secrets store.",
-      "organization": "Doppler",
-      "auth_method": "api_key",
-      "icon_url": "/icons/doppler/doppler-32x32.png",
-      "docs_url": "https://docs.doppler.com/docs/terraform-provider",
-      "status": "active",
-      "sort_order": 41,
-      "module_path": "categories/secrets/doppler",
-      "credential": {
-        "fields": [
-          {
-            "key": "token",
-            "label": "API Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A write-capable Doppler API token (personal or Service-Account). A read-only service token cannot manage secrets."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "project",
-            "label": "Project",
-            "type": "text",
-            "required": true,
-            "help": "The Doppler project the managed secrets live in."
-          },
-          {
-            "key": "config",
-            "label": "Config",
-            "type": "text",
-            "required": true,
-            "help": "The Doppler config (environment) within the project."
-          }
-        ]
-      }
-    },
-    {
-      "category": "secrets",
-      "slug": "infisical",
-      "name": "Infisical",
-      "description": "Manage application secrets in Infisical, an external (SaaS or self-hosted) secrets store.",
-      "organization": "Infisical",
-      "auth_method": "api_key",
-      "icon_url": "/icons/infisical/infisical-32x32.png",
-      "docs_url": "https://infisical.com/docs/integrations/frameworks/terraform",
-      "status": "active",
-      "sort_order": 42,
-      "module_path": "categories/secrets/infisical",
-      "credential": {
-        "fields": [
-          {
-            "key": "client_id",
-            "label": "Machine Identity Client ID",
-            "type": "text",
-            "secret": false,
-            "required": true,
-            "help": "Infisical Universal Auth (machine identity) client id."
-          },
-          {
-            "key": "client_secret",
-            "label": "Machine Identity Client Secret",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "Infisical Universal Auth client secret."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "host",
-            "label": "Host",
-            "type": "text",
-            "default": "https://app.infisical.com",
-            "required": false,
-            "help": "Infisical API host (override for self-hosted)."
-          },
-          {
-            "key": "workspace_id",
-            "label": "Workspace ID",
-            "type": "text",
-            "required": true,
-            "help": "The Infisical workspace (project) id."
-          },
-          {
-            "key": "env_slug",
-            "label": "Environment",
-            "type": "text",
-            "default": "dev",
-            "required": false,
-            "help": "Environment slug (e.g. dev, staging, prod)."
-          },
-          {
-            "key": "folder_path",
-            "label": "Folder Path",
-            "type": "text",
-            "default": "/",
-            "required": false,
-            "help": "Secret folder path."
-          }
-        ]
-      }
-    },
-    {
-      "category": "secrets",
-      "slug": "onepassword",
-      "name": "1Password",
-      "description": "Manage application secrets in 1Password, an external secrets store.",
-      "organization": "1Password",
-      "auth_method": "api_key",
-      "icon_url": "/icons/onepassword/onepassword-32x32.png",
-      "docs_url": "https://developer.1password.com/docs/terraform/",
-      "status": "active",
-      "sort_order": 43,
-      "module_path": "categories/secrets/onepassword",
-      "credential": {
-        "fields": [
-          {
-            "key": "service_account_token",
-            "label": "Service Account Token",
-            "type": "password",
-            "secret": true,
-            "required": true,
-            "help": "A 1Password Service Account token (supports creating items)."
-          }
-        ]
-      },
-      "provider_config": {
-        "fields": [
-          {
-            "key": "vault",
-            "label": "Vault UUID",
-            "type": "text",
-            "required": true,
-            "help": "The 1Password vault UUID the managed secrets live in."
-          }
-        ]
-      }
-    }
-  ]
+	"$comment": "SSOT — declarative registry of connectors. `providers` are the pluggable per-category backends (DNS/secrets/registry/observability): consumed by Go (go:embed, packages/core/categories) for module composition AND by the console codegen (apps/console/scripts/gen-connectors.mjs → lib/connectors/registry.generated.ts) for the Project selectors. `builtin` are the first-class cloud + git connectors (cloud federation / OAuth, handled outside the category module system): catalog rows only — seeded into the `connectors` table but NOT emitted to the TS registry. Both arrays are emitted into lib/db/seed/connectors.generated.sql. Go ignores `builtin`. Adding a pluggable provider = a `providers` row + a Go impl + an OpenTofu module under infra/templates/<module_path> — EXCEPT registry providers, whose only artifact is a dockerconfigjson imagePullSecret the runner seeds post-apply (no module; module_path is \"\"), because the in-tofu kubernetes provider is host+CA-only on AWS and can't create it.",
+	"builtin": [
+		{
+			"category": "cloud",
+			"slug": "aws",
+			"name": "Amazon Web Services",
+			"description": "Provision EKS, networking, databases, and more in your AWS account via a cross-account IAM role.",
+			"organization": "Amazon Web Services, Inc.",
+			"auth_method": "iam_role",
+			"icon_url": "/aws/favicon_64x64.png",
+			"docs_url": "https://docs.aws.amazon.com/",
+			"status": "active",
+			"sort_order": 10
+		},
+		{
+			"category": "cloud",
+			"slug": "gcp",
+			"name": "Google Cloud",
+			"description": "Provision GKE and managed services in your GCP project via Workload Identity Federation.",
+			"organization": "Google LLC",
+			"auth_method": "service_account",
+			"icon_url": "/gcp/favicon_64x64.png",
+			"docs_url": "https://cloud.google.com/docs",
+			"status": "active",
+			"sort_order": 11
+		},
+		{
+			"category": "cloud",
+			"slug": "azure",
+			"name": "Microsoft Azure",
+			"description": "Provision AKS and managed services in your Azure subscription via federated identity credentials.",
+			"organization": "Microsoft Corporation",
+			"auth_method": "service_principal",
+			"icon_url": "/azure/favicon_64x64.png",
+			"docs_url": "https://learn.microsoft.com/azure/",
+			"status": "active",
+			"sort_order": 12
+		},
+		{
+			"category": "cloud",
+			"slug": "alibaba",
+			"name": "Alibaba Cloud",
+			"description": "Provision ACK and managed services on Alibaba Cloud via a RAM role (zero stored credentials).",
+			"organization": "Alibaba Cloud",
+			"auth_method": "ram_role",
+			"icon_url": "/alibaba/favicon_64x64.png",
+			"docs_url": "https://www.alibabacloud.com/help",
+			"status": "active",
+			"sort_order": 13
+		},
+		{
+			"category": "cloud",
+			"slug": "digitalocean",
+			"name": "DigitalOcean",
+			"description": "Connect DigitalOcean with a scoped API token to provision DOKS and managed services. Provisioning templates coming soon.",
+			"organization": "DigitalOcean, LLC",
+			"auth_method": "api_key",
+			"icon_url": "/digitalocean/favicon_64x64.png",
+			"docs_url": "https://docs.digitalocean.com/reference/api/",
+			"status": "coming_soon",
+			"sort_order": 14
+		},
+		{
+			"category": "cloud",
+			"slug": "hetzner",
+			"name": "Hetzner Cloud",
+			"description": "Connect Hetzner Cloud with a scoped API token to provision a self-managed Talos Linux Kubernetes cluster on cheap VMs, with in-cluster data services via Helm.",
+			"organization": "Hetzner Online GmbH",
+			"auth_method": "api_key",
+			"icon_url": "/hetzner/favicon_64x64.png",
+			"docs_url": "https://docs.hetzner.cloud/",
+			"status": "active",
+			"sort_order": 15
+		},
+		{
+			"category": "cloud",
+			"slug": "civo",
+			"name": "Civo",
+			"description": "Connect Civo with a scoped API token to provision managed K3s clusters. Provisioning templates coming soon.",
+			"organization": "Civo Ltd",
+			"auth_method": "api_key",
+			"icon_url": "/civo/favicon_64x64.png",
+			"docs_url": "https://www.civo.com/docs",
+			"status": "coming_soon",
+			"sort_order": 16
+		},
+		{
+			"category": "git",
+			"slug": "github",
+			"name": "GitHub",
+			"description": "Connect repositories and wire GitOps deployments from GitHub.",
+			"organization": "GitHub, Inc.",
+			"auth_method": "oauth",
+			"icon_url": "/icons/github/github-32x32.png",
+			"docs_url": "https://docs.github.com/",
+			"status": "active",
+			"sort_order": 20
+		},
+		{
+			"category": "git",
+			"slug": "gitlab",
+			"name": "GitLab",
+			"description": "Connect repositories and wire GitOps deployments from GitLab.",
+			"organization": "GitLab Inc.",
+			"auth_method": "oauth",
+			"icon_url": "/icons/gitlab/gitlab-32x32.png",
+			"docs_url": "https://docs.gitlab.com/",
+			"status": "active",
+			"sort_order": 21
+		},
+		{
+			"category": "git",
+			"slug": "bitbucket",
+			"name": "Bitbucket",
+			"description": "Connect repositories and wire GitOps deployments from Bitbucket.",
+			"organization": "Atlassian",
+			"auth_method": "oauth",
+			"icon_url": "/icons/bitbucket/bitbucket-32x32.png",
+			"docs_url": "https://support.atlassian.com/bitbucket-cloud/",
+			"status": "active",
+			"sort_order": 22
+		}
+	],
+	"providers": [
+		{
+			"category": "dns",
+			"slug": "cloudflare",
+			"name": "Cloudflare",
+			"description": "Manage DNS records and certificates on Cloudflare instead of the cluster cloud's native DNS.",
+			"organization": "Cloudflare, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/cloudflare/cloudflare-32x32.png",
+			"docs_url": "https://developers.cloudflare.com/dns/",
+			"status": "active",
+			"sort_order": 30,
+			"module_path": "categories/dns/cloudflare",
+			"credential": {
+				"fields": [
+					{
+						"key": "api_token",
+						"label": "API Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A scoped Cloudflare API token with Zone:DNS:Edit permission."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "zone_id",
+						"label": "Zone ID",
+						"type": "text",
+						"required": true,
+						"help": "The Cloudflare Zone ID for the domain."
+					},
+					{
+						"key": "proxied",
+						"label": "Proxy records through Cloudflare",
+						"type": "boolean",
+						"default": false
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "vault",
+			"name": "HashiCorp Vault",
+			"description": "Manage application secrets in HashiCorp Vault, an external secrets store.",
+			"organization": "HashiCorp",
+			"auth_method": "api_key",
+			"icon_url": "/icons/vault/vault-32x32.png",
+			"docs_url": "https://developer.hashicorp.com/vault/docs",
+			"status": "active",
+			"sort_order": 40,
+			"module_path": "categories/secrets/vault",
+			"credential": {
+				"fields": [
+					{
+						"key": "address",
+						"label": "Vault Address",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Base URL of the Vault server, e.g. https://vault.example.com:8200"
+					},
+					{
+						"key": "token",
+						"label": "Vault Token",
+						"type": "password",
+						"secret": true,
+						"required": true
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "mount_path",
+						"label": "KV Mount Path",
+						"type": "text",
+						"default": "secret",
+						"required": true
+					},
+					{
+						"key": "kv_version",
+						"label": "KV Version",
+						"type": "select",
+						"options": [
+							"1",
+							"2"
+						],
+						"default": "2"
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "dockerhub",
+			"name": "Docker Hub",
+			"description": "Use a Docker Hub repository as the container registry instead of the cloud-native one.",
+			"organization": "Docker, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/dockerhub/dockerhub-32x32.png",
+			"docs_url": "https://docs.docker.com/docker-hub/",
+			"status": "active",
+			"sort_order": 50,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "access_token",
+						"label": "Access Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A Docker Hub personal access token (Account Settings → Security)."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "namespace",
+						"label": "Namespace / Organization",
+						"type": "text",
+						"required": false,
+						"help": "Defaults to the username if left blank."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "generic-cr",
+			"name": "Generic Registry",
+			"description": "Authenticate to any OCI/Docker registry with a URL, username, and password.",
+			"organization": "Self-hosted / any",
+			"auth_method": "api_key",
+			"icon_url": "/icons/generic-cr/generic-cr-32x32.png",
+			"docs_url": "https://distribution.github.io/distribution/",
+			"status": "active",
+			"sort_order": 51,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "password",
+						"label": "Password / Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "The password or access token for the registry."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_url",
+						"label": "Registry URL",
+						"type": "text",
+						"required": true,
+						"help": "The registry endpoint, e.g. https://registry.example.com."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "ghcr",
+			"name": "GitHub Container Registry",
+			"description": "Pull images from GitHub Container Registry (ghcr.io).",
+			"organization": "GitHub, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/github/github-32x32.png",
+			"docs_url": "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry",
+			"status": "active",
+			"sort_order": 52,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Your GitHub username."
+					},
+					{
+						"key": "password",
+						"label": "Personal Access Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A GitHub PAT with the read:packages scope."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": []
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "ghcr-enterprise",
+			"name": "GitHub Enterprise Container Registry",
+			"description": "Pull images from a GitHub Enterprise Server container registry.",
+			"organization": "GitHub, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/github/github-32x32.png",
+			"docs_url": "https://docs.github.com/en/enterprise-server@latest/packages/working-with-a-github-packages-registry/working-with-the-container-registry",
+			"status": "active",
+			"sort_order": 53,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Your GitHub Enterprise username."
+					},
+					{
+						"key": "password",
+						"label": "Personal Access Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A PAT with the read:packages scope on your GitHub Enterprise instance."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_url",
+						"label": "Registry URL",
+						"type": "text",
+						"required": true,
+						"help": "Your GitHub Enterprise container registry host, e.g. https://containers.github.example.com."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "gitlab-cr",
+			"name": "GitLab Container Registry",
+			"description": "Pull images from the GitLab container registry.",
+			"organization": "GitLab B.V.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/gitlab/gitlab-32x32.png",
+			"docs_url": "https://docs.gitlab.com/ee/user/packages/container_registry/",
+			"status": "active",
+			"sort_order": 54,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "A GitLab username or deploy-token username."
+					},
+					{
+						"key": "password",
+						"label": "Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A deploy token or PAT with the read_registry scope."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_url",
+						"label": "Registry URL",
+						"type": "text",
+						"required": false,
+						"help": "Defaults to https://registry.gitlab.com; set for self-managed GitLab."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "quay",
+			"name": "Quay",
+			"description": "Pull images from Quay.io or a self-hosted Quay registry.",
+			"organization": "Red Hat, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/quay/quay-32x32.png",
+			"docs_url": "https://docs.quay.io/",
+			"status": "active",
+			"sort_order": 55,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "A Quay username or robot account name."
+					},
+					{
+						"key": "password",
+						"label": "Token / Password",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "The robot account token or account password."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_url",
+						"label": "Registry URL",
+						"type": "text",
+						"required": false,
+						"help": "Defaults to https://quay.io; set for a self-hosted Quay."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "harbor",
+			"name": "Harbor",
+			"description": "Pull images from a self-hosted Harbor registry.",
+			"organization": "CNCF / Harbor",
+			"auth_method": "api_key",
+			"icon_url": "/icons/harbor/harbor-32x32.png",
+			"docs_url": "https://goharbor.io/docs/",
+			"status": "active",
+			"sort_order": 56,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "A Harbor username or robot account name."
+					},
+					{
+						"key": "password",
+						"label": "Password / Secret",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "The account password or robot account secret."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_url",
+						"label": "Registry URL",
+						"type": "text",
+						"required": true,
+						"help": "Your Harbor registry host, e.g. https://harbor.example.com."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "docr",
+			"name": "DigitalOcean Container Registry",
+			"description": "Pull images from the DigitalOcean container registry.",
+			"organization": "DigitalOcean, LLC",
+			"auth_method": "api_key",
+			"icon_url": "/icons/docr/docr-32x32.png",
+			"docs_url": "https://docs.digitalocean.com/products/container-registry/",
+			"status": "active",
+			"sort_order": 57,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "token",
+						"label": "API Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A DigitalOcean API token with registry read access. Used as both username and password."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": []
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "scaleway-cr",
+			"name": "Scaleway Container Registry",
+			"description": "Pull images from the Scaleway container registry.",
+			"organization": "Scaleway",
+			"auth_method": "api_key",
+			"icon_url": "/icons/scaleway-cr/scaleway-cr-32x32.png",
+			"docs_url": "https://www.scaleway.com/en/docs/container-registry/",
+			"status": "active",
+			"sort_order": 58,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "secret_key",
+						"label": "Secret Key",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A Scaleway secret key. The registry username is fixed to 'nologin'."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_url",
+						"label": "Registry URL",
+						"type": "text",
+						"required": true,
+						"help": "Your Scaleway registry endpoint, e.g. https://rg.fr-par.scw.cloud."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "ecr-xacct",
+			"name": "Amazon ECR (cross-account)",
+			"description": "Pull from an ECR registry in a different AWS account — keyless, no stored key. The cluster mints a short-lived pull token in-cluster from a role the target account trusts.",
+			"organization": "Amazon Web Services",
+			"auth_method": "iam_role",
+			"icon_url": "/icons/aws/aws-32x32.png",
+			"docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/repository-policy-examples.html",
+			"status": "coming_soon",
+			"sort_order": 60,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_account_id",
+						"label": "Target AWS Account ID",
+						"type": "text",
+						"required": true,
+						"help": "The AWS account that owns the ECR registry (the account the cluster pulls from cross-account)."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": true,
+						"help": "The ECR registry region, e.g. us-east-1."
+					},
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": true,
+						"help": "The registry endpoint, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com."
+					},
+					{
+						"key": "target_role_arn",
+						"label": "Target Role ARN",
+						"type": "text",
+						"required": true,
+						"help": "An IAM role in the target account that trusts this cluster's workload identity and grants ECR pull (GetAuthorizationToken + BatchGetImage). You create this in the registry account."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "gar-xacct",
+			"name": "Google Artifact Registry (cross-project)",
+			"description": "Pull from an Artifact Registry repository in a different GCP project — keyless, no stored key. The cluster mints a short-lived token in-cluster from a service account the target project granted reader.",
+			"organization": "Google Cloud",
+			"auth_method": "service_account",
+			"icon_url": "/icons/gcp/gcp-32x32.png",
+			"docs_url": "https://cloud.google.com/artifact-registry/docs/access-control",
+			"status": "coming_soon",
+			"sort_order": 61,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_project_id",
+						"label": "Target GCP Project ID",
+						"type": "text",
+						"required": true,
+						"help": "The GCP project that owns the Artifact Registry repository."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": true,
+						"help": "The Artifact Registry location, e.g. us-central1."
+					},
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": true,
+						"help": "The registry endpoint, e.g. us-central1-docker.pkg.dev."
+					},
+					{
+						"key": "target_service_account",
+						"label": "Reader Service Account",
+						"type": "text",
+						"required": true,
+						"help": "The service account the target project granted roles/artifactregistry.reader on the repository. You grant this in the registry project."
+					}
+				]
+			}
+		},
+		{
+			"category": "registry",
+			"slug": "acr-xacct",
+			"name": "Azure Container Registry (cross-subscription)",
+			"description": "Pull from an ACR in a different Azure subscription — keyless, no stored key. The cluster mints a short-lived token in-cluster from an identity the target ACR granted AcrPull.",
+			"organization": "Microsoft Azure",
+			"auth_method": "service_principal",
+			"icon_url": "/icons/azure/azure-32x32.png",
+			"docs_url": "https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication",
+			"status": "coming_soon",
+			"sort_order": 62,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_subscription_id",
+						"label": "Target Subscription ID",
+						"type": "text",
+						"required": true,
+						"help": "The Azure subscription that owns the ACR."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": false,
+						"help": "The ACR region (optional)."
+					},
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": true,
+						"help": "The registry endpoint, e.g. myregistry.azurecr.io."
+					},
+					{
+						"key": "target_identity_client_id",
+						"label": "Pull Identity Client ID",
+						"type": "text",
+						"required": true,
+						"help": "The client id of the identity the target ACR granted AcrPull. You grant this in the registry subscription."
+					}
+				]
+			}
+		},
+		{
+			"category": "observability",
+			"slug": "datadog",
+			"name": "Datadog",
+			"description": "Ship cluster metrics, logs, and traces to Datadog.",
+			"organization": "Datadog, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/datadog/datadog-32x32.png",
+			"docs_url": "https://docs.datadoghq.com/",
+			"status": "active",
+			"sort_order": 60,
+			"module_path": "categories/observability/datadog",
+			"credential": {
+				"fields": [
+					{
+						"key": "api_key",
+						"label": "API Key",
+						"type": "password",
+						"secret": true,
+						"required": true
+					},
+					{
+						"key": "app_key",
+						"label": "Application Key",
+						"type": "password",
+						"secret": true,
+						"required": true
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "site",
+						"label": "Datadog Site",
+						"type": "select",
+						"options": [
+							"datadoghq.com",
+							"datadoghq.eu",
+							"us3.datadoghq.com",
+							"us5.datadoghq.com",
+							"ap1.datadoghq.com"
+						],
+						"default": "datadoghq.com"
+					}
+				]
+			}
+		},
+		{
+			"category": "observability",
+			"slug": "grafana",
+			"name": "Grafana Cloud",
+			"description": "Remote-write metrics to Grafana Cloud's managed Prometheus.",
+			"organization": "Grafana Labs",
+			"auth_method": "api_key",
+			"icon_url": "/icons/grafana/grafana-32x32.png",
+			"docs_url": "https://grafana.com/docs/grafana-cloud/",
+			"status": "active",
+			"sort_order": 70,
+			"module_path": "categories/observability/grafana",
+			"credential": {
+				"fields": [
+					{
+						"key": "instance_id",
+						"label": "Instance ID / Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "api_token",
+						"label": "API Token",
+						"type": "password",
+						"secret": true,
+						"required": true
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "remote_write_url",
+						"label": "Remote Write URL",
+						"type": "text",
+						"required": true,
+						"help": "The Grafana Cloud Prometheus remote_write endpoint."
+					}
+				]
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "helm-https",
+			"name": "HTTPS Helm Repository",
+			"description": "Authenticate to a classic index.yaml Helm chart repository (https://charts.example.com) with HTTP basic auth.",
+			"organization": "Self-hosted / any",
+			"auth_method": "api_key",
+			"icon_url": "/icons/generic-cr/generic-cr-32x32.png",
+			"docs_url": "https://helm.sh/docs/topics/chart_repository/",
+			"status": "active",
+			"sort_order": 71,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "password",
+						"label": "Password / Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "The password or access token for the chart repository."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "repo_url",
+						"label": "Repository URL",
+						"type": "text",
+						"required": true,
+						"help": "The chart repository URL, e.g. https://charts.example.com."
+					}
+				]
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-docker-hub",
+			"name": "Docker Hub (OCI Helm)",
+			"description": "Pull Helm charts from Docker Hub's OCI registry (registry-1.docker.io).",
+			"organization": "Docker, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/dockerhub/dockerhub-32x32.png",
+			"docs_url": "https://docs.docker.com/docker-hub/oci-artifacts/",
+			"status": "active",
+			"sort_order": 72,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "access_token",
+						"label": "Access Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A Docker Hub access token."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": []
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-github-cr",
+			"name": "GitHub Container Registry (OCI Helm)",
+			"description": "Pull Helm charts from GitHub Container Registry (ghcr.io).",
+			"organization": "GitHub, Inc.",
+			"auth_method": "api_key",
+			"icon_url": "/icons/github/github-32x32.png",
+			"docs_url": "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry",
+			"status": "active",
+			"sort_order": 73,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Your GitHub username."
+					},
+					{
+						"key": "password",
+						"label": "Password / Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A GitHub PAT with the read:packages scope."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": []
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-gitlab-cr",
+			"name": "GitLab Container Registry (OCI Helm)",
+			"description": "Pull Helm charts from a GitLab container registry (registry.gitlab.com or a self-managed host).",
+			"organization": "GitLab",
+			"auth_method": "api_key",
+			"icon_url": "/icons/gitlab/gitlab-32x32.png",
+			"docs_url": "https://docs.gitlab.com/user/packages/container_registry/",
+			"status": "active",
+			"sort_order": 74,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "password",
+						"label": "Password / Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A GitLab deploy or personal access token."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": false,
+						"help": "The registry host (optional; defaults to registry.gitlab.com)."
+					}
+				]
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-generic-cr",
+			"name": "Generic OCI Registry (Helm)",
+			"description": "Pull Helm charts from any OCI-compliant registry (Harbor, JFrog, a self-hosted distribution) with a host, username, and password.",
+			"organization": "Self-hosted / any",
+			"auth_method": "api_key",
+			"icon_url": "/icons/generic-cr/generic-cr-32x32.png",
+			"docs_url": "https://helm.sh/docs/topics/registries/",
+			"status": "active",
+			"sort_order": 75,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "username",
+						"label": "Username",
+						"type": "text",
+						"secret": false,
+						"required": true
+					},
+					{
+						"key": "password",
+						"label": "Password / Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "The password or access token for the registry."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": true,
+						"help": "The OCI registry host, e.g. registry.example.com."
+					}
+				]
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-scaleway-cr",
+			"name": "Scaleway Container Registry (OCI Helm)",
+			"description": "Pull Helm charts from the Scaleway container registry. The username is fixed to 'nologin'.",
+			"organization": "Scaleway",
+			"auth_method": "api_key",
+			"icon_url": "/icons/scaleway-cr/scaleway-cr-32x32.png",
+			"docs_url": "https://www.scaleway.com/en/docs/container-registry/",
+			"status": "active",
+			"sort_order": 76,
+			"module_path": "",
+			"credential": {
+				"fields": [
+					{
+						"key": "secret_key",
+						"label": "Secret Key",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A Scaleway secret key. The registry username is fixed to 'nologin'."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": true,
+						"help": "Your Scaleway registry host, e.g. rg.fr-par.scw.cloud."
+					}
+				]
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-ecr",
+			"name": "Amazon ECR (OCI Helm)",
+			"description": "Pull Helm charts from Amazon ECR. Coming soon: ECR uses a 12-hour ephemeral token, so its keyless in-cluster token refresh (from the connected AWS account) is a documented follow-up.",
+			"organization": "Amazon Web Services",
+			"auth_method": "api_key",
+			"icon_url": "/icons/aws/aws-32x32.png",
+			"docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/push-oci-artifact.html",
+			"status": "coming_soon",
+			"sort_order": 77,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": false,
+						"help": "The ECR registry host, e.g. 1234.dkr.ecr.us-east-1.amazonaws.com."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": false,
+						"help": "The ECR region."
+					}
+				]
+			}
+		},
+		{
+			"category": "helm_registry",
+			"slug": "oci-public-ecr",
+			"name": "Amazon ECR Public (OCI Helm)",
+			"description": "Pull Helm charts from Amazon ECR Public (public.ecr.aws). Coming soon: keyless in-cluster token refresh is a documented follow-up.",
+			"organization": "Amazon Web Services",
+			"auth_method": "api_key",
+			"icon_url": "/icons/aws/aws-32x32.png",
+			"docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/public/public-registries.html",
+			"status": "coming_soon",
+			"sort_order": 78,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": false,
+						"help": "The ECR Public registry host (public.ecr.aws)."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "doppler",
+			"name": "Doppler",
+			"description": "Manage application secrets in Doppler, an external secrets store.",
+			"organization": "Doppler",
+			"auth_method": "api_key",
+			"icon_url": "/icons/doppler/doppler-32x32.png",
+			"docs_url": "https://docs.doppler.com/docs/terraform-provider",
+			"status": "active",
+			"sort_order": 41,
+			"module_path": "categories/secrets/doppler",
+			"credential": {
+				"fields": [
+					{
+						"key": "token",
+						"label": "API Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A write-capable Doppler API token (personal or Service-Account). A read-only service token cannot manage secrets."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "project",
+						"label": "Project",
+						"type": "text",
+						"required": true,
+						"help": "The Doppler project the managed secrets live in."
+					},
+					{
+						"key": "config",
+						"label": "Config",
+						"type": "text",
+						"required": true,
+						"help": "The Doppler config (environment) within the project."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "infisical",
+			"name": "Infisical",
+			"description": "Manage application secrets in Infisical, an external (SaaS or self-hosted) secrets store.",
+			"organization": "Infisical",
+			"auth_method": "api_key",
+			"icon_url": "/icons/infisical/infisical-32x32.png",
+			"docs_url": "https://infisical.com/docs/integrations/frameworks/terraform",
+			"status": "active",
+			"sort_order": 42,
+			"module_path": "categories/secrets/infisical",
+			"credential": {
+				"fields": [
+					{
+						"key": "client_id",
+						"label": "Machine Identity Client ID",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Infisical Universal Auth (machine identity) client id."
+					},
+					{
+						"key": "client_secret",
+						"label": "Machine Identity Client Secret",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "Infisical Universal Auth client secret."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "host",
+						"label": "Host",
+						"type": "text",
+						"default": "https://app.infisical.com",
+						"required": false,
+						"help": "Infisical API host (override for self-hosted)."
+					},
+					{
+						"key": "workspace_id",
+						"label": "Workspace ID",
+						"type": "text",
+						"required": true,
+						"help": "The Infisical workspace (project) id."
+					},
+					{
+						"key": "env_slug",
+						"label": "Environment",
+						"type": "text",
+						"default": "dev",
+						"required": false,
+						"help": "Environment slug (e.g. dev, staging, prod)."
+					},
+					{
+						"key": "folder_path",
+						"label": "Folder Path",
+						"type": "text",
+						"default": "/",
+						"required": false,
+						"help": "Secret folder path."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "onepassword",
+			"name": "1Password",
+			"description": "Manage application secrets in 1Password, an external secrets store.",
+			"organization": "1Password",
+			"auth_method": "api_key",
+			"icon_url": "/icons/onepassword/onepassword-32x32.png",
+			"docs_url": "https://developer.1password.com/docs/terraform/",
+			"status": "active",
+			"sort_order": 43,
+			"module_path": "categories/secrets/onepassword",
+			"credential": {
+				"fields": [
+					{
+						"key": "service_account_token",
+						"label": "Service Account Token",
+						"type": "password",
+						"secret": true,
+						"required": true,
+						"help": "A 1Password Service Account token (supports creating items)."
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "vault",
+						"label": "Vault UUID",
+						"type": "text",
+						"required": true,
+						"help": "The 1Password vault UUID the managed secrets live in."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "aws-sm-xacct",
+			"name": "AWS Secrets Manager (cross-account)",
+			"description": "Read secrets from a Secrets Manager in a different AWS account — keyless, no stored key. The External Secrets Operator assumes a role the target account trusts and reads across the account boundary.",
+			"organization": "Amazon Web Services",
+			"auth_method": "iam_role",
+			"icon_url": "/icons/aws/aws-32x32.png",
+			"docs_url": "https://external-secrets.io/latest/provider/aws-secrets-manager/",
+			"status": "coming_soon",
+			"sort_order": 44,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_account_id",
+						"label": "Target AWS Account ID",
+						"type": "text",
+						"required": true,
+						"help": "The AWS account that owns the Secrets Manager secrets (the account the cluster reads from cross-account)."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": true,
+						"help": "The Secrets Manager region, e.g. us-east-1."
+					},
+					{
+						"key": "target_role_arn",
+						"label": "Target Role ARN",
+						"type": "text",
+						"required": true,
+						"help": "An IAM role in the secrets account that trusts this cluster's external-secrets IRSA role and grants secretsmanager:GetSecretValue. You create this in the secrets account."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "gcp-sm-xacct",
+			"name": "GCP Secret Manager (cross-project)",
+			"description": "Read secrets from a Secret Manager in a different GCP project — keyless, no stored key. The External Secrets Operator reads the target project with the cluster's Workload Identity, which the target project granted secretAccessor.",
+			"organization": "Google Cloud",
+			"auth_method": "service_account",
+			"icon_url": "/icons/gcp/gcp-32x32.png",
+			"docs_url": "https://external-secrets.io/latest/provider/google-secrets-manager/",
+			"status": "coming_soon",
+			"sort_order": 45,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_project_id",
+						"label": "Target GCP Project ID",
+						"type": "text",
+						"required": true,
+						"help": "The GCP project that owns the Secret Manager secrets and granted your cluster's Workload-Identity principal roles/secretmanager.secretAccessor."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": false,
+						"help": "The secret location for regional secrets, e.g. us-central1 (optional; leave blank for global secrets)."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "azure-kv-xacct",
+			"name": "Azure Key Vault (cross-subscription)",
+			"description": "Read secrets from a Key Vault in a different Azure subscription (same tenant) — keyless, no stored key. The External Secrets Operator authenticates with the cluster's workload identity, which the target vault granted Key Vault Secrets User.",
+			"organization": "Microsoft Azure",
+			"auth_method": "service_principal",
+			"icon_url": "/icons/azure/azure-32x32.png",
+			"docs_url": "https://external-secrets.io/latest/provider/azure-key-vault/",
+			"status": "coming_soon",
+			"sort_order": 46,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_subscription_id",
+						"label": "Target Subscription ID",
+						"type": "text",
+						"required": true,
+						"help": "The Azure subscription that owns the Key Vault (same tenant as the cluster — cross-tenant is not supported keyless)."
+					},
+					{
+						"key": "vault_url",
+						"label": "Key Vault URL",
+						"type": "text",
+						"required": true,
+						"help": "The target Key Vault URL, e.g. https://my-vault.vault.azure.net."
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
+			"slug": "alibaba-kms-xacct",
+			"name": "Alibaba KMS Secrets Manager (cross-account)",
+			"description": "Read secrets from a KMS Secrets Manager in a different Alibaba RAM account — keyless, no stored key. The External Secrets Operator's RRSA identity assumes a role the target account trusts via its OIDC provider.",
+			"organization": "Alibaba Cloud",
+			"auth_method": "ram_role",
+			"icon_url": "/alibaba/favicon_64x64.png",
+			"docs_url": "https://external-secrets.io/latest/provider/alibaba/",
+			"status": "coming_soon",
+			"sort_order": 47,
+			"module_path": "",
+			"credential": {
+				"fields": []
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "target_account_id",
+						"label": "Target RAM Account ID",
+						"type": "text",
+						"required": true,
+						"help": "The Alibaba account that owns the KMS Secrets Manager secrets."
+					},
+					{
+						"key": "region",
+						"label": "Region",
+						"type": "text",
+						"required": true,
+						"help": "The KMS region, e.g. cn-hangzhou."
+					},
+					{
+						"key": "target_role_arn",
+						"label": "Target Role ARN",
+						"type": "text",
+						"required": true,
+						"help": "The acs:ram role in the secrets account that trusts this cluster's RRSA OIDC provider and grants KMS secret read. You create this in the secrets account."
+					},
+					{
+						"key": "target_oidc_provider_arn",
+						"label": "Target OIDC Provider ARN",
+						"type": "text",
+						"required": true,
+						"help": "The RAM OIDC provider in the secrets account trusting this cluster's ACK OIDC issuer. ESO's RRSA exchanges its projected token for the target role via this provider."
+					}
+				]
+			}
+		}
+	]
 }
