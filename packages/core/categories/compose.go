@@ -39,6 +39,9 @@ func Compose(
 	// Cross-account keyless registry PULL is off by default (separate from registry_provider — it
 	// adds a foreign-account pull without replacing the native registry).
 	tfvars["registry_pull_provider"] = "native"
+	// Cross-account keyless secret manager is off by default (separate from secrets_provider — it adds
+	// a foreign-account ClusterSecretStore without replacing the native store).
+	tfvars["secrets_xacct_provider"] = "native"
 
 	modules := map[string]map[string]any{}
 
@@ -103,16 +106,39 @@ func Compose(
 		if err != nil {
 			return 0, err
 		}
-		ctx := ComponentContext{
-			Project:        vc,
-			Credentials:    vc.ConnectorCredentialFor("secrets", slug),
-			ProviderConfig: secretsProviderConfig(vc, slug),
-			Items:          items,
+		if IsKeylessSecretStore(slug) {
+			// A cross-account KEYLESS secret manager (AWS SM / GCP SM / Azure KV / Alibaba KMS in a foreign
+			// account) is an ADDITIONAL read source, not a replacement: the cluster keeps its native store.
+			// So set the SEPARATE secrets_xacct_provider guard (the cluster template wires the least-privilege
+			// assume leg for AWS/Alibaba), NEVER secrets_provider (which would switch the native store off).
+			// There is NO tofu create-secret module — the External Secrets Operator ClusterSecretStore that
+			// reads the foreign account is rendered by argocd.EnsureExternalSecretsStore, not tofu.
+			ctx := ComponentContext{Project: vc, ProviderConfig: secretsProviderConfig(vc, slug), Items: items}
+			if err := p.Validate(ctx); err != nil {
+				return 0, fmt.Errorf("secrets/%s validation failed: %w", slug, err)
+			}
+			tfvars["secrets_xacct_provider"] = slug
+			if t, ok := p.KeylessSecretStore(ctx); ok && (t.Provider == "aws" || t.Provider == "alibaba") {
+				// AWS / Alibaba: the cluster-side ESO identity must be allowed to assume the target-account
+				// role. GCP/Azure need no cluster-side leg — the read grant lives entirely in the target
+				// project/subscription, bound to our workload identity by the customer bootstrap (Model B).
+				tfvars["secrets_xacct_target_role_arn"] = t.TargetRef
+			}
+			fmt.Fprintf(log, "Cross-account keyless secret manager %s: ESO reads the foreign account via ClusterSecretStore (native store untouched)\n", slug)
+		} else {
+			// A credential-based store (vault/doppler/infisical/onepassword) provisions placeholder entries
+			// via its tofu module and switches the native store off via secrets_provider.
+			ctx := ComponentContext{
+				Project:        vc,
+				Credentials:    vc.ConnectorCredentialFor("secrets", slug),
+				ProviderConfig: secretsProviderConfig(vc, slug),
+				Items:          items,
+			}
+			if err := add("secrets", p, ctx); err != nil {
+				return 0, err
+			}
+			tfvars["secrets_provider"] = slug
 		}
-		if err := add("secrets", p, ctx); err != nil {
-			return 0, err
-		}
-		tfvars["secrets_provider"] = slug
 	}
 
 	// ── Container registries (multi → homogeneous) ──

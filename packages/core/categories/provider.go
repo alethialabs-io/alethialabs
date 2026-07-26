@@ -53,6 +53,13 @@ type behavior struct {
 	// keyless registry gets a continuously-refreshed dockerconfigjson (the refresher Deployment), not a
 	// static one. nil → not a keyless registry.
 	keylessRegistry func(ComponentContext) KeylessRegistryTarget
+	// keylessSecretStore, when set (cross-account keyless secret-manager providers: AWS SM / GCP SM /
+	// Azure KV / Alibaba KMS in a DIFFERENT account than the cluster), describes the foreign-account
+	// secret store the in-cluster External Secrets Operator reads across the account boundary using the
+	// cluster's own workload identity — NO stored key. It is an ADDITIONAL read source (an extra
+	// ClusterSecretStore), NOT a replacement of the native store, so it never flips the native secrets
+	// gate. nil → not a keyless secret store.
+	keylessSecretStore func(ComponentContext) KeylessSecretTarget
 	// repoCred, when set (helm_registry category only), maps a private Helm/OCI chart-repo connection to
 	// the ArgoCD repository credential the runner seeds post-apply (argocd.EnsureHelmRepoCredential):
 	// the chart-repo URL (oci://host for an OCI registry, https://… for an HTTPS chart repo), the
@@ -152,6 +159,25 @@ func (p *CategoryProvider) KeylessRegistry(ctx ComponentContext) (KeylessRegistr
 func IsKeylessRegistry(slug string) bool {
 	b, ok := behaviors["registry/"+slug]
 	return ok && b.keylessRegistry != nil
+}
+
+// KeylessSecretStore returns the cross-account keyless secret-manager target (AWS SM / GCP SM / Azure
+// KV / Alibaba KMS in a foreign account), or ok=false when the provider is not a keyless secret store.
+// A keyless secret store adds a foreign-account ClusterSecretStore the External Secrets Operator reads
+// with the cluster's workload identity; it has no stored credential.
+func (p *CategoryProvider) KeylessSecretStore(ctx ComponentContext) (KeylessSecretTarget, bool) {
+	if p.b.keylessSecretStore == nil {
+		return KeylessSecretTarget{}, false
+	}
+	return p.b.keylessSecretStore(ctx), true
+}
+
+// IsKeylessSecretStore reports whether a secrets slug is a cross-account keyless secret-manager
+// provider (an ADDITIONAL foreign-account read source, not a native-store replacement). Cheap lookup
+// for routing in Compose / DominantKeylessSecretTarget without building a full ComponentContext.
+func IsKeylessSecretStore(slug string) bool {
+	b, ok := behaviors["secrets/"+slug]
+	return ok && b.keylessSecretStore != nil
 }
 
 // RepoCred returns the ArgoCD repository credential a private Helm/OCI chart-repo connection maps to
