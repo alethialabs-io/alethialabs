@@ -10,8 +10,10 @@ import { describe, expect, it } from "vitest";
 import {
 	advisoryFor,
 	dbEngineOptions,
+	dbInstanceClassOptions,
 	dbVersionOptions,
 	cacheTierOptions,
+	cacheVersionOptions,
 	existingNetworkOptions,
 	instanceTypeOptions,
 	intersectWithFloor,
@@ -434,5 +436,119 @@ describe("dbVersionOptions — the engine-version axis (#1351)", () => {
 			caps: NO_CAPABILITIES,
 		};
 		expect(dbVersionOptions(ctx)).toEqual([]);
+	});
+});
+
+// ── the two catalog-less axes (#977 residue) ────────────────────────────────────────────────────
+//
+// These two resolvers are the exception to invariant 1, deliberately: their fields are COMBOBOXES,
+// so the options are suggestions and an empty list is a fine answer — the control still accepts any
+// value. That matters because there is no Catalog #2 slice to fail open to (a SKU is the
+// non-portable escape hatch the catalog omits), and because the lanes cannot enumerate exhaustively
+// anyway. Returning [] rather than inventing a list is the honest behaviour; keeping the value
+// typeable is the control's job, tested in config-fields-combobox.test.tsx.
+
+describe("dbInstanceClassOptions", () => {
+	const skuCtx = (bag: Partial<CapabilityBag> = {}, engineFamily = "postgres"): FieldCtx => ({
+		provider: "aws",
+		config: { engine_family: engineFamily },
+		caps: { ...NO_CAPABILITIES, provider: "aws", identityId: "id-1", state: "ready", ...bag },
+	});
+
+	it("suggests nothing when nothing is synced, rather than inventing a list", () => {
+		expect(dbInstanceClassOptions(skuCtx())).toEqual([]);
+	});
+
+	it("narrows the account's SKUs to the selected engine, keeping engine-agnostic rows", () => {
+		const opts = dbInstanceClassOptions(
+			skuCtx({
+				dbInstanceClasses: [
+					{ value: "db.r6g.large", label: "db.r6g.large", engine: "aurora-postgresql" },
+					{ value: "db.m5.large", label: "db.m5.large", engine: "aurora-mysql" },
+					{ value: "anywhere", label: "anywhere", engine: null },
+				],
+			}),
+		);
+		expect(opts.map((o) => o.value)).toEqual(["db.r6g.large", "anywhere"]);
+	});
+
+	it("does not narrow when no engine is chosen — the whole account set beats none", () => {
+		const opts = dbInstanceClassOptions(
+			skuCtx(
+				{
+					dbInstanceClasses: [
+						{ value: "db.r6g.large", label: "db.r6g.large", engine: "aurora-postgresql" },
+						{ value: "db.m5.large", label: "db.m5.large", engine: "aurora-mysql" },
+					],
+				},
+				"",
+			),
+		);
+		expect(opts.map((o) => o.value)).toEqual(["db.r6g.large", "db.m5.large"]);
+	});
+
+	it("ignores a bag describing another cloud", () => {
+		const ctx: FieldCtx = {
+			provider: "aws",
+			config: { engine_family: "postgres" },
+			caps: {
+				...NO_CAPABILITIES,
+				provider: "gcp",
+				identityId: "id-1",
+				state: "ready",
+				dbInstanceClasses: [{ value: "db-custom-2-7680", label: "x", engine: null }],
+			},
+		};
+		expect(dbInstanceClassOptions(ctx)).toEqual([]);
+	});
+});
+
+describe("cacheVersionOptions", () => {
+	it("suggests nothing where the cloud documents an exclusion — the field is still typeable", () => {
+		expect(cacheVersionOptions(ctxStatic("gcp"))).toEqual([]);
+	});
+
+	it("suggests the account's versions, newest-first as the reader ordered them", () => {
+		const opts = cacheVersionOptions(
+			ctxWith("aws", {
+				cacheVersions: [
+					{ value: "7.1", label: "7.1", launchable: "launchable" },
+					{ value: "6.2", label: "6.2", launchable: "launchable" },
+				],
+			}),
+		);
+		expect(opts.map((o) => o.value)).toEqual(["7.1", "6.2"]);
+	});
+});
+
+describe("provenanceNote — a catalog-less axis must not claim a catalog", () => {
+	const bagWith = (source: "account" | "catalog"): FieldCtx => ({
+		provider: "aws",
+		config: {},
+		caps: {
+			...NO_CAPABILITIES,
+			provider: "aws",
+			identityId: "id-1",
+			state: "ready",
+			axisSource: { ...NO_CAPABILITIES.axisSource, db_instance_class: source },
+		},
+	});
+
+	it("says there is no catalog rather than 'showing the full catalog'", () => {
+		expect(provenanceNote(bagWith("catalog"), "db_instance_class", 1)).toBe(
+			"No catalog for this field — the cloud's default is used.",
+		);
+	});
+
+	it("still reports the account count when the account HAS reported SKUs", () => {
+		expect(provenanceNote(bagWith("account"), "db_instance_class", 12)).toBe(
+			"12 available to this account.",
+		);
+	});
+
+	it("leaves the catalogued axes' wording alone", () => {
+		expect(provenanceNote(bagWith("catalog"), "instance_type", 340)).toBe(
+			"Showing the full catalog.",
+		);
 	});
 });
