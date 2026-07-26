@@ -30,7 +30,6 @@ import type {
 	ChartValuePathMap,
 	ChartWorkloadConfig,
 	ChartWorkloadRendered,
-	ClusterAdmin,
 	ClusterProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
@@ -155,7 +154,6 @@ export const projectCluster = pgTable(
 		// node instance types per cloud at provision time (the form supplies explicit
 		// values for a chosen provider).
 		cluster_version: text(),
-		cluster_admins: jsonb().$type<ClusterAdmin[]>().default([]),
 		// Cloud-indifferent node capability ({vcpu, memory_gb}); the Go resolver maps it to
 		// the nearest per-provider instance type at provision time.
 		node_size: jsonb().$type<NodeSize>(),
@@ -197,10 +195,12 @@ export const projectCluster = pgTable(
 	],
 );
 
-// A cluster's day-2 admins, normalized out of project_cluster.cluster_admins JSONB. `groups` is a
-// real text[] column; `ordinal` preserves author order so buildConfigSnapshot re-embeds a
-// byte-identical array. Tenancy flows through the parent cluster → project (join-through RLS in
-// programmables.sql). ON DELETE CASCADE: clearing the cluster drops its admins.
+// A cluster's day-2 admins — the sole source since the contract phase dropped the
+// project_cluster.cluster_admins JSONB. `groups` is a real text[] column; `ordinal` preserves author
+// order so buildConfigSnapshot (via lib/db/normalized-reads.ts) and the project_full view (via an
+// ordered jsonb_agg subquery) re-embed a byte-identical array. Tenancy flows through the parent
+// cluster → project (join-through RLS in programmables.sql). ON DELETE CASCADE: clearing the cluster
+// drops its admins.
 export const clusterAdmins = pgTable(
 	"cluster_admins",
 	{

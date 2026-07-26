@@ -44,10 +44,13 @@ import type {
 // otherwise) so ProjectFormData keeps the same field types the form components rely on.
 const projectsInsert = createInsertSchema(projects);
 const networkInsert = createInsertSchema(projectNetwork);
+// cluster_admins is no longer a project_cluster column (contract phase — it persists to the
+// cluster_admins child table), so it's a form-only field extended onto the insert shape.
 const clusterInsert = createInsertSchema(projectCluster, {
-	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 	provider_config: z.custom<ClusterProviderConfig>().optional(),
 	node_size: z.custom<NodeSize>().optional(),
+}).extend({
+	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 });
 const dnsInsert = createInsertSchema(projectDns, {
 	provider_config: z.custom<DnsProviderConfig>().optional(),
