@@ -153,7 +153,13 @@ export function ConfigureProject({
 		setRegion(DEFAULT_REGION[prov]);
 	};
 
-	const needsCloud = !identityId;
+	// A cloud is required only when the create needs a provider — an import (its inferred stack targets
+	// one) or a Template (its cluster preset is per-provider). Blank / BYO create an empty project with
+	// no cloud (picked later on the canvas), exactly like the old "Create empty project" path.
+	const requiresCloud =
+		source.kind === "import" ||
+		(source.kind === "scratch" && source.scratch === "template");
+	const needsCloud = requiresCloud && !identityId;
 	const slug = slugify(name) || "project";
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
@@ -162,7 +168,7 @@ export function ConfigureProject({
 			toast.error("Name your project.");
 			return;
 		}
-		if (!identityId) {
+		if (requiresCloud && !identityId) {
 			toast.error("Connect and select a cloud account first.");
 			return;
 		}
@@ -188,6 +194,8 @@ export function ConfigureProject({
 					},
 				};
 			} else if (source.kind === "scratch" && source.scratch === "template") {
+				// requiresCloud guarantees a cloud for the template path; narrow for buildCreateInput.
+				if (!identityId) throw new Error("A cloud account is required.");
 				input = buildCreateInput({
 					projectName: name,
 					template: "standard",
@@ -278,6 +286,7 @@ export function ConfigureProject({
 
 					<Section n="01" title="Project">
 						<Input
+							id="project_name"
 							value={name}
 							autoComplete="off"
 							placeholder="my-project"
