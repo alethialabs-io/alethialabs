@@ -29,11 +29,12 @@ func TestSelectPlacementPath(t *testing.T) {
 		{"namespace azure → fail closed", types.PlacementModeNamespace, "azure", placementUnactivated},
 		{"namespace alibaba → fail closed", types.PlacementModeNamespace, "alibaba", placementUnactivated},
 		{"namespace hetzner → fail closed (permanent exclusion)", types.PlacementModeNamespace, "hetzner", placementUnactivated},
-		// vcluster is activated per-cloud as its host re-mint lands: aws (in-core) + gcp (runner-injected
-		// KubeConnResolver). azure/alibaba fail closed until their leg lands; hetzner is a permanent exclusion.
+		// vcluster is activated per-cloud as its host re-mint lands: aws (in-core) + gcp/azure
+		// (runner-injected KubeConnResolver). alibaba fails closed until its leg lands; hetzner is permanent.
 		{"vcluster aws → activated", types.PlacementModeVcluster, "aws", placementVcluster},
 		{"vcluster gcp → activated", types.PlacementModeVcluster, "gcp", placementVcluster},
-		{"vcluster azure → fail closed", types.PlacementModeVcluster, "azure", placementUnactivated},
+		{"vcluster azure → activated", types.PlacementModeVcluster, "azure", placementVcluster},
+		{"vcluster alibaba → fail closed", types.PlacementModeVcluster, "alibaba", placementUnactivated},
 		{"vcluster hetzner → fail closed (permanent exclusion)", types.PlacementModeVcluster, "hetzner", placementUnactivated},
 		{"unknown mode → fail closed", types.PlacementMode("bogus"), "aws", placementUnactivated},
 	}
@@ -131,12 +132,12 @@ func TestUnactivatedPlacementError(t *testing.T) {
 	}
 
 	// vcluster on an un-activated cloud names the cloud and the per-cloud reason (parity is documented,
-	// not silent) and points at a working cloud. azure is still a follow-up (gcp is now activated).
-	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "azure")
+	// not silent) and points at a working cloud. alibaba is still a follow-up (gcp/azure now activated).
+	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "alibaba")
 	if vcErr == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"vcluster", "azure", "aws"} {
+	for _, want := range []string{"vcluster", "alibaba", "aws"} {
 		if !strings.Contains(vcErr.Error(), want) {
 			t.Errorf("vcluster error %q missing %q", vcErr.Error(), want)
 		}

@@ -84,7 +84,7 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster, wired for aws (EKS DescribeCluster) today; gcp/azure/alibaba need output-based kubeconfig mint helpers and hetzner-talos a Fabric-create-time kubeconfig (per-cloud follow-ups). 'dedicated' provisions on every cloud", pm, provider)
 	}
 	if pm == types.PlacementModeVcluster {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster) and gcp (GKE clusters.get host re-mint) today; azure/alibaba are per-cloud follow-ups (#1128/#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get) and azure (AKS ManagedClusters) host re-mint today; alibaba is a per-cloud follow-up (#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud), 'namespace' (aws) and 'vcluster' (aws) provision today", pm)
 }
@@ -137,10 +137,10 @@ func namespaceRemintNotWired(provider string) error {
 // lives in packages/core). alibaba is a follow-up — its ConfigureKubeconfig reads a full `kubeconfig`
 // output (a different shape, and RRSA not a bearer token).
 var namespaceClusterConnKeys = map[string]struct{ endpoint, ca string }{
-	"gcp": {endpoint: "gke_cluster_endpoint", ca: "gke_cluster_ca_certificate"},
-	// "azure" follows once the Fabric's resource group is resolvable for a placed env (its RG is
-	// rg-<fabric-project>-<fabric-env>, not the placed env's — needs the RG on the snapshot or an ARM
-	// ManagedClusters.List lookup): {endpoint: "aks_cluster_endpoint", ca: "aks_cluster_ca_certificate"}.
+	"gcp":   {endpoint: "gke_cluster_endpoint", ca: "gke_cluster_ca_certificate"},
+	"azure": {endpoint: "aks_cluster_endpoint", ca: "aks_cluster_ca_certificate"},
+	// alibaba follows — its ConfigureKubeconfig reads a full `kubeconfig` output (a different shape),
+	// and its ARM analogue signs requests rather than using a bearer token.
 }
 
 // mintClusterOutputs builds the synthetic outputs map a keyless (no-tofu) placement feeds

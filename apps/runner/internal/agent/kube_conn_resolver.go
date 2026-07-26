@@ -12,6 +12,11 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+// azureARMScope is the Azure Resource Manager token scope needed to read a shared-Fabric AKS cluster
+// (ManagedClusters get/list + listClusterUserCredentials). Distinct from kube_token.go's
+// aksAADServerScope (which is for the kubeconfig exec-plugin's AAD token, not ARM).
+const azureARMScope = "https://management.azure.com/.default"
+
 // newKubeConnResolver returns the runner's implementation of provisioner.KubeConnResolver: it resolves
 // an EXISTING shared-Fabric cluster's control-plane endpoint + CA OUTPUT-FREE (by name, from the cloud
 // API) for a `namespace`/`vcluster` placement that runs no tofu. The runner owns this because it holds
@@ -27,6 +32,8 @@ func newKubeConnResolver() provisioner.KubeConnResolver {
 		switch providerSlug {
 		case "gcp":
 			return resolveGKEConn(ctx, config, clusterName)
+		case "azure":
+			return resolveAKSConn(ctx, config, clusterName)
 		default:
 			// azure/alibaba are per-cloud follow-ups; hetzner-talos is a permanent exclusion (no cloud
 			// API to re-mint). Fail closed rather than return an empty conn (which would silently
@@ -51,6 +58,28 @@ func resolveGKEConn(ctx context.Context, config *types.ProjectConfig, clusterNam
 		return "", "", fmt.Errorf("mint GCP token for kube-conn resolve: %w", err)
 	}
 	conn, err := cloud.ResolveGKEClusterConn(ctx, nil, token, config.CloudAccountID, config.Region, clusterName)
+	if err != nil {
+		return "", "", err
+	}
+	return conn.Endpoint, conn.CAData, nil
+}
+
+// resolveAKSConn resolves an AKS cluster's control-plane endpoint + base64 CA BY NAME via a keyless
+// federated-identity ARM token and ARM REST (cloud.ResolveAKSClusterConn). The Fabric's resource group
+// is not on a placed env's snapshot (its project/env differ from the Fabric's), so it is looked up
+// output-free from the cluster name via ManagedClusters LIST (cloud.ResolveAKSResourceGroup).
+//
+//	subscription = config.CloudAccountID — the tenant's Azure subscription (the shared Fabric lives in it).
+func resolveAKSConn(ctx context.Context, config *types.ProjectConfig, clusterName string) (string, string, error) {
+	token, err := workloadIdentityAADToken(ctx, azureARMScope)
+	if err != nil {
+		return "", "", fmt.Errorf("mint Azure ARM token for kube-conn resolve: %w", err)
+	}
+	rg, err := cloud.ResolveAKSResourceGroup(ctx, nil, token, config.CloudAccountID, clusterName)
+	if err != nil {
+		return "", "", err
+	}
+	conn, err := cloud.ResolveAKSClusterConn(ctx, nil, token, config.CloudAccountID, rg, clusterName)
 	if err != nil {
 		return "", "", err
 	}

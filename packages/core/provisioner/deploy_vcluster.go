@@ -58,14 +58,17 @@ const (
 //   - aws: EKS DescribeCluster (in-core, ambient) — ConfigureKubeconfig resolves from the name.
 //   - gcp: GKE clusters.get via the runner-injected KubeConnResolver (mintGCPToken + ResolveGKEClusterConn);
 //     project = CloudAccountID, location = Region (the shared cluster's region).
+//   - azure: AKS ManagedClusters get/list + listClusterUserCredentials via the runner-injected resolver
+//     (ARM token + ResolveAKSResourceGroup by name + ResolveAKSClusterConn); subscription = CloudAccountID.
 //
-// azure/alibaba are the next parity steps (azure needs the Fabric resource-group resolvable for a placed
-// env; alibaba's ConfigureKubeconfig reads a full kubeconfig output). hetzner-talos is a PERMANENT
-// exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig). Cloud parity is a hard
-// rule: every gap is a documented, fail-closed exclusion, never silent.
+// alibaba is the next parity step (its ConfigureKubeconfig reads a full kubeconfig output, and its cloud
+// API signs requests rather than using a bearer). hetzner-talos is a PERMANENT exclusion (no cloud API to
+// re-mint — needs a Fabric-create-time kubeconfig). Cloud parity is a hard rule: every gap is a
+// documented, fail-closed exclusion, never silent.
 var vclusterRemintProviders = map[string]bool{
-	"aws": true,
-	"gcp": true,
+	"aws":   true,
+	"gcp":   true,
+	"azure": true,
 }
 
 // vclusterRemintWired reports whether provider's output-free host re-mint is activated for vcluster.
@@ -73,7 +76,7 @@ func vclusterRemintWired(provider string) bool { return vclusterRemintProviders[
 
 // vclusterRemintNotWired is the fail-closed error for a cloud whose vcluster host re-mint isn't wired.
 func vclusterRemintNotWired(provider string) error {
-	return fmt.Errorf("vcluster placement: output-free keyless host re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster) and gcp (GKE clusters.get) today; azure/alibaba are per-cloud follow-ups (#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint)", provider)
+	return fmt.Errorf("vcluster placement: output-free keyless host re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster), gcp (GKE clusters.get) and azure (AKS ManagedClusters) today; alibaba is a per-cloud follow-up (#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint)", provider)
 }
 
 // buildVClusterSpec derives the vcluster provisioning spec for a `vcluster`-placement env from its config
