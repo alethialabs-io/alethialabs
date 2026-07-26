@@ -69,6 +69,12 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		return err
 	}
 
+	// vcluster-placement envs own NO tofu (an app on a shared Fabric): teardown is deregistering the
+	// virtual cluster + its ArgoCD Secret, not `tofu destroy`. Route it before the tofu path (#1231).
+	if vc.PlacementMode == types.PlacementModeVcluster {
+		return runVClusterDestroy(ctx, provider, params)
+	}
+
 	workspaceName := fmt.Sprintf("%s-%s", vc.ProjectName, vc.EnvironmentStage)
 	fmt.Fprintf(out, "Destroying environment %s...\n", workspaceName)
 
