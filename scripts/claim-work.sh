@@ -136,10 +136,12 @@ esac
 # Is a migration-mutex unit already held? (never two db:generate at once)
 mig_held="$(gh issue list --state open --label claimed --label "mutex:migration" --json number --jq 'length')"
 
-# Ready = open, in class, not claimed, not blocked, not needs:human; ordered by wave then
-# issue number. needs:human marks a unit awaiting a MAINTAINER decision (e.g. a product
+# Ready = open, in class, not claimed, not blocked, not needs:human, not epic; ordered by wave
+# then issue number. needs:human marks a unit awaiting a MAINTAINER decision (e.g. a product
 # A/B/C call) — autonomous instances repeatedly mis-claimed those (#648, twice in one
-# night) because only claimed/blocked were filtered.
+# night) because only claimed/blocked were filtered. `epic` marks an umbrella/tracking issue that
+# is decomposed into sub-issues and NEVER directly built — excluding it keeps `--class any` (and a
+# mislabeled epic that also carries a class) from ever being handed to a builder.
 ready="$(gh issue list --state open "${class_filter[@]}" --limit 200 --json number,title,labels --jq '
   def waveord:
     (.labels | map(.name) | map(select(startswith("wave:"))) | (.[0] // "wave:z"))
@@ -149,6 +151,7 @@ ready="$(gh issue list --state open "${class_filter[@]}" --limit 200 --json numb
     (.labels|map(.name)|index("claimed")|not)
     and (.labels|map(.name)|index("blocked")|not)
     and (.labels|map(.name)|index("needs:human")|not)
+    and (.labels|map(.name)|index("epic")|not)
   ))
   | map(. + {ord: waveord})
   | sort_by(.ord, .number)

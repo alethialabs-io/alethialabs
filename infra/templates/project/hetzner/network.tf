@@ -35,7 +35,7 @@ resource "hcloud_network_subnet" "nodes" {
 resource "hcloud_primary_ip" "control_plane_ipv4" {
   count       = var.control_plane_count
   name        = "${local.cluster_name}-cp-${count.index + 1}-ipv4"
-  datacenter  = local.region_datacenter
+  location    = data.hcloud_location.selected.name
   type        = "ipv4"
   auto_delete = false
   labels      = merge(local.default_labels, { role = "control-plane" })
@@ -44,7 +44,7 @@ resource "hcloud_primary_ip" "control_plane_ipv4" {
 resource "hcloud_primary_ip" "worker_ipv4" {
   count       = var.worker_count
   name        = "${local.cluster_name}-worker-${count.index + 1}-ipv4"
-  datacenter  = local.region_datacenter
+  location    = data.hcloud_location.selected.name
   type        = "ipv4"
   auto_delete = false
   labels      = merge(local.default_labels, { role = "worker" })

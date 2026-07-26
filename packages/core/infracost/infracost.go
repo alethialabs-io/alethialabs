@@ -28,6 +28,11 @@ const (
 	// DefaultInfracostVersion is the Infracost CLI version the runtime fallback downloads when the
 	// binary isn't already on PATH. Production bakes it into the runner image (Dockerfile.base's
 	// ARG INFRACOST_VERSION) — this constant is the native/dev fallback and should match that ARG.
+	//
+	// SSOT: packages/core/compat/matrix.json → static_couplings[infracost].value. This const, the
+	// Dockerfile ARG, and the matrix value must all agree; the compat couplings drift test asserts
+	// it modulo a leading "v" — the matrix + ARG record bare "0.10.39", this const carries the "v"
+	// (#1214).
 	DefaultInfracostVersion = "v0.10.39"
 	// InfracostVersionEnv overrides DefaultInfracostVersion (mirrors ALETHIA_IAC_VERSION for tofu).
 	InfracostVersionEnv = "ALETHIA_INFRACOST_VERSION"

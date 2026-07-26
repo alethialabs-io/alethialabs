@@ -48,6 +48,7 @@ type ProjectConfig struct {
 	NosqlTables         []ProjectNosqlConfig             `json:"nosql_tables"`
 	Secrets             []ProjectSecretConfig            `json:"secrets"`
 	ContainerRegistries []ProjectContainerRegistryConfig `json:"container_registries"`
+	HelmRegistries      []ProjectHelmRegistryConfig      `json:"helm_registries,omitempty"`
 	StorageBuckets      []ProjectStorageBucketConfig     `json:"storage_buckets"`
 
 	// Services are first-class application workloads (the customer's own code) — the W1
@@ -274,6 +275,20 @@ type ProjectContainerRegistryConfig struct {
 	Placement
 	Name string `json:"name"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native registry.
+	Provider       string         `json:"provider"`
+	ProviderConfig map[string]any `json:"provider_config"`
+}
+
+// ProjectHelmRegistryConfig selects a connected private Helm/OCI chart-repo connector
+// (connectors.slug in the helm_registry category) for a project. Unlike a container registry (a
+// dockerconfigjson imagePullSecret for image pulls), its downstream artifact is an ArgoCD
+// repository-credential Secret ArgoCD matches to an add-on/BYO Application by chart-repo URL, so a
+// private OCI/HTTPS chart pull authenticates. ProviderConfig carries the non-secret repo URL/host;
+// the credential fields arrive out-of-band via ConnectorCredentialFor("helm_registry", Provider).
+type ProjectHelmRegistryConfig struct {
+	Placement
+	Name string `json:"name"`
+	// Pluggable provider slug (connectors.slug); the helm_registry category has no cloud-native form.
 	Provider       string         `json:"provider"`
 	ProviderConfig map[string]any `json:"provider_config"`
 }

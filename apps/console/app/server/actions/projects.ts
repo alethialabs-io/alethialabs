@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { notFound } from "next/navigation";
+import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -27,6 +28,7 @@ import {
 	projectDns,
 	projectEnvironments,
 	projectFabrics,
+	projectHelmRegistries,
 	projectAddons,
 	projectIacSources,
 	projectNetwork,
@@ -203,6 +205,10 @@ export interface CreateProjectInput {
 		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
 		"repository_url"
 	>[];
+	// Private chart-repo selections (helm_registry connector). No output column to strip.
+	helm_registries?: ComponentInsert<
+		typeof projectHelmRegistries.$inferInsert
+	>[];
 	// W1 — first-class application workloads. resolved_image is the W2 build's write-back
 	// slot (output column, like registries.repository_url) — never part of a create/save.
 	services?: Omit<
@@ -315,6 +321,10 @@ async function writeComponents(
 		await tx
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
+	if (data.helm_registries?.length)
+		await tx
+			.insert(projectHelmRegistries)
+			.values(data.helm_registries.map((r) => ({ ...base, ...r })));
 	if (data.services?.length) {
 		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
 		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).
@@ -378,6 +388,9 @@ async function clearComponents(
 	await tx
 		.delete(projectContainerRegistries)
 		.where(envScope(projectContainerRegistries, projectId, environmentId));
+	await tx
+		.delete(projectHelmRegistries)
+		.where(envScope(projectHelmRegistries, projectId, environmentId));
 	await tx
 		.delete(projectServices)
 		.where(envScope(projectServices, projectId, environmentId));
@@ -594,6 +607,10 @@ export async function getProject(
 				.select()
 				.from(projectContainerRegistries)
 				.where(envScope(projectContainerRegistries, projectId, envId));
+			const helmRegistries = await tx
+				.select()
+				.from(projectHelmRegistries)
+				.where(envScope(projectHelmRegistries, projectId, envId));
 			const services = await tx
 				.select()
 				.from(projectServices)
@@ -612,6 +629,7 @@ export async function getProject(
 				secrets,
 				storage_buckets: storageBuckets,
 				container_registries: containerRegistries,
+				helm_registries: helmRegistries,
 				services,
 			};
 		}
@@ -632,6 +650,7 @@ export async function getProject(
 					secrets: [],
 					storage_buckets: [],
 					container_registries: [],
+					helm_registries: [],
 					services: [],
 				};
 
@@ -791,6 +810,10 @@ async function buildConfigSnapshot(
 			.select()
 			.from(projectContainerRegistries)
 			.where(envScope(projectContainerRegistries, projectId, envId));
+		const helmRegistries = await tx
+			.select()
+			.from(projectHelmRegistries)
+			.where(envScope(projectHelmRegistries, projectId, envId));
 		const storageBuckets = await tx
 			.select()
 			.from(projectStorageBuckets)
@@ -996,6 +1019,19 @@ async function buildConfigSnapshot(
 			);
 		}
 
+		// ── Config-time compatibility gate (#1218) — WARN, never block ───────
+		// Run the compat engine over the cluster's Kubernetes minor + the fully
+		// resolved add-on set (incl. Hetzner data-service + BYO charts). The report
+		// rides the config snapshot for the UI to surface at design time (#1221/#1222);
+		// it NEVER blocks saving — the fail-closed block is the apply gate (#1215).
+		// An unset K8s version or an add-on id absent from the matrix → honest
+		// `not_evaluable` (non-blocking), so this is safe before a cluster resolves.
+		const compat = evaluate({
+			providers: [identity.provider],
+			k8sVersion: cluster?.cluster_version ?? undefined,
+			addons: addons.map((a) => ({ id: a.id })),
+		});
+
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits
 		// the project's primary identity. Resolve every component to a concrete
@@ -1022,6 +1058,7 @@ async function buildConfigSnapshot(
 					...nosqlTables.map((n) => n.cloud_identity_id),
 					...secrets.map((s) => s.cloud_identity_id),
 					...containerRegistries.map((r) => r.cloud_identity_id),
+					...helmRegistries.map((r) => r.cloud_identity_id),
 					...storageBuckets.map((b) => b.cloud_identity_id),
 				].filter(
 					(id): id is string => typeof id === "string" && id !== identity.id,
@@ -1203,6 +1240,10 @@ async function buildConfigSnapshot(
 				...r,
 				...resolvePlacement(r),
 			})),
+			helm_registries: helmRegistries.map((r) => ({
+				...r,
+				...resolvePlacement(r),
+			})),
 			storage_buckets: storageBuckets.map((b) => ({
 				...b,
 				...resolvePlacement(b),
@@ -1213,6 +1254,9 @@ async function buildConfigSnapshot(
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
+			// Config-time compatibility report (#1218) — non-blocking; the UI surfaces
+			// its warnings (cluster inspector / add-on config sheet #1221, canvas chip #1222).
+			compat,
 			// Bring-your-own IaC (E3, replace mode): when present, the runner clones this repo at
 			// the PINNED commit_sha (never the moving ref — TOCTOU protection) and runs the
 			// customer's root module instead of the built-in template. Absent for template envs.
@@ -2026,6 +2070,11 @@ export async function getProjectAsFormData(
 		})),
 		// Output columns (repository_url) are provisioned state, not design — stripped here.
 		container_registries: source.components.container_registries.map((r) => ({
+			name: r.name,
+			provider: r.provider ?? undefined,
+			provider_config: r.provider_config ?? undefined,
+		})),
+		helm_registries: source.components.helm_registries.map((r) => ({
 			name: r.name,
 			provider: r.provider ?? undefined,
 			provider_config: r.provider_config ?? undefined,

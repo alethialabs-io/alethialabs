@@ -52,6 +52,13 @@ variable "required_status_checks" {
     # Enforces feature → dev → staging → main: fails a PR into main/staging from a disallowed source
     # branch → mis-targeted PRs (e.g. feature → main) are un-mergeable. See .github/workflows/branch-flow-guard.yml.
     "branch-flow-guard",
+    # The automated capabilities-security gate (replaces the dropped #982 CODEOWNERS review — a sole-owner
+    # human gate would deadlock the no-approval Mergify queue). Runs on EVERY PR and no-op-passes (green)
+    # when no capabilities/connector/keyless path changed; fail-closes on the deterministic
+    # alethia-security-review invariants when those paths DID change. See
+    # .github/workflows/capabilities-security.yml. SAFE to require: it always reports (unfiltered job), so
+    # it never wedges an unrelated PR the way a path-filtered required check would.
+    "capabilities-security",
   ]
 }
 

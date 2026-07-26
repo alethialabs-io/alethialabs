@@ -88,12 +88,9 @@ describe("PhoneInput", () => {
 		await user.click(trigger);
 		const search = await screen.findByPlaceholderText(/search country/i);
 		await user.type(search, "Germany");
-		// cmdk filters asynchronously; give the match extra headroom on a loaded CI box.
-		const option = await screen.findByRole(
-			"option",
-			{ name: /germany/i },
-			{ timeout: 3000 },
-		);
+		// cmdk filters asynchronously; the global asyncUtilTimeout (tests/setup.ts) gives the match
+		// generous headroom on a loaded CI box.
+		const option = await screen.findByRole("option", { name: /germany/i });
 		// The option surfaces the +49 dial code alongside the country label.
 		expect(within(option).getByText("+49")).toBeInTheDocument();
 		await user.click(option);

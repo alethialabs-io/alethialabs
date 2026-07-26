@@ -30,3 +30,9 @@ variable "registry_pull_provider" {
   type        = string
   default     = "native"
 }
+
+variable "secrets_xacct_provider" {
+  description = "Cross-account keyless cloud-secret-manager provider slug (aws-sm-xacct); \"native\" means no cross-account secret manager. SEPARATE from secrets_provider so the cluster keeps its native store AND wires a foreign-account keyless read (an additional ClusterSecretStore)."
+  type        = string
+  default     = "native"
+}

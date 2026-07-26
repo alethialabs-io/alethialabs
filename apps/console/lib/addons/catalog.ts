@@ -8,6 +8,7 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { MATRIX } from "@/lib/compat";
 import { asRecord } from "@/lib/records";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -49,10 +50,23 @@ export function deepMerge(
 	return out;
 }
 
-/** Identity helper that preserves each entry's Zod schema generic, so `toValues` receives a
- * properly-typed `config` (a plain `AddOnDef[]` annotation would erase it to `unknown`). */
-function defineAddOn<S extends z.ZodTypeAny>(def: AddOnDef<S>): AddOnDef<S> {
-	return def;
+/** Preserves each entry's Zod schema generic, so `toValues` receives a properly-typed `config`
+ * (a plain `AddOnDef[]` annotation would erase it to `unknown`), and attaches the add-on's
+ * Kubernetes support window from the compat matrix SSOT (`matrix.json` → `addon_k8s[id]`) — so
+ * `k8sRange` is derived, never hand-authored, and can't drift from the engine's source. Fails
+ * closed at module load if an add-on has no matrix entry (a new add-on must be added there
+ * first — currently every catalog id has an `addon_k8s` key). */
+function defineAddOn<S extends z.ZodTypeAny>(
+	def: Omit<AddOnDef<S>, "k8sRange">,
+): AddOnDef<S> {
+	const k8sRange = MATRIX.addon_k8s[def.id];
+	if (!k8sRange) {
+		throw new Error(
+			`AddOn "${def.id}" has no addon_k8s entry in the compat matrix ` +
+				"(packages/core/compat/matrix.json). Add it before shipping the add-on.",
+		);
+	}
+	return { ...def, k8sRange };
 }
 
 /** The curated catalog. Ordered for display; grouped by category in the UI.
@@ -1127,7 +1141,11 @@ export function resolveByoChartInstall(
 	// Binding write-back is runner-side (Lane 2b) and intentionally not composed here.
 	workloads: ChartWorkloadOverlay[] = [],
 ): AddOnInstallSpec | null {
-	if (!row.chart_repo || !row.chart_path) return null;
+	if (!row.chart_repo) return null;
+	// An `oci://` repo is a private OCI Helm registry (source='helm'); anything else is a git repo
+	// (source='git') whose chart lives at chart_path.
+	const isOci = row.chart_repo.startsWith("oci://");
+	if (!isOci && !row.chart_path) return null;
 	// Precedence (low → high): pristine project_addons.values → workload config overlay → raw YAML.
 	let values: Record<string, unknown> = { ...(row.values ?? {}) };
 	if (workloads.length > 0) {
@@ -1144,13 +1162,46 @@ export function resolveByoChartInstall(
 			bindings: w.bindings,
 			valuePaths: w.value_paths,
 		}));
+	if (isOci) {
+		// Private OCI Helm chart. ArgoCD's OCI source splits `oci://<host>/<ns>/<chart>` into
+		// repoURL (host + namespace, chart stripped) + chart (the last path segment) + targetRevision
+		// (the chart version). We KEEP the `oci://` scheme so the Application repoURL is a prefix of
+		// the seeded repo-cred `url` (e.g. cred `oci://ghcr.io` prefixes `oci://ghcr.io/acme`) — the
+		// convention packages/core/argocd/helm_repo_secrets.go + the helm_registry_oci_* providers
+		// already commit to. (Note: some ArgoCD versions want repoURL without the scheme; if that
+		// surfaces, strip `oci://` on BOTH the Application and the seeded cred in lockstep.)
+		const segments = row.chart_repo
+			.slice("oci://".length)
+			.replace(/\/+$/, "")
+			.split("/")
+			.filter(Boolean);
+		const chart = segments.pop() ?? "";
+		// Need at least a host AND a chart segment to address a chart.
+		if (!chart || segments.length === 0) return null;
+		return {
+			id: row.addon_id,
+			mode: row.mode,
+			source: "helm",
+			chartRepo: `oci://${segments.join("/")}`,
+			// Unused for a helm source (the chart is named separately), but the spec requires it.
+			path: "",
+			chart,
+			// The chart version (ArgoCD targetRevision); `*` = latest when unset.
+			version: row.version || "*",
+			namespace: row.namespace ?? "default",
+			values,
+			syncWave: BYO_CHART_SYNC_WAVE,
+			...(bound.length > 0 ? { workloads: bound } : {}),
+			// project is set by the runner (byo-<slug>); leave undefined here.
+		};
+	}
 	return {
 		id: row.addon_id,
 		mode: row.mode,
 		source: "git",
 		chartRepo: row.chart_repo,
 		// The chart directory within the repo (rendered as ArgoCD `source.path`).
-		path: row.chart_path,
+		path: row.chart_path ?? "",
 		// Unused for git source, but the spec requires the field; keep it empty.
 		chart: "",
 		// The git ref (branch/tag/sha); default to HEAD so an unset ref still resolves.

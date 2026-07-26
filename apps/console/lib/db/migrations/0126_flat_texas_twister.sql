@@ -1,0 +1,1 @@
+ALTER TYPE "public"."connector_category" ADD VALUE 'helm_registry' BEFORE 'dns';

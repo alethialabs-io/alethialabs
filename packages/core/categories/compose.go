@@ -39,6 +39,9 @@ func Compose(
 	// Cross-account keyless registry PULL is off by default (separate from registry_provider — it
 	// adds a foreign-account pull without replacing the native registry).
 	tfvars["registry_pull_provider"] = "native"
+	// Cross-account keyless secret manager is off by default (separate from secrets_provider — it adds
+	// a foreign-account ClusterSecretStore without replacing the native store).
+	tfvars["secrets_xacct_provider"] = "native"
 
 	modules := map[string]map[string]any{}
 
@@ -103,15 +106,41 @@ func Compose(
 		if err != nil {
 			return 0, err
 		}
-		ctx := ComponentContext{
-			Project:     vc,
-			Credentials: vc.ConnectorCredentialFor("secrets", slug),
-			Items:       items,
+		if IsKeylessSecretStore(slug) {
+			// A cross-account KEYLESS secret manager (AWS SM / GCP SM / Azure KV / Alibaba KMS in a foreign
+			// account) is an ADDITIONAL read source, not a replacement: the cluster keeps its native store.
+			// So set the SEPARATE secrets_xacct_provider guard (the cluster template wires the least-privilege
+			// assume leg for AWS/Alibaba), NEVER secrets_provider (which would switch the native store off).
+			// There is NO tofu create-secret module — the External Secrets Operator ClusterSecretStore that
+			// reads the foreign account is rendered by argocd.EnsureExternalSecretsStore, not tofu.
+			ctx := ComponentContext{Project: vc, ProviderConfig: secretsProviderConfig(vc, slug), Items: items}
+			if err := p.Validate(ctx); err != nil {
+				return 0, fmt.Errorf("secrets/%s validation failed: %w", slug, err)
+			}
+			tfvars["secrets_xacct_provider"] = slug
+			if t, ok := p.KeylessSecretStore(ctx); ok && t.Provider == "aws" {
+				// AWS only: the cluster-side ESO IRSA role must be allowed to assume the target-account role
+				// (spec.provider.aws.role). GCP/Azure/Alibaba need no cluster-side leg — the read grant lives
+				// entirely in the target account (Model B): GCP/Azure bind our workload identity in the target
+				// project/subscription; Alibaba exchanges the RRSA OIDC token directly for the target role via
+				// the target account's own OIDC provider (no role chaining).
+				tfvars["secrets_xacct_target_role_arn"] = t.TargetRef
+			}
+			fmt.Fprintf(log, "Cross-account keyless secret manager %s: ESO reads the foreign account via ClusterSecretStore (native store untouched)\n", slug)
+		} else {
+			// A credential-based store (vault/doppler/infisical/onepassword) provisions placeholder entries
+			// via its tofu module and switches the native store off via secrets_provider.
+			ctx := ComponentContext{
+				Project:        vc,
+				Credentials:    vc.ConnectorCredentialFor("secrets", slug),
+				ProviderConfig: secretsProviderConfig(vc, slug),
+				Items:          items,
+			}
+			if err := add("secrets", p, ctx); err != nil {
+				return 0, err
+			}
+			tfvars["secrets_provider"] = slug
 		}
-		if err := add("secrets", p, ctx); err != nil {
-			return 0, err
-		}
-		tfvars["secrets_provider"] = slug
 	}
 
 	// ── Container registries (multi → homogeneous) ──
@@ -185,6 +214,20 @@ func secretItems(vc *types.ProjectConfig) []providerItem {
 		})
 	}
 	return out
+}
+
+// secretsProviderConfig returns the CONNECTION-level provider_config for the dominant secrets provider
+// (the store's scope — Doppler project/config, Infisical workspace/env, 1Password vault — carried on the
+// selected secrets' provider_config, homogeneous across the project). Mirrors registryProviderConfig:
+// the secrets ComponentContext is otherwise Items-only, so a store that needs connection-level config
+// (unlike vault's per-connection mount) reads it from here. First matching entry wins.
+func secretsProviderConfig(vc *types.ProjectConfig, slug string) map[string]any {
+	for _, s := range vc.Secrets {
+		if s.Provider == slug {
+			return s.ProviderConfig
+		}
+	}
+	return nil
 }
 
 func registryItems(vc *types.ProjectConfig) []providerItem {
