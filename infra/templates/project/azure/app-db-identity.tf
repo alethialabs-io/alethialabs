@@ -25,8 +25,23 @@ locals {
   azure_app_ksa_namespace  = "default"
   azure_app_ksa_name       = "alethia-app"
   azure_bootstrap_ksa_name = "alethia-db-bootstrap"
-  # Postgres only (the AAD/Entra path); MySQL Flexible Server AAD is a separate follow-up.
+  # The APP's keyless path stays PostgreSQL-only, deliberately. The app pod reaches its database
+  # through a pgbouncer sidecar that consumes the refreshed token as the upstream password
+  # (packages/core/manifests/keyless.go — its own comment calls it "the shared local Postgres proxy").
+  # MySQL has no equivalent: Entra auth there passes the token AS the password, so the app half needs
+  # either a MySQL-aware proxy or a changed app contract where the workload reads the refresher's
+  # token file itself. That is a design decision, not a flag — widening this local would point
+  # pgbouncer at a MySQL server and fail at runtime, which is worse than password auth.
   enable_app_db_aad = var.create_azure_db && var.azure_db_iam_auth && var.provision_aks && var.azure_db_engine == "postgres"
+
+  # The SERVER side of Entra is engine-agnostic and lands now: a MySQL Flexible Server can carry an
+  # Entra administrator, which is what lets an operator — and later the bootstrap Job — authenticate
+  # without a password. The app keeps using password auth on MySQL until the half above exists, so
+  # `iam_auth` on MySQL buys Entra ADMINISTRATION, not yet a keyless app.
+  enable_mysql_entra = var.create_azure_db && var.azure_db_iam_auth && var.azure_db_engine == "mysql"
+
+  # Either path needs the dedicated admin identity.
+  enable_db_admin_identity = local.enable_app_db_aad || local.enable_mysql_entra
 }
 
 ########################################################################
@@ -57,7 +72,7 @@ resource "azurerm_federated_identity_credential" "app_db" {
 ########################################################################
 
 resource "azurerm_user_assigned_identity" "db_admin" {
-  count               = local.enable_app_db_aad ? 1 : 0
+  count               = local.enable_db_admin_identity ? 1 : 0
   name                = "${local.aks_name}-dbadmin"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
@@ -83,4 +98,19 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db
   object_id           = azurerm_user_assigned_identity.db_admin[0].principal_id
   principal_name      = azurerm_user_assigned_identity.db_admin[0].name
   principal_type      = "ServicePrincipal"
+}
+
+# MySQL's Entra administrator is a SEPARATE resource keyed on the server ID, and it requires the
+# server to already carry a user-assigned identity (passed in as `aad_identity_id` — the same
+# db_admin identity, so no third principal exists). PostgreSQL's equivalent keys on the server NAME
+# and needs no server identity at all; assuming they were the same shape is exactly the class of
+# mistake #1382 was.
+resource "azurerm_mysql_flexible_server_active_directory_administrator" "db_admin" {
+  count = local.enable_mysql_entra ? 1 : 0
+
+  server_id   = module.azure_db[0].server_id
+  identity_id = azurerm_user_assigned_identity.db_admin[0].id
+  login       = azurerm_user_assigned_identity.db_admin[0].name
+  object_id   = azurerm_user_assigned_identity.db_admin[0].principal_id
+  tenant_id   = data.azurerm_client_config.current.tenant_id
 }
