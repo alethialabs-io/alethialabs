@@ -11,6 +11,7 @@ import type { CapabilityIdentity } from "@/lib/cloud-providers/capabilities/type
 import {
 	normalizeAksVersions,
 	normalizeCosmos,
+	normalizeFlexibleServerSkus,
 	normalizeFlexibleServerVersions,
 	normalizeRedisTiers,
 	syncAzureServiceCapabilities,
@@ -78,6 +79,51 @@ describe("normalizeFlexibleServerVersions", () => {
 		// The version has its own column; `name` is the engine's stable label, not a composite.
 		expect(rows[0].name).toBe("Azure Database for PostgreSQL");
 		expect(rows[0].version).toBe("16");
+	});
+
+	it("reads the SKUs out of the SAME payload, under all three nesting shapes", () => {
+		// The PG and MySQL capability specs disagree on where the SKU list hangs, and some api-versions
+		// hang it off the EDITION instead of the version. Reading only one path would silently yield
+		// zero SKUs on the others, so all three are traversed — this fixture exercises each.
+		const skuFixture = [
+			{
+				supportedFlexibleServerEditions: [
+					{
+						supportedServerVersions: [
+							{
+								name: "16",
+								supportedVcores: [
+									{ name: "Standard_D2s_v3", vCores: 2, supportedMemoryPerVcoreMB: 4096 },
+								],
+							},
+							{
+								name: "15",
+								// Standard_D2s_v3 repeats across versions → one offering, not two.
+								supportedSkus: [{ name: "Standard_D2s_v3" }, { name: "Standard_D4s_v3" }],
+							},
+						],
+					},
+					{ supportedServerSkus: [{ name: "Standard_B1ms" }] },
+				],
+			},
+		];
+		const rows = normalizeFlexibleServerSkus("eastus", "postgres", skuFixture);
+		expect(rows.map((r) => r.native_id).sort()).toEqual([
+			"azure-postgresql-Standard_B1ms",
+			"azure-postgresql-Standard_D2s_v3",
+			"azure-postgresql-Standard_D4s_v3",
+		]);
+		const d2s = rows.find((r) => r.tier === "Standard_D2s_v3");
+		expect(d2s?.service_kind).toBe("database_instance_class");
+		expect(d2s?.engine).toBe("azure-postgresql");
+		expect(d2s?.version).toBeNull();
+		expect(d2s?.mem_gb).toBe(8); // 2 vCores × 4096 MB
+		// No size claimed when the payload omits the vCore fields — null, never 0.
+		expect(rows.find((r) => r.tier === "Standard_D4s_v3")?.mem_gb).toBeNull();
+	});
+
+	it("emits no SKU rows when the capabilities payload carries none", () => {
+		expect(normalizeFlexibleServerSkus("eastus", "postgres", pgFixture)).toEqual([]);
 	});
 
 	it("handles the mysql shape identically (versions path is shared)", () => {

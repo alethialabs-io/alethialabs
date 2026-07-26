@@ -22,7 +22,9 @@ import { coerceEnum } from "@/lib/coerce";
 import { toStrArray } from "@/lib/coerce";
 import {
 	cacheTierOptions,
+	cacheVersionOptions,
 	dbEngineOptions,
+	dbInstanceClassOptions,
 	dbVersionOptions,
 	existingNetworkOptions,
 	instanceTypeOptions,
@@ -72,7 +74,12 @@ export interface CapabilityBag {
 	instanceTypes: CapabilityOption[];
 	k8sVersions: CapabilityOption[];
 	dbEngines: DbEngineCapabilityOption[];
+	/** Concrete managed-DB SKUs, by engine. Unlike every other axis there is NO static catalog behind
+	 * it, so an unsynced account leaves this empty and the resolver offers only the resolver default. */
+	dbInstanceClasses: DbInstanceClassCapabilityOption[];
 	cacheTiers: CapabilityOption[];
+	/** Offered cache engine versions. Empty on the clouds that document an exclusion (GCP/Azure/Hetzner). */
+	cacheVersions: CapabilityOption[];
 	nosqlKeyTypes: CapabilityOption[];
 	/** Already-HAS placement inventory (#980) — not a capability axis, no federation involved. */
 	networks: PlacementOption[];
@@ -103,6 +110,17 @@ export interface DbEngineCapabilityOption extends CapabilityOption {
 	versions: string[];
 }
 
+/**
+ * A concrete managed-DB SKU, carrying the engine it was reported for.
+ *
+ * `engine` is NULL when the cloud offers SKUs per PROJECT rather than per engine (Cloud SQL tiers), and
+ * such a row matches whichever engine the node has selected — attaching a per-engine claim the API never
+ * made would be a fabricated verdict.
+ */
+export interface DbInstanceClassCapabilityOption extends CapabilityOption {
+	engine: string | null;
+}
+
 export interface PlacementOption {
 	/** The NATIVE id (`vpc-…`) — project_network.network_id stores this, not the row uuid. */
 	nativeId: string;
@@ -124,7 +142,9 @@ export type CapabilityAxis =
 	| "instance_type"
 	| "k8s_version"
 	| "database"
+	| "db_instance_class"
 	| "cache_tier"
+	| "cache_version"
 	| "nosql"
 	| "placement";
 
@@ -133,7 +153,9 @@ const ALL_CATALOG: Readonly<Record<CapabilityAxis, "account" | "catalog">> = Obj
 	instance_type: "catalog",
 	k8s_version: "catalog",
 	database: "catalog",
+	db_instance_class: "catalog",
 	cache_tier: "catalog",
+	cache_version: "catalog",
 	nosql: "catalog",
 	placement: "catalog",
 });
@@ -153,7 +175,9 @@ export const NO_CAPABILITIES: CapabilityBag = Object.freeze({
 	instanceTypes: [],
 	k8sVersions: [],
 	dbEngines: [],
+	dbInstanceClasses: [],
 	cacheTiers: [],
+	cacheVersions: [],
 	nosqlKeyTypes: [],
 	networks: [],
 	subnets: [],
@@ -195,6 +219,11 @@ export type FieldType =
 	| "text"
 	| "number"
 	| "select"
+	// A text input that SUGGESTS `options` rather than restricting to them. For the escape-hatch
+	// fields whose value the cloud may never list back (a DB SKU, a cache engine version): the
+	// account's offerings are the suggestions, but an unlisted value stays typeable, which a
+	// `select` structurally cannot allow.
+	| "combobox"
 	| "radio-card"
 	| "switch"
 	| "region"
@@ -1094,10 +1123,23 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 					},
 					{
 						key: "instance_class",
-						type: "text",
+						type: "combobox",
 						label: "Instance class",
 						mono: true,
 						placeholder: "resolver default",
+						// Capability-backed: the lanes enumerate the SKUs this account can actually order
+						// for the selected engine, which is knowledge no user reliably has — and a typo
+						// here is not a validation error, it is a failed apply.
+						//
+						// A combobox rather than a select, for two reasons that both point the same way:
+						// there is NO static catalog to fall open to (the catalog models capacity
+						// portably; a SKU is precisely the non-portable escape hatch), and the lanes
+						// cannot enumerate exhaustively — GCP custom machine types are constructible,
+						// and the Alibaba anchor asks about one version in one zone. An unlisted SKU
+						// must stay pinnable.
+						requiresProvider: true,
+						capabilityAxis: "db_instance_class",
+						options: dbInstanceClassOptions,
 						description:
 							"A concrete provider SKU (db.r6g.large · db-custom-2-7680 · GP_Gen5_2). Overrides the portable capacity above — and gives up portability.",
 						// Serverless capacity is the portable path; this is the escape hatch. Meaningless
@@ -1207,10 +1249,18 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{
 						key: "engine_version",
-						type: "text",
+						type: "combobox",
 						label: "Engine version",
 						mono: true,
 						placeholder: "cloud default",
+						// Capability-backed where the cloud will say: AWS and Alibaba report the offered
+						// cache engine versions; GCP/Azure/Hetzner document an exclusion (no account-scoped
+						// API states which versions a subscription may launch, and on Hetzner the value is
+						// a container image tag). A combobox, not a select, so the three excluded clouds —
+						// and any unsynced account — keep a field that still works.
+						requiresProvider: true,
+						capabilityAxis: "cache_version",
+						options: cacheVersionOptions,
 						description: "Pin an exact engine version. Empty tracks the template's default.",
 					},
 				],

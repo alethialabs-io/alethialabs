@@ -21,7 +21,9 @@ import { cloudIdentities } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
 	getCacheTierCapabilities,
+	getCacheVersionCapabilities,
 	getDatabaseCapabilities,
+	getDbInstanceClassCapabilities,
 	getInstanceTypeCapabilities,
 	getK8sVersionCapabilities,
 	getNosqlCapability,
@@ -86,20 +88,33 @@ export async function getIdentityCapabilities(
 	if (!provider) return emptyBag();
 	const scoped = region ?? null;
 
-	const [regions, instanceTypes, k8sVersions, database, cacheTiers, nosql, inventory] =
-		await Promise.all([
-			getRegionCapabilities(cloudIdentityId, provider),
-			scoped ? getInstanceTypeCapabilities(cloudIdentityId, provider, scoped) : [],
-			getK8sVersionCapabilities(cloudIdentityId, provider),
-			getDatabaseCapabilities(cloudIdentityId, provider),
-			scoped ? getCacheTierCapabilities(cloudIdentityId, provider, scoped) : [],
-			getNosqlCapability(cloudIdentityId, provider),
-			getCloudIdentityInventory(cloudIdentityId).catch(() => ({
-				networks: [],
-				subnets: [],
-				regions: [],
-			})),
-		]);
+	const [
+		regions,
+		instanceTypes,
+		k8sVersions,
+		database,
+		dbInstanceClasses,
+		cacheTiers,
+		cacheVersions,
+		nosql,
+		inventory,
+	] = await Promise.all([
+		getRegionCapabilities(cloudIdentityId, provider),
+		scoped ? getInstanceTypeCapabilities(cloudIdentityId, provider, scoped) : [],
+		getK8sVersionCapabilities(cloudIdentityId, provider),
+		getDatabaseCapabilities(cloudIdentityId, provider),
+		// NOT engine-filtered here: the bag is fetched once per node and the engine can change without
+		// a refetch, so the whole SKU set is carried and `dbInstanceClassOptions` narrows on render.
+		getDbInstanceClassCapabilities(cloudIdentityId, provider),
+		scoped ? getCacheTierCapabilities(cloudIdentityId, provider, scoped) : [],
+		getCacheVersionCapabilities(cloudIdentityId, provider),
+		getNosqlCapability(cloudIdentityId, provider),
+		getCloudIdentityInventory(cloudIdentityId).catch(() => ({
+			networks: [],
+			subnets: [],
+			regions: [],
+		})),
+	]);
 
 	// `launchable === undefined` marks a static fallback row, so it doubles as the provenance signal
 	// for every axis except regions (whose reader reports its own source).
@@ -111,7 +126,11 @@ export async function getIdentityCapabilities(
 		instance_type: scoped ? sourceOf(instanceTypes) : "catalog",
 		k8s_version: sourceOf(k8sVersions),
 		database: sourceOf(database.engines),
+		// These two have no catalog fallback at all, so their readers return [] rather than static rows:
+		// any row is account data, and none means there is nothing to show (see `provenanceNote`).
+		db_instance_class: dbInstanceClasses.length > 0 ? "account" : "catalog",
 		cache_tier: scoped ? sourceOf(cacheTiers) : "catalog",
+		cache_version: cacheVersions.length > 0 ? "account" : "catalog",
 		nosql: nosql.launchable !== undefined ? "account" : "catalog",
 		placement: inventory.networks.length > 0 ? "account" : "catalog",
 	};
@@ -124,7 +143,9 @@ export async function getIdentityCapabilities(
 		"instance_type",
 		"k8s_version",
 		"database",
+		"db_instance_class",
 		"cache_tier",
+		"cache_version",
 		"nosql",
 	];
 	const anyAccount = CAPABILITY_AXES.some((axis) => axisSource[axis] === "account");
@@ -157,6 +178,21 @@ export async function getIdentityCapabilities(
 			value: r.value,
 			label: r.label,
 			versions: r.versions,
+			launchable: r.launchable,
+			launchableReason: r.launchableReason ?? null,
+		})),
+		// The SKU's memory is the only thing that makes one comparable to another at a glance; where the
+		// provider doesn't report it the label stays the bare SKU rather than claiming a size.
+		dbInstanceClasses: dbInstanceClasses.map((r) => ({
+			value: r.value,
+			label: r.memoryGb != null ? `${r.label} · ${r.memoryGb} GB` : r.label,
+			engine: r.engine,
+			launchable: r.launchable,
+			launchableReason: r.launchableReason ?? null,
+		})),
+		cacheVersions: cacheVersions.map((r) => ({
+			value: r.version,
+			label: r.version,
 			launchable: r.launchable,
 			launchableReason: r.launchableReason ?? null,
 		})),
@@ -223,7 +259,9 @@ function emptyBag(): CapabilityBag {
 		instance_type: "catalog",
 		k8s_version: "catalog",
 		database: "catalog",
+		db_instance_class: "catalog",
 		cache_tier: "catalog",
+		cache_version: "catalog",
 		nosql: "catalog",
 		placement: "catalog",
 	};
@@ -237,7 +275,9 @@ function emptyBag(): CapabilityBag {
 		instanceTypes: [],
 		k8sVersions: [],
 		dbEngines: [],
+		dbInstanceClasses: [],
 		cacheTiers: [],
+		cacheVersions: [],
 		nosqlKeyTypes: [],
 		networks: [],
 		subnets: [],
