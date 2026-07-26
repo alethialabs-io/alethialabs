@@ -44,6 +44,16 @@ locals {
 
   cidrs_distinct         = !anytrue(values(local._cidr_overlap))
   pods_services_in_super = alltrue(values(local._is_subnet))
+
+  # Kubernetes major/minor parsed from the RESOLVED render version (render_kube_version in cilium.tf
+  # already maps "" -> the "1.35.6" default), e.g. "1.35.6" -> 1 / 35. -1 when unparseable, so a garbage
+  # version fails the COMPAT-001 guard closed rather than passing vacuously. The window literals in the
+  # guard below are the compat-matrix bounds (packages/core/compat/matrix.json): k8s_cloud.hetzner = 1.35
+  # (single supported minor); components talos 1.31-1.36, cilium <=1.35, hcloud-csi 1.34-1.36. These are
+  # the same couplings packages/core/compat/couplings_drift_test.go (#1214) proves in Go — keep both in
+  # lockstep with matrix.json.
+  hetzner_k8s_major = can(tonumber(split(".", local.render_kube_version)[0])) ? tonumber(split(".", local.render_kube_version)[0]) : -1
+  hetzner_k8s_minor = can(tonumber(split(".", local.render_kube_version)[1])) ? tonumber(split(".", local.render_kube_version)[1]) : -1
 }
 
 check "cluster_name_non_empty" {
@@ -155,5 +165,42 @@ check "classification_labels_present" {
       local.default_labels[k] == v || contains(keys(local.base_labels), k)
     ])
     error_message = "A classification_tags entry was dropped from default_labels; classification/sweep-handle labels must reach hcloud resources + volumes."
+  }
+}
+
+# COMPAT-001 (epic #1186, block-at-apply): the rendered Kubernetes minor must sit inside the Hetzner
+# cloud window (matrix.json k8s_cloud.hetzner = 1.35). A `check` block only WARNS, so the hard gate is
+# the terraform_data precondition below; this check surfaces the same violation loudly at plan time.
+check "compat_k8s_supported" {
+  assert {
+    condition     = local.hetzner_k8s_major == 1 && local.hetzner_k8s_minor == 35
+    error_message = "COMPAT: Kubernetes '${local.render_kube_version}' is outside the Hetzner-supported minor 1.35 (packages/core/compat/matrix.json k8s_cloud.hetzner); terraform_data.compat_k8s_guard blocks apply."
+  }
+}
+
+# Fail-closed apply gate (COMPAT-001): the rendered Kubernetes minor must satisfy the Hetzner cloud window
+# AND every in-template component's support window (talos / cilium / hcloud-csi). The cloud window (1.35)
+# is the tightest today, but the component preconditions independently guard a future matrix widening —
+# the real invariant couplings_drift_test.go (#1214) proves in Go (e.g. raising k8s past Cilium's 1.35
+# ceiling would break GitOps). `check` blocks only warn; a `terraform_data` lifecycle precondition is the
+# actual gate. No bypass variable — waivers are a runner-layer compat.Override / COMPAT-001 concern.
+resource "terraform_data" "compat_k8s_guard" {
+  lifecycle {
+    precondition {
+      condition     = local.hetzner_k8s_major == 1 && local.hetzner_k8s_minor == 35
+      error_message = "COMPAT-001: Kubernetes '${local.render_kube_version}' is outside the Hetzner-supported minor 1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.hetzner). Apply blocked fail-closed."
+    }
+    precondition {
+      condition     = local.hetzner_k8s_minor >= 31 && local.hetzner_k8s_minor <= 36
+      error_message = "COMPAT-001: Kubernetes '${local.render_kube_version}' is outside the Talos ${var.talos_version} support window 1.31-1.36 (matrix.json components.talos). Move Talos + kubernetes_version in lockstep."
+    }
+    precondition {
+      condition     = local.hetzner_k8s_minor <= 35
+      error_message = "COMPAT-001: Kubernetes '${local.render_kube_version}' exceeds the Cilium ${local.cilium_version} ceiling 1.35 (matrix.json components.cilium k8s_max). Raising k8s needs a Cilium bump first."
+    }
+    precondition {
+      condition     = local.hetzner_k8s_minor >= 34 && local.hetzner_k8s_minor <= 36
+      error_message = "COMPAT-001: Kubernetes '${local.render_kube_version}' is outside the hcloud-csi ${local.hcloud_csi_version} support window 1.34-1.36 (matrix.json components.hcloud-csi)."
+    }
   }
 }
