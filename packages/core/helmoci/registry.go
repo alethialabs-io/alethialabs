@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -16,7 +15,6 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
-	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
 const (
@@ -41,13 +39,15 @@ func newRepository(ref Ref, creds Creds) (*remote.Repository, error) {
 		return nil, fmt.Errorf("invalid OCI reference %s: %w", ref, err)
 	}
 	repo.TagListPageSize = tagPageSize
-	// Loopback registries speak plain HTTP (a `docker run registry:2` on a developer's box, and the
-	// fake registry the package tests stand up). Restricting the downgrade to loopback keeps it
-	// impossible to send a chart-repo credential in the clear to anything off-host.
-	repo.PlainHTTP = isLoopbackHost(ref.Registry)
+	// TLS always, for every customer-supplied reference. Plain HTTP is reachable only from this
+	// package's own tests (see egress.go) — a chart reference can never select it, so a chart-repo
+	// credential cannot be talked into going out in the clear.
+	repo.PlainHTTP = allowInsecureLocalRegistries
 
 	client := &auth.Client{
-		Client: retry.DefaultClient,
+		// registryHTTPClient wraps oras's retry policy in a dialer that refuses loopback,
+		// link-local (cloud metadata) and — by default — private addresses. See egress.go.
+		Client: registryHTTPClient(),
 		// A scan pulls from exactly one repository, which is what this cache is documented for.
 		Cache: auth.NewSingleContextCache(),
 	}
@@ -64,21 +64,6 @@ func newRepository(ref Ref, creds Creds) (*remote.Repository, error) {
 	// content), it just presents no Basic credential when asking for one.
 	repo.Client = client
 	return repo, nil
-}
-
-// isLoopbackHost reports whether a registry host is on this machine, the only case in which we drop
-// to plain HTTP. Anything that is not an unambiguous loopback literal stays on TLS.
-func isLoopbackHost(hostport string) bool {
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	host = strings.ToLower(strings.Trim(host, "[]"))
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // resolveVersion turns a chart version spec into a concrete registry tag. A literal version is used

@@ -54,9 +54,12 @@ type fakeRegistry struct {
 	srv      *httptest.Server
 }
 
-// newFakeRegistry starts a fake registry serving one chart repository.
+// newFakeRegistry starts a fake registry serving one chart repository. It flips the package's
+// test-only escape hatch so the pull may reach loopback over plain HTTP — production dials are
+// filtered by egress.go and can never do this.
 func newFakeRegistry(t *testing.T, repo string) *fakeRegistry {
 	t.Helper()
+	allowLocalRegistriesForTest(t)
 	f := &fakeRegistry{t: t, repo: repo, tags: map[string][]byte{}, blobs: map[string][]byte{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)

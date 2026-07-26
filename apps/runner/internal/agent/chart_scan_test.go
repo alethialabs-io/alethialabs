@@ -316,6 +316,8 @@ type testRegistry struct {
 // newTestRegistry starts the fake registry. Empty credentials make it public.
 func newTestRegistry(t *testing.T, repo, user, pass string) *testRegistry {
 	t.Helper()
+	// The chart-registry egress guard blocks loopback in production; open it for this test only.
+	helmoci.AllowLocalRegistriesForTesting(t)
 	r := &testRegistry{
 		t: t, repo: repo, wantUser: user, wantPass: pass,
 		tags: map[string][]byte{}, blobs: map[string][]byte{},

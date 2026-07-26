@@ -255,21 +255,6 @@ func TestHighestReleaseTag(t *testing.T) {
 	}
 }
 
-// TestIsLoopbackHost locks the plain-HTTP downgrade to genuinely local hosts — a chart-repo
-// credential must never be sent in the clear to anything off-box.
-func TestIsLoopbackHost(t *testing.T) {
-	for _, h := range []string{"localhost", "localhost:5000", "127.0.0.1", "127.0.0.1:5000", "[::1]:5000", "::1"} {
-		if !isLoopbackHost(h) {
-			t.Fatalf("isLoopbackHost(%q) = false, want true", h)
-		}
-	}
-	for _, h := range []string{"ghcr.io", "registry-1.docker.io", "localhost.evil.com", "127.0.0.1.evil.com", "10.0.0.1"} {
-		if isLoopbackHost(h) {
-			t.Fatalf("isLoopbackHost(%q) = true, want false", h)
-		}
-	}
-}
-
 // TestCredsEmpty documents when a pull is anonymous — a partially-filled credential still counts as
 // present, because sending half a credential should fail loudly at the registry, not silently
 // downgrade to anonymous.
