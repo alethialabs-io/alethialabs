@@ -29,9 +29,11 @@ func TestSelectPlacementPath(t *testing.T) {
 		{"namespace azure → fail closed", types.PlacementModeNamespace, "azure", placementUnactivated},
 		{"namespace alibaba → fail closed", types.PlacementModeNamespace, "alibaba", placementUnactivated},
 		{"namespace hetzner → fail closed (permanent exclusion)", types.PlacementModeNamespace, "hetzner", placementUnactivated},
-		// vcluster is activated aws-first (#1231); other clouds fail closed until their host re-mint lands.
+		// vcluster is activated per-cloud as its host re-mint lands: aws (in-core) + gcp (runner-injected
+		// KubeConnResolver). azure/alibaba fail closed until their leg lands; hetzner is a permanent exclusion.
 		{"vcluster aws → activated", types.PlacementModeVcluster, "aws", placementVcluster},
-		{"vcluster gcp → fail closed", types.PlacementModeVcluster, "gcp", placementUnactivated},
+		{"vcluster gcp → activated", types.PlacementModeVcluster, "gcp", placementVcluster},
+		{"vcluster azure → fail closed", types.PlacementModeVcluster, "azure", placementUnactivated},
 		{"vcluster hetzner → fail closed (permanent exclusion)", types.PlacementModeVcluster, "hetzner", placementUnactivated},
 		{"unknown mode → fail closed", types.PlacementMode("bogus"), "aws", placementUnactivated},
 	}
@@ -42,6 +44,76 @@ func TestSelectPlacementPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMintClusterOutputs locks the runner-injected kube-conn seam: aws needs no resolver (name-only,
+// resolved in-core), a cloud that reads endpoint/CA from outputs (gcp) gets them injected from the
+// resolver under its output keys, and every fail-closed branch surfaces an error rather than an
+// unusable kubeconfig.
+func TestMintClusterOutputs(t *testing.T) {
+	ctx := context.Background()
+	cfg := &types.ProjectConfig{CloudAccountID: "proj-1", Region: "us-central1"}
+
+	// aws: no conn keys → name-only map, resolver MUST NOT be consulted (in-core EKS DescribeCluster).
+	t.Run("aws name-only, resolver untouched", func(t *testing.T) {
+		called := false
+		resolver := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			called = true
+			return "", "", nil
+		}
+		out, err := mintClusterOutputs(ctx, resolver, "aws", cfg, "my-eks", "eks_cluster_name")
+		if err != nil {
+			t.Fatalf("aws: unexpected error: %v", err)
+		}
+		if called {
+			t.Error("aws must not invoke the kube-conn resolver (endpoint/CA come from EKS DescribeCluster)")
+		}
+		if out["eks_cluster_name"] != "my-eks" || len(out) != 1 {
+			t.Errorf("aws outputs = %v, want just the cluster name", out)
+		}
+	})
+
+	// gcp: resolver supplies endpoint+CA, stored under the GKE output keys ConfigureKubeconfig reads.
+	t.Run("gcp injects endpoint+CA", func(t *testing.T) {
+		resolver := func(_ context.Context, slug string, c *types.ProjectConfig, cluster string) (string, string, error) {
+			if slug != "gcp" || c != cfg || cluster != "my-gke" {
+				t.Errorf("resolver got (%q, %v, %q), want (gcp, cfg, my-gke)", slug, c, cluster)
+			}
+			return "https://1.2.3.4", "CA==", nil
+		}
+		out, err := mintClusterOutputs(ctx, resolver, "gcp", cfg, "my-gke", "gke_cluster_name")
+		if err != nil {
+			t.Fatalf("gcp: unexpected error: %v", err)
+		}
+		if out["gke_cluster_name"] != "my-gke" ||
+			out["gke_cluster_endpoint"] != "https://1.2.3.4" ||
+			out["gke_cluster_ca_certificate"] != "CA==" {
+			t.Errorf("gcp outputs = %v, want name+endpoint+CA under the GKE keys", out)
+		}
+	})
+
+	// A cloud that needs a conn but was handed no resolver is a runner wiring bug — fail closed.
+	t.Run("gcp nil resolver fails closed", func(t *testing.T) {
+		if _, err := mintClusterOutputs(ctx, nil, "gcp", cfg, "my-gke", "gke_cluster_name"); err == nil {
+			t.Error("gcp with a nil resolver = nil error, want a wiring-bug error")
+		}
+	})
+
+	// A resolver error propagates; an empty endpoint/CA is rejected (never a half-built kubeconfig).
+	t.Run("gcp resolver error propagates", func(t *testing.T) {
+		boom := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "", "", io.ErrUnexpectedEOF
+		}
+		if _, err := mintClusterOutputs(ctx, boom, "gcp", cfg, "my-gke", "gke_cluster_name"); err == nil {
+			t.Error("gcp resolver error = nil, want it propagated")
+		}
+		empty := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "", "CA==", nil
+		}
+		if _, err := mintClusterOutputs(ctx, empty, "gcp", cfg, "my-gke", "gke_cluster_name"); err == nil {
+			t.Error("gcp resolver empty endpoint = nil, want a fail-closed error")
+		}
+	})
 }
 
 func TestUnactivatedPlacementError(t *testing.T) {
@@ -58,13 +130,13 @@ func TestUnactivatedPlacementError(t *testing.T) {
 		}
 	}
 
-	// vcluster on a non-aws cloud names the cloud and the per-cloud reason (parity is documented, not
-	// silent) and points at aws as the working cloud — vcluster is activated aws-first (#1231).
-	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "gcp")
+	// vcluster on an un-activated cloud names the cloud and the per-cloud reason (parity is documented,
+	// not silent) and points at a working cloud. azure is still a follow-up (gcp is now activated).
+	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "azure")
 	if vcErr == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"vcluster", "gcp", "aws"} {
+	for _, want := range []string{"vcluster", "azure", "aws"} {
 		if !strings.Contains(vcErr.Error(), want) {
 			t.Errorf("vcluster error %q missing %q", vcErr.Error(), want)
 		}
@@ -97,7 +169,7 @@ func TestNamespaceRemintSeam(t *testing.T) {
 
 	// The mint seam fails closed for an unwired cloud BEFORE touching the CloudProvider — a nil provider
 	// is safe precisely because the guard returns first (defence-in-depth behind selectPlacementPath).
-	if err := mintNamespaceKubeAccess(context.Background(), nil, nil, "gcp", "some-cluster", io.Discard); err == nil {
+	if err := mintNamespaceKubeAccess(context.Background(), nil, nil, nil, "gcp", "some-cluster", io.Discard); err == nil {
 		t.Error("mintNamespaceKubeAccess(gcp) = nil, want fail-closed error (re-mint not wired)")
 	}
 

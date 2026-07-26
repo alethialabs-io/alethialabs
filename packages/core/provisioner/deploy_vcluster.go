@@ -52,12 +52,20 @@ const (
 // `vcluster` placement — the SINGLE control that activates a cloud (selectPlacementPath routes vcluster
 // here only for a cloud in this set; runVClusterDeploy fail-closes anything else). It mirrors
 // namespaceRemintProviders because a vcluster runs ON the host Fabric cluster and reaches it exactly the
-// way a namespace env does. Parity follow-ups add their entry as each per-cloud output-free mint lands
-// (#1127 gcp / #1128 azure / #1129 alibaba); hetzner-talos is a PERMANENT exclusion (no cloud API to
-// re-mint — needs a Fabric-create-time kubeconfig). Cloud parity is a hard rule: every gap is a
-// documented, fail-closed exclusion, never silent.
+// way a namespace env does — EXCEPT vcluster needs no per-namespace identity, so a cloud is activatable
+// here as soon as its host re-mint (the KubeConnResolver) is wired, ahead of the namespace tier.
+//
+//   - aws: EKS DescribeCluster (in-core, ambient) — ConfigureKubeconfig resolves from the name.
+//   - gcp: GKE clusters.get via the runner-injected KubeConnResolver (mintGCPToken + ResolveGKEClusterConn);
+//     project = CloudAccountID, location = Region (the shared cluster's region).
+//
+// azure/alibaba are the next parity steps (azure needs the Fabric resource-group resolvable for a placed
+// env; alibaba's ConfigureKubeconfig reads a full kubeconfig output). hetzner-talos is a PERMANENT
+// exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig). Cloud parity is a hard
+// rule: every gap is a documented, fail-closed exclusion, never silent.
 var vclusterRemintProviders = map[string]bool{
 	"aws": true,
+	"gcp": true,
 }
 
 // vclusterRemintWired reports whether provider's output-free host re-mint is activated for vcluster.
@@ -65,7 +73,7 @@ func vclusterRemintWired(provider string) bool { return vclusterRemintProviders[
 
 // vclusterRemintNotWired is the fail-closed error for a cloud whose vcluster host re-mint isn't wired.
 func vclusterRemintNotWired(provider string) error {
-	return fmt.Errorf("vcluster placement: output-free keyless host re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster) today; gcp/azure/alibaba are per-cloud follow-ups (#1127/#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint)", provider)
+	return fmt.Errorf("vcluster placement: output-free keyless host re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster) and gcp (GKE clusters.get) today; azure/alibaba are per-cloud follow-ups (#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint)", provider)
 }
 
 // buildVClusterSpec derives the vcluster provisioning spec for a `vcluster`-placement env from its config
@@ -105,17 +113,21 @@ func vclusterPreflight() error {
 
 // mintVClusterHostAccess mints keyless kube access to the EXISTING shared-Fabric HOST cluster by name,
 // output-free (no tofu) — the same re-mint the namespace path uses (the vcluster + its ArgoCD live on the
-// host). Fail-closed for any cloud not in vclusterRemintProviders (defence-in-depth behind
-// selectPlacementPath).
-func mintVClusterHostAccess(ctx context.Context, provider cloud.CloudProvider, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
+// host). For a cloud whose ConfigureKubeconfig reads endpoint/CA from outputs, the runner-injected
+// resolver supplies them (mintClusterOutputs). Fail-closed for any cloud not in vclusterRemintProviders
+// (defence-in-depth behind selectPlacementPath).
+func mintVClusterHostAccess(ctx context.Context, provider cloud.CloudProvider, resolver KubeConnResolver, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
 	if !vclusterRemintWired(providerSlug) {
 		return vclusterRemintNotWired(providerSlug)
 	}
-	outputKey, ok := namespaceClusterNameOutputKey[providerSlug]
+	nameKey, ok := namespaceClusterNameOutputKey[providerSlug]
 	if !ok {
 		return vclusterRemintNotWired(providerSlug)
 	}
-	mintOutputs := map[string]interface{}{outputKey: clusterName}
+	mintOutputs, err := mintClusterOutputs(ctx, resolver, providerSlug, config, clusterName, nameKey)
+	if err != nil {
+		return err
+	}
 	return provider.ConfigureKubeconfig(ctx, config, mintOutputs, stdout)
 }
 
@@ -209,7 +221,7 @@ func runVClusterDeploy(ctx context.Context, params DeployParams) (_ *PlanResult,
 	// Keyless host access to the EXISTING named Fabric cluster, output-free (no tofu). Then a cheap
 	// API-reachability probe so a wrong Fabric/region fails honestly here rather than as a later helm error.
 	setStage("kube_configure")
-	if err := mintVClusterHostAccess(ctx, provider, vc, params.Provider, hostCluster, stdout); err != nil {
+	if err := mintVClusterHostAccess(ctx, provider, params.KubeConn, vc, params.Provider, hostCluster, stdout); err != nil {
 		return nil, fmt.Errorf("kubeconfig mint failed for existing host cluster %q — the vcluster env is placed on a Fabric whose cluster is unreachable: %w", hostCluster, err)
 	}
 	if err := k8s.WaitClusterReady(ctx, clusterReadyTimeout(), false, stdout); err != nil {
@@ -326,7 +338,7 @@ func runVClusterDestroy(ctx context.Context, provider cloud.CloudProvider, param
 	if err := vclusterPreflight(); err != nil {
 		return err
 	}
-	if err := mintVClusterHostAccess(ctx, provider, vc, params.Provider, hostCluster, stdout); err != nil {
+	if err := mintVClusterHostAccess(ctx, provider, params.KubeConn, vc, params.Provider, hostCluster, stdout); err != nil {
 		return fmt.Errorf("vcluster teardown: kubeconfig mint failed for host cluster %q: %w", hostCluster, err)
 	}
 	return deregisterVCluster(ctx, NewVClusterProvisioner(), spec, stdout, stderr)
