@@ -149,34 +149,55 @@ func externalSecretsStoreDecision(f *InfraFacts) InfraServiceDecision {
 // install.go. Returns ok=false when no cross-account secret manager is selected (the common case), so
 // the decision list stays uncluttered. When selected but the cluster's own external-secrets identity
 // is absent, it is a FAIL-CLOSED skip: no foreign store is applied.
+//
+// The gate is InfraFacts.XacctSecretStore, the SAME predicate the render template reads — not a
+// hand-copied mirror of it. It used to be one, and the copies had already diverged: facts with an
+// IRSA role and a gcp-shaped target (SecretsXacctProjectID set, SecretsXacctRef empty) satisfied
+// this function's aws branch and reported "installed" while the template's aws branch, which also
+// requires SecretsXacctRef, rendered nothing.
 func externalSecretsXacctStoreDecision(f *InfraFacts) (InfraServiceDecision, bool) {
-	if f.SecretsXacctRef == "" && f.SecretsXacctProjectID == "" {
+	name, selected := f.XacctSecretStore()
+	if !selected {
 		return InfraServiceDecision{}, false
 	}
 	d := InfraServiceDecision{Service: "external-secrets-store-xacct"}
-	switch f.Provider {
+	if name == "" {
+		return skippedStore(d, xacctSkipReason(f.Provider)), true
+	}
+	return installedStore(d, xacctBackend(f.Provider)), true
+}
+
+// xacctBackend names the cross-account backend an installed *-xacct store reads.
+func xacctBackend(provider string) string {
+	switch provider {
 	case "aws":
-		if f.IRSAExternalSecretsArn != "" {
-			return installedStore(d, "cross-account AWS Secrets Manager (assumes the target-account role)"), true
-		}
-		return skippedStore(d, "the external-secrets IRSA role output is not present — the cross-account ClusterSecretStore is skipped."), true
+		return "cross-account AWS Secrets Manager (assumes the target-account role)"
 	case "gcp":
-		if f.GCPExternalSecretsSA != "" {
-			return installedStore(d, "cross-project GCP Secret Manager (reads the target project)"), true
-		}
-		return skippedStore(d, "the external-secrets service-account output is not present — the cross-account ClusterSecretStore is skipped."), true
+		return "cross-project GCP Secret Manager (reads the target project)"
 	case "azure":
-		if f.AzureExternalSecretsClient != "" {
-			return installedStore(d, "cross-subscription Azure Key Vault (reads the target vault)"), true
-		}
-		return skippedStore(d, "the external-secrets managed-identity client id output is not present — the cross-account ClusterSecretStore is skipped."), true
+		return "cross-subscription Azure Key Vault (reads the target vault)"
 	case "alibaba":
-		if f.AlibabaExternalSecretsRoleArn != "" && f.SecretsXacctOIDCProviderRef != "" {
-			return installedStore(d, "cross-account Alibaba KMS Secrets Manager (RRSA via the target OIDC provider)"), true
-		}
-		return skippedStore(d, "the external-secrets RRSA role output or the target OIDC provider ARN is not present — the cross-account ClusterSecretStore is skipped."), true
+		return "cross-account Alibaba KMS Secrets Manager (RRSA via the target OIDC provider)"
 	default:
-		return skippedStore(d, "no cross-account cloud secret store for this provider — skipped."), true
+		return "a cross-account cloud secret manager"
+	}
+}
+
+// xacctSkipReason explains WHICH half of the gate was missing when a selected cross-account store
+// did not render. It is always the cluster's own external-secrets identity: the target half is what
+// made the store "selected" in the first place.
+func xacctSkipReason(provider string) string {
+	switch provider {
+	case "aws":
+		return "the external-secrets IRSA role output is not present — the cross-account ClusterSecretStore is skipped."
+	case "gcp":
+		return "the external-secrets service-account output is not present — the cross-account ClusterSecretStore is skipped."
+	case "azure":
+		return "the external-secrets managed-identity client id output is not present — the cross-account ClusterSecretStore is skipped."
+	case "alibaba":
+		return "the external-secrets RRSA role output or the target OIDC provider ARN is not present — the cross-account ClusterSecretStore is skipped."
+	default:
+		return "no cross-account cloud secret store for this provider — skipped."
 	}
 }
 
