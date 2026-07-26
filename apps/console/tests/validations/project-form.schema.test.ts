@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "vitest";
-import { projectFormSchema } from "@/lib/validations/project-form.schema";
+import {
+	projectFormSchema,
+	helmRegistryProviderConfigSchema,
+} from "@/lib/validations/project-form.schema";
 
 const validProject = {
 	project: {
@@ -375,5 +378,35 @@ describe("projectFormSchema", () => {
 			]);
 			expect(projectFormSchema.safeParse(data).success).toBe(false);
 		});
+	});
+});
+
+// The chart-repo provider_config validator is parsed AGAIN server-side in writeComponents (the write
+// action is a public entry point, and provider_config is spread whole into the persisted
+// config_snapshot). These lock the two guarantees that fix relies on.
+describe("helmRegistryProviderConfigSchema", () => {
+	it("strips any key it never declared — a secret knob a crafted request tacks on can't be persisted", () => {
+		const parsed = helmRegistryProviderConfigSchema.parse({
+			registry_host: "registry.acme.io",
+			// not part of the schema — a hostile/extra knob that must never reach the snapshot
+			sneaky_token: "s3cr3t",
+		});
+		expect(parsed).toEqual({ registry_host: "registry.acme.io" });
+		expect("sneaky_token" in parsed).toBe(false);
+	});
+
+	it("keeps the declared non-secret knobs", () => {
+		expect(
+			helmRegistryProviderConfigSchema.parse({ repo_url: "https://charts.acme.io" }),
+		).toEqual({ repo_url: "https://charts.acme.io" });
+	});
+
+	it("fails closed on a malformed host that would break the seeded repo-cred match", () => {
+		// a scheme+path where a bare host is required — waved through today, it yields a credential
+		// URL no ArgoCD Application repoURL prefix-matches, surfacing only at deploy.
+		expect(
+			helmRegistryProviderConfigSchema.safeParse({ registry_host: "https://acme.io/charts" })
+				.success,
+		).toBe(false);
 	});
 });

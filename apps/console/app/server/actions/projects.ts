@@ -5,6 +5,7 @@
 import { notFound } from "next/navigation";
 import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
+import { helmRegistryProviderConfigSchema } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
@@ -343,9 +344,21 @@ async function writeComponents(
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
 	if (data.helm_registries?.length)
-		await tx
-			.insert(projectHelmRegistries)
-			.values(data.helm_registries.map((r) => ({ ...base, ...r })));
+		await tx.insert(projectHelmRegistries).values(
+			data.helm_registries.map((r) => ({
+				...base,
+				...r,
+				// Re-validate provider_config at the write seam, not only in the inspector. This action
+				// is a public entry point and provider_config is spread whole into config_snapshot, so a
+				// crafted request could otherwise persist an unknown/secret knob. `.strip()` drops any
+				// key the catalog never declared (a secret-flagged one included) and fails closed on a
+				// malformed host/URL that would break the seeded repo-cred prefix-match.
+				provider_config:
+					r.provider_config == null
+						? r.provider_config
+						: helmRegistryProviderConfigSchema.parse(r.provider_config),
+			})),
+		);
 	if (data.services?.length) {
 		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
 		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).

@@ -109,6 +109,7 @@ const ARRAY_SCHEMA_KIND: Record<string, NodeKind> = {
 	secrets: "secret",
 	storage_buckets: "bucket",
 	container_registries: "registry",
+	helm_registries: "helm_registry",
 };
 
 /**

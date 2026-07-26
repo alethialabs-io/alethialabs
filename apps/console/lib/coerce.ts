@@ -38,6 +38,15 @@ export function toArray(v: unknown): unknown[] {
 	return Array.isArray(v) ? v : [];
 }
 
+/** An unknown value as a plain object bag (empty when it is null, an array, or a primitive). */
+export function toRecord(v: unknown): Record<string, unknown> {
+	if (typeof v !== "object" || v === null || Array.isArray(v)) return {};
+	// Rebuilt entry-by-entry rather than asserted, so the returned bag really is one.
+	const out: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(v)) out[key] = value;
+	return out;
+}
+
 /**
  * Narrow an arbitrary string to a known union member, or `fallback` when it is none of them.
  * Cast-free: it returns the matching literal from `values` (already the union type), so a UI
