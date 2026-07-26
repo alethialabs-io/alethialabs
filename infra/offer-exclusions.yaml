@@ -71,24 +71,13 @@ exclusions:
 # Delete the entry in the same PR that fixes the gap.
 
 baseline:
-  # The canvas offers a cache engine on every managed cloud; no provider reads the choice, so
-  # selecting Valkey silently provisions Redis. AWS's Valkey module is written and stranded behind a
-  # toggle the cache path never sets.
+  # GCP offers BOTH cache engines and the provider reads neither, so the choice is dropped: picking
+  # Valkey silently provisions Redis. Memorystore Valkey is a different resource entirely
+  # (`google_memorystore_instance`, engine_version VALKEY_7_2), so this is a build, not a wiring fix.
   - offer: cache:redis
     cloud: gcp
     issue: "#1420"
   - offer: cache:valkey
     cloud: gcp
     issue: "#1420"
-  - offer: cache:redis
-    cloud: azure
-    issue: "#1420"
-  - offer: cache:redis
-    cloud: alibaba
-    issue: "#1420"
 
-  # Every resource in the azure-db module is gated on `is_postgres`, while the module's own variable
-  # validation accepts "mysql" — so it reads as supported and provisions nothing.
-  - offer: database:mysql
-    cloud: azure
-    issue: "#1382"

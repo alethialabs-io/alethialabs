@@ -287,6 +287,15 @@ for (const [kind, variants] of Object.entries(AXES)) {
 			const exc = excluded(offer, cloud);
 			let state = "ok";
 			let detail = "";
+			// A cloud that offers exactly ONE engine on this axis has no choice to drop, so the
+			// carrier check does not apply to it: the defect this guard names is "a CHOICE the product
+			// presents and then discards". Azure and Alibaba offer only Redis, so their provider not
+			// reading `cache.Engine` is not a silent gap — there is nothing for the user to pick.
+			// Without this they would sit on the baseline forever for no reachable reason, and a list
+			// with permanent residents stops being read.
+			const offeredHere = variants.filter((v) => offeredOn(cloud, kind, v));
+			const singleChoice = offeredHere.length <= 1;
+
 			if (!offeredOn(cloud, kind, variant)) {
 				// Not offered on this cloud at all — the canvas floor already hides it. Not a gap, and
 				// not an exclusion either: there is nothing to exclude from.
@@ -296,7 +305,7 @@ for (const [kind, variants] of Object.entries(AXES)) {
 			if (exc) {
 				state = "excluded";
 				detail = exc.reason ?? "";
-			} else if (!carrier) {
+			} else if (!carrier && !singleChoice) {
 				state = "no-carrier";
 				detail = `the ${kind} engine never reaches tfvars on ${cloud} — the choice is dropped between the canvas and the plan.`;
 			} else if (enumerated && !enumerated.supported.has(variant.toLowerCase())) {

@@ -25,13 +25,13 @@ nightly can promote a cell, and it does so in the e2e parity board.
 | Offer | alibaba | aws | azure | gcp | hetzner | local |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | `postgres` | 🟡 | 🟡 | 🟡 | 🟡 | — | — |
-| `mysql` | 🟡 | 🟡 | 🚫 #1382 | 🟡 | · | — |
+| `mysql` | 🟡 | 🟡 | 🟡 | 🟡 | · | — |
 
 ## cache engines
 
 | Offer | alibaba | aws | azure | gcp | hetzner | local |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| `redis` | 🚫 #1420 | 🟡 | 🚫 #1420 | 🚫 #1420 | · | — |
+| `redis` | 🟡 | 🟡 | 🟡 | 🚫 #1420 | · | — |
 | `valkey` | · | 🟡 | · | 🚫 #1420 | — | — |
 
 ## Documented exclusions
