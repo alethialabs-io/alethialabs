@@ -42,8 +42,9 @@ const SQL_FLAGS_FIXTURE = {
 
 const TIERS_FIXTURE = {
 	items: [
-		{ tier: "db-custom-2-7680", region: ["us-central1", "europe-west1"] },
-		{ tier: "db-custom-4-15360", region: ["us-central1"] },
+		// `RAM` is BYTES, delivered as a string on the JSON wire (7.5 GB / 15 GB).
+		{ tier: "db-custom-2-7680", region: ["us-central1", "europe-west1"], RAM: "8053063680" },
+		{ tier: "db-custom-4-15360", region: ["us-central1"], RAM: "16106127360" },
 	],
 };
 
@@ -143,8 +144,31 @@ describe("normalizeGcpServices", () => {
 		expect(nosql[0].native_id).toBe("Firestore");
 		expect(nosql[0].launchable).toBe("launchable");
 
-		// cache is the documented exclusion — never emitted.
+		// database_instance_class — the tiers.list items ARE the Cloud SQL machine types.
+		const skus = rows.filter((r) => r.service_kind === "database_instance_class");
+		expect(skus.map((r) => r.native_id)).toEqual(["db-custom-2-7680", "db-custom-4-15360"]);
+		expect(skus[0].tier).toBe("db-custom-2-7680");
+		// Engine-agnostic: Cloud SQL offers tiers per PROJECT, and the API says nothing about which
+		// engine a tier belongs to. Claiming one would be a verdict we never obtained.
+		expect(skus.every((r) => r.engine === null)).toBe(true);
+		expect(skus[0].mem_gb).toBe(7.5);
+
+		// cache + cache_version are the documented exclusions — never emitted.
 		expect(rows.some((r) => r.service_kind === "cache")).toBe(false);
+		expect(rows.some((r) => r.service_kind === "cache_version")).toBe(false);
+	});
+
+	it("reports no SKU memory rather than 0 when tiers.list omits RAM", () => {
+		const rows = normalizeGcpServices({
+			...BASE,
+			k8s: null,
+			sqlTiers: { items: [{ tier: "db-f1-micro", region: ["us-central1"] }] },
+			sqlFlags: null,
+			firestore: null,
+		});
+		const sku = rows.find((r) => r.service_kind === "database_instance_class");
+		expect(sku?.native_id).toBe("db-f1-micro");
+		expect(sku?.mem_gb).toBeNull();
 	});
 
 	it("marks DB not_evaluable when tiers.list returned nothing (Cloud SQL access unproven)", () => {

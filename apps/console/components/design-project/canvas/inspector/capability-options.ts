@@ -147,8 +147,23 @@ export function provenanceNote(
 	if (ctx.caps.state === "syncing" || ctx.caps.state === "loading") {
 		return "Checking your account…";
 	}
-	return "Showing the full catalog.";
+	return CATALOGLESS_AXES.has(axis)
+		? "No catalog for this field — the cloud's default is used."
+		: "Showing the full catalog.";
 }
+
+/**
+ * The axes with NO static Catalog #2 slice behind them.
+ *
+ * For every other axis "not account data" means the full catalog is on show, which is a true and
+ * useful thing to say. For these two it would be a lie: there is no catalog, and the list is just the
+ * default option. Saying so is the difference between "here is everything" and "we have nothing to
+ * offer you yet".
+ */
+const CATALOGLESS_AXES: ReadonlySet<CapabilityAxis> = new Set([
+	"db_instance_class",
+	"cache_version",
+]);
 
 // ── region ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -218,6 +233,46 @@ export function dbVersionOptions(ctx: FieldCtx): FieldOption[] {
 		return match.versions.map((v) => ({ value: v, label: v, advisory }));
 	}
 	return engine.versions.map((v) => ({ value: v, label: v }));
+}
+
+/**
+ * The concrete SKUs this account can order the SELECTED engine at.
+ *
+ * Rows whose `engine` is null are engine-agnostic (Cloud SQL lists tiers per project) and match
+ * whatever engine is chosen; the reader already applied that rule, but the client repeats it because
+ * the bag is fetched once per node and the engine can change without a refetch.
+ *
+ * These are SUGGESTIONS, not a menu — the field is a `combobox`, so returning [] is a fine answer and
+ * the control still works. That is why this resolver does NOT carry invariant 1 the way its siblings
+ * do: there is no static catalog to fail open to (the catalog models capacity portably, and a SKU is
+ * precisely the non-portable escape hatch), and the lanes cannot enumerate exhaustively anyway —
+ * a GCP custom machine type is constructible, and the Alibaba anchor asks about one version in one
+ * zone. An unlisted SKU stays typeable; that is the control's job, not this function's.
+ */
+export function dbInstanceClassOptions(ctx: FieldCtx): FieldOption[] {
+	const { provider } = ctx;
+	if (!provider) return [];
+	const family =
+		typeof ctx.config.engine_family === "string" ? ctx.config.engine_family : null;
+	// No engine chosen (or one the catalog doesn't model) ⇒ don't narrow: showing the account's whole
+	// SKU set is more useful than showing none, and the engine-agnostic rows are correct either way.
+	const engineValue = (family ? dbEngine(provider, family) : null)?.value ?? null;
+	const rows = accountRows(ctx, ctx.caps.dbInstanceClasses).filter(
+		(r) => r.engine === null || engineValue === null || r.engine === engineValue,
+	);
+	return toOptions(rows);
+}
+
+/**
+ * The cache engine versions this account can launch — suggestions for the `engine_version` combobox.
+ *
+ * Empty on the three clouds that document an exclusion (GCP/Azure have no account-scoped API for it;
+ * on Hetzner the value is a container image tag), which is the honest answer rather than a fabricated
+ * list. The field stays usable because it is not a select.
+ */
+export function cacheVersionOptions(ctx: FieldCtx): FieldOption[] {
+	if (!ctx.provider) return [];
+	return toOptions(accountRows(ctx, ctx.caps.cacheVersions));
 }
 
 export function cacheTierOptions(ctx: FieldCtx): FieldOption[] {

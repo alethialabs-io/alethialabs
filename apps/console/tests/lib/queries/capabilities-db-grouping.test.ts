@@ -11,6 +11,8 @@
 import { describe, expect, it } from "vitest";
 import {
 	type DbCapabilityRow,
+	type InstanceClassRow,
+	dedupeInstanceClasses,
 	groupDbEnginesByVersion,
 } from "@/lib/queries/capabilities";
 
@@ -125,5 +127,68 @@ describe("groupDbEnginesByVersion", () => {
 
 	it("returns nothing for no rows, so the caller's fail-open branch takes over", () => {
 		expect(groupDbEnginesByVersion([])).toEqual([]);
+	});
+});
+
+/** A federated `database_instance_class` row as the reader selects it. */
+function skuRow(over: Partial<InstanceClassRow>): InstanceClassRow {
+	return {
+		engine: "aurora-postgresql",
+		tier: "db.r6g.large",
+		nativeId: "aurora-postgresql-db.r6g.large",
+		name: "db.r6g.large",
+		memGb: null,
+		launchable: "launchable",
+		launchableReason: "available",
+		...over,
+	};
+}
+
+describe("dedupeInstanceClasses", () => {
+	it("folds the per-region repeats into one option per (engine, SKU)", () => {
+		const out = dedupeInstanceClasses([
+			skuRow({}),
+			skuRow({}), // same SKU seen in a second region
+			skuRow({ tier: "db.r6g.xlarge", nativeId: "aurora-postgresql-db.r6g.xlarge" }),
+		]);
+		expect(out.map((o) => o.value)).toEqual(["db.r6g.large", "db.r6g.xlarge"]);
+	});
+
+	it("keeps the same SKU under two engines apart, so the engine filter still works", () => {
+		const out = dedupeInstanceClasses([
+			skuRow({}),
+			skuRow({ engine: "aurora-mysql", nativeId: "aurora-mysql-db.r6g.large" }),
+		]);
+		expect(out).toHaveLength(2);
+		expect(out.map((o) => o.engine)).toEqual(["aurora-mysql", "aurora-postgresql"]);
+	});
+
+	it("narrows to one engine, and an engine-agnostic row matches every engine", () => {
+		const rows = [
+			skuRow({}),
+			skuRow({ engine: "aurora-mysql", nativeId: "aurora-mysql-db.r6g.large" }),
+			// GCP tiers are offered per PROJECT — a null engine is a claim about all of them.
+			skuRow({ engine: null, tier: "db-custom-2-7680", nativeId: "db-custom-2-7680" }),
+		];
+		const out = dedupeInstanceClasses(rows, "aurora-postgresql");
+		expect(out.map((o) => o.value).sort()).toEqual(["db-custom-2-7680", "db.r6g.large"]);
+	});
+
+	it("merges verdicts permissively — launchable somewhere beats not_launchable here", () => {
+		const out = dedupeInstanceClasses([
+			skuRow({ launchable: "not_launchable", launchableReason: "region_not_offered" }),
+			skuRow({ launchable: "launchable", launchableReason: "available" }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].launchable).toBe("launchable");
+	});
+
+	it("keeps a reported memory over a null one, whichever row arrives first", () => {
+		const out = dedupeInstanceClasses([skuRow({}), skuRow({ memGb: 16 })]);
+		expect(out[0].memoryGb).toBe(16);
+	});
+
+	it("returns nothing for no rows — there is no catalog behind this axis to fall back to", () => {
+		expect(dedupeInstanceClasses([])).toEqual([]);
 	});
 });
