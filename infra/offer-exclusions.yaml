@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Offer exclusions — the machine-readable half of the cloud-parity rule.
+#
+# CLAUDE.md: "a per-cloud change covers ALL clouds in the same pass; a cloud that can't is an EXPLICIT
+# documented exclusion, never silent." This file is where "explicit" lives. `check-offer-parity`
+# (apps/console/scripts) fails on any offer a cloud can't build unless it is listed here, and the
+# generated matrix prints every entry as a documented exclusion rather than hiding it.
+#
+# An entry is a DECISION, not a mute button. Each one states why the cloud cannot honor the offer —
+# a product limit, a platform architecture choice — never "we haven't got to it yet". Work not yet
+# done belongs on the board as an issue, where it stays visible; an exclusion says we are not going
+# to do it, and the matrix shows it to anyone reading.
+#
+# Fields:
+#   offer   — "<kind>:<variant>", matching the canvas's own vocabulary (e.g. database:mysql)
+#   cloud   — the template directory name, or "*" for every cloud
+#   reason  — one line, in the product's voice; it is printed verbatim in the matrix
+#   issue   — optional, when the exclusion is tracked or was decided in a thread
+
+exclusions:
+  # ── Hetzner — compute-only by architecture ──────────────────────────────────────────
+  # Hetzner exposes no managed data services. What a Hetzner project gets is in-cluster Helm charts
+  # installed by ArgoCD (CloudNativePG for Postgres, Valkey for cache), so the engine is fixed by the
+  # chart and nothing about it travels through OpenTofu. This is the documented ceiling in
+  # hetzner-connector-parity, not a gap: the canvas floor already narrows the engine list here.
+  - offer: database:postgres
+    cloud: hetzner
+    reason: Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine.
+  - offer: cache:valkey
+    cloud: hetzner
+    reason: Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine.
+
+  # ── local — the kind-cluster development template ───────────────────────────────────
+  # `infra/templates/project/local` stands up a kind cluster for development. It has no cloud behind
+  # it, so there are no managed services to provision at all; data services come from the same
+  # in-cluster charts as Hetzner.
+  - offer: database:postgres
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+  - offer: database:mysql
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+  - offer: cache:redis
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+  - offer: cache:valkey
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+
+# ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
+#
+# NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
+# each carries the issue tracking it. They do not fail the build, so the guard could land on a
+# codebase that already had the debt — but a NEW gap does fail, and the list RATCHETS: when a gap
+# stops reproducing, the guard fails until its entry is deleted. It can only shrink.
+#
+# Delete the entry in the same PR that fixes the gap.
+
+baseline:
+  # The canvas offers a cache engine on every managed cloud; no provider reads the choice, so
+  # selecting Valkey silently provisions Redis. AWS's Valkey module is written and stranded behind a
+  # toggle the cache path never sets.
+  - offer: cache:redis
+    cloud: aws
+    issue: "#1420"
+  - offer: cache:valkey
+    cloud: aws
+    issue: "#1420"
+  - offer: cache:redis
+    cloud: gcp
+    issue: "#1420"
+  - offer: cache:valkey
+    cloud: gcp
+    issue: "#1420"
+  - offer: cache:redis
+    cloud: azure
+    issue: "#1420"
+  - offer: cache:valkey
+    cloud: azure
+    issue: "#1420"
+  - offer: cache:redis
+    cloud: alibaba
+    issue: "#1420"
+  - offer: cache:valkey
+    cloud: alibaba
+    issue: "#1420"
+
+  # Every resource in the azure-db module is gated on `is_postgres`, while the module's own variable
+  # validation accepts "mysql" — so it reads as supported and provisions nothing.
+  - offer: database:mysql
+    cloud: azure
+    issue: "#1382"
