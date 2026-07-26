@@ -740,7 +740,8 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 	payload := buildDeployPayload(vc, provider, false, planFile,
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
+		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), buildCompatOverride(job.CompatOverride),
+		w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StageDeploy, payload)
 	if err != nil {
 		return err
@@ -851,6 +852,9 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 	if result.VerifyReceipt != nil {
 		metadata["verify_receipt"] = result.VerifyReceipt
 	}
+	if result.CompatReport != nil {
+		metadata["compat_result"] = result.CompatReport
+	}
 	if len(result.AddOnStatus) > 0 {
 		metadata["addon_status"] = result.AddOnStatus
 	}
@@ -926,7 +930,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	payload := buildDeployPayload(vc, provider, true, "",
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		infracostKey, nil, w.config.AlethiaURL, job.ID)
+		infracostKey, nil, nil, w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StagePlan, payload)
 	if err != nil {
 		return err
@@ -976,6 +980,9 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		}
 		if result.VerifyReceipt != nil {
 			metadata["verify_receipt"] = result.VerifyReceipt
+		}
+		if result.CompatReport != nil {
+			metadata["compat_result"] = result.CompatReport
 		}
 	}
 

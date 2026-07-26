@@ -21,6 +21,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
@@ -80,6 +81,11 @@ type DeployParams struct {
 	// a fail-closed apply can proceed deliberately. Nil means no waiver (the
 	// default — any hard control failure blocks apply).
 	VerifyOverride *verify.Override
+	// CompatOverride, when set, waives specific failing version-compatibility
+	// controls (COMPAT-COMPONENT-*/COMPAT-ADDON-*/COMPAT-K8S-CLOUD-*) so a
+	// fail-closed apply can proceed deliberately. Nil means no waiver (the default
+	// — any hard compat failure blocks apply, under the COMPAT-001 gate).
+	CompatOverride *compat.Override
 	// CostCeilingMonthlyUSD, when > 0, fail-closes a real apply whose Infracost
 	// estimated monthly cost exceeds it (or that could not be priced at all). 0 (the
 	// default) disables the guard, so existing callers are unaffected. Opt-in cost
@@ -112,6 +118,12 @@ type PlanResult struct {
 	// plan hash + tool versions. Signed when a signing key is configured
 	// (Algorithm "ed25519"); otherwise attached unsigned (Algorithm "none").
 	VerifyReceipt *verify.SignedReceipt
+	// CompatReport is the version-compatibility gate's result for this config
+	// (the cluster K8s minor × enabled add-ons/components against the matrix).
+	// Always attached (the engine is pure — an unrecorded version yields honest
+	// not_evaluable, never a silent pass). On a real apply a `fail` verdict stops
+	// the apply before any infrastructure changes (the COMPAT-001 gate).
+	CompatReport *compat.Report
 	// AddOnStatus is the post-apply ArgoCD health/sync per managed marketplace add-on
 	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
 	// health read failed; the runner forwards it so the console can show real status.
@@ -199,6 +211,19 @@ func enabledAddonIDs(addons []types.AddOnInstall) []string {
 		ids = append(ids, addons[i].ID)
 	}
 	return ids
+}
+
+// compatAddOnRefs maps the resolved add-on install set to the compat engine's
+// AddOnRef inputs (id + pinned chart/release version) for the apply-time gate.
+func compatAddOnRefs(addons []types.AddOnInstall) []compat.AddOnRef {
+	if len(addons) == 0 {
+		return nil
+	}
+	refs := make([]compat.AddOnRef, 0, len(addons))
+	for i := range addons {
+		refs = append(refs, compat.AddOnRef{ID: addons[i].ID, Version: addons[i].Version})
+	}
+	return refs
 }
 
 // writePhase records the current provisioning phase to the job's phase file (best-effort;
@@ -616,6 +641,35 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		fmt.Fprintln(stdout, "Verification gate: SKIPPED (no plan JSON) — coverage gap, not a pass")
 	}
 
+	// Version-compatibility gate (compat matrix, #1215). The second gate alongside
+	// elench verify: evaluate the RESOLVED config (cluster K8s minor × enabled add-ons
+	// against the compat matrix) rather than the plan JSON. The engine is pure and
+	// deterministic — an unrecorded version yields honest not_evaluable, never a silent
+	// pass — so the report is ALWAYS attached (for both plan and apply jobs; the console
+	// renders it, #1219). The fail-closed ENFORCEMENT happens just before apply, below.
+	compatSubject := compat.Subject{
+		Providers:  []string{params.Provider},
+		K8sVersion: vc.Cluster.ClusterVersion,
+		AddOns:     compatAddOnRefs(vc.AddOns),
+		// Components deliberately unset: the config-time subject omits them too, and
+		// component/K8s couplings are covered by the matrix's own drift test. Add-on and
+		// K8s-cloud couplings are the apply-gate's fail domain here.
+	}
+	crep := compat.Evaluate(compatSubject)
+	result.CompatReport = crep
+	fmt.Fprintf(stdout, "Compatibility gate: verdict=%s (pass=%d fail=%d warn=%d not_evaluable=%d, catalog %s)\n",
+		crep.Verdict, crep.Summary.Pass, crep.Summary.Fail, crep.Summary.Warn, crep.Summary.NotEvaluable, crep.CatalogVersion)
+	for _, c := range crep.Controls {
+		if c.Status == compat.StatusFail || c.Status == compat.StatusWarn {
+			for _, f := range c.Findings {
+				fmt.Fprintf(stdout, "  [%s/%s] %s: %s\n", c.ID, c.Status, f.Address, f.Message)
+			}
+		}
+		if c.Coverage != "" {
+			fmt.Fprintf(stdout, "  [%s] coverage: %s\n", c.ID, c.Coverage)
+		}
+	}
+
 	if params.InfracostToken != "" {
 		infracostEnv := []string{"INFRACOST_API_KEY=" + params.InfracostToken}
 		infracostCLI := infracost.NewInfracostCLI(infracost.ResolvedInfracostVersion(), params.InfracostToken)
@@ -685,6 +739,25 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if params.VerifyOverride != nil && len(params.VerifyOverride.Controls) > 0 {
 			fmt.Fprintf(stdout, "Verification override applied by %q for controls %v (reason: %s)\n",
 				params.VerifyOverride.By, params.VerifyOverride.Controls, params.VerifyOverride.Reason)
+		}
+	}
+
+	// Fail-closed compatibility enforcement (COMPAT-001): a real apply must not proceed
+	// while any hard compat control is failing and unwaived. Mirrors the verify gate above
+	// 1:1 through the shared Unwaived/Override machinery — an authorized operator may waive
+	// specific failing controls (COMPAT-COMPONENT-*/COMPAT-ADDON-*/…); disabling the gate
+	// wholesale is deliberately not an option. A nil/not_evaluable report is NON-blocking by
+	// contract (the honesty surface), so — unlike verify's missing-plan-JSON — there is no
+	// gateRequiresReport backstop: the engine always produces a conclusive verdict.
+	if result.CompatReport != nil {
+		if unresolved := result.CompatReport.Unwaived(params.CompatOverride); len(unresolved) > 0 {
+			telemetry.GateBlocked(ctx, provider.Name())
+			return nil, fmt.Errorf("compatibility gate (%s) BLOCKED apply: failing controls %v (catalog %s) — fix the config (K8s minor / add-on versions) or supply an authorized override to proceed",
+				compat.ControlGateID, unresolved, result.CompatReport.CatalogVersion)
+		}
+		if params.CompatOverride != nil && len(params.CompatOverride.Controls) > 0 {
+			fmt.Fprintf(stdout, "Compatibility override applied by %q for controls %v (reason: %s)\n",
+				params.CompatOverride.By, params.CompatOverride.Controls, params.CompatOverride.Reason)
 		}
 	}
 

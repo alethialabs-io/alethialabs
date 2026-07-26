@@ -45,7 +45,7 @@ func TestDeployPayloadRoundTrip(t *testing.T) {
 		ConnectorCredentials: []types.ConnectorCredential{{Category: "dns", Slug: "cloudflare", Credentials: map[string]string{"api_token": "cf_secret"}}},
 	}
 
-	payload := buildDeployPayload(vc, "aws", false, "", "/tpl", "/cat", "", nil, "https://console", "job-1")
+	payload := buildDeployPayload(vc, "aws", false, "", "/tpl", "/cat", "", nil, nil, "https://console", "job-1")
 
 	// buildDeployPayload must not mutate the caller's config.
 	if vc.GitAccessToken != "ghp_secret" {

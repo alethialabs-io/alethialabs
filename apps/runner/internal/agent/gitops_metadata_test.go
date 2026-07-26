@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 )
 
@@ -44,6 +45,43 @@ func TestDeployMetadata_CarriesGitopsStatus(t *testing.T) {
 	// A result WITHOUT gitops status (pre-#574 / dry-run) must not emit the key at all.
 	if md := buildDeployMetadata(&provisioner.PlanResult{ClusterName: "x"}); md["gitops_status"] != nil {
 		t.Errorf("nil GitopsStatus must omit the key, got %v", md["gitops_status"])
+	}
+}
+
+// TestDeployMetadata_CarriesCompatResult asserts the version-compatibility report (#1215)
+// crosses into execution_metadata as `compat_result` so the console can render it (#1219),
+// passes the secret denylist (the report is control verdicts + findings — never a
+// credential), and is omitted entirely when no report was produced.
+func TestDeployMetadata_CarriesCompatResult(t *testing.T) {
+	result := &provisioner.PlanResult{
+		ClusterName: "prod-eks",
+		CompatReport: &compat.Report{
+			Verdict:        compat.StatusFail,
+			CatalogVersion: "compat-matrix-0.1.0",
+			Controls: []compat.ControlResult{{
+				ID:       "COMPAT-K8S-CLOUD-HETZNER",
+				Status:   compat.StatusFail,
+				Severity: compat.SeverityHigh,
+				Findings: []compat.Finding{{Address: "hetzner/k8s@1.30", Message: "Kubernetes 1.30 is not offered by hetzner (supported: 1.35)"}},
+			}},
+			Summary: compat.Summary{Fail: 1},
+		},
+	}
+	metadata := buildDeployMetadata(result)
+	if dropped := scrubMetadataTree(metadata); len(dropped) > 0 {
+		t.Fatalf("compat_result tripped the secret denylist: %v", dropped)
+	}
+	cr, ok := metadata["compat_result"].(*compat.Report)
+	if !ok {
+		t.Fatalf("compat_result missing or wrong type: %T", metadata["compat_result"])
+	}
+	if cr.Verdict != compat.StatusFail || len(cr.Controls) != 1 {
+		t.Errorf("compat_result = %+v", cr)
+	}
+
+	// A result WITHOUT a compat report (e.g. a legacy/partial result) must omit the key.
+	if md := buildDeployMetadata(&provisioner.PlanResult{ClusterName: "x"}); md["compat_result"] != nil {
+		t.Errorf("nil CompatReport must omit the key, got %v", md["compat_result"])
 	}
 }
 
