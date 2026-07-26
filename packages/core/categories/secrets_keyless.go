@@ -47,6 +47,19 @@ type KeylessSecretTarget struct {
 	// exchanges the projected token for the target role via that provider. The customer bootstrap
 	// creates the provider + role in the target account and supplies this ARN. Empty for other clouds.
 	TargetOIDCProviderRef string
+
+	// TargetExternalID is set for AWS only, and is OPTIONAL there. When the customer's bootstrap sets
+	// an `sts:ExternalId` condition on the target role's trust policy, the same value must be sent on
+	// the assume or STS rejects it — ESO carries it as spec.provider.aws.externalID. Empty means the
+	// trust policy has no ExternalId condition (the default), and the field is omitted from the store.
+	//
+	// AWS-ONLY BY DESIGN — an explicit, documented per-cloud exclusion, not an oversight: ExternalId is
+	// an STS-specific confused-deputy control with no equivalent on the other three lanes, each of which
+	// already binds the grant to a concrete principal. GCP binds `roles/secretmanager.secretAccessor` to
+	// the cluster's Workload-Identity service account per secret; Azure assigns "Key Vault Secrets User"
+	// to the workload identity's service principal on one vault; Alibaba pins the RRSA trust to the
+	// cluster's OIDC issuer AND the external-secrets ServiceAccount `oidc:sub`.
+	TargetExternalID string
 }
 
 // DominantKeylessSecretTarget returns the cross-account keyless secret-manager target for the project's

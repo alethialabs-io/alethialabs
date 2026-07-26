@@ -33,6 +33,10 @@ func init() {
 				Region:          pcString(pc, "region", ""),
 				TargetAccountID: pcString(pc, "target_account_id", ""),
 				TargetRef:       pcString(pc, "target_role_arn", ""),
+				// Optional: only meaningful when the customer's bootstrap put an sts:ExternalId
+				// condition on the target role's trust policy. Deliberately NOT validated — a role
+				// without that condition is the default and must keep working.
+				TargetExternalID: pcString(pc, "external_id", ""),
 			}
 		},
 	})
