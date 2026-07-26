@@ -111,6 +111,11 @@ export const projectNetwork = pgTable(
 		region: text(),
 		provision_network: boolean().default(true).notNull(),
 		network_id: text(),
+		// Brownfield (existing-VPC) subnet selection: the native subnet ids the user
+		// picked from cloud inventory (#1352). Empty = auto-discover (today's behaviour),
+		// so it stays backward compatible. Consumed per-cloud via ProviderTfvars /
+		// deploy.go rather than guessing every subnet in the VPC.
+		subnet_ids: text().array().default([]),
 		cidr_block: text().default("10.0.0.0/16"),
 		single_nat_gateway: boolean().default(true),
 		allowed_cidr_blocks: text().array().default([]),

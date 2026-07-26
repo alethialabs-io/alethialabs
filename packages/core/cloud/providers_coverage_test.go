@@ -171,6 +171,9 @@ func TestAlibabaProviderTfvars_NetworkModes(t *testing.T) {
 	if _, ok := def["network_id"]; ok {
 		t.Error("network_id must be absent when provisioning a new network")
 	}
+	if _, ok := def["subnet_ids"]; ok {
+		t.Error("subnet_ids must be absent when provisioning a new network")
+	}
 
 	// BYO network: provision false + a network id => passthrough the id, don't provision.
 	byo := (&alibabaProvider{}).ProviderTfvars(&types.ProjectConfig{
@@ -182,6 +185,75 @@ func TestAlibabaProviderTfvars_NetworkModes(t *testing.T) {
 	}
 	if byo["network_id"] != "vpc-123" {
 		t.Errorf("network_id = %v, want vpc-123", byo["network_id"])
+	}
+	// No subnet selection => subnet_ids stays absent (auto-discover the VPC's vSwitches).
+	if _, ok := byo["subnet_ids"]; ok {
+		t.Error("subnet_ids must be absent when no subnets were selected")
+	}
+
+	// BYO network WITH an explicit vSwitch selection => passthrough the ordered ids.
+	byoSubnets := (&alibabaProvider{}).ProviderTfvars(&types.ProjectConfig{
+		ProjectName: "p",
+		Network: types.ProjectNetworkConfig{
+			ProvisionNetwork: false,
+			NetworkID:        "vpc-123",
+			SubnetIDs:        []string{"vsw-a", "vsw-b"},
+		},
+	})
+	gotVsw, ok := byoSubnets["subnet_ids"].([]string)
+	if !ok {
+		t.Fatalf("subnet_ids = %v (%T), want []string", byoSubnets["subnet_ids"], byoSubnets["subnet_ids"])
+	}
+	if len(gotVsw) != 2 || gotVsw[0] != "vsw-a" || gotVsw[1] != "vsw-b" {
+		t.Errorf("subnet_ids = %v, want [vsw-a vsw-b] in order", gotVsw)
+	}
+}
+
+// TestAzureProviderTfvars_NetworkModes covers the brownfield vnet_id + subnet selection
+// passthrough (#1352): both keys are absent when provisioning a new VNet, and only the
+// subnet selection is written when the user picked one. (The provider derives its internal
+// provisionVnet flag from Network.ProvisionNetwork.)
+func TestAzureProviderTfvars_NetworkModes(t *testing.T) {
+	newCfg := func(net types.ProjectNetworkConfig) *types.ProjectConfig {
+		return &types.ProjectConfig{
+			ProjectName: "p",
+			Cluster:     types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+			DNS:         types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+			Network:     net,
+		}
+	}
+	vnetID := "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet"
+
+	// New VNet: neither vnet_id nor subnet_ids is written.
+	def := (&azureProvider{}).ProviderTfvars(newCfg(types.ProjectNetworkConfig{ProvisionNetwork: true}))
+	if _, ok := def["vnet_id"]; ok {
+		t.Error("vnet_id must be absent when provisioning a new VNet")
+	}
+	if _, ok := def["subnet_ids"]; ok {
+		t.Error("subnet_ids must be absent when provisioning a new VNet")
+	}
+
+	// BYO VNet, no subnet selection: vnet_id passes through, subnet_ids stays absent.
+	byo := (&azureProvider{}).ProviderTfvars(newCfg(types.ProjectNetworkConfig{ProvisionNetwork: false, NetworkID: vnetID}))
+	if byo["vnet_id"] != vnetID {
+		t.Errorf("vnet_id = %v, want %v", byo["vnet_id"], vnetID)
+	}
+	if _, ok := byo["subnet_ids"]; ok {
+		t.Error("subnet_ids must be absent when no subnets were selected")
+	}
+
+	// BYO VNet WITH an explicit subnet selection => passthrough the ordered names.
+	byoSubnets := (&azureProvider{}).ProviderTfvars(newCfg(types.ProjectNetworkConfig{
+		ProvisionNetwork: false,
+		NetworkID:        vnetID,
+		SubnetIDs:        []string{"aks-subnet"},
+	}))
+	got, ok := byoSubnets["subnet_ids"].([]string)
+	if !ok {
+		t.Fatalf("subnet_ids = %v (%T), want []string", byoSubnets["subnet_ids"], byoSubnets["subnet_ids"])
+	}
+	if len(got) != 1 || got[0] != "aks-subnet" {
+		t.Errorf("subnet_ids = %v, want [aks-subnet]", got)
 	}
 }
 

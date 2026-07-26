@@ -490,28 +490,30 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				if ec2Err != nil {
 					fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 				} else {
-					subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
-					if subErr != nil {
+					// Discover the VPC's subnets and their public/private nature. On failure we
+					// keep nil metadata but still honor an explicit selection below (#1352).
+					var metas []cloud.SubnetMeta
+					if subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID); subErr != nil {
 						fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
 					} else {
-						privateIDs := make([]string, 0)
-						publicIDs := make([]string, 0)
+						metas = make([]cloud.SubnetMeta, 0, len(subnets))
 						for _, s := range subnets {
-							if s.MapPublicIpOnLaunch {
-								publicIDs = append(publicIDs, s.ID)
-							} else {
-								privateIDs = append(privateIDs, s.ID)
-							}
+							metas = append(metas, cloud.SubnetMeta{ID: s.ID, Public: s.MapPublicIpOnLaunch})
 						}
-						if len(publicIDs) == 0 {
-							publicIDs = privateIDs
-						}
-						if len(privateIDs) == 0 {
-							privateIDs = publicIDs
-						}
+					}
+					// Honor the user's explicit subnet selection when present; otherwise fall back
+					// to every discovered subnet (auto-discover, today's behaviour). Only set the
+					// tfvars when there is something to say, so an empty result leaves the
+					// template's fail-closed brownfield precondition to catch it at plan.
+					if len(metas) > 0 || len(vc.Network.SubnetIDs) > 0 {
+						privateIDs, publicIDs := cloud.SelectBrownfieldSubnets(metas, vc.Network.SubnetIDs)
 						tfvars["vpc_private_subnet_ids"] = privateIDs
 						tfvars["vpc_public_subnet_ids"] = publicIDs
-						fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
+						if len(vc.Network.SubnetIDs) > 0 {
+							fmt.Fprintf(stdout, "Resolved %d private and %d public subnets from your %d-subnet selection\n", len(privateIDs), len(publicIDs), len(vc.Network.SubnetIDs))
+						} else {
+							fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
+						}
 					}
 				}
 			case "gcp":

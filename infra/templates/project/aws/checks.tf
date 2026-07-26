@@ -52,6 +52,16 @@ check "external_vpc_id_present" {
   }
 }
 
+# When an external VPC is used, its private subnets must be resolved (either the user's subnet
+# selection or auto-discovery in deploy.go). WARN companion to the fail-closed guard below (#1352) —
+# catches the "subnet lookup failed → default [\"\"]" case that otherwise fails deep in apply.
+check "external_vpc_subnets_present" {
+  assert {
+    condition     = var.provision_vpc || (length(var.vpc_private_subnet_ids) > 0 && length(trimspace(var.vpc_private_subnet_ids[0])) > 0)
+    error_message = "provision_vpc is false but no private subnets resolved for vpc_id '${var.vpc_id}' — select subnets, or ensure the VPC's subnets are discoverable."
+  }
+}
+
 # An EKS Kubernetes cluster version must be set when EKS is provisioned.
 check "eks_cluster_version_present" {
   assert {
@@ -207,6 +217,19 @@ resource "terraform_data" "compat_k8s_guard" {
     precondition {
       condition     = !var.provision_eks || (local.eks_k8s_major == 1 && local.eks_k8s_minor >= 33 && local.eks_k8s_minor <= 35)
       error_message = "COMPAT-001: EKS Kubernetes '${var.eks_cluster_version}' is outside the AWS-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.aws). Apply blocked fail-closed — align eks_cluster_version and the matrix in lockstep."
+    }
+  }
+}
+
+# Fail-closed brownfield-subnet gate (#1352): on an external VPC the private subnet list MUST be
+# non-empty and real (not the `[""]` default). deploy.go resolves it from the user's subnet
+# selection (filtered) or auto-discovery; a failed lookup previously left `[""]` and blew up mid
+# `tofu apply`. This precondition turns that into a hard plan-time block.
+resource "terraform_data" "brownfield_subnet_guard" {
+  lifecycle {
+    precondition {
+      condition     = var.provision_vpc || (length(var.vpc_private_subnet_ids) > 0 && length(trimspace(var.vpc_private_subnet_ids[0])) > 0)
+      error_message = "provision_vpc is false but no private subnets resolved for VPC '${var.vpc_id}'. Select subnets, or ensure the VPC's subnets are discoverable. Apply blocked fail-closed."
     }
   }
 }

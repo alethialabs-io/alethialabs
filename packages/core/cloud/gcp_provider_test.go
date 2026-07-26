@@ -64,7 +64,7 @@ func TestGCPProvider_ProviderTfvars_Defaults(t *testing.T) {
 	}
 
 	// Optional node-pool / db / cache keys must be absent for an empty config.
-	for _, k := range []string{"gke_instance_types", "gke_node_min_size", "cloud_sql_engine", "memorystore_tier", "network_id"} {
+	for _, k := range []string{"gke_instance_types", "gke_node_min_size", "cloud_sql_engine", "memorystore_tier", "network_id", "subnet_ids"} {
 		if _, ok := tfvars[k]; ok {
 			t.Errorf("tfvars[%q] should be absent, got %v", k, tfvars[k])
 		}
@@ -75,11 +75,13 @@ func TestGCPProvider_ProviderTfvars_Defaults(t *testing.T) {
 // network_id decision matrix.
 func TestGCPProvider_ProviderTfvars_Network(t *testing.T) {
 	tests := []struct {
-		name            string
-		net             types.ProjectNetworkConfig
-		wantProvision   bool
-		wantNetworkID   string
-		wantNetIDExists bool
+		name             string
+		net              types.ProjectNetworkConfig
+		wantProvision    bool
+		wantNetworkID    string
+		wantNetIDExists  bool
+		wantSubnetIDs    []string
+		wantSubnetExists bool
 	}{
 		{
 			name:          "explicit provision",
@@ -92,11 +94,32 @@ func TestGCPProvider_ProviderTfvars_Network(t *testing.T) {
 			wantProvision: true,
 		},
 		{
-			name:            "byo network",
+			name:            "byo network without subnet selection",
 			net:             types.ProjectNetworkConfig{ProvisionNetwork: false, NetworkID: "projects/x/global/networks/vpc"},
 			wantProvision:   false,
 			wantNetworkID:   "projects/x/global/networks/vpc",
 			wantNetIDExists: true,
+		},
+		{
+			name: "byo network with subnet selection",
+			net: types.ProjectNetworkConfig{
+				ProvisionNetwork: false,
+				NetworkID:        "projects/x/global/networks/vpc",
+				SubnetIDs:        []string{"projects/x/regions/eu/subnetworks/s1"},
+			},
+			wantProvision:    false,
+			wantNetworkID:    "projects/x/global/networks/vpc",
+			wantNetIDExists:  true,
+			wantSubnetIDs:    []string{"projects/x/regions/eu/subnetworks/s1"},
+			wantSubnetExists: true,
+		},
+		{
+			name: "subnet selection ignored when auto-provisioning",
+			net: types.ProjectNetworkConfig{
+				ProvisionNetwork: true,
+				SubnetIDs:        []string{"projects/x/regions/eu/subnetworks/s1"},
+			},
+			wantProvision: true,
 		},
 		{
 			name:          "provision true ignores network id",
@@ -123,6 +146,15 @@ func TestGCPProvider_ProviderTfvars_Network(t *testing.T) {
 			}
 			if tt.wantNetIDExists && gotID != tt.wantNetworkID {
 				t.Errorf("network_id = %v, want %v", gotID, tt.wantNetworkID)
+			}
+			gotSubnets, subOK := tfvars["subnet_ids"]
+			if subOK != tt.wantSubnetExists {
+				t.Errorf("subnet_ids present = %v, want %v", subOK, tt.wantSubnetExists)
+			}
+			if tt.wantSubnetExists {
+				if !reflect.DeepEqual(gotSubnets, tt.wantSubnetIDs) {
+					t.Errorf("subnet_ids = %v, want %v", gotSubnets, tt.wantSubnetIDs)
+				}
 			}
 		})
 	}

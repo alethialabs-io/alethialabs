@@ -55,11 +55,25 @@ check "keyless_cloud_sql_app_identity_wired" {
   }
 }
 
-# When an existing network is used (provision_network = false) its self-links must be supplied.
-check "existing_network_ids_present" {
+# When an existing network is used (provision_network = false) its self-link must be supplied.
+# (The former subnetwork_id half of this assertion was dead — nothing consumed that variable, so it
+# forced callers to supply a value that no resource read. #1352 replaces it: the subnetwork is now
+# either the user's var.subnet_ids selection or auto-discovered in-region, and the fail-closed
+# brownfield_subnet_resolved guard below asserts one actually resolved.)
+check "existing_network_id_present" {
   assert {
-    condition     = var.provision_network || (length(trimspace(var.network_id)) > 0 && length(trimspace(var.subnetwork_id)) > 0)
-    error_message = "provision_network is false (existing network) but network_id or subnetwork_id is empty; supply both self-links."
+    condition     = var.provision_network || length(trimspace(var.network_id)) > 0
+    error_message = "provision_network is false (existing network) but network_id is empty; supply the network self-link."
+  }
+}
+
+# A brownfield deploy must resolve exactly one subnetwork — either from the user's explicit
+# var.subnet_ids selection or by auto-discovering the subnetwork in var.region. WARN companion to
+# the fail-closed guard below; surfaces the "no subnet in region" case at plan instead of apply.
+check "brownfield_subnet_resolved_warn" {
+  assert {
+    condition     = var.provision_network || length(trimspace(local.existing_subnet_self_link)) > 0
+    error_message = "provision_network is false but no subnetwork resolved for region '${var.region}' — select subnet_ids or ensure the existing network has a subnetwork in this region."
   }
 }
 
@@ -149,6 +163,19 @@ resource "terraform_data" "compat_k8s_guard" {
     precondition {
       condition     = !var.provision_gke || (local.gke_k8s_major == 1 && local.gke_k8s_minor >= 33 && local.gke_k8s_minor <= 35)
       error_message = "COMPAT-001: GKE Kubernetes '${var.gke_cluster_version}' is outside the GCP-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.gcp). Apply blocked fail-closed — align gke_cluster_version and the matrix in lockstep."
+    }
+  }
+}
+
+# Fail-closed brownfield-subnet gate (#1352): on an existing network a subnetwork MUST resolve —
+# from the user's var.subnet_ids selection or auto-discovery in var.region. Previously an
+# unresolved subnet fell through to an empty self-link and failed deep inside `tofu apply`; this
+# lifecycle precondition moves it to a hard plan-time block.
+resource "terraform_data" "brownfield_subnet_guard" {
+  lifecycle {
+    precondition {
+      condition     = var.provision_network || length(trimspace(local.existing_subnet_self_link)) > 0
+      error_message = "provision_network is false but no subnetwork resolved for region '${var.region}'. Select subnet_ids, or ensure the existing network (${var.network_id}) has a subnetwork in this region. Apply blocked fail-closed."
     }
   }
 }

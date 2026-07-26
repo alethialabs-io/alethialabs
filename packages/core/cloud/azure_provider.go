@@ -166,6 +166,13 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	if !provisionVnet && config.Network.NetworkID != "" {
 		tfvars["vnet_id"] = config.Network.NetworkID
 	}
+	// Brownfield subnet selection (#1352): the user-picked subnet name(s). Written only on
+	// an existing VNet and only when non-empty; the template uses subnet_ids[0] instead of
+	// the unordered subnets[0] guess. Empty selection leaves the key absent (today's
+	// behaviour).
+	if !provisionVnet && len(config.Network.SubnetIDs) > 0 {
+		tfvars["subnet_ids"] = config.Network.SubnetIDs
+	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
 	// are consumed above under a different tfvar name.
