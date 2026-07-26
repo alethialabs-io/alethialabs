@@ -84,7 +84,7 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster, wired for aws (EKS DescribeCluster) today; gcp/azure/alibaba need output-based kubeconfig mint helpers and hetzner-talos a Fabric-create-time kubeconfig (per-cloud follow-ups). 'dedicated' provisions on every cloud", pm, provider)
 	}
 	if pm == types.PlacementModeVcluster {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster host re-mint) today; gcp/azure/alibaba are per-cloud follow-ups (#1127/#1128/#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get) and azure (AKS ManagedClusters) host re-mint today; alibaba is a per-cloud follow-up (#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud), 'namespace' (aws) and 'vcluster' (aws) provision today", pm)
 }
@@ -128,20 +128,66 @@ func namespaceRemintNotWired(provider string) error {
 	return fmt.Errorf("namespace placement: output-free keyless re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster) today; gcp/azure/alibaba are per-cloud follow-ups (#1127/#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig)", provider)
 }
 
+// namespaceClusterConnKeys maps a provider whose ConfigureKubeconfig reads the control-plane endpoint +
+// CA from OUTPUTS (rather than resolving them from the cluster name via an in-core SDK) to those output
+// keys. For such a cloud a keyless (no-tofu) placement's runner-injected KubeConnResolver supplies
+// endpoint+CA — from the cloud API, by name — and the mint path stores them under these keys, so
+// ConfigureKubeconfig consumes them UNCHANGED. aws is deliberately absent: its ConfigureKubeconfig
+// resolves endpoint/CA/ARN via EKS DescribeCluster from the cluster name alone (the AWS SDK already
+// lives in packages/core). alibaba is a follow-up — its ConfigureKubeconfig reads a full `kubeconfig`
+// output (a different shape, and RRSA not a bearer token).
+var namespaceClusterConnKeys = map[string]struct{ endpoint, ca string }{
+	"gcp":   {endpoint: "gke_cluster_endpoint", ca: "gke_cluster_ca_certificate"},
+	"azure": {endpoint: "aks_cluster_endpoint", ca: "aks_cluster_ca_certificate"},
+	// alibaba follows — its ConfigureKubeconfig reads a full `kubeconfig` output (a different shape),
+	// and its ARM analogue signs requests rather than using a bearer token.
+}
+
+// mintClusterOutputs builds the synthetic outputs map a keyless (no-tofu) placement feeds
+// ConfigureKubeconfig. It always carries the cluster-name key; for a cloud whose ConfigureKubeconfig
+// reads endpoint+CA from outputs (namespaceClusterConnKeys), it uses the runner-injected resolver to
+// fetch them OUTPUT-FREE from the cloud API and stores them under the per-cloud keys. aws needs no
+// resolver (its ConfigureKubeconfig resolves endpoint/CA from the name via the in-core EKS SDK).
+// Fail-closed: a cloud that needs a conn but was given no resolver, or a resolver that returns empty
+// values, is surfaced as an error rather than silently producing an unusable kubeconfig.
+func mintClusterOutputs(ctx context.Context, resolver KubeConnResolver, providerSlug string, config *types.ProjectConfig, clusterName, nameKey string) (map[string]interface{}, error) {
+	outputs := map[string]interface{}{nameKey: clusterName}
+	keys, needsConn := namespaceClusterConnKeys[providerSlug]
+	if !needsConn {
+		return outputs, nil
+	}
+	if resolver == nil {
+		return nil, fmt.Errorf("placement mint: provider %q resolves its kube endpoint/CA from the cloud API but no KubeConnResolver was injected — this is a runner wiring bug", providerSlug)
+	}
+	endpoint, caData, err := resolver(ctx, providerSlug, config, clusterName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s cluster %q connection (keyless, output-free): %w", providerSlug, clusterName, err)
+	}
+	if strings.TrimSpace(endpoint) == "" || strings.TrimSpace(caData) == "" {
+		return nil, fmt.Errorf("resolve %s cluster %q connection: resolver returned an empty endpoint or CA", providerSlug, clusterName)
+	}
+	outputs[keys.endpoint] = endpoint
+	outputs[keys.ca] = caData
+	return outputs, nil
+}
+
 // mintNamespaceKubeAccess mints keyless kube access to an EXISTING shared-Fabric cluster BY NAME, with no
 // tofu outputs — the per-cloud seam #1127/#1128/#1129 activate. It synthesizes the provider's cluster-name
-// output key and delegates to CloudProvider.ConfigureKubeconfig, which (for a wired cloud) resolves
-// endpoint+CA output-free from the cloud API and writes the in-process `kube-token` exec-plugin kubeconfig.
+// output key (plus, for a cloud that needs it, the endpoint+CA from the injected resolver) and delegates
+// to CloudProvider.ConfigureKubeconfig, which writes the in-process `kube-token` exec-plugin kubeconfig.
 // Fail-closed for any cloud not in namespaceRemintProviders (defence-in-depth behind selectPlacementPath).
-func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
+func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, resolver KubeConnResolver, config *types.ProjectConfig, providerSlug, clusterName string, stdout io.Writer) error {
 	if !namespaceRemintWired(providerSlug) {
 		return namespaceRemintNotWired(providerSlug)
 	}
-	outputKey, ok := namespaceClusterNameOutputKey[providerSlug]
+	nameKey, ok := namespaceClusterNameOutputKey[providerSlug]
 	if !ok {
 		return namespaceRemintNotWired(providerSlug)
 	}
-	mintOutputs := map[string]interface{}{outputKey: clusterName}
+	mintOutputs, err := mintClusterOutputs(ctx, resolver, providerSlug, config, clusterName, nameKey)
+	if err != nil {
+		return err
+	}
 	return provider.ConfigureKubeconfig(ctx, config, mintOutputs, stdout)
 }
 
@@ -287,7 +333,7 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	// on the ambient keyless session; gcp/azure/alibaba resolve the same from their cloud API once their
 	// lane (#1127/#1128/#1129) wires it. The provider is fed only its cluster-name output key.
 	setStage("kube_configure")
-	if err := mintNamespaceKubeAccess(ctx, provider, vc, params.Provider, clusterName, stdout); err != nil {
+	if err := mintNamespaceKubeAccess(ctx, provider, params.KubeConn, vc, params.Provider, clusterName, stdout); err != nil {
 		return nil, fmt.Errorf("kubeconfig mint failed for existing cluster %q — the namespace env is placed on a Fabric whose cluster is unreachable: %w", clusterName, err)
 	}
 	// Reachability probe: minting only proves DescribeCluster succeeded, not that the exec-plugin token
