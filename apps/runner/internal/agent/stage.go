@@ -233,6 +233,11 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		GitAccessToken:        sec.GitToken,
 		GitRepoTokens:         sec.GitTokens,
 		StateBackend:          &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		// Output-free kube-conn resolver for a namespace/vcluster placement on a cloud whose
+		// ConfigureKubeconfig reads endpoint/CA from outputs (gcp today). Invoked only by the placement
+		// mint path (mintClusterOutputs); never called on a dedicated deploy or for aws. Keeps the
+		// gcp/azure auth SDKs in the runner, out of packages/core.
+		KubeConn: newKubeConnResolver(),
 		// Record the provisioning phase under the workdir so the runner can tell an
 		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
 		// Passthrough (same process) and container child (RW-mounted workdir) paths.
@@ -266,6 +271,9 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 		StateBackend:  &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
 		Stdout:        stdout,
 		Stderr:        stderr,
+		// Output-free host-conn resolver for a vcluster teardown (mirrors the deploy path); only the
+		// vcluster destroy path invokes it, and never for aws/dedicated.
+		KubeConn: newKubeConnResolver(),
 	})
 	return writeStageResult(workDir, stageResult{}, err)
 }

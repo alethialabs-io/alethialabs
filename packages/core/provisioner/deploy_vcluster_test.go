@@ -64,10 +64,14 @@ func TestBuildVClusterSpecFailsClosed(t *testing.T) {
 // TestSelectPlacementPathVcluster locks the activation gate: vcluster is routed to the vcluster path only
 // on a re-mint-wired cloud (aws today) and fails closed everywhere else — cloud parity is explicit.
 func TestSelectPlacementPathVcluster(t *testing.T) {
-	if got := selectPlacementPath(types.PlacementModeVcluster, "aws"); got != placementVcluster {
-		t.Errorf("vcluster on aws = %v, want placementVcluster", got)
+	// Activated clouds route to the vcluster path (aws in-core; gcp/azure via the runner-injected resolver).
+	for _, provider := range []string{"aws", "gcp", "azure"} {
+		if got := selectPlacementPath(types.PlacementModeVcluster, provider); got != placementVcluster {
+			t.Errorf("vcluster on %q = %v, want placementVcluster", provider, got)
+		}
 	}
-	for _, provider := range []string{"gcp", "azure", "alibaba", "hetzner", "hetzner-talos", ""} {
+	// alibaba is a per-cloud follow-up; hetzner-talos is a permanent exclusion — all fail closed.
+	for _, provider := range []string{"alibaba", "hetzner", "hetzner-talos", ""} {
 		if got := selectPlacementPath(types.PlacementModeVcluster, provider); got != placementUnactivated {
 			t.Errorf("vcluster on %q = %v, want placementUnactivated (fail-closed parity)", provider, got)
 		}
@@ -83,10 +87,14 @@ func TestSelectPlacementPathVcluster(t *testing.T) {
 
 // TestVClusterRemintWired locks the single activation control (aws-first, everything else fail-closed).
 func TestVClusterRemintWired(t *testing.T) {
-	if !vclusterRemintWired("aws") {
-		t.Error("aws should be wired for vcluster re-mint")
+	for _, provider := range []string{"aws", "gcp", "azure"} {
+		if !vclusterRemintWired(provider) {
+			t.Errorf("%q should be wired for vcluster re-mint", provider)
+		}
 	}
-	for _, provider := range []string{"gcp", "azure", "alibaba", "hetzner", "hetzner-talos"} {
+	// alibaba is a parity follow-up (needs its signing-client resolver leg); hetzner-talos is a
+	// permanent exclusion (no cloud API to re-mint).
+	for _, provider := range []string{"alibaba", "hetzner", "hetzner-talos"} {
 		if vclusterRemintWired(provider) {
 			t.Errorf("%q must not be wired yet (parity follow-up / permanent exclusion)", provider)
 		}

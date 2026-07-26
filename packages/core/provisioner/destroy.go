@@ -36,6 +36,11 @@ type DestroyParams struct {
 	// GitAccessToken authorizes the BYO IaC clone (only used when ProjectConfig
 	// carries an IacSource; falls back to ProjectConfig.GitAccessToken when empty).
 	GitAccessToken string
+	// KubeConn resolves an existing shared-Fabric cluster's endpoint + CA OUTPUT-FREE for a
+	// vcluster teardown that must reach the HOST to deregister the virtual cluster (same seam as
+	// DeployParams.KubeConn — runner-injected, keeps the gcp/azure auth SDKs out of packages/core).
+	// Nil for aws (resolved in-core from the name) and for dedicated destroys.
+	KubeConn KubeConnResolver
 }
 
 // RunDestroy tears down a project environment. It rebuilds the tofu workdir from
