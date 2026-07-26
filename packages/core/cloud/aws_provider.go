@@ -94,8 +94,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"sqs_queues":    buildSQSQueues(config.Queues, config.Topics),
 		"sns_topics":    buildSNSTopics(config.Topics),
 
-		// Redis defaults
+		// Cache defaults. The chosen ENGINE decides which module runs — the Caches block below
+		// overrides both toggles. Defaulting Redis on keeps an engine-less config unchanged.
 		"create_elasticache_redis":         len(config.Caches) > 0,
+		"create_elasticache_valkey":        false,
 		"redis_cluster_size":               1,
 		"redis_cluster_mode_enabled":       false,
 		"redis_instance_type":              "cache.t3.micro",
@@ -163,31 +165,48 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		tfvars["redis_instance_type"] = orDefault(
-			resolveCacheNodeType("aws", cache),
-			"cache.t3.medium",
-		)
-		if cache.EngineVersion != "" {
-			// AWS provisions ElastiCache Redis for the cache node today; the valkey module is not yet
-			// wired to the engine selector (create_elasticache_valkey stays off — tracked as a
-			// follow-up). Route a valkey-engine pick to the valkey var so it can't corrupt
-			// redis_engine_version, and for redis keep the parameter-group FAMILY in lock-step with the
-			// version — ElastiCache rejects a version whose major doesn't match `family` (e.g. "6.2"
-			// under "redis7"). Now that the version is a real picker (#977) this is easy to trip.
-			if cache.Engine == types.CacheEngineValkey {
+
+		// The engine the user picked decides WHICH ElastiCache module runs. #1415 stopped a Valkey
+		// version corrupting the Redis config and left the toggle wiring as an explicit follow-up;
+		// this is that follow-up. Anything not explicitly Valkey stays Redis, so an engine-less
+		// config (an older project, the CLI's minimal shape) builds exactly what it built before.
+		valkey := cache.Engine == types.CacheEngineValkey
+		tfvars["create_elasticache_valkey"] = valkey
+		tfvars["create_elasticache_redis"] = !valkey
+
+		if valkey {
+			// Serverless: sized by usage limits, not a node type. MemoryGB is the cloud-indifferent
+			// size the canvas collects and maps to the storage ceiling directly (both GB).
+			//
+			// NumCacheNodes / MultiAz have no serverless analogue — capacity and AZ spread are the
+			// service's job — so they are deliberately NOT translated, rather than mapped onto
+			// something that merely looks equivalent.
+			if cache.MemoryGB > 0 {
+				tfvars["valkey_data_storage_max"] = cache.MemoryGB
+			}
+			if cache.EngineVersion != "" {
 				tfvars["valkey_engine_version"] = cache.EngineVersion
-			} else {
+			}
+		} else {
+			tfvars["redis_instance_type"] = orDefault(
+				resolveCacheNodeType("aws", cache),
+				"cache.t3.medium",
+			)
+			if cache.EngineVersion != "" {
 				tfvars["redis_engine_version"] = cache.EngineVersion
+				// Keep the parameter-group FAMILY in lock-step with the version — ElastiCache rejects
+				// a version whose major doesn't match `family` ("6.2" under "redis7"). Now that the
+				// version is a real picker (#977) this is easy to trip. (#1415)
 				if fam := awsRedisFamily(cache.EngineVersion); fam != "" {
 					tfvars["redis_family"] = fam
 				}
 			}
-		}
-		if cache.NumCacheNodes != nil {
-			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
-		}
-		if cache.MultiAz != nil {
-			tfvars["redis_multi_az_enabled"] = *cache.MultiAz
+			if cache.NumCacheNodes != nil {
+				tfvars["redis_cluster_size"] = *cache.NumCacheNodes
+			}
+			if cache.MultiAz != nil {
+				tfvars["redis_multi_az_enabled"] = *cache.MultiAz
+			}
 		}
 	}
 
