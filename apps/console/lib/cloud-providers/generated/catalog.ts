@@ -5,7 +5,7 @@
 // Source of truth: packages/core/catalog/catalog.json (also embedded by the Go resolver).
 // Run `pnpm -F console gen:catalog` to regenerate.
 
-import type { CloudProvider } from "@/lib/db/schema/enums";
+import type { CacheEngine, CloudProvider } from "@/lib/db/schema/enums";
 import type { ClusterProviderConfig, DnsProviderConfig } from "@/types/jsonb.types";
 
 // The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
@@ -2925,6 +2925,53 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"redis.master.mid.default": "2",
 				"redis.master.large.default": "4"
 			}
+		}
+	};
+
+export type CacheEngineVersionMap = Partial<Record<CacheEngine, string[]>>;
+
+/** Offline cache-engine version baseline per provider, keyed by engine (newest-first). Fail-open
+ * fallback for the engine-version picker until an account's capabilities sync — guidance, not a gate
+ * (#977, #918). Flows into the provider tofu `*_engine_version` variable when picked. */
+export const CACHE_ENGINE_VERSIONS: Record<CloudProviderSlug, CacheEngineVersionMap> = {
+		"aws": {
+			"redis": [
+				"7.1",
+				"7.0",
+				"6.2"
+			],
+			"valkey": [
+				"8.1",
+				"8.0",
+				"7.2"
+			]
+		},
+		"gcp": {
+			"redis": [
+				"7.2",
+				"7.0",
+				"6.0",
+				"5.0"
+			]
+		},
+		"azure": {
+			"redis": [
+				"6",
+				"4"
+			]
+		},
+		"hetzner": {
+			"valkey": [
+				"8.0",
+				"7.2"
+			]
+		},
+		"alibaba": {
+			"redis": [
+				"7.0",
+				"6.0",
+				"5.0"
+			]
 		}
 	};
 

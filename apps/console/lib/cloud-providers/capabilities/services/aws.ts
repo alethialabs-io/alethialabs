@@ -8,9 +8,10 @@
 //                 UNSUPPORTED/EOL ones — an honest verdict, never an EOL version the account can't create).
 //   - database:   RDS DescribeDBEngineVersions for the platform's engine set (Aurora PG/MySQL) → one row
 //                 per engine at its latest offered major version.
-//   - cache:      ElastiCache DescribeCacheEngineVersions gates the platform cache tiers (there is no
-//                 read-only per-node-type list API, so availability of the service ⇒ the catalog tiers
-//                 are launchable, memory carried from the catalog).
+//   - cache:      ElastiCache DescribeCacheEngineVersions drives BOTH the platform cache tiers (there is
+//                 no read-only per-node-type list API, so availability of the service ⇒ the catalog
+//                 tiers are launchable, memory carried from the catalog) AND — from the SAME response —
+//                 one engine-version row per (redis|valkey, major.minor) the account can launch (#977).
 //   - nosql:      DynamoDB DescribeLimits reachable ⇒ the account can launch DynamoDB.
 //
 // Availability is design-time GUIDANCE, never a hard gate (#918 fail-open): the pickers fall back to the
@@ -195,6 +196,55 @@ export function normalizeCacheTierRows(
 	);
 }
 
+/** ElastiCache reports full patch versions ("7.1.0", "6.2.6"); the ElastiCache `engine_version` tofu
+ * input (and the static catalog) is keyed at MAJOR.MINOR — AWS picks the patch. Reduce to the first
+ * two dotted segments so a picked version is one the provider actually accepts. A single-segment or
+ * non-numeric label is left as-is rather than guessed. */
+function cacheVersionGrain(raw: string): string {
+	const parts = raw.split(".");
+	return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : raw;
+}
+
+/** ElastiCache DescribeCacheEngineVersions → one `cache` ENGINE-VERSION row per (engine, major.minor)
+ * for the two modelled engines (redis/valkey; memcached is not provisioned). Siblings to the tier rows
+ * from the SAME response, discriminated by the `version` column being SET (tier rows leave it null),
+ * so the version picker reads them via `version IS NOT NULL` (#977). `native_id` is the composite
+ * `<engine>-<version>` — the convention the DB lane uses — because the unique key excludes `version`,
+ * so per-version rows under a bare id would overwrite one another. Empty ⇒ no rows (fail-open). */
+export function normalizeCacheEngineVersionRows(
+	engineVersions: CacheEngineVersion[],
+	ctx: ServiceNormalizeCtx,
+): CloudCapabilityServiceInsert[] {
+	const versionsByEngine = new Map<"redis" | "valkey", string[]>();
+	for (const ev of engineVersions) {
+		const engine = ev.Engine;
+		if (engine !== "redis" && engine !== "valkey") continue;
+		if (!ev.EngineVersion) continue;
+		const version = cacheVersionGrain(ev.EngineVersion);
+		const seen = versionsByEngine.get(engine);
+		if (seen) seen.push(version);
+		else versionsByEngine.set(engine, [version]);
+	}
+	const rows: CloudCapabilityServiceInsert[] = [];
+	for (const [engine, versions] of versionsByEngine) {
+		const label = engine === "valkey" ? "Valkey" : "Redis";
+		for (const version of dedupeVersionsDesc(versions)) {
+			rows.push(
+				serviceRow(ctx, {
+					service_kind: "cache",
+					native_id: `${engine}-${version}`,
+					name: label,
+					engine,
+					version,
+					tier: null,
+					mem_gb: null,
+				}),
+			);
+		}
+	}
+	return rows;
+}
+
 /** DynamoDB availability → one `nosql` row when the service is reachable/authorized (DescribeLimits
  * resolved). `native_id` = `name` = the catalog service name ("DynamoDB"). A non-available account
  * produces no row (fail-open to the static catalog — we never fabricate a not_launchable from a throw). */
@@ -318,9 +368,14 @@ export async function syncAwsServiceCapabilities(
 	await collect(async () =>
 		normalizeDatabaseRows(await fetchDbEngineVersions(root.region, creds), ctx),
 	);
-	await collect(async () =>
-		normalizeCacheTierRows(await fetchCacheEngineVersions(root.region, creds), ctx),
-	);
+	// One DescribeCacheEngineVersions call feeds BOTH the tier gate and the engine-version rows (#977).
+	await collect(async () => {
+		const cacheEngineVersions = await fetchCacheEngineVersions(root.region, creds);
+		return [
+			...normalizeCacheTierRows(cacheEngineVersions, ctx),
+			...normalizeCacheEngineVersionRows(cacheEngineVersions, ctx),
+		];
+	});
 	await collect(async () =>
 		normalizeNosqlRows(await fetchNosqlAvailable(root.region, creds), ctx),
 	);

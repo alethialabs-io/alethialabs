@@ -20,6 +20,7 @@ import { withActorScope } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
+	getCacheEngineVersionCapabilities,
 	getCacheTierCapabilities,
 	getDatabaseCapabilities,
 	getInstanceTypeCapabilities,
@@ -86,13 +87,24 @@ export async function getIdentityCapabilities(
 	if (!provider) return emptyBag();
 	const scoped = region ?? null;
 
-	const [regions, instanceTypes, k8sVersions, database, cacheTiers, nosql, inventory] =
-		await Promise.all([
+	const [
+		regions,
+		instanceTypes,
+		k8sVersions,
+		database,
+		cacheTiers,
+		cacheEngineVersions,
+		nosql,
+		inventory,
+	] = await Promise.all([
 			getRegionCapabilities(cloudIdentityId, provider),
 			scoped ? getInstanceTypeCapabilities(cloudIdentityId, provider, scoped) : [],
 			getK8sVersionCapabilities(cloudIdentityId, provider),
 			getDatabaseCapabilities(cloudIdentityId, provider),
 			scoped ? getCacheTierCapabilities(cloudIdentityId, provider, scoped) : [],
+			// Region-agnostic like the DB version read: cache engine versions aren't per-region, and the
+			// lanes anchor them to one canonical region, so scoping would empty the picker.
+			getCacheEngineVersionCapabilities(cloudIdentityId, provider),
 			getNosqlCapability(cloudIdentityId, provider),
 			getCloudIdentityInventory(cloudIdentityId).catch(() => ({
 				networks: [],
@@ -112,6 +124,7 @@ export async function getIdentityCapabilities(
 		k8s_version: sourceOf(k8sVersions),
 		database: sourceOf(database.engines),
 		cache_tier: scoped ? sourceOf(cacheTiers) : "catalog",
+		cache_engine_version: sourceOf(cacheEngineVersions),
 		nosql: nosql.launchable !== undefined ? "account" : "catalog",
 		placement: inventory.networks.length > 0 ? "account" : "catalog",
 	};
@@ -125,6 +138,7 @@ export async function getIdentityCapabilities(
 		"k8s_version",
 		"database",
 		"cache_tier",
+		"cache_engine_version",
 		"nosql",
 	];
 	const anyAccount = CAPABILITY_AXES.some((axis) => axisSource[axis] === "account");
@@ -166,6 +180,15 @@ export async function getIdentityCapabilities(
 				r.memoryGb != null
 					? `${r.label} · ${r.memoryGb} GB${r.cost ? ` (${r.cost})` : ""}`
 					: r.label,
+			launchable: r.launchable,
+			launchableReason: r.launchableReason ?? null,
+		})),
+		// Sibling to the DB version axis (#977): one option per cache engine carrying its offerable
+		// version list; the resolver narrows to the node's selected engine.
+		cacheEngineVersions: cacheEngineVersions.map((r) => ({
+			value: r.value,
+			label: r.label,
+			versions: r.versions,
 			launchable: r.launchable,
 			launchableReason: r.launchableReason ?? null,
 		})),
@@ -224,6 +247,7 @@ function emptyBag(): CapabilityBag {
 		k8s_version: "catalog",
 		database: "catalog",
 		cache_tier: "catalog",
+		cache_engine_version: "catalog",
 		nosql: "catalog",
 		placement: "catalog",
 	};
@@ -238,6 +262,7 @@ function emptyBag(): CapabilityBag {
 		k8sVersions: [],
 		dbEngines: [],
 		cacheTiers: [],
+		cacheEngineVersions: [],
 		nosqlKeyTypes: [],
 		networks: [],
 		subnets: [],

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
 	type K8sVersionMeta,
 	type RdsAvailableZone,
+	normalizeCacheEngineVersions,
 	normalizeCacheTiers,
 	normalizeDbEngines,
 	normalizeK8sVersions,
@@ -169,6 +170,54 @@ describe("normalizeCacheTiers", () => {
 			[],
 		);
 		expect(normalizeCacheTiers(IDENTITY, REGION, null)).toEqual([]);
+	});
+});
+
+describe("normalizeCacheEngineVersions", () => {
+	it("deep-walks the response to collect distinct redis engine versions", () => {
+		// The same DescribeAvailableResource body also carries engineVersion leaves.
+		const body = {
+			availableZones: {
+				availableZone: [
+					{
+						supportedEngines: {
+							supportedEngine: [
+								{
+									engine: "Redis",
+									engineVersion: "7.0",
+									supportedEditionTypes: {
+										supportedEditionType: [
+											{ engineVersion: "7.0" }, // repeated → deduped
+											{ engineVersion: "6.0" },
+										],
+									},
+								},
+							],
+						},
+					},
+				],
+			},
+		};
+		const rows = normalizeCacheEngineVersions(IDENTITY, REGION, body);
+		expect(rows.map((r) => r.native_id).sort()).toEqual([
+			"redis-6.0",
+			"redis-7.0",
+		]);
+		expect(rows.find((r) => r.native_id === "redis-7.0")).toMatchObject({
+			service_kind: "cache",
+			engine: "redis",
+			version: "7.0",
+			name: "Redis",
+			tier: null,
+			launchable: "launchable",
+		});
+	});
+
+	it("returns nothing (fail-open) when the body carries no engine versions", () => {
+		expect(
+			normalizeCacheEngineVersions(IDENTITY, REGION, { unrelated: true }),
+		).toEqual([]);
+		expect(normalizeCacheEngineVersions(IDENTITY, REGION, null)).toEqual([]);
 	});
 });
 

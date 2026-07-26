@@ -47,6 +47,7 @@ vi.mock("@/lib/queries/capabilities", () => ({
 		state.cacheCalls.push(a);
 		return [];
 	}),
+	getCacheEngineVersionCapabilities: vi.fn(async () => []),
 	getNosqlCapability: vi.fn(async () => ({
 		serviceName: "DynamoDB",
 		available: true,

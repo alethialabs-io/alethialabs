@@ -27,6 +27,8 @@ export {
 	CACHE_NODE_TYPES,
 	DEFAULT_CACHE_NODE,
 	CACHE_NODE_MAP,
+	CACHE_ENGINE_VERSIONS,
+	type CacheEngineVersionMap,
 	NOSQL,
 } from "./generated/catalog";
 export { getProvider, CACHE_TTL_HOURS } from "./provider-slug";

@@ -10,6 +10,11 @@
 //   - cache      — Azure Cache for Redis SKU tiers. Redis has NO dynamic per-region SKU/capability ARM
 //                  op, so the tiers are the fixed product enum; account-availability is the Microsoft.Cache
 //                  resource-provider registration state (registered ⇒ launchable; not ⇒ not_launchable).
+//                  Engine VERSION is a DOCUMENTED EXCLUSION (#977): the platform provisions
+//                  `azurerm_managed_redis`, which exposes no version selector — a picked version is inert
+//                  downstream — so the cache-version picker is hidden on Azure and no version row is
+//                  emitted (the axis fails open to the static catalog). Revisit if the module gains a
+//                  version input.
 //   - nosql      — Cosmos DB availability, taken from the Microsoft.DocumentDB provider registration state
 //                  (+ the databaseAccounts region list) — the read-only "this subscription can use Cosmos"
 //                  signal.

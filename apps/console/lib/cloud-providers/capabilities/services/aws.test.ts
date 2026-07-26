@@ -10,6 +10,7 @@ import type { ClusterVersionInformation } from "@aws-sdk/client-eks";
 import type { DBEngineVersion } from "@aws-sdk/client-rds";
 import { describe, expect, it } from "vitest";
 import {
+	normalizeCacheEngineVersionRows,
 	normalizeCacheTierRows,
 	normalizeDatabaseRows,
 	normalizeK8sVersionRows,
@@ -121,6 +122,37 @@ describe("normalizeCacheTierRows", () => {
 
 	it("returns no rows (fail-open) when ElastiCache exposes no engines", () => {
 		expect(normalizeCacheTierRows([], ctx)).toEqual([]);
+	});
+});
+
+describe("normalizeCacheEngineVersionRows", () => {
+	it("emits one row per (engine, major.minor) for redis/valkey, dropping memcached", () => {
+		const engines: CacheEngineVersion[] = [
+			{ Engine: "redis", EngineVersion: "7.1.0" },
+			{ Engine: "redis", EngineVersion: "7.0.7" },
+			{ Engine: "redis", EngineVersion: "7.1.4" }, // same major.minor as 7.1.0 → deduped
+			{ Engine: "valkey", EngineVersion: "8.0.0" },
+			{ Engine: "memcached", EngineVersion: "1.6.22" }, // not modelled → dropped
+		];
+		const rows = normalizeCacheEngineVersionRows(engines, ctx);
+
+		// redis newest-first then valkey; patch collapsed to major.minor; composite native_id.
+		expect(rows.map((r) => r.native_id)).toEqual(["redis-7.1", "redis-7.0", "valkey-8.0"]);
+
+		const redis71 = rows.find((r) => r.native_id === "redis-7.1");
+		expect(redis71?.service_kind).toBe("cache");
+		expect(redis71?.engine).toBe("redis");
+		expect(redis71?.version).toBe("7.1");
+		expect(redis71?.tier).toBeNull(); // version rows carry no tier — the discriminator
+		expect(redis71?.name).toBe("Redis");
+		expect(redis71?.launchable).toBe("launchable");
+
+		expect(rows.find((r) => r.engine === "valkey")?.name).toBe("Valkey");
+		expect(rows.some((r) => r.engine === "memcached")).toBe(false);
+	});
+
+	it("returns no rows (fail-open) when ElastiCache exposes no engines", () => {
+		expect(normalizeCacheEngineVersionRows([], ctx)).toEqual([]);
 	});
 });
 

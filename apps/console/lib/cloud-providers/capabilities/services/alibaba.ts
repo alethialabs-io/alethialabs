@@ -6,7 +6,8 @@
 // session/alibaba.ts), reads are read-only Describe/List, and the account-accurate offerings land in
 // `cloud_capability_services` discriminated by `service_kind`:
 //   • database   — ApsaraDB RDS engines + versions (DescribeAvailableZones)
-//   • cache      — ApsaraDB for Redis (KVStore) node classes/tiers (DescribeAvailableResource)
+//   • cache      — ApsaraDB for Redis (KVStore) node classes/tiers + offered engine versions (#977),
+//                  both from one DescribeAvailableResource response
 //   • kubernetes — ACK managed-Kubernetes control-plane versions (DescribeKubernetesVersionMetadata)
 //   • nosql      — Tablestore availability (ListInstance reachability)
 // These are "available"/"metadata" APIs — everything they return is offerable, so each row is
@@ -217,6 +218,48 @@ export function normalizeCacheTiers(
 	return rows;
 }
 
+/** Recursively collects `engineVersion` leaves from the KVStore DescribeAvailableResource response
+ * (the same body `collectCacheClasses` walks for node classes). Defensive walk — resilient to the
+ * response's exact nesting, and harmless when the field is absent (→ no rows → fail-open to static). */
+function collectCacheEngineVersions(node: unknown, out: Set<string>): void {
+	if (Array.isArray(node)) {
+		for (const item of node) collectCacheEngineVersions(item, out);
+		return;
+	}
+	if (node === null || typeof node !== "object") return;
+	const record = asRecord(node);
+	const version = record.engineVersion;
+	if (typeof version === "string" && version.length > 0) out.add(version);
+	for (const value of Object.values(record)) collectCacheEngineVersions(value, out);
+}
+
+/** Normalizes the KVStore DescribeAvailableResource response → `cache` ENGINE-VERSION rows (#977), one
+ * per offered Redis version (the resource is queried with `engine: "Redis"`). Sibling to the tier rows
+ * from the SAME response, discriminated by the `version` column being SET (tier rows leave it null), so
+ * the version picker reads them via `version IS NOT NULL`. `native_id` is the composite `redis-<version>`
+ * (the unique key excludes `version`). Empty ⇒ no rows (fail-open to the static catalog). */
+export function normalizeCacheEngineVersions(
+	identityId: string,
+	region: string,
+	availableResourceBody: unknown,
+): CloudCapabilityServiceInsert[] {
+	const versions = new Set<string>();
+	collectCacheEngineVersions(availableResourceBody, versions);
+	const rows: CloudCapabilityServiceInsert[] = [];
+	for (const version of versions) {
+		rows.push(
+			serviceRow(identityId, region, {
+				service_kind: "cache",
+				native_id: `redis-${version}`,
+				name: "Redis",
+				engine: "redis",
+				version,
+			}),
+		);
+	}
+	return rows;
+}
+
 /** Normalizes Tablestore reachability → a single `nosql` row when the account can reach the OTS API
  * (service enabled). Reachability is the availability signal — no instances need exist. */
 export function normalizeNosql(
@@ -368,7 +411,12 @@ async function syncCacheTiers(
 			instanceChargeType: "PostPaid",
 		}),
 	);
-	const rows = normalizeCacheTiers(identityId, region, resp.body);
+	// One response drives BOTH the tier rows and the engine-version rows (#977); combine their
+	// native_ids for the soft-remove so neither set retires the other (both are service_kind "cache").
+	const rows = [
+		...normalizeCacheTiers(identityId, region, resp.body),
+		...normalizeCacheEngineVersions(identityId, region, resp.body),
+	];
 	await upsertServiceRows(rows);
 	await softRemoveKindUnseen(
 		identityId,

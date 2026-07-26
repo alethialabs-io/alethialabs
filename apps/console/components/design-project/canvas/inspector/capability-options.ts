@@ -21,6 +21,7 @@
 //      would be worse than showing none.
 
 import {
+	CACHE_ENGINE_VERSIONS,
 	CACHE_NODE_TYPES,
 	dbEngine,
 	INSTANCE_TYPES,
@@ -229,6 +230,36 @@ export function cacheTierOptions(ctx: FieldCtx): FieldOption[] {
 		value: n.value,
 		label: `${n.label} · ${n.memoryGb} GB (${n.cost})`,
 	}));
+}
+
+/**
+ * The versions this account can launch the CURRENTLY SELECTED cache engine at (#977).
+ *
+ * The cache analogue of `dbVersionOptions`, minus the family indirection: a cache node stores its
+ * engine directly in `config.engine` ("redis"/"valkey"), so there is no family→value join. Fail-open
+ * like every resolver (#918): with no account rows it returns the catalog's offline baseline for the
+ * engine, so the list is never empty. Returns [] only when no provider is chosen yet.
+ *
+ * Like the DB version field this offers no explicit "cloud default" entry — an empty value renders the
+ * placeholder and tracks the provider template default, and `withSelected` keeps a previously pinned
+ * free-text version representable after the flip from a text box.
+ */
+export function cacheVersionOptions(ctx: FieldCtx): FieldOption[] {
+	const { provider } = ctx;
+	if (!provider) return [];
+	// Narrow to the modelled engine enum without a cast; defaults to redis (the node-registry default
+	// and the only engine on gcp/azure/alibaba — valkey exists only on aws).
+	const engine = ctx.config.engine === "valkey" ? "valkey" : "redis";
+	const rows = accountRows(ctx, ctx.caps.cacheEngineVersions);
+	const match = rows.find((r) => r.value === engine);
+	if (match && match.versions.length > 0) {
+		// One advisory for the engine, carried onto each of its versions (the verdict is held per
+		// engine, merged permissively across regions by the reader).
+		const advisory = advisoryFor(match.launchable, match.launchableReason);
+		return match.versions.map((v) => ({ value: v, label: v, advisory }));
+	}
+	const staticVersions = CACHE_ENGINE_VERSIONS[provider]?.[engine] ?? [];
+	return staticVersions.map((v) => ({ value: v, label: v }));
 }
 
 /**

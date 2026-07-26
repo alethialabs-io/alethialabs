@@ -43,7 +43,7 @@ const REQUIRED_LIVE_KEYS = [
 	"providers", "regionLabels", "defaultRegion", "regionMap", "instanceTypes",
 	"k8sVersions", "autoscaler", "defaultInstanceType", "defaultK8sVersion", "instanceTypeMap",
 	"dbEngines", "dbCapacity", "engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap",
-	"wafOptions", "certOptions", "nosql", "network", "messaging",
+	"cacheEngineVersions", "wafOptions", "certOptions", "nosql", "network", "messaging",
 ];
 for (const k of REQUIRED_LIVE_KEYS) {
 	if (!(k in live)) throw new Error(`catalog.json live block is missing '${k}' (#1126)`);
@@ -51,7 +51,8 @@ for (const k of REQUIRED_LIVE_KEYS) {
 const provisioningSlugs = Object.keys(live.instanceTypes).sort();
 for (const k of ["regionLabels", "defaultRegion", "regionMap", "k8sVersions", "autoscaler",
 	"defaultInstanceType", "defaultK8sVersion", "instanceTypeMap", "dbEngines", "dbCapacity",
-	"engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap", "wafOptions", "certOptions",
+	"engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap", "cacheEngineVersions",
+	"wafOptions", "certOptions",
 	"nosql", "network", "messaging"]) {
 	const got = Object.keys(live[k]).sort();
 	if (got.join(",") !== provisioningSlugs.join(",")) {
@@ -105,6 +106,36 @@ for (const [provider, dp] of Object.entries(catalogCore.database)) {
 	});
 }
 
+// Cache engine-version baseline (#977). Keyed by cache engine (redis/valkey) since AWS offers both
+// on different version lines. Same fail-open contract as the DB baseline: a malformed list is a bad
+// apply (it flows into `redis_engine_version` / `memorystore_redis_version` / `kvstore_engine_version`),
+// not a cosmetic bug, so validate non-empty + unique here. No default_version — the picker's explicit
+// "Cloud default" option (value "") preserves the provider template default, not a catalog entry.
+const CACHE_ENGINES = ["redis", "valkey"];
+for (const [provider, byEngine] of Object.entries(live.cacheEngineVersions)) {
+	const engines = Object.keys(byEngine);
+	if (engines.length === 0) {
+		throw new Error(`catalog.json live.cacheEngineVersions.${provider} has no engines (#977)`);
+	}
+	for (const [engine, versions] of Object.entries(byEngine)) {
+		if (!CACHE_ENGINES.includes(engine)) {
+			throw new Error(
+				`catalog.json live.cacheEngineVersions.${provider} engine '${engine}' is not one of ${JSON.stringify(CACHE_ENGINES)} (#977)`,
+			);
+		}
+		if (!Array.isArray(versions) || versions.length === 0) {
+			throw new Error(
+				`catalog.json live.cacheEngineVersions.${provider}.${engine} has no versions[] (#977)`,
+			);
+		}
+		if (new Set(versions).size !== versions.length) {
+			throw new Error(
+				`catalog.json live.cacheEngineVersions.${provider}.${engine} repeats a version (#977)`,
+			);
+		}
+	}
+}
+
 // The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
 // live data's own coverage (the `instanceTypes` keys) so it can't drift from it. Still gated through
 // `Extract<CloudProvider, ...>` so an off-enum slug surfaces instead of being invented.
@@ -128,7 +159,7 @@ const out = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // Source of truth: packages/core/catalog/catalog.json (also embedded by the Go resolver).
 // Run \`pnpm -F console gen:catalog\` to regenerate.
 
-import type { CloudProvider } from "@/lib/db/schema/enums";
+import type { CacheEngine, CloudProvider } from "@/lib/db/schema/enums";
 import type { ClusterProviderConfig, DnsProviderConfig } from "@/types/jsonb.types";
 
 // The clouds with a per-cloud pricing/sizing catalog — a curated subset of the generated
@@ -421,6 +452,13 @@ export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = ${emit(live
 
 /** Cross-provider cache node mapping for project conversion. */
 export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug, Record<string, string>>> = ${emit(live.cacheNodeMap)};
+
+export type CacheEngineVersionMap = Partial<Record<CacheEngine, string[]>>;
+
+/** Offline cache-engine version baseline per provider, keyed by engine (newest-first). Fail-open
+ * fallback for the engine-version picker until an account's capabilities sync — guidance, not a gate
+ * (#977, #918). Flows into the provider tofu \`*_engine_version\` variable when picked. */
+export const CACHE_ENGINE_VERSIONS: Record<CloudProviderSlug, CacheEngineVersionMap> = ${emit(live.cacheEngineVersions)};
 
 export interface WafOption {
 	providerConfigKey: keyof DnsProviderConfig;

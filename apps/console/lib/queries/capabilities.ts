@@ -14,7 +14,7 @@ import "server-only";
 // own/share), and every query also filters `provider` (the cross-provider-leak rule). `launchable` /
 // `launchable_reason` are BOUNDED enums; render them as escaped text, never dangerouslySetInnerHTML.
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import {
@@ -24,6 +24,7 @@ import {
 	cloudCapabilityServices,
 } from "@/lib/db/schema";
 import {
+	CACHE_ENGINE_VERSIONS,
 	CACHE_NODE_TYPES,
 	type CloudProviderSlug,
 	DB_CAPACITY,
@@ -197,6 +198,19 @@ export interface CapabilityCacheTierOption {
 	label: string;
 	memoryGb: number | null;
 	cost?: string;
+	launchable?: CapabilityLaunchable;
+	launchableReason?: CapabilityLaunchableReason | null;
+}
+
+/** A managed-cache engine-version option — the engine value plus EVERY offered version (newest-first)
+ * and the account verdict for federated rows. Mirrors `CapabilityDbEngineOption`; `versions` is never
+ * empty (a federated row always carries a version; the static fallback contributes the catalog list). */
+export interface CapabilityCacheEngineVersionOption {
+	/** The cache engine ("redis" / "valkey"). */
+	value: string;
+	label: string;
+	version: string | null;
+	versions: string[];
 	launchable?: CapabilityLaunchable;
 	launchableReason?: CapabilityLaunchableReason | null;
 }
@@ -384,6 +398,11 @@ export function groupDbEnginesByVersion(
  * The managed cache tiers this account can launch — optionally scoped to a region. Fails open to
  * `CACHE_NODE_TYPES[provider]` (which carries the static `cost` hint, absent on federated rows) when
  * nothing has synced yet.
+ *
+ * Filters `version IS NULL`: cache tier rows and cache ENGINE-VERSION rows (#977) share
+ * `service_kind = "cache"`, discriminated by whether the `version` column is set — tiers leave it
+ * null, version rows set it. Without this guard a version row (`native_id = "redis-7.1"`) would leak
+ * into the node-type picker as a bogus tier.
  */
 export async function getCacheTierCapabilities(
 	cloudIdentityId: string,
@@ -409,6 +428,7 @@ export async function getCacheTierCapabilities(
 					eq(cloudCapabilityServices.cloud_identity_id, cloudIdentityId),
 					eq(cloudCapabilityServices.provider, provider),
 					eq(cloudCapabilityServices.service_kind, "cache"),
+					isNull(cloudCapabilityServices.version),
 					isNull(cloudCapabilityServices.removed_at),
 					region ? eq(cloudCapabilityServices.region, region) : undefined,
 				),
@@ -431,6 +451,76 @@ export async function getCacheTierCapabilities(
 		memoryGb: c.memoryGb,
 		cost: c.cost,
 	}));
+}
+
+/** Labels for the two modelled cache engines; the fail-open rows have no `name` column to borrow. */
+const CACHE_ENGINE_LABEL: Record<string, string> = { redis: "Redis", valkey: "Valkey" };
+
+/**
+ * The cache-engine versions this account can launch, grouped by engine (#977).
+ *
+ * The cache lanes emit one row per (engine, version) with the `version` column SET — tier rows leave
+ * it null — so this filters `version IS NOT NULL` to read only version rows (the mirror of the
+ * `version IS NULL` guard in `getCacheTierCapabilities`). Region-agnostic and verdict-permissive,
+ * exactly like the DB version read: a version offered in ANY region should not be hidden, so it reuses
+ * the same per-engine fold (`groupDbEnginesByVersion`).
+ *
+ * Fails open to `CACHE_ENGINE_VERSIONS[provider]` when nothing has synced — one option per engine with
+ * the catalog's offline version list and no per-account verdict.
+ */
+export async function getCacheEngineVersionCapabilities(
+	cloudIdentityId: string,
+	provider: CloudProviderSlug,
+): Promise<CapabilityCacheEngineVersionOption[]> {
+	const actor = await authorize("view", {
+		type: "cloud_identity",
+		id: cloudIdentityId,
+	});
+	const rows = await withActorScope(actor, (tx) =>
+		tx
+			.select({
+				engine: cloudCapabilityServices.engine,
+				nativeId: cloudCapabilityServices.native_id,
+				name: cloudCapabilityServices.name,
+				version: cloudCapabilityServices.version,
+				launchable: cloudCapabilityServices.launchable,
+				launchableReason: cloudCapabilityServices.launchable_reason,
+			})
+			.from(cloudCapabilityServices)
+			.where(
+				and(
+					eq(cloudCapabilityServices.cloud_identity_id, cloudIdentityId),
+					eq(cloudCapabilityServices.provider, provider),
+					eq(cloudCapabilityServices.service_kind, "cache"),
+					isNotNull(cloudCapabilityServices.version),
+					isNull(cloudCapabilityServices.removed_at),
+				),
+			)
+			.orderBy(cloudCapabilityServices.native_id),
+	);
+	if (rows.length > 0) {
+		// The row shape and "one option per engine, versions newest-first" semantics are identical to the
+		// DB version read, so reuse its fold. Map to the cache option explicitly — no cross-domain type
+		// coupling — and label from the engine value (federated `name` is the node class, not the engine).
+		return groupDbEnginesByVersion(rows).map((e) => ({
+			value: e.value,
+			label: CACHE_ENGINE_LABEL[e.value] ?? e.label,
+			version: e.version,
+			versions: e.versions,
+			launchable: e.launchable,
+			launchableReason: e.launchableReason,
+		}));
+	}
+	// Fail-open: the static catalog's per-engine version lists (no per-account verdict). `launchable`
+	// stays UNDEFINED — the sentinel that marks a catalog-sourced row for `sourceOf`/`advisoryFor`.
+	return Object.entries(CACHE_ENGINE_VERSIONS[provider] ?? {}).map(
+		([engine, versions]) => ({
+			value: engine,
+			label: CACHE_ENGINE_LABEL[engine] ?? engine,
+			version: versions?.[0] ?? null,
+			versions: versions ?? [],
+		}),
+	);
 }
 
 /**

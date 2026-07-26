@@ -9,11 +9,14 @@
 //   - database    Cloud SQL `projects.tiers.list` (account-scoped: proves the project can launch Cloud SQL)
 //                 + `flags.list` (the offered DB engine versions) → one engine row at its latest version.
 //   - nosql       Firestore `databases.list` probe → Firestore availability for this project.
-//   - cache       DOCUMENTED EXCLUSION: GCP exposes NO keyless per-account "list Memorystore tiers" API
-//                 (the Redis API lists instances, not offered tiers; capacity tiers are a fixed pricing
-//                 dimension), so the cache axis is intentionally left to fail open to the static Catalog #2
-//                 (lib/queries/capabilities.ts getCacheTierCapabilities). This is an explicit per-axis gap,
-//                 not a silent omission — the cloud-parity rule allows a documented exclusion.
+//   - cache       DOCUMENTED EXCLUSION (tiers AND engine versions, #977): GCP exposes NO keyless
+//                 per-account "list Memorystore tiers" API (the Redis API lists instances, not offered
+//                 tiers; capacity tiers are a fixed pricing dimension), and the offered Redis versions are
+//                 a FIXED API enum (REDIS_7_2 … REDIS_5_0), not a per-project list — so emitting them as
+//                 account rows would falsely claim account-accuracy. Both cache axes are intentionally
+//                 left to fail open to the static Catalog #2 (getCacheTierCapabilities /
+//                 getCacheEngineVersionCapabilities → CACHE_ENGINE_VERSIONS.gcp). Explicit per-axis gaps,
+//                 not silent omissions — the cloud-parity rule allows a documented exclusion.
 //
 // Account-global axes (k8s versions, DB engines, Firestore) are region-uniform on GCP and the consumer
 // reads them region-agnostically (getK8sVersionCapabilities / getDatabaseCapabilities / getNosqlCapability

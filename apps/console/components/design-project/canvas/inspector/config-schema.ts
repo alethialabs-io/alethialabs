@@ -22,6 +22,7 @@ import { coerceEnum } from "@/lib/coerce";
 import { toStrArray } from "@/lib/coerce";
 import {
 	cacheTierOptions,
+	cacheVersionOptions,
 	dbEngineOptions,
 	dbVersionOptions,
 	existingNetworkOptions,
@@ -73,6 +74,9 @@ export interface CapabilityBag {
 	k8sVersions: CapabilityOption[];
 	dbEngines: DbEngineCapabilityOption[];
 	cacheTiers: CapabilityOption[];
+	/** Per cache engine (redis/valkey), the versions this account can launch it at (#977). Sibling to
+	 * `cacheTiers` but a distinct axis — tier rows and version rows are separate capability rows. */
+	cacheEngineVersions: CacheEngineCapabilityOption[];
 	nosqlKeyTypes: CapabilityOption[];
 	/** Already-HAS placement inventory (#980) — not a capability axis, no federation involved. */
 	networks: PlacementOption[];
@@ -103,6 +107,20 @@ export interface DbEngineCapabilityOption extends CapabilityOption {
 	versions: string[];
 }
 
+/**
+ * A managed-cache engine option carrying every version the account can launch it at (#977).
+ *
+ * Structurally the DB analogue (`DbEngineCapabilityOption`): the cache engine is chosen by the
+ * `engine` select (stored directly as "redis"/"valkey", no family indirection) and the version by a
+ * separate select, so the option's `value` is the engine and `versions` its offerable list
+ * (newest-first, never empty). It rides its OWN `cache_engine_version` axis because cache tier rows
+ * and cache version rows are separate `cloud_capability_services` rows (discriminated by whether the
+ * `version` column is set).
+ */
+export interface CacheEngineCapabilityOption extends CapabilityOption {
+	versions: string[];
+}
+
 export interface PlacementOption {
 	/** The NATIVE id (`vpc-…`) — project_network.network_id stores this, not the row uuid. */
 	nativeId: string;
@@ -125,6 +143,7 @@ export type CapabilityAxis =
 	| "k8s_version"
 	| "database"
 	| "cache_tier"
+	| "cache_engine_version"
 	| "nosql"
 	| "placement";
 
@@ -134,6 +153,7 @@ const ALL_CATALOG: Readonly<Record<CapabilityAxis, "account" | "catalog">> = Obj
 	k8s_version: "catalog",
 	database: "catalog",
 	cache_tier: "catalog",
+	cache_engine_version: "catalog",
 	nosql: "catalog",
 	placement: "catalog",
 });
@@ -154,6 +174,7 @@ export const NO_CAPABILITIES: CapabilityBag = Object.freeze({
 	k8sVersions: [],
 	dbEngines: [],
 	cacheTiers: [],
+	cacheEngineVersions: [],
 	nosqlKeyTypes: [],
 	networks: [],
 	subnets: [],
@@ -1207,10 +1228,24 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{
 						key: "engine_version",
-						type: "text",
+						type: "select",
 						label: "Engine version",
 						mono: true,
 						placeholder: "cloud default",
+						// Capability-backed since #977 (the cache twin of the DB engine_version picker):
+						// the lanes enumerate the versions the account can launch the selected engine at,
+						// per `config.engine`. Still fail-open — with nothing synced the catalog's offline
+						// list stands, and `withSelected` keeps a previously pinned free-text version.
+						//
+						// Hidden where the value is inert (cloud parity: cover all, or exclude explicitly):
+						//   • hetzner — the in-cluster Valkey chart pins its own version; unconsumed.
+						//   • azure   — azurerm_managed_redis exposes no version selector, so a pick would be
+						//               dead downstream. Excluded until the module can consume it (#977).
+						requiresProvider: true,
+						capabilityAxis: "cache_engine_version",
+						options: cacheVersionOptions,
+						visibleWhen: (_c, { provider }) =>
+							provider !== "hetzner" && provider !== "azure",
 						description: "Pin an exact engine version. Empty tracks the template's default.",
 					},
 				],

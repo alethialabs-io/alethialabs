@@ -16,6 +16,10 @@
 // (`available: false`). The offerings are location-independent (the charts run wherever the cluster is),
 // so they are recorded once at the default location; the region-filtered cache read falls open to the
 // static catalog elsewhere. Best-effort + never throws; the dispatcher stamps freshness.
+//
+// Cache engine VERSION is a DOCUMENTED EXCLUSION (#977): the in-cluster Valkey chart is version-pinned
+// and the cache `engine_version` config is not consumed on Hetzner, so the cache-version picker is
+// hidden on Hetzner and this lane records no version row (only the fixed Valkey tiers above).
 
 import { sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
