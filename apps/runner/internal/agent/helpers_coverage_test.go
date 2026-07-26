@@ -57,6 +57,40 @@ func TestResolveAccountID(t *testing.T) {
 	}
 }
 
+// TestResolveAmbientAccountID covers the self-operator (nil-identity) fallback that reads the account
+// identifier from the ambient environment: AWS_ACCOUNT_ID, the GOOGLE_*/GCLOUD_*/CLOUDSDK_* project
+// chain (first non-empty wins), ARM_SUBSCRIPTION_ID, and "" for account-less providers.
+func TestResolveAmbientAccountID(t *testing.T) {
+	// Clear every input first so inherited env can't leak into a case.
+	for _, k := range []string{"AWS_ACCOUNT_ID", "GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT", "ARM_SUBSCRIPTION_ID"} {
+		t.Setenv(k, "")
+	}
+	cases := []struct {
+		name     string
+		provider string
+		env      map[string]string
+		want     string
+	}{
+		{"aws", "aws", map[string]string{"AWS_ACCOUNT_ID": "270587882865"}, "270587882865"},
+		{"gcp GOOGLE_PROJECT", "gcp", map[string]string{"GOOGLE_PROJECT": "itgix-adp"}, "itgix-adp"},
+		{"gcp fallback to CLOUDSDK", "gcp", map[string]string{"CLOUDSDK_CORE_PROJECT": "proj-x"}, "proj-x"},
+		{"gcp precedence GOOGLE_PROJECT wins", "gcp", map[string]string{"GOOGLE_PROJECT": "first", "GOOGLE_CLOUD_PROJECT": "second"}, "first"},
+		{"azure", "azure", map[string]string{"ARM_SUBSCRIPTION_ID": "sub-1"}, "sub-1"},
+		{"hetzner is account-less", "hetzner", nil, ""},
+		{"aws unset yields empty", "aws", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if got := resolveAmbientAccountID(tc.provider); got != tc.want {
+				t.Fatalf("resolveAmbientAccountID(%q) = %q, want %q", tc.provider, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCopyDir(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")

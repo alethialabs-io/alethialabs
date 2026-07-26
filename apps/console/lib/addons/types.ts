@@ -8,6 +8,7 @@
 // merged Helm values + mode) that rides the DEPLOY job's config snapshot to the runner.
 
 import { z } from "zod";
+import type { K8sRange } from "@/lib/compat";
 import type { AddonMode } from "@/lib/db/schema/enums";
 import type { ChartValuePathMap, ServiceBinding } from "@/types/jsonb.types";
 
@@ -171,6 +172,15 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	syncWave: number;
 	/** Capabilities this add-on expects (surfaced as hints in the UI). */
 	requires?: AddOnRequirement[];
+	/**
+	 * Per-add-on Kubernetes support window, DERIVED from the compat matrix SSOT
+	 * (`packages/core/compat/matrix.json` → `addon_k8s[id]`) by the `defineAddOn` helper —
+	 * not authored here, so it can never drift from the matrix the compat engine reads.
+	 * Empty bounds → `not_evaluable` (honest; never a false pass). Read by the config-time
+	 * compat resolver (#1218) and the compat UI (cluster inspector / add-on config sheet
+	 * #1221, canvas node chip / palette badge #1222). Real windows land via #1216.
+	 */
+	k8sRange: K8sRange;
 }
 
 /** A reference into the per-add-on k8s Secret the runner seeds (W4.5): `name` is the

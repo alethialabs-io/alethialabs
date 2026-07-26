@@ -372,6 +372,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	switch selectPlacementPath(vc.PlacementMode, params.Provider) {
 	case placementNamespaceAWS:
 		return runNamespaceDeploy(ctx, params)
+	case placementVcluster:
+		return runVClusterDeploy(ctx, params)
 	case placementUnactivated:
 		return nil, unactivatedPlacementError(vc.PlacementMode, params.Provider)
 	case placementDedicated:
@@ -854,6 +856,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, applyErr)
 			return &result, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
+		// The per-cloud external-secrets ClusterSecretStore is a CR of the operator applied just
+		// above; apply it separately AFTER, once the operator's ArgoCD-synced CRD + validating
+		// webhook are up, so it never races/poisons the operator's own apply on a fresh cluster
+		// (#1208 — mixing it into the operator's client-side apply file could deadlock the whole
+		// deploy). Non-fatal, like the Karpenter node class below: the store is NOT an ArgoCD app and
+		// is NOT required for a healthy cluster (cluster_ready + the ArgoCD apps already converged),
+		// so a slow ArgoCD-installed operator webhook must not fail an otherwise-healthy deploy — the
+		// apply is idempotent and reconciles on the next deploy once the operator is ready.
+		if esErr := argocd.EnsureExternalSecretsStore(facts, stdout, stderr); esErr != nil {
+			fmt.Fprintf(stderr, "Warning: external-secrets ClusterSecretStore not applied yet "+
+				"(will reconcile once the operator webhook is ready): %v\n", esErr)
+		}
 		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
 		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
 		// EC2NodeClass spec.tags (from the karpenter_node_tags output) is the ONLY lever that
@@ -891,6 +905,24 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 
 		setStage("addons")
+		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos
+		// (helm_registry connectors) BEFORE the add-on / BYO Applications sync — ArgoCD matches these
+		// to an Application by repoURL, so the credential must pre-exist its first sync. Runner-seeded
+		// post-apply (never in git); credentials come from the job's ConnectorCredentials, never
+		// logged. Non-fatal: a misconfigured repo surfaces as an OutOfSync Application and must not
+		// fail an otherwise-healthy cluster (a bad entry is skipped fail-closed, never half-seeded).
+		var desiredHelmRepoCreds []string
+		helmRepoSpecs, helmRepoErr := categories.HelmRepoCredSpecs(vc)
+		if helmRepoErr != nil {
+			fmt.Fprintf(stderr, "Warning: some Helm repo credentials were skipped: %v\n", helmRepoErr)
+		}
+		for _, s := range helmRepoSpecs {
+			if err := argocd.EnsureHelmRepoCredential(s.Name, s.URL, s.Username, s.Password, s.EnableOCI, stdout, stderr); err != nil {
+				fmt.Fprintf(stderr, "Warning: could not seed Helm repo credential %s: %v\n", s.Name, err)
+				continue
+			}
+			desiredHelmRepoCreds = append(desiredHelmRepoCreds, s.Name)
+		}
 		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
 		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
@@ -966,6 +998,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			desiredPullSecrets = []string{n}
 		}
 		argocd.PruneRegistryPullSecrets(desiredPullSecrets, stdout, stderr)
+		// And the runner-seeded ArgoCD repo credential of any deselected private Helm/OCI chart repo —
+		// likewise owned by no Application. Desired = the repos seeded above (empty when none connected),
+		// so switching or removing a helm_registry connector cleans up the stale credential.
+		argocd.PruneHelmRepoCredentials(desiredHelmRepoCreds, stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//

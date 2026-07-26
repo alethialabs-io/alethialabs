@@ -63,6 +63,7 @@
 	"nosql_tables": [],
 	"secrets": [],
 	"container_registries": [],
+	"helm_registries": [],
 	"storage_buckets": [],
 	"services": [],
 	"addons": [
@@ -84,5 +85,31 @@
 			"syncWave": 1
 		}
 	],
+	"compat": {
+		"verdict": "not_evaluable",
+		"catalog_version": "compat-matrix-0.1.0",
+		"controls": [
+			{
+				"id": "COMPAT-K8S-CLOUD-HETZNER",
+				"title": "Kubernetes availability on hetzner",
+				"severity": "high",
+				"status": "not_evaluable",
+				"coverage": "cluster Kubernetes version is unset or unparseable"
+			},
+			{
+				"id": "COMPAT-ADDON-RELOADER",
+				"title": "add-on reloader ↔ Kubernetes",
+				"severity": "medium",
+				"status": "not_evaluable",
+				"coverage": "no Kubernetes compatibility range recorded"
+			}
+		],
+		"summary": {
+			"pass": 0,
+			"fail": 0,
+			"warn": 0,
+			"not_evaluable": 2
+		}
+	},
 	"git_access_token": ""
 }

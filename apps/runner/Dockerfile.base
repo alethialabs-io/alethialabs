@@ -61,6 +61,8 @@ RUN apk add --no-cache \
 
 # OpenTofu (MPL-2.0) — the IaC engine. Baked in so the runner never downloads it at provision time.
 # SHA256-verified against the published SHA256SUMS.
+# SSOT: packages/core/compat/matrix.json static_couplings[tofu].value must equal this ARG and the
+# tofu.DefaultIaCVersion Go const (asserted by the compat couplings drift test, #1214).
 ARG TOFU_VERSION=1.9.0
 RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
     ASSET="tofu_${TOFU_VERSION}_linux_${ARCH}.zip" && \
@@ -75,6 +77,8 @@ RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
 # Infracost (Apache-2.0) — cost estimation. Baked in so the runner never downloads it at provision
 # time. SHA256-verified against the release's published per-asset .sha256 (was previously an
 # unverified curl | tar).
+# SSOT: packages/core/compat/matrix.json static_couplings[infracost].value must equal this ARG and
+# the infracost.DefaultInfracostVersion Go const (modulo the leading "v"; drift test, #1214).
 ARG INFRACOST_VERSION=0.10.39
 RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
     ASSET="infracost-linux-${ARCH}.tar.gz" && \

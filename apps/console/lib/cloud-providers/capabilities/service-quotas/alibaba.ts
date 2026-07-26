@@ -1,23 +1,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Alibaba Cloud service-quota headroom enumeration (Wave-2 quota axis, epic #928, #981). Assumes the
-// customer's RAM role via AssumeRoleWithOIDC (keyless, session/alibaba) and reads, per region, the
-// security-group ceiling from ECS `DescribeAccountAttributes` (attribute `max-security-groups`). The API
-// reports the limit only (no usage), so `used`/`available` are stored NULL. Best-effort: never throws; a
-// failing region is skipped.
-//
-// DOCUMENTED per-cloud parity gap (cloud parity is a hard rule — explicit, not silent): EIP, NAT-gateway,
-// and SLB/load-balancer headroom on Alibaba are only read-obtainable via the Quota Center product
-// (`@alicloud/quotas`, ProductCodes eip/nat/slb). That SDK client is NOT installed in the console, so
-// wiring those three is deferred to a follow-up that adds the dependency (a package.json change, out of
-// this lane's file scope). Today Alibaba covers `security_group` only.
+// Alibaba Cloud service-quota headroom enumeration (Wave-2 quota axis, epic #928, #981, #1229). Assumes
+// the customer's RAM role via AssumeRoleWithOIDC (keyless, session/alibaba) and reads, per region, the
+// networking quota ceilings a provision plan can exhaust:
+//   • security_group — ECS `DescribeAccountAttributes` (attribute `max-security-groups`): limit only, so
+//     used/available are NULL (honest not_evaluable).
+//   • elastic_ip / nat_gateway / load_balancer — Quota Center `ListProductQuotas` (ProductCodes eip / vpc /
+//     slb, region as a dimension). Quota Center reports BOTH the ceiling (`TotalQuota`) and usage
+//     (`TotalUsage`), so these carry real used/available headroom (#1229 closes the #981 gap; cloud parity).
+// Best-effort: never throws; a failing region/product is skipped. Availability is design-time GUIDANCE
+// (#918 fail-open), surfaced as advisory on the network node.
 
 import EcsClient, {
 	DescribeAccountAttributesRequest,
 	DescribeRegionsRequest,
 } from "@alicloud/ecs20140526";
 import * as $OpenApi from "@alicloud/openapi-client";
+import QuotasClient, {
+	ListProductQuotasRequest,
+} from "@alicloud/quotas20200510";
 import { sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -31,6 +33,43 @@ import type { CapabilityIdentity } from "../types";
 const BOOTSTRAP_REGION = "cn-hangzhou";
 // The ECS DescribeAccountAttributes attribute carrying the per-region security-group ceiling.
 const SG_ATTRIBUTE = "max-security-groups";
+// The Quota Center endpoint is central (region is passed as a `regionId` dimension, not the endpoint host).
+const QUOTA_CENTER_ENDPOINT = "quotas.aliyuncs.com";
+
+// The networking quotas we reconcile via Quota Center, grouped by ProductCode. Quota Center action codes
+// vary (and are only knowable against the live product), so each kind carries an ALLOW-LIST of candidate
+// `quotaActionCode`s — the first that matches wins, and an unmatched kind simply yields no row (honest
+// not_evaluable / fail-open, never a fabricated value). One spec per kind (a single count quota each).
+interface AlibabaQuotaCenterSpec {
+	productCode: string;
+	kind: CapabilityQuotaKind;
+	actionCodes: string[];
+	name: string;
+}
+const QUOTA_CENTER_SPECS: AlibabaQuotaCenterSpec[] = [
+	{
+		productCode: "eip",
+		kind: "elastic_ip",
+		actionCodes: ["eip_whitelist/eip_number", "eip_number", "q_eip_number"],
+		name: "Elastic IP addresses per region",
+	},
+	{
+		productCode: "vpc",
+		kind: "nat_gateway",
+		actionCodes: ["vpc_quota_ngw_num", "vpc_quota_ngw_number", "vpc_quota_enhanced_ngw"],
+		name: "NAT gateways per region",
+	},
+	{
+		productCode: "slb",
+		kind: "load_balancer",
+		actionCodes: ["slb_quota_instances_num", "slb_quota_instance_num", "slb_quota_clb_number"],
+		name: "Load balancer instances per region",
+	},
+];
+/** Distinct ProductCodes to query per region (one ListProductQuotas call each). */
+const QUOTA_CENTER_PRODUCTS = [
+	...new Set(QUOTA_CENTER_SPECS.map((s) => s.productCode)),
+];
 
 /** A quota row before identity/timestamps are attached — the pure normalizer output (testable). */
 export interface NormalizedQuota {
@@ -72,6 +111,111 @@ export function normalizeAlibabaSecurityGroups(
 			available: null,
 		},
 	];
+}
+
+/** A flattened Quota Center quota ({productCode, action code, name, limit, usage}) — the shape the
+ * normalizer consumes, decoupled from the SDK's response classes (the recorded-fixture contract). */
+export interface QuotaCenterItem {
+	productCode: string | null;
+	quotaActionCode: string | null;
+	quotaName: string | null;
+	totalQuota: number | null;
+	totalUsage: number | null;
+}
+
+/** Maps a region's Quota Center quotas to elastic_ip / nat_gateway / load_balancer headroom rows. Each kind
+ * takes the first quota whose (productCode, quotaActionCode) matches its spec allow-list; `available` is
+ * `limit − used` when Quota Center reports both (it usually does), else NULL. Pure — no IO. */
+export function normalizeAlibabaQuotaCenter(
+	region: string,
+	items: QuotaCenterItem[],
+): NormalizedQuota[] {
+	const out: NormalizedQuota[] = [];
+	for (const spec of QUOTA_CENTER_SPECS) {
+		const match = items.find(
+			(i) =>
+				i.productCode === spec.productCode &&
+				typeof i.quotaActionCode === "string" &&
+				spec.actionCodes.includes(i.quotaActionCode),
+		);
+		if (!match) continue;
+		const limit =
+			typeof match.totalQuota === "number" && Number.isFinite(match.totalQuota)
+				? match.totalQuota
+				: null;
+		const used =
+			typeof match.totalUsage === "number" && Number.isFinite(match.totalUsage)
+				? match.totalUsage
+				: null;
+		const available = limit !== null && used !== null ? limit - used : null;
+		out.push({
+			region,
+			quota_kind: spec.kind,
+			native_id: match.quotaActionCode ?? spec.actionCodes[0],
+			name: match.quotaName ?? spec.name,
+			quota_limit: limit,
+			used,
+			available,
+		});
+	}
+	return out;
+}
+
+/** Flattens a ListProductQuotas response's `quotas` into {productCode, quotaActionCode, …}. */
+function flattenQuotaCenter(
+	quotas:
+		| {
+				productCode?: string;
+				quotaActionCode?: string;
+				quotaName?: string;
+				totalQuota?: number;
+				totalUsage?: number;
+		  }[]
+		| undefined,
+): QuotaCenterItem[] {
+	return (quotas ?? []).map((q) => ({
+		productCode: q.productCode ?? null,
+		quotaActionCode: q.quotaActionCode ?? null,
+		quotaName: q.quotaName ?? null,
+		totalQuota: typeof q.totalQuota === "number" ? q.totalQuota : null,
+		totalUsage: typeof q.totalUsage === "number" ? q.totalUsage : null,
+	}));
+}
+
+/** Builds the central Quota Center OpenAPI client from the assumed STS credentials. */
+function quotasClient(creds: AlibabaCredentials): QuotasClient {
+	return new QuotasClient(
+		new $OpenApi.Config({
+			accessKeyId: creds.accessKeyId,
+			accessKeySecret: creds.accessKeySecret,
+			securityToken: creds.securityToken,
+			endpoint: QUOTA_CENTER_ENDPOINT,
+		}),
+	);
+}
+
+/** Collects the flattened Quota Center quotas for a region across all networking ProductCodes. A single
+ * product's failure is isolated so the others still contribute. */
+async function collectQuotaCenter(
+	client: QuotasClient,
+	region: string,
+): Promise<QuotaCenterItem[]> {
+	const items: QuotaCenterItem[] = [];
+	for (const productCode of QUOTA_CENTER_PRODUCTS) {
+		try {
+			const resp = await client.listProductQuotas(
+				new ListProductQuotasRequest({
+					productCode,
+					dimensions: [{ key: "regionId", value: region }],
+					maxResults: 100,
+				}),
+			);
+			items.push(...flattenQuotaCenter(resp.body?.quotas));
+		} catch {
+			// Best-effort — a single product's Quota Center call may 403/throttle; skip it.
+		}
+	}
+	return items;
 }
 
 /** Builds a region-scoped ECS OpenAPI client from the assumed STS credentials. */
@@ -132,9 +276,11 @@ export async function syncAlibabaQuotaCapabilities(
 
 	const now = new Date();
 	const seen: string[] = [];
+	const quotas = quotasClient(creds);
 
 	for (const region of regionIds) {
-		let attributes: AccountAttribute[] = [];
+		// security_group ceiling via ECS DescribeAccountAttributes (limit only).
+		let sgRows: NormalizedQuota[] = [];
 		try {
 			const client = ecsClient(creds, region);
 			const resp = await client.describeAccountAttributes(
@@ -143,14 +289,21 @@ export async function syncAlibabaQuotaCapabilities(
 					attributeName: [SG_ATTRIBUTE],
 				}),
 			);
-			attributes = flattenAttributes(
-				resp.body?.accountAttributeItems?.accountAttributeItem,
+			sgRows = normalizeAlibabaSecurityGroups(
+				region,
+				flattenAttributes(resp.body?.accountAttributeItems?.accountAttributeItem),
 			);
 		} catch {
-			continue;
+			// ECS unreachable in this region — the Quota Center pass below can still contribute.
 		}
 
-		const rows = normalizeAlibabaSecurityGroups(region, attributes);
+		// elastic_ip / nat_gateway / load_balancer headroom via Quota Center (limit + usage).
+		const quotaCenterRows = normalizeAlibabaQuotaCenter(
+			region,
+			await collectQuotaCenter(quotas, region),
+		);
+
+		const rows = [...sgRows, ...quotaCenterRows];
 		if (rows.length === 0) continue;
 
 		const insertRows = rows.map((r) => {

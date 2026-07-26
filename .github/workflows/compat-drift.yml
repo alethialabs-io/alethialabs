@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Compat-matrix drift scout (#1216, epic #1186). Weekly, it re-derives the version-compatibility matrix
+# from upstream — each marketplace chart's Chart.yaml `kubeVersion`, plus (when creds are present) the
+# cloud control-plane version APIs — and files ONE deduped GitHub issue when the shipped
+# packages/core/compat/matrix.json drifts from upstream reality. Keeps the matrix an upstream-verifiable
+# artifact instead of a hand-maintained guess. Remediation is `pnpm -F console derive:compat -- --write`.
+#
+# No special secrets required: Helm repos are public and GITHUB_TOKEN is automatic. The cloud derivers
+# SKIP cleanly when their CLI/auth is absent (so the run is always green) — wire cloud creds (e.g. AWS
+# OIDC) to also validate the curated k8s_cloud set against what each cloud still offers. Start with a
+# workflow_dispatch (dry_run: true) to preview the report; the schedule is weekly to stay low-noise.
+
+name: Compat drift → issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the drift report; don't create/update the issue"
+        type: boolean
+        default: true
+  schedule:
+    - cron: "23 7 * * 1" # Mondays 07:23 UTC (off-minute; kubeVersion changes slowly)
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: compat-drift
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install console deps (the scout imports the `yaml` dep)
+        run: pnpm install --frozen-lockfile --filter console
+      - name: Derive compat + file drift issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: pnpm -F console derive:compat ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '-- --dry-run' || '' }}

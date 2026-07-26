@@ -57,7 +57,7 @@ const catalogRows = [...builtin, ...providers];
 // ── registry.generated.ts ─────────────────────────────────────────────────────
 const ts = `${HEADER_TS}
 /** Categories that support pluggable (non-cloud-native) connector backends. */
-export const PLUGGABLE_CATEGORIES = ["dns", "secrets", "registry", "observability"] as const;
+export const PLUGGABLE_CATEGORIES = ["dns", "secrets", "registry", "helm_registry", "observability"] as const;
 export type PluggableCategory = (typeof PLUGGABLE_CATEGORIES)[number];
 
 /** A single field collected for a credential or a component's provider_config. */

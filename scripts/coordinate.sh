@@ -12,7 +12,14 @@
 # Usage:
 #   scripts/coordinate.sh                 # reclaim + unblock + report
 #   scripts/coordinate.sh --report        # report only (no mutations)
+#   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
+#
+# --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
+# NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
+# keyword (close|fix|resolve + tenses) directly before `#<n>`, in the PR TITLE or BODY — it closes
+# the issue with a comment. Mirrors the Action's parser, so it retroactively catches the body-only
+# `Closes #n` cases. A bare mention without a closing keyword is not a delivery and is left open.
 #
 # Env: ALETHIA_LEASE_TTL (seconds, default 3600) — a lease older than this with no heartbeat
 #      is reclaimable.
@@ -26,9 +33,10 @@ LEASE_TTL="${ALETHIA_LEASE_TTL:-3600}"
 MODE="full"
 case "${1:-}" in
   --report) MODE="report" ;;
+  --close-shipped) MODE="close-shipped" ;;
   --init-labels) MODE="init" ;;
   "" ) MODE="full" ;;
-  -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac
 
@@ -52,6 +60,7 @@ if [ "$MODE" = "init" ]; then
   mklabel "mutex:migration" "e99695" "generates a drizzle migration — serialized, one at a time"
   mklabel "needs:design"  "d4c5f9" "UI unit awaiting the Claude-Design build"
   mklabel "needs:human"   "d4c5f9" "awaiting a human decision/gate"
+  mklabel "epic"          "8b5cf6" "umbrella/tracking issue — decomposed into sub-issues, never directly built/claimed"
   echo "✓ label set ready"
   exit 0
 fi
@@ -59,6 +68,44 @@ fi
 # Pull the whole open board once.
 board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($n|tonumber))|.labels|map(.name)|index($l)' >/dev/null 2>&1; }
+
+# ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
+# Mutates NOTHING on leases/blocks. For each open, still-claimable board unit that a MERGED PR
+# CLOSES — a closing keyword (`close|fix|resolve` + tenses) directly before `#<n>`, in the PR
+# TITLE or BODY — close the issue. This mirrors the `close-on-dev-merge` Action's parser exactly,
+# so it's the retroactive backstop for units the Action didn't fire on (PRs merged before it
+# existed, incl. the body-only `Closes #n` a title-only heuristic used to miss). A bare mention
+# without a closing keyword is NOT a delivery and is never auto-closed. Idempotent (only OPEN
+# units are in `board`). See .claude/COORDINATION.md.
+if [ "$MODE" = "close-shipped" ]; then
+  merged="$(gh pr list --state merged --limit 300 --json number,title,body 2>/dev/null || echo '[]')"
+  # Emit "<issue> <pr-list>" pairs for every claimable unit a merged PR CLOSES (keyword + #n in
+  # title or body — the same signal GitHub honours and the Action parses).
+  strong="$(echo "$board" | jq -r --argjson merged "$merged" '
+    .[]
+    | select(.labels|map(.name)|any(startswith("class:")))                                 # board units only
+    | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "needs:human" or . == "needs:design")|not)
+    | .number as $n
+    | ($merged | map(select(                                                                # CLOSING keyword + #n, title OR body
+        (((.title // "") + " " + (.body // ""))
+         | test("(?i)\\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\\s+#\($n)\\b"))))) as $refs
+    | select($refs|length > 0)
+    | "\($n) \($refs|map("#\(.number)")|join(","))"
+  ' 2>/dev/null || true)"
+  if [ -z "$strong" ]; then
+    echo "close-shipped: no open board unit is closed by a merged PR (keyword + #n in title/body). Nothing to close."
+    exit 0
+  fi
+  closed=0
+  while read -r n prs; do
+    [ -z "$n" ] && continue
+    gh issue close "$n" --comment "Closed by merged PR(s) ${prs} (coordinate --close-shipped backstop)." >/dev/null \
+      && { echo "✓ closed #$n (shipped in ${prs})"; closed=$((closed+1)); } \
+      || echo "  (could not close #$n — skipped)"
+  done <<< "$strong"
+  echo "close-shipped: closed $closed shipped board unit(s)."
+  exit 0
+fi
 
 # ── reclaim stale leases ─────────────────────────────────────────────────────
 reclaimed=0
@@ -111,17 +158,20 @@ echo "──────── BOARD ($(date -u +%H:%MZ)) ───────�
 echo "$board" | jq -r '
   def waveof: (.labels|map(.name)|map(select(startswith("wave:")))|(.[0]//"wave:—"));
   def st:
-    (if (.labels|map(.name)|index("claimed")) then "CLAIMED"
+    (if (.labels|map(.name)|index("epic")) then "EPIC"
+     elif (.labels|map(.name)|index("claimed")) then "CLAIMED"
      elif (.labels|map(.name)|index("blocked")) then "blocked"
      else "READY" end);
   sort_by(waveof, .number)[]
   | "  \(waveof|ltrimstr("wave:")|(.+"      ")[0:8]) #\(.number|tostring|(.+"    ")[0:5]) \(st|(.+"       ")[0:8]) \(.title[0:56]) \(if .assignees|length>0 then "→ "+.assignees[0].login else "" end)"
 '
 echo "  ─────"
+# READY excludes epics: an umbrella/tracking issue is never claimable (it decomposes into sub-issues).
 echo "$board" | jq -r '
-  "  ready:   \(map(select((.labels|map(.name)|index("claimed")|not) and (.labels|map(.name)|index("blocked")|not)))|length)"
+  "  ready:   \(map(select((.labels|map(.name)|index("claimed")|not) and (.labels|map(.name)|index("blocked")|not) and (.labels|map(.name)|index("epic")|not)))|length)"
   + "   claimed: \(map(select(.labels|map(.name)|index("claimed")))|length)"
   + "   blocked: \(map(select(.labels|map(.name)|index("blocked")))|length)"
+  + "   epics: \(map(select(.labels|map(.name)|index("epic")))|length)"
 '
 
 # Collisions to eyeball: >1 claimed mutex:migration.

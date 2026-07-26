@@ -29,6 +29,9 @@ variable "region" {
 }
 
 variable "talos_version" {
+  # SSOT for the Talos↔Kubernetes window: packages/core/compat/matrix.json → components[talos].
+  # The compat couplings drift test asserts this default is a recorded matrix release and that
+  # kubernetes_version's minor stays inside its window (#1214).
   description = "Talos Linux version (e.g. v1.13.6)."
   type        = string
   default     = "v1.13.6"
@@ -40,6 +43,9 @@ variable "kubernetes_version" {
   # only publishes patch tags — a bare "1.35" yields an unpullable image (ImagePullBackOff).
   # Coupled to talos_version: Talos v1.13.6 supports k8s 1.31–1.36; we pin 1.35 (the newest minor
   # Cilium v1.19 officially tests). Leave empty ("") only to let Talos pick its own default (1.36).
+  # SSOT for every component↔k8s window this minor must satisfy (talos / cilium / hcloud-csi):
+  # packages/core/compat/matrix.json → components[*]; the compat drift test evaluates this pinned
+  # version against the whole Hetzner component set and fails on any incompatibility (#1214).
   description = "Kubernetes version (concrete patch, e.g. 1.35.6); coupled to talos_version. Empty → Talos default."
   type        = string
   default     = "1.35.6"

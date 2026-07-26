@@ -23,6 +23,9 @@
 # ---------------------------------------------------------------------------
 
 locals {
+  # SSOT for the Cilium↔k8s and CCM↔k8s couplings: packages/core/compat/matrix.json →
+  # components[cilium] / components[hcloud-ccm]. The compat couplings drift test asserts these are
+  # recorded matrix releases compatible with the pinned kubernetes_version (#1214).
   cilium_version     = "1.19.6"
   hcloud_ccm_version = "1.34.0"
 

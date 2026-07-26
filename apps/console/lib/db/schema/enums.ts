@@ -290,6 +290,7 @@ export const connectorCategory = pgEnum("connector_category", [
 	"cloud",
 	"observability",
 	"registry",
+	"helm_registry",
 	"dns",
 	"secrets",
 ]);

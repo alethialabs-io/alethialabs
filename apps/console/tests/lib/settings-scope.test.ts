@@ -45,9 +45,9 @@ describe("settingsNavItemsForScope", () => {
 		]);
 	});
 
-	it("shows the project-scopable sections inside a project (General · Access · Activity)", () => {
+	it("shows the project-scopable sections inside a project", () => {
 		const subs = settingsNavItemsForScope("project").map((i) => i.sub);
-		expect(subs).toEqual(["general", "access", "activity"]);
+		expect(subs).toEqual(["general", "preview", "access", "activity"]);
 		// Org-only surfaces never leak into project scope.
 		expect(subs).not.toContain("billing");
 		expect(subs).not.toContain("sso");

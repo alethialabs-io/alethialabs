@@ -21,7 +21,7 @@ import { NextResponse } from "next/server";
 
 /**
  * Extracts the pluggable provider slugs a job's project references, from the
- * identifier-only config_snapshot (dns/secrets/registry/observability). Returns
+ * identifier-only config_snapshot (dns/secrets/registry/helm_registry/observability). Returns
  * the unique non-native slugs so we know which credentials to attach.
  */
 function referencedConnectorSlugs(snapshot: unknown): string[] {
@@ -35,7 +35,7 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 		add(dns?.provider);
 		const obs = asRecord(s.observability);
 		add(obs?.provider);
-		for (const key of ["secrets", "container_registries"]) {
+		for (const key of ["secrets", "container_registries", "helm_registries"]) {
 			const arr = s[key];
 			if (Array.isArray(arr)) {
 				for (const item of arr) {
