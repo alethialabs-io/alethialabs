@@ -147,15 +147,32 @@ export function normalizeAksVersions(
 	return out;
 }
 
+/** The catalog engine value + label per Azure family (matches DB_ENGINES[azure]), so federated rows
+ * and the static fallback share ONE value space. Without this the fail-open path (#918) hands the
+ * picker a different engine identity than the synced rows use. */
+const AZURE_DB_ENGINES: Record<
+	"postgres" | "mysql",
+	{ value: string; label: string }
+> = {
+	postgres: { value: "azure-postgresql", label: "Azure Database for PostgreSQL" },
+	mysql: { value: "azure-mysql", label: "Azure Database for MySQL" },
+};
+
 /** DBforPostgreSQL/DBforMySQL location capabilities → one `database` offering per distinct engine
  * VERSION. Both services nest versions at
  * `value[].supportedFlexibleServerEditions[].supportedServerVersions[].name`, so one normalizer serves
- * both (the differing SKU sub-shape, supportedVcores vs supportedSkus, is not read here). */
+ * both (the differing SKU sub-shape, supportedVcores vs supportedSkus, is not read here).
+ *
+ * This lane ALREADY emitted the per-version grain #1351 wants; what changed is the value space. It
+ * used to write `engine: "postgres"` while the catalog calls the same engine `azure-postgresql`, so a
+ * reader grouping by engine could not match synced rows to the static fallback. The version also left
+ * `name`: it is the engine's label now, and the version is its own column. */
 export function normalizeFlexibleServerVersions(
 	region: string,
 	engine: "postgres" | "mysql",
 	value: FlexibleCapabilityEntry[],
 ): NormalizedService[] {
+	const meta = AZURE_DB_ENGINES[engine];
 	const seen = new Set<string>();
 	const out: NormalizedService[] = [];
 	for (const entry of value ?? []) {
@@ -167,9 +184,9 @@ export function normalizeFlexibleServerVersions(
 				out.push({
 					region,
 					service_kind: "database",
-					native_id: `${engine}-${version}`,
-					name: `${engine === "postgres" ? "PostgreSQL" : "MySQL"} ${version}`,
-					engine,
+					native_id: `${meta.value}-${version}`,
+					name: meta.label,
+					engine: meta.value,
 					version,
 					tier: null,
 					mem_gb: null,

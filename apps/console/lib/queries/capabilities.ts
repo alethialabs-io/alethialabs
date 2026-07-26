@@ -38,6 +38,7 @@ import type {
 	CapabilityLaunchableReason,
 	CapabilityQuotaKind,
 } from "@/lib/db/schema";
+import { sortVersionsDesc } from "@/lib/cloud-providers/capabilities/services/version";
 
 /** An instance-type option the pickers consume — the static Catalog #2 shape plus the account-accurate
  * tri-state verdict (absent when the row is a static fallback). */
@@ -166,12 +167,18 @@ export interface CapabilityK8sVersionOption {
 	launchableReason?: CapabilityLaunchableReason | null;
 }
 
-/** A managed database engine option — the engine value + offered version, plus the account verdict for
- * federated rows. `version` is null when the provider/row does not pin one. */
+/** A managed database engine option — the engine value plus EVERY offered version, newest-first, and
+ * the account verdict for federated rows.
+ *
+ * `versions` is the engine-version axis the picker offers (#1351). It is never empty: a federated row
+ * always carries a version, and the static fallback contributes the catalog's default as a
+ * one-element list. `version` is the NEWEST offered version — a convenience mirror of `versions[0]`,
+ * kept because a single-value caller shouldn't have to know that the list is sorted newest-first. */
 export interface CapabilityDbEngineOption {
 	value: string;
 	label: string;
 	version: string | null;
+	versions: string[];
 	launchable?: CapabilityLaunchable;
 	launchableReason?: CapabilityLaunchableReason | null;
 }
@@ -248,8 +255,19 @@ export async function getK8sVersionCapabilities(
 }
 
 /**
- * The managed database engines this account can launch, plus the static capacity model. Fails open to
- * `DB_ENGINES[provider]` (one row per engine at its default version) when nothing has synced yet.
+ * The managed database engines this account can launch — each with EVERY offered version — plus the
+ * static capacity model. Fails open to `DB_ENGINES[provider]` when nothing has synced yet.
+ *
+ * The lanes emit one row per (engine, version) and per region, so this GROUPS BY ENGINE. That is not
+ * cosmetic: before #1351 the read projected `native_id` as the engine identity, so on Azure — whose
+ * lane enumerates every subscription location — the picker received `azure-postgresql-16` once per
+ * region as a separate "engine". Grouping by the `engine` column and deduping versions collapses that
+ * back to one engine with a version list, which is also the shape the version picker needs.
+ *
+ * Deliberately region-agnostic: the other four lanes anchor their rows to a single canonical region,
+ * so filtering by region here would silently empty the picker for them. A version offered in ANY
+ * region keeps the most permissive verdict — an account that can launch it somewhere should not be
+ * told it cannot.
  */
 export async function getDatabaseCapabilities(
 	cloudIdentityId: string,
@@ -262,7 +280,8 @@ export async function getDatabaseCapabilities(
 	const rows = await withActorScope(actor, (tx) =>
 		tx
 			.select({
-				value: cloudCapabilityServices.native_id,
+				engine: cloudCapabilityServices.engine,
+				nativeId: cloudCapabilityServices.native_id,
 				name: cloudCapabilityServices.name,
 				version: cloudCapabilityServices.version,
 				launchable: cloudCapabilityServices.launchable,
@@ -281,26 +300,84 @@ export async function getDatabaseCapabilities(
 	);
 	const capacity = DB_CAPACITY[provider];
 	if (rows.length > 0) {
-		return {
-			engines: rows.map((r) => ({
-				value: r.value,
-				label: r.name ?? r.value,
-				version: r.version,
-				launchable: r.launchable,
-				launchableReason: r.launchableReason,
-			})),
-			capacity,
-		};
+		return { engines: groupDbEnginesByVersion(rows), capacity };
 	}
-	// Fail-open: the static catalog's engine set (no per-account launch verdict).
+	// Fail-open: the static catalog's engine set (no per-account launch verdict). The catalog knows
+	// only one version per engine, so `versions` is honestly a one-element list rather than a guess.
+	// `launchable` stays UNDEFINED here — that sentinel is what marks a row as catalog-sourced for
+	// `sourceOf` (the provenance footnote) and `advisoryFor`; setting it would claim an account
+	// verdict we never obtained.
 	return {
 		engines: (DB_ENGINES[provider] ?? []).map((e) => ({
 			value: e.value,
 			label: e.label,
 			version: e.defaultVersion,
+			versions: [e.defaultVersion],
 		})),
 		capacity,
 	};
+}
+
+/** Row shape `groupDbEnginesByVersion` folds — the federated `database` rows as selected above. */
+export interface DbCapabilityRow {
+	engine: string | null;
+	nativeId: string;
+	name: string | null;
+	version: string | null;
+	launchable: CapabilityLaunchable;
+	launchableReason: CapabilityLaunchableReason | null;
+}
+
+/**
+ * Folds per-(engine, version, region) rows into one option per engine, versions newest-first.
+ *
+ * Keyed on the `engine` column, falling back to `native_id` for any legacy row written before the
+ * lanes canonicalized (a stale row is soft-removed on the next sweep, but it must not crash or
+ * duplicate an engine in the meantime). Verdicts merge permissively: `launchable` beats
+ * `not_evaluable` beats `not_launchable`, because the rows differ by region and the picker is not
+ * region-scoped — reporting the worst region's verdict would understate what the account can do.
+ */
+export function groupDbEnginesByVersion(
+	rows: DbCapabilityRow[],
+): CapabilityDbEngineOption[] {
+	const RANK: Record<CapabilityLaunchable, number> = {
+		launchable: 2,
+		not_evaluable: 1,
+		not_launchable: 0,
+	};
+	const byEngine = new Map<
+		string,
+		{ option: CapabilityDbEngineOption; versions: Set<string> }
+	>();
+	for (const r of rows) {
+		const key = r.engine ?? r.nativeId;
+		const entry = byEngine.get(key);
+		if (!entry) {
+			byEngine.set(key, {
+				option: {
+					value: key,
+					label: r.name ?? key,
+					version: r.version,
+					versions: [],
+					launchable: r.launchable,
+					launchableReason: r.launchableReason,
+				},
+				versions: new Set(r.version ? [r.version] : []),
+			});
+			continue;
+		}
+		if (r.version) entry.versions.add(r.version);
+		if (RANK[r.launchable] > RANK[entry.option.launchable ?? "not_launchable"]) {
+			entry.option.launchable = r.launchable;
+			entry.option.launchableReason = r.launchableReason;
+		}
+	}
+	const out: CapabilityDbEngineOption[] = [];
+	for (const { option, versions } of byEngine.values()) {
+		const sorted = sortVersionsDesc([...versions]);
+		out.push({ ...option, versions: sorted, version: sorted[0] ?? option.version });
+	}
+	return out.sort((a, b) => a.value.localeCompare(b.value));
 }
 
 /**

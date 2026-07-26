@@ -22,6 +22,7 @@
 
 import {
 	CACHE_NODE_TYPES,
+	dbEngine,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	NOSQL,
@@ -49,8 +50,10 @@ function forThisNode(ctx: FieldCtx): boolean {
 	return ctx.provider !== null && ctx.caps.provider === ctx.provider;
 }
 
-/** Account rows for an axis, or [] when there is no usable per-account signal. */
-function accountRows(ctx: FieldCtx, rows: CapabilityOption[]): CapabilityOption[] {
+/** Account rows for an axis, or [] when there is no usable per-account signal. Generic so an axis
+ * that carries more than the base option shape (dbEngines, which adds `versions`) keeps its type
+ * through the gate rather than being widened back to CapabilityOption. */
+function accountRows<T extends CapabilityOption>(ctx: FieldCtx, rows: T[]): T[] {
 	return forThisNode(ctx) ? rows : [];
 }
 
@@ -180,6 +183,38 @@ export function k8sVersionOptions(ctx: FieldCtx): FieldOption[] {
 
 // ── data services ───────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The versions this account can launch the CURRENTLY SELECTED database engine at (#1351).
+ *
+ * Joins two value spaces: the canvas stores an abstract FAMILY in `engine_family` ("postgres"),
+ * while capability rows are keyed on the provider's engine VALUE ("aurora-postgresql"), so the
+ * catalog resolves one to the other. This field was free text before — a user had to already know
+ * which versions their account offered.
+ *
+ * Fail-open like every other resolver (#918): with no account rows it returns the catalog's default
+ * version, so the list is never empty. It returns [] only when no provider or no engine is chosen
+ * yet, where an empty list is the honest answer rather than a wrong one.
+ */
+export function dbVersionOptions(ctx: FieldCtx): FieldOption[] {
+	const { provider } = ctx;
+	if (!provider) return [];
+	const family =
+		typeof ctx.config.engine_family === "string" ? ctx.config.engine_family : null;
+	if (!family) return [];
+	const engine = dbEngine(provider, family);
+	if (!engine) return [];
+
+	const rows = accountRows(ctx, ctx.caps.dbEngines);
+	const match = rows.find((r) => r.value === engine.value);
+	if (match && match.versions.length > 0) {
+		// The engine's advisory rides on each of its versions: the verdict is held per (engine,
+		// version) row and `groupDbEnginesByVersion` already merged them permissively across regions.
+		const advisory = advisoryFor(match.launchable, match.launchableReason);
+		return match.versions.map((v) => ({ value: v, label: v, advisory }));
+	}
+	return [{ value: engine.default_version, label: engine.default_version }];
+}
+
 export function cacheTierOptions(ctx: FieldCtx): FieldOption[] {
 	const { provider } = ctx;
 	if (!provider) return [];
@@ -240,10 +275,10 @@ export function intersectWithFloor(
  * capability: on Hetzner the chart mapper only knows CloudNativePG, so offering MySQL because the
  * account "could" run it would produce an unbuildable node. Hence intersect, never replace.
  *
- * NOTE the engine VERSION is deliberately not wired. `getDatabaseCapabilities` returns a version per
- * engine, but AWS/GCP collapse to "latest per engine" and Azure/Alibaba fuse the version into
- * `native_id` (`postgres-16`), so there is no orthogonal version axis to offer yet — see the
- * follow-up on splitting engine from version in the enumeration lanes.
+ * The engine's VERSION is a sibling axis, resolved by `dbVersionOptions` from the same
+ * `caps.dbEngines` rows. It became offerable in #1351: the lanes now emit one row per
+ * (engine, version) and the reader folds them into a per-engine version list, where they used to
+ * collapse to "latest per engine" (AWS/GCP) or fuse the version into `native_id` (Azure/Alibaba).
  */
 export function dbEngineOptions(ctx: FieldCtx): FieldOption[] {
 	return intersectWithFloor(

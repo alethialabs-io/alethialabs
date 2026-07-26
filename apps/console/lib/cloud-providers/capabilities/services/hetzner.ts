@@ -73,11 +73,17 @@ export function normalizeHetznerServiceRows(
 	const rows: CloudCapabilityServiceInsert[] = [];
 
 	// database: CloudNativePG (in-cluster Postgres) at its chart's default version.
+	//
+	// DOCUMENTED SINGLE-VERSION EXCLUSION (cloud-parity rule, #1351): every other cloud emits one row
+	// per offered engine version, enumerated from a read-only API. Hetzner has no such API — the
+	// engine is a Helm chart, so the only version we can honestly claim is the chart's default. The
+	// `native_id` still uses the composite `<engine>-<version>` shape so the read path treats all five
+	// clouds identically; Hetzner simply contributes a one-element version list.
 	for (const e of DB_ENGINES.hetzner) {
 		rows.push(
 			serviceRow(ctx, {
 				service_kind: "database",
-				native_id: e.value,
+				native_id: `${e.value}-${e.defaultVersion}`,
 				name: e.label,
 				engine: e.value,
 				version: e.defaultVersion,
