@@ -28,6 +28,7 @@ import { type CostSummary, parseCostBreakdown } from "@/lib/plan/parse-cost";
 import { type PlanSummary, parsePlanJSON } from "@/lib/plan/parse-plan";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
+import type { CompatReport } from "@/types/compat.types";
 import type {
 	SignedReceipt,
 	VerifyReport,
@@ -44,6 +45,8 @@ interface PlanState {
 	planSummary: PlanSummary | null;
 	costSummary: CostSummary | null;
 	verifyReport: VerifyReport | null;
+	/** PLAN/DEPLOY jobs: execution_metadata.compat_result (version-compatibility gate). */
+	compatReport: CompatReport | null;
 	receipt: SignedReceipt | null;
 	/** BUILD jobs only: execution_metadata.build_result (service → pushed digest). */
 	buildResult: Record<string, string> | null;
@@ -169,6 +172,7 @@ export function ArtifactPanel() {
 					? parseCostBreakdown(meta.cost_breakdown)
 					: null,
 				verifyReport: meta?.verify_result ?? null,
+				compatReport: meta?.compat_result ?? null,
 				receipt: meta?.verify_receipt ?? null,
 				buildResult: meta?.build_result ?? null,
 			});
@@ -561,6 +565,58 @@ export function VerifyBlock({ report }: { report: VerifyReport }) {
 }
 
 /**
+ * The version-compatibility gate (packages/core/compat): a 1:1 mirror of VerifyBlock
+ * for the compat report the apply gate attaches on `execution_metadata.compat_result`
+ * (#1215). CompatReport carries no `provider`/`frameworks`, so the header shows only the
+ * catalog version and each control shows only its title. `CompatStatus` is the same union
+ * as `VerifyStatus`, so it reuses `statusBadgeVariant` + `VERDICT_LABEL` verbatim.
+ */
+export function CompatBlock({ report }: { report: CompatReport }) {
+	return (
+		<Section title="Compatibility">
+			<div className="flex items-center justify-between border-b border-border py-2">
+				<span className="font-mono text-[10px] text-muted-foreground">
+					compat · {report.catalog_version}
+				</span>
+				<Badge
+					variant={statusBadgeVariant(report.verdict)}
+					className="rounded-none text-[9px] uppercase"
+				>
+					{VERDICT_LABEL[report.verdict]}
+				</Badge>
+			</div>
+			{report.controls.map((c) => (
+				<div key={c.id} className="border-b border-border py-2 last:border-0">
+					<div className="flex items-center justify-between gap-2">
+						<span className="font-mono text-[11px] text-foreground">{c.id}</span>
+						<Badge
+							variant={statusBadgeVariant(c.status)}
+							className="rounded-none text-[9px] uppercase"
+						>
+							{c.status.replace("_", " ")}
+						</Badge>
+					</div>
+					<div className="text-[10px] text-muted-foreground">{c.title}</div>
+					{(c.findings ?? []).map((f, i) => (
+						<div
+							key={`${f.address}-${i}`}
+							className="mt-1 font-mono text-[10px] text-foreground"
+						>
+							<span className="text-muted-foreground">{f.address}</span> — {f.message}
+						</div>
+					))}
+					{c.coverage && (
+						<div className="mt-1 text-[10px] italic text-muted-foreground">
+							coverage: {c.coverage}
+						</div>
+					)}
+				</div>
+			))}
+		</Section>
+	);
+}
+
+/**
  * The signed evidence receipt (elench): shows whether the receipt is signed, the
  * plan hash it is bound to, any recorded exception, and a download of the raw
  * receipt JSON (which can be verified offline against the signing public key).
@@ -617,6 +673,7 @@ function PlanPane({
 	return (
 		<div className="space-y-3">
 			{plan.verifyReport && <VerifyBlock report={plan.verifyReport} />}
+			{plan.compatReport && <CompatBlock report={plan.compatReport} />}
 			{plan.receipt && <ReceiptBlock receipt={plan.receipt} jobId={jobId} />}
 			{plan.planSummary ? (
 				<>

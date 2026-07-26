@@ -11,6 +11,9 @@ import type {
 	ServiceBindingKind,
 	TopicSubscriptionProtocol,
 } from "@/lib/db/schema/enums";
+// The compat report contract lives in its own file (types/compat.types) to keep the
+// `wave:compat` scope disjoint; re-referenced here only for the ExecutionMetadata field.
+import type { CompatReport } from "@/types/compat.types";
 
 export type { ServiceBindingKind, ServiceBindingFacet };
 
@@ -671,6 +674,10 @@ export interface ExecutionMetadata {
 	// PLAN/DEPLOY jobs: the signed evidence receipt sealing the report to the plan
 	// hash + tool versions (packages/core/verify Receipt/SignedReceipt).
 	verify_receipt?: SignedReceipt;
+	// PLAN/DEPLOY jobs: the version-compatibility gate result for the config
+	// (packages/core/compat, #1215). On DEPLOY a blocking verdict stops apply
+	// under COMPAT-001. Rendered by CompatBlock in the artifact panel (#1219).
+	compat_result?: CompatReport;
 	// DETECT_DRIFT jobs: the per-environment drift posture (packages/core/drift).
 	drift_posture?: DriftPosture;
 	// PROBE_CLUSTER jobs: the cluster-alive probe result (BYOC B2). An unreachable cluster is a
