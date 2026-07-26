@@ -565,3 +565,33 @@ variable "external_secrets_service_account_email" {
     error_message = "external_secrets_service_account_email must be a full service-account email (name@project.iam.gserviceaccount.com), not a bare account id."
   }
 }
+
+variable "create_memorystore_valkey" {
+  type        = bool
+  description = "Provision Memorystore for Valkey instead of Redis. Mutually exclusive with create_memorystore — the chosen cache engine sets exactly one."
+  default     = false
+}
+
+variable "memorystore_valkey_engine_version" {
+  type        = string
+  description = "Valkey engine enum (VALKEY_7_2, …)"
+  default     = "VALKEY_7_2"
+}
+
+variable "memorystore_valkey_node_type" {
+  type        = string
+  description = "Per-shard machine size for the Valkey instance"
+  default     = "SHARED_CORE_NANO"
+}
+
+variable "memorystore_valkey_shard_count" {
+  type        = number
+  description = "Number of Valkey shards (derived from the requested memory)"
+  default     = 1
+}
+
+variable "memorystore_valkey_replica_count" {
+  type        = number
+  description = "Replica nodes per Valkey shard"
+  default     = 0
+}
