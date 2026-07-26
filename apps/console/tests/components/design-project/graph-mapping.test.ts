@@ -61,6 +61,14 @@ function sampleForm(): ProjectFormData {
 		container_registries: [
 			{ name: "apps", provider_config: { immutable_tags: true } },
 		],
+		helm_registries: [
+			{ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} },
+			{
+				name: "harbor-acme-io",
+				provider: "oci-generic-cr",
+				provider_config: { registry_host: "harbor.acme.io" },
+			},
+		],
 		services: [
 			{
 				name: "api",
@@ -143,5 +151,98 @@ describe("formToGraph / graphToForm round-trip", () => {
 		});
 		expect(parsed.data.services[0].env).toEqual([{ name: "LOG_LEVEL", value: "info" }]);
 		expect(parsed.data.services[0].ports[0].container_port).toBe(8080);
+	});
+
+	// REGRESSION: graphToForm used to omit `helm_registries` entirely. Because the field carries a
+	// zod `.default([])`, the omission parsed clean as an EMPTY array — and updateProjectDesign
+	// reconciles components by delete-then-insert, so every canvas deploy silently dropped the
+	// environment's chart repos (and with them the ArgoCD repo-credentials that let private charts
+	// pull). A silent `.default([])` is the trap: nothing errors, the rows just leave.
+	it("carries chart repos through the round-trip so a deploy can't wipe them", () => {
+		const form = sampleForm();
+		const { nodes } = formToGraph(form, IDENTITIES);
+		expect(nodes.filter((n) => n.data.kind === "helm_registry")).toHaveLength(2);
+
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.helm_registries).toHaveLength(2);
+		expect(parsed.data.helm_registries).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ name: "ghcr-io", provider: "oci-github-cr" }),
+				expect.objectContaining({
+					name: "harbor-acme-io",
+					provider: "oci-generic-cr",
+					provider_config: { registry_host: "harbor.acme.io" },
+				}),
+			]),
+		);
+	});
+});
+
+describe("helm registry selection validation", () => {
+	const parseRow = (row: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...sampleForm(), helm_registries: [row] });
+
+	it("rejects a selection with no provider — the runner would skip it silently", () => {
+		const res = parseRow({ name: "charts" });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects an any-host provider with no registry host", () => {
+		const res = parseRow({ name: "charts", provider: "oci-generic-cr", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a classic HTTPS repo with no repository URL", () => {
+		const res = parseRow({ name: "charts", provider: "helm-https", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a coming_soon provider", () => {
+		const res = parseRow({ name: "charts", provider: "oci-ecr", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("accepts a fixed-host provider with no config at all", () => {
+		const res = parseRow({ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} });
+		expect(res.success).toBe(true);
+	});
+
+	// Both knobs are concatenated into the seeded credential's URL, so a value that merely "looks
+	// filled in" still breaks the repoURL prefix match ArgoCD authenticates by. Catch the shape here,
+	// where the field is on screen, rather than at deploy.
+	it("rejects a registry host carrying a scheme or a path", () => {
+		for (const registry_host of [
+			"https://harbor.acme.io",
+			"harbor.acme.io/charts",
+			"oci://harbor.acme.io",
+		]) {
+			const res = parseRow({
+				name: "charts",
+				provider: "oci-generic-cr",
+				provider_config: { registry_host },
+			});
+			expect(res.success, `${registry_host} should be rejected`).toBe(false);
+		}
+	});
+
+	it("accepts a registry host with a port", () => {
+		const res = parseRow({
+			name: "charts",
+			provider: "oci-generic-cr",
+			provider_config: { registry_host: "harbor.acme.io:5000" },
+		});
+		expect(res.success).toBe(true);
+	});
+
+	it("rejects a non-https repository URL", () => {
+		for (const repo_url of ["charts.acme.io", "http://charts.acme.io"]) {
+			const res = parseRow({
+				name: "charts",
+				provider: "helm-https",
+				provider_config: { repo_url },
+			});
+			expect(res.success, `${repo_url} should be rejected`).toBe(false);
+		}
 	});
 });

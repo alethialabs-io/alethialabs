@@ -48,13 +48,27 @@ Once connected, pick the provider per component in the [Project designer](/conso
 
 At provision time the runner composes the chosen provider's module into the plan and **skips** the cloud-native resource for that category.
 
+### Chart repositories
+
+A chart repository works differently from the categories above: it provisions nothing. It tells Alethia which credential to use when ArgoCD pulls a Helm chart from a private repository.
+
+1. Connect the provider under **Chart Repos** on the Connectors page.
+2. On the Project canvas, add a **Chart repository** component (**Add → DevOps → Chart repository**) and pick the connected provider. Providers that serve a single fixed host — GitHub Container Registry, Docker Hub — need nothing more. For a self-hosted or generic registry, give the bare registry host (`registry.acme.io`, no scheme and no path); for an HTTPS Helm repository, give the full `https://` URL.
+3. Deploy. Before it syncs any chart, the runner writes an ArgoCD **repository credential** for that repository. ArgoCD matches a chart to a credential by URL prefix, so the host you enter must match the host your charts are addressed by.
+
+You need one only for a **private** repository. Public charts, including everything in the add-on marketplace, pull without a credential.
+
+To use a private chart, attach it with **Add → Bring your own Helm chart**, choose **OCI registry**, and give the whole reference including the chart name (`oci://ghcr.io/acme/payments`) plus a chart version (`*` for the latest). The dialog tells you whether a chart repository on the environment covers that host.
+
+A chart pulled from an OCI registry is scanned exactly like one in a Git repository, and the same credential authenticates both the safety scan and ArgoCD's deploy-time pull. See [Chart repositories](/console/connectors/chart-repositories) for the full provider list and how a chart's host is matched to a credential.
+
 ## Adding a new provider
 
 Pluggable connectors are an open-ended catalog. Adding a sixth provider takes four steps and **no** changes to routes, the runner core, or the form engine:
 
 1. Add a row to `packages/core/categories/catalog.json` (category, slug, auth_method, icon, credential + provider_config fields).
 2. Add a `CategoryProvider` Go impl under `packages/core/categories/` (its `Tfvars`/`Validate` behavior).
-3. Add the OpenTofu module under `infra/templates/categories/<category>/<slug>/`.
+3. Add the OpenTofu module under `infra/templates/categories/<category>/<slug>/`. A chart-repo provider has no module — it implements `RepoCred` instead, and must also get a host rule in `apps/console/lib/connectors/helm-registry-hosts.ts` so the console resolves the same credential URL the Go provider seeds.
 4. Run `pnpm -F console gen:connectors` to regenerate the registry + catalog seed.
 
 See [Connectors Architecture](/concepts/connectors) for the contract details.

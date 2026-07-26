@@ -3,6 +3,7 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
 import { slugify } from "@/lib/slug";
 import {
 	environmentLifecycle,
@@ -86,8 +87,33 @@ const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 const registriesInsert = createInsertSchema(projectContainerRegistries, {
 	provider_config: z.custom<RegistryProviderConfig>().optional(),
 });
+// Both knobs flow into the ArgoCD repository-credential `url`, so they are shape-checked rather than
+// waved through as opaque JSONB: a stray scheme or a trailing path in `registry_host` yields a
+// credential URL that no Application repoURL prefix-matches, which surfaces at deploy as an
+// unauthenticated chart pull rather than as a bad value here.
+// Annotated with the column's own JSONB interface so the two can't drift: add a knob to
+// HelmRegistryProviderConfig and this stops compiling until the validator learns about it.
+const helmRegistryProviderConfigSchema: z.ZodType<HelmRegistryProviderConfig> = z
+	.object({
+		repo_url: z
+			.string()
+			.trim()
+			.url("Enter a full repository URL (https://…)")
+			.startsWith("https://", "The repository URL must use https://")
+			.optional(),
+		registry_host: z
+			.string()
+			.trim()
+			.regex(
+				/^[a-z0-9.-]+(:\d+)?$/i,
+				"Enter a bare registry host (no scheme, no path) — e.g. registry.acme.io",
+			)
+			.optional(),
+	})
+	.strip();
+
 const helmRegistriesInsert = createInsertSchema(projectHelmRegistries, {
-	provider_config: z.custom<HelmRegistryProviderConfig>().optional(),
+	provider_config: helmRegistryProviderConfigSchema.optional(),
 });
 
 // W1 — service/workload sub-shapes (validated, not passthrough): a service is the customer's own
@@ -331,6 +357,12 @@ const registryItemSchema = registriesInsert
 
 // Private chart-repo selection (helm_registry connector). No output column — the seeded
 // ArgoCD repo-cred is runner-side state, not a design field.
+//
+// The refinement is what makes the selection FAIL-CLOSED. `provider` and `provider_config` are
+// nullable columns, so the generated schema alone would happily persist a row with no provider or
+// no host — the runner would then skip it (`HelmRepoCredSpecs` joins the error and moves on) and
+// the chart would fail to pull at deploy with no design-time signal. These mirror the `Validate`
+// implementations in packages/core/categories/helm_registry_*.go.
 const helmRegistryItemSchema = helmRegistriesInsert
 	.omit({
 		...autoFields,
@@ -338,7 +370,38 @@ const helmRegistryItemSchema = helmRegistriesInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Chart repo name is required") });
+	.extend({ name: z.string().min(1, "Chart repo name is required") })
+	.superRefine((value, ctx) => {
+		const rule = value.provider ? HELM_REGISTRY_HOST_RULES[value.provider] : undefined;
+		if (!value.provider || !rule) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected chart repository provider",
+			});
+			return;
+		}
+		if (rule.comingSoon) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This chart repository provider isn't available yet",
+			});
+			return;
+		}
+		// A classic Helm repo is addressed by its full URL; an "any host" OCI provider needs the host.
+		const key = !rule.oci ? "repo_url" : rule.wildcard ? "registry_host" : null;
+		if (key && !value.provider_config?.[key]?.trim()) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider_config"],
+				message:
+					key === "repo_url"
+						? "Repository URL is required"
+						: "Registry host is required",
+			});
+		}
+	});
 
 // W1 — a first-class service/workload the customer designs on the canvas.
 const serviceItemSchema = servicesInsert
@@ -387,6 +450,9 @@ export {
 	bucketItemSchema,
 	registryItemSchema,
 	helmRegistryItemSchema,
+	// The chart-repo provider_config validator — parsed again server-side at the write seam so a
+	// crafted request can't persist an unknown/secret knob the inspector never offered.
+	helmRegistryProviderConfigSchema,
 	sourceRepoItemSchema,
 	// Singleton sub-schemas — consumed by the canvas for per-node validation.
 	projectSchema,

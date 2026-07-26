@@ -28,6 +28,8 @@ function scanChip(
 	scanStatus?: string,
 	report?: VerifyReport | null,
 ): { label: string; cls: string; Icon: typeof ShieldCheck; spin?: boolean } {
+	// Both chart sources scan: the runner resolves a git chart by cloning and an OCI chart by pulling
+	// it from the registry (#1300), so the chip is driven purely by the scan lifecycle.
 	if (scanStatus === "scanning")
 		return { label: "Scanning…", cls: "text-muted-foreground", Icon: Loader2, spin: true };
 	if (scanStatus === "failed")

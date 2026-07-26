@@ -38,6 +38,11 @@ import {
 	chartWorkloadValuePathsSchema,
 	chartWorkloadWireArraySchema,
 } from "@/lib/validations/chart-workloads";
+import {
+	byoChartAttachSchema,
+	chartSlug,
+	type ByoChartAttachInput,
+} from "@/lib/validations/byo-charts";
 import type {
 	AddOnValues,
 	ChartValuePathMap,
@@ -76,89 +81,51 @@ export interface ByoChartState {
 	scannedAt: string | null;
 }
 
-/** RFC1123-ish slug for the addon_id of a BYO chart (unique per env), derived from a display name. */
-function chartSlug(raw: string): string {
-	const s = raw
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9-]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	return s || "chart";
-}
-
-/** Basic sanity on a chart-repo URL — a git remote (https:// or git@), or an `oci://` reference to
- * a private OCI Helm registry (the whole `oci://<host>/<ns>/<chart>` path). Deep validation happens
- * when the runner clones/pulls it; this just rejects obvious garbage at save time. */
-function isPlausibleRepoUrl(url: string): boolean {
-	return (
-		/^https:\/\/\S+$/.test(url) ||
-		/^git@\S+:\S+$/.test(url) ||
-		/^oci:\/\/\S+$/.test(url)
-	);
-}
-
 /**
  * Attaches (or reconfigures) a BYO Helm chart on an environment. Upserts a source='byo'
  * project_addons row as PENDING so the next DEPLOY renders it. `id` is a stable per-env slug
  * (the chart node's id); re-attaching the same id updates it in place.
+ *
+ * `repoUrl` is a git remote (https://…/git@…) OR an `oci://<host>/<ns>/<chart>` reference to a
+ * private OCI Helm registry. For git the chart lives at `chartPath` and `ref` is a git ref; for OCI
+ * the chart name is the URL's last segment (no `chartPath`) and `ref` is the chart version.
  */
-export async function attachByoChart(input: {
-	projectId: string;
-	environmentId?: string | null;
-	/** Display name / node id → slugified into the addon_id (unique per env). */
-	id: string;
-	/** A git remote (https://…/git@…) OR an `oci://<host>/<ns>/<chart>` reference to a private
-	 * OCI Helm registry. For git the chart lives at `chartPath`; for OCI the chart name is the
-	 * last URL path segment (no `chartPath`) and `ref` is the chart version. */
-	repoUrl: string;
-	/** Chart directory within a git repo — required for git, unused (omit) for an `oci://` repo. */
-	chartPath?: string;
-	/** Git ref for a git repo (default HEAD); the chart VERSION for an `oci://` repo (default `*`). */
-	ref?: string;
-	namespace?: string;
-	values?: AddOnValues;
-	valuesYaml?: string | null;
-	gitCredentialId?: string | null;
-}): Promise<{ ok: true; id: string }> {
+export async function attachByoChart(
+	input: ByoChartAttachInput,
+): Promise<{ ok: true; id: string }> {
 	assertByoHelmEnabled();
-	const actor = await authorize("edit", { type: "project", id: input.projectId });
+	const parsed = byoChartAttachSchema.parse(input);
+	const actor = await authorize("edit", { type: "project", id: parsed.projectId });
 
-	const id = chartSlug(input.id);
-	const repoUrl = input.repoUrl.trim();
+	const id = chartSlug(parsed.id);
+	const repoUrl = parsed.repoUrl;
 	const isOci = repoUrl.startsWith("oci://");
 	// git charts live at a path within the repo; OCI charts are named by the URL's last segment.
-	const chartPath = isOci ? null : (input.chartPath ?? "").trim().replace(/^\/+/, "");
-	if (!isPlausibleRepoUrl(repoUrl)) {
-		throw new Error(
-			"Enter a valid chart repository URL (https://, git@…, or oci://…).",
-		);
-	}
-	if (!isOci && !chartPath)
-		throw new Error("Enter the chart path within the repository.");
+	const chartPath = isOci ? null : (parsed.chartPath ?? "").replace(/^\/+/, "");
 
-	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
+	const valuesYaml = parsed.valuesYaml?.trim() ? parsed.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
 		throw new Error("Advanced values must be valid YAML describing a mapping (key: value).");
 	}
 
-	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+	const envId = await resolveActiveEnvironmentId(parsed.projectId, parsed.environmentId);
 	// `version` holds the git ref for a git chart, or the chart version for an OCI chart
 	// (`*` = latest, an ArgoCD-supported Helm targetRevision).
-	const ref = input.ref?.trim() || (isOci ? "*" : "HEAD");
-	const namespace = input.namespace?.trim() || "default";
-	const values = input.values ?? {};
+	const ref = parsed.ref || (isOci ? "*" : "HEAD");
+	const namespace = parsed.namespace || "default";
+	const values: AddOnValues = parsed.values ?? {};
 
 	await withActorScope(actor, async (tx) => {
 		await tx
 			.insert(projectAddons)
 			.values({
-				project_id: input.projectId,
+				project_id: parsed.projectId,
 				environment_id: envId,
 				addon_id: id,
 				source: "byo",
 				chart_repo: repoUrl,
 				chart_path: chartPath,
-				git_credential_id: input.gitCredentialId ?? null,
+				git_credential_id: parsed.gitCredentialId ?? null,
 				enabled: true,
 				mode: "managed",
 				version: ref,
@@ -173,7 +140,7 @@ export async function attachByoChart(input: {
 					source: "byo",
 					chart_repo: repoUrl,
 					chart_path: chartPath,
-					git_credential_id: input.gitCredentialId ?? null,
+					git_credential_id: parsed.gitCredentialId ?? null,
 					enabled: true,
 					mode: "managed",
 					version: ref,
@@ -187,9 +154,10 @@ export async function attachByoChart(input: {
 	});
 
 	// Auto-queue a safety scan so the user sees any issues right after attaching (best-effort — a
-	// scan-queue failure must never fail the attach itself).
+	// scan-queue failure must never fail the attach itself). Both chart sources scan: the runner
+	// resolves a git chart by cloning and an OCI chart by pulling it from the registry (#1300).
 	try {
-		await scanByoChart({ projectId: input.projectId, environmentId: envId, id });
+		await scanByoChart({ projectId: parsed.projectId, environmentId: envId, id });
 	} catch {
 		/* ignore — the chart is attached; the user can re-run the scan from the node */
 	}

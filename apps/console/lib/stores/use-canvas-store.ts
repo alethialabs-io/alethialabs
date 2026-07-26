@@ -132,6 +132,7 @@ function layoutByKind(nodes: CanvasNode[]): CanvasNode[] {
 		"secret",
 		"bucket",
 		"registry",
+		"helm_registry",
 	];
 	const counts = new Map<NodeKind, number>();
 	return nodes.map((n) => {

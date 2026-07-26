@@ -62,6 +62,9 @@ export function graphToForm(nodes: CanvasNode[]): Record<string, unknown> {
 		secrets: ofKind("secret"),
 		storage_buckets: ofKind("bucket"),
 		container_registries: ofKind("registry"),
+		// Omitting this made `projectFormSchema` default the field to [], and updateProjectDesign's
+		// delete-then-insert reconcile then wiped every project_helm_registries row on each deploy.
+		helm_registries: ofKind("helm_registry"),
 		services: ofKind("service"),
 	};
 }
