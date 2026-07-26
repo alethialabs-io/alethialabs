@@ -146,6 +146,24 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Log("A0.6: ArgoCD-with-repos SKIPPED — no apps/BYO repo configured (set ALETHIA_E2E_ARGO_APPS_REPO + ALETHIA_E2E_ARGO_BYO_CHART_REPO + ALETHIA_E2E_GIT_TOKEN). Base T2 proof still runs.")
 	}
 
+	// #1268: resolve the cross-account secrets scenario HERE, before any provisioning spend — a
+	// misconfigured opt-in must fail in seconds, not after a cluster exists. A BLOCKED cloud
+	// resolves to "off" carrying the recorded reason (secretsXacctLane), never a silent skip.
+	xacct := secretsXacctFromEnv(provider)
+	xacctOn, xacctBlocked, xacctErr := xacct.decide()
+	if xacctErr != nil {
+		t.Fatalf("#1268 cross-account secrets: %v", xacctErr)
+	}
+	switch {
+	case xacctOn:
+		t.Logf("#1268: cross-account keyless secrets ENABLED — %s reading %q from the target account via %s",
+			xacct.connectorSlug(), xacct.remoteKey, xacct.storeName())
+	case xacctBlocked != "":
+		t.Logf("#1268: cross-account keyless secrets BLOCKED on %s — %s", provider, xacctBlocked)
+	default:
+		t.Logf("#1268: cross-account keyless secrets SKIPPED — set %s (+ its target vars) to enable.", envSecretsXacct)
+	}
+
 	root := t2RepoRoot(t)
 	waitTimeout := resolveT2WaitTimeout(p)
 	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
@@ -160,7 +178,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	} else if soakOn {
 		soakBudget = soakDur + 15*time.Minute // drift wait (10m) + PVC bind (5m) headroom
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+7*time.Minute)
+	// #1268 needs its own term: the store-Ready + ExternalSecret-sync + denied-probe windows are
+	// ~10m of polling AFTER ArgoCD converges, and a ctx that expired mid-poll would look identical
+	// to a cross-account read that never worked.
+	xacctBudget := time.Duration(0)
+	if xacctOn {
+		xacctBudget = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+7*time.Minute)
 	defer cancel()
 
 	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
@@ -233,7 +258,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
@@ -513,6 +538,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		owner:       owner,
 		appsRepo:    repos.appsRepo,
 	})
+
+	// (11) CROSS-ACCOUNT KEYLESS SECRETS (#1268). Opt-in via ALETHIA_E2E_SECRETS_XACCT — the base
+	//      DEPLOY already carried the *-xacct connector row and a secret-kind binding, so the runner
+	//      rendered secretstore-<cloud>-xacct AND the ExternalSecret that reads through it. This
+	//      layer proves the read actually crossed the account boundary (value compared by sha256),
+	//      and that a placed tenant is still refused (#1306). aws-only today; other clouds record
+	//      BLOCKED with a reason. Runs BEFORE the guaranteed teardown.
+	if xacctOn {
+		runT2SecretsXacct(t, ctx, kc, secretsXacctParams{cfg: xacct, metaRaw: metaRaw})
+	}
 }
 
 // assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least
