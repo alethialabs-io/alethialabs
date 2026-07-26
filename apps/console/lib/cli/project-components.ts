@@ -20,6 +20,7 @@ import {
 	projectContainerRegistries,
 	projectDatabases,
 	projectDns,
+	projectHelmRegistries,
 	projectNetwork,
 	projectNosqlTables,
 	projectObservability,
@@ -219,6 +220,20 @@ const KINDS: Record<string, KindDef> = {
 				region: true,
 				provider: true,
 				repository_url: true,
+			})
+			.partial(),
+	},
+	// A chart repo's HOST lives in the JSONB provider_config, which `--set` deliberately can't reach,
+	// so the CLI can list/read these and switch the connector but not finish configuring an "any
+	// host" provider — that needs the console.
+	helm_registries: {
+		table: projectHelmRegistries,
+		singleton: false,
+		fields: createInsertSchema(projectHelmRegistries)
+			.pick({
+				cloud_identity_id: true,
+				region: true,
+				provider: true,
 			})
 			.partial(),
 	},

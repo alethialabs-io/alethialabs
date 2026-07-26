@@ -35,6 +35,8 @@ import {
 	HETZNER_DB_ENGINES,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
@@ -52,6 +54,7 @@ export type SchemaKey =
 	| "secrets"
 	| "storage_buckets"
 	| "container_registries"
+	| "helm_registries"
 	| "services"
 	// Chart / add-on / external nodes are OUT-OF-BAND (project_addons, project_iac_sources) and are
 	// never written into ProjectFormData — this key exists only to satisfy the exhaustive registry;
@@ -178,6 +181,10 @@ export type NodeRegistry = { [K in NodeKind]: NodeKindDef<K> };
 // in-cluster Helm chart instead (see hetzner-services.ts). The cards say so rather than implying
 // a managed service exists.
 const isInCluster = (provider: CloudProviderSlug | null) => provider === "hetzner";
+
+/** A connector slug as its catalog display name, falling back to the raw slug. */
+const providerName = (slug: string | null | undefined): string =>
+	(slug ? getConnectorProviderBySlug(slug)?.name : undefined) ?? slug ?? "";
 
 /** Human engine family for a database config (mirrors the inspector's `engineLabel`). */
 function dbEngineLabel(config: {
@@ -617,6 +624,36 @@ export const NODE_REGISTRY: NodeRegistry = {
 			provider_config: {},
 		}),
 	},
+	// A private chart repo (helm_registry connector) the environment pulls Helm charts from. Unlike
+	// `registry` this provisions NOTHING — it names a connector whose credential the runner turns into
+	// an ArgoCD repository-credential Secret before the add-on/BYO Applications sync.
+	// `cloudScoped: false`: the columns exist but nothing places into a cloud, and the design
+	// round-trip (`getProjectAsFormData`) keeps only name/provider/provider_config — offering a
+	// placement picker here would silently drop the value. A COLLECTION: an environment usually pulls
+	// from one or two repos, and they are plumbing rather than architecture, so they ride behind one
+	// card instead of scattering across the board.
+	helm_registry: {
+		kind: "helm_registry",
+		schemaKey: "helm_registries",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Chart repo",
+		label: "Chart repository",
+		icon: Package,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Provider", value: providerName(config.provider) },
+				{ label: "URL", value: helmRegistryUrl(config) },
+			],
+		},
+		collection: { title: "Chart repos", singular: "chart repo" },
+		palette: { group: "DevOps", subtitle: "Private Helm chart repositories" },
+		defaultData: () => ({
+			name: "charts",
+			provider_config: {},
+		}),
+	},
 	// W1 — a first-class application workload. Not cloud-scoped: a service runs on the cluster, not a
 	// cloud account, so it leads the palette in its own Workloads group. The rich config sheet is the
 	// class:ui lane (#571). Population from scan/BYO/AI is W5/W6.
@@ -855,6 +892,7 @@ export const ADDABLE_KINDS: NodeKind[] = [
 	"secret",
 	"bucket",
 	"registry",
+	"helm_registry",
 	"repositories",
 ];
 
