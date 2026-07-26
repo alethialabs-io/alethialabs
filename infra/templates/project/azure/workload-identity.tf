@@ -37,18 +37,42 @@ resource "azurerm_role_assignment" "external_dns_dns" {
 # azurekv ClusterSecretStore reads Key Vault secrets with NO static secret. The client id is
 # exported as `external_secrets_client_id` and rendered onto the operator's ServiceAccount
 # (azure.workload.identity/client-id annotation + the azure.workload.identity/use pod label).
+#
+# ADOPTION (var.external_secrets_identity_name + _resource_group): when both are set this template
+# does NOT create the identity — it federates and grants against the caller's pre-existing one.
+# The reason is cross-subscription reads. A role assignment in the TARGET subscription binds the
+# identity's OBJECT ID, which Azure regenerates on every create, so a pre-applied grant is dead the
+# moment the identity is recreated; a stable NAME buys nothing. Adopting a standing identity is what
+# lets the target-subscription grant be applied ONCE.
+#
+# Both empty (the default) keeps the create-our-own behavior byte-identical — this is opt-in.
 resource "azurerm_user_assigned_identity" "external_secrets" {
-  count               = var.provision_aks ? 1 : 0
+  count               = var.provision_aks && !local.external_secrets_adopted ? 1 : 0
   name                = "${local.aks_name}-extsecrets"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
 }
 
+# The adopted identity. Read rather than created, so a wrong/absent name fails the plan loudly
+# instead of provisioning a cluster whose ESO can authenticate to nothing.
+data "azurerm_user_assigned_identity" "external_secrets_adopted" {
+  count               = var.provision_aks && local.external_secrets_adopted ? 1 : 0
+  name                = var.external_secrets_identity_name
+  resource_group_name = var.external_secrets_identity_resource_group
+}
+
 resource "azurerm_federated_identity_credential" "external_secrets" {
-  count               = var.provision_aks ? 1 : 0
-  name                = "external-secrets"
-  resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.external_secrets[0].id
+  count = var.provision_aks ? 1 : 0
+  # The credential name must be unique PER IDENTITY. When the identity is ours it is used by exactly
+  # one cluster and the constant name is fine; an ADOPTED identity may be shared, and a constant name
+  # would make two clusters fight over one credential — each apply overwriting the other's issuer, so
+  # whichever applied last is the only cluster whose ESO can authenticate. Azure also caps federated
+  # credentials at 20 per identity, so a destroyed cluster must free its own slot: the name is keyed
+  # on the cluster, and `tofu destroy` removes exactly that one.
+  name = local.external_secrets_adopted ? "external-secrets-${local.aks_name}" : "external-secrets"
+  # An adopted identity lives in the caller's resource group, not ours.
+  resource_group_name = local.external_secrets_adopted ? var.external_secrets_identity_resource_group : azurerm_resource_group.main.name
+  parent_id           = local.external_secrets_identity_id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
   subject             = "system:serviceaccount:external-secrets-operator:external-secrets-operator-sa"
@@ -61,5 +85,5 @@ resource "azurerm_role_assignment" "external_secrets_kv" {
   count                = var.provision_aks ? 1 : 0
   scope                = module.key_vault.vault_id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_user_assigned_identity.external_secrets[0].principal_id
+  principal_id         = local.external_secrets_principal_id
 }
