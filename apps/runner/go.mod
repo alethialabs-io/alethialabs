@@ -21,6 +21,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.4
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.30
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.0
+	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.41.0
 	github.com/aws/smithy-go v1.27.3
 	github.com/getsentry/sentry-go v0.47.0
 	go.opentelemetry.io/otel v1.44.0
