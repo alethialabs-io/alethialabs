@@ -76,6 +76,19 @@ expect ALLOW "$(run "$(bash_payload "git -C $WT log --oneline -5")")" "git log i
 expect ALLOW "$(run "$(bash_payload "git -C $WT diff origin/dev")")" "git diff in a foreign worktree"
 expect ALLOW "$(run "$(bash_payload "git -C $WT worktree list")")" "git worktree list"
 
+echo "── piped git reads are still reads (the guard's own false-block regression) ──"
+# `| head` is its own `;|&` segment, and `head` is not in the git allowlist — so requiring EVERY
+# segment to be a git read blocked routine inspection of another worktree. A segment that never
+# names the foreign tree cannot harm it.
+expect ALLOW "$(run "$(bash_payload "git -C $WT log --oneline | head -3")")" "git log piped to head"
+expect ALLOW "$(run "$(bash_payload "git -C $WT status | grep -c modified")")" "git status piped to grep"
+expect ALLOW "$(run "$(bash_payload "git -C $WT diff | wc -l")")" "git diff piped to wc"
+# …but a sink that writes BACK into the tree still names it, so it is still judged.
+expect BLOCK "$(run "$(bash_payload "git -C $WT log | tee $WT/out.txt")")" "git log piped into the foreign tree"
+expect BLOCK "$(run "$(bash_payload "cat $WT/f.ts | head -3")")" "cat from the foreign tree, piped"
+# Residency is judged as a whole: `cd` in, then a write that names no path at all.
+expect BLOCK "$(run "$(bash_payload "cd $WT && rm -rf .")")" "cd in, then rm -rf . (names no path)"
+
 echo "── my own worktree is never blocked ──"
 rm -rf "$LD"
 expect ALLOW "$(run "$(edit_payload "$WT/lib/thing.ts")")" "Edit in an UNLEASED worktree (acquires)"
