@@ -85,6 +85,11 @@ type InfraFacts struct {
 	SecretsXacctProjectID       string // gcp: the target project the store reads
 	SecretsXacctOIDCProviderRef string // alibaba only: the target-account RAM OIDC provider ARN (see KeylessSecretTarget)
 	SecretsXacctExternalID      string // aws only, OPTIONAL: the sts:ExternalId the target role's trust policy requires (see KeylessSecretTarget)
+	// SecretsXacctSlug is the *-xacct connector slug that selected the store (e.g. "aws-sm-xacct").
+	// The cross-account store is DOMINANT per project, so the manifest lane needs the slug to tell
+	// WHICH project secrets may be read through it: a secret selecting a DIFFERENT xacct slug has no
+	// store of its own and must stay unresolved rather than silently read the dominant account.
+	SecretsXacctSlug string
 
 	// ── Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic Vault-compatible) ──
 	// The credential-based external store the project selected via the `secrets` connector, that ESO
@@ -95,6 +100,43 @@ type InfraFacts struct {
 	// the connector provider_config + a credential-presence check (fail-closed); the token itself is
 	// seeded out-of-band by the runner and NEVER lives on the facts (facts render into manifests).
 	SecretsSaaS *categories.SecretsSaaSStore
+}
+
+// XacctSecretStore reports the cross-account (*-xacct) ClusterSecretStore for this deploy.
+// `name` is the store externalSecretsStoreTemplate actually renders ("secretstore-<cloud>-xacct")
+// and is "" when the render gate is closed; `selected` says whether the project chose a
+// cross-account secret manager at all, so a caller can tell "not selected" (stay silent) from
+// "selected but fail-closed" (say so, loudly).
+//
+// SINGLE GATE. The template's *-xacct branches, CleanupSkippedInfraServices' reap map,
+// externalSecretsXacctStoreDecision and the manifest lane that points ExternalSecrets at the store
+// all read this, so they cannot drift apart — the drift is not hypothetical: the decision used to
+// report "installed" for facts the template renders nothing for, because the two lists of gate
+// conditions were maintained by hand in four places.
+//
+// Fail-closed on both halves of every lane: the CLUSTER's own external-secrets identity fact must be
+// present (without it ESO has nothing to authenticate as) AND the cross-account target from the
+// connector provider_config must be present (without it there is nothing to read).
+func (f *InfraFacts) XacctSecretStore() (name string, selected bool) {
+	selected = f.SecretsXacctRef != "" || f.SecretsXacctProjectID != ""
+	if !selected {
+		return "", false
+	}
+	renders := false
+	switch f.Provider {
+	case "aws":
+		renders = f.IRSAExternalSecretsArn != "" && f.SecretsXacctRef != ""
+	case "gcp":
+		renders = f.GCPExternalSecretsSA != "" && f.SecretsXacctProjectID != ""
+	case "azure":
+		renders = f.AzureExternalSecretsClient != "" && f.SecretsXacctRef != ""
+	case "alibaba":
+		renders = f.AlibabaExternalSecretsRoleArn != "" && f.SecretsXacctRef != "" && f.SecretsXacctOIDCProviderRef != ""
+	}
+	if !renders {
+		return "", true
+	}
+	return categories.XacctStoreName(f.Provider), true
 }
 
 // DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
@@ -232,6 +274,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.SecretsXacctProjectID = t.TargetProjectID
 		f.SecretsXacctOIDCProviderRef = t.TargetOIDCProviderRef
 		f.SecretsXacctExternalID = t.TargetExternalID
+		f.SecretsXacctSlug = t.Slug
 	}
 
 	// Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic Vault-compatible). Cloud-agnostic

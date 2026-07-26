@@ -108,6 +108,11 @@ func TestExternalSecretsStoreManifest(t *testing.T) {
 // TestExternalSecretsStoreManifest_Xacct covers the ADDITIONAL cross-account (*-xacct) ClusterSecretStore:
 // it renders as a SECOND document (with a `---` separator) alongside the native store, and only when BOTH
 // the cluster's own external-secrets identity fact AND the cross-account target are present (fail-closed).
+//
+// It doubles as the drift guard for InfraFacts.XacctSecretStore: every case asserts the GATE agrees with
+// what the TEMPLATE actually rendered. The gate is what the decision record, the stale-store reaper and the
+// manifest lane all read, so a template branch changed without the gate (or vice versa) would let a
+// workload reference a store that was never applied. Asserting both off ONE table is why they can't drift.
 func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -152,6 +157,14 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 			m, err := externalSecretsStoreManifest(c.facts)
 			if err != nil {
 				t.Fatalf("render: %v", err)
+			}
+			// The gate must report exactly what the template rendered — in BOTH directions.
+			gotName, gotSelected := c.facts.XacctSecretStore()
+			if !gotSelected {
+				t.Fatalf("XacctSecretStore reported not-selected, but these facts carry a cross-account target")
+			}
+			if gotName != c.wantStore {
+				t.Errorf("XacctSecretStore name = %q, but the template rendered %q — the gate and the template have drifted", gotName, c.wantStore)
 			}
 			if c.wantStore == "" {
 				if strings.Contains(m, "-xacct") {
