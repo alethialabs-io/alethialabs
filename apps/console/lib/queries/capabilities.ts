@@ -53,14 +53,25 @@ export interface CapabilityInstanceOption {
 	launchableReason?: CapabilityLaunchableReason | null;
 }
 
+/** A region read, with its provenance. */
+export interface CapabilityRegions {
+	codes: string[];
+	/** `account` = the account's synced regions · `catalog` = the fail-open full set. */
+	source: "account" | "catalog";
+}
+
 /**
  * The region CODES this account can deploy to. Fails open to the static catalog's full region set for
  * the provider when nothing has synced yet. The picker groups these via `groupRegions(codes, provider)`.
+ *
+ * Returns the SOURCE alongside the codes: the fail-open is otherwise invisible in the payload (both
+ * branches are just `string[]`), so a caller cannot tell "your account's 12 regions" from "the
+ * catalog's 34" — which is exactly the distinction the picker's provenance footnote needs.
  */
 export async function getRegionCapabilities(
 	cloudIdentityId: string,
 	provider: CloudProviderSlug,
-): Promise<string[]> {
+): Promise<CapabilityRegions> {
 	const actor = await authorize("view", {
 		type: "cloud_identity",
 		id: cloudIdentityId,
@@ -78,9 +89,9 @@ export async function getRegionCapabilities(
 			)
 			.orderBy(cloudCapabilityRegions.native_id),
 	);
-	if (rows.length > 0) return rows.map((r) => r.code);
+	if (rows.length > 0) return { codes: rows.map((r) => r.code), source: "account" };
 	// Fail-open: the static catalog's full region set for this provider.
-	return Object.keys(REGION_LABELS[provider] ?? {});
+	return { codes: Object.keys(REGION_LABELS[provider] ?? {}), source: "catalog" };
 }
 
 /**

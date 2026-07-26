@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
 	CONFIG_SCHEMA,
 	getKindConfig,
+	NO_CAPABILITIES,
 	type FieldCtx,
 	type FieldOption,
 } from "@/components/design-project/canvas/inspector/config-schema";
@@ -111,7 +112,7 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 			?.sections.flatMap((s) => s.fields)
 			.find((f) => f.key === key);
 		expect(field).toBeDefined();
-		const ctx: FieldCtx = { provider, config };
+		const ctx: FieldCtx = { provider, config, caps: NO_CAPABILITIES };
 		return !field?.visibleWhen || field.visibleWhen(config, ctx);
 	};
 
@@ -147,7 +148,7 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		const resolveOptions = (provider: CloudProviderSlug): FieldOption[] => {
 			const options = field?.options;
 			return typeof options === "function"
-				? options({ provider, config: {} })
+				? options({ provider, config: {}, caps: NO_CAPABILITIES })
 				: (options ?? []);
 		};
 		expect(resolveOptions("hetzner").map((o) => o.value)).toEqual(["postgres"]);
@@ -164,7 +165,7 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		const resolveOptions = (provider: CloudProviderSlug): FieldOption[] => {
 			const options = field?.options;
 			return typeof options === "function"
-				? options({ provider, config: {} })
+				? options({ provider, config: {}, caps: NO_CAPABILITIES })
 				: (options ?? []);
 		};
 		expect(resolveOptions("hetzner").map((o) => o.value)).toEqual(["valkey"]);
@@ -264,7 +265,7 @@ describe("service config (W1)", () => {
 	};
 	const visible = (key: string, config: Record<string, unknown>) => {
 		const f = field(key);
-		const ctx: FieldCtx = { provider: null, config };
+		const ctx: FieldCtx = { provider: null, config, caps: NO_CAPABILITIES };
 		return !f?.visibleWhen || f.visibleWhen(config, ctx);
 	};
 
