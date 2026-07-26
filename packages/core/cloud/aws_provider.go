@@ -168,7 +168,20 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			"cache.t3.medium",
 		)
 		if cache.EngineVersion != "" {
-			tfvars["redis_engine_version"] = cache.EngineVersion
+			// AWS provisions ElastiCache Redis for the cache node today; the valkey module is not yet
+			// wired to the engine selector (create_elasticache_valkey stays off — tracked as a
+			// follow-up). Route a valkey-engine pick to the valkey var so it can't corrupt
+			// redis_engine_version, and for redis keep the parameter-group FAMILY in lock-step with the
+			// version — ElastiCache rejects a version whose major doesn't match `family` (e.g. "6.2"
+			// under "redis7"). Now that the version is a real picker (#977) this is easy to trip.
+			if cache.Engine == types.CacheEngineValkey {
+				tfvars["valkey_engine_version"] = cache.EngineVersion
+			} else {
+				tfvars["redis_engine_version"] = cache.EngineVersion
+				if fam := awsRedisFamily(cache.EngineVersion); fam != "" {
+					tfvars["redis_family"] = fam
+				}
+			}
 		}
 		if cache.NumCacheNodes != nil {
 			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
@@ -270,6 +283,17 @@ func providerInt(cfg map[string]any, key string) (int, bool) {
 		return v, true
 	}
 	return 0, false
+}
+
+// awsRedisFamily derives the ElastiCache parameter-group family ("redis7", "redis6", …) from a Redis
+// engine version, so a picked version and the `redis_family` var never disagree. Returns "" for an
+// unparseable version, leaving the base default untouched. (#977)
+func awsRedisFamily(version string) string {
+	major, _, _ := strings.Cut(version, ".")
+	if major == "" {
+		return ""
+	}
+	return "redis" + major
 }
 
 // s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the
