@@ -16,15 +16,30 @@ import {
 	NOSQL,
 	PROVIDERS,
 	REGION_MAP,
+	cacheEngines,
+	dbEngines,
 } from "./generated/catalog";
-import {
-	HETZNER_CACHE_ENGINES,
-	HETZNER_DB_ENGINES,
-} from "./hetzner-services";
-
-/** Engine families / cache engines Hetzner's in-cluster charts can back. */
-const HETZNER_DB_ENGINE_SET = new Set<string>(HETZNER_DB_ENGINES);
-const HETZNER_CACHE_ENGINE_SET = new Set<string>(HETZNER_CACHE_ENGINES);
+/**
+ * Engines the TARGET cloud can back, from the catalog.
+ *
+ * These were two hardcoded Hetzner sets. That was fine while Hetzner was the only cloud with an
+ * engine ceiling — it isn't: Azure Managed Redis and ApsaraDB KVStore have no Valkey, so converting
+ * an AWS project carrying `engine: "valkey"` to either one produced a config whose engine that cloud
+ * cannot build, and nothing said so. Reading the catalog covers every cloud, including the next one.
+ */
+const dbFamiliesFor = (provider: CloudProviderSlug): Set<string> =>
+	new Set(dbEngines(provider).map((e) => e.family));
+/** The cache engine column is a pgEnum, so the catalog's strings are narrowed to it here. A catalog
+ * value outside the enum is DROPPED rather than cast — it would save through the form and then fail
+ * on insert, which is a worse failure than not offering it. */
+type CacheEngineValue = NonNullable<
+	NonNullable<ProjectFormData["caches"]>[number]["engine"]
+>;
+const CACHE_ENGINE_VALUES: readonly string[] = ["redis", "valkey"];
+const cacheEnginesFor = (provider: CloudProviderSlug): CacheEngineValue[] =>
+	cacheEngines(provider)
+		.map((e) => e.value)
+		.filter((v): v is CacheEngineValue => CACHE_ENGINE_VALUES.includes(v));
 
 export type ConversionSeverity = "info" | "warning" | "error";
 
@@ -117,19 +132,24 @@ export function convertProjectConfig(
 					});
 				}
 			}
-			// Hetzner runs databases in-cluster via CloudNativePG (PostgreSQL-only). Any other
-			// engine_family would be silently skipped by the chart mapper — remap fail-closed.
+			// An engine the target cloud cannot back would be silently skipped at deploy — remap
+			// fail-closed to the cloud's first offered family and SAY so.
+			const targetFamilies = dbFamiliesFor(targetProvider);
 			if (
-				targetProvider === "hetzner" &&
 				db.engine_family &&
-				!HETZNER_DB_ENGINE_SET.has(db.engine_family)
+				targetFamilies.size > 0 &&
+				!targetFamilies.has(db.engine_family)
 			) {
+				const fallback = [...targetFamilies][0];
 				warnings.push({
 					severity: "warning",
 					component: "Databases",
-					message: `Database "${db.name}" used ${db.engine_family} — ${target.shortName} runs databases in-cluster via CloudNativePG, which is PostgreSQL-only. Engine switched to PostgreSQL.`,
+					message:
+						targetProvider === "hetzner"
+							? `Database "${db.name}" used ${db.engine_family} — ${target.shortName} runs databases in-cluster via CloudNativePG, which is PostgreSQL-only. Engine switched to PostgreSQL.`
+							: `Database "${db.name}" used ${db.engine_family}, which ${target.shortName} does not offer. Engine switched to ${fallback}.`,
 				});
-				db.engine_family = "postgres";
+				db.engine_family = fallback;
 			}
 			if (db.min_capacity != null) {
 				db.min_capacity = Math.max(targetCapacity.min, db.min_capacity);
@@ -149,18 +169,24 @@ export function convertProjectConfig(
 	if (data.caches && data.caches.length > 0) {
 		const nodeMap = CACHE_NODE_MAP[sourceProvider]?.[targetProvider] ?? {};
 		for (const cache of data.caches) {
-			// Hetzner's in-cluster cache chart is Valkey — keep the stored engine honest.
+			// Same for the cache engine: keep the stored engine honest against what the target can
+			// actually run. Hetzner's chart is Valkey; Azure and Alibaba have no Valkey at all.
+			const targetCacheEngines = cacheEnginesFor(targetProvider);
 			if (
-				targetProvider === "hetzner" &&
 				cache.engine &&
-				!HETZNER_CACHE_ENGINE_SET.has(cache.engine)
+				targetCacheEngines.length > 0 &&
+				!targetCacheEngines.includes(cache.engine)
 			) {
+				const fallback = targetCacheEngines[0];
 				warnings.push({
 					severity: "info",
 					component: "Caches",
-					message: `Caches on ${target.shortName} run in-cluster as Valkey (Redis-compatible). Cache "${cache.name}" switched to Valkey.`,
+					message:
+						targetProvider === "hetzner"
+							? `Caches on ${target.shortName} run in-cluster as Valkey (Redis-compatible). Cache "${cache.name}" switched to Valkey.`
+							: `${target.shortName} does not offer ${cache.engine}. Cache "${cache.name}" switched to ${fallback}.`,
 				});
-				cache.engine = "valkey";
+				cache.engine = fallback;
 			}
 			if (cache.node_type) {
 				const mapped = nodeMap[cache.node_type];

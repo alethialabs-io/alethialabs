@@ -746,6 +746,16 @@
 	"cache": {
 		"aws": {
 			"default_tier": "cache.t3.medium",
+			"engines": [
+				{
+					"value": "redis",
+					"label": "Redis (ElastiCache)"
+				},
+				{
+					"value": "valkey",
+					"label": "Valkey (ElastiCache Serverless)"
+				}
+			],
 			"tiers": [
 				{
 					"value": "cache.t3.micro",
@@ -781,6 +791,16 @@
 		},
 		"gcp": {
 			"default_tier": "M1",
+			"engines": [
+				{
+					"value": "redis",
+					"label": "Redis (Memorystore)"
+				},
+				{
+					"value": "valkey",
+					"label": "Valkey (Memorystore)"
+				}
+			],
 			"tiers": [
 				{
 					"value": "M1",
@@ -810,6 +830,12 @@
 		},
 		"azure": {
 			"default_tier": "C1",
+			"engines": [
+				{
+					"value": "redis",
+					"label": "Azure Managed Redis"
+				}
+			],
 			"tiers": [
 				{
 					"value": "C0",
@@ -845,6 +871,12 @@
 		},
 		"hetzner": {
 			"default_tier": "1",
+			"engines": [
+				{
+					"value": "valkey",
+					"label": "Valkey (in-cluster chart)"
+				}
+			],
 			"tiers": [
 				{
 					"value": "1",
@@ -868,6 +900,12 @@
 		},
 		"alibaba": {
 			"default_tier": "redis.master.small.default",
+			"engines": [
+				{
+					"value": "redis",
+					"label": "ApsaraDB for Redis"
+				}
+			],
 			"tiers": [
 				{
 					"value": "redis.master.small.default",
@@ -2497,6 +2535,46 @@
 					"label": "4 GB",
 					"memoryGb": 4,
 					"cost": "~$85/mo"
+				}
+			]
+		},
+		"cacheEngines": {
+			"aws": [
+				{
+					"value": "redis",
+					"label": "Redis (ElastiCache)"
+				},
+				{
+					"value": "valkey",
+					"label": "Valkey (ElastiCache Serverless)"
+				}
+			],
+			"gcp": [
+				{
+					"value": "redis",
+					"label": "Redis (Memorystore)"
+				},
+				{
+					"value": "valkey",
+					"label": "Valkey (Memorystore)"
+				}
+			],
+			"azure": [
+				{
+					"value": "redis",
+					"label": "Azure Managed Redis"
+				}
+			],
+			"hetzner": [
+				{
+					"value": "valkey",
+					"label": "Valkey (in-cluster chart)"
+				}
+			],
+			"alibaba": [
+				{
+					"value": "redis",
+					"label": "ApsaraDB for Redis"
 				}
 			]
 		},

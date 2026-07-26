@@ -31,9 +31,9 @@ import {
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import {
-	HETZNER_CACHE_ENGINES,
-	HETZNER_DB_ENGINES,
-} from "@/lib/cloud-providers/hetzner-services";
+	cacheEngines,
+	dbEngines,
+} from "@/lib/cloud-providers/generated/catalog";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
@@ -915,29 +915,46 @@ export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] 
 }
 
 /**
- * Variant values a compute-only Hetzner project can actually back — the in-cluster charts
- * are engine-fixed (databases → CloudNativePG = PostgreSQL-only, caches → Valkey). Kinds
- * absent here keep their full variant list.
+ * The engine values each cloud can actually back, DERIVED from the catalog.
+ *
+ * This used to be a hardcoded Hetzner carve-out, which was fine while Hetzner was the only cloud
+ * with an engine ceiling. It isn't: Azure Managed Redis and ApsaraDB KVStore have no Valkey, so the
+ * canvas was offering an engine those clouds cannot build — the #1382 shape on a second axis.
+ *
+ * Both axes now come from the catalog, which is where "what does this cloud offer" already lived for
+ * databases. `DB_ENGINES` is keyed by engine VALUE and carries the abstract `family` the canvas
+ * variants use; `CACHE_ENGINES` is keyed by the engine name directly.
  */
-const HETZNER_VARIANT_VALUES: Partial<Record<NodeKind, ReadonlySet<string>>> = {
-	database: new Set<string>(HETZNER_DB_ENGINES),
-	cache: new Set<string>(HETZNER_CACHE_ENGINES),
+const VARIANT_FLOOR: Record<
+	string,
+	(provider: CloudProviderSlug) => ReadonlySet<string>
+> = {
+	// `dbEngines`/`cacheEngines` read the CATALOG surface, which carries the abstract `family` the
+	// canvas variants are keyed on. (`DB_ENGINES` is the flattened `live` mirror and drops it.)
+	database: (p) => new Set(dbEngines(p).map((e) => e.family)),
+	cache: (p) => new Set(cacheEngines(p).map((e) => e.value)),
 };
 
 /**
- * A kind's variant options filtered to what the effective provider can back. The single
- * engine gate shared by the Add palette's variant step and the inspector's engine radios,
- * so a Hetzner project can never pick an engine its in-cluster charts won't deploy
- * (e.g. Database → MySQL, which the chart mapper would otherwise silently skip).
+ * A kind's variant options filtered to what the effective provider can back. The single engine gate
+ * shared by the Add palette's variant step and the inspector's engine radios, so a project can never
+ * pick an engine its cloud won't deploy — Hetzner → MySQL (the chart mapper would skip it), or
+ * Azure/Alibaba → Valkey (no such product).
+ *
+ * A kind with no floor entry keeps its full variant list.
  */
 export function variantOptionsFor(
 	kind: NodeKind,
 	provider: CloudProviderSlug | null,
 ): { value: string; label: string; description: string }[] {
 	const options = NODE_REGISTRY[kind].variants?.options ?? [];
-	if (provider !== "hetzner") return options;
-	const allowed = HETZNER_VARIANT_VALUES[kind];
-	return allowed ? options.filter((o) => allowed.has(o.value)) : options;
+	const floor = provider ? VARIANT_FLOOR[kind] : undefined;
+	if (!floor || !provider) return options;
+	const allowed = floor(provider);
+	// An empty floor means the catalog has nothing for this cloud/kind — show everything rather than
+	// an empty picker (#918); a missing catalog slice is not evidence that nothing is offered.
+	if (allowed.size === 0) return options;
+	return options.filter((o) => allowed.has(o.value));
 }
 
 /** Singleton kinds may exist at most once on the canvas. */
