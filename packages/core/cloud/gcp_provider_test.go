@@ -5,6 +5,7 @@ package cloud
 
 import (
 	"reflect"
+	"regexp"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -193,6 +194,37 @@ func TestGCPProvider_ProviderTfvars_CloudSQLEngine(t *testing.T) {
 			}
 			if got := tfvars["cloud_sql_engine"]; got != tt.wantEngine {
 				t.Errorf("cloud_sql_engine = %v, want %v", got, tt.wantEngine)
+			}
+		})
+	}
+}
+
+// TestGCPProvider_ProviderTfvars_CloudSQLEngineVersionIsBare pins the CONTRACT the cloud-sql module
+// composes `database_version` from: this tfvar carries the BARE version, never one that already
+// carries its engine prefix.
+//
+// The module composes "${POSTGRES|MYSQL}_${version}" and normalizes the separator, so it tolerates
+// "8.0" and "8_0" alike — but it cannot recover from "POSTGRES_16", which composes
+// "POSTGRES_POSTGRES_16". That exact shape reached production once and left Cloud SQL unprovisionable
+// (see the comment in modules/cloud-sql/main.tf); the dotted-MySQL half of the same grain confusion
+// is #1381. The catalog is what feeds this, so a bad edit there is what this catches.
+func TestGCPProvider_ProviderTfvars_CloudSQLEngineVersionIsBare(t *testing.T) {
+	bare := regexp.MustCompile(`^[0-9]+([._][0-9]+)*$`)
+	p := &gcpProvider{}
+
+	for _, family := range []string{"postgres", "mysql"} {
+		t.Run(family, func(t *testing.T) {
+			cfg := &types.ProjectConfig{
+				Cluster:   types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+				DNS:       types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+				Databases: []types.ProjectDatabaseConfig{{Name: "main", EngineFamily: family}},
+			}
+			got, _ := p.ProviderTfvars(cfg)["cloud_sql_engine_version"].(string)
+			if got == "" {
+				t.Fatalf("cloud_sql_engine_version is empty for %q — the catalog default did not resolve", family)
+			}
+			if !bare.MatchString(got) {
+				t.Errorf("cloud_sql_engine_version = %q for %q; want a bare version like 16 or 8.0 (never engine-prefixed)", got, family)
 			}
 		})
 	}

@@ -52,8 +52,21 @@ variable "engine" {
 
 variable "engine_version" {
   type        = string
-  description = "Database engine version (e.g. 15 for PostgreSQL 15, 8_0 for MySQL 8.0)"
+  description = <<-EOT
+    Bare database engine version, WITHOUT the engine prefix — "16" for PostgreSQL 16, "8.0" or "8_0"
+    for MySQL 8.0. The module composes the Cloud SQL `database_version` enum token from it and
+    normalizes the separator to the enum's underscore grain, so either form is accepted (#1381).
+  EOT
   default     = "15"
+
+  # Catches the two shapes that produce an invalid database_version: a version that already carries
+  # its engine prefix ("POSTGRES_16" → "POSTGRES_POSTGRES_16", the outage this module's comment
+  # records) and anything that isn't a dotted/underscored numeric version. Failing at plan time beats
+  # the API's opaque "Invalid value at 'body.database_version'".
+  validation {
+    condition     = can(regex("^[0-9]+([._][0-9]+)*$", var.engine_version))
+    error_message = "engine_version must be the BARE version (16, 8.0, 8_0) — never prefixed with the engine name."
+  }
 }
 
 variable "tier" {
