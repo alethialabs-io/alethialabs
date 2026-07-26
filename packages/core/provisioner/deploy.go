@@ -91,7 +91,23 @@ type DeployParams struct {
 	// default) disables the guard, so existing callers are unaffected. Opt-in cost
 	// safety for the real-cloud e2e nightly; see costCeilingBlock.
 	CostCeilingMonthlyUSD float64
+	// KubeConn resolves an EXISTING shared-Fabric cluster's control-plane endpoint + CA
+	// OUTPUT-FREE (by name, from the cloud API) for a `namespace`/`vcluster` placement that
+	// runs no tofu. It is INJECTED by the runner — which holds the per-cloud keyless token
+	// minters and the stdlib resolvers (cloud.Resolve{GKE,AKS,ACK}ClusterConn) — so
+	// packages/core stays free of the gcp/azure/alibaba auth SDKs. Nil for aws (whose
+	// ConfigureKubeconfig resolves endpoint/CA via the in-core EKS SDK from the name alone)
+	// and for every dedicated deploy. See mintClusterOutputs.
+	KubeConn KubeConnResolver
 }
+
+// KubeConnResolver resolves an EXISTING shared-Fabric cluster's control-plane connection (endpoint +
+// base64 CA) OUTPUT-FREE — by name, from the cloud API, using a keyless token the RUNNER mints. The
+// runner injects it into DeployParams so a placement (namespace/vcluster) can complete a no-tofu
+// kubeconfig mint on a cloud whose ConfigureKubeconfig reads endpoint/CA from outputs, without
+// packages/core taking on that cloud's auth SDK. Returns a non-nil error (never partial values) when
+// the cluster can't be resolved.
+type KubeConnResolver func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName string) (endpoint, caData string, err error)
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
 type PlanResult struct {
