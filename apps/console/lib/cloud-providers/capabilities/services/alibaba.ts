@@ -6,7 +6,10 @@
 // session/alibaba.ts), reads are read-only Describe/List, and the account-accurate offerings land in
 // `cloud_capability_services` discriminated by `service_kind`:
 //   • database   — ApsaraDB RDS engines + versions (DescribeAvailableZones)
+//   • database_instance_class — ApsaraDB RDS instance classes (DescribeAvailableClasses), one bounded call
+//                  per engine at its newest offered version (see pickClassQueries for the narrowing)
 //   • cache      — ApsaraDB for Redis (KVStore) node classes/tiers (DescribeAvailableResource)
+//   • cache_version — the offered Redis engine versions nested in that SAME response
 //   • kubernetes — ACK managed-Kubernetes control-plane versions (DescribeKubernetesVersionMetadata)
 //   • nosql      — Tablestore availability (ListInstance reachability)
 // These are "available"/"metadata" APIs — everything they return is offerable, so each row is
@@ -26,7 +29,10 @@ import OtsClient, { ListInstanceRequest } from "@alicloud/ots20160620";
 import KvstoreClient, {
 	DescribeAvailableResourceRequest,
 } from "@alicloud/r-kvstore20150101";
-import RdsClient, { DescribeAvailableZonesRequest } from "@alicloud/rds20140815";
+import RdsClient, {
+	DescribeAvailableClassesRequest,
+	DescribeAvailableZonesRequest,
+} from "@alicloud/rds20140815";
 import { and, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -35,6 +41,7 @@ import {
 } from "@/lib/db/schema";
 import { asRecord } from "@/lib/records";
 import { type AlibabaCredentials, assumeAlibabaRole } from "../../session/alibaba";
+import { compareVersions, dedupeVersionsDesc } from "./version";
 import type { CapabilityIdentity } from "../types";
 
 /** The region the service axes are enumerated at. ApsaraDB engines/versions, Redis tiers, ACK versions and
@@ -51,9 +58,21 @@ export interface K8sVersionMeta {
 	creatable?: boolean | null;
 }
 
+/** One RDS DescribeAvailableZones storage-type entry. */
+export interface RdsStorageType {
+	storageType?: string | null;
+}
+
+/** One RDS DescribeAvailableZones category entry (the instance series: Basic / HighAvailability / …). */
+export interface RdsCategory {
+	category?: string | null;
+	supportedStorageTypes?: RdsStorageType[] | null;
+}
+
 /** One RDS DescribeAvailableZones supported-engine version entry. */
 export interface RdsEngineVersion {
 	version?: string | null;
+	supportedCategorys?: RdsCategory[] | null;
 }
 
 /** One RDS DescribeAvailableZones supported-engine entry. */
@@ -64,7 +83,23 @@ export interface RdsSupportedEngine {
 
 /** One RDS DescribeAvailableZones zone entry (the fields we traverse for engines + versions). */
 export interface RdsAvailableZone {
+	zoneId?: string | null;
 	supportedEngines?: RdsSupportedEngine[] | null;
+}
+
+/** One DescribeAvailableClasses instance-class entry. */
+export interface RdsInstanceClass {
+	DBInstanceClass?: string | null;
+}
+
+/** The fully-specified tuple ONE DescribeAvailableClasses call needs. ApsaraDB will not answer for a bare
+ * engine: the class list is scoped to (zone, engine, version, category, storage type). */
+export interface RdsClassQuery {
+	engine: string;
+	engineVersion: string;
+	zoneId: string;
+	category: string;
+	storageType: string;
 }
 
 // ── Row factory ───────────────────────────────────────────────────────────────────
@@ -164,6 +199,135 @@ export function normalizeDbEngines(
 					}),
 				);
 			}
+		}
+	}
+	return rows;
+}
+
+/** One DescribeAvailableClasses query per ENGINE, at its newest offered version.
+ *
+ * The full matrix is (zone × engine × version × category × storage type) — enumerating it would be
+ * dozens of calls per sweep for a list that barely varies across the tuple. So this picks, per engine,
+ * the newest version and the first zone/category/storage-type that offers it: a bounded |engines| calls.
+ * The narrowing is real and deliberate — a class offered ONLY on an older version, or only in another
+ * zone, is not enumerated — and `withSelected` keeps such a value representable if one is already pinned.
+ *
+ * Pure, so the choice of anchor is unit-testable rather than an accident of response ordering. */
+export function pickClassQueries(zones: RdsAvailableZone[]): RdsClassQuery[] {
+	// Best (newest-version) query seen per engine.
+	const best = new Map<string, RdsClassQuery>();
+	for (const zone of zones) {
+		const zoneId = zone.zoneId;
+		if (typeof zoneId !== "string" || zoneId.length === 0) continue;
+		for (const supported of zone.supportedEngines ?? []) {
+			const engine = supported.engine;
+			if (typeof engine !== "string" || engine.length === 0) continue;
+			for (const ev of supported.supportedEngineVersions ?? []) {
+				const engineVersion = ev.version;
+				if (typeof engineVersion !== "string" || engineVersion.length === 0) continue;
+				for (const cat of ev.supportedCategorys ?? []) {
+					const category = cat.category;
+					if (typeof category !== "string" || category.length === 0) continue;
+					for (const st of cat.supportedStorageTypes ?? []) {
+						const storageType = st.storageType;
+						if (typeof storageType !== "string" || storageType.length === 0) continue;
+						const current = best.get(engine);
+						if (
+							current === undefined ||
+							compareVersions(engineVersion, current.engineVersion) > 0
+						) {
+							best.set(engine, { engine, engineVersion, zoneId, category, storageType });
+						}
+						break; // one storage type is enough to ask the question
+					}
+				}
+			}
+		}
+	}
+	return [...best.values()];
+}
+
+/** DescribeAvailableClasses → `database_instance_class` rows for ONE engine. `native_id` is the composite
+ * `<engine>-<class>` (the same class is orderable for more than one engine, and each is its own
+ * offering); the bare class lives in `tier`, which is what the picker reads. */
+export function normalizeDbInstanceClasses(
+	identityId: string,
+	region: string,
+	engine: string,
+	classes: RdsInstanceClass[],
+): CloudCapabilityServiceInsert[] {
+	const rows: CloudCapabilityServiceInsert[] = [];
+	const seen = new Set<string>();
+	for (const entry of classes) {
+		const cls = entry.DBInstanceClass;
+		if (typeof cls !== "string" || cls.length === 0) continue;
+		if (seen.has(cls)) continue;
+		seen.add(cls);
+		rows.push(
+			serviceRow(identityId, region, {
+				service_kind: "database_instance_class",
+				native_id: `${engine}-${cls}`,
+				name: cls,
+				engine,
+				tier: cls,
+			}),
+		);
+	}
+	return rows;
+}
+
+/** Recursively collects (engine, version) pairs from the KVStore DescribeAvailableResource response.
+ *
+ * The response nests the version SIX levels below its engine
+ * (availableZones → supportedEngines → supportedEngine{engine} → supportedEditionTypes →
+ * supportedSeriesTypes → supportedEngineVersions → supportedEngineVersion{version}), so the walk carries
+ * the nearest enclosing `engine` down rather than trying to encode that path — the same defensive shape
+ * `collectCacheClasses` uses, and for the same reason: the exact nesting is not a contract we control. */
+function collectCacheVersions(
+	node: unknown,
+	engine: string | null,
+	out: Map<string, Set<string>>,
+): void {
+	if (Array.isArray(node)) {
+		for (const item of node) collectCacheVersions(item, engine, out);
+		return;
+	}
+	if (node === null || typeof node !== "object") return;
+	const record = asRecord(node);
+	const nested =
+		typeof record.engine === "string" && record.engine.length > 0
+			? record.engine
+			: engine;
+	const version = record.version;
+	if (nested !== null && typeof version === "string" && version.length > 0) {
+		const seen = out.get(nested);
+		if (seen) seen.add(version);
+		else out.set(nested, new Set([version]));
+	}
+	for (const value of Object.values(record)) collectCacheVersions(value, nested, out);
+}
+
+/** Normalizes the KVStore DescribeAvailableResource response → `cache_version` rows, one per (engine,
+ * offered version). The response was already fetched for the node classes; the versions rode along in it. */
+export function normalizeCacheVersions(
+	identityId: string,
+	region: string,
+	availableResourceBody: unknown,
+): CloudCapabilityServiceInsert[] {
+	const byEngine = new Map<string, Set<string>>();
+	collectCacheVersions(availableResourceBody, null, byEngine);
+	const rows: CloudCapabilityServiceInsert[] = [];
+	for (const [engine, versions] of byEngine) {
+		for (const version of dedupeVersionsDesc([...versions])) {
+			rows.push(
+				serviceRow(identityId, region, {
+					service_kind: "cache_version",
+					native_id: `${engine}-${version}`,
+					name: `${engine} ${version}`,
+					engine,
+					version,
+				}),
+			);
 		}
 	}
 	return rows;
@@ -340,16 +504,44 @@ async function syncDbEngines(
 	const resp = await client.describeAvailableZones(
 		new DescribeAvailableZonesRequest({ regionId: region }),
 	);
-	const rows = normalizeDbEngines(
-		identityId,
-		region,
-		resp.body?.availableZones ?? [],
-	);
+	const zones = resp.body?.availableZones ?? [];
+	const rows = normalizeDbEngines(identityId, region, zones);
 	await upsertServiceRows(rows);
 	await softRemoveKindUnseen(
 		identityId,
 		"database",
 		rows.map((r) => r.native_id),
+	);
+
+	// database_instance_class rides on the SAME zones response: it carries every parameter
+	// DescribeAvailableClasses requires, so no second enumeration call is needed to work out what to ask.
+	const classRows: CloudCapabilityServiceInsert[] = [];
+	for (const query of pickClassQueries(zones)) {
+		const classes = await client.describeAvailableClasses(
+			new DescribeAvailableClassesRequest({
+				regionId: region,
+				zoneId: query.zoneId,
+				engine: query.engine,
+				engineVersion: query.engineVersion,
+				category: query.category,
+				DBInstanceStorageType: query.storageType,
+				instanceChargeType: "Postpaid",
+			}),
+		);
+		classRows.push(
+			...normalizeDbInstanceClasses(
+				identityId,
+				region,
+				query.engine,
+				classes.body?.DBInstanceClasses ?? [],
+			),
+		);
+	}
+	await upsertServiceRows(classRows);
+	await softRemoveKindUnseen(
+		identityId,
+		"database_instance_class",
+		classRows.map((r) => r.native_id),
 	);
 }
 
@@ -374,6 +566,15 @@ async function syncCacheTiers(
 		identityId,
 		"cache",
 		rows.map((r) => r.native_id),
+	);
+
+	// One response, two axes: the node classes above and the engine versions nested beside them.
+	const versionRows = normalizeCacheVersions(identityId, region, resp.body);
+	await upsertServiceRows(versionRows);
+	await softRemoveKindUnseen(
+		identityId,
+		"cache_version",
+		versionRows.map((r) => r.native_id),
 	);
 }
 

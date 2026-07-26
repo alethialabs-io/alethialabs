@@ -7,9 +7,14 @@
 //   - kubernetes — AKS offered control-plane versions (ContainerService ListKubernetesVersions).
 //   - database   — Azure Database for PostgreSQL/MySQL Flexible Server offered engine VERSIONS
 //                  (the DBforPostgreSQL/DBforMySQL location-based capabilities).
+//   - database_instance_class — the compute SKUs those same capabilities payloads offer per engine
+//                  (Standard_D2s_v3 …), the escape-hatch `instance_class` field used to ask users to type.
 //   - cache      — Azure Cache for Redis SKU tiers. Redis has NO dynamic per-region SKU/capability ARM
 //                  op, so the tiers are the fixed product enum; account-availability is the Microsoft.Cache
 //                  resource-provider registration state (registered ⇒ launchable; not ⇒ not_launchable).
+//   - cache_version — DOCUMENTED EXCLUSION, following from the same limit: with no capability op for
+//                  Microsoft.Cache there is no account-scoped statement of which Redis versions the
+//                  subscription may launch. The picker falls open to the cloud default.
 //   - nosql      — Cosmos DB availability, taken from the Microsoft.DocumentDB provider registration state
 //                  (+ the databaseAccounts region list) — the read-only "this subscription can use Cosmos"
 //                  signal.
@@ -74,11 +79,24 @@ interface AksVersionEntry {
 interface AksVersionsResponse {
 	values?: AksVersionEntry[];
 }
+/** One orderable compute SKU under a flexible-server edition. The PostgreSQL and MySQL capability
+ * specs disagree on the property name for the same thing — PG nests `supportedServerVersions[].
+ * supportedVcores[]`, MySQL nests `supportedServerVersions[].supportedSkus[]` — so both are declared
+ * optional and whichever is present is read. Guessing one would silently yield zero SKUs on the other. */
+interface FlexibleServerSku {
+	name?: string;
+	vCores?: number;
+	supportedMemoryPerVcoreMB?: number;
+}
 interface FlexibleServerVersion {
 	name?: string;
+	supportedVcores?: FlexibleServerSku[];
+	supportedSkus?: FlexibleServerSku[];
 }
 interface FlexibleServerEdition {
 	supportedServerVersions?: FlexibleServerVersion[];
+	/** Some api-versions hang the SKU list off the EDITION rather than the version. */
+	supportedServerSkus?: FlexibleServerSku[];
 }
 interface FlexibleCapabilityEntry {
 	supportedFlexibleServerEditions?: FlexibleServerEdition[];
@@ -193,6 +211,57 @@ export function normalizeFlexibleServerVersions(
 					launchable: "launchable",
 					launchable_reason: "available",
 				});
+			}
+		}
+	}
+	return out;
+}
+
+/** The SAME DBfor{PostgreSQL,MySQL} location-capabilities payload, read for the compute SKUs it carries
+ * → one `database_instance_class` offering per (engine, SKU). This is the payload the version normalizer
+ * above deliberately did not read; the SKUs were already on the wire.
+ *
+ * The SKU list is nested under three different property names across the two services' api-versions
+ * (edition→version→supportedVcores, edition→version→supportedSkus, edition→supportedServerSkus), so all
+ * three are traversed. Memory is `supportedMemoryPerVcoreMB × vCores` where both are reported, else null.
+ *
+ * `native_id` is `<engine>-<sku>`: the same `Standard_D2s_v3` is orderable for both PostgreSQL and MySQL
+ * and each is its own offering. The bare SKU lives in `tier`, which is what the picker reads. */
+export function normalizeFlexibleServerSkus(
+	region: string,
+	engine: "postgres" | "mysql",
+	value: FlexibleCapabilityEntry[],
+): NormalizedService[] {
+	const meta = AZURE_DB_ENGINES[engine];
+	const seen = new Set<string>();
+	const out: NormalizedService[] = [];
+	const push = (sku: FlexibleServerSku): void => {
+		const name = sku.name?.trim();
+		if (!name || seen.has(name)) return;
+		seen.add(name);
+		const memGb =
+			sku.vCores && sku.supportedMemoryPerVcoreMB
+				? Math.round(((sku.vCores * sku.supportedMemoryPerVcoreMB) / 1024) * 100) / 100
+				: null;
+		out.push({
+			region,
+			service_kind: "database_instance_class",
+			native_id: `${meta.value}-${name}`,
+			name,
+			engine: meta.value,
+			version: null,
+			tier: name,
+			mem_gb: memGb,
+			launchable: "launchable",
+			launchable_reason: "available",
+		});
+	};
+	for (const entry of value ?? []) {
+		for (const edition of entry.supportedFlexibleServerEditions ?? []) {
+			for (const sku of edition.supportedServerSkus ?? []) push(sku);
+			for (const sv of edition.supportedServerVersions ?? []) {
+				for (const sku of sv.supportedVcores ?? []) push(sku);
+				for (const sku of sv.supportedSkus ?? []) push(sku);
 			}
 		}
 	}
@@ -382,13 +451,15 @@ export async function syncAzureServiceCapabilities(
 			// AKS not offered / RP not registered in this region — best-effort skip.
 		}
 
-		// database — PostgreSQL + MySQL flexible-server offered engine versions.
+		// database + database_instance_class — PostgreSQL + MySQL flexible-server offered engine versions
+		// AND the compute SKUs they can run on; both axes come out of the one capabilities payload.
 		try {
 			const pg = await armListValue<FlexibleCapabilityEntry>(
 				`${ARM}/subscriptions/${subscriptionId}/providers/Microsoft.DBforPostgreSQL/locations/${region}/capabilities?api-version=${API_PG}`,
 				token,
 			);
 			rows.push(...normalizeFlexibleServerVersions(region, "postgres", pg));
+			rows.push(...normalizeFlexibleServerSkus(region, "postgres", pg));
 		} catch {
 			// PostgreSQL flexible-server not offered here — skip.
 		}
@@ -398,6 +469,7 @@ export async function syncAzureServiceCapabilities(
 				token,
 			);
 			rows.push(...normalizeFlexibleServerVersions(region, "mysql", my));
+			rows.push(...normalizeFlexibleServerSkus(region, "mysql", my));
 		} catch {
 			// MySQL flexible-server not offered here — skip.
 		}

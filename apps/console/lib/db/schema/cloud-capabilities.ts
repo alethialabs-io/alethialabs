@@ -46,6 +46,14 @@ export const capabilityServiceKind = pgEnum("capability_service_kind", [
 	"cache", // a managed in-memory cache tier/node class (ElastiCache, Memorystore, Azure Cache, ApsaraDB Redis)
 	"kubernetes", // an offered managed-Kubernetes control-plane version (EKS/GKE/AKS/ACK; Hetzner = pinned Talos)
 	"nosql", // account availability of the cloud's NoSQL service (DynamoDB/Firestore/Cosmos DB/Tablestore)
+	// A concrete managed-DB SKU the account can launch an engine at (db.r6g.large, db-custom-2-7680,
+	// Standard_D2s_v3, rds.mysql.c1.large). Its own kind rather than a `database` row: an engine row is
+	// keyed on (engine, version) and a SKU is a THIRD axis, so folding them into one kind would make the
+	// unique key collide. `engine` scopes the SKU; NULL = offerable for every engine (the GCP tier list).
+	"database_instance_class",
+	// An offered cache ENGINE VERSION (redis 7.0, valkey 8.0) — distinct from `cache`, which is the node
+	// class/tier. The two are orthogonal axes on the same service, so a single kind cannot hold both.
+	"cache_version",
 ]);
 export type CapabilityServiceKind =
 	(typeof capabilityServiceKind.enumValues)[number];
@@ -136,10 +144,12 @@ export const cloudCapabilityInstanceTypes = pgTable(
 
 // ── Managed-SERVICE offerings PER REGION (Wave-2) ───────────────────────────────────
 // One table for every managed-service axis (discriminated by `service_kind`): the DB engines+versions,
-// cache engines+tiers, managed-Kubernetes versions, and NoSQL availability THIS account can launch —
-// the service-level generalization of the instance-types table. `native_id` is the provider-native id
-// per kind: the engine value ("aurora-postgresql"), cache node class ("cache.t3.medium"), k8s version
-// string ("1.35"), or NoSQL service name ("DynamoDB"). The same offering recurs per region, so `region`
+// DB instance classes, cache engines+tiers+versions, managed-Kubernetes versions, and NoSQL availability
+// THIS account can launch — the service-level generalization of the instance-types table. `native_id` is
+// the provider-native id per kind, and is COMPOSITE wherever the kind's identity spans more than the one
+// column the unique key carries: `<engine>-<version>` for a database or cache_version row,
+// `<engine>-<sku>` for a database_instance_class row, the bare cache node class ("cache.t3.medium"), the
+// k8s version string ("1.35"), or the NoSQL service name ("DynamoDB"). The same offering recurs per region, so `region`
 // is part of the unique key (account-wide axes like NoSQL populate it with a real region code — never
 // NULL — so the unique key doesn't trip Postgres's "NULLs are distinct" rule on upsert, exactly as the
 // instance-types + sync-state tables do). `launchable`/`launchable_reason` carry the same tri-state
@@ -150,14 +160,17 @@ export const cloudCapabilityServices = pgTable(
 		...capabilityBase(),
 		service_kind: capabilityServiceKind().notNull(),
 		// The engine/family this offering belongs to, where the kind has one: DB engine family
-		// ("aurora-postgresql", "postgres"), cache engine ("redis"). NULL for k8s/nosql (no engine axis).
+		// ("aurora-postgresql", "postgres"), cache engine ("redis"), or the engine a `database_instance_class`
+		// SKU is offerable for (NULL there = every engine). NULL for k8s/nosql (no engine axis).
 		engine: text(),
-		// The offered version, where the kind is versioned: DB engine version ("16.6") or managed-k8s
-		// control-plane version ("1.35"). NULL for cache/nosql.
+		// The offered version, where the kind is versioned: DB engine version ("16.6"), managed-k8s
+		// control-plane version ("1.35"), or cache engine version ("7.0"). NULL for cache/nosql.
 		version: text(),
-		// Coarse tier/capacity class for the `cache` kind (the node class label) — NULL for other kinds.
+		// The capacity class: the node class for `cache` ("cache.t3.medium") or the SKU for
+		// `database_instance_class` ("db.r6g.large") — NULL for the versioned + availability kinds.
 		tier: text(),
-		// GB of memory for a `cache` tier where the provider reports it; numeric because some are fractional.
+		// GB of memory for a `cache` tier or DB SKU where the provider reports it; numeric because some
+		// are fractional.
 		mem_gb: numeric({ precision: 8, scale: 2, mode: "number" }),
 		launchable: capabilityLaunchable().notNull().default("not_evaluable"),
 		launchable_reason: capabilityLaunchableReason(),

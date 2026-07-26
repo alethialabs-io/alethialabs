@@ -69,6 +69,19 @@ describe("normalizeHetznerServiceRows", () => {
 		expect(rows.some((r) => r.service_kind === "nosql")).toBe(false);
 	});
 
+	// The two axes added for #977's residue are exclusions here too — pinned so they stay decisions.
+	it("records NO database instance class — a Hetzner DB has no SKU axis at all", () => {
+		// It is a CloudNativePG Cluster sized by storage_gb/replicas, and the canvas already hides
+		// `instance_class` for this provider. A row here would invent an offering.
+		expect(rows.some((r) => r.service_kind === "database_instance_class")).toBe(false);
+	});
+
+	it("records NO cache engine version — the value is a container image tag, not an enumeration", () => {
+		// `HETZNER_CHARTS.valkey.version` is the CHART version, a different number from the engine's, so
+		// emitting it as an engine version would be a wrong answer dressed as an account-accurate one.
+		expect(rows.some((r) => r.service_kind === "cache_version")).toBe(false);
+	});
+
 	it("scopes every row to the identity + provider + region", () => {
 		for (const r of rows) {
 			expect(r.cloud_identity_id).toBe("ci-1");
