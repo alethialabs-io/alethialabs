@@ -145,6 +145,15 @@ jobs:
       E2E_AZURE_CLIENT_ID: ${{ vars.E2E_AZURE_CLIENT_ID }}
       E2E_AZURE_TENANT_ID: ${{ vars.E2E_AZURE_TENANT_ID }}
       E2E_AZURE_SUBSCRIPTION_ID: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
+      # AZURE SELF-ADMIN (BYOC A2.2) — the Entra group object id from infra/azure-e2e's
+      # `aks_admin_group_object_id` output. t2_providers.go reads THIS env var and maps it into the
+      # cluster snapshot's `aks_admin_group_object_ids` tfvar, which is what authorizes the runner's
+      # AAD token as AKS cluster-admin AT CREATE TIME. AKS AAD-integrated RBAC has no post-hoc
+      # escalation path, so leaving it unset does not degrade gracefully: the cluster comes up and
+      # the runner is simply not authorized on it — the leg then fails as "cluster provisioned but
+      # not reachable — AUTH REJECTED", the same shape as the EKS #1040 outage. Empty is still fine
+      # for every non-azure leg (the mapper no-ops unless provider == azure).
+      ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID: ${{ vars.ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID }}
       E2E_ALIBABA_ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
       E2E_ALIBABA_OIDC_PROVIDER_ARN: ${{ vars.E2E_ALIBABA_OIDC_PROVIDER_ARN }}
       ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
@@ -185,7 +194,7 @@ jobs:
             echo "::notice::T2 real-cloud proof ENABLED for $PROVIDER ($SECRET_NAME present) — provisioning a real ephemeral cluster."
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. See demos/proofs/README.md."
+            echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. To enable it: docs/testing/e2e-nightly-enablement.md (apply the stack, set the companion vars FIRST, dispatch this cloud alone, kill-drill, then set the gate)."
           fi
 
       # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
@@ -672,7 +681,9 @@ jobs:
         run: |
           set -euo pipefail
           providers="hetzner aws gcp azure alibaba"
+          total=5
           reds=""
+          skips=""
           {
             echo "## E2E nightly — 5-cloud verdict rollup"
             echo
@@ -687,6 +698,7 @@ jobs:
               # No proof bundle for this leg ⇒ it green-skipped at the gate (no secret/var wired).
               status="SKIP"
               detail="gate off — no secret/var wired"
+              skips="$skips $p"
             else
               outcome="$(jq -r '.outcome // "unknown"' "$summary" 2>/dev/null || echo unknown)"
               verdict="$(jq -r '.verdict // ""' "$summary" 2>/dev/null || echo "")"
@@ -708,7 +720,68 @@ jobs:
             echo "| (job) | FAIL | provision matrix failed with no per-leg proof bundle |" >> "$GITHUB_STEP_SUMMARY"
             reds="$reds job"
           fi
-          echo "reds:${reds:-<none>}"
+          # ── COVERAGE. A leg that green-skips is not a proof, but the job list shows it as a green
+          #    check — five greens under a step named "5-cloud" reads like five clouds proven when it
+          #    can be one. State the ratio explicitly so the aggregate gap cannot hide behind the
+          #    per-leg SKIP rows above. ──
+          skip_n="$(printf '%s' "$skips" | wc -w | tr -d ' ')"
+          enabled_n=$(( total - skip_n ))
+          {
+            echo
+            if [ "$skip_n" -eq 0 ]; then
+              echo "**Coverage: ${enabled_n}/${total} clouds enabled** — every leg is wired."
+            else
+              echo "**Coverage: ${enabled_n}/${total} clouds enabled** · inert (gate off):${skips}"
+              echo
+              echo "> An inert leg proves nothing. See \`docs/testing/e2e-nightly-enablement.md\` to wire one."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "coverage:${enabled_n}/${total} reds:${reds:-<none>} skips:${skips:-<none>}"
+
+          # ── Standing coverage issue: ONE issue (not one per cloud) naming every inert leg and the
+          #    exact var it needs, refreshed while the gap persists and closed automatically at full
+          #    coverage. Schedule/dispatch only, same as the red-issue path below. Never fails the run:
+          #    an unwired cloud is a deliberate no-op, and a red "not configured yet" nightly is how a
+          #    signal gets trained into noise. ──
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            cov_title="e2e nightly: ${skip_n} of ${total} clouds are not enabled"
+            open_cov="$(gh issue list --state open --search "e2e nightly: in:title clouds are not enabled" --json number,title \
+              --jq '[.[] | select(.title | test("^e2e nightly: [0-9]+ of [0-9]+ clouds are not enabled$"))] | .[0].number // ""' 2>/dev/null || echo "")"
+            if [ "$skip_n" -eq 0 ]; then
+              if [ -n "$open_cov" ]; then
+                gh issue close "$open_cov" --comment "All ${total} clouds are now enabled — every nightly leg provisions for real. Closing automatically." \
+                  && echo "::notice::closed coverage issue #${open_cov} (full coverage)." || true
+              fi
+            else
+              cov_body="${RUNNER_TEMP}/issue-body-coverage.md"
+              {
+                printf '%s\n\n' "Only **${enabled_n} of ${total}** nightly legs provision anything. The rest green-skip at the gate, so the run reports success while proving nothing for them."
+                printf '%s\n\n' "Run: ${RUN_URL}"
+                printf '%s\n' "| cloud | needs |"
+                printf '%s\n' "|---|---|"
+                for s in $skips; do
+                  case "$s" in
+                    hetzner) printf '%s\n' "| hetzner | \`HCLOUD_TOKEN\` (repo **secret**) |" ;;
+                    aws)     printf '%s\n' "| aws | \`E2E_AWS_ROLE_ARN\` (repo variable) — from \`infra/aws-oidc\` |" ;;
+                    gcp)     printf '%s\n' "| gcp | \`E2E_GCP_WIF_PROVIDER\` **and** \`E2E_GCP_SA_EMAIL\` — from \`infra/gcp-e2e\` |" ;;
+                    azure)   printf '%s\n' "| azure | \`E2E_AZURE_CLIENT_ID\`, \`E2E_AZURE_TENANT_ID\`, \`E2E_AZURE_SUBSCRIPTION_ID\`, \`ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID\` — from \`infra/azure-e2e\` |" ;;
+                    alibaba) printf '%s\n' "| alibaba | \`E2E_ALIBABA_ROLE_ARN\` **and** \`E2E_ALIBABA_OIDC_PROVIDER_ARN\` — from \`infra/alibaba-e2e\` |" ;;
+                  esac
+                done
+                printf '\n%s\n' "Procedure (apply the stack → dispatch that cloud alone → kill-drill → set the gate var): \`docs/testing/e2e-nightly-enablement.md\`."
+                printf '%s\n' "_Auto-maintained by the e2e-nightly rollup: refreshed while legs are inert, closed automatically at ${total}/${total}._"
+              } > "$cov_body"
+              if [ -n "$open_cov" ]; then
+                gh issue edit "$open_cov" --title "$cov_title" --body-file "$cov_body" \
+                  && echo "::notice::refreshed coverage issue #${open_cov}." || true
+              else
+                gh issue create --title "$cov_title" --body-file "$cov_body" \
+                  && echo "::notice::filed coverage issue: ${cov_title}" \
+                  || echo "::warning::could not create the coverage issue (continuing)."
+              fi
+            fi
+          fi
+
           # Dedup tracking issue on ANY red — schedule/dispatch runs only.
           if [ -z "${reds// /}" ]; then
             echo "::notice::nightly rollup all-green (no FAIL legs) — no issue filed."
