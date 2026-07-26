@@ -35,7 +35,7 @@ import {
 	HETZNER_DB_ENGINES,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
-import { helmRegistryUrl } from "@/lib/connectors/helm-registry-derive";
+import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */

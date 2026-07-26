@@ -44,10 +44,12 @@ import { RadioCardGroup } from "@/components/design-project/canvas/inspector/rad
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
 import { attachByoChart } from "@/app/server/actions/byo-charts";
 import {
-	deriveHelmRegistries,
+	helmRegistryServesHost,
 	isSelectableHelmRegistry,
 	ociHostOf,
-} from "@/lib/connectors/helm-registry-derive";
+} from "@/lib/connectors/helm-registry-hosts";
+import { nodeOfKind } from "@/components/design-project/canvas/graph/types";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 
 interface ByoChartDialogProps {
@@ -414,55 +416,50 @@ export function ByoChartDialog({
 }
 
 /**
- * Which connected chart-repo connector will authenticate this pull — the same derivation the Chart
- * Repos sheet runs, shown at the moment the host is typed. A private chart whose host matches
- * nothing fails at deploy with an ArgoCD pull error; saying so here is far cheaper.
+ * Whether any chart repo configured on this environment will authenticate this pull, answered at the
+ * moment the host is typed. A private chart whose host no chart repo covers fails at deploy with an
+ * ArgoCD pull error naming neither the chart nor the missing credential — saying it here is far
+ * cheaper. Silent for a public registry, which needs no credential at all.
  */
 function OciCredentialNote({ url }: { url: string }) {
+	const nodes = useCanvasStore((s) => s.nodes);
 	const connected = useConnectedProviders("helm_registry");
 	const host = ociHostOf(url.trim());
 
-	const outcome = useMemo(() => {
-		if (!host) return null;
-		return deriveHelmRegistries({
-			chartRepos: [url.trim()],
-			connectedSlugs: connected.filter((p) => isSelectableHelmRegistry(p.slug)).map((p) => p.slug),
-			existing: [],
-		});
-	}, [url, host, connected]);
+	const match = useMemo(() => {
+		if (!host) return undefined;
+		return nodes
+			.map((n) => nodeOfKind(n, "helm_registry"))
+			.find((n) => n && helmRegistryServesHost(n.data.config, host))?.data.config;
+	}, [nodes, host]);
 
-	if (!host || !outcome) return null;
+	if (!host) return null;
 
-	const match = outcome.additions[0];
 	if (match) {
 		const provider = getProvidersForCategory("helm_registry").find(
 			(p) => p.slug === match.provider,
 		);
 		return (
 			<p className="text-xs text-muted-foreground">
-				Authenticates through your <span className="text-foreground">{provider?.name}</span>{" "}
-				connector — the chart repo is added automatically.
+				Authenticates through the{" "}
+				<span className="font-mono text-foreground">{match.name}</span> chart repo
+				{provider ? ` (${provider.name})` : ""}.
 			</p>
 		);
 	}
 
-	const unresolved = outcome.unresolved[0];
+	// Distinguish "you have nothing connected" from "you connected it but this project doesn't use
+	// it" — they need different fixes, and only the second is a one-step one.
+	const selectable = connected.filter((p) => isSelectableHelmRegistry(p.slug));
 	return (
 		<p className="flex items-start gap-1.5 text-xs text-muted-foreground">
 			<TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
 			<span>
-				{unresolved?.reason === "ambiguous" ? (
-					<>
-						More than one connected connector could serve{" "}
-						<span className="font-mono">{host}</span> — pick one in Chart repos after attaching.
-					</>
-				) : (
-					<>
-						No connected chart-repo connector serves{" "}
-						<span className="font-mono">{host}</span>. If the registry is private, connect one
-						first or the chart won&apos;t pull.
-					</>
-				)}
+				No chart repo on this environment serves{" "}
+				<span className="font-mono">{host}</span>.{" "}
+				{selectable.length > 0
+					? "Add one from the Add menu (Chart repository) so the pull can authenticate — unless the registry is public."
+					: "If the registry is private, connect a chart-repo connector first or the chart won't pull."}
 			</span>
 		</p>
 	);

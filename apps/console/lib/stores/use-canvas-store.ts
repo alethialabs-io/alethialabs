@@ -13,7 +13,6 @@ import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo-charts";
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import type { HelmRegistryItem } from "@/lib/connectors/helm-registry-derive";
 import {
 	NODE_REGISTRY,
 	SINGLETON_KINDS,
@@ -337,14 +336,6 @@ interface CanvasStore {
 	 * the external cards; empty when there is no BYO-IaC source or it exports none. */
 	iacOutputs: string[];
 	setIacOutputs: (outputs: string[]) => void;
-	/**
-	 * Append derived chart-repo selections that aren't on the graph yet (Surface 1's auto-derive).
-	 * Unlike the `set*Nodes` loaders these ARE staged changes — a chart repo is form state that
-	 * persists on deploy — so they land in the Pending Changes diff where the user can see (and undo)
-	 * what was inferred. Existing rows are never touched: a row the user configured by hand outranks
-	 * anything we can infer.
-	 */
-	addHelmRegistries: (rows: HelmRegistryItem[]) => void;
 	/** Replace all marketplace add-on nodes (out-of-band; not a staged change). */
 	setAddonNodes: (
 		addons: {
@@ -540,28 +531,6 @@ export const useCanvasStore = create<CanvasStore>()(
 				}));
 				const next = [...nonChart, ...chartNodes];
 				set({ nodes: next, edges: deriveEdges(next) });
-			},
-
-			addHelmRegistries: (rows) => {
-				const { nodes } = get();
-				const taken = new Set(
-					nodes
-						.filter((n) => n.data.kind === "helm_registry")
-						.map((n) => configName(n.data))
-						.filter((v): v is string => typeof v === "string"),
-				);
-				const fresh = rows.filter((r) => !taken.has(r.name));
-				if (fresh.length === 0) return;
-				get().commit();
-				// Off-board (canvas-flow never draws them), so the position is bookkeeping only.
-				const added: CanvasNode[] = fresh.map((row, i) => ({
-					id: newId("helm_registry"),
-					type: "helm_registry",
-					position: { x: 900, y: 900 + i * 80 },
-					data: buildNodeData("helm_registry", { ...row }, null, null),
-				}));
-				const next = [...nodes, ...added];
-				set({ nodes: next, edges: deriveEdges(next), dirty: true });
 			},
 
 			setChartWorkloadNodes: (workloads) => {

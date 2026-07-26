@@ -3,7 +3,7 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-derive";
+import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
 import { slugify } from "@/lib/slug";
 import {
 	environmentLifecycle,

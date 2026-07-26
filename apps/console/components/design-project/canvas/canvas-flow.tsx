@@ -107,16 +107,14 @@ export function CanvasFlow() {
 	const iacGoverned = useEnvironmentStatus().iac !== null;
 
 	// Visibility layers hide whole node groups; connections toggle hides all edges. The project root
-	// (data anchor: name/region/core identity), the cluster + network (env-level substrate, edited
-	// as settings) and the chart repos (credential plumbing, edited in the Chart Repos sheet) are
-	// never drawn — they persist as hidden store nodes so graphToForm/the deploy snapshot are
-	// byte-identical. Edges to/from a hidden node are dropped so none dangle.
+	// (data anchor: name/region/core identity) and the cluster + network (env-level substrate, edited
+	// as settings) are never drawn — they persist as hidden store nodes so graphToForm/the deploy
+	// snapshot are byte-identical. Edges to/from a hidden node are dropped so none dangle.
 	const designNodes = nodes.filter(
 		(n) =>
 			n.data.kind !== "project" &&
 			n.data.kind !== "cluster" &&
 			n.data.kind !== "network" &&
-			n.data.kind !== "helm_registry" &&
 			!hiddenKinds.includes(n.data.kind) &&
 			!(iacGoverned && !OUT_OF_BAND.has(n.data.kind)),
 	);
