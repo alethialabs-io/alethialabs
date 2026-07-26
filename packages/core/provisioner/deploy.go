@@ -936,6 +936,36 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			}
 			desiredHelmRepoCreds = append(desiredHelmRepoCreds, s.Name)
 		}
+		// KEYLESS OCI ECR chart repos (#1185): ECR issues a ~12h token, so there is no static
+		// password to seed above. Instead, for each connected ECR helm_registry, render + apply a
+		// standalone in-cluster refresher (the runner's `helm-repo-token` loop under the tofu
+		// helm-repo-pull IRSA) that mints + patches the repo-helm-<hash> Secret's credentials on a
+		// loop. Dark by default: only ALETHIA_XACCT_HELM_ECR_ENABLED=true renders anything.
+		// Fail-closed: a missing pull-identity output means the refresher is NOT applied (the private
+		// chart pull just can't authenticate — surfaced, not silent), never a half-wired refresher.
+		// Non-fatal like the static path. Each target's placeholder Secret is added to
+		// desiredHelmRepoCreds so the prune below keeps it; the refresher unit names feed
+		// PruneHelmRepoRefreshers.
+		var desiredHelmRepoRefreshers []string
+		if os.Getenv("ALETHIA_XACCT_HELM_ECR_ENABLED") == "true" {
+			irsa, _ := result.Outputs["helm_repo_pull_irsa_arn"].(string)
+			res := renderKeylessHelmRefreshers(vc, irsa, os.Getenv("ALETHIA_RUNNER_IMAGE"))
+			if res.SkippedTargets != nil {
+				fmt.Fprintf(stderr, "Warning: some keyless Helm ECR targets were skipped: %v\n", res.SkippedTargets)
+			}
+			switch {
+			case res.Skip != "":
+				fmt.Fprintln(stderr, "Warning: "+res.Skip)
+			case res.Manifest != "":
+				if applyErr := argocd.ApplyManifest(res.Manifest, stdout, stderr); applyErr != nil {
+					fmt.Fprintf(stderr, "Warning: could not apply keyless Helm ECR refreshers: %v\n", applyErr)
+				} else {
+					desiredHelmRepoCreds = append(desiredHelmRepoCreds, res.DesiredSecrets...)
+					desiredHelmRepoRefreshers = append(desiredHelmRepoRefreshers, res.DesiredRefreshers...)
+					fmt.Fprintf(stdout, "Applied %d keyless Helm ECR chart-repo refresher(s)\n", len(res.DesiredRefreshers))
+				}
+			}
+		}
 		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
 		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
@@ -1015,6 +1045,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// likewise owned by no Application. Desired = the repos seeded above (empty when none connected),
 		// so switching or removing a helm_registry connector cleans up the stale credential.
 		argocd.PruneHelmRepoCredentials(desiredHelmRepoCreds, stdout, stderr)
+		// And the keyless OCI ECR refresher (#1185) unit — Deployment/Role/RoleBinding — of any
+		// deselected ECR helm_registry (owned by no Application; its placeholder Secret is swept by the
+		// prune above). Desired = the refreshers applied above (empty when none / flag off), so removing
+		// an ECR chart-repo connector tears its refresher down. The shared KSA is left in place.
+		argocd.PruneHelmRepoRefreshers(desiredHelmRepoRefreshers, stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//

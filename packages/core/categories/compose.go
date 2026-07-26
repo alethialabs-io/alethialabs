@@ -182,6 +182,40 @@ func Compose(
 		}
 	}
 
+	// ── Keyless OCI ECR Helm chart repos (#1185) ──
+	// ECR issues a ~12h token, so a connected ECR chart repo has NO static credential (no tofu module,
+	// no seeded Secret). When enabled, collect the connected ECR helm_registry targets and set the
+	// SEPARATE helm-repo pull guards (they activate the helm-repo-pull IRSA; they do NOT touch
+	// registry_provider / secrets_provider — a Helm pull identity is additive). Dark by default: with the
+	// flag off no tfvars are written, so the plan is byte-identical. The refresher itself is applied
+	// post-apply (deploy.go), not a tofu module.
+	if os.Getenv("ALETHIA_XACCT_HELM_ECR_ENABLED") == "true" {
+		targets, err := KeylessHelmRepoTargets(vc)
+		if err != nil {
+			fmt.Fprintf(log, "Warning: some keyless Helm ECR targets were skipped: %v\n", err)
+		}
+		var roleARNs []string
+		publicEnabled := false
+		for _, t := range targets {
+			if t.Public {
+				publicEnabled = true
+				continue
+			}
+			if t.TargetRoleArn != "" {
+				roleARNs = append(roleARNs, t.TargetRoleArn)
+			}
+		}
+		if len(roleARNs) > 0 {
+			tfvars["helm_repo_pull_target_role_arns"] = roleARNs
+		}
+		if publicEnabled {
+			tfvars["helm_repo_pull_public_enabled"] = true
+		}
+		if len(roleARNs) > 0 || publicEnabled {
+			fmt.Fprintf(log, "Keyless Helm ECR: %d private target(s) + public=%v — pull identity via helm-repo-pull IRSA (native registry untouched)\n", len(roleARNs), publicEnabled)
+		}
+	}
+
 	if len(modules) == 0 {
 		return 0, nil
 	}

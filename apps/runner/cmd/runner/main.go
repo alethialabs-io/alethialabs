@@ -65,6 +65,19 @@ func main() {
 		return
 	}
 
+	// Keyless cross-account OCI Helm chart-repo refresher mode (#1185): the helm_registry analogue of
+	// registry-token — as a standalone in-cluster Deployment, mint a short-lived ECR token from the pod's
+	// Workload Identity (assuming the target-account role, or reading ECR Public under the cluster's own
+	// identity) and keep the repo-helm-<hash> ArgoCD repo-cred Secret fresh. Long-running (loops until
+	// SIGTERM), so handled before the normal runner boot.
+	if len(os.Args) > 1 && os.Args[1] == "helm-repo-token" {
+		if err := agent.RunHelmRepoToken(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "helm-repo-token error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container-sandbox child mode: this process was re-exec'd INSIDE a per-job sandbox
 	// container to run one untrusted stage. It has an allowlisted env only (no runner
 	// token / storage keys / bootstrap token), so it must run the stage and exit BEFORE
