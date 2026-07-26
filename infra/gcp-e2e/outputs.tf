@@ -7,7 +7,7 @@ output "e2e_gcp_wif_provider" {
 }
 
 output "e2e_gcp_sa_email" {
-  description = "The e2e provisioner service account email. Set as the repo Actions VARIABLE E2E_GCP_SA_EMAIL (auth `service_account`). NOTE: the workflow reads it from vars.E2E_GCP_SERVICE_ACCOUNT — set BOTH the E2E_GCP_WIF_PROVIDER gate var and the SA var."
+  description = "The e2e provisioner service account email. Set as the repo Actions VARIABLE E2E_GCP_SA_EMAIL — e2e-nightly.yml reads exactly `vars.E2E_GCP_SA_EMAIL` and passes it to google-github-actions/auth as `service_account`. Both this AND the E2E_GCP_WIF_PROVIDER gate var must be set: the gate only checks the provider var, so setting that one alone enables the leg and then fails it with an empty service_account. See docs/testing/e2e-nightly-enablement.md."
   value       = google_service_account.e2e.email
 }
 
