@@ -46,13 +46,13 @@ jobs:
           echo "MIRROR_TAG=v$VER" >> "$GITHUB_ENV"
 
       - name: Checkout monorepo @ the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ env.CLI_TAG }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           cache-dependency-path: apps/cli/go.sum
@@ -61,7 +61,7 @@ jobs:
       # token so each is least-scoped.
       - name: Mint alethia-cli token (GitHub App)
         id: cli_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -71,7 +71,7 @@ jobs:
       # Token for the Homebrew tap + Scoop bucket (formula/manifest pushes).
       - name: Mint tap token (GitHub App)
         id: tap_token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -132,20 +132,20 @@ jobs:
           fi
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run GoReleaser (publishes to alethia-cli)
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -160,7 +160,7 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ env.MIRROR_TAG }}
 
       - name: Configure AWS credentials (OIDC — read the release bearer)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
           aws-region: eu-central-1
