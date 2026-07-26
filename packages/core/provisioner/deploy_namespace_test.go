@@ -23,9 +23,9 @@ func TestSelectPlacementPath(t *testing.T) {
 		{"dedicated aws", types.PlacementModeDedicated, "aws", placementDedicated},
 		{"dedicated gcp", types.PlacementModeDedicated, "gcp", placementDedicated},
 		{"namespace aws → activated", types.PlacementModeNamespace, "aws", placementNamespaceAWS},
+		{"namespace gcp → activated", types.PlacementModeNamespace, "gcp", placementNamespaceAWS},
 		// Only clouds in namespaceRemintProviders activate; the rest fail closed with a documented,
-		// cloud-named reason. Each flips to placementNamespaceAWS as its lane lands (#1127/#1128/#1129).
-		{"namespace gcp → fail closed", types.PlacementModeNamespace, "gcp", placementUnactivated},
+		// cloud-named reason. Each flips as its mint + identity lane lands (#1128/#1129).
 		{"namespace azure → fail closed", types.PlacementModeNamespace, "azure", placementUnactivated},
 		{"namespace alibaba → fail closed", types.PlacementModeNamespace, "alibaba", placementUnactivated},
 		{"namespace hetzner → fail closed (permanent exclusion)", types.PlacementModeNamespace, "hetzner", placementUnactivated},
@@ -120,12 +120,12 @@ func TestMintClusterOutputs(t *testing.T) {
 func TestUnactivatedPlacementError(t *testing.T) {
 	// namespace on a non-aws cloud names the cloud and the per-cloud reason (parity is documented, not
 	// silent) and points at aws as the working cloud.
-	nsErr := unactivatedPlacementError(types.PlacementModeNamespace, "gcp")
+	nsErr := unactivatedPlacementError(types.PlacementModeNamespace, "azure")
 	if nsErr == nil {
 		t.Fatal("expected error")
 	}
 	msg := nsErr.Error()
-	for _, want := range []string{"namespace", "gcp", "aws"} {
+	for _, want := range []string{"namespace", "azure", "aws"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("namespace error %q missing %q", msg, want)
 		}
@@ -145,24 +145,26 @@ func TestUnactivatedPlacementError(t *testing.T) {
 }
 
 func TestNamespaceRemintSeam(t *testing.T) {
-	// The allowlist is the single activation control: aws is wired today; the parity clouds and the
-	// permanent hetzner exclusion are not (they flip on as #1127/#1128/#1129 land).
-	if !namespaceRemintWired("aws") {
-		t.Error("namespaceRemintWired(aws) = false, want true (aws-first activation)")
+	// The allowlist is the single activation control: aws + gcp are wired today (mint + per-namespace
+	// identity); azure/alibaba and the permanent hetzner exclusion are not (they flip on as #1128/#1129 land).
+	for _, p := range []string{"aws", "gcp"} {
+		if !namespaceRemintWired(p) {
+			t.Errorf("namespaceRemintWired(%q) = false, want true (activated)", p)
+		}
 	}
-	for _, p := range []string{"gcp", "azure", "alibaba", "hetzner", "digitalocean", ""} {
+	for _, p := range []string{"azure", "alibaba", "hetzner", "digitalocean", ""} {
 		if namespaceRemintWired(p) {
 			t.Errorf("namespaceRemintWired(%q) = true, want false (not yet wired)", p)
 		}
 	}
 
 	// The fail-closed error is cloud-named and points at the follow-ups (parity is documented, never
-	// silent).
-	err := namespaceRemintNotWired("gcp")
+	// silent). alibaba is still unwired (aws + gcp are activated).
+	err := namespaceRemintNotWired("alibaba")
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"gcp", "aws", "#1127", "hetzner"} {
+	for _, want := range []string{"alibaba", "aws", "#1128", "hetzner"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("namespaceRemintNotWired error %q missing %q", err.Error(), want)
 		}
@@ -170,13 +172,19 @@ func TestNamespaceRemintSeam(t *testing.T) {
 
 	// The mint seam fails closed for an unwired cloud BEFORE touching the CloudProvider — a nil provider
 	// is safe precisely because the guard returns first (defence-in-depth behind selectPlacementPath).
-	if err := mintNamespaceKubeAccess(context.Background(), nil, nil, nil, "gcp", "some-cluster", io.Discard); err == nil {
-		t.Error("mintNamespaceKubeAccess(gcp) = nil, want fail-closed error (re-mint not wired)")
+	if err := mintNamespaceKubeAccess(context.Background(), nil, nil, nil, "alibaba", "some-cluster", io.Discard); err == nil {
+		t.Error("mintNamespaceKubeAccess(alibaba) = nil, want fail-closed error (re-mint not wired)")
 	}
 
-	// The identity seam fails closed for an unwired cloud (default case) — no AWS calls, no silent no-op.
-	if err := provisionAndBindNamespaceIdentity(context.Background(), "azure", "eu-west-1", "some-cluster", "ns", io.Discard, io.Discard); err == nil {
-		t.Error("provisionAndBindNamespaceIdentity(azure) = nil, want fail-closed error (identity not wired)")
+	// The identity seam fails closed for an unwired cloud (default case) — no cloud calls, no silent no-op.
+	if err := provisionAndBindNamespaceIdentity(context.Background(), nil, "alibaba", "eu-west-1", nil, "some-cluster", "ns", io.Discard, io.Discard); err == nil {
+		t.Error("provisionAndBindNamespaceIdentity(alibaba) = nil, want fail-closed error (identity not wired)")
+	}
+
+	// gcp namespace identity needs an injected provisioner — a nil one is a runner wiring bug, fail closed
+	// (never a silent skip that would leave the tenant SA with the cluster node role).
+	if err := provisionAndBindNamespaceIdentity(context.Background(), nil, "gcp", "us-central1", nil, "some-cluster", "ns", io.Discard, io.Discard); err == nil {
+		t.Error("provisionAndBindNamespaceIdentity(gcp, nil provisioner) = nil, want a wiring-bug error")
 	}
 }
 

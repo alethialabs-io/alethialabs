@@ -64,6 +64,33 @@ func resolveGKEConn(ctx context.Context, config *types.ProjectConfig, clusterNam
 	return conn.Endpoint, conn.CAData, nil
 }
 
+// newNamespaceIdentityProvisioner returns the runner's provisioner.NamespaceIdentityProvisioner: it
+// provisions a per-namespace tenant cloud identity LIVE at deploy time via a keyless IAM-WRITE the runner
+// performs (the stdlib REST provisioners in packages/core/cloud take the runner's injected token), keeping
+// the gcp/azure/alibaba auth SDKs out of packages/core. aws never reaches this (its identity is
+// provisioned in-core via the AWS IAM SDK).
+func newNamespaceIdentityProvisioner() provisioner.NamespaceIdentityProvisioner {
+	return func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) (string, error) {
+		switch providerSlug {
+		case "gcp":
+			return provisionGKENamespaceIdentity(ctx, config, clusterName, namespace)
+		default:
+			return "", fmt.Errorf("namespace identity: no provisioner is wired for provider %q — namespace placement on it is not activated", providerSlug)
+		}
+	}
+}
+
+// provisionGKENamespaceIdentity mints a keyless WIF token and get-or-creates the per-namespace GSA + its
+// Workload-Identity binding (cloud.ProvisionGKENamespaceIdentity), returning the GSA email. project =
+// config.CloudAccountID.
+func provisionGKENamespaceIdentity(ctx context.Context, config *types.ProjectConfig, clusterName, namespace string) (string, error) {
+	token, _, err := mintGCPToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("mint GCP token for namespace identity: %w", err)
+	}
+	return cloud.ProvisionGKENamespaceIdentity(ctx, nil, token, config.CloudAccountID, clusterName, namespace)
+}
+
 // resolveAKSConn resolves an AKS cluster's control-plane endpoint + base64 CA BY NAME via a keyless
 // federated-identity ARM token and ARM REST (cloud.ResolveAKSClusterConn). The Fabric's resource group
 // is not on a placed env's snapshot (its project/env differ from the Fabric's), so it is looked up
