@@ -6,6 +6,7 @@ package argocd
 import (
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -71,6 +72,18 @@ type InfraFacts struct {
 	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
 	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
 	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
+
+	// ── Cross-account keyless secret manager (*-xacct) ──────────
+	// The ADDITIONAL foreign-account secret store the project selected (AWS SM / GCP SM / Azure KV /
+	// Alibaba KMS in a DIFFERENT account than the cluster), layered on top of the native store. Built
+	// from the connector provider_config (categories.DominantKeylessSecretTarget), NOT tofu outputs —
+	// the cross-account read is performed by ESO itself. Empty → no cross-account store renders
+	// (fail-closed). The store renders only when BOTH these AND the cloud's external-secrets identity
+	// fact above are present. An identity/resource REFERENCE, never a key.
+	SecretsXacctRef             string // aws/alibaba: target role ARN the ESO identity assumes; azure: target Key Vault URL
+	SecretsXacctRegion          string // aws, alibaba
+	SecretsXacctProjectID       string // gcp: the target project the store reads
+	SecretsXacctOIDCProviderRef string // alibaba only: the target-account RAM OIDC provider ARN (see KeylessSecretTarget)
 }
 
 // DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
@@ -196,6 +209,17 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 	default:
 		// Unknown/connect-only clouds (digitalocean, civo): common facts only — never
 		// fall through to another cloud's output keys.
+	}
+
+	// Cross-account keyless secret manager: the target lives in the connector's provider_config, not the
+	// tofu outputs (ESO performs the cross-account read). A misconfigured target was already rejected
+	// fail-closed by Compose pre-plan; here a nil/error target simply renders no cross-account store
+	// (also fail-closed). Guard on the cluster cloud so a stray cross-cloud target never renders.
+	if t, err := categories.DominantKeylessSecretTarget(vc); err == nil && t != nil && t.Provider == f.Provider {
+		f.SecretsXacctRef = t.TargetRef
+		f.SecretsXacctRegion = t.Region
+		f.SecretsXacctProjectID = t.TargetProjectID
+		f.SecretsXacctOIDCProviderRef = t.TargetOIDCProviderRef
 	}
 
 	return f
