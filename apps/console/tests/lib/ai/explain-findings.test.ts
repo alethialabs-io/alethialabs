@@ -12,6 +12,7 @@ import {
 	explainFindings,
 	parseExplanations,
 } from "@/lib/ai/explain-findings";
+import type { CompatReport } from "@/types/compat.types";
 import type { VerifyControlResult, VerifyReport } from "@/types/jsonb.types";
 
 function control(
@@ -105,5 +106,31 @@ describe("explainFindings", () => {
 		});
 		expect(seenPrompt).toContain("A");
 		expect(out[0]).toMatchObject({ id: "A", explanation: "e", remediation: "r" });
+	});
+
+	// The explainer is report-agnostic: a compat report (no `provider`/`frameworks`,
+	// same control surface) flows through the same path as a verify report (#1219).
+	it("explains a compat report's failing controls too", async () => {
+		const r: CompatReport = {
+			verdict: "fail",
+			catalog_version: "compat-test",
+			controls: [
+				{
+					id: "COMPAT-001",
+					title: "k8s ↔ cloud version",
+					severity: "high",
+					status: "fail",
+					findings: [{ address: "cluster.k8s", message: "1.35 unsupported on eks" }],
+				},
+				{ id: "COMPAT-ADDON", title: "add-on pin", severity: "low", status: "pass" },
+			],
+			summary: { pass: 1, fail: 1, warn: 0, not_evaluable: 0 },
+		};
+		expect(explainableControls(r).map((c) => c.id)).toEqual(["COMPAT-001"]);
+		const out = await explainFindings(r, async () =>
+			JSON.stringify([{ id: "COMPAT-001", explanation: "e", remediation: "r" }]),
+		);
+		expect(out).toHaveLength(1);
+		expect(out[0]).toMatchObject({ id: "COMPAT-001", explanation: "e", remediation: "r" });
 	});
 });
