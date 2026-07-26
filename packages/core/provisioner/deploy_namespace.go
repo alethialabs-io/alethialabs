@@ -81,7 +81,7 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 // silent omission). namespace is activated on aws; other clouds + vcluster are tracked follow-ups.
 func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 	if pm == types.PlacementModeNamespace {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster, wired for aws (EKS DescribeCluster) today; gcp/azure/alibaba need output-based kubeconfig mint helpers and hetzner-talos a Fabric-create-time kubeconfig (per-cloud follow-ups). 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA) and gcp (GKE + Workload Identity) today; azure/alibaba are per-cloud follow-ups and hetzner-talos needs a Fabric-create-time kubeconfig. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	if pm == types.PlacementModeVcluster {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get) and azure (AKS ManagedClusters) host re-mint today; alibaba is a per-cloud follow-up (#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
@@ -104,6 +104,7 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 // needs a Fabric-create-time persisted kubeconfig instead (a console-snapshot change, tracked separately).
 var namespaceRemintProviders = map[string]bool{
 	"aws": true,
+	"gcp": true,
 }
 
 // namespaceRemintWired reports whether provider's output-free namespace re-mint + identity are activated.
@@ -125,7 +126,7 @@ var namespaceClusterNameOutputKey = map[string]string{
 // namespaceRemintNotWired is the fail-closed error for a cloud whose namespace re-mint seam isn't wired —
 // an explicit, cloud-named exclusion (parity is documented, never a silent omission).
 func namespaceRemintNotWired(provider string) error {
-	return fmt.Errorf("namespace placement: output-free keyless re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster) today; gcp/azure/alibaba are per-cloud follow-ups (#1127/#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig)", provider)
+	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA) and gcp (GKE clusters.get + Workload Identity) today; azure/alibaba are per-cloud follow-ups (#1128/#1129) and hetzner-talos is a permanent exclusion (no cloud API to re-mint — needs a Fabric-create-time kubeconfig)", provider)
 }
 
 // namespaceClusterConnKeys maps a provider whose ConfigureKubeconfig reads the control-plane endpoint +
@@ -198,7 +199,7 @@ func mintNamespaceKubeAccess(ctx context.Context, provider cloud.CloudProvider, 
 // the default SA; gcp/azure/alibaba (GCP Workload Identity, Azure federated identity, Alibaba RRSA) are
 // the #1127/#1128/#1129 seams. Fail-closed default — a cloud only reaches the default if it's activated
 // in namespaceRemintProviders but its identity case is unimplemented (parity is never a silent no-op).
-func provisionAndBindNamespaceIdentity(ctx context.Context, providerSlug, region, clusterName, ns string, stdout, stderr io.Writer) error {
+func provisionAndBindNamespaceIdentity(ctx context.Context, identity NamespaceIdentityProvisioner, providerSlug, region string, config *types.ProjectConfig, clusterName, ns string, stdout, stderr io.Writer) error {
 	switch providerSlug {
 	case "aws":
 		roleARN, idErr := coreaws.ProvisionNamespaceIdentity(ctx, region, clusterName, ns)
@@ -209,6 +210,24 @@ func provisionAndBindNamespaceIdentity(ctx context.Context, providerSlug, region
 			return fmt.Errorf("provisioned per-namespace role ARN %q is malformed", roleARN)
 		}
 		if err := bindNamespaceIdentity(ns, roleARN, stdout, stderr); err != nil {
+			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
+		}
+		return nil
+	case "gcp":
+		// GCP Workload Identity: the runner-injected provisioner get-or-creates a zero-perm per-namespace
+		// GSA + the roles/iam.workloadIdentityUser binding for this namespace's KSA principal (a live IAM
+		// write, done keyless by the runner), returning the GSA email. Bind the KSA to it.
+		if identity == nil {
+			return fmt.Errorf("namespace placement: provider %q needs an injected NamespaceIdentity provisioner but none was provided — this is a runner wiring bug", providerSlug)
+		}
+		gsaEmail, idErr := identity(ctx, providerSlug, config, clusterName, ns)
+		if idErr != nil {
+			return fmt.Errorf("failed to provision per-namespace identity for %q: %w", ns, idErr)
+		}
+		if !cloud.IsValidGSAEmail(gsaEmail) {
+			return fmt.Errorf("provisioned per-namespace GSA email %q is malformed", gsaEmail)
+		}
+		if err := bindGKENamespaceIdentity(ns, gsaEmail, stdout, stderr); err != nil {
 			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
 		}
 		return nil
@@ -403,7 +422,7 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	// Identity / Azure federated / Alibaba RRSA are the #1127/#1128/#1129 follow-ups (cloud parity is a
 	// hard rule). Runs AFTER the guardrail bundle (which creates the default SA) and BEFORE the app, so
 	// pods pick up the binding on sync.
-	if err := provisionAndBindNamespaceIdentity(ctx, params.Provider, vc.Region, clusterName, ns, stdout, stderr); err != nil {
+	if err := provisionAndBindNamespaceIdentity(ctx, params.NamespaceIdentity, params.Provider, vc.Region, vc, clusterName, ns, stdout, stderr); err != nil {
 		return &result, err
 	}
 
@@ -467,6 +486,18 @@ func bindNamespaceIdentity(ns, roleARN string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace identity...\n", ns)
 	return executeCommand(
 		fmt.Sprintf("kubectl annotate serviceaccount default -n %s eks.amazonaws.com/role-arn=%s --overwrite", ns, roleARN),
+		".", nil, stdout, stderr,
+	)
+}
+
+// bindGKENamespaceIdentity annotates the namespace's default ServiceAccount with the per-namespace GSA
+// email (`iam.gke.io/gcp-service-account`), so a pod using it assumes ONLY the tenant's zero-perm GSA via
+// GKE Workload Identity. `ns` is a validated DNS-1123 label and `gsaEmail` passed IsValidGSAEmail, so
+// neither can inject the `bash -c` shell this runs through. `--overwrite` keeps it idempotent.
+func bindGKENamespaceIdentity(ns, gsaEmail string, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace GCP identity...\n", ns)
+	return executeCommand(
+		fmt.Sprintf("kubectl annotate serviceaccount default -n %s iam.gke.io/gcp-service-account=%s --overwrite", ns, gsaEmail),
 		".", nil, stdout, stderr,
 	)
 }
