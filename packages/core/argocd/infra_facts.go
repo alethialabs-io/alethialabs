@@ -85,6 +85,16 @@ type InfraFacts struct {
 	SecretsXacctProjectID       string // gcp: the target project the store reads
 	SecretsXacctOIDCProviderRef string // alibaba only: the target-account RAM OIDC provider ARN (see KeylessSecretTarget)
 	SecretsXacctExternalID      string // aws only, OPTIONAL: the sts:ExternalId the target role's trust policy requires (see KeylessSecretTarget)
+
+	// ── Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic Vault-compatible) ──
+	// The credential-based external store the project selected via the `secrets` connector, that ESO
+	// reads IN-CLUSTER with a STATIC token seeded into an in-cluster Secret (categories.SecretsSaaSStore).
+	// Cloud-AGNOSTIC (renders on any provider incl. Hetzner, which has no native store), and REPLACES
+	// the native store as the secret source. nil → none selected, or the store has no first-class ESO
+	// runtime-read path on the pinned chart (infisical / 1Password — documented exclusions). Built from
+	// the connector provider_config + a credential-presence check (fail-closed); the token itself is
+	// seeded out-of-band by the runner and NEVER lives on the facts (facts render into manifests).
+	SecretsSaaS *categories.SecretsSaaSStore
 }
 
 // DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
@@ -222,6 +232,15 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.SecretsXacctProjectID = t.TargetProjectID
 		f.SecretsXacctOIDCProviderRef = t.TargetOIDCProviderRef
 		f.SecretsXacctExternalID = t.TargetExternalID
+	}
+
+	// Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic Vault-compatible). Cloud-agnostic
+	// and credential-based: DominantSecretsSaaSStore runs the provider's Validate over the job's
+	// ConnectorCredentials, so a nil/error result means the store's token/config is absent — render no
+	// store (fail-closed), which also stops us pointing an ESO store at a Secret the seeder would refuse
+	// to write. The token is seeded separately by the runner; only the non-secret descriptor lands here.
+	if s, err := categories.DominantSecretsSaaSStore(vc); err == nil && s != nil {
+		f.SecretsSaaS = s
 	}
 
 	return f
