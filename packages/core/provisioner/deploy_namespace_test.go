@@ -29,7 +29,10 @@ func TestSelectPlacementPath(t *testing.T) {
 		{"namespace azure → fail closed", types.PlacementModeNamespace, "azure", placementUnactivated},
 		{"namespace alibaba → fail closed", types.PlacementModeNamespace, "alibaba", placementUnactivated},
 		{"namespace hetzner → fail closed (permanent exclusion)", types.PlacementModeNamespace, "hetzner", placementUnactivated},
-		{"vcluster aws → fail closed", types.PlacementModeVcluster, "aws", placementUnactivated},
+		// vcluster is activated aws-first (#1231); other clouds fail closed until their host re-mint lands.
+		{"vcluster aws → activated", types.PlacementModeVcluster, "aws", placementVcluster},
+		{"vcluster gcp → fail closed", types.PlacementModeVcluster, "gcp", placementUnactivated},
+		{"vcluster hetzner → fail closed (permanent exclusion)", types.PlacementModeVcluster, "hetzner", placementUnactivated},
 		{"unknown mode → fail closed", types.PlacementMode("bogus"), "aws", placementUnactivated},
 	}
 	for _, tc := range cases {
@@ -55,14 +58,16 @@ func TestUnactivatedPlacementError(t *testing.T) {
 		}
 	}
 
-	// vcluster explains the mode isn't activated at all (tracked follow-up), never mentions a specific
-	// cloud being the fix.
-	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "aws")
+	// vcluster on a non-aws cloud names the cloud and the per-cloud reason (parity is documented, not
+	// silent) and points at aws as the working cloud — vcluster is activated aws-first (#1231).
+	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "gcp")
 	if vcErr == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(vcErr.Error(), "vcluster") {
-		t.Errorf("vcluster error %q missing 'vcluster'", vcErr.Error())
+	for _, want := range []string{"vcluster", "gcp", "aws"} {
+		if !strings.Contains(vcErr.Error(), want) {
+			t.Errorf("vcluster error %q missing %q", vcErr.Error(), want)
+		}
 	}
 }
 

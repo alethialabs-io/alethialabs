@@ -37,8 +37,13 @@ const (
 	// because the RunDeployV2 dispatch in deploy.go (outside this file / this issue's scope) switches
 	// on it; renaming is a follow-up cleanup, not a behaviour change.
 	placementNamespaceAWS
-	// placementUnactivated is a placement the runner cannot deploy yet (namespace on a cloud whose
-	// keyless re-mint isn't wired, or vcluster) — fail closed rather than run the full-cluster tofu.
+	// placementVcluster provisions a virtual cluster (vcluster) on an EXISTING shared Fabric cluster and
+	// delivers the app onto it via ArgoCD destination.name — the activated `vcluster` path (#1231), no
+	// tofu. Like placementNamespaceAWS it is gated per-cloud (vclusterRemintProviders); routed by
+	// selectPlacementPath and handled by runVClusterDeploy (deploy_vcluster.go).
+	placementVcluster
+	// placementUnactivated is a placement the runner cannot deploy yet (namespace/vcluster on a cloud
+	// whose keyless re-mint isn't wired) — fail closed rather than run the full-cluster tofu.
 	placementUnactivated
 )
 
@@ -58,7 +63,12 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 		}
 		return placementUnactivated
 	case types.PlacementModeVcluster:
-		// vcluster exec is P2 (#960) — not activated on any cloud yet.
+		// vcluster is activated per-cloud as each cloud's output-free host re-mint lands
+		// (vclusterRemintProviders, aws-first). A cloud outside it fails closed rather than running the
+		// full-cluster tofu.
+		if vclusterRemintWired(provider) {
+			return placementVcluster
+		}
 		return placementUnactivated
 	default:
 		// any unrecognized/future mode → fail closed.
@@ -73,7 +83,10 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 	if pm == types.PlacementModeNamespace {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster, wired for aws (EKS DescribeCluster) today; gcp/azure/alibaba need output-based kubeconfig mint helpers and hetzner-talos a Fabric-create-time kubeconfig (per-cloud follow-ups). 'dedicated' provisions on every cloud", pm, provider)
 	}
-	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud) and 'namespace' (aws) provision today; vcluster is tracked (#960)", pm)
+	if pm == types.PlacementModeVcluster {
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster host re-mint) today; gcp/azure/alibaba are per-cloud follow-ups (#1127/#1128/#1129) and hetzner-talos is a permanent exclusion. 'dedicated' provisions on every cloud", pm, provider)
+	}
+	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud), 'namespace' (aws) and 'vcluster' (aws) provision today", pm)
 }
 
 // namespaceRemintProviders is the allowlist of clouds whose OUTPUT-FREE keyless re-mint (resolve an
