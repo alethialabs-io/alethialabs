@@ -120,3 +120,82 @@ func TestResolveACKClusterConn_InputValidation(t *testing.T) {
 		t.Error("expected an error for an empty cluster id")
 	}
 }
+
+// TestResolveACKUserKubeconfig_ReturnsRaw asserts the raw `config` is returned verbatim (the string
+// ConfigureKubeconfig writes) and that the short-TTL param is sent.
+func TestResolveACKUserKubeconfig_ReturnsRaw(t *testing.T) {
+	raw := ackKubeconfig("https://1.2.3.4:6443", "BASE64CA==")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != ackUserConfigPath {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("TemporaryDurationMinutes") == "" {
+			t.Errorf("expected a short-lived kubeconfig (TemporaryDurationMinutes), got %q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := json.Marshal(map[string]string{"config": raw})
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	got, err := ResolveACKUserKubeconfig(context.Background(), ackClientTo(srv), "eu-central-1", "ack-1")
+	if err != nil {
+		t.Fatalf("ResolveACKUserKubeconfig: %v", err)
+	}
+	if got != raw {
+		t.Fatalf("kubeconfig not returned verbatim:\n got: %q\nwant: %q", got, raw)
+	}
+}
+
+const ackClustersListPath = "/api/v1/clusters"
+
+// ackClustersHandler serves DescribeClustersV1 with the given cluster rows.
+func ackClustersHandler(t *testing.T, clusters []map[string]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != ackClustersListPath {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := json.Marshal(map[string]interface{}{"clusters": clusters})
+		_, _ = w.Write(body)
+	}
+}
+
+func TestResolveACKClusterID_Success(t *testing.T) {
+	srv := httptest.NewServer(ackClustersHandler(t, []map[string]string{
+		{"cluster_id": "cabc123", "name": "proj-prod", "region_id": "eu-central-1", "state": "running"},
+	}))
+	defer srv.Close()
+	id, err := ResolveACKClusterID(context.Background(), ackClientTo(srv), "eu-central-1", "proj-prod")
+	if err != nil {
+		t.Fatalf("ResolveACKClusterID: %v", err)
+	}
+	if id != "cabc123" {
+		t.Fatalf("cluster id = %q, want cabc123", id)
+	}
+}
+
+func TestResolveACKClusterID_NotFound(t *testing.T) {
+	srv := httptest.NewServer(ackClustersHandler(t, []map[string]string{
+		{"cluster_id": "cother", "name": "someone-else", "region_id": "eu-central-1", "state": "running"},
+	}))
+	defer srv.Close()
+	_, err := ResolveACKClusterID(context.Background(), ackClientTo(srv), "eu-central-1", "proj-prod")
+	if !errors.Is(err, ErrACKClusterNotReady) {
+		t.Fatalf("want ErrACKClusterNotReady when no cluster matches, got %v", err)
+	}
+}
+
+func TestResolveACKClusterID_AmbiguousFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(ackClustersHandler(t, []map[string]string{
+		{"cluster_id": "cone", "name": "proj-prod", "region_id": "eu-central-1", "state": "running"},
+		{"cluster_id": "ctwo", "name": "proj-prod", "region_id": "eu-central-1", "state": "running"},
+	}))
+	defer srv.Close()
+	_, err := ResolveACKClusterID(context.Background(), ackClientTo(srv), "eu-central-1", "proj-prod")
+	if err == nil {
+		t.Fatal("expected a fail-closed error when two clusters share the name")
+	}
+	if errors.Is(err, ErrACKClusterNotReady) {
+		t.Fatal("ambiguity is a hard error, not not-ready")
+	}
+}

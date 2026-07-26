@@ -31,11 +31,11 @@ func TestSelectPlacementPath(t *testing.T) {
 		// hetzner is activated via the persisted-talosconfig Talos mint (no cloud IAM — k8s-native isolation).
 		{"namespace hetzner → activated", types.PlacementModeNamespace, "hetzner", placementNamespaceAWS},
 		// vcluster is activated per-cloud as its host re-mint lands: aws (in-core) + gcp/azure
-		// (runner-injected KubeConnResolver) + hetzner (Talos-API mint). alibaba fails closed until its leg lands.
+		// (runner-injected KubeConnResolver) + alibaba (in-core keyless RRSA) + hetzner (Talos-API mint).
 		{"vcluster aws → activated", types.PlacementModeVcluster, "aws", placementVcluster},
 		{"vcluster gcp → activated", types.PlacementModeVcluster, "gcp", placementVcluster},
 		{"vcluster azure → activated", types.PlacementModeVcluster, "azure", placementVcluster},
-		{"vcluster alibaba → fail closed", types.PlacementModeVcluster, "alibaba", placementUnactivated},
+		{"vcluster alibaba → activated", types.PlacementModeVcluster, "alibaba", placementVcluster},
 		{"vcluster hetzner → activated", types.PlacementModeVcluster, "hetzner", placementVcluster},
 		{"unknown mode → fail closed", types.PlacementMode("bogus"), "aws", placementUnactivated},
 	}
@@ -188,12 +188,13 @@ func TestUnactivatedPlacementError(t *testing.T) {
 	}
 
 	// vcluster on an un-activated cloud names the cloud and the per-cloud reason (parity is documented,
-	// not silent) and points at a working cloud. alibaba is still a follow-up (gcp/azure now activated).
-	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "alibaba")
+	// not silent) and points at a working cloud. hetzner-talos is the permanent exclusion (aws/gcp/azure
+	// and now alibaba are activated).
+	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "hetzner")
 	if vcErr == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"vcluster", "alibaba", "aws"} {
+	for _, want := range []string{"vcluster", "hetzner", "aws"} {
 		if !strings.Contains(vcErr.Error(), want) {
 			t.Errorf("vcluster error %q missing %q", vcErr.Error(), want)
 		}
