@@ -80,9 +80,19 @@ scripts/claim-work.sh --class backend      # loop
   (e.g. its work already merged, or it needs a maintainer decision), **fix the board so the script skips it** —
   `gh issue close <n>` the done one, or `gh issue edit <n> --remove-label class:backend` an un-actionable one —
   don't reach around the script to grab a different issue.
+- **Working a `needs:human` / `class:ui` unit: `scripts/claim-work.sh --issue <n>`.** Those units are excluded
+  from autonomous picking (they await a maintainer decision) but they are NOT exempt from claiming — that was
+  the gap behind #1247: unclaimable meant unprotected, so the only path was the forbidden hand-claim, leaving
+  no lease and nothing to stop a second instance starting the same unit. `--issue` runs the full lock + lease +
+  verify on one named unit; it refuses if the unit is closed, already claimed, or already has a closing PR.
+- **A worktree is leased too, separately from the issue.** `pnpm wt:who` shows holders; another instance cannot
+  write in, remove, or commit from a worktree you hold. See CLAUDE.md → "One worktree per instance". The two
+  leases answer different questions — the issue lease says *who is building this unit*, the worktree lease says
+  *whose files these are right now* — and #1247 needed both.
 - **Lease + reclaim**: the lease comment carries `instance · pid · branch · UTC-timestamp`. Refresh it on each
-  PR push (the worker) — or just let `coordinate.sh` reclaim a unit whose lease is older than `LEASE_TTL` and
-  whose linked PR/branch shows no recent activity. Reclaim = clear assignee + `claimed`, comment "reclaimed".
+  PR push (the worker) — or let `coordinate.sh` reclaim a unit whose lease is older than `LEASE_TTL`. Reclaim
+  skips a unit that already has an **open closing PR** (evidence the holder is alive despite a stale lease) and
+  a unit whose lease timestamp is unreadable. Reclaim = clear assignee + `claimed`, comment "reclaimed".
 - **Migration mutex**: only ONE open issue may hold `mutex:migration` claimed at a time. `claim-work.sh`
   refuses to claim a second. Never run `pnpm -F console db:generate` in two worktrees at once — the drizzle
   snapshot chain is un-mergeable (this is the board-level guard on top of `scripts/db-generate.sh`).
