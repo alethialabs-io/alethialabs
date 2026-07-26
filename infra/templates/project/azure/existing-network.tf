@@ -5,7 +5,9 @@
 # (provision_vnet = true) is untouched: these data sources have count = 0 and the `module.vnet` seam is
 # used as before.
 #
-# NOTE: verify against a real AKS + existing VNet. Assumption: use the VNet's first subnet.
+# NOTE: verify against a real AKS + existing VNet. The subnet is the user's explicit selection
+# (var.subnet_ids, #1352) when supplied; otherwise it falls back to the VNet's first subnet — an
+# arbitrary pick, since azurerm_virtual_network.subnets is an UNORDERED set. Prefer a selection.
 # ARM id shape: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<name>
 
 locals {
@@ -21,7 +23,14 @@ data "azurerm_virtual_network" "existing" {
 }
 
 locals {
-  existing_subnet_name = var.provision_vnet ? "" : try(data.azurerm_virtual_network.existing[0].subnets[0], "")
+  # Prefer the user's explicit subnet selection (#1352). subnet_ids[0] may be a bare subnet name
+  # or a full ARM subnet id (.../subnets/<name>) — take the last path segment so both work. With no
+  # selection, fall back to the VNet's first subnet (arbitrary; the set is unordered).
+  existing_subnet_name = var.provision_vnet ? "" : (
+    length(var.subnet_ids) > 0
+    ? element(split("/", var.subnet_ids[0]), length(split("/", var.subnet_ids[0])) - 1)
+    : try(data.azurerm_virtual_network.existing[0].subnets[0], "")
+  )
 }
 
 data "azurerm_subnet" "existing" {

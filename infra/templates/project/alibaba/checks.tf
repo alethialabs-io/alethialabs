@@ -113,3 +113,24 @@ resource "terraform_data" "compat_k8s_guard" {
     }
   }
 }
+
+# When an existing VPC is used (provision_network = false) its id must be supplied. WARN companion
+# to the fail-closed guard below (#1352).
+check "existing_network_id_present" {
+  assert {
+    condition     = var.provision_network || length(trimspace(var.network_id)) > 0
+    error_message = "provision_network is false (existing VPC) but network_id is empty; supply the existing VPC id."
+  }
+}
+
+# Fail-closed brownfield-subnet gate (#1352): on an existing VPC at least one vSwitch MUST resolve —
+# from the user's var.subnet_ids selection or auto-discovery. An empty list previously indexed
+# local.vswitch_ids[0] out of bounds inside `tofu apply`; this precondition blocks it at plan time.
+resource "terraform_data" "brownfield_subnet_guard" {
+  lifecycle {
+    precondition {
+      condition     = var.provision_network || length(local.vswitch_ids) > 0
+      error_message = "provision_network is false but no vSwitch resolved for VPC '${var.network_id}'. Select subnet_ids, or ensure the existing VPC has at least one vSwitch. Apply blocked fail-closed."
+    }
+  }
+}

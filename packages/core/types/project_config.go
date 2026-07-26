@@ -140,6 +140,12 @@ type ProjectNetworkConfig struct {
 	CIDRBlock        string `json:"cidr_block"`
 	NetworkID        string `json:"network_id"`
 	SingleNatGateway bool   `json:"single_nat_gateway"`
+	// SubnetIDs is the user's explicit brownfield subnet selection (native subnet ids
+	// from cloud inventory). Empty means auto-discover the VPC's subnets — today's
+	// behaviour — so it is backward compatible. Emitted onto the config snapshot only
+	// when non-empty; consumed per-cloud in ProviderTfvars (gcp/azure/alibaba) and in
+	// deploy.go's AWS brownfield subnet classification (#1352).
+	SubnetIDs []string `json:"subnet_ids,omitempty"`
 }
 
 // NodeSize is a cloud-indifferent node capability; the catalog resolver maps it to the

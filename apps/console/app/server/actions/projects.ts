@@ -1197,6 +1197,12 @@ async function buildConfigSnapshot(
 				cidr_block: network?.cidr_block ?? "10.0.0.0/16",
 				network_id: network?.network_id,
 				single_nat_gateway: network?.single_nat_gateway ?? true,
+				// Brownfield subnet selection (#1352) — emit ONLY when non-empty so the key is
+				// absent (not null/[]) when unset, keeping the byte-locked config-snapshot
+				// fixtures green and preserving auto-discover as the default.
+				...(network?.subnet_ids?.length
+					? { subnet_ids: network.subnet_ids }
+					: {}),
 			},
 			cluster: {
 				...resolvePlacement(cluster),
@@ -1972,6 +1978,9 @@ export async function getProjectAsFormData(
 					single_nat_gateway:
 						source.components.network.single_nat_gateway ?? true,
 					network_id: source.components.network.network_id ?? undefined,
+					// Carry the brownfield subnet selection across a clone/duplicate — an
+					// explicit copy is required, else the field is silently dropped (#1352).
+					subnet_ids: source.components.network.subnet_ids ?? [],
 				}
 			: {
 					provision_network: true,
