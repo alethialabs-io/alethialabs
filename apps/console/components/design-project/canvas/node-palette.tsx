@@ -6,7 +6,11 @@ import { ArrowLeft, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { AddonIcon, AddonStatusBadge } from "@/components/addons/addon-visuals";
+import {
+	AddonCompatBadge,
+	AddonIcon,
+	AddonStatusBadge,
+} from "@/components/addons/addon-visuals";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -104,6 +108,13 @@ export function NodePalette({
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const nodes = useCanvasStore((s) => s.nodes);
+	// The env's Kubernetes minor, for the add-on compat badges. Read defensively: a design may
+	// have no cluster yet, and an unset version is an honest `not_evaluable`, never a pass.
+	const clusterK8s = useCanvasStore((s) => {
+		const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
+		const v = c && "cluster_version" in c ? c.cluster_version : null;
+		return typeof v === "string" && v ? v : undefined;
+	});
 	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
 	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
 	const coreProvider = useCanvasStore((s) =>
@@ -284,6 +295,9 @@ export function NodePalette({
 												{a.summary}
 											</div>
 										</div>
+										{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
+										    whose recorded window fits this cluster shows nothing at all. */}
+										<AddonCompatBadge addonId={a.id} k8sVersion={clusterK8s} />
 										{a.install ? (
 											<AddonStatusBadge
 												status={a.install.status}

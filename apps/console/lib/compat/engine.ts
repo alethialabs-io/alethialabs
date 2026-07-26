@@ -111,8 +111,10 @@ function evalComponent(k8s: string | undefined, ref: CompatComponentRef): Compat
 	return c;
 }
 
-/** Checks the cluster Kubernetes minor against an add-on chart's window. */
-function evalAddOn(k8s: string | undefined, ref: CompatAddOnRef): CompatControlResult {
+/** Checks the cluster Kubernetes minor against an add-on chart's window. Exported so the canvas
+ * compat surfaces (#1222) judge one add-on through the SAME code the report does, rather than
+ * reimplementing range math in a component. */
+export function evalAddOn(k8s: string | undefined, ref: CompatAddOnRef): CompatControlResult {
 	const c: CompatControlResult = {
 		id: `COMPAT-ADDON-${ref.id.toUpperCase()}`,
 		title: `add-on ${ref.id} ↔ Kubernetes`,
@@ -177,8 +179,9 @@ function checkK8sRange(
 	return { status: "pass", detail: "" };
 }
 
-/** Renders a [min, max] window for a human message ("1.33+", "≤1.32", "1.34–1.36"). */
-function rangeLabel(min: string, max: string): string {
+/** Renders a [min, max] window for a human message ("1.33+", "≤1.32", "1.34–1.36"). Exported: it is
+ * exactly the string a compat chip should show. */
+export function rangeLabel(min: string, max: string): string {
 	if (min && max) return `${min}–${max}`;
 	if (min) return `${min}+`;
 	if (max) return `≤${max}`;
