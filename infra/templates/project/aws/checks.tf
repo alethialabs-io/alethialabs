@@ -210,3 +210,12 @@ resource "terraform_data" "compat_k8s_guard" {
     }
   }
 }
+
+# Cross-account Secrets Manager (#1262): if aws-sm-xacct is selected, the external-secrets IRSA role
+# needs a target-account role to assume — a missing ARN is a misconfigured connector, so fail loudly.
+check "secrets_xacct_target_configured" {
+  assert {
+    condition     = var.secrets_xacct_provider != "aws-sm-xacct" || var.secrets_xacct_target_role_arn != ""
+    error_message = "secrets_xacct_provider = aws-sm-xacct requires secrets_xacct_target_role_arn (the target-account role the external-secrets operator assumes for cross-account Secrets Manager read)."
+  }
+}
