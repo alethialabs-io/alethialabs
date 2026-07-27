@@ -784,82 +784,12 @@ UPDATE public.project_iac_sources s
    AND s.fabric_id IS NULL
    AND e.fabric_id IS NOT NULL;
 
--- ── project_full: denormalized read model for the CLI config + job-create endpoints.
--- OUTPUT column names match the ProjectConfig wire contract (create_vpc, …);
--- sources the renamed project_* tables. Numerics are cast to float8 so the JSON carries
--- numbers (postgres-js otherwise returns numeric as a string). ──
--- DROP first: CREATE OR REPLACE VIEW cannot rename/reorder existing columns
--- (Postgres 42P16), and this view's output columns change as the schema evolves.
+-- ── project_full: RETIRED. This denormalized, default-env-only read model (a hand-maintained
+-- view + parallel TS type that had to be kept in sync by hand) served only the CLI `project get`.
+-- It was replaced by the TS read layer — lib/queries/cli-config.ts `getCliConfig` → the shared
+-- `readEnvComponents` — which is env-aware, type-safe, and has no view/type to drift. Dropped here
+-- (programmables runs every migrate) so existing databases clean up; fresh databases never create it.
 DROP VIEW IF EXISTS public.project_full;
-CREATE VIEW public.project_full AS
-SELECT
-  s.id, s.user_id, s.cloud_identity_id,
-  s.project_name,
-  -- M1: environment identity + provisioning status now live on the project's default
-  -- environment (was projects.environment_stage / projects.status). The wire keeps the
-  -- `environment_stage` name + emits the env's name (= the old stage for backfilled
-  -- projects, so the ProjectConfig.EnvironmentStage → tofu state path is unchanged).
-  env.name AS environment_stage,
-  s.region,
-  ci.provider AS cloud_provider,
-  ci.credentials->>'account_id' AS cloud_account_id,
-  s.iac_version,
-  env.status::text AS status,
-  s.estimated_monthly_cost::float8 AS estimated_monthly_cost,
-  s.created_at, s.updated_at,
-
-  -- Network
-  net.provision_network,
-  net.cidr_block,
-  net.network_id,
-  net.single_nat_gateway,
-  net.status::text AS network_status,
-
-  -- Cluster (provider-specific knobs travel in cluster_provider_config)
-  cl.cluster_version,
-  cl.provider_config AS cluster_provider_config,
-  -- cluster_admins was normalized out of project_cluster into the cluster_admins child table
-  -- (contract phase — the JSONB column is dropped). Reconstruct the same {username, groups} array in
-  -- author `ordinal` order so the view column stays byte-shape identical for the CLI config endpoints.
-  COALESCE(
-    (SELECT jsonb_agg(jsonb_build_object('username', ca.username, 'groups', ca.groups) ORDER BY ca.ordinal)
-     FROM public.cluster_admins ca WHERE ca.cluster_id = cl.id),
-    '[]'::jsonb
-  ) AS cluster_admins,
-  cl.instance_types,
-  cl.node_min_size, cl.node_max_size, cl.node_desired_size,
-  cl.cluster_name, cl.cluster_endpoint,
-  cl.status::text AS cluster_status,
-
-  -- DNS (provider-specific knobs travel in dns_provider_config)
-  dns.enabled AS dns_enabled,
-  dns.domain_name AS dns_domain_name,
-  dns.zone_id AS dns_zone_id,
-  dns.managed_certificate AS dns_managed_certificate,
-  dns.waf_enabled AS dns_waf_enabled,
-  dns.provider_config AS dns_provider_config,
-  dns.status::text AS dns_status,
-
-  -- Repositories
-  repos.apps_destination_repo,
-
-  -- Aggregated (scoped to the default environment's components)
-  EXISTS(SELECT 1 FROM public.project_databases d WHERE d.project_id = s.id AND d.environment_id = env.id AND d.status != 'DESTROYED') AS has_database,
-  (SELECT MIN(d.min_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.environment_id = env.id AND d.status != 'DESTROYED') AS db_min_capacity,
-  (SELECT MAX(d.max_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.environment_id = env.id AND d.status != 'DESTROYED') AS db_max_capacity,
-  EXISTS(SELECT 1 FROM public.project_caches c WHERE c.project_id = s.id AND c.environment_id = env.id AND c.status != 'DESTROYED') AS has_cache
-
--- The view summarises a project via its DEFAULT environment: `env` is the default env and every
--- component join/aggregate is scoped to it (components are environment-scoped).
-FROM public.projects s
-LEFT JOIN public.project_environments env ON env.project_id = s.id AND env.is_default = true
-LEFT JOIN public.cloud_identities ci ON ci.id = s.cloud_identity_id
-LEFT JOIN public.project_network net ON net.project_id = s.id AND net.environment_id = env.id
-LEFT JOIN public.project_cluster cl ON cl.project_id = s.id AND cl.environment_id = env.id
-LEFT JOIN public.project_dns dns ON dns.project_id = s.id AND dns.environment_id = env.id
-LEFT JOIN public.project_repositories repos ON repos.project_id = s.id AND repos.environment_id = env.id;
-
-GRANT SELECT ON public.project_full TO alethia_app;
 
 -- ── org_id coarse-tenancy backfill + trigger. Community: org_id = user_id (the
 -- user's personal org); the ee/ Teams build assigns real organization ids. The

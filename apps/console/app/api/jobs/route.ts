@@ -49,7 +49,7 @@ function parseJobType(v: unknown): CreatableJobType | null {
  * (runWithActor — the MCP seam), so a CLI-queued job freezes the SAME nested
  * `buildConfigSnapshot` shape (provider, environment_stage, cluster, dns,
  * addons, placement-resolved components) the Go runner deserializes into
- * ProjectConfig — never the flat project_full view row.
+ * ProjectConfig — a nested, placement-resolved snapshot, not a flat per-table row.
  */
 export async function POST(req: Request) {
 	const { payload, error: authError } = await verifyCliToken(req);

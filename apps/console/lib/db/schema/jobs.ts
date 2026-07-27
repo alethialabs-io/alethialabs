@@ -58,7 +58,7 @@ export const jobs = pgTable(
 		// (under-counts) rather than letting a background insert drain a free org's quota. Stamped
 		// explicitly at every user enqueue site; see lib/billing/job-quota.ts.
 		initiated_by: jobInitiator().notNull().default("system"),
-		// Intentionally polymorphic per job_type: a frozen project_full snapshot for
+		// Intentionally polymorphic per job_type: a frozen buildConfigSnapshot for
 		// project jobs, a runner-deploy config for runner-lifecycle jobs, or {} for
 		// connection-test/fetch jobs — so an open JSON record is the correct type.
 		config_snapshot: jsonb()
