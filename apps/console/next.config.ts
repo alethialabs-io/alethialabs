@@ -6,7 +6,7 @@ import { withPostHogConfig } from "@posthog/nextjs-config";
 import type { NextConfig } from "next";
 
 // Cross-origin dev/proxy origins to allow (the public tunnel — Cloudflare quick tunnel /
-// ngrok — that `dev:stack`/`dev:tunnel` front the app with). Without this, Next blocks
+// ngrok — that `dev:stack`, or the sandbox box's tunnel, front the app with). Without this, Next blocks
 // cross-origin requests from the tunnel host (server actions, /_next/*, HMR) and the
 // browser reports "Load failed". The exact host comes from the env dev-stack injects; the
 // wildcards cover a new random quick-tunnel URL without re-editing.

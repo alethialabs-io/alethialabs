@@ -78,7 +78,7 @@ source ./.env
 set +a
 
 # Front the console at a public tunnel origin (ngrok / cloudflare). When
-# ALETHIA_PUBLIC_URL is exported by the caller (e.g. scripts/cf-tunnel.sh), it
+# ALETHIA_PUBLIC_URL is exported by the caller, it
 # overrides the .env auth base URLs so a browser on that origin is same-origin
 # with Better Auth (client baseURL + server trustedOrigins). Survives the source
 # above because nothing in .env sets ALETHIA_PUBLIC_URL.
