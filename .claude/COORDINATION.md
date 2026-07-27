@@ -16,19 +16,25 @@ like #530). You already built and debugged this for provisioning — this reuses
 ## The board (hybrid)
 
 - **GitHub Issues = the live execution board.** One issue per claimable work unit. Labels:
-  - `wave:W1`…`wave:W7` / `wave:hygiene` — which north-star wave (see `00-NORTH-STAR.md`).
+  - `wave:<name>` — which programme. `wave:W1`…`wave:W7` and `wave:hygiene` from the original
+    north-star DAG, plus the named programmes that followed: `wave:fabric`, `wave:canvas`,
+    `wave:frontdoor`, `wave:connectors-v2`, `wave:capabilities`, `wave:compat`,
+    `wave:offer-parity`. Run `scripts/coordinate.sh --report` for the live set.
   - `lane:schema` · `lane:server` · `lane:runner` · `lane:core` · `lane:canvas` · `lane:tests` · `lane:docs`.
   - `class:backend` or `class:ui` — the routing rule (below).
   - `claimed` — set when an instance holds it; carries a **lease comment**.
   - `blocked` — maintained by `coordinate.sh`: present while any `blocked-by` is still open.
   - `mutex:migration` — this unit generates a drizzle migration (serialized; see below).
   - `needs:design` / `needs:human` — a UI unit awaiting the human/Claude-Design pipeline.
+  - `epic` — an umbrella/tracking issue. **Never directly built or claimed**: it is decomposed
+    into sub-issues, and claiming it would collide with every one of them.
 - The issue **body** declares two machine-read lines:
   - `blocked-by: #12 #14` — units that must close first.
   - `scope: apps/console/lib/db/schema/** packages/core/types/**` — the files this unit owns (globs). No two
     open+claimable issues in a wave may share a scope glob — that is how the mega-commit tangle is prevented.
-- **Management ledger = the plan.** `00-NORTH-STAR.md` holds the wave DAG; each wave gets a design doc in
-  `management/spec/features/`. Board = execution state; ledger = design. An issue links its wave doc.
+- **The ledger = the plan.** Wave design docs live in the private `alethialabs-io/dataroom` repo
+  (`spec/features/`), not in this one. Board = execution state; ledger = design. An issue links
+  its wave doc by URL.
 
 ## The two work classes (the routing rule)
 
@@ -53,9 +59,14 @@ Every instance, at kickoff, reads this file, then:
 scripts/claim-work.sh --class backend      # atomically claim the next ready backend unit
 cd ../wt-<slug>                             # the script prints the pnpm wt slug
 # ... build; open a NON-DRAFT PR into dev with "Closes #<n>"; Mergify auto-queues + squash-merges on green (run NO gh pr merge) ...
-scripts/complete-work.sh <n>               # REQUIRED: a dev squash-merge does NOT auto-close the issue (dev isn't the default branch) — this closes + de-claims it; coordinate opens downstream
+scripts/complete-work.sh <n>               # usually unnecessary — see below; a manual backstop that closes + de-claims
 scripts/claim-work.sh --class backend      # loop
 ```
+
+- **Closing is automatic.** `.github/workflows/close-on-dev-merge.yml` parses every merged dev PR
+  for closing refs and closes each referenced issue. GitHub's own auto-close does not fire here
+  because `dev` is not the default branch, which is why the Action exists. `complete-work.sh <n>`
+  and `coordinate.sh --close-shipped` are manual backstops for when it misses.
 
 - **Atomic claim** (`claim-work.sh`): acquires `/tmp/alethia-claim.lock` (atomic `mkdir`, stale-reclaim by
   pid — same primitive as `compose-up.sh`), picks the next issue that is `open`, not `claimed`, not `blocked`,
@@ -90,7 +101,7 @@ scripts/claim-work.sh --class backend      # loop
   leases answer different questions — the issue lease says *who is building this unit*, the worktree lease says
   *whose files these are right now* — and #1247 needed both.
 - **Lease + reclaim**: the lease comment carries `instance · pid · branch · UTC-timestamp`. Refresh it on each
-  PR push (the worker) — or let `coordinate.sh` reclaim a unit whose lease is older than `LEASE_TTL`. Reclaim
+  PR push (the worker) — or let `coordinate.sh` reclaim a unit whose lease is older than `ALETHIA_LEASE_TTL`. Reclaim
   skips a unit that already has an **open closing PR** (evidence the holder is alive despite a stale lease) and
   a unit whose lease timestamp is unreadable. Reclaim = clear assignee + `claimed`, comment "reclaimed".
 - **Stalled units** (`⚠ stalled` in the report): claimed, lease long dead, and the PR that stops the reclaim is
@@ -128,3 +139,21 @@ failure — it is stateless over the board, so any instance can run it.
 3. Seed **interface-first**: one small `class:backend` "seams" issue (the shared types/schema/contract) with
    no `blocked-by`; then the fine lanes (`blocked-by:` the seams issue), each with a disjoint `scope:`.
 4. Merge the seams issue fast → downstream unblocks → instances claim and go.
+
+## The toolchain
+
+Everything below already exists; none of it was reachable from this file.
+
+| Tool | What it is for |
+|---|---|
+| `scripts/engine.sh` | The autonomous build-loop driver: `claim` · `heartbeat <n>` · `complete <n>` · `coordinate` · `status`. **Exit code 3 from `claim` means the board is drained — stop the loop.** It never merges, never applies IaC. |
+| `.claude/skills/foundry/SKILL.md` | What an agent invokes to *drive* `engine.sh` in a loop. This, not `/loop`, is the always-on backend engine. |
+| `.claude/skills/decompose/SKILL.md` | Turns a wave spec into a well-formed board as a dry-run proposal you approve. This is the "Bootstrapping a wave" workflow below, automated. |
+| `scripts/decompose-validate.mjs` | Validates a proposed board: disjoint scopes (with prefix-subsumption detection), `blocked-by` presence, known labels, acyclic DAG. Has `--self-test`. |
+| `scripts/board-dashboard.mjs` | Read-only HTML dashboard: per-wave READY/CLAIMED/BLOCKED/DONE, in-flight dev PRs with check rollups, scope collisions, and a "NEEDS YOU" panel. `--out`, `--open`, `--json`. |
+| `scripts/lib/board-pr.sh` | Shared, fail-closed board↔PR predicates. Extracted after two copies drifted and silently stopped matching `Fixes #n`. |
+| `scripts/merge-signal-health.sh` | Tracks whether the observe-only heavy E2Es are reliable enough to promote to required. |
+
+**Environment knobs:** `ALETHIA_LEASE_TTL` (3600s) · `ALETHIA_PR_IDLE_TTL` (4× lease TTL) ·
+`ALETHIA_CLAIM_VERIFY_DELAY` (5s; `0` disables the verify pass) · `ALETHIA_CLAIM_WINDOW` (45s) ·
+`ALETHIA_INSTANCE_ID` (overrides the derived instance identity).

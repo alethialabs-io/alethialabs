@@ -28,6 +28,7 @@
 		"compose:logs": "docker compose logs -f --tail=100",
 		"compose:down": "docker compose down",
 		"check:connector-assets": "node scripts/check-connector-assets.mjs",
+		"check:docs-contract": "node scripts/check-docs-contract.mjs",
 		"sync:connector-assets": "node scripts/sync-connector-assets.mjs",
 		"env:box": "bash scripts/env.sh box",
 		"env:up": "bash scripts/env.sh up",
