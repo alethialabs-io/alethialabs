@@ -114,18 +114,29 @@ type keylessCell struct {
 // never enabled, or whose login the bootstrap Job cannot create, is a lie told at deploy time and
 // discovered in production.
 //
-// MySQL is Azure-only today: the runner's db_bootstrap.go errors for aws/gcp because AWS Aurora-MySQL
-// needs `CREATE USER … IDENTIFIED WITH AWSAuthenticationPlugin` and GCP creates its Cloud SQL IAM
-// users in tofu. Both are separate, unshipped lanes — so those cells stay off until they land, at
-// which point each is a one-line flip here.
+// Every managed cell is live. MySQL was Azure-only while its aws/gcp legs were unshipped; they landed
+// in #1504 (Aurora-MySQL template + `iam_database_authentication_enabled`), #1505 (Cloud SQL's
+// underscored `cloudsql_iam_authentication` flag + the truncated MySQL login form), #1506 (the
+// AWSAuthenticationPlugin / GRANT-only bootstrap dialects) and #1507 (the mysql-client apply
+// container), so this table opens them.
+//
+// This table governs ENGINE support per cloud, not which clouds keyless applies to at all: Alibaba and
+// Hetzner never reach it, because KeylessDBTarget excludes them upstream (ApsaraDB has no token-based
+// database login; Hetzner databases are in-cluster add-ons with no IAM plane).
+//
+// Keeping a cell off is a claim that one of its four legs is missing — the tofu flag, the bootstrap
+// Job renderer, the bootstrap SQL dialect, or the runtime proxy. check-keyless-cells.mjs (CI guards)
+// verifies that claim against those sources, because a cell left off after its legs ship is dead code
+// that fails closed citing work already merged — which is how aws/gcp MySQL sat switched off across
+// three lanes.
 var keylessCells = map[string]map[string]keylessCell{
 	providerAWS: {
 		enginePostgres: {ok: true},
-		engineMySQL:    {why: "the Aurora-MySQL template lands in #1504 and its AWSAuthenticationPlugin bootstrap SQL in #1506"},
+		engineMySQL:    {ok: true},
 	},
 	providerGCP: {
 		enginePostgres: {ok: true},
-		engineMySQL:    {why: "the Cloud SQL MySQL IAM-auth flag lands in #1505"},
+		engineMySQL:    {ok: true},
 	},
 	providerAzure: {
 		enginePostgres: {ok: true},
