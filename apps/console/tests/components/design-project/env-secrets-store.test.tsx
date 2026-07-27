@@ -38,8 +38,21 @@ const VAULT: ConnectorProviderMeta = {
 // Connectable, but no in-cluster read path on the pinned ESO chart.
 const INFISICAL: ConnectorProviderMeta = { ...VAULT, slug: "infisical", name: "Infisical" };
 
+const HARBOR: ConnectorProviderMeta = {
+	...VAULT,
+	category: "registry",
+	slug: "harbor",
+	name: "Harbor",
+	providerConfigFields: [
+		{ key: "registry_url", label: "Registry URL", type: "text", required: true },
+	],
+};
+
+// Category-aware: the sheet renders one picker per category, and a mock that returned the same
+// providers for both would let a registry test pass while showing secrets connectors.
 vi.mock("@/components/design-project/connectors-context", () => ({
-	useConnectedProviders: () => [VAULT, INFISICAL],
+	useConnectedProviders: (category: string) =>
+		category === "registry" ? [HARBOR] : [VAULT, INFISICAL],
 }));
 
 vi.mock("@/lib/connectors/registry.generated", async (importOriginal) => {
@@ -52,7 +65,7 @@ vi.mock("@/lib/connectors/registry.generated", async (importOriginal) => {
 	};
 });
 
-function seed(secretNames: string[], config: Record<string, unknown> = {}) {
+function seed(secretNames: string[], config: Record<string, unknown> = {}, kind: "secret" | "registry" = "secret") {
 	const root = {
 		id: PROJECT_NODE_ID,
 		type: "project",
@@ -67,12 +80,12 @@ function seed(secretNames: string[], config: Record<string, unknown> = {}) {
 	const secrets = secretNames.map(
 		(name) =>
 			({
-				id: `secret-${name}`,
-				type: "secret",
+				id: `${kind}-${name}`,
+				type: kind,
 				position: { x: 0, y: 0 },
 				data: {
-					kind: "secret",
-					config: { ...NODE_REGISTRY.secret.defaultData("aws"), name, ...config },
+					kind,
+					config: { ...NODE_REGISTRY[kind].defaultData("aws"), name, ...config },
 					cloud_identity_id: null,
 					provider: "aws",
 				},
@@ -89,11 +102,12 @@ function seed(secretNames: string[], config: Record<string, unknown> = {}) {
 }
 
 /** Each secret node's stored provider, in seed order. */
-const providers = () =>
+const providersOf = (kind: "secret" | "registry") =>
 	useCanvasStore
 		.getState()
-		.nodes.filter((n) => n.data.kind === "secret")
+		.nodes.filter((n) => n.data.kind === kind)
 		.map((n) => (n.data.config as { provider?: unknown }).provider);
+const providers = () => providersOf("secret");
 
 describe("environment secret store", () => {
 	beforeEach(() => {
@@ -178,5 +192,64 @@ describe("environment secret store", () => {
 		// project-wide and leave nothing to read from.
 		expect(infisical).toHaveAttribute("aria-disabled", "true");
 		expect(infisical?.textContent).toMatch(/no in-cluster read yet/i);
+	});
+});
+
+describe("environment container registry", () => {
+	beforeEach(() => {
+		useCanvasStore.setState({ envSettingsOpen: false });
+	});
+
+	// Registry goes through the SAME dominantProvider collapse as secrets (compose.go:152): the first
+	// pluggable row's slug becomes registry_provider for the whole project, and there is exactly ONE
+	// pull secret. A row left behind would have its images pulled with a credential for a different
+	// registry — an ImagePullBackOff against a secret that exists.
+	it("writes the chosen registry to EVERY registry in the environment", async () => {
+		seed(["apps", "jobs"], {}, "registry");
+		const user = userEvent.setup();
+		render(<EnvSettingsSheet />);
+
+		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
+		await user.click(await screen.findByRole("option", { name: /harbor/i }));
+
+		// Both rows, not just the first — one environment pushes through one registry.
+		expect(providersOf("registry")).toEqual(["harbor", "harbor"]);
+	});
+
+	// `provider_config` on a registry mixes PER-ROW cloud settings (immutable tags, scanning) with the
+	// per-environment connector knobs. Writing the picker's patch whole would replace each row's bag
+	// and silently flatten two registries' distinct settings — including when picking the native
+	// option they already had.
+	it("keeps each registry's own cloud settings across a provider change", async () => {
+		seed(["apps", "jobs"], {}, "registry");
+		// Give the two rows different native settings.
+		const [a, b] = useCanvasStore
+			.getState()
+			.nodes.filter((n) => n.data.kind === "registry");
+		useCanvasStore.getState().updateNodeConfig(a.id, {
+			provider_config: { immutable_tags: true, vulnerability_scanning: true },
+		});
+		useCanvasStore.getState().updateNodeConfig(b.id, {
+			provider_config: { immutable_tags: false },
+		});
+
+		const user = userEvent.setup();
+		render(<EnvSettingsSheet />);
+		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
+		await user.click(await screen.findByRole("option", { name: /harbor/i }));
+
+		const configs = useCanvasStore
+			.getState()
+			.nodes.filter((n) => n.data.kind === "registry")
+			.map((n) => (n.data.config as { provider_config?: Record<string, unknown> }).provider_config);
+
+		expect(configs[0]).toMatchObject({ immutable_tags: true, vulnerability_scanning: true });
+		expect(configs[1]).toMatchObject({ immutable_tags: false });
+	});
+
+	it("offers nothing to configure when the environment has no registries", () => {
+		seed([], {}, "registry");
+		render(<EnvSettingsSheet />);
+		expect(screen.getByText(/add a container registry to choose/i)).toBeInTheDocument();
 	});
 });

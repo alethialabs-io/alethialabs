@@ -163,6 +163,30 @@ describe("formToGraph / graphToForm round-trip", () => {
 		expect(parsed.data.services[0].ports[0].container_port).toBe(8080);
 	});
 
+	// #1412: dns is a singleton, so it round-trips through `first("dns")` rather than ofKind — a
+	// different code path from the array kinds, and one with zero prior coverage.
+	it("carries the DNS connector through the round-trip", () => {
+		const form = sampleForm();
+		form.dns = {
+			enabled: true,
+			provider: "cloudflare",
+			domain_name: "acme.io",
+			zone_id: "zone-123",
+			provider_config: { proxied: true },
+		};
+		const { nodes } = formToGraph(form, IDENTITIES);
+
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.dns).toEqual(
+			expect.objectContaining({
+				provider: "cloudflare",
+				zone_id: "zone-123",
+				provider_config: { proxied: true },
+			}),
+		);
+	});
+
 	// REGRESSION (#1412): the same silent-wipe shape, one table over. A secret's `provider` /
 	// `provider_config` say WHICH store the environment reads through; if they don't survive the
 	// round-trip, delete-then-insert re-creates every secret as native and the environment quietly
