@@ -126,6 +126,20 @@ run_self_test() {
   _n "Part of #1389"                                1389 "$BOARD_PR_CLOSING_KW" "closing: 'Part of #n' is NOT a closing match (the original bug)"
   _n "fixing #84"                                   84   "$BOARD_PR_CLOSING_KW" "closing: 'fixing' is not a GitHub keyword"
 
+  # board_pr_is_stalled — the "is the PR holding this unit actually dead?" predicate behind
+  # coordinate.sh's stalled report. Pinned offline like the rest, and the two directions matter
+  # differently: calling a LIVE PR dead sends a human to take over work in flight, while calling a
+  # DEAD one alive is the invisibility #1426/#1461 sat in for 8h with nothing surfacing it.
+  _s() { if board_pr_is_stalled "$1" "$2" "$3" "$4"; then echo "ok   - $5"; else echo "FAIL - $5: expected STALLED" >&2; fails=$((fails+1)); fi; }
+  _ns() { if board_pr_is_stalled "$1" "$2" "$3" "$4"; then echo "FAIL - $5: expected ALIVE" >&2; fails=$((fails+1)); else echo "ok   - $5"; fi; }
+  _now=1000000; _ttl=14400   # 4h, the default PR_IDLE_TTL (4 x LEASE_TTL)
+  _s  CONFLICTING "$_now"           "$_now" "$_ttl" "stalled: conflicting counts even when just updated"
+  _s  MERGEABLE   "$((_now-20000))" "$_now" "$_ttl" "stalled: mergeable but idle past the TTL"
+  _ns MERGEABLE   "$((_now-100))"   "$_now" "$_ttl" "alive: mergeable and recently updated"
+  _ns MERGEABLE   "$((_now-14399))" "$_now" "$_ttl" "alive: idle just under the TTL (boundary)"
+  _ns UNKNOWN     ""                "$_now" "$_ttl" "alive: missing timestamp must not accuse a live PR"
+  _ns MERGEABLE   "not-a-number"    "$_now" "$_ttl" "alive: garbage timestamp must not accuse a live PR"
+
   if [ "$fails" -eq 0 ]; then echo "self-test: all passed"; exit 0; fi
   echo "self-test: $fails check(s) FAILED" >&2; exit 1
 }
