@@ -10,10 +10,17 @@
 //   - NATIVE PROXY — GCP Cloud SQL Auth Proxy (--auto-iam-authn) mints the Cloud SQL IAM token itself.
 //   - TOKEN REFRESHER — AWS (RDS IAM) and Azure (Entra) have no native proxy, so an `alethia db-token`
 //     sidecar mints a short-lived DB token from the pod's Workload Identity and keeps it fresh on a
-//     shared file that a local PgBouncer uses as its upstream credential.
+//     shared file that a local wire proxy uses as its upstream credential.
 //   - EXCLUDED (documented) — Alibaba ApsaraDB RDS has no token-based DB login (RAM is control-plane
 //     only), and Hetzner data services are ArgoCD add-ons with no cloud IAM. Both stay on the password
 //     path; the exclusion is explicit here so parity is enforced, not silently dropped.
+//
+// ENGINE (#1441). The local proxy is wire-protocol specific, so it is chosen by the target database's
+// engine family: PgBouncer for postgres, ProxySQL for mysql. Keyless MySQL is AZURE-ONLY — the
+// bootstrap Job binds an Entra login with `CREATE AADUSER` (see runner db_bootstrap.go), a mechanism
+// AWS Aurora-MySQL and GCP Cloud SQL MySQL do not share and for which no template ships yet. That
+// exclusion is enforced in keylessDBSidecar as an explicit error rather than left to render a
+// Postgres-wire proxy against a MySQL server, which would fail only at runtime.
 //
 // The decision to go keyless is DERIVED, not declared: it keys off the target database's existing
 // `iam_auth` config (one source of truth, no new binding field). Everything here is pure +
@@ -22,6 +29,7 @@ package manifests
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -38,6 +46,11 @@ const (
 	// upstream credential (the DB access token) fresh. The pgbouncer config that consumes the token
 	// file is validated on the real-cloud e2e gate (#722 Lane D).
 	pgBouncerImage = "bitnami/pgbouncer:1.23.1"
+	// proxySQLImage fronts Azure MySQL on 127.0.0.1 — the MySQL-wire counterpart to pgBouncerImage,
+	// consuming the same refreshed token file as its upstream credential. Debian variant for /bin/sh
+	// (the entrypoint reads the token file), matching the rationale mysqlClientImage documents in
+	// bootstrap_job.go. Validated on the real-cloud e2e gate (#1450).
+	proxySQLImage = "proxysql/proxysql:3.0.9-debian"
 
 	// keylessKSAName / keylessKSANamespace name the Workload-Identity ServiceAccount a keyless app
 	// pod runs as. These MUST match the per-cloud templates' WIF/federated-identity subject binding
@@ -45,13 +58,21 @@ const (
 	keylessKSAName      = "alethia-app"
 	keylessKSANamespace = "default"
 
-	// keylessDBUser is the least-privilege Postgres role the bootstrap Job creates for the app on the
-	// token-as-password clouds (AWS RDS IAM / Azure Entra), mapped to the app's cloud identity. GCP
-	// instead uses its tofu-created IAM service-account user (the cloud_sql_iam_user output).
+	// keylessDBUser is the least-privilege login the bootstrap Job creates for the app on the
+	// token-as-password clouds (AWS RDS IAM / Azure Entra), mapped to the app's cloud identity — a
+	// Postgres ROLE, or on Azure MySQL an Entra AADUSER (db_bootstrap.go keylessBootstrapRole is the
+	// same name). It is the upstream user BOTH local proxies authenticate as. GCP instead uses its
+	// tofu-created IAM service-account user (the cloud_sql_iam_user output).
 	keylessDBUser = "alethia_app"
 
-	// keylessTokenDir is the shared emptyDir the refresher writes the token into and pgbouncer reads.
+	// keylessTokenDir is the shared emptyDir the refresher writes the token into and the local proxy
+	// (pgbouncer / proxysql) reads.
 	keylessTokenDir = "/db-token"
+
+	// The local proxy's listen port, per engine wire protocol. The workload connects here on
+	// 127.0.0.1, so this is also the value the `port` binding facet injects (keylessProxyPort).
+	keylessPortPostgres = 5432
+	keylessPortMySQL    = 3306
 )
 
 // keylessWiring is everything a keyless database binding adds to the workload's pod: the auth-proxy
@@ -116,13 +137,25 @@ func keylessDBSidecar(opts Options, t types.ServiceBindingTarget) (keylessWiring
 	if opts.Namespace != "" && opts.Namespace != keylessKSANamespace {
 		return keylessWiring{}, fmt.Errorf("keyless DB auth requires namespace %q (the Workload-Identity subject), got %q", keylessKSANamespace, opts.Namespace)
 	}
+	// ENGINE GATE (#1441) — one place, all clouds. Keyless MySQL exists only on Azure: the bootstrap
+	// Job's `CREATE AADUSER` Entra binding has no AWS Aurora-MySQL / GCP Cloud SQL MySQL equivalent and
+	// no template ships one (db_bootstrap.go makes --engine mysql an explicit error there too). Without
+	// this gate an AWS/GCP MySQL with iam_auth would render a POSTGRES-wire proxy against a MySQL
+	// server and fail only at runtime — the silent-misconfiguration shape the fail-closed rule exists
+	// to prevent.
+	engine := dbEngineForTarget(opts, t)
+	if engine == engineMySQL && opts.Provider != string(types.CloudProviderAzure) {
+		return keylessWiring{}, fmt.Errorf(
+			"keyless MySQL auth is supported on Azure only (AWS Aurora-MySQL and GCP Cloud SQL MySQL bind their DB login differently and ship no template yet), got provider %q",
+			opts.Provider)
+	}
 	switch opts.Provider {
 	case string(types.CloudProviderGcp):
 		return gcpProxyWiring(opts)
 	case string(types.CloudProviderAws):
 		return awsRefresherWiring(opts)
 	case string(types.CloudProviderAzure):
-		return azureRefresherWiring(opts)
+		return azureRefresherWiring(opts, engine)
 	}
 	return keylessWiring{}, fmt.Errorf("keyless DB auth is not supported for provider %q", opts.Provider)
 }
@@ -141,8 +174,8 @@ func gcpProxyWiring(opts Options) (keylessWiring, error) {
 		sidecars: []Sidecar{{
 			Name:  "cloudsql-proxy",
 			Image: cloudSQLProxyImage,
-			Args:  []string{"--private-ip", "--auto-iam-authn", "--port=5432", conn},
-			Ports: []int{5432},
+			Args:  []string{"--private-ip", "--auto-iam-authn", "--port=" + strconv.Itoa(keylessPortPostgres), conn},
+			Ports: []int{keylessPortPostgres},
 		}},
 		saName:        keylessKSAName,
 		saAnnotations: map[string]string{"iam.gke.io/gcp-service-account": gsa},
@@ -173,7 +206,7 @@ func awsRefresherWiring(opts Options) (keylessWiring, error) {
 		Image: opts.RunnerImage,
 		Args: []string{
 			"db-token", "--provider", "aws", "--out", keylessTokenDir + "/token",
-			"--host", endpoint, "--port", "5432", "--region", region, "--user", keylessDBUser,
+			"--host", endpoint, "--port", strconv.Itoa(keylessPortPostgres), "--region", region, "--user", keylessDBUser,
 		},
 		Mounts: []VolumeMount{{Name: "db-token", MountPath: keylessTokenDir}},
 	}
@@ -186,9 +219,14 @@ func awsRefresherWiring(opts Options) (keylessWiring, error) {
 }
 
 // azureRefresherWiring — Entra auth: an `alethia db-token --provider azure` refresher (mints the
-// Entra token from the pod's federated identity) + a local PgBouncer. The KSA carries the Azure
+// Entra token from the pod's federated identity) + a local wire proxy. The KSA carries the Azure
 // Workload-Identity label + client-id annotation.
-func azureRefresherWiring(opts Options) (keylessWiring, error) {
+//
+// The REFRESHER is engine-agnostic and unchanged for MySQL: the ossrdbms-aad Entra scope it mints for
+// is shared by Azure Database for PostgreSQL, MySQL and MariaDB (see the runner's db_token.go), and
+// both engines take the token as the password. Only the local proxy differs — PgBouncer speaks the
+// Postgres wire, ProxySQL the MySQL wire.
+func azureRefresherWiring(opts Options, engine string) (keylessWiring, error) {
 	fqdn := opts.Outputs["azure_db_fqdn"]
 	if fqdn == "" {
 		return keylessWiring{}, fmt.Errorf("no azure_db_fqdn output for keyless Entra auth")
@@ -206,8 +244,12 @@ func azureRefresherWiring(opts Options) (keylessWiring, error) {
 		Args:   []string{"db-token", "--provider", "azure", "--out", keylessTokenDir + "/token", "--user", keylessDBUser},
 		Mounts: []VolumeMount{{Name: "db-token", MountPath: keylessTokenDir}},
 	}
+	proxy := pgbouncerSidecar(fqdn)
+	if engine == engineMySQL {
+		proxy = proxysqlSidecar(fqdn)
+	}
 	return keylessWiring{
-		sidecars:      []Sidecar{refresher, pgbouncerSidecar(fqdn)},
+		sidecars:      []Sidecar{refresher, proxy},
 		volumes:       []Volume{{Name: "db-token"}},
 		saName:        keylessKSAName,
 		saLabels:      map[string]string{"azure.workload.identity/use": "true"},
@@ -228,7 +270,55 @@ func pgbouncerSidecar(upstreamHost string) Sidecar {
 			{Name: "PGB_UPSTREAM_USER", Value: keylessDBUser},
 			{Name: "PGB_TOKEN_FILE", Value: keylessTokenDir + "/token"},
 		},
-		Ports:  []int{5432},
+		Ports:  []int{keylessPortPostgres},
 		Mounts: []VolumeMount{{Name: "db-token", MountPath: keylessTokenDir, ReadOnly: true}},
 	}
+}
+
+// proxysqlSidecar — the local MySQL proxy for Azure Database for MySQL, the MySQL-wire counterpart to
+// pgbouncerSidecar. It serves 127.0.0.1:3306 and connects upstream to `upstreamHost` as keylessDBUser
+// (the Entra AADUSER the bootstrap Job created) using the refreshed token file as the credential; the
+// app connects to localhost with no token awareness.
+//
+// Like pgbouncer's, the entrypoint that consumes PROXYSQL_TOKEN_FILE is finalized on the real-cloud
+// e2e gate (#1450). It is NOT the same shape as pgbouncer's file read: ProxySQL holds backend
+// credentials in its admin DB, so the refresh applies via its admin interface (UPDATE mysql_servers /
+// LOAD MYSQL SERVERS TO RUNTIME) rather than by re-reading a file — a rotating Entra token has to be
+// pushed in, not picked up. That is the one substantive difference between the two proxies and the
+// reason #1450 gates this cell.
+//
+// TWO CONSTRAINTS that entrypoint MUST satisfy (from the #1441 security review):
+//
+//  1. Bind the admin interface to a UNIX SOCKET outside any app-visible mount, and never ship the
+//     default admin credentials. ProxySQL keeps backend credentials in its admin DB, and its default
+//     admin user is "localhost-only" — but a pod shares ONE network namespace, so 127.0.0.1 is
+//     reachable from the customer's own app container. Left at the default, the workload could read
+//     the rotating Entra token out of mysql_servers, turning a pod-confined proxy-mediated credential
+//     into a bearer token it can exfiltrate — the exact invariant this file exists to hold.
+//  2. Give it a writable emptyDir for ProxySQL's datadir (/var/lib/proxysql, the admin SQLite DB).
+//     The sidecar inherits readOnlyRootFilesystem, so it cannot start without one. Add the volume —
+//     do NOT relax readOnlyRootFilesystem, which is the shortcut that would undo the hardening.
+func proxysqlSidecar(upstreamHost string) Sidecar {
+	return Sidecar{
+		Name:  "proxysql",
+		Image: proxySQLImage,
+		Env: []types.ServiceEnvVar{
+			{Name: "PROXYSQL_UPSTREAM_HOST", Value: upstreamHost},
+			{Name: "PROXYSQL_UPSTREAM_USER", Value: keylessDBUser},
+			{Name: "PROXYSQL_TOKEN_FILE", Value: keylessTokenDir + "/token"},
+		},
+		Ports:  []int{keylessPortMySQL},
+		Mounts: []VolumeMount{{Name: "db-token", MountPath: keylessTokenDir, ReadOnly: true}},
+	}
+}
+
+// keylessProxyPort is the local port the keyless auth proxy listens on, as a string for the `port`
+// binding facet. Under keyless auth the workload connects to the SIDECAR, not the server, so this —
+// not defaultPort — is the port it must be handed; a MySQL app pointed at pgbouncer's 5432 would
+// dial a listener that isn't there.
+func keylessProxyPort(opts Options, t types.ServiceBindingTarget) string {
+	if dbEngineForTarget(opts, t) == engineMySQL {
+		return strconv.Itoa(keylessPortMySQL)
+	}
+	return strconv.Itoa(keylessPortPostgres)
 }
