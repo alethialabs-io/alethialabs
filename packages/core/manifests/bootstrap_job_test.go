@@ -168,6 +168,84 @@ func TestBootstrapJob_Azure_DedicatedAdminKeyless(t *testing.T) {
 	}
 }
 
+func TestBootstrapJob_Azure_MySQL_Keyless(t *testing.T) {
+	// A keyless MySQL binding (EngineFamily "mysql") switches the apply client to the mysql client and
+	// binds the app on its CLIENT id via CREATE AADUSER — not the Postgres OID/psql path.
+	res, err := RenderBootstrapJob(Options{
+		Provider:    "azure",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Databases: []types.ProjectDatabaseConfig{
+			{Name: "orders-db", EngineFamily: "mysql", IamAuth: boolPtr(true)},
+		},
+		Outputs: map[string]string{
+			"azure_db_fqdn":            "orders.mysql.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_client_id":       "cccc1111-2222-3333-4444-555566667777",
+		},
+	}, dbTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Still the Azure keyless shape: ServiceAccount + Job (two docs), WI-federated dedicated admin.
+	docs := parseYAMLDocs(t, res.JobYAML)
+	if len(docs) != 2 {
+		t.Fatalf("Azure MySQL should emit a ServiceAccount + Job (2 docs), got %d:\n%s", len(docs), res.JobYAML)
+	}
+	if docs[0]["kind"] != "ServiceAccount" {
+		t.Fatalf("first doc should be the ServiceAccount, got %v", docs[0]["kind"])
+	}
+	// db-bootstrap binds the app on the CLIENT id via the MySQL dialect (--engine mysql --app-client-id).
+	for _, want := range []string{
+		"mint-admin-token", "db-token", // engine-agnostic admin-token init (unchanged)
+		"--engine", "mysql", "--app-client-id", "cccc1111-2222-3333-4444-555566667777",
+		mysqlClientImage, `name: "MYSQL_TCP_PORT"`, `value: "3306"`,
+		"--enable-cleartext-plugin", "--ssl-mode=REQUIRED",
+		"/bin/sh", "MYSQL_PWD=", "$(cat " + bootstrapTokenFile + ")", // token read into the mysql password
+
+	} {
+		if !strings.Contains(res.JobYAML, want) {
+			t.Errorf("Azure MySQL Job missing %q:\n%s", want, res.JobYAML)
+		}
+	}
+	// It must NOT be the Postgres path: no psql/postgres image, no OID bind, no PG* env.
+	for _, bad := range []string{postgresClientImage, "psql", "--app-oid", "PGPORT", "PGPASSWORD"} {
+		if strings.Contains(res.JobYAML, bad) {
+			t.Errorf("Azure MySQL Job must not contain the Postgres construct %q:\n%s", bad, res.JobYAML)
+		}
+	}
+	// Keyless: no admin ExternalSecret and no password secret ref (the password is the minted token).
+	if res.AdminSecretYAML != "" {
+		t.Errorf("Azure MySQL admin is keyless (token) — no admin ExternalSecret expected, got:\n%s", res.AdminSecretYAML)
+	}
+	if strings.Contains(res.JobYAML, "secretKeyRef") {
+		t.Errorf("Azure MySQL Job must hold no password secret (keyless admin):\n%s", res.JobYAML)
+	}
+}
+
+func TestBootstrapJob_Azure_MySQL_FailsClosed_OnMissingClientID(t *testing.T) {
+	// Keyless MySQL binds on the app UAMI client id; without azure_db_client_id there is nothing to bind
+	// to, so the Job must fail closed rather than render an un-bindable AADUSER.
+	_, err := RenderBootstrapJob(Options{
+		Provider:    "azure",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Databases: []types.ProjectDatabaseConfig{
+			{Name: "orders-db", EngineFamily: "mysql", IamAuth: boolPtr(true)},
+		},
+		Outputs: map[string]string{
+			"azure_db_fqdn":            "orders.mysql.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			// azure_db_client_id intentionally absent
+		},
+	}, dbTarget())
+	if err == nil {
+		t.Error("expected fail-closed error when azure_db_client_id is missing for a keyless MySQL bind")
+	}
+}
+
 func TestBootstrapJob_FailsClosed_OnMissingOutput(t *testing.T) {
 	// A required admin output missing → error (the caller reports; no half-wired Job that wedges sync).
 	_, err := RenderBootstrapJob(Options{
