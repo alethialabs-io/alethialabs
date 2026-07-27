@@ -350,13 +350,11 @@ func mysqlHandshakeResponse(caps uint32, hs mysqlClientHandshake, user string) [
 // with the token. Any plugin other than mysql_clear_password hashes the secret and cannot be
 // satisfied by a token, so it fails closed with the plugin named.
 func mysqlFinishAuth(c net.Conn, token string) error {
-	seq := byte(2)
 	for {
-		p, s, err := mysqlReadPacket(c)
+		p, seq, err := mysqlReadPacket(c)
 		if err != nil {
 			return fmt.Errorf("read auth response: %w", err)
 		}
-		seq = s
 		if len(p) == 0 {
 			return errors.New("empty auth packet")
 		}
@@ -372,7 +370,7 @@ func mysqlFinishAuth(c net.Conn, token string) error {
 			}
 			if name != mysqlClearPasswordPlugin {
 				return fmt.Errorf("upstream requested auth plugin %q; only %s can carry a token "+
-					"(is %s an IAM/Entra database user?)", name, mysqlClearPasswordPlugin, "the configured --user")
+					"(is the configured --user an IAM/Entra database user?)", name, mysqlClearPasswordPlugin)
 			}
 			// string<EOF> — the token is NOT length-prefixed here, so its size is bounded only by
 			// max_allowed_packet. This is what makes multi-kilobyte Entra JWTs safe.
