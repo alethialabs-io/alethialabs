@@ -617,6 +617,29 @@ export interface QueueProviderConfig {
 	delay_seconds?: number;
 }
 
+// The CloudWatch log types a managed database can export. Finite and known, so a union
+// rather than string[]: Aurora MySQL accepts audit/error/general/slowquery and Aurora
+// PostgreSQL accepts only postgresql — a set that does not match the engine is rejected
+// fail-closed at apply by RDS-ENGINE-003 (infra/templates/project/aws/checks_data.tf).
+export type DatabaseLogExport =
+	| "audit"
+	| "error"
+	| "general"
+	| "slowquery"
+	| "postgresql";
+
+export interface DatabaseProviderConfig {
+	// AWS only — `rds_logs_exports` is the sole DB log-export variable any template
+	// declares (gcp/azure/alibaba have none). Unset → {audit, error, slowquery} on MySQL,
+	// {postgresql} on Postgres.
+	//
+	// `general` is deliberately NOT a default: the MySQL general log records every
+	// statement with its literal parameter values, so switching it on ships whatever the
+	// application put in a WHERE clause to the customer's CloudWatch. `audit` covers the
+	// security-forensics case without the statement text.
+	log_exports?: DatabaseLogExport[];
+}
+
 // Provider-specific resource identifiers captured after a deploy (cloud-agnostic
 // keys). Replaces the AWS-shaped typed columns (cluster_arn, *_secret_arn, kms…)
 // — AWS fills arn/secret_ref/kms_key; GCP/Azure fill the keys their model uses.

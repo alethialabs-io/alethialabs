@@ -219,6 +219,12 @@ type ProjectDatabaseConfig struct {
 	Port                *int     `json:"port"`
 	BackupRetentionDays *int     `json:"backup_retention_days"`
 	IamAuth             *bool    `json:"iam_auth"`
+	// ProviderConfig carries per-cloud database knobs the typed fields above do not model,
+	// merged into tfvars by name (mergeProviderConfig). Each provider RESERVES its own
+	// IAM-auth flag, so keyless can never be switched on from here for a cloud × engine cell
+	// the canvas did not offer — that would walk around both the offer-parity guard (#1508)
+	// and the visibleWhen gate (#1510).
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type ProjectCacheConfig struct {

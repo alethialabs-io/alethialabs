@@ -31,6 +31,7 @@ import type {
 	ChartWorkloadConfig,
 	ChartWorkloadRendered,
 	ClusterProviderConfig,
+	DatabaseProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
 	IacScanReport,
@@ -491,6 +492,11 @@ export const projectDatabases = pgTable(
 		iam_auth: boolean().default(false),
 		endpoint: text(),
 		reader_endpoint: text(),
+		// Provider-specific database knobs the typed columns above do not model, passed
+		// through to the template variables by name (mergeProviderConfig). Databases were
+		// the last multi-instance component table without this, which is why a knob like
+		// the CloudWatch log-export set had to be hardcoded in Go.
+		provider_config: jsonb().$type<DatabaseProviderConfig>().default({}),
 		// Provider-specific resource identifiers (cluster ARN/identifier, credential
 		// secret refs, KMS key on AWS) — cloud-agnostic JSONB.
 		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
