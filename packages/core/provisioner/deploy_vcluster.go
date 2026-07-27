@@ -68,6 +68,7 @@ const (
 //     by name → ClusterId → a short-lived user kubeconfig (DescribeClusterUserKubeconfig). ACK embeds an
 //     x509 client cert (no exec-plugin bearer), so it needs no KubeConnResolver (absent from
 //     namespaceClusterConnKeys, like aws).
+//
 //   - hetzner: no cloud API to re-mint — the runner-injected TalosKubeconfigMinter mints a fresh kubeconfig
 //     from the Fabric's PERSISTED talosconfig (delivered encrypted on the job claim), which mintClusterOutputs
 //     hands to hetznerProvider.ConfigureKubeconfig under the `kubeconfig` key. vcluster needs no per-namespace
