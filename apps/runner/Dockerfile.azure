@@ -16,7 +16,9 @@ USER runner
 WORKDIR /home/runner
 
 # Pre-initialize only the Azure template. TF_PLUGIN_CACHE_DIR is inherited from the base.
-RUN cd /home/runner/project-templates/azure && tofu init -backend=false -input=false -upgrade
+# NO `-upgrade`: the committed .terraform.lock.hcl decides the provider versions; `-upgrade` disregards
+# it and re-resolves against the registry, so the image would drift from what the e2e nightly runs (#1259).
+RUN cd /home/runner/project-templates/azure && tofu init -backend=false -input=false
 
 ENV ALETHIA_RUNNER_PROVIDERS=azure
 ENTRYPOINT ["runner"]
