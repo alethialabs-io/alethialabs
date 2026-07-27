@@ -65,7 +65,15 @@ output "cloud_sql_credentials_secret" {
 
 output "artifact_registry_urls" {
   description = "Map of Artifact Registry repository URLs"
-  value       = var.provision_artifact_registry ? module.artifact_registry[0].repository_urls : {}
+  # Guarded on the MODULE, not on a copy of its count predicate. `provision_artifact_registry` alone
+  # is NOT that predicate: the module also requires `registry_provider == "native"` (artifact-registry.tf),
+  # because a pluggable registry connector means Artifact Registry is not ours to create. The console
+  # sets `provision_artifact_registry` from the mere PRESENCE of a registry row, so selecting any
+  # connector left this indexing [0] of an empty module and failed the WHOLE apply with "Invalid
+  # index" — a crash a mile from its cause.
+  #
+  # length(module...) can't drift from the count the way a duplicated predicate did.
+  value = length(module.artifact_registry) > 0 ? module.artifact_registry[0].repository_urls : {}
 }
 
 #########################################################################
