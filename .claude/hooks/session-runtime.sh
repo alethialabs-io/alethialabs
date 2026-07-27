@@ -33,6 +33,45 @@ ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
 say ""
 say "── Runtime ─────────────────────────────────────────────────"
 
+# ── Is the harness you are running the CURRENT one? ───────────────────────────────
+#
+# THE MOST IMPORTANT LINE THIS HOOK PRINTS, and the least obvious.
+#
+# Hooks resolve through $CLAUDE_PROJECT_DIR, so the copies that actually gate every tool
+# call are the MAIN CHECKOUT's — even for a session working inside a worktree. The main
+# checkout is pinned to `dev` but is NOT auto-pulled, so it silently falls behind, and the
+# session then enforces an old ruleset and reads an old CLAUDE.md.
+#
+# This is not hypothetical. On 2026-07-27 the main checkout was 30+ commits behind: it was
+# missing guard-runtime.sh and this very file entirely, so neither ran. A fix to a guard
+# could not take effect for the session that wrote it, and the stale guard kept blocking
+# edits that the fixed one allowed. Two PRs' worth of doc drift had the same root cause.
+#
+# Read-only and timeout-wrapped: `git fetch` touches the network but writes nothing to the
+# working tree, and a failure here is silent by design.
+GIT_COMMON="$(TO 3 git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+MAIN_CHECKOUT="$ROOT"
+if [ -n "$GIT_COMMON" ]; then
+	# In a linked worktree the common dir is the MAIN checkout's .git — its parent is the
+	# main checkout, which is the tree whose .claude/ is actually in force.
+	case "$GIT_COMMON" in
+	*/.git) MAIN_CHECKOUT="$(cd "$(dirname "$GIT_COMMON")" 2>/dev/null && pwd || echo "$ROOT")" ;;
+	esac
+fi
+
+TO 8 git -C "$MAIN_CHECKOUT" fetch -q origin dev >/dev/null 2>&1 || true
+behind="$(TO 3 git -C "$MAIN_CHECKOUT" rev-list --count HEAD..origin/dev 2>/dev/null || echo 0)"
+case "$behind" in '' | *[!0-9]*) behind=0 ;; esac
+
+if [ "$behind" -gt 0 ]; then
+	say ""
+	say "  ⚠ STALE HARNESS — the main checkout is ${behind} commit(s) behind origin/dev."
+	say "    Hooks and CLAUDE.md load from there, NOT from your worktree, so the rules"
+	say "    gating this session are the old ones. Fix before trusting any guard:"
+	say "      git -C ${MAIN_CHECKOUT} pull --ff-only"
+	say ""
+fi
+
 # Where does this worktree's app run?
 branch="$(TO 3 git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 slug="${branch#feat/}"

@@ -115,12 +115,26 @@ Four hooks gate every session (`.claude/settings.json`):
 | `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits in the main checkout |
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
-| `.claude/hooks/session-runtime.sh` | SessionStart | Prints the Runtime banner (branch, env, box, disk) |
+| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base branch: `dev` may merge, `staging`/`main` and `--admin` may not |
+| `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
+| `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
+
+Beyond the hooks, `.claude/settings.json` carries a **permission policy**. `deny` is absolute
+— it beats any allow rule and any hook — and covers the things that cannot be undone:
+`tofu`/`terraform` apply and destroy, pushes to `main`/`staging`, `docker compose down -v`,
+and reads or edits of credential files. `allow` pre-approves the routine read-only commands
+so the prompts you do see are meaningful.
 
 **A footgun worth knowing:** `guard-runtime.sh` matches **inside quotes**, deliberately — so
 `sh -c "…"` cannot smuggle a blocked command past it. The cost is that merely *writing* a
 blocked command into a file from a Bash heredoc is also refused. Use the Write/Edit tools for
 that; they are not matched.
+
+**The harness you run is the MAIN CHECKOUT's.** Hooks, `settings.json` and CLAUDE.md all
+resolve through `$CLAUDE_PROJECT_DIR`, so a session working in a worktree is still gated by
+`app/`'s copies. `app/` is pinned to `dev` but is not auto-pulled, so it drifts — and a fix
+to a guard cannot take effect for the session that wrote it. The SessionStart banner warns
+when this has happened; `git -C <main checkout> pull --ff-only` is the fix.
 
 `.githooks/pre-commit` and `pre-push` are the second layer: they run at commit time with the
 real working directory, and they also check the migration chain and SPDX headers.
