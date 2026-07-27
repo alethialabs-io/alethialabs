@@ -3,7 +3,9 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { toRecord } from "@/lib/coerce";
 import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { slugify } from "@/lib/slug";
 import {
 	environmentLifecycle,
@@ -53,8 +55,27 @@ const clusterInsert = createInsertSchema(projectCluster, {
 }).extend({
 	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 });
+// Cloud-native DNS/WAF/cert knobs plus the Cloudflare connector's own. SHAPED AND STRIPPED rather
+// than `z.custom` (a type assertion with no runtime effect) because this object is spread WHOLE into
+// the Postgres-persisted config_snapshot — an unrecognised key would be stored verbatim. Same
+// reasoning as the helm and secrets lanes.
+const dnsProviderConfigSchema: z.ZodType<DnsProviderConfig> = z
+	.object({
+		// cloud-native
+		acm_certificate: z.boolean().optional(),
+		managed_certificate: z.boolean().optional(),
+		cloudfront_waf: z.boolean().optional(),
+		application_waf: z.boolean().optional(),
+		cloud_armor: z.boolean().optional(),
+		azure_waf: z.boolean().optional(),
+		// cloudflare
+		zone_id: z.string().optional(),
+		proxied: z.boolean().optional(),
+	})
+	.strip();
+
 const dnsInsert = createInsertSchema(projectDns, {
-	provider_config: z.custom<DnsProviderConfig>().optional(),
+	provider_config: dnsProviderConfigSchema.optional(),
 });
 const repositoriesInsert = createInsertSchema(projectRepositories);
 const sourceReposInsert = createInsertSchema(projectSourceRepos, {
@@ -84,8 +105,35 @@ const secretsInsert = createInsertSchema(projectSecrets);
 const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 	provider_config: z.custom<StorageProviderConfig>().optional(),
 });
+// The cloud-native registry knobs plus every pluggable provider's. SHAPED AND STRIPPED for the same
+// reason as dns above (this rides whole into the persisted config_snapshot), and annotated with the
+// column's own JSONB interface so the two can't drift.
+//
+// `registry_url` is the one that matters most: four active providers require it, and a pull secret
+// built without it authenticates against nothing. It was missing from RegistryProviderConfig
+// entirely — which is exactly what the catalog-parity test below now catches from the other side.
+const registryProviderConfigSchema: z.ZodType<RegistryProviderConfig> = z
+	.object({
+		// cloud-native (ECR / Artifact Registry / ACR)
+		vulnerability_scanning: z.boolean().optional(),
+		immutable_tags: z.boolean().optional(),
+		// pluggable
+		namespace: z.string().optional(),
+		registry_url: z.string().optional(),
+		// cross-account keyless (*-xacct) — references, never keys
+		target_account_id: z.string().optional(),
+		target_project_id: z.string().optional(),
+		target_subscription_id: z.string().optional(),
+		region: z.string().optional(),
+		registry_host: z.string().optional(),
+		target_role_arn: z.string().optional(),
+		target_service_account: z.string().optional(),
+		target_identity_client_id: z.string().optional(),
+	})
+	.strip();
+
 const registriesInsert = createInsertSchema(projectContainerRegistries, {
-	provider_config: z.custom<RegistryProviderConfig>().optional(),
+	provider_config: registryProviderConfigSchema.optional(),
 });
 // Both knobs flow into the ArgoCD repository-credential `url`, so they are shape-checked rather than
 // waved through as opaque JSONB: a stray scheme or a trailing path in `registry_host` yields a
@@ -280,7 +328,46 @@ const clusterSchema = clusterInsert.omit({
 	cluster_endpoint: true,
 });
 
-const dnsSchema = dnsInsert.omit(componentAutoFields);
+// Fail-closed on the connector selection, mirroring the secrets and helm lanes.
+//
+// `provider` and `provider_config` are nullable columns, so the generated schema alone would persist
+// knobs with no slug — which is precisely the state the dropped-`provider` mapping used to produce,
+// and it fails OPEN: DNSProvider() reverts to the cloud's native backend and the deploy looks fine
+// while ignoring the connector the user chose.
+//
+// DNS is also not an open connector list. DNSProvider() (argocd/infra_facts.go) hard-codes
+// "cloudflare" and returns "" for any other non-native slug — which DISABLES external-dns rather
+// than falling back. So a slug added to the catalog must not become silently selectable here.
+const dnsSchema = dnsInsert.omit(componentAutoFields).superRefine((value, ctx) => {
+	if (!value.provider || value.provider === "native") return;
+
+	const provider = getConnectorProviderBySlug(value.provider);
+	if (!provider || provider.category !== "dns") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["provider"],
+			message: "Select a connected DNS provider",
+		});
+		return;
+	}
+	if (provider.status === "coming_soon") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["provider"],
+			message: "This DNS provider isn't available yet",
+		});
+		return;
+	}
+	// Cloudflare needs a zone. The column is the single source (categories/dns_cloudflare.go prefers
+	// provider_config.zone_id but falls back to it), so accept either rather than forcing a duplicate.
+	if (!value.zone_id?.trim() && !toRecord(value.provider_config).zone_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["zone_id"],
+			message: `${provider.name} needs the hosted zone ID`,
+		});
+	}
+});
 
 const repositoriesSchema = repositoriesInsert.omit({
 	...autoFields,

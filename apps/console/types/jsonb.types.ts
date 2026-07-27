@@ -432,10 +432,26 @@ export interface NosqlProviderConfig {
 }
 
 export interface RegistryProviderConfig {
+	// Cloud-native registry knobs (ECR / Artifact Registry / ACR). Meaningless once a pluggable
+	// registry connector is selected — the registry is then someone else's to configure.
 	vulnerability_scanning?: boolean;
 	immutable_tags?: boolean;
-	// Docker Hub (pluggable registry provider)
+	// Docker Hub
 	namespace?: string;
+	// The registry host for the providers that serve any host (generic-cr, ghcr-enterprise, harbor,
+	// scaleway-cr require it; gitlab-cr and quay accept it). LOAD-BEARING, not cosmetic:
+	// categories/registry_generic.go fails validation without it, and pullAuth uses it as the
+	// dockerconfig `auths` key — so a pull secret built without it authenticates against nothing.
+	registry_url?: string;
+	// Cross-account keyless registries (*-xacct) — identity/resource REFERENCES, never keys.
+	target_account_id?: string; // ecr-xacct
+	target_project_id?: string; // gar-xacct
+	target_subscription_id?: string; // acr-xacct
+	region?: string;
+	registry_host?: string;
+	target_role_arn?: string; // ecr-xacct
+	target_service_account?: string; // gar-xacct
+	target_identity_client_id?: string; // acr-xacct
 }
 
 // Helm chart-repo connector (helm_registry category) — non-secret knobs only; the

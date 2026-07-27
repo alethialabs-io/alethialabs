@@ -1940,9 +1940,15 @@ export async function getProjectAsFormData(
 					cluster_admins: [],
 					provider_config: {},
 				},
+		// `provider` is DESIGN — which DNS backend this environment uses — and must round-trip.
+		// Omitting it while KEEPING provider_config was the worst version of this bug: the reconcile
+		// is delete-then-insert, so a canvas save re-inserted the Cloudflare knobs with no slug to
+		// give them meaning, and DNSProvider() silently fell back to the cloud's native backend. Same
+		// class as the secrets wipe; the registries below have always carried it.
 		dns: source.components.dns
 			? {
 					enabled: source.components.dns.enabled,
+					provider: source.components.dns.provider ?? undefined,
 					zone_id: source.components.dns.zone_id ?? undefined,
 					domain_name: source.components.dns.domain_name ?? undefined,
 					managed_certificate:
