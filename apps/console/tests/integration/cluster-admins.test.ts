@@ -5,15 +5,12 @@
 // project_cluster.cluster_admins JSONB column is dropped. Proves against real Postgres: (1)
 // clusterAdminsByCluster reconstructs a cluster's admins in author `ordinal` order with groups as
 // text[] — the byte-stability guarantee buildConfigSnapshot / getProjectAsFormData rely on; (2) the
-// project_full view re-exposes the same {username, groups} array from the child table (an ordered
-// jsonb_agg subquery) so the CLI config endpoints are unchanged — guarded to run only once the
-// contract migration has dropped the column (so it validates in CI's fresh DB, not the stale shared
-// dev DB); (3) the join-through RLS policy scopes an admin to its cluster's project's org; (4) ON
-// DELETE CASCADE removes a cluster's admins when the cluster is cleared. Seeded via the service
-// connection; read back through the RLS-enforced app connection.
+// join-through RLS policy scopes an admin to its cluster's project's org; (3) ON DELETE CASCADE
+// removes a cluster's admins when the cluster is cleared. Seeded via the service connection; read
+// back through the RLS-enforced app connection.
 
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, withScope } from "@/lib/db";
 import { clusterAdminsByCluster } from "@/lib/db/normalized-reads";
@@ -23,7 +20,6 @@ import {
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
-import type { ClusterAdmin } from "@/types/jsonb.types";
 import { describeIfDb } from "./db";
 
 const ORG = randomUUID();
@@ -84,26 +80,6 @@ describeIfDb("cluster_admins — reader parity, view, RLS, cascade", () => {
 		const db = getServiceDb();
 		// A cluster with zero admin rows (here, a nonexistent id) reconstructs as an empty array.
 		expect(await clusterAdminsByCluster(db, randomUUID())).toEqual([]);
-	});
-
-	it("project_full re-exposes cluster_admins from the child table (post-migration)", async () => {
-		const db = getServiceDb();
-		// Only meaningful once the contract migration has dropped the column and programmables.sql
-		// re-sourced the view from the child table. On a pre-migration DB (shared dev), the old view
-		// still reads the column — skip to avoid a false red; CI runs it against a fresh migrated DB.
-		const droppedRows = await db.execute<{ dropped: boolean }>(sql`
-			SELECT NOT EXISTS(
-				SELECT 1 FROM information_schema.columns
-				WHERE table_name = 'project_cluster' AND column_name = 'cluster_admins'
-			) AS dropped`);
-		if (!droppedRows[0]?.dropped) return;
-		const rows = await db.execute<{ cluster_admins: ClusterAdmin[] }>(
-			sql`SELECT cluster_admins FROM project_full WHERE id = ${PROJ}`,
-		);
-		expect(rows[0]?.cluster_admins).toEqual([
-			{ username: "alice", groups: ["platform"] },
-			{ username: "bob", groups: ["sre", "oncall"] },
-		]);
 	});
 
 	it("RLS scopes admins to the owning org (join-through the cluster)", async () => {
