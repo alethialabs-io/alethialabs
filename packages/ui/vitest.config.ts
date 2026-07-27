@@ -10,17 +10,18 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+import { TEST_TIMEOUT_MS } from "./tests/timeouts";
+
 export default defineConfig({
 	plugins: [react()],
 	test: {
 		environment: "jsdom",
 		setupFiles: ["./tests/setup.ts"],
 		include: ["./tests/**/*.test.{ts,tsx}"],
-		// The PhoneInput RTL tests drive many userEvent interactions (typing a full number +
-		// a country search); on a loaded CI runner the sequence blew past vitest's 5000ms
-		// default, flaking the required TypeScript job on ~every train. `delay: null` on the
-		// userEvent setups makes the events near-instant; this is the CI-load safety margin.
-		testTimeout: 15000,
+		// The per-TEST budget. DERIVED from the per-WAIT budget in tests/timeouts.ts — the two are
+		// different clocks and setting them independently is what flaked the required TypeScript job
+		// twice (#1236 → #1402). Change the constants there, never a literal here.
+		testTimeout: TEST_TIMEOUT_MS,
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov", "json-summary"],
