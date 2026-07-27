@@ -489,6 +489,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       ArgoCD URL resolves. Reuses the same kc + metaRaw; runs BEFORE the guaranteed teardown.
 	runT2Day2Access(t, ctx, kc, day2AccessParams{provider: provider, metaRaw: metaRaw})
 
+	// (7.8) DAY-2 OFFER postures (#1495, driving the #1440 classifier). Opt-in via
+	//       ALETHIA_E2E_DAY2_OFFER — unset ⇒ a clean skip. Where (7.7) proves the CLUSTER is
+	//       reachable, this proves the OFFERS on it survive day-2: it plans a tunable change, a
+	//       resize and a teardown against live state and asserts tofu's own plan converges in
+	//       place (update/resize) and goes cleanly to zero (destroy). Runs BEFORE the guaranteed
+	//       teardown so the plans see real state; nothing here applies anything.
+	runT2Day2Offer(t, ctx, day2OfferParams{
+		provider:     provider,
+		cpURL:        cp.URL(),
+		jobID:        jobID,
+		templatesDir: stagedTemplate,
+		snapshot:     full,
+	})
+
 	// (8) SOAK / day-2 window (BYOC A0.3). Opt-in via ALETHIA_E2E_SOAK — unset ⇒ a clean
 	//     skip (everything above is the unchanged base T2 proof). Runs AFTER the readiness +
 	//     ArgoCD asserts and BEFORE this function returns, so the GUARANTEED t.Cleanup

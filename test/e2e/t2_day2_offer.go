@@ -56,10 +56,16 @@
 package e2e
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	tfjson "github.com/hashicorp/terraform-json"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // Day2Op is one of the three post-first-apply operations #1440 establishes per offer.
@@ -266,4 +272,197 @@ func day2Addrs(cs []Day2ResourceChange) string {
 		a = append(a, c.Address)
 	}
 	return strings.Join(a, ", ")
+}
+
+// ─────────────────────── run-harness support (#1495) ───────────────────────
+// Everything below is what the e2e_t2 run-harness (t2_day2_offer_run_test.go) needs in order
+// to DRIVE the classifier above against a live environment. It lives in this untagged file so
+// it is unit-tested without a cloud — the mutation planner especially, since a mutation that
+// plans no change is the one way this gate can fail open.
+
+// Day2OfferEnabled reports whether this run should assert the day-2 OFFER postures (opt-in;
+// the nightly turns it on with the full bar).
+func Day2OfferEnabled() bool {
+	return os.Getenv("ALETHIA_E2E_DAY2_OFFER") == "1"
+}
+
+// Day2OfferTimeout bounds each day-2 PLAN — ALETHIA_E2E_DAY2_OFFER_TIMEOUT when set (a Go
+// duration), else 15m. A `tofu plan` against live state does real provider refreshes, so the
+// default is generous; the bound exists so a wedged provider call cannot hang the nightly.
+func Day2OfferTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_DAY2_OFFER_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 15 * time.Minute
+}
+
+// day2ResizeClass is the database instance class each cloud RESIZES TO. Resize is the one day-2
+// axis that cannot be expressed cloud-indifferently: ProjectDatabaseConfig.InstanceClass is a
+// concrete provider SKU, so naming a target means naming it per cloud. Each value is a real,
+// valid class for that provider and DIFFERENT from the template default it replaces
+// (aws db.serverless · gcp db-f1-micro · azure B_Standard_B1ms · alibaba pg.n2.small.2c), which
+// is what makes the plan non-empty. Nothing is ever applied — this only has to plan.
+var day2ResizeClass = map[string]string{
+	"aws":     "db.t3.medium",
+	"gcp":     "db-g1-small",
+	"azure":   "B_Standard_B2s",
+	"alibaba": "pg.n2.medium.2c",
+}
+
+// Day2Mutation describes the change a day-2 op proposes, for the summary and for the error a
+// vacuous plan produces. Applied is false when this provider/offer combination has no mutation
+// to make — recorded rather than silently skipped.
+type Day2Mutation struct {
+	Op      Day2Op `json:"op"`
+	Field   string `json:"field"`
+	Detail  string `json:"detail"`
+	Applied bool   `json:"applied"`
+}
+
+// applyDay2Update mutates a TUNABLE on every database offer: backup retention, +1 day.
+//
+// Retention is the only tunable all four clouds wire from the cloud-indifferent config
+// (BackupRetentionDays → aws/gcp/azure/alibaba), it converges in place on every one of them,
+// and it needs no per-cloud SKU vocabulary. Engine version was the obvious alternative and is
+// rejected: a version string valid on one cloud is invalid on the next, and an invalid one
+// fails at plan time — which would look identical to the hazard this gate hunts for.
+//
+// Caches are deliberately NOT mutated here: no cache tunable is wired on all four clouds
+// (MemoryGB reaches aws+gcp only, NumCacheNodes aws+gcp+azure), so any choice would be a
+// half-dead per-cloud table. The summary records which offers were exercised.
+func applyDay2Update(dbs []types.ProjectDatabaseConfig) Day2Mutation {
+	m := Day2Mutation{Op: Day2Update, Field: "databases[].backup_retention_days"}
+	if len(dbs) == 0 {
+		m.Detail = "no database offer in this environment"
+		return m
+	}
+	for i := range dbs {
+		cur := 7
+		if dbs[i].BackupRetentionDays != nil {
+			cur = *dbs[i].BackupRetentionDays
+		}
+		next := cur + 1
+		dbs[i].BackupRetentionDays = &next
+	}
+	m.Applied = true
+	m.Detail = fmt.Sprintf("backup retention +1 day on %d database offer(s)", len(dbs))
+	return m
+}
+
+// applyDay2Resize mutates the SIZE axis on every database offer — the instance class, to the
+// per-cloud target in day2ResizeClass. A provider with no entry yields Applied=false, which the
+// caller reports as an honest skip rather than a pass.
+func applyDay2Resize(dbs []types.ProjectDatabaseConfig, provider string) Day2Mutation {
+	m := Day2Mutation{Op: Day2Resize, Field: "databases[].instance_class"}
+	target, ok := day2ResizeClass[provider]
+	if !ok {
+		m.Detail = fmt.Sprintf("no resize target recorded for provider %q", provider)
+		return m
+	}
+	if len(dbs) == 0 {
+		m.Detail = "no database offer in this environment"
+		return m
+	}
+	// A resize to the class the offer already runs plans nothing. Refuse rather than emit a
+	// mutation the caller would read as applied and then fail on an empty changeset.
+	for i := range dbs {
+		if dbs[i].InstanceClass == target {
+			m.Detail = fmt.Sprintf("database already runs %s — no resize to propose", target)
+			return m
+		}
+	}
+	for i := range dbs {
+		dbs[i].InstanceClass = target
+	}
+	m.Applied = true
+	m.Detail = fmt.Sprintf("instance class → %s on %d database offer(s)", target, len(dbs))
+	return m
+}
+
+// planFromMap converts the provisioner's PlanResult.PlanJSON (an untyped map, because it
+// crosses the runner's result.json boundary) into the typed plan AnalyzeDay2 reads. A nil or
+// empty map is an error: "no plan" and "a plan with no changes" are opposite findings, and
+// AnalyzeDay2 must never be handed the former dressed as the latter.
+func planFromMap(raw map[string]interface{}) (*tfjson.Plan, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("plan JSON is empty — the plan was not produced, which is not the same as a plan with no changes")
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("re-marshal plan JSON: %w", err)
+	}
+	var plan tfjson.Plan
+	if err := json.Unmarshal(b, &plan); err != nil {
+		return nil, fmt.Errorf("decode plan JSON: %w", err)
+	}
+	return &plan, nil
+}
+
+// OfferSummary is the machine-readable result of the day-2 OFFER assertion, written to
+// ALETHIA_E2E_DAY2_OFFER_SUMMARY so the proof/verdict capture can fold a day-2 line into the
+// per-provider step summary. Booleans, counts and resource addresses only — no secrets.
+type OfferSummary struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider"`
+	// Postures is one entry per op that RAN. An op whose mutation did not apply is absent
+	// here and present in Skipped — the two must stay distinguishable.
+	Postures  []*Day2Posture `json:"postures,omitempty"`
+	Mutations []Day2Mutation `json:"mutations,omitempty"`
+	Skipped   []string       `json:"skipped,omitempty"`
+	// OffersExercised names what update/resize actually touched. The gate covers the database
+	// offer on every cloud; caches are covered by destroy only (see applyDay2Update).
+	OffersExercised []string `json:"offers_exercised,omitempty"`
+	Verdict         string   `json:"verdict"`
+}
+
+// offerVerdictPass reports whether every day-2 posture that RAN is Safe. An op that could not
+// run does not gate — but it is never counted as a pass either, and a run where NOTHING ran is
+// a failure: that is the vacuous shape this whole surface exists to refuse.
+func offerVerdictPass(s OfferSummary) bool {
+	if !s.Enabled || len(s.Postures) == 0 {
+		return false
+	}
+	for _, p := range s.Postures {
+		if p == nil || !p.Safe {
+			return false
+		}
+	}
+	return true
+}
+
+// offerSummaryVerdict renders the one-line human verdict embedded in OfferSummary.Verdict.
+func offerSummaryVerdict(s OfferSummary) string {
+	if !s.Enabled {
+		return "day2-offer: skipped (ALETHIA_E2E_DAY2_OFFER unset)"
+	}
+	icon := "✅"
+	if !offerVerdictPass(s) {
+		icon = "❌"
+	}
+	parts := make([]string, 0, len(s.Postures))
+	for _, p := range s.Postures {
+		if p == nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%t", p.Op, p.Safe))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "none ran")
+	}
+	out := fmt.Sprintf("%s day2-offer (%s): %s", icon, s.Provider, strings.Join(parts, " · "))
+	if len(s.Skipped) > 0 {
+		out += fmt.Sprintf(" · skipped: %s", strings.Join(s.Skipped, "; "))
+	}
+	return out
+}
+
+// writeOfferSummary persists the day-2 offer summary as indented JSON.
+func writeOfferSummary(path string, s OfferSummary) error {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
