@@ -72,19 +72,13 @@ fi
 board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($n|tonumber))|.labels|map(.name)|index($l)' >/dev/null 2>&1; }
 
-# Does an OPEN or MERGED PR close this issue? Used by the reclaim below as evidence that a holder
-# is alive despite a stale lease. Fails CLOSED (a gh failure reads as "yes, taken") — mirrors
-# claim-work.sh's guard, and here a false "no" would strip a live instance's claim.
-has_closing_pr() { # <n>
-  local n="$1" out
-  if ! out="$(gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
-    --jq "[.[] | select(.state==\"OPEN\" or .state==\"MERGED\")
-               | select((.body + \" \" + .title) | test(\"(?i)(close|fix|resolve)(s|d)? +#$n\\\\b\"))] | length" \
-    2>/dev/null)"; then
-    return 0
-  fi
-  [ "${out:-0}" -gt 0 ]
-}
+# has_closing_pr / has_active_pr — evidence that a holder is alive despite a stale lease. Both fail
+# CLOSED (a gh failure reads as "yes, taken"): here a false "no" STRIPS a live instance's claim.
+# Shared with claim-work.sh, which needs the identical predicates — this file used to carry a
+# verbatim copy of has_closing_pr, and one protocol duplicated across call sites is how the xacct
+# gate diverged three ways. See scripts/lib/board-pr.sh.
+# shellcheck source=scripts/lib/board-pr.sh
+. scripts/lib/board-pr.sh
 
 # ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
 # Mutates NOTHING on leases/blocks. For each open, still-claimable board unit that a MERGED PR
@@ -147,6 +141,13 @@ if [ "$MODE" = "full" ]; then
       # handed to a second instance. An open PR closing the issue is proof of a live holder.
       if has_closing_pr "$n"; then
         echo "· #$n lease is stale (${age}s) but a PR already closes it — not reclaiming." >&2
+        continue
+      fi
+      # Same evidence, the other phrasing: a PR delivering one tier of a multi-tier unit says
+      # "Part of #n", never "Closes #n". Reclaiming on a stale lease alone would hand a unit that
+      # someone is demonstrably still building to a second instance.
+      if has_active_pr "$n"; then
+        echo "· #$n lease is stale (${age}s) but open PR $(active_pr_ref "$n") is building it — not reclaiming." >&2
         continue
       fi
       who="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.assignees[0].login // ""')"
