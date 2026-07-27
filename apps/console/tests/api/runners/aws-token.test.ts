@@ -8,11 +8,11 @@
 // platform AWS account in the path. These tests pin the contract — a real minted token that verifies against
 // the JWKS (audience sts.amazonaws.com), 501 when the issuer is missing, and 401 when unauthenticated.
 
-import { generateKeyPairSync } from "node:crypto";
 import * as jose from "jose";
 import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetIssuerCache, getPublicJwks } from "@/lib/oidc/issuer";
+import { testRsaKey } from "../../fixtures/rsa-keys";
 
 const verifyRunnerToken = vi.fn();
 vi.mock("@/lib/runners/auth", () => ({
@@ -29,9 +29,7 @@ const ENV_KEYS = [
 const saved: Record<string, string | undefined> = {};
 
 function installConfigured() {
-	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-	const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-	process.env.ALETHIA_OIDC_SIGNING_KEY = Buffer.from(pem, "utf8").toString("base64");
+	process.env.ALETHIA_OIDC_SIGNING_KEY = testRsaKey().b64;
 	process.env.AWS_REGION = "eu-central-1";
 	process.env.NEXT_PUBLIC_APP_URL = APP_URL;
 	__resetIssuerCache();
