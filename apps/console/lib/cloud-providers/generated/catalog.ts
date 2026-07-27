@@ -936,7 +936,7 @@ export const CATALOG: Catalog = {
 				]
 			},
 			"azure": {
-				"default_tier": "C1",
+				"default_tier": "Balanced_B1",
 				"engines": [
 					{
 						"value": "redis",
@@ -945,34 +945,40 @@ export const CATALOG: Catalog = {
 				],
 				"tiers": [
 					{
-						"value": "C0",
-						"label": "Basic C0",
-						"memory_gb": 0.25,
-						"cost": "~$15/mo"
+						"value": "Balanced_B0",
+						"label": "Balanced B0",
+						"memory_gb": 0.5,
+						"cost": "~$12/mo"
 					},
 					{
-						"value": "C1",
-						"label": "Basic C1",
+						"value": "Balanced_B1",
+						"label": "Balanced B1",
 						"memory_gb": 1,
-						"cost": "~$35/mo"
+						"cost": "~$23/mo"
 					},
 					{
-						"value": "C2",
-						"label": "Standard C2",
-						"memory_gb": 2.5,
-						"cost": "~$80/mo"
+						"value": "Balanced_B3",
+						"label": "Balanced B3",
+						"memory_gb": 3,
+						"cost": "~$47/mo"
 					},
 					{
-						"value": "C3",
-						"label": "Standard C3",
+						"value": "Balanced_B5",
+						"label": "Balanced B5",
 						"memory_gb": 6,
-						"cost": "~$155/mo"
+						"cost": "~$114/mo"
 					},
 					{
-						"value": "P1",
-						"label": "Premium P1",
-						"memory_gb": 6,
-						"cost": "~$210/mo"
+						"value": "Balanced_B10",
+						"label": "Balanced B10",
+						"memory_gb": 12,
+						"cost": "~$230/mo"
+					},
+					{
+						"value": "Balanced_B20",
+						"label": "Balanced B20",
+						"memory_gb": 24,
+						"cost": "~$459/mo"
 					}
 				]
 			},

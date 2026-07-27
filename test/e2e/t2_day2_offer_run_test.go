@@ -100,15 +100,16 @@ func runT2Day2Offer(t *testing.T, ctx context.Context, p day2OfferParams) {
 			summary.Skipped = append(summary.Skipped, fmt.Sprintf("update: %s", mut.Detail))
 			t.Logf("day-2 update: skipped — %s", mut.Detail)
 		} else {
-			summary.OffersExercised = append(summary.OffersExercised, "database (update)")
+			summary.OffersExercised = append(summary.OffersExercised, day2Exercised(mut)...)
 			posture := day2PlanAndAnalyze(t, planCtx, Day2Update, cfg, p, backend)
 			summary.Postures = append(summary.Postures, posture)
 		}
 	}
 
-	// ── resize ── the size axis moves; the endpoint must survive.
+	// ── resize ── the size axis moves; the endpoint must survive. Databases AND caches: the
+	// cache leg rides the cloud-indifferent MemoryGB, so it needs no per-cloud target (#1526).
 	if cfg, mut, err := day2MutatedConfig(p.snapshot, func(c *types.ProjectConfig) Day2Mutation {
-		return applyDay2Resize(c.Databases, p.provider)
+		return applyDay2Resize(c.Databases, c.Caches, p.provider)
 	}); err != nil {
 		t.Fatalf("day-2 offer: build the resize config: %v", err)
 	} else {
@@ -117,7 +118,7 @@ func runT2Day2Offer(t *testing.T, ctx context.Context, p day2OfferParams) {
 			summary.Skipped = append(summary.Skipped, fmt.Sprintf("resize: %s", mut.Detail))
 			t.Logf("day-2 resize: skipped — %s", mut.Detail)
 		} else {
-			summary.OffersExercised = append(summary.OffersExercised, "database (resize)")
+			summary.OffersExercised = append(summary.OffersExercised, day2Exercised(mut)...)
 			posture := day2PlanAndAnalyze(t, planCtx, Day2Resize, cfg, p, backend)
 			summary.Postures = append(summary.Postures, posture)
 		}
