@@ -119,8 +119,31 @@ if [ "$MODE" = "close-shipped" ]; then
 fi
 
 # ── reclaim stale leases ─────────────────────────────────────────────────────
+# STALLED units: the lease is long dead AND the only reason we are not reclaiming is a PR that is
+# itself stuck (conflicting, or untouched for PR_IDLE_TTL). Found via #1426/#1461: the lease was 8h
+# past TTL, the worktree lease was free, the branch was 17 commits behind — and nothing surfaced it,
+# because an open "Closes #1426" PR is, correctly, treated as evidence someone is on it.
+#
+# We deliberately do NOT reclaim these. Two reasons, and the second is the load-bearing one:
+#   1. The guards in scripts/lib/board-pr.sh are FAIL-CLOSED by contract; weakening them to unstick a
+#      board is how two instances end up building one unit (#1247).
+#   2. It would not even work. claim-work.sh Guard 1 skips any unit with an open closing PR, so
+#      stripping the label would only make the unit LOOK ready while the loop kept skipping it —
+#      strictly worse than the honest "claimed" it shows today.
+# So: name it loudly and let a human decide. `claim-work.sh --issue <n>` is the documented override.
+PR_IDLE_TTL="${ALETHIA_PR_IDLE_TTL:-$(( LEASE_TTL * 4 ))}"
+stalled_units=""
+note_if_stalled() { # <n> <lease-age-seconds>
+  local n="$1" age="$2" ref
+  ref="$(stalled_pr_ref "$n" "$PR_IDLE_TTL")"
+  [ -z "$ref" ] && return 0
+  stalled_units="$stalled_units  #$n — lease dead ${age}s, blocked behind stalled PR $ref"$'\n'
+}
 reclaimed=0
-if [ "$MODE" = "full" ]; then
+# Runs in `full` AND `report`: the scan itself is read-only (lease comments + PR queries), and the
+# stalled diagnostic below is worthless if you can only get it by running the mutating mode. The
+# three writes are gated separately, further down.
+if [ "$MODE" = "full" ] || [ "$MODE" = "report" ]; then
   for n in $(echo "$board" | jq -r '.[]|select(.labels|map(.name)|index("claimed"))|.number'); do
     stamp="$(gh issue view "$n" --json comments \
       --jq '[.comments[].body|select(startswith("```lease"))]|last // ""' \
@@ -141,6 +164,7 @@ if [ "$MODE" = "full" ]; then
       # handed to a second instance. An open PR closing the issue is proof of a live holder.
       if has_closing_pr "$n"; then
         echo "· #$n lease is stale (${age}s) but a PR already closes it — not reclaiming." >&2
+        note_if_stalled "$n" "$age"
         continue
       fi
       # Same evidence, the other phrasing: a PR delivering one tier of a multi-tier unit says
@@ -148,6 +172,13 @@ if [ "$MODE" = "full" ]; then
       # someone is demonstrably still building to a second instance.
       if has_active_pr "$n"; then
         echo "· #$n lease is stale (${age}s) but open PR $(active_pr_ref "$n") is building it — not reclaiming." >&2
+        note_if_stalled "$n" "$age"
+        continue
+      fi
+      # `--report` reaches here too, so that the read-only mode can SEE what full mode would do.
+      # Everything above this line is read-only; only the three writes below are gated on `full`.
+      if [ "$MODE" != "full" ]; then
+        echo "· #$n lease is stale (${age}s) and nothing is building it — reclaimable (report mode: not touching)." >&2
         continue
       fi
       who="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.assignees[0].login // ""')"
@@ -238,6 +269,15 @@ ship="$(echo "$board" | jq -r --argjson merged "$merged" '
 if [ -n "$ship" ]; then
   echo "  ── ⚠ possibly-shipped (open, but a MERGED PR references it — verify vs origin/dev, close if delivered) ──"
   echo "$ship"
+fi
+
+# ── stalled: claimed, lease long dead, and the PR holding it is stuck too ────
+# Not reclaimed on purpose (see the reclaim block). These are the units that would otherwise sit
+# invisible forever: the board says someone owns them, and nothing says the owner left.
+if [ -n "$stalled_units" ]; then
+  echo "  ── ⚠ stalled (claimed, lease dead, and the PR holding it is stuck — needs a human) ──"
+  printf '%s' "$stalled_units"
+  echo "     take one over with:  scripts/claim-work.sh --issue <n>   (then rebase or close its PR)"
 fi
 
 [ "$MODE" = "full" ] && echo "  (reclaimed $reclaimed stale lease(s))"

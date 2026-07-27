@@ -93,6 +93,13 @@ scripts/claim-work.sh --class backend      # loop
   PR push (the worker) — or let `coordinate.sh` reclaim a unit whose lease is older than `LEASE_TTL`. Reclaim
   skips a unit that already has an **open closing PR** (evidence the holder is alive despite a stale lease) and
   a unit whose lease timestamp is unreadable. Reclaim = clear assignee + `claimed`, comment "reclaimed".
+- **Stalled units** (`⚠ stalled` in the report): claimed, lease long dead, and the PR that stops the reclaim is
+  itself stuck — CONFLICTING, or untouched for `ALETHIA_PR_IDLE_TTL` (default `4 × LEASE_TTL`). These are
+  **reported, never auto-reclaimed**, deliberately. The board↔PR guards are fail-closed by contract, and
+  reclaiming would not even help: `claim-work.sh` Guard 1 skips any unit with an open closing PR, so stripping
+  the label would only make the unit *look* ready while the loop kept skipping it. Take one over with
+  `scripts/claim-work.sh --issue <n>`, then rebase or close its PR. Both `--report` and the default full run
+  print this; only the reclaim writes are full-only.
 - **Migration mutex**: only ONE open issue may hold `mutex:migration` claimed at a time. `claim-work.sh`
   refuses to claim a second. Never run `pnpm -F console db:generate` in two worktrees at once — the drizzle
   snapshot chain is un-mergeable (this is the board-level guard on top of `scripts/db-generate.sh`).
