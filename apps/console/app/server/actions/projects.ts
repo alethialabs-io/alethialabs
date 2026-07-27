@@ -11,7 +11,10 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
-import { clusterAdminsByCluster } from "@/lib/db/normalized-reads";
+import {
+	clusterAdminsByCluster,
+	serviceBindingsByOwner,
+} from "@/lib/db/normalized-reads";
 import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
 import {
 	auditLog,
@@ -84,7 +87,11 @@ import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import type { ClusterAdmin, TopicSubscription } from "@/types/jsonb.types";
+import type {
+	ClusterAdmin,
+	ServiceBinding,
+	TopicSubscription,
+} from "@/types/jsonb.types";
 import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -234,10 +241,14 @@ export interface CreateProjectInput {
 	>[];
 	// W1 — first-class application workloads. resolved_image is the W2 build's write-back
 	// slot (output column, like registries.repository_url) — never part of a create/save.
-	services?: Omit<
+	services?: (Omit<
 		ComponentInsert<typeof projectServices.$inferInsert>,
 		"resolved_image"
-	>[];
+	> & {
+		// Form-only field (not a project_services column since the contract phase, #1426): bindings
+		// persist to the service_bindings child table via insertServiceBindings below.
+		bindings?: ServiceBinding[];
+	})[];
 }
 
 // ============================================================
@@ -349,11 +360,12 @@ async function writeComponents(
 			})),
 		);
 	if (data.services?.length) {
-		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
-		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).
+		// Each binding is normalized into service_bindings (+ its injections), keyed by service name
+		// (unique per env). The parent `bindings` JSONB was dropped in the contract phase (#1426), so
+		// strip the form-only `bindings` field from the row insert — the child write below owns it.
 		const insertedServices = await tx
 			.insert(projectServices)
-			.values(data.services.map((s) => ({ ...base, ...s })))
+			.values(data.services.map(({ bindings: _bindings, ...s }) => ({ ...base, ...s })))
 			.returning({ id: projectServices.id, name: projectServices.name });
 		const svcIdByName = new Map(insertedServices.map((r) => [r.name, r.id]));
 		for (const s of data.services) {
@@ -596,7 +608,12 @@ export async function getProject(
 				storage_buckets: c.storageBuckets,
 				container_registries: c.containerRegistries,
 				helm_registries: c.helmRegistries,
-				services: c.services,
+				// W3 bindings live in the service_bindings child table (JSONB dropped, #1426), so the
+				// declared service→infra edges round-trip through form-data unchanged.
+				services: c.services.map((s) => ({
+					...s,
+					bindings: c.serviceBindings.get(s.id) ?? [],
+				})),
 			};
 		}
 
@@ -751,7 +768,11 @@ async function buildConfigSnapshot(
 			containerRegistries,
 			helmRegistries,
 			services,
+			// W3 bindings live in the service_bindings child table (JSONB dropped, #1426) — used by
+			// the fail-closed gate below and the snapshot wire.
+			serviceBindings: bindingsByService,
 		} = await readEnvComponents(tx, projectId, envId, { cluster: "none" });
+
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
@@ -780,11 +801,11 @@ async function buildConfigSnapshot(
 		if (byoAddonIds.length > 0) {
 			const workloadRows = await tx
 				.select({
+					id: projectChartWorkloads.id,
 					addon_id: projectChartWorkloads.addon_id,
 					name: projectChartWorkloads.name,
 					rendered: projectChartWorkloads.rendered,
 					config: projectChartWorkloads.config,
-					bindings: projectChartWorkloads.bindings,
 					value_paths: projectChartWorkloads.value_paths,
 				})
 				.from(projectChartWorkloads)
@@ -794,13 +815,18 @@ async function buildConfigSnapshot(
 						inArray(projectChartWorkloads.addon_id, byoAddonIds),
 					),
 				);
+			// Chart-workload bindings live in service_bindings too (JSONB dropped, #1426).
+			const bindingsByWorkload = await serviceBindingsByOwner(tx, {
+				serviceIds: [],
+				chartWorkloadIds: workloadRows.map((w) => w.id),
+			});
 			for (const w of workloadRows) {
 				const list = workloadsByAddon.get(w.addon_id) ?? [];
 				list.push({
 					name: w.name,
 					rendered: w.rendered,
 					config: w.config,
-					bindings: w.bindings,
+					bindings: bindingsByWorkload.get(w.id) ?? [],
 					value_paths: w.value_paths,
 				});
 				workloadsByAddon.set(w.addon_id, list);
@@ -910,7 +936,7 @@ async function buildConfigSnapshot(
 			const queueNames = new Set(queues.map((q) => q.name));
 			const secretNames = new Set(secrets.map((s) => s.name));
 			for (const svc of services) {
-				for (const b of svc.bindings ?? []) {
+				for (const b of bindingsByService.get(svc.id) ?? []) {
 					const targetExists =
 						b.target.kind === "database"
 							? dbNames.has(b.target.name)
@@ -1190,7 +1216,11 @@ async function buildConfigSnapshot(
 			})),
 			// W1 — first-class application workloads (the customer's own code). The runner renders
 			// each into k8s manifests; image build/push (from source when kind==="repo") is W2.
-			services: services.map((s) => ({ ...s, ...resolvePlacement(s) })),
+			services: services.map((s) => ({
+				...s,
+				bindings: bindingsByService.get(s.id) ?? [],
+				...resolvePlacement(s),
+			})),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
