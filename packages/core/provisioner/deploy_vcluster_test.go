@@ -65,14 +65,14 @@ func TestBuildVClusterSpecFailsClosed(t *testing.T) {
 // on a re-mint-wired cloud (aws today) and fails closed everywhere else — cloud parity is explicit.
 func TestSelectPlacementPathVcluster(t *testing.T) {
 	// Activated clouds route to the vcluster path (aws in-core; gcp/azure via the runner-injected resolver;
-	// hetzner via the injected Talos-API minter from the persisted talosconfig).
-	for _, provider := range []string{"aws", "gcp", "azure", "hetzner"} {
+	// alibaba (in-core keyless RRSA signing client) + hetzner (Talos-API minter from the persisted talosconfig).
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
 		if got := selectPlacementPath(types.PlacementModeVcluster, provider); got != placementVcluster {
 			t.Errorf("vcluster on %q = %v, want placementVcluster", provider, got)
 		}
 	}
-	// alibaba is a per-cloud follow-up; the "hetzner-talos" non-slug and empty string are not providers.
-	for _, provider := range []string{"alibaba", "hetzner-talos", ""} {
+	// "hetzner-talos" is not a provider slug (the slug is "hetzner"); the empty string is not a provider.
+	for _, provider := range []string{"hetzner-talos", ""} {
 		if got := selectPlacementPath(types.PlacementModeVcluster, provider); got != placementUnactivated {
 			t.Errorf("vcluster on %q = %v, want placementUnactivated (fail-closed parity)", provider, got)
 		}
@@ -88,16 +88,15 @@ func TestSelectPlacementPathVcluster(t *testing.T) {
 
 // TestVClusterRemintWired locks the single activation control (aws-first, everything else fail-closed).
 func TestVClusterRemintWired(t *testing.T) {
-	for _, provider := range []string{"aws", "gcp", "azure", "hetzner"} {
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
 		if !vclusterRemintWired(provider) {
 			t.Errorf("%q should be wired for vcluster re-mint", provider)
 		}
 	}
-	// alibaba is a parity follow-up (needs its signing-client resolver leg); "hetzner-talos" is not a
-	// provider slug (the slug is "hetzner").
-	for _, provider := range []string{"alibaba", "hetzner-talos"} {
+	// "hetzner-talos" is not a provider slug (the slug is "hetzner").
+	for _, provider := range []string{"hetzner-talos"} {
 		if vclusterRemintWired(provider) {
-			t.Errorf("%q must not be wired (parity follow-up / not a slug)", provider)
+			t.Errorf("%q must not be wired (not a provider slug)", provider)
 		}
 	}
 }
