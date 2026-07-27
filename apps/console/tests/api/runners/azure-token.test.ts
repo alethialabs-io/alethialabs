@@ -7,11 +7,11 @@
 // contract — a real minted token that verifies against the published JWKS (audience scoped to the
 // Azure exchange), 501 when the issuer isn't configured, and 401 when the runner isn't authenticated.
 
-import { generateKeyPairSync } from "node:crypto";
 import * as jose from "jose";
 import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetIssuerCache, getPublicJwks } from "@/lib/oidc/issuer";
+import { testRsaKey } from "../../fixtures/rsa-keys";
 
 // Runner auth is exercised by its own suite; here we stub it to isolate the mint behaviour.
 const verifyRunnerToken = vi.fn();
@@ -23,9 +23,7 @@ const APP_URL = "https://alethialabs.io";
 const saved: Record<string, string | undefined> = {};
 
 function installKey() {
-	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-	const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-	process.env.ALETHIA_OIDC_SIGNING_KEY = Buffer.from(pem, "utf8").toString("base64");
+	process.env.ALETHIA_OIDC_SIGNING_KEY = testRsaKey().b64;
 	process.env.NEXT_PUBLIC_APP_URL = APP_URL;
 	__resetIssuerCache();
 }
