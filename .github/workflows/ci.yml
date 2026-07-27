@@ -487,6 +487,30 @@ jobs:
         run: node scripts/check-license-headers.mjs
       - name: Docs describe a repo that exists (paths · scripts · blocked commands)
         run: node scripts/check-docs-contract.mjs
+      # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
+      # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
+      # uncommitted work) against a real throwaway leased worktree; it is the only proof
+      # the lease actually holds, and it was never executed by CI.
+      - name: Worktree lease protocol (13 properties, incl. pid-reuse + nested worktrees)
+        run: bash scripts/lib/wt-lease.sh --self-test
+      - name: Worktree lease guard — replays incident #1247
+        run: bash scripts/lib/wt-lease-hook-test.sh
+      - name: Board claim arbitration (earliest-lease-wins) + PR predicates
+        run: bash scripts/claim-work.sh --self-test
+      - name: Board decomposition validator (disjoint scopes, acyclic DAG)
+        run: node scripts/decompose-validate.mjs --self-test
+      # Each guard proves it still BLOCKS what it must and, more importantly, still
+      # ALLOWS what it must — the false positives are what get a guard disabled.
+      - name: Guards self-test (runtime · compose · merge)
+        run: |
+          bash .claude/hooks/guard-runtime.sh --self-test
+          bash .claude/hooks/guard-compose.sh --self-test
+          bash .claude/hooks/guard-merge.sh --self-test
+      - name: Hook scripts parse
+        run: |
+          for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
+            bash -n "$f"
+          done
       - name: Cloud privilege (OIDC / creds) never reachable from a PR (BYOC invariant 1)
         run: node scripts/check-workflow-oidc-isolation.mjs
 

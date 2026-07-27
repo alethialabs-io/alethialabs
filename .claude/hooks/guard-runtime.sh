@@ -76,6 +76,13 @@ if [ "${1:-}" = "--self-test" ]; then
 	t allow 'pnpm env:reap'
 	t allow 'pnpm dev:doctor'
 	t allow 'pnpm dev:runner'
+	# Blocking the teardown for a stack you may start is backwards. `dev:stack` itself
+	# stays blocked; its sub-commands do not start anything.
+	t allow 'pnpm dev:stack:logs'
+	t allow 'pnpm dev:stack:down'
+	t allow 'pnpm dev:runner:logs'
+	t allow 'pnpm dev:runner:down'
+	t block 'pnpm dev:stack'
 	t allow 'pnpm wt foo'
 	t allow 'pnpm db:up'
 
@@ -163,7 +170,12 @@ if printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_-])pnpm[[:space:]]+dev:up\b'; t
 	block "\`pnpm dev:up\` runs the console on this Mac." "pnpm env:up"
 fi
 
-if printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_-])pnpm[[:space:]]+dev:stack\b'; then
+# `dev:stack` only — NOT `dev:stack:logs` or `dev:stack:down`. `\b` matches at the k/:
+# boundary, so the original rule caught the sub-commands too: it blocked tailing a stack
+# and, worse, blocked TEARING ONE DOWN. Refusing the cleanup path for something you are
+# permitted to start (with the escape hatch) leaves the machine worse off than not
+# guarding at all. The trailing class is what excludes the sub-commands.
+if printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_-])pnpm[[:space:]]+dev:stack([^:[:alnum:]]|$)'; then
 	block "\`pnpm dev:stack\` runs four dockerised \`next dev\` servers with polling file watchers on this Mac." \
 		"pnpm env:up   (inotify works natively on the box — no polling tax)"
 fi
