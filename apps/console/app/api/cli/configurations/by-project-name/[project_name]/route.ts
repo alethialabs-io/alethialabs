@@ -3,10 +3,11 @@
 
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { queryProjectFull } from "@/lib/queries/project-full";
+import { getCliConfig } from "@/lib/queries/cli-config";
 import { NextResponse } from "next/server";
 
-/** Returns the full project_full config for one of the CLI user's projects by project name. */
+/** Returns the flat config for one of the CLI user's projects by project name (?env selects a
+ * specific environment; default env otherwise). Assembled from the live tables via getCliConfig. */
 export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ project_name: string }> },
@@ -18,17 +19,18 @@ export async function GET(
 
 		const { project_name } = await params;
 
-		// queryProjectFull still scopes by user_id (community-correct; threaded to org in 4.5).
-		const [data] = await queryProjectFull(getServiceDb(), {
-			user_id: actor.userId,
-			project_name,
+		// Still scoped by user_id (community-correct; threaded to org in 4.5).
+		const configuration = await getCliConfig(getServiceDb(), {
+			userId: actor.userId,
+			projectName: project_name,
+			envId: new URL(req.url).searchParams.get("env") ?? undefined,
 		});
 
-		if (!data) {
+		if (!configuration) {
 			return NextResponse.json({ error: "Configuration not found" }, { status: 404 });
 		}
 
-		return NextResponse.json({ configuration: data });
+		return NextResponse.json({ configuration });
 	} catch {
 		return NextResponse.json({ error: "Failed to fetch configuration" }, { status: 500 });
 	}
