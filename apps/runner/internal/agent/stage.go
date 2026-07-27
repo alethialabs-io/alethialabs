@@ -115,6 +115,11 @@ type stageSecrets struct {
 	// boundary as a JSON-encoded ALETHIA_STAGE_ADDON_SECRETS env var — never the payload,
 	// which is persisted to stage.json in the workdir.
 	AddonSecrets map[string]map[string]string
+	// TalosConfig is a hetzner-talos Fabric's admin talosconfig (#1389), fetched by the parent over the
+	// authenticated job channel (FetchFabricTalosconfig) for a namespace/vcluster placement, so the stage
+	// can mint a fresh kubeconfig from it (newTalosKubeconfigMinter → DeployParams.TalosKubeconfig).
+	// Crosses the container boundary as ALETHIA_STAGE_TALOS_CONFIG — never the persisted payload.
+	TalosConfig string
 }
 
 func stageSecretsFromEnv() stageSecrets {
@@ -131,6 +136,7 @@ func stageSecretsFromEnv() stageSecrets {
 		StateToken:   os.Getenv("TF_HTTP_PASSWORD"),
 		GitTokens:    gitTokens,
 		AddonSecrets: addonSecrets,
+		TalosConfig:  os.Getenv("ALETHIA_STAGE_TALOS_CONFIG"),
 	}
 }
 
@@ -242,6 +248,10 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		// on a cloud whose identity provisioning the runner performs (gcp Workload Identity today).
 		// Invoked only by provisionAndBindNamespaceIdentity; never for aws/dedicated.
 		NamespaceIdentity: newNamespaceIdentityProvisioner(),
+		// hetzner-talos placement kubeconfig minter (#1389): mints a fresh kubeconfig from the Fabric's
+		// persisted talosconfig via the Talos machine API. nil unless this is a hetzner placement carrying
+		// a fetched talosconfig; invoked only by the hetzner branch of mintClusterOutputs.
+		TalosKubeconfig: newTalosKubeconfigMinter(sec.TalosConfig),
 		// Record the provisioning phase under the workdir so the runner can tell an
 		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
 		// Passthrough (same process) and container child (RW-mounted workdir) paths.
