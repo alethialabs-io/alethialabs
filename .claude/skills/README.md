@@ -12,7 +12,13 @@ Synced (from `alethialabs-io/skills`): `grilling`, `grill-me`, `research`, `hand
 `codebase-design`, `alethia-security-review`, `alethia-design`, `alethia-docs` (+ `NOTICE`, the MIT
 attribution).
 
-App-only (not from the source repo, edit here): `vercel-microfrontends`.
+App-only (not from the source repo, edit here): `vercel-microfrontends`, `dev`.
+
+`dev` is app-only on purpose: it describes *this* repo's sandbox box and `pnpm env:*`
+commands, which mean nothing in another codebase. `sync-skills.sh` never prunes skills
+that are absent upstream, so it survives a sync. It is also **model-invocable** (no
+`disable-model-invocation`) — a session that starts reasoning about how to run the app
+has to find it without being told, which is the entire point of it existing.
 
 The working-discipline rule that routes to these lives in `CLAUDE.md`; the wayfinder is `.claude/COORDINATION.md`
 (our coordination board), not a skill.

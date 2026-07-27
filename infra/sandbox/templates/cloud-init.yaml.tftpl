@@ -1,0 +1,71 @@
+#cloud-config
+# Prepares the sandbox box. It does NOT bring any environment up — `pnpm env:up`
+# rsyncs the working tree and does that, so changing how an env boots never means
+# rebuilding a box.
+#
+# Everything here is idempotent, because this file also runs on a snapshot restore
+# (cloud-init re-runs runcmd on a rebuilt instance) and must not clobber the seeded
+# databases or warm node_modules that the snapshot exists to preserve.
+package_update: true
+package_upgrade: false
+
+packages:
+  - git
+  - jq
+  - tmux
+  - rsync
+  - curl
+  - ca-certificates
+  - postgresql-client
+  - build-essential
+
+write_files:
+  # Read by scripts/box/env-registry.sh and env-mode.sh so the box carries its own
+  # configuration; env.sh does not have to pass these on every call.
+  - path: /opt/alethia/box.env
+    permissions: "0644"
+    content: |
+      ALETHIA_ENV_DOMAIN=${env_domain}
+      ALETHIA_ENV_CAP=${env_cap}
+
+  # A dev box that fills its disk fails in confusing ways (ENOSPC surfaces as a
+  # Turbopack crash, not a disk error). Weekly prune of what is safe to lose.
+  - path: /etc/cron.weekly/alethia-docker-prune
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+      docker image prune -af --filter "until=336h" >/dev/null 2>&1 || true
+
+runcmd:
+  # ── Docker ────────────────────────────────────────────────────────────────────
+  - [sh, -c, "command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh"]
+  - [systemctl, enable, --now, docker]
+
+  # ── Node 22 + pnpm ────────────────────────────────────────────────────────────
+  # Version-pinned to the repo's engines (node >=22, packageManager pnpm@9.15.0);
+  # a mismatched pnpm rewrites the lockfile on install and the box stops matching CI.
+  - [sh, -c, "command -v node >/dev/null || (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs)"]
+  - [sh, -c, "corepack enable && corepack prepare pnpm@9.15.0 --activate"]
+
+  # ── Go ────────────────────────────────────────────────────────────────────────
+  # For `env:runner` (native mode) and the Go test matrix. Kept in sync with the
+  # toolchain the repo's go.work targets.
+  - [sh, -c, "command -v go >/dev/null || (curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz -o /tmp/go.tgz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz)"]
+  - [sh, -c, "printf 'export PATH=$PATH:/usr/local/go/bin\\n' > /etc/profile.d/go.sh"]
+
+  # ── cloudflared ───────────────────────────────────────────────────────────────
+  # Installed as a binary rather than run as a container: it must reach every env's
+  # `next dev` on localhost:<port>, and --network host in a container plus a
+  # per-env-changing ingress is more moving parts for no gain.
+  - [sh, -c, "command -v cloudflared >/dev/null || (curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cf.deb && dpkg -i /tmp/cf.deb && rm /tmp/cf.deb)"]
+
+  # ── Layout ────────────────────────────────────────────────────────────────────
+  - [mkdir, -p, /opt/alethia/envs, /opt/alethia/shared, /opt/alethia/cloudflared, /opt/alethia/bin]
+  - [sh, -c, "test -s /opt/alethia/envs.json || echo '{}' > /opt/alethia/envs.json"]
+
+  # inotify limits: four Next dev servers plus watchers exhaust the default 128
+  # instances / 8192 watches and Turbopack then silently stops hot-reloading.
+  - [sh, -c, "printf 'fs.inotify.max_user_instances=1024\\nfs.inotify.max_user_watches=524288\\n' > /etc/sysctl.d/60-alethia-inotify.conf && sysctl -p /etc/sysctl.d/60-alethia-inotify.conf"]
+
+  - [sh, -c, "echo 'alethia-sandbox provisioned. Nothing is running yet — that is deliberate. From your laptop: pnpm env:up' > /opt/alethia/READY"]
