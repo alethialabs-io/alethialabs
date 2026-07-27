@@ -131,6 +131,13 @@ output "rds_cluster_arn" {
   value       = var.create_rds ? module.rds_maindb[0].rds_cluster_arn : null
 }
 
+# Keyless RDS IAM auth (#1504): the cluster resource id (cluster-XXXX) that scopes the app's
+# rds-db:connect ARN to THIS cluster instead of the current dbuser:*/alethia_app wildcard (#1509).
+output "rds_cluster_resource_id" {
+  description = "The RDS Cluster resource id (cluster-XXXX) — scopes the keyless rds-db:connect ARN"
+  value       = var.create_rds ? module.rds_maindb[0].rds_cluster_resource_id : null
+}
+
 output "rds_credentials_kms_key_arn" {
   description = "RDS Credentials kms key arn"
   value       = var.create_rds ? module.rds_maindb[0].rds_credentials_kms_key_arn : null

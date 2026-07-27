@@ -142,12 +142,29 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 		tfvars["rds_scaling_config"] = scalingConfig
 		engine, version := resolveDBEngine("aws", db)
-		tfvars["rds_config"] = map[string]interface{}{
-			"engine":         orDefault(engine, "aurora-postgresql"),
-			"engine_version": orDefault(version, "16.6"),
-			"db_port":        derefIntOr(db.Port, 5432),
+		engine = orDefault(engine, "aurora-postgresql")
+		version = orDefault(version, "16.6")
+		// Engine-aware composition (#1504). Everything below must follow the RESOLVED engine — the
+		// template's defaults are all Aurora-PostgreSQL-shaped, so an aurora-mysql engine that only
+		// set engine/version would get a Postgres parameter-group family, port 5432 and the
+		// "postgresql" log export: a MySQL cluster that never comes up.
+		defaultPort := 5432
+		if awsIsMySQLEngine(engine) {
+			defaultPort = 3306
+		}
+		rdsConfig := map[string]interface{}{
+			"engine":         engine,
+			"engine_version": version,
+			"db_port":        derefIntOr(db.Port, defaultPort),
 			"db_name":        db.Name,
 		}
+		// Omitted (not blanked) when underivable, so the template default stands and the
+		// family-matches-engine check decides — never emit a family we can't justify.
+		if family := awsAuroraFamily(engine, version); family != "" {
+			rdsConfig["cluster_family"] = family
+		}
+		tfvars["rds_config"] = rdsConfig
+		tfvars["rds_logs_exports"] = awsRDSLogExports(engine)
 		if db.InstanceClass != "" {
 			tfvars["rds_instance_type"] = db.InstanceClass
 		}
@@ -313,6 +330,54 @@ func awsRedisFamily(version string) string {
 		return ""
 	}
 	return "redis" + major
+}
+
+// awsIsMySQLEngine reports whether a resolved AWS database engine is MySQL-family. Matches the
+// catalog value ("aurora-mysql") as well as a legacy hand-set Engine ("mysql"), since resolveDBEngine
+// passes the latter through untouched.
+func awsIsMySQLEngine(engine string) bool {
+	return strings.Contains(strings.ToLower(engine), "mysql")
+}
+
+// awsAuroraFamily derives the Aurora DB cluster parameter-group family from the resolved engine +
+// version, so a picked engine and the `cluster_family` var can never disagree — the #1382-class trap
+// where the canvas offers Aurora MySQL but the tfvars compose it onto the `aurora-postgresql16`
+// default, mis-provisioning the cluster.
+//
+// The two engines name their families DIFFERENTLY, which is the whole reason this can't be one
+// sprintf: AWS uses MAJOR.MINOR for Aurora MySQL ("aurora-mysql8.0", "aurora-mysql8.4") but MAJOR
+// only for Aurora PostgreSQL ("aurora-postgresql16"). Verified against the AWS Aurora User Guide
+// (custom-parameter-group tutorial: "For Parameter group family, choose aurora-mysql8.0").
+//
+// Returns "" when the version can't yield a valid family (e.g. a MySQL version with no minor), which
+// leaves the template default in place. That is safe because the template's
+// terraform_data.rds_engine_shape_guard precondition then BLOCKS the apply — a `check` block alone
+// would only warn. Never guess a family: a wrong one provisions a cluster that cannot serve.
+func awsAuroraFamily(engine, version string) string {
+	major, rest, hasMinor := strings.Cut(version, ".")
+	if major == "" {
+		return ""
+	}
+	switch {
+	case awsIsMySQLEngine(engine):
+		minor, _, _ := strings.Cut(rest, ".")
+		if !hasMinor || minor == "" {
+			return ""
+		}
+		return "aurora-mysql" + major + "." + minor
+	case strings.Contains(strings.ToLower(engine), "postgres"):
+		return "aurora-postgresql" + major
+	}
+	return ""
+}
+
+// awsRDSLogExports returns the CloudWatch log-export set valid for the engine. Aurora MySQL rejects
+// "postgresql" (and vice versa), so this must follow the engine or `tofu apply` fails at the cluster.
+func awsRDSLogExports(engine string) []string {
+	if awsIsMySQLEngine(engine) {
+		return []string{"audit", "error", "general", "slowquery"}
+	}
+	return []string{"postgresql"}
 }
 
 // s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the

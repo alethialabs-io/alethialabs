@@ -26,6 +26,110 @@ check "keyless_rds_iam_irsa_wired" {
 }
 
 
+# Aurora engine/family agreement (#1504). Every template default is Aurora-PostgreSQL-shaped, so a
+# MySQL engine that arrives without a matching cluster_family silently composes a MySQL cluster on a
+# `aurora-postgresql16` parameter group. Note the family forms differ by engine: Aurora MySQL is
+# MAJOR.MINOR ("aurora-mysql8.0"), Aurora PostgreSQL is MAJOR only ("aurora-postgresql16").
+# This check WARNS; terraform_data.rds_engine_shape_guard below is the hard gate.
+check "rds_cluster_family_matches_engine" {
+  assert {
+    condition = !var.create_rds || (
+      strcontains(var.rds_config.engine, "mysql")
+      ? startswith(var.rds_config.cluster_family, "aurora-mysql")
+      : startswith(var.rds_config.cluster_family, "aurora-postgresql")
+    )
+    error_message = "rds_config.cluster_family (${var.rds_config.cluster_family}) does not match rds_config.engine (${var.rds_config.engine}); Aurora MySQL needs aurora-mysqlX.Y and Aurora PostgreSQL needs aurora-postgresqlX."
+  }
+}
+
+
+# Aurora engine/port agreement (#1504). The port default is 5432, so a MySQL cluster that inherits it
+# listens on the Postgres port and every keyless binding (which stamps the port onto the app's wire)
+# connects to nothing.
+check "rds_port_matches_engine" {
+  assert {
+    condition = !var.create_rds || (
+      strcontains(var.rds_config.engine, "mysql")
+      ? var.rds_config.db_port == 3306
+      : var.rds_config.db_port == 5432
+    )
+    error_message = "rds_config.db_port (${var.rds_config.db_port}) does not match rds_config.engine (${var.rds_config.engine}); use 3306 for Aurora MySQL and 5432 for Aurora PostgreSQL."
+  }
+}
+
+
+# Aurora engine/log-export agreement (#1504). Aurora MySQL rejects the "postgresql" log type outright
+# (and vice versa), so a mismatched export set fails at apply — after the cluster starts creating.
+check "rds_log_exports_match_engine" {
+  assert {
+    condition = !var.create_rds || alltrue([
+      for l in var.rds_logs_exports :
+      strcontains(var.rds_config.engine, "mysql")
+      ? contains(["audit", "error", "general", "slowquery"], l)
+      : l == "postgresql"
+    ])
+    error_message = "rds_logs_exports ${jsonencode(var.rds_logs_exports)} is not valid for rds_config.engine (${var.rds_config.engine}); Aurora MySQL accepts audit/error/general/slowquery and Aurora PostgreSQL accepts postgresql."
+  }
+}
+
+
+# Keyless rds-db:connect scoping (#1504 → #1509): when IAM auth is on, the cluster resource id must
+# actually resolve. Upstream emits join("", …), so an absent cluster yields "" rather than null — and
+# an empty resource id would silently widen the connect ARN to a wildcard.
+check "rds_cluster_resource_id_resolvable_when_iam_auth" {
+  assert {
+    # try(): with create_rds off (or the module absent) one() yields null and trimspace would raise
+    # instead of failing the check — the whole point is a clean, actionable failure, so collapse any
+    # unresolvable id to false.
+    condition     = !var.rds_iam_auth_enabled || try(length(trimspace(one(module.rds_maindb[*].rds_cluster_resource_id))) > 0, false)
+    error_message = "rds_iam_auth_enabled is on but rds_cluster_resource_id is empty; the rds-db:connect ARN cannot be scoped to this cluster."
+  }
+}
+
+
+# Fail-closed apply gate for the Aurora engine invariants (#1504). The four `check` blocks above only
+# WARN — they surface the violation loudly at plan time but never stop an apply — so this
+# terraform_data precondition is the actual gate, matching terraform_data.compat_k8s_guard (COMPAT-001).
+#
+# It matters here because the failure is silent by construction: a MySQL engine composed onto the
+# Aurora-PostgreSQL-shaped defaults produces a plan that SUCCEEDS and a cluster that never serves. That
+# includes the case where the tfvars writer could not derive a family and deliberately omitted the key
+# (packages/core/cloud/aws_provider.go), and the case where a customer's provider_config passthrough
+# overrides rds_config with a mismatched pair. No bypass variable — an engine and its parameter-group
+# family are not a matter of opinion.
+resource "terraform_data" "rds_engine_shape_guard" {
+  lifecycle {
+    precondition {
+      condition = !var.create_rds || (
+        strcontains(var.rds_config.engine, "mysql")
+        ? startswith(var.rds_config.cluster_family, "aurora-mysql")
+        : startswith(var.rds_config.cluster_family, "aurora-postgresql")
+      )
+      error_message = "RDS-ENGINE-001: rds_config.cluster_family '${var.rds_config.cluster_family}' does not match rds_config.engine '${var.rds_config.engine}'. Apply blocked fail-closed — Aurora MySQL needs an aurora-mysqlX.Y family, Aurora PostgreSQL an aurora-postgresqlX family."
+    }
+
+    precondition {
+      condition = !var.create_rds || (
+        strcontains(var.rds_config.engine, "mysql")
+        ? var.rds_config.db_port == 3306
+        : var.rds_config.db_port == 5432
+      )
+      error_message = "RDS-ENGINE-002: rds_config.db_port ${var.rds_config.db_port} does not match rds_config.engine '${var.rds_config.engine}'. Apply blocked fail-closed — use 3306 for Aurora MySQL and 5432 for Aurora PostgreSQL."
+    }
+
+    precondition {
+      condition = !var.create_rds || alltrue([
+        for l in var.rds_logs_exports :
+        strcontains(var.rds_config.engine, "mysql")
+        ? contains(["audit", "error", "general", "slowquery"], l)
+        : l == "postgresql"
+      ])
+      error_message = "RDS-ENGINE-003: rds_logs_exports ${jsonencode(var.rds_logs_exports)} is not valid for rds_config.engine '${var.rds_config.engine}'. Apply blocked fail-closed — Aurora MySQL accepts audit/error/general/slowquery, Aurora PostgreSQL accepts postgresql."
+    }
+  }
+}
+
+
 # Every S3 bucket must keep public access blocked (block_public_acls / restrict_public_buckets must
 # not be explicitly false). null is allowed — the module defaults those to a blocked posture.
 check "s3_buckets_block_public_access" {
