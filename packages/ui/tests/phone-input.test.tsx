@@ -14,6 +14,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PhoneInput } from "../src/phone-input";
+import { pasteQuery } from "./interactions";
 
 // The country picker renders one CommandItem — with an SVG flag — PER COUNTRY, and re-renders the
 // whole list on every keystroke in the search box. Against the library's full ~240-country default
@@ -54,23 +55,6 @@ function renderPhone(defaultCountry: "US" | "DE" = "US") {
 /** The latest value handed to the spy. */
 function lastValue(onChange: ReturnType<typeof vi.fn>): string {
 	return onChange.mock.calls.at(-1)?.[0];
-}
-
-/**
- * Enters a search query as ONE input event instead of one per character.
- *
- * `user.type` re-renders the whole filtered country list per keystroke; a paste drives cmdk's filter
- * exactly once. What these tests assert is the FILTERED RESULT, not per-character behaviour, so the
- * cheaper input is the honest one. Deliberately contains no RTL wait — waits stay in the `it()` body
- * so tests/timeouts.test.ts can count them.
- */
-async function pasteQuery(
-	user: ReturnType<typeof userEvent.setup>,
-	box: HTMLElement,
-	query: string,
-) {
-	await user.click(box);
-	await user.paste(query);
 }
 
 describe("PhoneInput", () => {
