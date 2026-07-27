@@ -75,7 +75,11 @@ export function startOtel(): boolean {
 			loggerProvider = new LoggerProvider({
 				resource,
 				processors: [
-					new BatchLogRecordProcessor(new OTLPLogExporter(), {
+					// sdk-logs 0.221 folded the exporter into the single options object
+					// (the old `(exporter, config)` pair is gone). Spans/metrics kept their
+					// own shapes, so only this call site moves.
+					new BatchLogRecordProcessor({
+						exporter: new OTLPLogExporter(),
 						maxQueueSize: 2048,
 						maxExportBatchSize: 512,
 						scheduledDelayMillis: 5000,
