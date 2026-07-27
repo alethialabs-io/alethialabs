@@ -59,6 +59,7 @@ import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
 import { EnvSettingsSheet } from "./env-settings-sheet";
 import { useDropPosition } from "./use-drop-position";
 import { PendingChangesBar } from "./pending-changes-bar";
+import { buildShortcuts } from "./shortcuts";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
 
@@ -296,10 +297,20 @@ function CanvasInner({
 		const isMac =
 			typeof navigator !== "undefined" &&
 			/Mac|iP(hone|ad|od)/.test(navigator.platform);
-		return buildShortcuts(isMac);
-	}, []);
+		return buildShortcuts(isMac, !projectId);
+	}, [projectId]);
 
+	/**
+	 * Create flow ONLY: turn the canvas into a new project.
+	 *
+	 * There is deliberately no edit-mode counterpart. On a live project the pending-changes bar is
+	 * the one path changes take — it diffs against `baseline`, and only `commitBaseline()` clears
+	 * it, so a second "save" that persisted without committing would leave the bar reporting changes
+	 * that are already written. The guard below is defence in depth: before it existed, ⌘S on an
+	 * existing project ran this handler and FORKED it into a duplicate.
+	 */
 	const handleSave = useCallback(async () => {
+		if (projectId) return;
 		const nodes = useCanvasStore.getState().nodes;
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
 		if (!parsed.success) {
@@ -319,7 +330,7 @@ function CanvasInner({
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Failed to create project");
 		}
-	}, [router, orgSlug]);
+	}, [router, orgSlug, projectId]);
 
 	/** Edit mode: persist the desired config to the live project, then provision the
 	 * active environment. Falls back to create when there's no projectId. */
@@ -377,8 +388,10 @@ function CanvasInner({
 				return;
 			}
 			if (mod && e.key.toLowerCase() === "s") {
+				// Swallowed in BOTH modes so the browser's own Save-page dialog never lands on the
+				// canvas — but it only means anything in the create flow (see handleSave).
 				e.preventDefault();
-				void handleSave();
+				if (!projectId) void handleSave();
 				return;
 			}
 			if (mod && e.key.toLowerCase() === "z") {
@@ -534,6 +547,7 @@ function CanvasInner({
 			<PendingChangesBar
 				onDeploy={projectId ? handleDeploy : handleSave}
 				deploying={deploying}
+				deployLabel={projectId ? "Deploy" : "Create project"}
 				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
 			/>
 
@@ -559,7 +573,7 @@ function CanvasInner({
 			<CanvasCommandPalette
 				open={cmdOpen}
 				onOpenChange={setCmdOpen}
-				onSave={handleSave}
+				onSave={projectId ? undefined : handleSave}
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
 				onAskAi={openAssistantExclusive}
@@ -666,25 +680,3 @@ function CanvasInner({
 	);
 }
 
-/** The shortcut hint rows, with OS-correct modifier glyphs (⌘ on macOS, `Ctrl` elsewhere). */
-function buildShortcuts(isMac: boolean): { label: string; keys: string }[] {
-	const mod = isMac ? "⌘" : "Ctrl";
-	const j = isMac ? "" : "+"; // "⌘K" on macOS vs "Ctrl+K" elsewhere
-	return [
-		{ label: "Command palette", keys: `${mod}${j}K` },
-		{ label: "Add component", keys: "A" },
-		{ label: "Pan the canvas", keys: "Space-drag" },
-		{ label: "Hand tool (pan)", keys: "H" },
-		{ label: "Ask AI", keys: `${mod}${j}I` },
-		{ label: "Open inspector", keys: "Enter" },
-		{ label: "Duplicate selection", keys: `${mod}${j}D` },
-		{ label: "Delete selection", keys: "Del" },
-		{
-			label: "Undo / Redo",
-			keys: isMac ? "⌘Z / ⇧⌘Z" : "Ctrl+Z / Ctrl+Shift+Z",
-		},
-		{ label: "Switch environment", keys: isMac ? "⇧⇥" : "Shift+Tab" },
-		{ label: "Save project", keys: `${mod}${j}S` },
-		{ label: "Shortcuts", keys: "?" },
-	];
-}
