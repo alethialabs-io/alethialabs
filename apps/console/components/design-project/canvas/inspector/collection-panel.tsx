@@ -35,7 +35,7 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const env = useEnvironmentStatus();
 	const addNode = useCanvasStore((s) => s.addNode);
-	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
+	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
 	const setEnvSettingsOpen = useCanvasStore((s) => s.setEnvSettingsOpen);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
 	const openInspector = useCanvasStore((s) => s.openInspector);
@@ -114,7 +114,20 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 					type="button"
 					size="sm"
 					className="h-8 shrink-0 text-xs"
-					onClick={() => addNode(kind)}
+					onClick={() => {
+						// Add through the normal path (which owns defaults, placement and positioning),
+						// then patch the store onto the new node — a new secret INHERITS the
+						// environment's. One that quietly defaulted to native would put the rows back
+						// into disagreement, and dominantProvider would fold it into the pluggable store
+						// anyway, so the row would describe something the deploy does not do.
+						const id = addNode(kind);
+						if (secretsStore?.provider) {
+							updateNodeConfig(id, {
+								provider: secretsStore.provider,
+								provider_config: secretsStore.providerConfig,
+							});
+						}
+					}}
 				>
 					<Plus className="mr-1 h-3.5 w-3.5" />
 					Add

@@ -12,6 +12,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EnvSettingsSheet } from "@/components/design-project/canvas/env-settings-sheet";
+import { CollectionPanel } from "@/components/design-project/canvas/inspector/collection-panel";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
@@ -124,6 +125,38 @@ describe("environment secret store", () => {
 
 		// NULL is the column's sentinel for "no connector" — never a "native" string.
 		expect(providers()).toEqual([null, null]);
+	});
+
+	// REGRESSION: this behaviour was claimed by #1460 and silently absent — the Add button still
+	// called addNode(kind), because the edit that was supposed to add inheritance never applied and
+	// nothing asserted it had. A new secret defaulting to native would put the rows back into
+	// disagreement, and dominantProvider would fold it into the pluggable store anyway, so the row
+	// would describe something the deploy does not do.
+	it("a secret added afterwards inherits the environment's store", async () => {
+		seed(["api-key"], { provider: "vault", provider_config: { mount_path: "secret" } });
+		const user = userEvent.setup();
+		render(<CollectionPanel kind="secret" />);
+
+		await user.click(screen.getByRole("button", { name: /add/i }));
+
+		// Both the pre-existing secret and the new one.
+		expect(providers()).toEqual(["vault", "vault"]);
+		const added = useCanvasStore
+			.getState()
+			.nodes.filter((n) => n.data.kind === "secret")
+			.at(-1);
+		expect((added?.data.config as { provider_config?: unknown }).provider_config).toEqual({
+			mount_path: "secret",
+		});
+	});
+
+	it("a secret added to a native environment stays native", async () => {
+		seed(["api-key"]);
+		const user = userEvent.setup();
+		render(<CollectionPanel kind="secret" />);
+
+		await user.click(screen.getByRole("button", { name: /add/i }));
+		expect(providers().filter(Boolean)).toEqual([]);
 	});
 
 	it("offers no store to configure when the environment has no secrets", () => {
