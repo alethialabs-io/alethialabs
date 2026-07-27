@@ -64,27 +64,15 @@ lease_body() { # <branch>
     "$INSTANCE" "$$" "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 
-# has_closing_pr <issue-number>: true (exit 0) if an OPEN or MERGED PR closes this issue — the
-# pre-claim guard that skips work already in flight on another box, or an issue whose PR merged but
-# GitHub never auto-closed (a "Closes #n" that didn't link). Requires the closing keyword + the
-# exact number (\b so #84 doesn't match #842).
-#
-# FAILS CLOSED. This used to be `2>/dev/null || echo 0`, so any gh error — rate limit, expired
-# auth, network blip — read as "no PR exists" and the claim proceeded. A guard that silently
-# vanishes under load is worse than no guard, because it's trusted. On a query failure we now skip
-# the candidate rather than claim it. Also searches title AND body (coordinate.sh already did; this
-# didn't, so a title-only "Closes #n" was invisible here).
-has_closing_pr() { # <n> -> 0 = a PR closes it (or we couldn't tell) · 1 = definitely none
-  local n="$1" out
-  if ! out="$(gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
-    --jq "[.[] | select(.state==\"OPEN\" or .state==\"MERGED\")
-               | select((.body + \" \" + .title) | test(\"(?i)(close|fix|resolve)(s|d)? +#$n\\\\b\"))] | length" \
-    2>/dev/null)"; then
-    echo "⚠ could not check PRs for #$n (gh failed) — treating as taken." >&2
-    return 0
-  fi
-  [ "${out:-0}" -gt 0 ]
-}
+# has_closing_pr / has_active_pr / active_pr_ref — the board↔PR guards. They live in
+# scripts/lib/board-pr.sh because coordinate.sh needs the identical predicates, and this file used
+# to carry a verbatim copy: one protocol with two call sites, where a drift is a silent false-ALLOW
+# (two instances on one unit). Same reasoning as scripts/lib/wt-lease.sh; read that file for the
+# fail-closed contract before changing either.
+# (Sourced by path from the repo root — `cd "$(dirname "$0")/.."` above already put us there, so
+# `$0`-relative would resolve against the caller's cwd instead.)
+# shellcheck source=scripts/lib/board-pr.sh
+. scripts/lib/board-pr.sh
 
 # claim_winner <window_start_epoch>: read a `gh issue view --json comments` payload on STDIN and
 # print the instance whose lease comment has the EARLIEST server createdAt within the window
@@ -115,6 +103,29 @@ run_self_test() {
   _a "box-A" "$(printf '%s' '{"comments":[{"createdAt":"2026-07-20T10:00:02Z","body":"```lease\ninstance: box-B\n```"},{"createdAt":"2026-07-20T10:00:02Z","body":"```lease\ninstance: box-A\n```"}]}' | claim_winner "$ws")" "same-second tie -> lowest instance"
   _a "box-A" "$(printf '%s' '{"comments":[{"createdAt":"2026-01-01T00:00:00Z","body":"```lease\ninstance: box-OLD\n```"},{"createdAt":"2026-07-20T10:00:03Z","body":"```lease\ninstance: box-A\n```"}]}' | claim_winner "$ws")" "out-of-window (stale) lease ignored"
   _a "" "$(printf '%s' '{"comments":[{"createdAt":"2026-07-20T10:00:00Z","body":"just a normal comment"}]}' | claim_winner "$ws")" "no lease -> empty"
+
+  # board_pr_links — the keyword discrimination behind Guard 1/1b (scripts/lib/board-pr.sh). Pinned
+  # offline because the regex is where this silently regresses: too narrow and a live PR stops being
+  # seen (#1389 handed to a second instance); too broad and an incidental mention locks a unit
+  # forever. `_l` asserts LINKS, `_n` asserts DOES NOT.
+  _l() { if board_pr_links "$1" "$2" "$3"; then echo "ok   - $4"; else echo "FAIL - $4: expected a link" >&2; fails=$((fails+1)); fi; }
+  _n() { if board_pr_links "$1" "$2" "$3"; then echo "FAIL - $4: expected NO link" >&2; fails=$((fails+1)); else echo "ok   - $4"; fi; }
+
+  _l "Part of #1389. Completes the namespace tier." 1389 "$BOARD_PR_LINKING_KW" "linking: 'Part of #n' (the #1408 case that caused this)"
+  _l "part of epic #1419"                           1419 "$BOARD_PR_LINKING_KW" "linking: 'part of epic #n'"
+  _l "Stacked on #1405"                             1405 "$BOARD_PR_LINKING_KW" "linking: 'Stacked on #n'"
+  _n "Closes #1389"                                 1389 "$BOARD_PR_LINKING_KW" "linking: 'Closes #n' is NOT a linking match (Guard 1 owns it)"
+  _n "behaves similar to #1389 but unrelated"       1389 "$BOARD_PR_LINKING_KW" "linking: an incidental mention must NOT lock the unit"
+  _n "Part of #13890"                               1389 "$BOARD_PR_LINKING_KW" "linking: word boundary — #13890 is not #1389"
+  # All NINE GitHub closing keywords. The old `(close|fix|resolve)(s|d)?` shorthand expanded to
+  # fix/fixs/fixd, so "Fixes #n" — the commonest phrasing there is — silently never matched.
+  for kw in close closes closed fix fixes fixed resolve resolves resolved; do
+    _l "$kw #84" 84 "$BOARD_PR_CLOSING_KW" "closing: '$kw #n'"
+  done
+  _n "closes #842"                                  84   "$BOARD_PR_CLOSING_KW" "closing: word boundary — #842 is not #84"
+  _n "Part of #1389"                                1389 "$BOARD_PR_CLOSING_KW" "closing: 'Part of #n' is NOT a closing match (the original bug)"
+  _n "fixing #84"                                   84   "$BOARD_PR_CLOSING_KW" "closing: 'fixing' is not a GitHub keyword"
+
   if [ "$fails" -eq 0 ]; then echo "self-test: all passed"; exit 0; fi
   echo "self-test: $fails check(s) FAILED" >&2; exit 1
 }
@@ -206,6 +217,13 @@ if [ -n "$ONLY_ISSUE" ]; then
     echo "✗ #$ONLY_ISSUE already has an open/merged PR closing it — someone is on it." >&2
     exit 1
   fi
+  # An open "Part of #n" PR WARNS here rather than blocking: a human naming a unit may deliberately
+  # be taking over an abandoned draft, and that override is the whole point of --issue. The
+  # autonomous loop treats the same signal as a hard skip (Guard 1b).
+  if has_active_pr "$ONLY_ISSUE"; then
+    echo "⚠ #$ONLY_ISSUE has an open PR $(active_pr_ref "$ONLY_ISSUE") already building it — claiming anyway (--issue is an explicit override)." >&2
+    echo "  If that PR is alive, you are about to duplicate it. Check first:  gh pr view $(active_pr_ref "$ONLY_ISSUE" | tr -d '#' | cut -d' ' -f1)" >&2
+  fi
   ready="$(echo "$meta" | jq -c '[{number, title, labels}]')"
 fi
 
@@ -223,6 +241,19 @@ while [ "$i" -lt "$count" ]; do
   # Guard 1 — skip a unit that already has an open/merged PR closing it.
   if has_closing_pr "$cand"; then
     echo "↷ skip #$cand — a PR already closes it (in flight or merged-but-stale-open)." >&2
+    continue
+  fi
+
+  # Guard 1b — skip a unit an OPEN PR is BUILDING without claiming to close it. A PR that delivers
+  # one tier of a multi-tier unit says "Part of #n" (correctly — it does not close it), which
+  # Guard 1 cannot see. On 2026-07-27 that handed #1389 to a second instance while #1408 was
+  # actively building its last tier.
+  # `-z "$ONLY_ISSUE"`: this guard is for the AUTONOMOUS pick only. --issue already warned above and
+  # is an explicit human override, so re-blocking it here would make that override a no-op (it did,
+  # until this line existed). A CLOSING PR still hard-blocks both paths — that one exits before the
+  # loop.
+  if [ -z "$ONLY_ISSUE" ] && has_active_pr "$cand"; then
+    echo "↷ skip #$cand — open PR $(active_pr_ref "$cand") is already building this (\"Part of #$cand\")." >&2
     continue
   fi
 
