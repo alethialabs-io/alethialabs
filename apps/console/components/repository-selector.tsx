@@ -132,41 +132,9 @@ export function RepositorySelector({
     }
   }, [sharedCtx?.reposByProvider, selectedProvider, sharedCtx?.loadingRepos]);
 
-  const loadInitialData = useCallback(async () => {
-    if (sharedCtx) return; // Skip — using shared context
-    setLoading(true);
-    setError(null);
-    try {
-      const providers = await getLinkedProviders();
-      setLinkedProviders(providers);
-
-      if (providers.length > 0) {
-        let initialProvider = providers[0];
-        const detected = initialValue
-          ? providerFromRepoUrl(initialValue)
-          : null;
-        if (detected) initialProvider = detected;
-
-        if (providers.includes(initialProvider)) {
-          setSelectedProvider(initialProvider);
-          await fetchRepositories(initialProvider);
-        } else {
-          setSelectedProvider(providers[0]);
-          await fetchRepositories(providers[0]);
-        }
-      }
-    } catch (err) {
-      console.error("Error loading linked providers:", err);
-      setError("Failed to load linked accounts");
-    } finally {
-      setLoading(false);
-    }
-  }, [initialValue, sharedCtx]);
-
-  useEffect(() => {
-    if (!sharedCtx) loadInitialData();
-  }, [loadInitialData, sharedCtx]);
-
+  // Declared before loadInitialData, which awaits it. The old ordering only
+  // worked because the call is async; referencing the binding above its
+  // declaration is a TDZ hazard (react-hooks/immutability).
   const fetchRepositories = async (providerName: PublicGitProvider) => {
     setFetchingRepos(true);
     setError(null);
@@ -203,6 +171,41 @@ export function RepositorySelector({
       setFetchingRepos(false);
     }
   };
+
+  const loadInitialData = useCallback(async () => {
+    if (sharedCtx) return; // Skip — using shared context
+    setLoading(true);
+    setError(null);
+    try {
+      const providers = await getLinkedProviders();
+      setLinkedProviders(providers);
+
+      if (providers.length > 0) {
+        let initialProvider = providers[0];
+        const detected = initialValue
+          ? providerFromRepoUrl(initialValue)
+          : null;
+        if (detected) initialProvider = detected;
+
+        if (providers.includes(initialProvider)) {
+          setSelectedProvider(initialProvider);
+          await fetchRepositories(initialProvider);
+        } else {
+          setSelectedProvider(providers[0]);
+          await fetchRepositories(providers[0]);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading linked providers:", err);
+      setError("Failed to load linked accounts");
+    } finally {
+      setLoading(false);
+    }
+  }, [initialValue, sharedCtx]);
+
+  useEffect(() => {
+    if (!sharedCtx) loadInitialData();
+  }, [loadInitialData, sharedCtx]);
 
   const handleProviderChange = async (provider: PublicGitProvider) => {
     setSelectedProvider(provider);
