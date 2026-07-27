@@ -3,10 +3,11 @@
 
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { queryProjectFull } from "@/lib/queries/project-full";
+import { getCliConfig } from "@/lib/queries/cli-config";
 import { NextResponse } from "next/server";
 
-/** Returns the full project_full config for one of the CLI user's projects by project name. */
+/** Returns the flat config for one of the CLI user's projects by project name (?env selects a
+ * specific environment; default env otherwise). Assembled from the live tables via getCliConfig. */
 export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ name: string }> },
@@ -20,10 +21,11 @@ export async function GET(
 		return NextResponse.json({ error: "Project name is required" }, { status: 400 });
 	}
 
-	// queryProjectFull still scopes by user_id (community-correct; threaded to org_id in 4.5).
-	const [configuration] = await queryProjectFull(getServiceDb(), {
-		user_id: actor.userId,
-		project_name: projectName,
+	// Still scoped by user_id (community-correct; threaded to org_id in 4.5).
+	const configuration = await getCliConfig(getServiceDb(), {
+		userId: actor.userId,
+		projectName,
+		envId: new URL(req.url).searchParams.get("env") ?? undefined,
 	});
 
 	if (!configuration) {
