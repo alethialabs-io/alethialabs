@@ -123,6 +123,54 @@ for (const [provider, cp] of Object.entries(catalogCore.cache)) {
 	}
 }
 
+// Cache TIERS, the axis one field over from the engines above — and the one that actually forked
+// (#1577). `cache.<p>.tiers` is what the Go resolver picks a sku from (NearestCacheTier), while
+// `live.cacheNodeTypes` / `defaultCacheNode` / `cacheNodeMap` are what the canvas stamps, offers and
+// converts with. When azure moved to Managed Redis, only the first was updated: the canvas kept
+// defaulting every cache to the retired `C1`, which the tofu template's sku validation rejects — so
+// an azure cache left at its defaults did not plan at all. Nothing noticed, because nothing checked.
+//
+// Deliberately a SUBSET check, not the engines' exact-mirror: `live.cacheNodeTypes` is a curated
+// ladder carrying a `cost` hint (aws lists 5 of its tiers, alibaba 3 of 4), and that is fine. What
+// may never happen is a DIFFERENT value space — a name the resolver and the template have never
+// heard of.
+const cacheTierValues = Object.fromEntries(
+	Object.entries(catalogCore.cache).map(([p, cp]) => [p, new Set((cp.tiers ?? []).map((t) => t.value))]),
+);
+for (const [provider, tiers] of Object.entries(cacheTierValues)) {
+	if (tiers.size === 0) {
+		throw new Error(`catalog.json cache.${provider}.tiers is empty — every cloud offers at least one (#1577)`);
+	}
+	const offered = (live.cacheNodeTypes[provider] ?? []).map((n) => n.value);
+	const stray = offered.filter((v) => !tiers.has(v));
+	if (stray.length > 0) {
+		throw new Error(
+			`catalog.json live.cacheNodeTypes.${provider} offers ${JSON.stringify(stray)}, which cache.${provider}.tiers does not — the picker names a sku the resolver and the template never see (#1577)`,
+		);
+	}
+	const fallback = live.defaultCacheNode[provider];
+	if (!tiers.has(fallback)) {
+		throw new Error(
+			`catalog.json live.defaultCacheNode.${provider} = ${JSON.stringify(fallback)} is not a cache.${provider}.tiers value — every cache node the canvas creates would carry an unbuildable sku (#1577)`,
+		);
+	}
+}
+
+// The cross-cloud conversion map is the third surface holding these same sku names, and it fell out
+// of date with the other two for exactly as long. Both sides are checked: a key must be a sku of the
+// SOURCE cloud, a value a sku of the TARGET cloud.
+for (const [source, targets] of Object.entries(live.cacheNodeMap)) {
+	for (const [target, mapping] of Object.entries(targets)) {
+		const badKeys = Object.keys(mapping).filter((k) => !cacheTierValues[source]?.has(k));
+		const badValues = Object.values(mapping).filter((v) => !cacheTierValues[target]?.has(v));
+		if (badKeys.length > 0 || badValues.length > 0) {
+			throw new Error(
+				`catalog.json live.cacheNodeMap.${source}.${target} is stale: unknown ${source} skus ${JSON.stringify(badKeys)}, unknown ${target} skus ${JSON.stringify(badValues)} (#1577)`,
+			);
+		}
+	}
+}
+
 // The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
 // live data's own coverage (the `instanceTypes` keys) so it can't drift from it. Still gated through
 // `Extract<CloudProvider, ...>` so an off-enum slug surfaces instead of being invented.
