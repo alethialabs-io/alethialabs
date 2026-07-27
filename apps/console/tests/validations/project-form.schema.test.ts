@@ -489,6 +489,60 @@ describe("provider_config is pinned to the connector catalog", () => {
 	});
 });
 
+// ── the registry connector selection is fail-closed (#1412) ──────────────────────────────────
+describe("registry connector selection", () => {
+	const parseRegistry = (row: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...validProject, container_registries: [row] });
+
+	it("accepts the cloud's own registry with no connector", () => {
+		expect(parseRegistry({ name: "apps" }).success).toBe(true);
+		expect(parseRegistry({ name: "apps", provider: "native" }).success).toBe(true);
+	});
+
+	it("accepts a connector whose required knobs are filled", () => {
+		expect(
+			parseRegistry({
+				name: "apps",
+				provider: "harbor",
+				provider_config: { registry_url: "harbor.acme.io" },
+			}).success,
+		).toBe(true);
+	});
+
+	// registry_url is the registry's ADDRESS: registry_generic.go fails Validate without it and
+	// pullAuth has no dockerconfig `auths` key, so the pull secret authenticates against nothing.
+	it("rejects an any-host connector with no registry_url", () => {
+		expect(parseRegistry({ name: "apps", provider: "harbor", provider_config: {} }).success).toBe(
+			false,
+		);
+	});
+
+	it("accepts a connector that declares no required knobs", () => {
+		expect(parseRegistry({ name: "apps", provider: "ghcr" }).success).toBe(true);
+	});
+
+	it("rejects a slug the catalog doesn't have", () => {
+		expect(parseRegistry({ name: "apps", provider: "not-a-registry" }).success).toBe(false);
+	});
+
+	// The *-xacct registries are coming_soon AND dark-flagged: selecting one provisions the pull
+	// identity in tofu while no refresher renders and no pull secret ever exists.
+	it("rejects a registry that isn't available yet", () => {
+		expect(
+			parseRegistry({
+				name: "apps",
+				provider: "ecr-xacct",
+				provider_config: {
+					target_account_id: "222222222222",
+					region: "us-east-1",
+					registry_host: "222222222222.dkr.ecr.us-east-1.amazonaws.com",
+					target_role_arn: "arn:aws:iam::222222222222:role/pull",
+				},
+			}).success,
+		).toBe(false);
+	});
+});
+
 // ── the DNS connector selection is fail-closed (#1412) ────────────────────────────────────────
 describe("dns connector selection", () => {
 	const parseDns = (dns: Record<string, unknown>) =>

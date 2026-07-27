@@ -14,10 +14,13 @@ import {
 } from "@repo/ui/sheet";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
-	NATIVE_SECRETS_LABEL,
-	environmentSecretsStore,
+	NATIVE_LABELS,
+	environmentConnector,
+	nativeRegistryKnobs,
+	registryUnavailable,
 	secretsStoreUnavailable,
-} from "@/lib/canvas/secrets-store";
+} from "@/lib/canvas/environment-connector";
+import { toRecord } from "@/lib/coerce";
 import { ConfigFields } from "./inspector/config-fields";
 import { getKindConfig } from "./inspector/config-schema";
 import { ConnectorSelect } from "./inspector/connector-select";
@@ -47,8 +50,10 @@ export function EnvSettingsSheet() {
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
 
-	const secretsStore = environmentSecretsStore(nodes);
+	const secretsStore = environmentConnector(nodes, "secret");
 	const secretNodes = nodes.filter((n) => n.data.kind === "secret");
+	const registryStore = environmentConnector(nodes, "registry");
+	const registryNodes = nodes.filter((n) => n.data.kind === "registry");
 
 	const cluster = nodes.find((n) => n.data.kind === "cluster");
 	const network = nodes.find((n) => n.data.kind === "network");
@@ -130,7 +135,7 @@ export function EnvSettingsSheet() {
 										// The cluster's own secret store is the default and must stay reachable —
 										// a project that tried Vault has to be able to go back.
 										nativeOption={{
-											label: NATIVE_SECRETS_LABEL,
+											label: NATIVE_LABELS.secret,
 											description: "cloud secret manager",
 										}}
 										unavailable={(p) => secretsStoreUnavailable(p.slug)}
@@ -146,6 +151,59 @@ export function EnvSettingsSheet() {
 										Applies to all {secretNodes.length}{" "}
 										{secretNodes.length === 1 ? "secret" : "secrets"} in this environment — one
 										environment reads through one store.
+									</p>
+								</>
+							)}
+						</section>
+						<section className="space-y-2">
+							<Label htmlFor="env-registry" className="vx-eyebrow text-[10px]">
+								Container registry
+							</Label>
+							{registryNodes.length === 0 ? (
+								<p className="text-xs text-muted-foreground">
+									Add a container registry to choose where this environment&apos;s images are
+									pushed and pulled from.
+								</p>
+							) : (
+								<>
+									<ConnectorSelect
+										id="env-registry"
+										category="registry"
+										value={registryStore.provider}
+										providerConfig={registryStore.providerConfig}
+										// The cloud's own registry (ECR / Artifact Registry / ACR) is the default,
+										// and a credential-based connector REPLACES it — so going back must be
+										// possible.
+										nativeOption={{
+											label: NATIVE_LABELS.registry,
+											description: "ECR / Artifact Registry / ACR",
+										}}
+										unavailable={(p) => registryUnavailable(p.slug)}
+										// WRITE-THROUGH: dominantProvider takes the first pluggable row's slug for
+										// the whole project and there is exactly ONE pull secret, so a row left
+										// behind would have its images pulled with a credential for another
+										// registry — an ImagePullBackOff against a secret that exists.
+										onChange={(patch) => {
+											for (const node of registryNodes) {
+												// Merge, don't replace: `provider_config` also carries this row's OWN
+												// cloud-registry settings (immutable tags, scanning), which are per
+												// row while the provider is per environment. Writing the patch whole
+												// would flatten two registries' distinct settings on any provider
+												// change — including choosing the native option they already had.
+												updateNodeConfig(node.id, {
+													provider: patch.provider,
+													provider_config: {
+														...nativeRegistryKnobs(toRecord(toRecord(node.data.config).provider_config)),
+														...patch.provider_config,
+													},
+												});
+											}
+										}}
+									/>
+									<p className="text-xs text-muted-foreground">
+										Applies to all {registryNodes.length}{" "}
+										{registryNodes.length === 1 ? "registry" : "registries"} in this environment
+										— one environment pushes through one registry.
 									</p>
 								</>
 							)}

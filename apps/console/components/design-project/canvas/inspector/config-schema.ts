@@ -32,7 +32,11 @@ import {
 	nosqlKeyTypeOptions,
 } from "./capability-options";
 import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
-import type { PluggableCategory } from "@/lib/connectors/registry.generated";
+import type {
+	ConnectorField,
+	PluggableCategory,
+} from "@/lib/connectors/registry.generated";
+import { isPluggable } from "@/lib/canvas/environment-connector";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
@@ -299,6 +303,9 @@ export interface FieldDef<C = AnyConfig> {
 	capabilityAxis?: CapabilityAxis;
 	/** `connector` only: which pluggable category's connected connectors to offer. */
 	category?: PluggableCategory;
+	/** `connector` only: knobs this schema owns as their own field, so the connector must not
+	 * render a second input for them (dns's `zone_id` is a column with its own field). */
+	hiddenKnobs?: (field: ConnectorField) => boolean;
 }
 
 /**
@@ -1621,6 +1628,10 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "immutable_tags",
 						type: "switch",
 						label: "Immutable tags",
+						// ECR / Artifact Registry / ACR features. A pluggable connector REPLACES the
+						// cloud's registry, so these describe a registry this project no longer uses —
+						// hide them rather than imply we can set them on someone else's.
+						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Prevent pushed image tags from being overwritten.",
 						get: (c) => c.provider_config?.immutable_tags ?? false,
 						set: (v, c) => ({
@@ -1631,6 +1642,10 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "vulnerability_scanning",
 						type: "switch",
 						label: "Vulnerability scanning",
+						// ECR / Artifact Registry / ACR features. A pluggable connector REPLACES the
+						// cloud's registry, so these describe a registry this project no longer uses —
+						// hide them rather than imply we can set them on someone else's.
+						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Scan pushed images for known CVEs.",
 						get: (c) => c.provider_config?.vulnerability_scanning ?? false,
 						set: (v, c) => ({
@@ -1684,6 +1699,21 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				defaultOpen: true,
 				fields: [
 					{ key: "enabled", type: "switch", label: "Enabled" },
+					{
+						key: "provider",
+						type: "connector",
+						category: "dns",
+						label: "DNS provider",
+						description:
+							"Which DNS backend external-dns manages records through. The cluster cloud's own (Route 53 / Cloud DNS / Azure DNS) unless you connect one.",
+						full: true,
+						// The zone lives on `project_dns.zone_id` — its own field below — and Cloudflare's
+						// connector declares a `zone_id` knob too. Two inputs for one concept, writing to
+						// two places, is worse than either; the column wins. Safe because
+						// categories/dns_cloudflare.go prefers provider_config.zone_id but FALLS BACK to
+						// the column, and the dns schema guard accepts either.
+						hiddenKnobs: (f) => f.key === "zone_id",
+					},
 					{
 						key: "domain_name",
 						type: "text",
