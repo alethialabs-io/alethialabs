@@ -92,6 +92,63 @@ has_active_pr() { # <n> -> 0 = an open PR is building it (or we couldn't tell) �
   [ "${out:-0}" -gt 0 ]
 }
 
+# board_pr_is_stalled <mergeable> <updated-at-epoch> <now-epoch> <idle-ttl>: is this OPEN PR stuck
+# rather than in flight? Pure (no network) so the self-test can pin it offline.
+#
+# Two independent signals, either one is enough:
+#   * CONFLICTING — it cannot merge until somebody rebases it. Mergify will not touch it.
+#   * idle beyond <idle-ttl> — nobody has pushed, commented or re-run anything.
+#
+# This DECIDES NOTHING about claiming. It exists so a unit that is blocked behind a dead PR can be
+# NAMED, because that state is otherwise completely silent: the board shows `claimed`, the guards
+# correctly refuse to hand it out, and the instance that claimed it is gone. See the caller in
+# coordinate.sh — the fix for "invisible" is a louder report, NOT a weaker guard.
+# ISO-8601 → epoch, GNU and BSD `date`. Deliberately private and duplicated from coordinate.sh's
+# `to_epoch` rather than shared: this file is sourced by several scripts and must not depend on a
+# function the CALLER happens to define, which would break the moment a new caller sources it. The
+# no-duplication rule at the top of this file is about the PROTOCOL (the keyword sets and the
+# predicates); a date parse carries no policy and cannot drift into a false-ALLOW.
+_board_pr_epoch() { # <iso8601> -> prints epoch seconds, or nothing
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || true
+}
+
+board_pr_is_stalled() { # <mergeable> <updated_epoch> <now_epoch> <ttl> -> 0 = stalled · 1 = looks alive
+  local mergeable="$1" updated="$2" now="$3" ttl="$4"
+  [ "$mergeable" = "CONFLICTING" ] && return 0
+  # Unparseable/missing timestamp → NOT stalled. Same instinct as the lease's unreadable-stamp path:
+  # when we cannot tell, say nothing rather than accuse a live PR of being dead.
+  case "$updated" in ''|*[!0-9]*) return 1 ;; esac
+  [ $(( now - updated )) -gt "$ttl" ]
+}
+
+# stalled_pr_ref <issue-number> <idle-ttl>: describe the first OPEN PR linked to this issue that is
+# stalled by board_pr_is_stalled — e.g. "#1461 (CONFLICTING, idle 8h)". Empty when every linked PR
+# looks alive, or when we cannot tell. Best-effort and non-fatal: this is a DIAGNOSTIC, so a gh
+# failure here must never change a caller's decision (contrast the fail-closed predicates above,
+# which answer "is this taken?").
+stalled_pr_ref() { # <n> <ttl> -> prints e.g. "#1461 (CONFLICTING, idle 8h)" or nothing
+  local n="$1" ttl="$2" now rows
+  now="$(date -u +%s)"
+  rows="$(gh pr list --state open --limit 20 --search "#$n" --json number,mergeable,updatedAt,body,title \
+    --jq "[.[] | select((.body + \" \" + .title)
+              | test(\"(?i)($BOARD_PR_CLOSING_KW|$BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
+          | .[] | \"\\(.number)\\t\\(.mergeable)\\t\\(.updatedAt)\"" 2>/dev/null)" || return 0
+  [ -z "$rows" ] && return 0
+  local pr mergeable ts upd idle
+  while IFS=$'\t' read -r pr mergeable ts; do
+    [ -z "$pr" ] && continue
+    upd="$(_board_pr_epoch "$ts")"
+    if board_pr_is_stalled "$mergeable" "${upd:-}" "$now" "$ttl"; then
+      idle=$(( (now - ${upd:-now}) / 3600 ))
+      printf '#%s (%s, idle %sh)' "$pr" "$mergeable" "$idle"
+      return 0
+    fi
+  done <<EOF
+$rows
+EOF
+  return 0
+}
+
 # active_pr_ref <issue-number>: the "#<pr> (<state>)" of the first OPEN PR building this issue, for
 # a diagnostic that names what to go look at. Best-effort — empty when unknown, never fails the
 # caller (the DECISION belongs to has_active_pr; this is only how we describe it).
