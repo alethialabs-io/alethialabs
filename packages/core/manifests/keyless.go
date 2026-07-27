@@ -51,14 +51,21 @@ const (
 	keylessKSAName      = "alethia-app"
 	keylessKSANamespace = "default"
 
-	// keylessDBUser is the least-privilege login the bootstrap Job creates for the app on the
+	// KeylessDBUser is the least-privilege login the bootstrap Job creates for the app on the
 	// token-as-password clouds (AWS RDS IAM / Azure Entra), mapped to the app's cloud identity. It is
 	// the same name on every one of those cells: AWS Postgres `CREATE ROLE alethia_app` + rds_iam,
 	// Azure Postgres `CREATE ROLE` + a pgaadauth SECURITY LABEL, Azure MySQL
-	// `CREATE AADUSER 'alethia_app' IDENTIFIED BY '<uami-client-id>'` — see the runner's
-	// db_bootstrap.go (keylessBootstrapRole). GCP instead uses its tofu-created IAM service-account
-	// user (the cloud_sql_iam_user output).
-	keylessDBUser = "alethia_app"
+	// `CREATE AADUSER 'alethia_app' IDENTIFIED BY '<uami-client-id>'`. GCP instead uses its
+	// tofu-created IAM service-account user (the cloud_sql_iam_user output).
+	//
+	// EXPORTED because three places must agree on it and only two of them can share a symbol:
+	// this package, the runner's db_bootstrap.go (which creates the login), and the AWS IAM policy
+	// ARN in infra/templates/project/aws/irsa.tf (`dbuser:<resource-id>/alethia_app`, #1509). The
+	// runner now imports this constant; the template cannot, so TestKeylessDBUserMatchesIRSAPolicy
+	// asserts the ARN's username segment against it. RDS IAM usernames are CASE-SENSITIVE and a
+	// mismatch does not fail the apply — it grants connect for a user that does not exist, so every
+	// connect is denied at runtime with nothing pointing back at the drift.
+	KeylessDBUser = "alethia_app"
 
 	// authProxyListenHost is the loopback address the in-process proxy serves on. `db-authproxy`
 	// REJECTS a non-loopback --listen at startup (it would expose a credential-substituting proxy to
@@ -199,7 +206,7 @@ func keylessDBUsername(provider string, outputs map[string]string) (string, erro
 		}
 		return "", fmt.Errorf("no cloud_sql_iam_user output for the keyless login")
 	case string(types.CloudProviderAws), string(types.CloudProviderAzure):
-		return keylessDBUser, nil
+		return KeylessDBUser, nil
 	}
 	return "", fmt.Errorf("keyless DB auth is not supported for provider %q", provider)
 }
@@ -265,7 +272,7 @@ func authProxySidecar(provider, engine, upstreamHost, region, runnerImage string
 		// Both flags carry a full host:port — `db-authproxy` splits them and has no port defaults.
 		"--upstream", upstreamAddr(upstreamHost, portStr),
 		"--listen", net.JoinHostPort(authProxyListenHost, portStr),
-		"--user", keylessDBUser,
+		"--user", KeylessDBUser,
 	}
 	if region != "" {
 		args = append(args, "--region", region)
