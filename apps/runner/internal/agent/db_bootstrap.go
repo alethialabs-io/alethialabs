@@ -28,12 +28,20 @@ import (
 //     15+ (all three managed engines) CREATE on schema public is no longer implicit, so it is required
 //     for the app to create its tables; CONNECT/USAGE are idempotent belt-and-suspenders.
 //
-// MySQL (--engine mysql — Azure Database for MySQL Flexible Server only):
+// MySQL (--engine mysql — all three clouds, #1506):
+//   - Every cloud grants the SAME least-priv DDL+DML set scoped to the app's own database
+//     (mysqlAppPrivileges) — never *.* / GRANT OPTION / SUPER. They differ only in how the login binds
+//     to the cloud identity.
+//   - AWS: `CREATE USER … IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS'`. No identity id appears in
+//     the SQL — the IAM policy maps the pod's role to the DB username, so the rds-db:connect ARN's
+//     username segment and this literal must agree (both keylessBootstrapRole), and AWS matches it
+//     case-sensitively.
 //   - Azure binds an Entra login with `CREATE AADUSER '<alias>' IDENTIFIED BY '<uami-client-id>'`
 //     (the IDENTIFIED BY value is the app UAMI's *client id*, not the object id the Postgres pgaadauth
-//     label uses), then grants DDL+DML scoped to the app's own database — never *.* / GRANT OPTION /
-//     SUPER. AWS Aurora-MySQL and GCP Cloud SQL MySQL use different mechanisms and ship no template
-//     yet, so --engine mysql on those providers is an explicit (not silent) error — see mysqlBootstrapSQL.
+//     label uses).
+//   - GCP: tofu already created the CLOUD_IAM_SERVICE_ACCOUNT user (as on Postgres), so the Job emits
+//     GRANTs only. The target is the MySQL login form — Cloud SQL MySQL truncates the '@' and domain,
+//     so it is the lowercase SA local part, not the Postgres "sa@project.iam" form (#1505).
 
 // keylessBootstrapRole is the least-priv role/user AWS/Azure converge on (matches manifests.keylessDBUser).
 const keylessBootstrapRole = "alethia_app"
@@ -53,6 +61,12 @@ var safeIdent = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 // email minus the ".gserviceaccount.com" suffix, so it also contains '@'. It is double-quoted in the
 // emitted SQL; this reject-list still blocks anything that could break out of the quoted identifier.
 var safeGcpUser = regexp.MustCompile(`^[a-zA-Z0-9_.@\-]+$`)
+
+// safeMySQLUser guards a GCP Cloud SQL **MySQL** IAM login. Deliberately stricter than safeGcpUser:
+// MySQL truncates the '@' and domain from the SA email, requires the login be all lowercase, and caps
+// usernames at 32 characters on 8.0+ (#1505). Excluding '@' is what makes passing the Postgres form
+// ("sa@project.iam") a hard error rather than a GRANT against a nonexistent user.
+var safeMySQLUser = regexp.MustCompile(`^[a-z0-9_.\-]{1,32}$`)
 
 // bootstrapInput is the set of values the bootstrap SQL generator interpolates. Grouped into a struct
 // (rather than a growing positional arg list) so each field's meaning and injection guard stay clear.
@@ -125,31 +139,63 @@ func postgresBootstrapSQL(in bootstrapInput) ([]string, error) {
 	return nil, fmt.Errorf("db-bootstrap: no least-priv role SQL for provider %q (want aws|azure|gcp)", in.Provider)
 }
 
-// mysqlBootstrapSQL emits the least-priv Azure Database for MySQL Flexible Server AAD dialect. Azure
-// MySQL binds an Entra login with `CREATE AADUSER '<alias>' IDENTIFIED BY '<client-id>'` — the
-// IDENTIFIED BY value is the app UAMI's *client id* (distinct from the object id the Postgres pgaadauth
-// SECURITY LABEL uses). The app then gets DDL+DML scoped to its own database only.
+// mysqlAppPrivileges is the least-priv DDL+DML set the app gets on its OWN database, shared by all
+// three clouds so the privilege surface can't drift per-provider. Never *.*, never GRANT OPTION,
+// never SUPER — the app creates and uses its own tables and nothing else.
+const mysqlAppPrivileges = "SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES"
+
+// mysqlBootstrapSQL emits the least-priv MySQL dialect for the requested provider. All three clouds
+// converge on the same GRANT (mysqlAppPrivileges, scoped to the app's own database); they differ only
+// in how the login is BOUND to the cloud identity:
 //
-// Only Azure ships a MySQL Flexible Server template (#1435). AWS Aurora-MySQL keyless would use
-// `CREATE USER … IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS'`, and GCP Cloud SQL MySQL creates its
-// IAM users in tofu like Postgres — both are separate, unshipped work. So a mysql engine on aws/gcp is
-// an explicit error, never a silent fallthrough to Postgres SQL (cloud-parity: exclusions are documented).
+//   - AWS (Aurora/RDS MySQL): `IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS'` — no identity id is
+//     embedded in the SQL at all. The IAM policy maps the pod's role to a DB username, so the
+//     rds-db:connect ARN's username segment and this literal MUST agree (both are keylessBootstrapRole
+//     / manifests.keylessDBUser). AWS documents that "the user name used for IAM authentication must
+//     match the case of the user name in the database", which is why the constant is lowercase and
+//     interpolated verbatim rather than normalized here.
+//   - Azure (MySQL Flexible Server): binds an Entra login with
+//     `CREATE AADUSER '<alias>' IDENTIFIED BY '<client-id>'` — the IDENTIFIED BY value is the app
+//     UAMI's *client id* (distinct from the object id the Postgres pgaadauth SECURITY LABEL uses).
+//   - GCP (Cloud SQL MySQL): tofu already created the CLOUD_IAM_SERVICE_ACCOUNT user, exactly like the
+//     Postgres path, so there is NO user to create and NO password/identity clause — grants only.
+//     The target is the MySQL login form (#1505): Cloud SQL MySQL truncates the '@' and domain from the
+//     SA email, so it is the lowercase local part, NOT the Postgres "sa@project.iam" form.
 func mysqlBootstrapSQL(in bootstrapInput) ([]string, error) {
-	if in.Provider != "azure" {
-		return nil, fmt.Errorf("db-bootstrap: keyless mysql bootstrap is only supported on azure (got %q); aws Aurora-MySQL and gcp Cloud SQL MySQL use different mechanisms and ship no template yet", in.Provider)
+	switch in.Provider {
+	case "aws":
+		user := keylessBootstrapRole // a compile-time constant, always safe
+		return []string{
+			// IF NOT EXISTS keeps the PreSync Job idempotent across re-syncs. No IAM id appears here —
+			// the binding is the IAM policy's dbuser:<cluster-resource-id>/<user> ARN (#1504/#1509).
+			fmt.Sprintf(`CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';`, user),
+			fmt.Sprintf("GRANT %s ON `%s`.* TO '%s'@'%%';", mysqlAppPrivileges, in.DBName, user),
+		}, nil
+	case "azure":
+		if !safeIdent.MatchString(in.AppClientID) {
+			return nil, fmt.Errorf("db-bootstrap: unsafe app client id %q", in.AppClientID)
+		}
+		user := keylessBootstrapRole // a compile-time constant, always safe; single-quoted → '<user>'@'%'
+		return []string{
+			// IF NOT EXISTS keeps the PreSync Job idempotent across re-syncs. (Azure's exact CREATE AADUSER
+			// grammar — incl. IF NOT EXISTS acceptance and the precise UAMI value — is confirmed by the
+			// main-gated real-apply e2e, #1450.)
+			fmt.Sprintf(`CREATE AADUSER IF NOT EXISTS '%s' IDENTIFIED BY '%s';`, user, in.AppClientID),
+			// Least-privilege: DDL+DML scoped to the app's own database — never *.* / GRANT OPTION / SUPER.
+			fmt.Sprintf("GRANT %s ON `%s`.* TO '%s';", mysqlAppPrivileges, in.DBName, user),
+		}, nil
+	case "gcp":
+		// Guarded by the MySQL form, not the Postgres one: passing "sa@project.iam" here would GRANT to
+		// a user that does not exist on a Cloud SQL MySQL instance, so the Job would report success while
+		// the app stayed unprivileged. Fail closed instead.
+		if !safeMySQLUser.MatchString(in.AppUser) {
+			return nil, fmt.Errorf("db-bootstrap: unsafe or non-MySQL gcp app user %q (want the lowercase, <=32ch service-account local part — Cloud SQL MySQL truncates the @ and domain)", in.AppUser)
+		}
+		return []string{
+			fmt.Sprintf("GRANT %s ON `%s`.* TO '%s'@'%%';", mysqlAppPrivileges, in.DBName, in.AppUser),
+		}, nil
 	}
-	if !safeIdent.MatchString(in.AppClientID) {
-		return nil, fmt.Errorf("db-bootstrap: unsafe app client id %q", in.AppClientID)
-	}
-	user := keylessBootstrapRole // a compile-time constant, always safe; single-quoted → '<user>'@'%'
-	return []string{
-		// IF NOT EXISTS keeps the PreSync Job idempotent across re-syncs. (Azure's exact CREATE AADUSER
-		// grammar — incl. IF NOT EXISTS acceptance and the precise UAMI value — is confirmed by the
-		// main-gated real-apply e2e, #1450.)
-		fmt.Sprintf(`CREATE AADUSER IF NOT EXISTS '%s' IDENTIFIED BY '%s';`, user, in.AppClientID),
-		// Least-privilege: DDL+DML scoped to the app's own database — never *.* / GRANT OPTION / SUPER.
-		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES ON `%s`.* TO '%s';", in.DBName, user),
-	}, nil
+	return nil, fmt.Errorf("db-bootstrap: no keyless mysql bootstrap SQL for provider %q (want aws|azure|gcp)", in.Provider)
 }
 
 // renderBootstrapSQL joins the statements into a single script (newline-separated) — the form the Job
@@ -185,11 +231,20 @@ func RunDBBootstrap(_ context.Context, args []string) error {
 	// (bootstrapSQL enforces the same invariants, but its "unsafe app client id" error reads oddly for
 	// a simply-missing flag).
 	if *engine == engineMySQL {
-		if *provider != "azure" {
-			return fmt.Errorf("db-bootstrap: --engine mysql is only supported with --provider azure")
-		}
-		if *appClientID == "" {
-			return fmt.Errorf("db-bootstrap: --engine mysql requires --app-client-id (the app UAMI client id)")
+		switch *provider {
+		case "azure":
+			if *appClientID == "" {
+				return fmt.Errorf("db-bootstrap: --engine mysql --provider azure requires --app-client-id (the app UAMI client id)")
+			}
+		case "gcp":
+			if *appUser == "" {
+				return fmt.Errorf("db-bootstrap: --engine mysql --provider gcp requires --app-user (the Cloud SQL IAM login — the lowercase service-account local part, NOT the Postgres sa@project.iam form)")
+			}
+		case "aws":
+			// Nothing extra: AWSAuthenticationPlugin embeds no identity id, and the username is the
+			// shared keylessBootstrapRole constant that the IAM policy's ARN also names.
+		default:
+			return fmt.Errorf("db-bootstrap: --engine mysql requires --provider aws|azure|gcp (got %q)", *provider)
 		}
 	}
 	sql, err := renderBootstrapSQL(bootstrapInput{
