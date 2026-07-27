@@ -75,7 +75,9 @@ function keywordsFor(kind: NodeKind): string[] {
 interface CanvasCommandPaletteProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onSave: () => void;
+	/** Create flow only — turns the canvas into a project. Omitted on a live project, where the
+	 * pending-changes bar is the only path changes take. */
+	onSave?: () => void;
 	/** Optional — only present while the legacy form view still exists. */
 	onToggleView?: () => void;
 	onFitView: () => void;
@@ -235,9 +237,11 @@ export function CanvasCommandPalette({
 					<CommandItem value="ask-ai" onSelect={() => run(onAskAi)}>
 						Ask AI
 					</CommandItem>
-					<CommandItem value="save" onSelect={() => run(onSave)}>
-						Save project
-					</CommandItem>
+					{onSave && (
+						<CommandItem value="save" onSelect={() => run(onSave)}>
+							Save project
+						</CommandItem>
+					)}
 					<CommandItem value="fit-view" onSelect={() => run(onFitView)}>
 						Fit view
 					</CommandItem>
