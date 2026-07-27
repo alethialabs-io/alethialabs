@@ -17,6 +17,9 @@ interface PendingChangesBarProps {
    * mode; createProject in the create flow). */
   onDeploy: () => void;
   deploying?: boolean;
+  /** What the primary button actually does. Defaults to "Deploy"; the create flow passes
+   * "Create project", where the click persists the project and queues NO provisioning job. */
+  deployLabel?: string;
   /** Clear durable server-side staged changes (edit mode), alongside the client revert. */
   onDiscard?: () => void;
 }
@@ -41,6 +44,7 @@ const OP_GLYPH: Record<"new" | "modified" | "removed", string> = {
 export function PendingChangesBar({
   onDeploy,
   deploying,
+  deployLabel = "Deploy",
   onDiscard,
 }: PendingChangesBarProps) {
   const nodes = useCanvasStore((s) => s.nodes);
@@ -91,7 +95,7 @@ export function PendingChangesBar({
                 )}
               </div>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Staged before going live. Review, then Deploy.
+                Staged before going live. Review, then {deployLabel}.
               </p>
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
@@ -156,7 +160,7 @@ export function PendingChangesBar({
           ) : (
             <>
               <Rocket className="mr-1 h-3.5 w-3.5" />
-              Deploy
+              {deployLabel}
             </>
           )}
         </Button>
