@@ -34,22 +34,27 @@ nightly can promote a cell, and it does so in the e2e parity board.
 | `redis` | 🟡 | 🟡 | 🟡 | 🟡 | · | — |
 | `valkey` | · | 🟡 | · | 🟡 | — | — |
 
-## Option-level offers — a switch the canvas shows on every cloud
+## Option-level offers — a switch inside an offer
 
-Not every offer is an engine choice. `iam_auth` is a plain switch in the inspector with no
-per-cloud gate, so the canvas presents keyless database auth on **every** cloud for **both** engines.
-The variant grids above cannot see that, which is why shipping MySQL keyless broken was
-un-catchable until #1508.
+Not every offer is an engine choice. `iam_auth` is a switch in the inspector, so it makes its own
+per-cloud × per-engine promise, one the variant grids above cannot see — which is why shipping MySQL
+keyless broken was un-catchable until #1508.
 
-A cell here is 🚫 when the cloud's provider never reads the option (the switch is dropped between the
+Some of these switches are now GATED in the canvas (`iam_auth` is, since #1510: the inspector reads
+the same `keylessCells` table the renderer does and disables the toggle, with the reason, on a cell
+that cannot honor it). A gate does not remove the offer from this board — it would then be possible
+to silence the guard by adding one. A gated cell shows —, and the reason below is checked against the
+one the user actually sees, so the two cannot drift.
+
+A cell is 🚫 when the cloud's provider never reads the option (the switch is dropped between the
 canvas and the plan), or when the template gates it per engine and this engine has no branch.
 
 ### `database` · `iam_auth`
 
 | Offer | alibaba | aws | azure | gcp | hetzner | local |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| `postgres` | 🚫 #1510 | 🟡 | 🟡 | 🟡 | — | — |
-| `mysql` | 🚫 #1510 | 🟡 | 🟡 | 🟡 | · | — |
+| `postgres` | — | 🟡 | 🟡 | 🟡 | — | — |
+| `mysql` | — | 🟡 | 🟡 | 🟡 | · | — |
 
 ## Day-2 posture — would a hazard be caught?
 
@@ -101,9 +106,11 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `database:mysql` | local | A local kind cluster has no managed services — data services run in-cluster. |
 | `cache:redis` | local | A local kind cluster has no managed services — data services run in-cluster. |
 | `cache:valkey` | local | A local kind cluster has no managed services — data services run in-cluster. |
-| `database:postgres:iam_auth` | hetzner | Postgres runs in-cluster via CloudNativePG — no managed instance and no cloud identity plane to mint DB tokens against. |
+| `database:postgres:iam_auth` | hetzner | Unavailable on Hetzner. Postgres runs in-cluster via CloudNativePG — there is no managed instance and no cloud identity plane to mint database tokens against. This database keeps a generated password. |
 | `database:postgres:iam_auth` | local | A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against. |
 | `database:mysql:iam_auth` | local | A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against. |
+| `database:postgres:iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. |
+| `database:mysql:iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. |
 
 ---
 

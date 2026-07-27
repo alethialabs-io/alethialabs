@@ -14,8 +14,10 @@
 //     connection from the pod's Workload Identity, dials the cloud over TLS and splices the wire.
 //     It holds NO token at rest — no token file, no rotation store, no shared volume.
 //   - EXCLUDED (documented) — Alibaba ApsaraDB RDS has no token-based DB login (RAM is control-plane
-//     only), and Hetzner data services are ArgoCD add-ons with no cloud IAM. Both stay on the password
-//     path; the exclusion is explicit here so parity is enforced, not silently dropped.
+//     only), and Hetzner data services are ArgoCD add-ons with no cloud IAM. Both are cells in
+//     keylessCells carrying the reason a user reads, so a database marked `iam_auth` there fails
+//     CLOSED with that reason. It does NOT fall back to a password: silently handing a password to
+//     someone who asked for keyless is the failure this file exists to prevent (#1510).
 //
 // This replaces the original AWS/Azure wiring — an `alethia db-token` file refresher plus a stock
 // `bitnami/pgbouncer` configured through PGB_UPSTREAM_HOST / PGB_UPSTREAM_USER / PGB_TOKEN_FILE.
@@ -28,6 +30,7 @@
 package manifests
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -79,9 +82,11 @@ const (
 
 // Provider slugs, as the strings this package compares and passes to `db-authproxy --provider`.
 const (
-	providerAWS   = string(types.CloudProviderAws)
-	providerGCP   = string(types.CloudProviderGcp)
-	providerAzure = string(types.CloudProviderAzure)
+	providerAWS     = string(types.CloudProviderAws)
+	providerGCP     = string(types.CloudProviderGcp)
+	providerAzure   = string(types.CloudProviderAzure)
+	providerAlibaba = string(types.CloudProviderAlibaba)
+	providerHetzner = string(types.CloudProviderHetzner)
 )
 
 // Default wire ports per engine family. `db-authproxy` has no default for --listen or --upstream
@@ -104,13 +109,32 @@ type keylessWiring struct {
 	podLabels     map[string]string
 }
 
+// cellState is what we CLAIM about one cloud × engine keyless cell. The three states are not
+// interchangeable: "we have not built it yet" and "this cloud can never do it" are different facts
+// with different consequences — the first is debt that a lane retires, the second is a permanent
+// product boundary the canvas must render and the offer-parity matrix must record as an exclusion.
+// Collapsing them into one boolean is how alibaba/hetzner came to be "excluded" by simply being
+// ABSENT from this table, which is the cloud-parity rule obeyed by omission.
+type cellState string
+
+const (
+	// cellLive — every leg is built; the binding renders.
+	cellLive cellState = "live"
+	// cellPending — a leg is missing; reason names the lane that will deliver it.
+	cellPending cellState = "pending"
+	// cellExcluded — the cloud can never honor it; reason is the product-voice why.
+	cellExcluded cellState = "excluded"
+)
+
 // keylessCell records whether one cloud × engine keyless cell is implemented END TO END — the tofu
 // flag that turns IAM auth on, the bootstrap Job that creates the app's login, AND the runtime proxy.
 type keylessCell struct {
-	ok bool
-	// why names the lane that will deliver the cell; empty when ok. It is surfaced in the fail-closed
-	// error so an operator reads "not built yet, tracked in #N" rather than a bare refusal.
-	why string
+	state cellState
+	// reason is empty ONLY when state is cellLive. It is surfaced three ways — the fail-closed error
+	// an operator reads, the canvas's disabled-toggle prose (via lib/cloud-providers/generated/
+	// keyless-cells.ts, generated from this table), and the offer-parity matrix — so it is written in
+	// the product's voice, not as an internal note. TestKeylessCellsTotal enforces non-emptiness.
+	reason string
 }
 
 // keylessCells is the single source of truth for which keyless cells may render.
@@ -127,9 +151,11 @@ type keylessCell struct {
 // AWSAuthenticationPlugin / GRANT-only bootstrap dialects) and #1507 (the mysql-client apply
 // container), so this table opens them.
 //
-// This table governs ENGINE support per cloud, not which clouds keyless applies to at all: Alibaba and
-// Hetzner never reach it, because KeylessDBTarget excludes them upstream (ApsaraDB has no token-based
-// database login; Hetzner databases are in-cluster add-ons with no IAM plane).
+// The table is TOTAL over every cloud the console can place a database on × both engine families. A
+// cell you did not think about must not compile into a hole: absence used to mean "excluded", so
+// alibaba and hetzner were excluded by not being written down, and the canvas — which had no way to
+// read this table at all — went on offering the toggle for them anyway (#1510). Totality is the
+// cloud-parity rule made structural, and TestKeylessCellsTotal is what enforces it.
 //
 // Keeping a cell off is a claim that one of its four legs is missing — the tofu flag, the bootstrap
 // Job renderer, the bootstrap SQL dialect, or the runtime proxy. check-keyless-cells.mjs (CI guards)
@@ -138,22 +164,45 @@ type keylessCell struct {
 // three lanes.
 var keylessCells = map[string]map[string]keylessCell{
 	providerAWS: {
-		enginePostgres: {ok: true},
-		engineMySQL:    {ok: true},
+		enginePostgres: {state: cellLive},
+		engineMySQL:    {state: cellLive},
 	},
 	providerGCP: {
-		enginePostgres: {ok: true},
-		engineMySQL:    {ok: true},
+		enginePostgres: {state: cellLive},
+		engineMySQL:    {state: cellLive},
 	},
 	providerAzure: {
-		enginePostgres: {ok: true},
-		engineMySQL:    {ok: true},
+		enginePostgres: {state: cellLive},
+		engineMySQL:    {state: cellLive},
+	},
+	providerAlibaba: {
+		enginePostgres: {state: cellExcluded, reason: alibabaKeylessExclusion},
+		engineMySQL:    {state: cellExcluded, reason: alibabaKeylessExclusion},
+	},
+	providerHetzner: {
+		enginePostgres: {state: cellExcluded, reason: hetznerKeylessExclusion},
+		// Unreachable in the canvas — the catalog floor gives Hetzner only Postgres, so the engine
+		// picker never offers MySQL. Present because the table is total: a cell that cannot be
+		// reached today must still say what it would mean, or the next cloud added here inherits
+		// "absent means excluded" all over again.
+		engineMySQL: {state: cellExcluded, reason: hetznerMySQLExclusion},
 	},
 }
 
-// keylessCellSupported reports whether a cloud × engine keyless cell may render, or an error naming
-// the lane that will deliver it. Fail-closed: an unknown provider or engine is refused, never
-// defaulted into a neighbouring cell's wiring.
+// The exclusion prose. Extracted as constants because each string is used twice or more and is
+// PRODUCT COPY: it is what a user reads on the disabled canvas toggle, what an operator reads in the
+// fail-closed deploy error, and — mirrored into infra/offer-exclusions.yaml, coupled by
+// check-offer-parity.mjs — what the parity matrix prints. Reword it here and the guard reds until
+// the yaml agrees.
+const (
+	alibabaKeylessExclusion = "Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password."
+	hetznerKeylessExclusion = "Unavailable on Hetzner. Postgres runs in-cluster via CloudNativePG — there is no managed instance and no cloud identity plane to mint database tokens against. This database keeps a generated password."
+	hetznerMySQLExclusion   = "MySQL is not offered on Hetzner — the in-cluster CloudNativePG operator is PostgreSQL only."
+)
+
+// keylessCellSupported reports whether a cloud × engine keyless cell may render, or an error carrying
+// the cell's reason. Fail-closed: an unknown provider or engine is refused, never defaulted into a
+// neighbouring cell's wiring.
 func keylessCellSupported(provider, engine string) error {
 	engines, ok := keylessCells[provider]
 	if !ok {
@@ -163,10 +212,21 @@ func keylessCellSupported(provider, engine string) error {
 	if !ok {
 		return fmt.Errorf("keyless DB auth is not supported for engine %q on %s", engine, provider)
 	}
-	if !cell.ok {
-		return fmt.Errorf("keyless %s on %s is not implemented yet (%s)", engine, provider, cell.why)
+	switch cell.state {
+	case cellLive:
+		return nil
+	case cellPending:
+		return fmt.Errorf("keyless %s on %s is not implemented yet (%s)", engine, provider, cell.reason)
+	case cellExcluded:
+		// The reason is the whole message: it is written for the person reading it, and prefixing it
+		// with our own framing would bury the sentence that actually answers "why not".
+		return errors.New(cell.reason)
 	}
-	return nil
+	// Not a `default:` inside the switch — every state is named above so the exhaustive linter fails
+	// the build when a fourth is added, rather than letting it fall into a branch that was written
+	// without it in mind. Reaching here means a state exists that nobody taught this gate about, and
+	// a fail-closed table must not fail OPEN on one.
+	return fmt.Errorf("keyless %s on %s has an unrecognised cell state %q", engine, provider, cell.state)
 }
 
 // enginePort returns the conventional wire port for an engine family, as a string and an int — the
@@ -178,24 +238,20 @@ func enginePort(engine string) (string, int) {
 	return strconv.Itoa(postgresPort), postgresPort
 }
 
-// KeylessDBTarget reports whether a binding target is a database that should use keyless IAM/AAD auth
-// — kind "database", a provider that supports it (AWS RDS IAM / GCP Cloud SQL IAM / Azure Entra), and
-// the matched db's IamAuth is true. Alibaba (ApsaraDB RDS: no token DB login) and Hetzner (add-on DBs:
-// no cloud IAM) are EXPLICIT exclusions → they keep the password/ExternalSecret path. A password-auth
-// db or a non-database target → false.
+// KeylessDBTarget reports whether a binding target is a database the operator asked to authenticate
+// keylessly — kind "database" and the matched db's IamAuth is true. A password-auth db or a
+// non-database target → false.
 //
-// This is deliberately engine-BLIND: an unimplemented cloud × engine cell must fail closed with a
-// reason (keylessCellSupported, applied in keylessDBSidecar), not silently fall back to the password
-// path — a database the operator marked `iam_auth: true` must never quietly acquire a password.
-func KeylessDBTarget(provider string, t types.ServiceBindingTarget, dbs []types.ProjectDatabaseConfig) bool {
+// It is deliberately both engine-BLIND and provider-BLIND. It answers "did the operator ask for
+// this?", never "can we do it?" — that second question is keylessCells', asked in keylessDBSidecar,
+// which fails closed with the cell's reason. Answering both here is what made the doc comment false:
+// this function used to return false for alibaba/hetzner, which routed a database explicitly marked
+// `iam_auth: true` onto the password/ExternalSecret path with no error anywhere. A database the
+// operator marked `iam_auth: true` must never quietly acquire a password (#1510), so the excluded
+// cells now produce a reasoned refusal instead of a silent downgrade — and the key set of
+// keylessCells is the only place that says which clouds honor keyless.
+func KeylessDBTarget(t types.ServiceBindingTarget, dbs []types.ProjectDatabaseConfig) bool {
 	if t.Kind != "database" {
-		return false
-	}
-	switch provider {
-	case string(types.CloudProviderAws), string(types.CloudProviderGcp), string(types.CloudProviderAzure):
-		// supported
-	default:
-		// Alibaba / Hetzner (and anything unknown): documented exclusion — password path.
 		return false
 	}
 	for _, db := range dbs {

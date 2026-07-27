@@ -43,6 +43,8 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { readKeylessCells } from "./lib/keyless-cells.mjs";
+
 const ROOT = "../..";
 const TEMPLATES = `${ROOT}/infra/templates/project`;
 const PROVIDERS = `${ROOT}/packages/core/cloud`;
@@ -53,6 +55,10 @@ const CONFIG_SCHEMA_SRC = "components/design-project/canvas/inspector/config-sch
 const CATALOG = `${ROOT}/packages/core/catalog/catalog.json`;
 
 const writeMatrix = process.argv.includes("--matrix");
+
+/** Compare two user-facing reasons for MEANING, not layout: the yaml wraps its `reason:` across
+ * lines, the Go constant does not. Differences in whitespace are the file format talking. */
+const normalizeReason = (s) => (s ?? "").replace(/\s+/g, " ").trim();
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────
 
@@ -173,15 +179,18 @@ function offeredOn(cloud, kind, variant) {
 
 // ── the offer side, part 2: OPTION-level offers (`database:<engine>:iam_auth`) ───────
 //
-// A variant axis is not the only thing the canvas offers. `iam_auth` is a plain SWITCH in
-// config-schema.ts with no `visibleWhen`, so the canvas presents keyless database auth on EVERY cloud
-// for BOTH engines — and until #1500 several of those cells could not honor it. The guard could not
-// see any of that: its whole vocabulary was `variants:` blocks, so shipping MySQL keyless broken was
+// A variant axis is not the only thing the canvas offers. `iam_auth` was a plain SWITCH in
+// config-schema.ts with no gate, so the canvas presented keyless database auth on EVERY cloud for
+// BOTH engines — and until #1500 several of those cells could not honor it. The guard could not see
+// any of that: its whole vocabulary was `variants:` blocks, so shipping MySQL keyless broken was
 // structurally un-catchable (#1508).
 //
-// Options are DERIVED, like everything else here: every unconditional `type: "switch"` field in
-// CONFIG_SCHEMA. A field carrying `visibleWhen`/`requiresProvider` is already gated by the canvas, so
-// it makes no cross-cloud promise and is skipped.
+// Options are DERIVED, like everything else here: every `type: "switch"` field in CONFIG_SCHEMA.
+// A field carrying a gate this guard CANNOT read makes no measurable cross-cloud promise and is
+// skipped. A field whose gate is in KNOWN_GATES is KEPT, with the gate attached — because otherwise
+// "add a gate" is a way to delete an offer from this guard's vocabulary, which is exactly the hole
+// #1508 closed. Gating `iam_auth` in #1510 would have reopened it: the whole option grid, and the
+// exclusions keyed on it, would simply have vanished, green.
 //
 // TWO LIMITS, stated because a guard that looks more complete than it is, is worse than no guard:
 //
@@ -194,17 +203,61 @@ function offeredOn(cloud, kind, variant) {
 //  2. Only `type: "switch"` is read. An enum-shaped option (a `select` whose values are not a
 //     `variants:` axis) makes the same cross-cloud promise and is equally invisible.
 
-/** Unconditional switch fields per kind — the options the canvas offers on every cloud. */
+/** The keyless gate: which cloud × engine cells the canvas offers `iam_auth` on, read from the same
+ * table the canvas reads (`var keylessCells`, packages/core/manifests/keyless.go).
+ *
+ * A gate is only usable here if the guard can EVALUATE it. This one can be: it is a table, not a
+ * closure. `(cloud, variant) → {state, reason}`, or undefined for a cloud with no cells at all. */
+function keylessGate() {
+	const { cells } = readKeylessCells(`${ROOT}/packages/core/manifests/keyless.go`);
+	return (cloud, variant) =>
+		cells.find((c) => c.cloud === cloud && c.engine === variant);
+}
+
+/** Options whose canvas gate this guard knows how to read, keyed `<kind>:<option>`. */
+const KNOWN_GATES = { "database:iam_auth": keylessGate() };
+
+/** Drop FULL-LINE `//` comments. Deliberately not a general comment stripper: a `//` inside a
+ * description string must survive, and a field's own doc comment naming `visibleWhen` must not make
+ * the field read as gated. */
+const stripLineComments = (src) =>
+	src
+		.split("\n")
+		.filter((l) => !l.trimStart().startsWith("//"))
+		.join("\n");
+
+/** The `{ … }` object literal starting at `from`, brace-matched, braces included. */
+function objectLiteralAt(src, from) {
+	const open = src.indexOf("{", from);
+	let depth = 0;
+	for (let i = open; i < src.length; i++) {
+		if (src[i] === "{") depth++;
+		else if (src[i] === "}" && --depth === 0) return src.slice(open, i + 1);
+	}
+	return "";
+}
+
+/** Switch fields per kind: `{key, gate}` — gate null when the canvas offers it on every cloud.
+ *
+ * The field literal is BRACE-MATCHED rather than window-matched. A fixed character window silently
+ * drops any field that outgrows it, and "the guard stopped measuring this" is not a failure anyone
+ * sees — it just goes green with less in it. */
 function offeredOptions() {
-	const src = readFileSync(CONFIG_SCHEMA_SRC, "utf8");
+	const src = stripLineComments(readFileSync(CONFIG_SCHEMA_SRC, "utf8"));
 	const body = src.slice(src.indexOf("CONFIG_SCHEMA"));
 	const kinds = [...body.matchAll(/\n\t(\w+): \{/g)];
 	const out = {};
 	for (let i = 0; i < kinds.length; i++) {
+		const kind = kinds[i][1];
 		const seg = body.slice(kinds[i].index, kinds[i + 1]?.index ?? body.length);
-		for (const f of seg.matchAll(/\{\s*key:\s*"(\w+)",\s*type:\s*"switch"([\s\S]{0,400}?)\n\t*\}/g)) {
-			if (/visibleWhen|requiresProvider/.test(f[2])) continue; // already gated by the canvas
-			(out[kinds[i][1]] ??= []).push(f[1]);
+		for (const f of seg.matchAll(/\{\s*key:\s*"(\w+)",\s*type:\s*"switch"/g)) {
+			const key = f[1];
+			const gate = KNOWN_GATES[`${kind}:${key}`] ?? null;
+			// A gate we can read keeps the offer measurable; one we cannot makes no promise to measure.
+			if (!gate && /visibleWhen|requiresProvider/.test(objectLiteralAt(seg, f.index))) {
+				continue;
+			}
+			(out[kind] ??= []).push({ key, gate });
 		}
 	}
 	return out;
@@ -614,7 +667,7 @@ const unadjudicated = [];
 for (const [kind, keys] of Object.entries(OPTIONS)) {
 	const variants = AXES[kind];
 	if (!variants) continue; // no variant axis → no `<kind>:<variant>:<option>` cell to name
-	for (const key of keys) {
+	for (const { key, gate } of keys) {
 		const carriers = optionCarriers(key);
 		// No provider reads it → the guard cannot see whether this option is a tfvars-carried capability
 		// at all (it may be console-only or template-default). Saying nothing is the honest result;
@@ -635,6 +688,42 @@ for (const [kind, keys] of Object.entries(OPTIONS)) {
 				}
 				const offer = `${kind}:${variant}:${key}`;
 				const exc = excluded(offer, cloud);
+
+				// A cell the CANVAS withholds. Two things must hold, and neither is automatic:
+				// the withholding must be recorded in the yaml (a gate is a decision, and an
+				// unrecorded decision is indistinguishable from a bug), and the recorded reason
+				// must be the one the user actually sees — otherwise the matrix documents a
+				// product that no longer exists.
+				const withheld = gate?.(cloud, variant);
+				if (withheld && withheld.state !== "live") {
+					if (!exc) {
+						optionCells.push({ kind, variant, key, cloud, state: "excluded", detail: withheld.reason });
+						findings.push({
+							shape: "undocumented-gate",
+							cloud,
+							offer,
+							detail:
+								`the canvas withholds \`${key}\` here (keylessCells says "${withheld.state}"), but ` +
+								`nothing in ${EXCLUSIONS} records why. A gate is a decision — record it or ungate it.`,
+						});
+						continue;
+					}
+					if (normalizeReason(exc.reason) !== normalizeReason(withheld.reason)) {
+						optionCells.push({ kind, variant, key, cloud, state: "excluded", detail: withheld.reason });
+						findings.push({
+							shape: "reason-drift",
+							cloud,
+							offer,
+							detail:
+								`the canvas shows one reason and the matrix another, so one of them is wrong ` +
+								`wherever a user reads it.\n      canvas: ${withheld.reason}\n      yaml:   ${exc.reason}`,
+						});
+						continue;
+					}
+					optionCells.push({ kind, variant, key, cloud, state: "excluded", detail: exc.reason ?? "" });
+					continue;
+				}
+
 				let state = "ok";
 				let detail = "";
 				if (exc) {
@@ -660,6 +749,25 @@ for (const [kind, keys] of Object.entries(OPTIONS)) {
 			}
 		}
 	}
+}
+
+// An adjudicated offer that produces NO cells has stopped being measured, and the failure mode of
+// that is silence: the grid disappears from the matrix, its exclusions become dead entries, and the
+// guard reports success on a vocabulary that shrank. That is precisely how gating a switch used to
+// delete an offer, so the tripwire is the line that makes the trap loud rather than invisible.
+for (const offerBase of ADJUDICATED) {
+	const [kind, key] = offerBase.split(":");
+	if (optionCells.some((c) => c.kind === kind && c.key === key)) continue;
+	findings.push({
+		shape: "unmeasured-offer",
+		cloud: "—",
+		offer: offerBase,
+		detail:
+			`adjudicated, but it produced ZERO cells this run — the guard is no longer measuring it and ` +
+			`would go green whatever the clouds do. Usually this means the option gained a canvas gate ` +
+			`that KNOWN_GATES cannot read (so it was skipped), the field was renamed, or its kind lost ` +
+			`its variant axis. Teach the guard the gate; do not drop the offer.`,
+	});
 }
 
 // ── matrix ──────────────────────────────────────────────────────────────────────────
@@ -714,13 +822,18 @@ nightly can promote a cell, and it does so in the e2e parity board.
 	// and the thing worth seeing at a glance is which CELLS honor it — that is the shape that hid
 	// MySQL keyless.
 	if (optionCells.length) {
-		md += `\n## Option-level offers — a switch the canvas shows on every cloud\n
-Not every offer is an engine choice. \`iam_auth\` is a plain switch in the inspector with no
-per-cloud gate, so the canvas presents keyless database auth on **every** cloud for **both** engines.
-The variant grids above cannot see that, which is why shipping MySQL keyless broken was
-un-catchable until #1508.
+		md += `\n## Option-level offers — a switch inside an offer\n
+Not every offer is an engine choice. \`iam_auth\` is a switch in the inspector, so it makes its own
+per-cloud × per-engine promise, one the variant grids above cannot see — which is why shipping MySQL
+keyless broken was un-catchable until #1508.
 
-A cell here is 🚫 when the cloud's provider never reads the option (the switch is dropped between the
+Some of these switches are now GATED in the canvas (\`iam_auth\` is, since #1510: the inspector reads
+the same \`keylessCells\` table the renderer does and disables the toggle, with the reason, on a cell
+that cannot honor it). A gate does not remove the offer from this board — it would then be possible
+to silence the guard by adding one. A gated cell shows —, and the reason below is checked against the
+one the user actually sees, so the two cannot drift.
+
+A cell is 🚫 when the cloud's provider never reads the option (the switch is dropped between the
 canvas and the plan), or when the template gates it per engine and this engine has no branch.\n`;
 		for (const key of [...new Set(optionCells.map((c) => c.key))]) {
 			const kind = optionCells.find((c) => c.key === key).kind;

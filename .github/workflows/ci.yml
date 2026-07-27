@@ -449,6 +449,14 @@ jobs:
             || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -F console gen:offer-parity' and commit."; exit 1; }
       - name: Keyless cells agree with the code that implements them
         run: pnpm -F console check:keyless-cells
+      # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only
+      # DETECT drift; generating it makes drift impossible — and the table churns (aws/gcp MySQL
+      # opened four lanes after it was first written).
+      - name: Keyless cell mirror is in sync with the renderer (keyless.go → keyless-cells.ts)
+        run: |
+          pnpm -F console gen:keyless-cells
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
+            || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
       - name: Project templates pin their providers (tofu lock files, no -upgrade)
         run: pnpm -F console check:tofu-lockfiles
       - name: Shipped version defaults are mutually compatible (compat matrix)

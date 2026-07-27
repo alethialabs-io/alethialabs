@@ -284,6 +284,15 @@ function FieldControl({
 		);
 	}
 
+	// Same slot-replacement as above, for a field this cell cannot honor. Prose instead of a disabled
+	// control, so one gate covers all eleven field types rather than each inventing its own `disabled`
+	// plumbing. (Switches render in FieldRow and handle it themselves — a toggle you can SEE is off is
+	// a better answer than a sentence where the toggle used to be.)
+	const unavailable = field.unavailableWhen?.(config, ctx) ?? null;
+	if (unavailable) {
+		return <p className="text-xs text-muted-foreground">{unavailable}</p>;
+	}
+
 	switch (field.type) {
 		case "text":
 			return (
@@ -465,18 +474,56 @@ function FieldRow({
 	);
 
 	if (field.type === "switch") {
+		// A switch renders here rather than in FieldControl, so it owns both gates itself.
+		// `requiresProvider` first: with no cloud picked there is nothing to be unavailable ON, and
+		// letting `unavailableWhen` answer that too would give one question two owners.
+		const needsProvider = Boolean(field.requiresProvider) && !ctx.provider;
+		const unavailable = needsProvider
+			? null
+			: (field.unavailableWhen?.(ctx.config, ctx) ?? null);
+		const note = needsProvider
+			? "Select a cloud account to configure this."
+			: unavailable;
+		const off = Boolean(needsProvider || unavailable);
 		return (
-			<div className="col-span-full flex items-center justify-between gap-4 rounded-none border border-border/60 px-3 py-2.5">
+			<div
+				className={cn(
+					"col-span-full flex items-center justify-between gap-4 rounded-none border px-3 py-2.5",
+					// Hairline weight is the de-emphasis, the same move `advanced` makes with a sunken
+					// surface. No colour: an unavailable cell is a fact, not a warning.
+					off ? "border-border/40" : "border-border/60",
+				)}
+			>
 				<div className="min-w-0">
-					<p className="text-sm font-medium">{field.label}</p>
-					{field.description && (
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							{field.description}
+					<p
+						className={cn(
+							"flex items-center gap-2 text-sm font-medium",
+							off && "text-muted-foreground",
+						)}
+					>
+						{field.label}
+						{/* Same typography as the option advisory above, a DIFFERENT mechanism: that one
+						    is ink-only and must never disable (#918), this one marks a real gate. */}
+						{unavailable && (
+							<span className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground">
+								unavailable
+							</span>
+						)}
+					</p>
+					{(note ?? field.description) && (
+						<p id={`${fieldId}-note`} className="mt-0.5 text-xs text-muted-foreground">
+							{note ?? field.description}
 						</p>
 					)}
 				</div>
+				{/* A switch's label is a sibling <p>, not a <Label htmlFor>, so without these the
+				    control has NO accessible name — a screen reader reads "switch, off" and the reason
+				    for a disabled one is never announced at all. */}
 				<Switch
-					checked={raw !== false}
+					aria-label={field.label}
+					aria-describedby={note ?? field.description ? `${fieldId}-note` : undefined}
+					checked={off ? false : raw !== false}
+					disabled={off}
 					onCheckedChange={(v) => onChange({ [field.key]: v })}
 				/>
 				{error && (

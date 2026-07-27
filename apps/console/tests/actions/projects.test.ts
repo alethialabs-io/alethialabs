@@ -1412,6 +1412,68 @@ describe("planProject", () => {
 		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
+	// ── Fail-closed keyless gate (#1510) ────────────────────────────────────
+	// The canvas disables the IAM-auth toggle on these cells, but the canvas is not a boundary: the
+	// CLI writes `iam_auth` on any cloud, an AI-composed graph can carry it, and legacy rows predate
+	// the gate. Before this the database was simply handed a PASSWORD — no error, nothing in the UI,
+	// and the operator's explicit "no password" silently reversed.
+	it.each([
+		["hetzner", "postgres", /CloudNativePG/],
+		["alibaba", "postgres", /control plane/],
+		["alibaba", "mysql", /control plane/],
+	])(
+		"fails closed on iam_auth for %s × %s (never a silent password)",
+		async (provider, engine_family, reason) => {
+			setupDb({
+				select: snapshotSelect(
+					new Map<unknown, RowsResolver>([
+						[cloudIdentities, [{ id: "ci-1", provider }]],
+						[
+							projectDatabases,
+							[
+								{
+									name: "orders",
+									engine_family,
+									iam_auth: true,
+									cloud_identity_id: null,
+								},
+							],
+						],
+					]),
+				),
+			});
+			await expect(planProject("p1")).rejects.toThrow(reason);
+			await expect(planProject("p1")).rejects.toThrow(
+				/Turn IAM authentication off/,
+			);
+			expect(notifyScaler).not.toHaveBeenCalled();
+		},
+	);
+
+	it("lets iam_auth through on a cell the renderer can build", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectDatabases,
+						[
+							{
+								name: "orders",
+								engine_family: "mysql",
+								iam_auth: true,
+								cloud_identity_id: null,
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		// aws × mysql is live, so the gate must be silent — a gate that also blocks the cells it is
+		// meant to permit is just the old bug wearing an error message.
+		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-1" });
+	});
+
 	it("queues a hetzner job when databases are postgres (or legacy NULL family)", async () => {
 		const { valuesSpy } = setupDb({
 			select: snapshotSelect(

@@ -7,6 +7,10 @@ export {
 	type CloudProviderSlug,
 	type ConnectableCloudSlug,
 	type CloudProviderMeta,
+	// The abstract database engine axis ("postgres" | "mysql"). Exported because the keyless gate,
+	// the inspector's engine label and the store normalizer all key on it, and a bare `string` there
+	// would let a typo through every one of them.
+	type EngineFamily,
 	PROVIDERS,
 	REGION_LABELS,
 	DEFAULT_REGION,
@@ -29,6 +33,17 @@ export {
 	CACHE_NODE_MAP,
 	NOSQL,
 } from "./generated/catalog";
+export {
+	dbEngineFamily,
+	keylessUnavailableReason,
+	keylessUnavailableReasonForCloud,
+	normalizeKeylessAuth,
+} from "./keyless";
+export {
+	KEYLESS_CELLS,
+	type KeylessCell,
+	type KeylessCellState,
+} from "./generated/keyless-cells";
 export { getProvider, CACHE_TTL_HOURS } from "./provider-slug";
 export { groupRegions } from "./region-groups";
 export { WAF_OPTIONS, CERT_OPTIONS } from "./dns";

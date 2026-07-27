@@ -25,6 +25,7 @@ import { connectorLabel, isPluggable } from "@/lib/canvas/environment-connector"
 import {
 	AUTOSCALER,
 	DB_CAPACITY,
+	dbEngineFamily,
 	DEFAULT_CACHE_NODE,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
@@ -187,16 +188,15 @@ const isInCluster = (provider: CloudProviderSlug | null) => provider === "hetzne
 const providerName = (slug: string | null | undefined): string =>
 	(slug ? getConnectorProviderBySlug(slug)?.name : undefined) ?? slug ?? "";
 
-/** Human engine family for a database config (mirrors the inspector's `engineLabel`). */
+/** Human engine family (+ version) for a database config. The family normalization itself lives in
+ * `dbEngineFamily` — this used to re-implement it, and so did the inspector's `engineLabel`, which is
+ * three copies of a rule the keyless gate now also depends on. */
 function dbEngineLabel(config: {
 	engine_family?: string | null;
 	engine?: string | null;
 	engine_version?: string | null;
 }): string {
-	const family =
-		config.engine_family ??
-		(config.engine?.includes("mysql") ? "mysql" : "postgres");
-	const name = family === "mysql" ? "MySQL" : "PostgreSQL";
+	const name = dbEngineFamily(config) === "mysql" ? "MySQL" : "PostgreSQL";
 	return config.engine_version ? `${name} ${config.engine_version}` : name;
 }
 
