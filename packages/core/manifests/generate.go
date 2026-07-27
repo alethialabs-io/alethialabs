@@ -662,11 +662,17 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					value = opts.Outputs[endpointOutputKey(opts.Provider, string(b.Target.Kind))]
 				}
 			case "port":
-				// BYO-IaC may export a port output; otherwise (and for first-class) use the
-				// conventional default for the kind.
-				if k := byoPortKey(b.Target); k != "" {
-					value = opts.Outputs[k]
-				} else {
+				switch {
+				case keyless:
+					// Keyless: the workload connects to the local proxy sidecar (endpoint is
+					// 127.0.0.1 above), so the port is the PROXY's listener — engine-specific
+					// (pgbouncer 5432 / proxysql 3306), not the server's. #1441.
+					value = keylessProxyPort(opts, b.Target)
+				case byoPortKey(b.Target) != "":
+					// BYO-IaC may export a port output.
+					value = opts.Outputs[byoPortKey(b.Target)]
+				default:
+					// First-class: the conventional default for the kind.
 					value = defaultPort(string(b.Target.Kind))
 				}
 			}
