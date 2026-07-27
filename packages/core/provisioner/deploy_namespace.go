@@ -81,10 +81,10 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 // silent omission). namespace is activated on aws; other clouds + vcluster are tracked follow-ups.
 func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 	if pm == types.PlacementModeNamespace {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA), gcp (GKE + Workload Identity) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure/alibaba are per-cloud follow-ups. 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA), gcp (GKE + Workload Identity), alibaba (ACK + RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure is the per-cloud follow-up. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	if pm == types.PlacementModeVcluster {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters) and hetzner (Talos-API kubeconfig from the persisted talosconfig) host re-mint today; alibaba is a per-cloud follow-up (#1129). 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters), alibaba (ACK DescribeClusterUserKubeconfig, keyless RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig) host re-mint today. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud), 'namespace' (aws) and 'vcluster' (aws) provision today", pm)
 }
@@ -109,6 +109,7 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 var namespaceRemintProviders = map[string]bool{
 	"aws":     true,
 	"gcp":     true,
+	"alibaba": true,
 	"hetzner": true,
 }
 
@@ -134,7 +135,7 @@ var namespaceClusterNameOutputKey = map[string]string{
 // namespaceRemintNotWired is the fail-closed error for a cloud whose namespace re-mint seam isn't wired —
 // an explicit, cloud-named exclusion (parity is documented, never a silent omission).
 func namespaceRemintNotWired(provider string) error {
-	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA), gcp (GKE clusters.get + Workload Identity) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure/alibaba are per-cloud follow-ups (#1128/#1129)", provider)
+	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA), gcp (GKE clusters.get + Workload Identity), alibaba (ACK DescribeClusterUserKubeconfig + RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure is a per-cloud follow-up (#1128)", provider)
 }
 
 // namespaceClusterConnKeys maps a provider whose ConfigureKubeconfig reads the control-plane endpoint +
@@ -267,6 +268,23 @@ func provisionAndBindNamespaceIdentity(ctx context.Context, identity NamespaceId
 		// on the Talos template). This is an EXPLICIT, documented per-cloud exclusion (cloud parity is a hard
 		// rule: the gap is named, never a silent no-op), reviewed as such. No cloud-identity binding to apply.
 		fmt.Fprintf(stdout, "Namespace %q on hetzner-talos: k8s-native isolation only (no cloud IAM to bind a per-namespace identity).\n", ns)
+		return nil
+	case "alibaba":
+		// Alibaba RRSA (the ACK analog of AWS IRSA): provision a zero-perm per-namespace RAM role — OIDC
+		// trust scoped to system:serviceaccount:<ns>:* on the cluster's RRSA provider — IN-CORE via the
+		// keyless ACS3-signing client (the signer is stdlib; no cloud SDK in packages/core, like aws's
+		// in-core IAM path). Returns the ROLE NAME (RRSA binds by name). Then enable the namespace's RRSA
+		// webhook injection + annotate the default SA with the role name.
+		roleName, idErr := cloud.ProvisionACKNamespaceIdentity(ctx, region, clusterName, ns)
+		if idErr != nil {
+			return fmt.Errorf("failed to provision per-namespace identity for %q: %w", ns, idErr)
+		}
+		if !cloud.IsValidACKRoleName(roleName) {
+			return fmt.Errorf("provisioned per-namespace RAM role name %q is malformed", roleName)
+		}
+		if err := bindACKNamespaceIdentity(ns, roleName, stdout, stderr); err != nil {
+			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
+		}
 		return nil
 	default:
 		return namespaceRemintNotWired(providerSlug)
@@ -535,6 +553,26 @@ func bindGKENamespaceIdentity(ns, gsaEmail string, stdout, stderr io.Writer) err
 	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace GCP identity...\n", ns)
 	return executeCommand(
 		fmt.Sprintf("kubectl annotate serviceaccount default -n %s iam.gke.io/gcp-service-account=%s --overwrite", ns, gsaEmail),
+		".", nil, stdout, stderr,
+	)
+}
+
+// bindACKNamespaceIdentity wires the namespace's default ServiceAccount to its per-namespace RRSA role.
+// ACK's ack-pod-identity-webhook injects an RRSA OIDC token into pods when (a) the namespace carries the
+// `pod-identity.alibabacloud.com/injection=on` label and (b) the SA is annotated with
+// `pod-identity.alibabacloud.com/role-name=<roleName>`. `ns` is a validated DNS-1123 label and `roleName`
+// passed IsValidACKRoleName, so neither can inject the `bash -c` shell this runs through. `--overwrite`
+// keeps both idempotent across re-deploys.
+func bindACKNamespaceIdentity(ns, roleName string, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace RRSA identity...\n", ns)
+	if err := executeCommand(
+		fmt.Sprintf("kubectl label namespace %s pod-identity.alibabacloud.com/injection=on --overwrite", ns),
+		".", nil, stdout, stderr,
+	); err != nil {
+		return err
+	}
+	return executeCommand(
+		fmt.Sprintf("kubectl annotate serviceaccount default -n %s pod-identity.alibabacloud.com/role-name=%s --overwrite", ns, roleName),
 		".", nil, stdout, stderr,
 	)
 }
