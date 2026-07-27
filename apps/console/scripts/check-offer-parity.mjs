@@ -64,15 +64,18 @@ function stripComments(src) {
 		.join("\n");
 }
 
-/** Every .tf file under a directory, recursively, comments stripped. */
-function readTf(dir) {
-	if (!existsSync(dir)) return "";
-	let out = "";
+/** Every .tf file under a directory, recursively, comments stripped, WITH its path.
+ *
+ * The day-2 scan needs the path the day-1 checks do not: `modules/redis/` and `modules/valkey/`
+ * declare the same shape, and only where a declaration LIVES says which variant it backs. */
+function readTfFiles(dir) {
+	if (!existsSync(dir)) return [];
+	const out = [];
 	for (const e of readdirSync(dir, { withFileTypes: true })) {
 		if (e.name === ".terraform") continue;
 		const full = join(dir, e.name);
-		if (e.isDirectory()) out += readTf(full);
-		else if (e.name.endsWith(".tf")) out += `\n${stripComments(readFileSync(full, "utf8"))}`;
+		if (e.isDirectory()) out.push(...readTfFiles(full));
+		else if (e.name.endsWith(".tf")) out.push({ path: full, text: stripComments(readFileSync(full, "utf8")) });
 	}
 	return out;
 }
@@ -83,7 +86,8 @@ const CLOUDS = readdirSync(TEMPLATES, { withFileTypes: true })
 	.map((e) => e.name)
 	.sort();
 
-const tf = Object.fromEntries(CLOUDS.map((c) => [c, readTf(`${TEMPLATES}/${c}`)]));
+const tfFiles = Object.fromEntries(CLOUDS.map((c) => [c, readTfFiles(`${TEMPLATES}/${c}`)]));
+const tf = Object.fromEntries(CLOUDS.map((c) => [c, tfFiles[c].map((f) => `\n${f.text}`).join("")]));
 const goSrc = Object.fromEntries(
 	CLOUDS.map((c) => {
 		const p = `${PROVIDERS}/${c}_provider.go`;
@@ -272,16 +276,160 @@ function hasCarrier(cloud, kind) {
 	return probe.test(goSrc[cloud]);
 }
 
+// ── day-2 posture · gate coverage (#1494) ───────────────────────────────────────────
+// Everything above is a DAY-1 question: could this offer ever be built. #1440 added the day-2 half
+// — after the first apply, does changing a tunable CONVERGE in place or force-replace the data? —
+// as `AnalyzeDay2` in test/e2e/t2_day2_offer.go, which reads a real `tofu plan -json`.
+//
+// This generator cannot answer that question, and pretending otherwise would be the worst outcome.
+// Whether an argument forces replacement lives in the PROVIDER SCHEMA, not in template text; only a
+// real plan resolves it. So what is derived here is the honest half — GATE COVERAGE:
+//
+//   which resource backs this offer, and would `AnalyzeDay2` actually catch a hazard on it?
+//
+// A hazard is only caught if the backing type is in `day2StatefulTypes`. A data-bearing type MISSING
+// from that map is worse than an unguarded offer: the gate returns Safe, so the offer looks proven.
+// That is a real defect this found — Azure's template moved to `azurerm_managed_redis` (the retired
+// `azurerm_redis_cache` cannot be created any more) while the map still listed only the old types.
+//
+// Where the backing type is inside an EXTERNAL registry module (all of AWS: cloudposse/rds-cluster,
+// cloudposse/elasticache-redis, terraform-aws-modules/elasticache//serverless-cache) the type is not
+// in this repo's text at all. That is reported as `?` — not-evaluable — the same honesty
+// packages/core/verify applies to a control the plan cannot show. It is a known limit, not debt: the
+// real-apply harness (#1495) is what resolves it.
+
+const DAY2_GATE_SRC = `${ROOT}/test/e2e/t2_day2_offer.go`;
+
+/** The resource types `AnalyzeDay2` treats as data-bearing, read from the Go map itself.
+ *
+ * Deliberately PARSED rather than restated here. A second copy of the list in JS would drift from
+ * the gate exactly the way the gate drifted from the templates — which is the bug this surfaces. */
+function gatedTypes() {
+	if (!existsSync(DAY2_GATE_SRC)) return null;
+	const src = readFileSync(DAY2_GATE_SRC, "utf8");
+	const map = src.match(/var day2StatefulTypes = map\[string\]bool\{([\s\S]*?)\n\}/);
+	if (!map) return null;
+	return new Set([...map[1].matchAll(/"([a-z0-9_]+)":\s*true/g)].map((m) => m[1]));
+}
+
+const GATED = gatedTypes();
+
+/** Tokens that make a resource type (or module source) data-bearing FOR AN AXIS.
+ *
+ * A detector, not a source of truth — its only job is to notice a candidate the gate may not know
+ * about, so a miss is what costs. Whole-token matching keeps the neighbours out: `cosmosdb` and
+ * `dynamodb` are single tokens, so neither trips `db`, and `google_firestore_database` never reads
+ * as a relational offer. Anything this over-collects surfaces as a cell to resolve, never as silence. */
+const DAY2_AXIS_TOKENS = {
+	database: /(?:^|_)(?:db|rds|sql|postgres|postgresql|mysql)(?:_|$)/,
+	cache: /(?:^|_)(?:cache|redis|valkey|memorystore|kvstore|elasticache)(?:_|$)/,
+};
+
+/** Companion resources that sit ON a data service without holding its data — users, grants, logical
+ * databases, firewall rules, admin bindings, subnet/parameter groups. Replacing one of these loses
+ * nothing, so they are not the offer's backing resource. A type the GATE already claims is never
+ * filtered by this: `day2StatefulTypes` outranks the heuristic. */
+const DAY2_SIDECAR =
+	/_(?:user|user_group|user_group_association|database|account|account_privilege|privilege|firewall_rule|rule|administrator|backup_policy|subnet_group|parameter_group|group|policy|association|role|secret|version|alias|configuration|endpoint|link)$/;
+
+/** Is this resource type the data-bearing backing of THIS axis?
+ *
+ * The axis test always applies — being in the gate says a type holds data, never WHICH axis it is on.
+ * An early version let gate membership skip it, and `alicloud_kvstore_instance` (Redis) duly turned up
+ * as a candidate backing for `database:postgres`. Gate membership overrides only the sidecar
+ * heuristic, which it outranks by construction: the gate is the authority on what holds data. */
+const isDay2Backing = (type, kind) =>
+	DAY2_AXIS_TOKENS[kind].test(type) && (GATED?.has(type) || !DAY2_SIDECAR.test(type));
+
+/** Which variant a declaration names, by its own text and the path it lives at.
+ *
+ * `google_memorystore_instance` is GCP's Valkey resource but says "memorystore", and AWS's serverless
+ * cache says neither — so a name test alone cannot finish the job. It does not have to: an
+ * unattributed candidate is resolved by elimination below, which is also what correctly reads a
+ * single passthrough resource (one `alicloud_db_instance` for both engines) as serving every variant. */
+const VARIANT_ALIASES = {
+	postgres: ["postgres", "postgresql", "pgsql"],
+	mysql: ["mysql", "mariadb"],
+	redis: ["redis"],
+	valkey: ["valkey", "memorystore"],
+};
+
+function namedVariant(text, variants) {
+	const hay = text.toLowerCase();
+	const hits = variants.filter((v) => (VARIANT_ALIASES[v] ?? [v]).some((a) => hay.includes(a)));
+	return hits.length === 1 ? hits[0] : null;
+}
+
+/** Every data-bearing declaration on a cloud's axis: in-repo resources, and the external modules
+ * that hide one. Each carries the variant it names (or null → resolved by elimination). */
+function day2Candidates(cloud, kind, variants) {
+	const found = [];
+	for (const file of tfFiles[cloud]) {
+		for (const m of file.text.matchAll(/resource\s+"([a-z0-9_]+)"\s+"([A-Za-z0-9_-]+)"/g)) {
+			if (!isDay2Backing(m[1], kind)) continue;
+			found.push({ form: "resource", ref: m[1], variant: namedVariant(`${m[1]} ${file.path}`, variants) });
+		}
+		// An EXTERNAL module source (registry / git — not a `./` path) is an opaque box: the types it
+		// creates are not in this repo, so the gate's coverage of them cannot be read from here.
+		for (const m of file.text.matchAll(/module\s+"([A-Za-z0-9_-]+)"\s*\{([\s\S]*?)\n\}/g)) {
+			const src = m[2].match(/\n\s*source\s*=\s*"([^"]+)"/);
+			if (!src || /^\.{1,2}\//.test(src[1])) continue;
+			if (!DAY2_AXIS_TOKENS[kind].test(src[1].replace(/[^a-z0-9]+/gi, "_"))) continue;
+			found.push({
+				form: "module",
+				ref: src[1],
+				variant: namedVariant(`${m[1]} ${src[1]} ${file.path}`, variants),
+			});
+		}
+	}
+	// Dedupe — the same module/resource can be declared in more than one stack file.
+	const seen = new Map();
+	for (const f of found) {
+		const key = `${f.form}:${f.ref}:${f.variant ?? ""}`;
+		if (!seen.has(key)) seen.set(key, f);
+	}
+	return [...seen.values()];
+}
+
+/** Resolve backing declarations onto the variants a cloud actually offers.
+ *
+ * Two passes: the ones that name a variant claim it, then what is left is matched by elimination —
+ * a lone unattributed candidate against a lone unclaimed variant is that variant's; a lone
+ * unattributed candidate against SEVERAL unclaimed variants is a passthrough serving all of them,
+ * which is the same "passthrough is not a gap" reading check B already takes. */
+function day2Backings(cloud, kind, variants) {
+	const offeredHere = variants.filter((v) => offeredOn(cloud, kind, v));
+	const cands = day2Candidates(cloud, kind, variants);
+	const backing = {};
+	for (const c of cands) if (c.variant && offeredHere.includes(c.variant)) backing[c.variant] ??= c;
+
+	// Exactly ONE unattributed declaration serves every variant still unclaimed — that is a passthrough
+	// (one `alicloud_db_instance` for both engines), the same reading check B takes. SEVERAL
+	// unattributed declarations are not resolvable from here: pairing them off by order would be a
+	// coin flip printed as a fact, so they are left unassigned and the cell says so.
+	const looseCands = cands.filter((c) => !c.variant);
+	const unclaimed = offeredHere.filter((v) => !backing[v]);
+	if (looseCands.length === 1) for (const v of unclaimed) backing[v] = looseCands[0];
+	else if (looseCands.length > 1) for (const v of unclaimed) backing[v] = { form: "ambiguous", ref: null, cands: looseCands };
+	return backing;
+}
+
+// Only offered cells get a day-2 row — an excluded or unoffered offer has no day 2 to have — so
+// these three are the whole vocabulary.
+const DAY2_STATE = { guarded: "🟡", blind: "🚫", "not-evaluable": "?" };
+
 // ── run ─────────────────────────────────────────────────────────────────────────────
 
 const findings = [];
 const knownDebt = [];
 const cells = []; // for the matrix
+const day2Cells = [];
 
 for (const [kind, variants] of Object.entries(AXES)) {
 	for (const cloud of CLOUDS) {
 		const carrier = hasCarrier(cloud, kind);
 		const enumerated = enumeratedValues(cloud, variants);
+		const backings = day2Backings(cloud, kind, variants);
 		for (const variant of variants) {
 			const offer = `${kind}:${variant}`;
 			const exc = excluded(offer, cloud);
@@ -321,6 +469,40 @@ for (const [kind, variants] of Object.entries(AXES)) {
 			cells.push({ kind, variant, cloud, state, detail, known });
 			if (state !== "ok" && state !== "excluded") {
 				(known ? knownDebt : findings).push({ shape: state, cloud, offer, detail, known });
+			}
+
+			// ── day-2 · gate coverage for this same cell ───────────────────────────────────
+			// Only cells the product actually offers get a day-2 row: an excluded or unoffered
+			// offer has no day-2 to have.
+			if (state === "excluded") continue;
+			const back = backings[variant];
+			let d2 = "not-evaluable";
+			let ref = "—";
+			let note = "no data-bearing declaration found in the template — only a real plan can show one.";
+			if (back?.form === "resource") {
+				ref = back.ref;
+				d2 = GATED?.has(back.ref) ? "guarded" : "blind";
+				note = d2 === "guarded"
+					? "replace/delete of this resource is a data-loss hazard the day-2 gate catches."
+					: `\`${back.ref}\` is data-bearing but is NOT in \`day2StatefulTypes\` — the day-2 gate would call replacing it Safe.`;
+			} else if (back?.form === "module") {
+				ref = back.ref;
+				note = "the backing type is inside an external module — not visible in template text; the real-apply harness resolves it.";
+			} else if (back?.form === "ambiguous") {
+				note =
+					`${back.cands.length} data-bearing declarations on this axis (${back.cands.map((c) => `\`${c.ref}\``).join(", ")}) ` +
+					`and none names a variant — which one backs this offer is not decidable from template text.`;
+			}
+			// A variant switch that crosses backing resources is a delete + create, not an in-place
+			// change — the shape `AnalyzeDay2` catches via its delete half (aws redis↔valkey is a
+			// module swap; gcp swaps google_redis_instance for google_memorystore_instance).
+			const others = Object.entries(backings).filter(([v, b]) => v !== variant && b?.ref !== back?.ref);
+			if (back && others.length) {
+				note += ` Switching to ${others.map(([v]) => `\`${v}\``).join("/")} crosses backing resources — a delete + create, not an in-place change.`;
+			}
+			day2Cells.push({ kind, variant, cloud, offer, state: d2, ref, note });
+			if (d2 === "blind") {
+				findings.push({ shape: "day2-blind", cloud, offer, detail: note, known: null });
 			}
 		}
 	}
@@ -373,6 +555,42 @@ nightly can promote a cell, and it does so in the e2e parity board.
 		}
 	}
 
+	// ── day-2 · one row per (offer × cloud) ────────────────────────────────────────────
+	// A row rather than a second grid, on purpose. The day-2 signal is not one glyph: it is WHICH
+	// resource backs the offer, WHICH external module hides it, and whether switching variant crosses
+	// resources. A 4×6 day-2 grid would render as near-uniform 🟡 with one `?` column — a whole matrix
+	// to say one thing — and would have nowhere to put the part that is actually worth reading. This
+	// is the same shape the documented-exclusions table below already uses for the same reason.
+	if (day2Cells.length) {
+		md += `\n## Day-2 posture — would a hazard be caught?
+
+Day 1 asks *could this ever be built*. Day 2 asks *what happens when you change it afterwards*: does a
+new engine version or size CONVERGE in place, or force-replace the data? That question is answered from
+a real \`tofu plan -json\` by \`AnalyzeDay2\` ([\`test/e2e/t2_day2_offer.go\`](../../test/e2e/t2_day2_offer.go))
+— it cannot be answered from template text, because whether an argument forces replacement lives in the
+provider schema.
+
+What IS derivable here, and all this table claims, is **gate coverage**: the resource backing each offer,
+and whether \`day2StatefulTypes\` knows it — because a data-bearing type the gate does not know is worse
+than an unguarded one. The gate returns *Safe*, so the offer looks proven when nothing checked it.
+
+One row per offer this cloud actually offers (an excluded offer has no day 2 to have). Legend:
+🟡 backing resource is in the repo **and** guarded — a hazard would be caught, awaiting a real-apply
+proof · 🚫 data-bearing but **not** in \`day2StatefulTypes\` — the gate would pass it vacuously ·
+? not evaluable from template text (the type is inside an external module; only a real plan shows it)
+
+As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorded in
+[\`demos/proofs/provisioning-e2e-log.md\`](../../demos/proofs/provisioning-e2e-log.md) and promoted in
+[\`provisioning-e2e-parity.md\`](./provisioning-e2e-parity.md).
+
+| Offer | Cloud | Backing resource | Day-2 | Note |
+|---|---|---|:---:|---|
+`;
+		for (const c of day2Cells) {
+			const ref = c.ref === "—" ? "—" : `\`${c.ref}\``;
+			md += `| \`${c.offer}\` | ${c.cloud} | ${ref} | ${DAY2_STATE[c.state]} | ${c.note} |\n`;
+		}
+	}
 
 	if (exclusions.length) {
 		md += `\n## Documented exclusions\n\n| Offer | Cloud | Reason |\n|---|---|---|\n`;
@@ -410,10 +628,29 @@ list keeps meaning what it says. The baseline ratchets down; it never grows on i
 	process.exit(1);
 }
 
+// The gate the day-2 rows are measured against has to EXIST. If t2_day2_offer.go moves or its map is
+// renamed, every cell would quietly read `blind` (a wall of false failures) or the parse would return
+// an empty set. Say so instead of reporting nonsense.
+if (!GATED) {
+	console.error(
+		`\n✗ offer parity — could not read \`day2StatefulTypes\` from ${DAY2_GATE_SRC}.\n` +
+			`  The day-2 rows measure gate coverage against that map; without it they mean nothing.\n` +
+			`  If the gate moved, update DAY2_GATE_SRC in this script.\n`,
+	);
+	process.exit(1);
+}
+
+const day2Summary = day2Cells.reduce((acc, c) => ({ ...acc, [c.state]: (acc[c.state] ?? 0) + 1 }), {});
+
 if (findings.length === 0) {
 	console.log(
 		`✓ offer parity — ${cells.length} (offer × cloud) cells, ${exclusions.length} documented exclusion(s), ` +
 			`${baseline.length} on the baseline, no NEW silent gaps.`,
+	);
+	console.log(
+		`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +
+			`${day2Summary.guarded ?? 0} guarded, ${day2Summary["not-evaluable"] ?? 0} not evaluable from ` +
+			`template text (external modules), 0 unguarded data-bearing types.`,
 	);
 	process.exit(0);
 }
@@ -430,4 +667,10 @@ Do one of three things — never a fourth:
   · record an EXCLUSION in infra/offer-exclusions.yaml, if the cloud genuinely cannot ever honor it;
   · add it to the BASELINE there with its tracking issue, if it is real work that is already boarded.
 `);
+if (findings.some((f) => f.shape === "day2-blind")) {
+	console.error(`A [day2-blind] finding has exactly ONE fix, and it is a one-line one: add the resource type to
+\`day2StatefulTypes\` in test/e2e/t2_day2_offer.go. It is not baseline material — an unguarded
+data-bearing type does not report a gap, it reports SAFE, so nothing would ever come back to collect it.
+`);
+}
 process.exit(1);
