@@ -134,3 +134,40 @@ describe("lodForZoom", () => {
 		expect(lodForZoom(LOD_THRESHOLD.compact)).toBe("full");
 	});
 });
+
+// ── #1412: a registry card must not describe a service the project doesn't use ─────────────────
+describe("registry card facts", () => {
+	const facts = (config: Record<string, unknown>) =>
+		NODE_REGISTRY.registry.card?.facts?.({
+			config: config as never,
+			provider: "aws",
+		} as never) ?? [];
+
+	it("names the cloud service for the cloud's own registry", () => {
+		const labels = facts({ name: "apps", provider_config: {} }).map((f) => f.label);
+		expect(labels).toEqual(["Service", "Tags", "Scanning"]);
+	});
+
+	// A pluggable connector REPLACES the cloud's registry (compose.go sets registry_provider, which
+	// switches the native ECR/AR/ACR off). Keeping "Service: ECR" would name a service this project
+	// does not use, and Tags/Scanning are ECR/GAR/ACR features the connector's registry ignores.
+	it("names the connector and its host once one is selected", () => {
+		const out = facts({
+			name: "apps",
+			provider: "harbor",
+			provider_config: { registry_url: "harbor.acme.io" },
+		});
+		expect(out.map((f) => f.label)).toEqual(["Registry", "Host"]);
+		expect(out.find((f) => f.label === "Host")?.value).toBe("harbor.acme.io");
+		expect(out.map((f) => f.value)).not.toContain("ECR");
+	});
+
+	it("falls back to the Docker Hub namespace when there is no registry_url", () => {
+		const out = facts({
+			name: "apps",
+			provider: "dockerhub",
+			provider_config: { namespace: "acme" },
+		});
+		expect(out.find((f) => f.label === "Host")?.value).toBe("acme");
+	});
+});

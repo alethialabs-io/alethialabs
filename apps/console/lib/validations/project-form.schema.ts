@@ -533,7 +533,47 @@ const registryItemSchema = registriesInsert
 		// Output column (set after the first deploy), never designed by the user.
 		repository_url: true,
 	})
-	.extend({ name: z.string().min(1, "Registry name is required") });
+	.extend({ name: z.string().min(1, "Registry name is required") })
+	.superRefine((value, ctx) => {
+		// Native is the default and needs no connector.
+		if (!value.provider || value.provider === "native") return;
+
+		const provider = getConnectorProviderBySlug(value.provider);
+		if (!provider || provider.category !== "registry") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected container registry",
+			});
+			return;
+		}
+		// The *-xacct registries are coming_soon AND dark-flagged behind
+		// ALETHIA_XACCT_REGISTRY_ENABLED: selecting one still provisions the pull identity in tofu
+		// while no refresher renders and no pull secret ever exists.
+		if (provider.status === "coming_soon") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This registry isn't available yet",
+			});
+			return;
+		}
+		// A required knob is the registry's ADDRESS (registry_url for the any-host providers). Without
+		// it, categories/registry_generic.go fails Validate at compose time and pullAuth has no
+		// dockerconfig `auths` key — the pull secret authenticates against nothing.
+		for (const field of provider.providerConfigFields) {
+			if (!field.required || field.secret) continue;
+			const raw = toRecord(value.provider_config)[field.key];
+			if (typeof raw !== "string" || raw.trim() === "") {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["provider_config"],
+					message: `${provider.name} needs ${field.label}`,
+				});
+				return;
+			}
+		}
+	});
 
 // Private chart-repo selection (helm_registry connector). No output column — the seeded
 // ArgoCD repo-cred is runner-side state, not a design field.

@@ -433,6 +433,7 @@ function FieldControl({
 					category={field.category}
 					value={toStr(raw) || null}
 					providerConfig={toRecord(config.provider_config)}
+					hiddenKnobs={field.hiddenKnobs}
 					onChange={onChange}
 				/>
 			) : null;

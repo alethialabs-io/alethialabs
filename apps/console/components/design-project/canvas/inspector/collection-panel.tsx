@@ -11,9 +11,10 @@ import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import {
-	environmentSecretsStore,
-	secretsStoreLabel,
-} from "@/lib/canvas/secrets-store";
+	NATIVE_LABELS,
+	connectorLabel,
+	environmentConnector,
+} from "@/lib/canvas/environment-connector";
 import {
 	NODE_STATUS_META,
 	resolveNodeStatusFor,
@@ -50,7 +51,7 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	// Secrets read through ONE store per environment (#1412). Surface which one here, where the
 	// secrets are managed, even though the choice is made in the environment-settings sheet — someone
 	// looking at a list of secrets is exactly who needs to know where they come from.
-	const secretsStore = kind === "secret" ? environmentSecretsStore(nodes) : null;
+	const secretsStore = kind === "secret" ? environmentConnector(nodes, "secret") : null;
 
 	const title = def.collection?.title ?? def.label;
 	const singular = def.collection?.singular ?? def.label.toLowerCase();
@@ -95,7 +96,7 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 					<span className="text-xs text-muted-foreground">
 						Store{" "}
 						<span className="font-mono text-foreground">
-							{secretsStoreLabel(secretsStore.provider)}
+							{connectorLabel(secretsStore.provider, NATIVE_LABELS.secret)}
 						</span>
 					</span>
 					<span className="vx-eyebrow text-[10px] text-muted-foreground">Change</span>

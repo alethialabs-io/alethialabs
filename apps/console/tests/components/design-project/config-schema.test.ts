@@ -347,3 +347,53 @@ describe("service config (W1)", () => {
 		expect(bindings?.set?.([], {})).toEqual({ bindings: [] });
 	});
 });
+
+// ── #1412: a pluggable registry replaces the cloud's, so native-only surfaces must step aside ──
+describe("registry connector selection", () => {
+	const fieldsOf = (config: Record<string, unknown>) =>
+		CONFIG_SCHEMA.registry!.sections
+			.flatMap((sec) => sec.fields)
+			.filter((f) => !f.visibleWhen || f.visibleWhen(config as never, { provider: "aws" } as never))
+			.map((f) => f.key);
+
+	it("shows the ECR/GAR/ACR knobs for the cloud's own registry", () => {
+		const keys = fieldsOf({ name: "apps" });
+		expect(keys).toContain("immutable_tags");
+		expect(keys).toContain("vulnerability_scanning");
+	});
+
+	// They are cloud-registry features. Leaving them visible for Docker Hub would imply we can set
+	// them on someone else's registry.
+	it("hides them once a connector is selected", () => {
+		const keys = fieldsOf({ name: "apps", provider: "dockerhub" });
+		expect(keys).not.toContain("immutable_tags");
+		expect(keys).not.toContain("vulnerability_scanning");
+		// The connector itself is chosen in the environment-settings sheet, not here — it is
+		// per-environment (dominantProvider collapses all rows), so it is deliberately NOT a field on
+		// the individual card's inspector. The card's facts are what surface it.
+		expect(keys).not.toContain("provider");
+	});
+});
+
+// ── #1412: the DNS provider is chosen on the dns node's own inspector ──────────────────────────
+describe("dns connector selection", () => {
+	const dnsFields = CONFIG_SCHEMA.dns!.sections.flatMap((sec) => sec.fields);
+
+	it("offers a dns connector field", () => {
+		const field = dnsFields.find((f) => f.key === "provider");
+		expect(field?.type).toBe("connector");
+		expect(field?.category).toBe("dns");
+	});
+
+	// project_dns.zone_id is a column with its own field; Cloudflare declares a zone_id knob too.
+	// Two inputs for one concept writing to two places is worse than either — the column wins.
+	it("suppresses the connector's duplicate zone_id knob", () => {
+		const field = dnsFields.find((f) => f.key === "provider");
+		expect(field?.hiddenKnobs?.({ key: "zone_id", label: "Zone ID", type: "text" })).toBe(true);
+		expect(field?.hiddenKnobs?.({ key: "proxied", label: "Proxied", type: "boolean" })).toBe(false);
+	});
+
+	it("keeps the column-backed zone field", () => {
+		expect(dnsFields.map((f) => f.key)).toContain("zone_id");
+	});
+});

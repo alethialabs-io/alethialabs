@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { OTHER_GROUP } from "@/lib/canvas/iac-inventory";
+import { connectorLabel, isPluggable } from "@/lib/canvas/environment-connector";
 import {
 	AUTOSCALER,
 	DB_CAPACITY,
@@ -606,17 +607,34 @@ export const NODE_REGISTRY: NodeRegistry = {
 		label: "Container registry",
 		icon: Package,
 		card: {
-			facts: ({ config, provider }) => [
-				{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
-				{
-					label: "Tags",
-					value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
-				},
-				{
-					label: "Scanning",
-					value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
-				},
-			],
+			// Two different registries, so two different fact sets. A pluggable connector REPLACES the
+			// cloud's registry (categories/compose.go sets registry_provider, which switches the native
+			// ECR/AR/ACR off), so a card that kept printing "Service: ECR" for a Docker Hub registry
+			// would name a service this project does not use — and Tags/Scanning are ECR/GAR/ACR
+			// features that the connector's registry does not honour either.
+			facts: ({ config, provider }) =>
+				isPluggable(config.provider)
+					? [
+							{ label: "Registry", value: connectorLabel(config.provider, "") },
+							{
+								label: "Host",
+								value:
+									config.provider_config?.registry_url ??
+									config.provider_config?.namespace ??
+									"",
+							},
+						]
+					: [
+							{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
+							{
+								label: "Tags",
+								value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
+							},
+							{
+								label: "Scanning",
+								value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
+							},
+						],
 		},
 		palette: { group: "DevOps", subtitle: "Private container images" },
 		defaultData: () => ({
