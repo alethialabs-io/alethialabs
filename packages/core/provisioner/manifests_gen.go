@@ -411,16 +411,31 @@ func secretStoreRefs(vc *types.ProjectConfig, facts *argocd.InfraFacts) map[stri
 	if facts != nil && facts.SecretsXacctSlug != "" && vc.PlacementMode != types.PlacementModeNamespace {
 		xacctStore, _ = facts.XacctSecretStore()
 	}
+	// The SaaS store is dominant too, and for the same reason: categories.dominantProvider picks ONE
+	// slug for the whole project and externalSecretsStoreTemplate renders exactly that one. Keying an
+	// entry off each row's own provider therefore emitted `secretstore-doppler` for a doppler row in a
+	// vault-dominant project — an ExternalSecret pointing at a ClusterSecretStore that was never
+	// applied, and a pod blocked forever on a Secret nothing would create.
+	//
+	// facts.SecretsSaaS is the store the deploy actually rendered (categories.DominantSecretsSaaSStore,
+	// already Validate-gated against the connector credential), so comparing against its name is the
+	// same "gate on what shipped" rule the cross-account branch above follows. nil facts ⇒ nothing
+	// rendered ⇒ no SaaS entry, deliberately: a nil-facts fallback would keep the bug alive on exactly
+	// the path that has no way to check.
+	saasStore := ""
+	if facts != nil && facts.SecretsSaaS != nil {
+		saasStore = facts.SecretsSaaS.StoreName
+	}
 	out := make(map[string]manifests.SecretStoreRef, len(vc.Secrets))
 	for _, s := range vc.Secrets {
 		switch {
-		case categories.IsSaaSSecretStore(s.Provider):
+		case categories.IsSaaSSecretStore(s.Provider) && saasStore == "secretstore-"+s.Provider:
 			prop := "value"
 			if s.Provider == "doppler" {
 				prop = "" // Doppler is flat key→value — no sub-property
 			}
 			out[s.Name] = manifests.SecretStoreRef{
-				StoreName:     "secretstore-" + s.Provider,
+				StoreName:     saasStore,
 				ValueProperty: prop,
 			}
 		case xacctStore != "" && s.Provider == facts.SecretsXacctSlug:

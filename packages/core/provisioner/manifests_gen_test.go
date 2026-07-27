@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -162,7 +163,7 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 			}},
 		}},
 	}
-	stores := secretStoreRefs(vc, nil)
+	stores := secretStoreRefs(vc, saasFacts("vault"))
 	if stores["stripe-key"].StoreName != "secretstore-vault" || stores["stripe-key"].ValueProperty != "value" {
 		t.Fatalf("secretStoreRefs wrong: %+v", stores)
 	}
@@ -184,7 +185,7 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 
 	// A native-provider secret has no readable store → fail-closed (nothing written, reported).
 	vc.Secrets[0].Provider = ""
-	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc, nil), io.Discard)
+	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc, saasFacts("vault")), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +194,17 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 	}
 }
 
+// saasFacts are facts whose rendered SaaS store is `slug` — i.e. `slug` is the project's DOMINANT
+// secrets provider, the only one externalSecretsStoreTemplate emits for this deploy.
+func saasFacts(slug string) *argocd.InfraFacts {
+	return &argocd.InfraFacts{
+		SecretsSaaS: &categories.SecretsSaaSStore{Slug: slug, StoreName: "secretstore-" + slug},
+	}
+}
+
 // TestSecretStoreRefs_Classification: only first-class runtime-read stores (vault/doppler/generic) get
-// an entry; doppler is flat (no property); native/excluded providers are absent (fail-closed).
+// an entry, and only in the deploy that actually rendered THAT store; doppler is flat (no property);
+// native/excluded providers are absent (fail-closed).
 func TestSecretStoreRefs_Classification(t *testing.T) {
 	vc := &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{
 		{Name: "a", Provider: "vault"},
@@ -203,13 +213,16 @@ func TestSecretStoreRefs_Classification(t *testing.T) {
 		{Name: "d", Provider: "onepassword"}, // runtime-read excluded on ESO 0.9.12
 		{Name: "e", Provider: ""},            // native
 	}}
-	refs := secretStoreRefs(vc, nil)
-	if refs["a"] != (manifests.SecretStoreRef{StoreName: "secretstore-vault", ValueProperty: "value"}) {
+	// One dominant store per deploy, so each SaaS row resolves only in the deploy that rendered ITS
+	// store. Asserting all three at once — as this test used to — described a project that cannot
+	// exist, and was what let the non-dominant bug through.
+	if refs := secretStoreRefs(vc, saasFacts("vault")); refs["a"] != (manifests.SecretStoreRef{StoreName: "secretstore-vault", ValueProperty: "value"}) {
 		t.Errorf("vault ref wrong: %+v", refs["a"])
 	}
-	if refs["b"] != (manifests.SecretStoreRef{StoreName: "secretstore-doppler", ValueProperty: ""}) {
+	if refs := secretStoreRefs(vc, saasFacts("doppler")); refs["b"] != (manifests.SecretStoreRef{StoreName: "secretstore-doppler", ValueProperty: ""}) {
 		t.Errorf("doppler ref must be flat (no property): %+v", refs["b"])
 	}
+	refs := secretStoreRefs(vc, saasFacts("generic"))
 	if refs["c"].StoreName != "secretstore-generic" || refs["c"].ValueProperty != "value" {
 		t.Errorf("generic ref wrong: %+v", refs["c"])
 	}
@@ -218,6 +231,34 @@ func TestSecretStoreRefs_Classification(t *testing.T) {
 	}
 	if _, ok := refs["e"]; ok {
 		t.Error("native secret must have no store ref")
+	}
+}
+
+// REGRESSION (#1409): a SaaS row that is NOT the dominant provider must get no ref.
+//
+// dominantProvider picks ONE slug for the project and only that store is rendered, but this function
+// used to key each entry off the row's own provider — so a doppler secret in a vault-dominant project
+// got `secretstore-doppler`, and both binding lanes then emitted an ExternalSecret plus a
+// secretKeyRef against a ClusterSecretStore that was never applied. The pod waits forever on a Secret
+// nothing will create, with no error at deploy time.
+func TestSecretStoreRefs_NonDominantSaaSAbsent(t *testing.T) {
+	vc := &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{
+		{Name: "a", Provider: "vault"},
+		{Name: "b", Provider: "doppler"},
+	}}
+	refs := secretStoreRefs(vc, saasFacts("vault"))
+	if refs["a"].StoreName != "secretstore-vault" {
+		t.Errorf("the dominant SaaS secret must resolve: %+v", refs["a"])
+	}
+	if ref, ok := refs["b"]; ok {
+		t.Errorf("a non-dominant SaaS secret must have NO ref, got %+v — that ExternalSecret would point at a store this deploy never applied", ref)
+	}
+	// And with nothing rendered at all, no SaaS row resolves. nil facts is the same case: a caller
+	// with no post-apply facts cannot know what shipped, so it must not guess.
+	for _, f := range []*argocd.InfraFacts{{}, nil} {
+		if refs := secretStoreRefs(vc, f); len(refs) != 0 {
+			t.Errorf("no rendered SaaS store ⇒ no refs, got %+v", refs)
+		}
 	}
 }
 
@@ -410,9 +451,12 @@ func TestSecretStoreRefs_XacctSkippedOnPlacedNamespace(t *testing.T) {
 	if refs := secretStoreRefs(vc, xacctFacts()); len(refs) != 0 {
 		t.Errorf("placed tenant ⇒ no cross-account refs, got %+v", refs)
 	}
-	// ...but a SaaS store is unaffected: it is in-cluster and carries no such condition.
+	// ...but a SaaS store is unaffected: it is in-cluster and carries no such condition. Facts must
+	// carry the rendered SaaS store, since that is now what a SaaS row is gated on.
 	vc.Secrets = []types.ProjectSecretConfig{{Name: "a", Provider: "vault"}}
-	if refs := secretStoreRefs(vc, xacctFacts()); refs["a"].StoreName != "secretstore-vault" {
+	placedSaaS := xacctFacts()
+	placedSaaS.SecretsSaaS = &categories.SecretsSaaSStore{Slug: "vault", StoreName: "secretstore-vault"}
+	if refs := secretStoreRefs(vc, placedSaaS); refs["a"].StoreName != "secretstore-vault" {
 		t.Errorf("a SaaS store must still resolve for a placed tenant, got %+v", refs["a"])
 	}
 }
