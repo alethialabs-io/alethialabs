@@ -16,6 +16,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-worktree.sh\"",
             "statusMessage": "Checking worktree guard"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-runtime.sh\"",
+            "statusMessage": "Checking runtime guard"
           }
         ]
       },
@@ -26,6 +31,17 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-worktree.sh\"",
             "statusMessage": "Checking worktree ownership"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-runtime.sh\"",
+            "statusMessage": "Runtime status"
           }
         ]
       }

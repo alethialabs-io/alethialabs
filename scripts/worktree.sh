@@ -7,7 +7,7 @@
 #   pnpm wt <name> --install  … and run `pnpm install` in the new worktree
 #   pnpm wt:ls                list worktrees (alias → git worktree list)
 #   pnpm wt:who               who holds each worktree (live | stale | free)
-#   pnpm wt:rm <name>         remove ../wt-<name>
+#   pnpm wt:rm <name> · pnpm wt:prune         remove ../wt-<name>
 #   pnpm wt:release [name]    hand your worktree back
 #   pnpm wt:steal <name>      take a worktree whose holder is really gone
 #
@@ -110,6 +110,56 @@ if [ "${1:-}" = "--steal" ]; then
 	exit 0
 fi
 
+# `pnpm wt:prune` — remove worktrees whose branch is already merged into dev.
+#
+# Only ever touches trees that are (a) free (no live lease), (b) clean (no uncommitted
+# or untracked files), and (c) on a branch already contained in origin/dev. Anything
+# failing any test is REPORTED AND SKIPPED, never forced: on 2026-07-27 a sweep found a
+# tree with 22 untracked .tf files that a bad scan had cleared for deletion, and the
+# only thing that saved it was `git worktree remove` refusing without --force.
+if [ "${1:-}" = "--prune" ]; then
+	git fetch -q origin dev 2>/dev/null || true
+	base="origin/dev"
+	git rev-parse --verify -q "$base" >/dev/null 2>&1 || base="dev"
+	removed=0
+	kept=0
+	while IFS= read -r wt; do
+		[ -n "$wt" ] || continue
+		case "$wt" in */wt-*) ;; *) continue ;; esac
+		br="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+
+		if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+			echo "  skip  $wt  ($br) — uncommitted or untracked work"
+			kept=$((kept + 1))
+			continue
+		fi
+		if ! git merge-base --is-ancestor "$br" "$base" 2>/dev/null; then
+			echo "  skip  $wt  ($br) — not merged into ${base}"
+			kept=$((kept + 1))
+			continue
+		fi
+		if ! wt_lease_acquire "$wt" >/dev/null 2>&1; then
+			echo "  skip  $wt  ($br) — held by another live instance"
+			kept=$((kept + 1))
+			continue
+		fi
+		# Deliberately no --force. If git objects, that is new information: believe it.
+		if git worktree remove "$wt" 2>/dev/null; then
+			echo "  rm    $wt  ($br)"
+			removed=$((removed + 1))
+		else
+			echo "  skip  $wt  ($br) — git refused to remove it"
+			kept=$((kept + 1))
+		fi
+	done <<EOF
+$(git worktree list --porcelain | awk '/^worktree /{print $2}')
+EOF
+	git worktree prune
+	echo ""
+	echo "✓ removed $removed, kept $kept. Nothing was forced."
+	exit 0
+fi
+
 # `pnpm wt:rm <name>` routes here as: worktree.sh --remove <name>
 if [ "${1:-}" = "--remove" ]; then
 	name="${2:-}"
@@ -155,19 +205,21 @@ else
 	wt_lease_acquire "$dir" >/dev/null || true
 fi
 
-# Suggest a free console port (3000, 3100, 3200, …) so each worktree runs its own dev:up.
-port=3000
-while lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; do port=$((port + 100)); done
-
+# No port is suggested any more, and no install is implied: a worktree is SOURCE ONLY.
+# It runs on the sandbox box (pnpm env:up), which allocates its own port from the
+# registry there. Installing node_modules into every worktree is what filled the disk —
+# 8 hydrated trees measured ~24 GB — and a locally-suggested port is now a dead end,
+# because guard-runtime.sh blocks the local dev server anyway.
 abs="$(cd "$dir" && pwd)"
 echo ""
 echo "Next:"
 echo "  cd $abs"
 if [ "$install" = 1 ]; then
+	echo "  --install: installing locally (only needed for editor/vitest in the MAIN checkout)"
 	(cd "$dir" && pnpm install)
 else
-	echo "  pnpm install             # node_modules aren't shared across worktrees"
+	echo "  pnpm env:up              # run it on the box — prints the URL"
+	echo "  pnpm env:check           # tsc + lint + vitest, also on the box"
 fi
-echo "  PORT=$port pnpm dev:up   # a free console port (each worktree = its own console)"
 echo ""
 echo "Commit here (not in app/); push; open a PR into dev."

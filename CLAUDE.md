@@ -15,9 +15,8 @@ The compose project name is hardcoded (`name: alethia` in `docker-compose.yml`),
 terminal / Claude window shares one stack** — there is never a duplicate app. The only hazard is
 two `docker compose up --build` racing the same builder at once.
 
-- **Only ever bring the stack up via `pnpm compose:up`.** It is guarded by an atomic lock
-  (`scripts/compose-up.sh`): a second concurrent call no-ops and prints status instead of starting
-  a duplicate build.
+- **The local stack is no longer the way you run this app** — see *Running the app* below;
+  `compose:up` is blocked on the Mac. It remains the deploy-check path, run on the box.
 - **Never run `docker compose up --build` directly, and never in parallel across windows.**
 - Other windows inspect the running stack with `pnpm compose:ps` / `pnpm compose:logs`.
 - Default `compose:up` is the **lite** stack (`caddy app docs blog` + auto postgres/seaweedfs/migrate),
@@ -89,91 +88,43 @@ same checkout tangle: a single `git add -A` once swept three features into one m
   `dev` — never generate in two worktrees at once (the drizzle snapshot chain is un-mergeable; see
   the DB pipeline section).
 
-### Two run modes — prefer the light one for daily work
+### Running the app — the Mac is not a runtime
 
-The full dockerized stack builds heavy production images (Next.js build pegs CPU). Use it only for
-end-to-end / "does the deploy work" checks. For everyday development, run the backends in Docker and
-the console natively (hot-reload, no image builds, far less CPU/RAM):
+**Everything that RUNS the product runs on the sandbox box, one environment per branch.**
+The Mac keeps the editor, git, and the cheap checks. This is enforced:
+`.claude/hooks/guard-runtime.sh` blocks `pnpm dev:up`, `dev:stack`, `dev:console`, a bare
+`next dev`, `compose:up`, `db:reset` and `docker compose down -v`.
 
-- **Dev (default): `pnpm dev:up`** — one command. Brings up Postgres + SeaweedFS + OpenFGA in
-  Docker, migrates, auto-provisions an OpenFGA store, then runs the console via `next dev --turbopack`
-  on `http://localhost:3000` (hot reload). It **sources the root `.env`** into the console process
-  (DB → `localhost:5433`, storage → `localhost:8333`, `BETTER_AUTH_SECRET`, the ngrok auth URL) and
-  points `OPENFGA_API_URL` at `localhost:8082`. The OpenFGA model + tuples are written on boot by
-  `instrumentation.ts` (tuple-sync `backfill()`); the store id is persisted to a gitignored
-  `apps/console/.env.local`.
-- **`dev:up` is lock-guarded like `compose:up`** (atomic lock at `/tmp/alethia-dev-console.lock`):
-  the console is a single shared `next dev` on `:3000` across all windows/worktrees. A second
-  `pnpm dev:up` **no-ops and prints the running pid + URL** instead of racing a duplicate. Follow the
-  shared session from any window with **`pnpm dev:logs`** (tails `/tmp/alethia-dev-console.log`).
-  Force a fresh restart (stop the old server, take over) with **`FORCE=1 pnpm dev:up`**.
-  Run the console **off `:3000`** (e.g. another project owns it) with **`PORT=3100 pnpm dev:up`**
-  — the lock/guard/kill all follow `$PORT`, so it won't touch whatever's on `:3000`. To tunnel a
-  moved console: **`CONSOLE_PORT=3100 pnpm dev:tunnel 3100`**.
-- **Public tunnel for browser/mobile testing: `pnpm dev:tunnel`** (`scripts/cf-tunnel.sh`). Opens a
-  **Cloudflare quick tunnel** to the microfrontends proxy (`:3024`) — no interstitial / no throttle
-  (vs ngrok-free) — prints a `*.trycloudflare.com` URL, and **restarts the console with that URL as
-  its auth origin** via `ALETHIA_PUBLIC_URL` (dev-up overrides `NEXT_PUBLIC_APP_URL`/`BETTER_AUTH_URL`
-  so Better Auth is same-origin). Open the printed URL (not `localhost`). Caveats: the URL is **random
-  per run** and **social OAuth callbacks won't match** it → sign in with **email-OTP**; for a stable
-  URL + working OAuth use a *named* tunnel (see next).
-- **Stable named tunnel: `pnpm dev:tunnel:named`** (`scripts/cf-named-tunnel.sh`) — exposes the
-  console at a **permanent hostname** (default `dev.alethialabs.io`; pass another as arg1) over a
-  *named* Cloudflare tunnel (`alethia-dev`), and restarts the console with that hostname as its auth
-  origin (same `ALETHIA_PUBLIC_URL` mechanism). One-time prereq: **`cloudflared tunnel login`** to
-  authorize the zone in your Cloudflare account; the script then creates the tunnel + DNS route +
-  `~/.cloudflared/config.yml` idempotently and runs it detached. Because the hostname is stable,
-  **social OAuth works** once you add `https://dev.alethialabs.io/api/auth/callback/*` redirect URIs
-  to your providers (email-OTP works regardless). Targets `:3000` (`CONSOLE_PORT` to override).
-- **Prod-accurate stitched site over the tunnel: `pnpm dev:stitch`** (`scripts/dev-stitch.sh`) —
-  serves console **+ marketing** behind the microfrontends proxy under the stable hostname, so
-  `dev.alethialabs.io` behaves like hosted: **logged-out `/` → marketing landing, logged-in `/` →
-  console org** (no product code — `apps/marketing/proxy.ts` + `microfrontends.json` already do this;
-  console-only/OSS still correctly falls back to `/login`). Topology: `cloudflared → proxy :3024 →
-  console :3100 + marketing :3010`. Console stays on `:3100` (so the `management` clone keeps `:3000`);
-  since the committed `microfrontends.json` pins console to `:3000`, the script feeds the proxy a
-  generated temp config (`/tmp/alethia-mfe-config.json`) with `console.local=:3100` — never edits the
-  real file. Needs the `alethia-dev` tunnel from `pnpm dev:tunnel:named` first. `pnpm dev:stitch:down`
-  stops marketing+proxy+tunnel (leaves console/backends/runner). Heavier than console-only (two native
-  `next dev`) but far lighter than the dockerized `dev:stack`.
-- **Why not bare `pnpm dev:console`?** Next reads the app-local `apps/console/.env` (stale, no DB /
-  auth / storage vars), **not** the monorepo-root `.env` — so authed pages (incl. the home page,
-  which now redirects logged-in users) 500 without the wiring `dev:up` does. Use `dev:console` only
-  when backends are already up *and* the env is sourced; otherwise prefer `dev:up`.
-- **Stripe webhooks (auto):** `dev:up` forwards **test-mode** Stripe events to the local console
-  (`stripe listen → localhost:3000/api/webhooks/stripe`) whenever `STRIPE_SECRET_KEY` is set and the
-  `stripe` CLI is installed (already logged in) — so trial/cancel/invoice/credit-pack flows exercise
-  end-to-end. It fetches the CLI's local signing secret and exports `STRIPE_WEBHOOK_SECRET` for the
-  console (overriding `.env`), and the listener dies with the console. Watch events with
-  **`pnpm dev:stripe-logs`**; opt out with **`DEV_STRIPE_LISTEN=0`**. `dev:tunnel` inherits this
-  (it re-execs `dev-up.sh`). For the production-image `compose:up` stack, forward manually:
-  `stripe listen --forward-to http://localhost/api/webhooks/stripe` and set `.env`'s
-  `STRIPE_WEBHOOK_SECRET` to its `stripe listen --print-secret`.
-- **Backends only:** `pnpm db:up` (postgres + migrate, no seaweedfs/openfga).
-- **Local runners: `pnpm dev:runner`** (`scripts/dev-runner.sh`) — stands up 1–2 provisioning
-  runners pointed at the **native `dev:up` console** (the compose `runner` only targets the heavy
-  `compose:up:full` dockerized console, so it's no use for daily work). Knobs: `RUNNERS=2`,
-  `MODE=native|docker` (default native via `go build`; **`docker` bakes OpenTofu + cloud CLIs +
-  templates → use it for real job execution**), `CRED=bootstrap|self` (default bootstrap), `SLOTS`,
-  `PROVIDERS`, `FORCE=1`. Bootstrap auto-generates `ALETHIA_RUNNER_BOOTSTRAP_TOKEN` into `.env` on
-  first run — **the console must be restarted to load it** (`FORCE=1 pnpm dev:up`); the script
-  preflights this. Several runners on one host self-register distinctly via the
-  `ALETHIA_RUNNER_INSTANCE_ID` override (docker uses `--hostname`). Lock-guarded like `dev:up`
-  (`/tmp/alethia-dev-runner.lock`, runners run detached). `pnpm dev:runner:logs` /
-  `pnpm dev:runner:down`.
-- **E2E / deploy check:** `pnpm compose:up` (lite, production images at `http://localhost`).
-- **Full platform, fully dockerized + tunnel + Stripe: `pnpm dev:stack`** (`scripts/dev-stack.sh`,
-  `docker-compose.dev.yml`, `Dockerfile.dev`, `deploy/caddy/Caddyfile.dev`). Every Next zone runs
-  `next dev` in its OWN container (source bind-mounted, file-watch **polling** — heavier CPU), **Caddy**
-  stitches them like prod (mirrors `microfrontends.json`), and a **cloudflared** container fronts the
-  stitched site over a Cloudflare quick tunnel while a **stripe-cli** container forwards webhooks (its
-  signing secret is read from its logs + injected into the console). One command builds the shared
-  `alethia-dev` image (`REBUILD=1` to rebuild after a deps change), brings up backends + all zones, and
-  prints the tunnel URL. `pnpm dev:stack:logs` / `pnpm dev:stack:down`. **Heavy** — the dev image is
-  multi-GB and the four `next dev` build caches add several GB; needs ample free disk (see hygiene
-  below). For everyday work prefer the lighter native `dev:up`.
+Why: the laptop measured **92% disk and 86% swap** with `go build` failing on ENOSPC. The
+containers were never the problem — the whole datastore tier is ~300 MiB RSS — it is
+`next dev` (~2 GB each), Turbopack, Go caches, and hydrated worktrees at ~2.4 GB apiece.
 
-Note: `pnpm dev` (unfiltered) runs *every* app and is heavy — use `pnpm dev:up` / `pnpm dev:console`.
+```
+pnpm env:up      # this branch gets a database, storage, an OpenFGA store, a URL
+pnpm env:push    # after editing — rsync the working tree  (--watch to automate)
+pnpm env:logs    # tail the console  ← sign-in codes are printed here
+pnpm env:status  # every env, who holds it, capacity
+pnpm env:down    # release the slot
+```
+
+- Branch envs are `https://<slug>.dev.alethialabs.io`; the primary is
+  `dev.alethialabs.io`. **There is no hot reload** — the sync is on command.
+- **Social sign-in and Stripe webhooks only work on the primary env** (OAuth redirect
+  URIs cannot be wildcarded). Branch envs are email-OTP only, and no credential is
+  copied to the box — with no SES region set the console *logs* the code, so read it
+  from `pnpm env:logs`.
+- **Cap of 3 concurrent envs.** The fourth is refused, naming the holders; nothing is
+  evicted automatically.
+- **The box is reaped when idle** — snapshotted and *deleted*, because a stopped Hetzner
+  server still bills. Hostnames return Cloudflare 1033 while it is down; `pnpm env:box`
+  restores it in 1–2 min. Creating it runs `tofu apply`, which is a human action.
+- Worktrees are **de-hydrated** (no local `node_modules`); run their checks with
+  `pnpm env:check`. `pnpm dev:doctor` reports local disk, Docker and worktree health.
+
+Full detail: **`.claude/skills/dev/SKILL.md`** (model-invocable) and
+`infra/sandbox/README.md`. Still local: build, type-check, lint, unit tests, git, and
+read-only Docker. Deliberate local runtime: `export ALETHIA_LOCAL_DEV=1` **before**
+launching `claude` — an inline prefix cannot reach a PreToolUse hook.
 
 ### Local resource hygiene
 
