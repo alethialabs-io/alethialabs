@@ -1781,6 +1781,74 @@ describe("getProjectAsFormData", () => {
 });
 
 // ============================================================
+// getProjectAsFormData — the DNS connector round-trips (#1412)
+// ============================================================
+
+describe("getProjectAsFormData — dns provider round-trip", () => {
+	const dnsSelect = (dnsRow: Record<string, unknown>) =>
+		new Map<unknown, RowsResolver>([
+			[
+				projects,
+				[
+					{
+						id: "p1",
+						org_id: "org-1",
+						cloud_identity_id: "ci-1",
+						region: "us-east-1",
+						iac_version: "1.9.5",
+						project_name: "My App",
+						slug: "my-app",
+					},
+				],
+			],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+			],
+			[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+			[projectDns, [dnsRow]],
+		]);
+
+	// REGRESSION: this mapping carried provider_config but dropped `provider`. Because
+	// updateProjectDesign reconciles delete-then-insert, a canvas save re-inserted the Cloudflare
+	// knobs with NO slug — and that fails OPEN: DNSProvider() (argocd/infra_facts.go) sees an empty
+	// connector and silently reverts to the cloud's native DNS. The deploy looks healthy while
+	// ignoring the provider the user chose.
+	it("carries the DNS connector so a canvas save can't revert to cloud-native DNS", async () => {
+		setupDb({
+			select: dnsSelect({
+				enabled: true,
+				provider: "cloudflare",
+				domain_name: "acme.io",
+				zone_id: "zone-123",
+				provider_config: { proxied: true },
+			}),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.dns).toEqual(
+			expect.objectContaining({
+				enabled: true,
+				provider: "cloudflare",
+				domain_name: "acme.io",
+				zone_id: "zone-123",
+				provider_config: { proxied: true },
+			}),
+		);
+	});
+
+	// Cloud-native DNS has no connector; it must round-trip as absent, not as a string, since only
+	// NULL / "native" mean "the cluster cloud's own DNS".
+	it("leaves cloud-native DNS without a provider", async () => {
+		setupDb({ select: dnsSelect({ enabled: true, domain_name: "acme.io", provider: null }) });
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.dns.provider).toBeUndefined();
+	});
+});
+
+
+// ============================================================
 // duplicateProjectForProvider (real convertProjectConfig)
 // ============================================================
 

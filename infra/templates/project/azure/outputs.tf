@@ -80,7 +80,14 @@ output "azure_db_name" {
 
 output "acr_login_server" {
   description = "Login server URL of the Azure Container Registry"
-  value       = var.provision_acr ? module.acr[0].login_server : null
+  # Guarded on the MODULE, not on a copy of its count predicate. `provision_acr` alone is NOT that
+  # predicate: the module also requires `registry_provider == "native"` (acr.tf), because a pluggable
+  # registry connector means the ACR is not ours to create. The console sets `provision_acr` from the
+  # mere PRESENCE of a registry row, so selecting any connector left this indexing [0] of an empty
+  # module and failed the WHOLE apply with "Invalid index" — a crash a mile from its cause.
+  #
+  # length(module...) can't drift from the count the way a duplicated predicate did.
+  value = length(module.acr) > 0 ? module.acr[0].login_server : null
 }
 
 #########################################################################
