@@ -1,19 +1,26 @@
 #########################################################################
-##     Keyless app→Postgres identity (Entra Workload Identity)  #722    ##
+##     Keyless app→database identity (Entra Workload Identity)  #722    ##
 #########################################################################
 # When the Flexible Server has Entra (AAD) authentication enabled, the app workload connects to it
 # KEYLESSLY: a user-assigned managed identity is federated (via AKS Workload Identity) to the app KSA,
-# so the app authenticates with a short-lived Entra access token (scope ossrdbms-aad.database.windows.net)
-# minted from its own identity — no password. The app pod runs the token-refresher + pgbouncer
-# sidecars (see the manifest keyless lane + Lane D); this mirrors the external-dns / external-secrets
-# federated-identity pattern.
+# so the app authenticates with a short-lived Entra access token (scope ossrdbms-aad.database.windows.net
+# — shared by PostgreSQL, MySQL and MariaDB) minted from its own identity — no password. The app pod
+# runs the token-refresher + a local proxy (see the manifest keyless lane + Lane D); this mirrors the
+# external-dns / external-secrets federated-identity pattern.
+#
+# BOTH ENGINES (#1464): the app identity, its federation, and the outputs are engine-agnostic and are
+# created for PostgreSQL and MySQL alike. What differs is only the RUNTIME bind the bootstrap Job issues
+# (see below) and the app-pod proxy wire protocol (the manifest lanes' concern, #1449/#1441), not this
+# identity plumbing.
 #
 # LEAST-PRIVILEGE (#722 R5): the app identity is NOT the server's Entra administrator. A SEPARATE
 # `db_admin` managed identity is registered as the sole Entra administrator; it is federated only to
 # the one-shot bootstrap Job's KSA (default/alethia-db-bootstrap). That Job (an ArgoCD PreSync hook)
-# logs in as the admin, creates a SCOPED Postgres role for the app (bound to the app UAMI's object id
-# via a pgaadauth SECURITY LABEL, granted only CONNECT + schema USAGE/CREATE), and exits. The app
-# UAMI (`app_db`) therefore only ever logs in as that scoped role — never as a superuser/admin.
+# logs in as the admin, creates a SCOPED login for the app, and exits:
+#   - Postgres: a role bound to the app UAMI's OBJECT id via a pgaadauth SECURITY LABEL (--app-oid).
+#   - MySQL:    CREATE AADUSER '<alias>' IDENTIFIED BY '<app UAMI CLIENT id>' (--app-client-id).
+# granted only working privileges. The app UAMI (`app_db`) therefore only ever logs in as that scoped
+# role/user — never as a superuser/admin.
 #
 # The federated subjects (namespace/name of each KSA) MUST match `manifests`:
 #   app_db   → keylessKSANamespace/keylessKSAName          (the app pod)
@@ -25,23 +32,27 @@ locals {
   azure_app_ksa_namespace  = "default"
   azure_app_ksa_name       = "alethia-app"
   azure_bootstrap_ksa_name = "alethia-db-bootstrap"
-  # The APP's keyless path stays PostgreSQL-only, deliberately. The app pod reaches its database
-  # through a pgbouncer sidecar that consumes the refreshed token as the upstream password
-  # (packages/core/manifests/keyless.go — its own comment calls it "the shared local Postgres proxy").
-  # MySQL has no equivalent: Entra auth there passes the token AS the password, so the app half needs
-  # either a MySQL-aware proxy or a changed app contract where the workload reads the refresher's
-  # token file itself. That is a design decision, not a flag — widening this local would point
-  # pgbouncer at a MySQL server and fail at runtime, which is worse than password auth.
+  # PostgreSQL keyless: gates the Postgres-specific Entra-admin registration (a Flexible Server
+  # `active_directory_administrator` keyed on server NAME). The app-side identity itself is no longer
+  # gated on this — see enable_app_db_identity below — but the PG admin resource still keys off it.
   enable_app_db_aad = var.create_azure_db && var.azure_db_iam_auth && var.provision_aks && var.azure_db_engine == "postgres"
 
-  # The SERVER side of Entra is engine-agnostic and lands now: a MySQL Flexible Server can carry an
-  # Entra administrator, which is what lets an operator — and later the bootstrap Job — authenticate
-  # without a password. The app keeps using password auth on MySQL until the half above exists, so
-  # `iam_auth` on MySQL buys Entra ADMINISTRATION, not yet a keyless app.
+  # The SERVER side of MySQL Entra: a MySQL Flexible Server carries the dedicated db_admin identity as
+  # its Entra administrator (a SEPARATE resource keyed on server ID). This lets an operator — and the
+  # bootstrap Job — authenticate without a password. Note: no provision_aks term (the server admin is
+  # useful even without a cluster).
   enable_mysql_entra = var.create_azure_db && var.azure_db_iam_auth && var.azure_db_engine == "mysql"
 
   # Either path needs the dedicated admin identity.
   enable_db_admin_identity = local.enable_app_db_aad || local.enable_mysql_entra
+
+  # The APP-side keyless identity — the app UAMI, its app-KSA + bootstrap-KSA federations, and the
+  # keyless outputs — is engine-agnostic and now covers MySQL too (#1464). The app's actual DB login is
+  # granted at RUNTIME by the bootstrap Job (Postgres: pgaadauth SECURITY LABEL on the app OID; MySQL:
+  # CREATE AADUSER … IDENTIFIED BY '<app client id>'); this template only creates the identity and
+  # federates it. Federation needs the AKS OIDC issuer, so the MySQL branch also requires provision_aks
+  # (enable_mysql_entra alone omits it). The app UAMI is never the admin — least-privilege holds for both.
+  enable_app_db_identity = local.enable_app_db_aad || (local.enable_mysql_entra && var.provision_aks)
 }
 
 ########################################################################
@@ -50,14 +61,14 @@ locals {
 ########################################################################
 
 resource "azurerm_user_assigned_identity" "app_db" {
-  count               = local.enable_app_db_aad ? 1 : 0
+  count               = local.enable_app_db_identity ? 1 : 0
   name                = "${local.aks_name}-appdb"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
 }
 
 resource "azurerm_federated_identity_credential" "app_db" {
-  count               = local.enable_app_db_aad ? 1 : 0
+  count               = local.enable_app_db_identity ? 1 : 0
   name                = "app-db"
   resource_group_name = azurerm_resource_group.main.name
   parent_id           = azurerm_user_assigned_identity.app_db[0].id
@@ -79,7 +90,7 @@ resource "azurerm_user_assigned_identity" "db_admin" {
 }
 
 resource "azurerm_federated_identity_credential" "db_admin" {
-  count               = local.enable_app_db_aad ? 1 : 0
+  count               = local.enable_app_db_identity ? 1 : 0
   name                = "db-admin"
   resource_group_name = azurerm_resource_group.main.name
   parent_id           = azurerm_user_assigned_identity.db_admin[0].id
@@ -113,4 +124,15 @@ resource "azurerm_mysql_flexible_server_active_directory_administrator" "db_admi
   login       = azurerm_user_assigned_identity.db_admin[0].name
   object_id   = azurerm_user_assigned_identity.db_admin[0].principal_id
   tenant_id   = data.azurerm_client_config.current.tenant_id
+}
+
+# Keyless MySQL is dead without the app UAMI: the app authenticates to MySQL with its own Entra token,
+# so if the app identity is missing (or its keyless outputs resolve null) the app can never log in —
+# exactly the silent-null class of failure #1382 was. Assert the app identity exists whenever a keyless
+# MySQL cluster is provisioned with AKS.
+check "mysql_keyless_app_identity" {
+  assert {
+    condition     = !(local.enable_mysql_entra && var.provision_aks) || length(azurerm_user_assigned_identity.app_db) == 1
+    error_message = "Keyless MySQL on AKS must create the app UAMI so the app can authenticate to MySQL via its own Entra token."
+  }
 }
