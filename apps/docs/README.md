@@ -1,38 +1,11 @@
-# docs
+# apps/docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+Alethia's user-facing documentation — Next.js 16 + Fumadocs + fumadocs-mdx. Content lives in
+`apps/docs/content/docs/`, routed by `apps/docs/app/(docs)/[[...slug]]/page.tsx`.
 
-Run development server:
-
-```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
-```
-
-Open http://localhost:3000 with your browser to see the result.
-
-## Explore
-
-In the project, you can see:
-
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
-
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
-
-### Fumadocs MDX
-
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+The docs site runs on the sandbox box like everything else (`pnpm env:up`); see
+[`CLAUDE.md`](../../CLAUDE.md). The prose bar below is enforced by the
+`Docs prose (Vale · Diátaxis + plain-language)` required check, so read it before writing.
 
 ## Writing docs (the style bar)
 
