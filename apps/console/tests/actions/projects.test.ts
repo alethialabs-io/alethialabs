@@ -761,6 +761,103 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 });
 
 // ============================================================
+// getProjectAsFormData — the secret store round-trips (#1412)
+// ============================================================
+
+describe("getProjectAsFormData — secrets provider round-trip", () => {
+	// REGRESSION: this mapping used to emit only {name, generate, length, special_chars}, dropping
+	// `provider` and `provider_config`. updateProjectDesign reconciles components delete-then-insert,
+	// so the very next canvas deploy re-inserted every secret WITHOUT its store — the environment
+	// silently fell back to the cluster's native secret manager and every binding to a Vault-backed
+	// secret went unsatisfiable, with nothing reported. Same shape as the chart-repo wipe (#1301).
+	it("carries provider + provider_config into the design/form view so a deploy can't wipe them", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							cloud_identity_id: "ci-1",
+							region: "us-east-1",
+							iac_version: "1.9.5",
+							project_name: "My App",
+							slug: "my-app",
+						},
+					],
+				],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+				],
+				[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+				[
+					projectSecrets,
+					[
+						{
+							name: "stripe-key",
+							generate: false,
+							length: 32,
+							special_chars: true,
+							provider: "vault",
+							provider_config: { mount_path: "secret", kv_version: "2" },
+						},
+					],
+				],
+			]),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.secrets).toHaveLength(1);
+		expect(formData.secrets[0]).toEqual(
+			expect.objectContaining({
+				name: "stripe-key",
+				provider: "vault",
+				provider_config: { mount_path: "secret", kv_version: "2" },
+			}),
+		);
+	});
+
+	// A native secret has no provider at all; it must round-trip as absent rather than as a string,
+	// since "" and "native" are both the cluster's own store and only NULL is the column's sentinel.
+	it("leaves a native secret's provider undefined", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							cloud_identity_id: "ci-1",
+							region: "us-east-1",
+							iac_version: "1.9.5",
+							project_name: "My App",
+							slug: "my-app",
+						},
+					],
+				],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+				],
+				[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+				[
+					projectSecrets,
+					[{ name: "api-key", generate: true, length: 32, special_chars: true, provider: null }],
+				],
+			]),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.secrets[0].provider).toBeUndefined();
+	});
+});
+
+
+// ============================================================
 // planProject / provisionProject (exercise buildConfigSnapshot)
 // ============================================================
 
