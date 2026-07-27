@@ -8,12 +8,35 @@
 ##########################
 #IRSA for RDS IAM Auth   #
 ##########################
-# The keyless app workload's identity (#722). Least-privilege on both axes:
+# The keyless app workload's identity (#722). Least-privilege on all THREE axes:
 #   - scoped to the EXACT app KSA (default/alethia-app), not "*:*" — only that pod can assume it, so a
 #     stray workload can't mint DB tokens (parity with the GCP/Azure per-KSA subject binding);
 #   - rds-db:connect ONLY, and only as the `alethia_app` user (the bootstrap-created least-priv role),
 #     not the former rds-db:* on dbuser:*/*. The unrelated SQS-FullAccess / KMS-PowerUser grants that
-#     used to ride on this role are dropped — a keyless DB identity has no business holding them.
+#     used to ride on this role are dropped — a keyless DB identity has no business holding them;
+#   - scoped to THIS cluster's resource id, not the `dbuser:*` wildcard it used to carry (#1509).
+#
+# On the username segment: the IAM policy is what MAPS the pod's role onto a database user, so
+# `/alethia_app` here and the DDL username the bootstrap Job creates
+# (apps/runner/internal/agent/db_bootstrap.go, keylessBootstrapRole, #1506) must be identical — AWS
+# matches it case-sensitively and a mismatch denies every connect SILENTLY. There is no guard pinning
+# the two literals together; keep them in step by hand.
+#
+# On admin identity: AWS deliberately has NO separate admin identity here, unlike Azure's
+# app-UAMI / admin-UAMI split. The bootstrap Job connects with the master password via its
+# ExternalSecret, so there is nothing to scope — this role is the APP's identity only. That asymmetry
+# is intentional; do not port Azure's machinery to close it.
+
+locals {
+  # The Aurora CLUSTER RESOURCE id ("cluster-XXXXXXXXXXXX"), NOT the cluster identifier/name: AWS
+  # matches the rds-db:connect ARN on the resource id, so an identifier here produces a non-matching
+  # ARN and denies every connect (#1504 exports it for exactly this).
+  #
+  # Unknown at plan time for a new cluster — that is fine, it resolves during apply and simply orders
+  # the policy after the cluster. Empty only when no RDS cluster exists, which the precondition below
+  # rejects rather than letting it degrade back into a wildcard.
+  rds_iam_cluster_resource_id = try(one(module.rds_maindb[*].rds_cluster_resource_id), "")
+}
 module "rds_iam_auth" {
 
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
@@ -48,13 +71,25 @@ resource "aws_iam_policy" "rds_iam_auth" {
                 "rds-db:connect"
             ],
             "Effect": "Allow",
-            "Resource": "arn:aws:rds-db:${var.region}:${var.aws_account_id}:dbuser:*/alethia_app",
+            "Resource": "arn:aws:rds-db:${var.region}:${var.aws_account_id}:dbuser:${local.rds_iam_cluster_resource_id}/alethia_app",
             "Sid": "AllowRDSiamAccess"
         }
     ],
     "Version": "2012-10-17"
 }
 EOT
+
+  lifecycle {
+    # Fail closed rather than degrade. With no RDS cluster there is no resource id to scope to, and the
+    # ARN would render as `dbuser:/alethia_app` — a malformed resource that grants nothing but reports
+    # a healthy apply, so the breakage would only surface as a runtime auth failure. Both operands are
+    # plain variables, so this is decided at PLAN time. (`check` blocks only warn; a precondition
+    # blocks — see terraform_data.rds_engine_shape_guard / compat_k8s_guard for the same pairing.)
+    precondition {
+      condition     = !var.rds_iam_irsa || var.create_rds
+      error_message = "RDS-IAM-IRSA-001: rds_iam_irsa is on but create_rds is false, so there is no cluster resource id to scope rds-db:connect to. Apply blocked fail-closed — enabling the app's RDS-IAM identity without an RDS cluster would either grant nothing or require the dbuser:* wildcard this policy exists to avoid."
+    }
+  }
 }
 
 
