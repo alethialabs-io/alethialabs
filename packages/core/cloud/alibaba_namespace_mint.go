@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,12 +33,13 @@ import (
 // Alibaba's OpenAPI SIGNS every request (HMAC over a canonicalized request) with the caller's
 // credentials — for keyless that is the RRSA-derived STS credential (from the pod's OIDC token, never a
 // stored key). Request signing depends on the whole request, so it cannot be a static bearer header.
-// This lane therefore takes an http.Client whose transport performs that RRSA signing (the wiring builds
-// it — using the Alibaba SDK or a manual signer), and does the URL construction + response parsing
-// itself. That keeps the lane dependency-free (stdlib + the already-present yaml.v3 — no cloud SDK added
-// to packages/core/go.mod) and unit-testable (the test injects a plain client against a stub). Wiring the
-// signing client + ResolveACKClusterConn into ConfigureKubeconfig + the namespaceRemintProviders
-// allowlist lives in the provider/dispatch files (out of this lane's single-file scope) — the follow-up.
+// This lane therefore takes an http.Client whose transport performs that RRSA signing — the hand-rolled
+// stdlib signer in alibaba_sign.go (newAlibabaSigningClient) — and does the URL construction + response
+// parsing itself. That keeps the lane dependency-free (stdlib + the already-present yaml.v3 — no cloud SDK
+// added to packages/core/go.mod) and unit-testable (the test injects a plain client against a stub). The
+// signer + ResolveACKClusterID/ResolveACKUserKubeconfig are wired into alibabaProvider.ConfigureKubeconfig
+// (output-free branch) and the vclusterRemintProviders allowlist; the per-namespace RRSA identity that
+// activates namespaceRemintProviders for alibaba is the remaining follow-up.
 //
 // Keyless + fail-closed: an empty/undelivered kubeconfig, or a kubeconfig with no server/CA, returns
 // ErrACKClusterNotReady (a retry signal), never a partial conn.
@@ -50,6 +52,19 @@ var ErrACKClusterNotReady = errors.New("ack cluster is not ready yet")
 // ackAPIHostFmt is the region-scoped ACK (Container Service) REST host. Tests redirect via the injected
 // http.Client's transport, so the URL construction is still exercised.
 const ackAPIHostFmt = "https://cs.%s.aliyuncs.com"
+
+const (
+	// ackAPIVersion is the Container Service API version (ROA under V3 signing still carries it).
+	ackAPIVersion = "2015-12-15"
+	// ackActionUserKubeconfig / ackActionDescribeClusters are the x-acs-action values the signing
+	// transport folds into the signature (the CALLER sets them; alibaba_sign.go signs them).
+	ackActionUserKubeconfig   = "DescribeClusterUserKubeconfig"
+	ackActionDescribeClusters = "DescribeClustersV1"
+	// ackTempKubeconfigMinutes requests a SHORT-LIVED user kubeconfig (ACK issues an x509 client cert
+	// with this validity; range 15–4320). A placement deploy is minutes, so a bounded cert keeps the
+	// written credential short-lived — the ACK analog of the other clouds' short-TTL exec-plugin tokens.
+	ackTempKubeconfigMinutes = 60
+)
 
 // ACKClusterConn is the connection detail needed to build a kubeconfig for a ready ACK cluster — the
 // Alibaba twin of aws.EKSClusterConn. Endpoint is the https API-server URL; CAData is base64 (a PUBLIC
@@ -85,40 +100,11 @@ func ResolveACKClusterConn(
 	client *http.Client,
 	regionID, clusterID string,
 ) (ACKClusterConn, error) {
-	if regionID == "" || clusterID == "" {
-		return ACKClusterConn{}, fmt.Errorf("ack mint: region and cluster id must both be set (got %q / %q)", regionID, clusterID)
-	}
-	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
-	}
-
-	rawURL := fmt.Sprintf(ackAPIHostFmt, url.PathEscape(regionID)) +
-		"/k8s/" + url.PathEscape(clusterID) + "/user_config?PrivateIpAddress=false"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	config, err := fetchACKUserKubeconfig(ctx, client, regionID, clusterID)
 	if err != nil {
 		return ACKClusterConn{}, err
 	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return ACKClusterConn{}, fmt.Errorf("ack DescribeClusterUserKubeconfig %q: %w", clusterID, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ACKClusterConn{}, fmt.Errorf("ack DescribeClusterUserKubeconfig %q: status %d: %s", clusterID, resp.StatusCode, ackErrSnippet(body))
-	}
-
-	var uc ackUserConfigResponse
-	if err := json.Unmarshal(body, &uc); err != nil {
-		return ACKClusterConn{}, fmt.Errorf("ack DescribeClusterUserKubeconfig %q: decode: %w", clusterID, err)
-	}
-	if strings.TrimSpace(uc.Config) == "" {
-		return ACKClusterConn{}, fmt.Errorf("%w: %q (no kubeconfig returned)", ErrACKClusterNotReady, clusterID)
-	}
-
-	server, ca := extractACKServerCA(uc.Config)
+	server, ca := extractACKServerCA(config)
 	if server == "" || ca == "" {
 		return ACKClusterConn{}, fmt.Errorf("%w: %q (kubeconfig missing server/CA)", ErrACKClusterNotReady, clusterID)
 	}
@@ -126,6 +112,125 @@ func ResolveACKClusterConn(
 		server = "https://" + server
 	}
 	return ACKClusterConn{Endpoint: server, CAData: ca}, nil
+}
+
+// ResolveACKUserKubeconfig resolves an EXISTING ACK cluster BY ID (no tofu outputs) to a COMPLETE,
+// short-lived user kubeconfig — the string is written verbatim by ConfigureKubeconfig. Unlike the
+// EKS/GKE/AKS lanes (endpoint+CA + a `kube-token` exec-plugin bearer), ACK's DescribeClusterUserKubeconfig
+// returns a full kubeconfig with an EMBEDDED x509 client cert, so there is no exec-plugin: the returned
+// config authenticates kubectl directly. `client` is the request-SIGNING http.Client (RRSA-derived STS
+// signature). Returns ErrACKClusterNotReady when no config is returned.
+func ResolveACKUserKubeconfig(ctx context.Context, client *http.Client, regionID, clusterID string) (string, error) {
+	return fetchACKUserKubeconfig(ctx, client, regionID, clusterID)
+}
+
+// fetchACKUserKubeconfig calls DescribeClusterUserKubeconfig (GET /k8s/<id>/user_config) for the PUBLIC
+// API-server endpoint (PrivateIpAddress=false) and a SHORT-LIVED cert (TemporaryDurationMinutes), and
+// returns the raw `config` kubeconfig. Sets the x-acs-action / x-acs-version the signing transport folds
+// into the signature. Fail-closed (ErrACKClusterNotReady) on an empty config.
+func fetchACKUserKubeconfig(ctx context.Context, client *http.Client, regionID, clusterID string) (string, error) {
+	if regionID == "" || clusterID == "" {
+		return "", fmt.Errorf("ack mint: region and cluster id must both be set (got %q / %q)", regionID, clusterID)
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	q := url.Values{}
+	q.Set("PrivateIpAddress", "false")
+	q.Set("TemporaryDurationMinutes", strconv.Itoa(ackTempKubeconfigMinutes))
+	rawURL := fmt.Sprintf(ackAPIHostFmt, url.PathEscape(regionID)) +
+		"/k8s/" + url.PathEscape(clusterID) + "/user_config?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-acs-action", ackActionUserKubeconfig)
+	req.Header.Set("x-acs-version", ackAPIVersion)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ack DescribeClusterUserKubeconfig %q: %w", clusterID, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("ack DescribeClusterUserKubeconfig %q: status %d: %s", clusterID, resp.StatusCode, ackErrSnippet(body))
+	}
+	var uc ackUserConfigResponse
+	if err := json.Unmarshal(body, &uc); err != nil {
+		return "", fmt.Errorf("ack DescribeClusterUserKubeconfig %q: decode: %w", clusterID, err)
+	}
+	if strings.TrimSpace(uc.Config) == "" {
+		return "", fmt.Errorf("%w: %q (no kubeconfig returned)", ErrACKClusterNotReady, clusterID)
+	}
+	return uc.Config, nil
+}
+
+// ackClusterListResponse is the slice of the DescribeClustersV1 response this lane reads.
+type ackClusterListResponse struct {
+	Clusters []struct {
+		ClusterID   string `json:"cluster_id"`
+		Name        string `json:"name"`
+		RegionID    string `json:"region_id"`
+		State       string `json:"state"`
+		ClusterType string `json:"cluster_type"`
+	} `json:"clusters"`
+}
+
+// ResolveACKClusterID maps an ACK cluster DISPLAY NAME to its ClusterId (the hash the user_config API
+// needs) via DescribeClustersV1 (GET /api/v1/clusters?name=&region_id=). The output-free placement path
+// only knows the cluster NAME (namespaceClusterNameOutputKey → ack_cluster_name), so this resolves the id
+// first. ACK does NOT guarantee names are unique, so this matches on name AND region and fail-closes on
+// ambiguity (more than one matching cluster) — never guessing which cluster to deploy onto.
+func ResolveACKClusterID(ctx context.Context, client *http.Client, regionID, clusterName string) (string, error) {
+	if regionID == "" || clusterName == "" {
+		return "", fmt.Errorf("ack mint: region and cluster name must both be set (got %q / %q)", regionID, clusterName)
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	q := url.Values{}
+	q.Set("name", clusterName)
+	q.Set("region_id", regionID)
+	rawURL := fmt.Sprintf(ackAPIHostFmt, url.PathEscape(regionID)) + "/api/v1/clusters?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-acs-action", ackActionDescribeClusters)
+	req.Header.Set("x-acs-version", ackAPIVersion)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ack DescribeClustersV1 %q: %w", clusterName, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("ack DescribeClustersV1 %q: status %d: %s", clusterName, resp.StatusCode, ackErrSnippet(body))
+	}
+	var list ackClusterListResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("ack DescribeClustersV1 %q: decode: %w", clusterName, err)
+	}
+
+	// Exact name + region match (the API `name` filter is a server-side convenience; re-check here).
+	var matches []string
+	for _, c := range list.Clusters {
+		if c.Name == clusterName && (c.RegionID == "" || c.RegionID == regionID) && c.ClusterID != "" {
+			matches = append(matches, c.ClusterID)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("%w: no ACK cluster named %q in region %q", ErrACKClusterNotReady, clusterName, regionID)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ack DescribeClustersV1 %q: %d clusters share this name in region %q — cannot disambiguate by name; fail closed", clusterName, len(matches), regionID)
+	}
 }
 
 // extractACKServerCA parses an ACK kubeconfig (raw YAML, or base64-wrapped as some ACK responses return
