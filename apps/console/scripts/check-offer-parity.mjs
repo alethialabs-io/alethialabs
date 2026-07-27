@@ -49,6 +49,7 @@ const PROVIDERS = `${ROOT}/packages/core/cloud`;
 const EXCLUSIONS = `${ROOT}/infra/offer-exclusions.yaml`;
 const MATRIX_OUT = `${ROOT}/docs/testing/offer-parity.md`;
 const NODE_REGISTRY = "components/design-project/canvas/graph/node-registry.ts";
+const CONFIG_SCHEMA_SRC = "components/design-project/canvas/inspector/config-schema.ts";
 const CATALOG = `${ROOT}/packages/core/catalog/catalog.json`;
 
 const writeMatrix = process.argv.includes("--matrix");
@@ -168,6 +169,99 @@ function offeredOn(cloud, kind, variant) {
 	const allowed = FLOOR[cloud]?.[kind];
 	if (!allowed || allowed.size === 0) return true;
 	return allowed.has(variant);
+}
+
+// ── the offer side, part 2: OPTION-level offers (`database:<engine>:iam_auth`) ───────
+//
+// A variant axis is not the only thing the canvas offers. `iam_auth` is a plain SWITCH in
+// config-schema.ts with no `visibleWhen`, so the canvas presents keyless database auth on EVERY cloud
+// for BOTH engines — and until #1500 several of those cells could not honor it. The guard could not
+// see any of that: its whole vocabulary was `variants:` blocks, so shipping MySQL keyless broken was
+// structurally un-catchable (#1508).
+//
+// Options are DERIVED, like everything else here: every unconditional `type: "switch"` field in
+// CONFIG_SCHEMA. A field carrying `visibleWhen`/`requiresProvider` is already gated by the canvas, so
+// it makes no cross-cloud promise and is skipped.
+//
+// TWO LIMITS, stated because a guard that looks more complete than it is, is worse than no guard:
+//
+//  1. Only kinds that ALSO have a variant axis are covered, because the offer key is
+//     `<kind>:<variant>:<option>`. Unconditional switches on variant-less kinds — `bucket:versioning`,
+//     `registry:immutable_tags`, `dns:waf_enabled`, `nosql:point_in_time_recovery`,
+//     `network:provision_network`, `secret:generate`, `service:probe_enabled` — are NOT measured here.
+//     Several of those are provider-carried on some clouds and not others, so the same class of gap
+//     can still hide there. Extending to a `<kind>:<option>` key is the follow-on.
+//  2. Only `type: "switch"` is read. An enum-shaped option (a `select` whose values are not a
+//     `variants:` axis) makes the same cross-cloud promise and is equally invisible.
+
+/** Unconditional switch fields per kind — the options the canvas offers on every cloud. */
+function offeredOptions() {
+	const src = readFileSync(CONFIG_SCHEMA_SRC, "utf8");
+	const body = src.slice(src.indexOf("CONFIG_SCHEMA"));
+	const kinds = [...body.matchAll(/\n\t(\w+): \{/g)];
+	const out = {};
+	for (let i = 0; i < kinds.length; i++) {
+		const seg = body.slice(kinds[i].index, kinds[i + 1]?.index ?? body.length);
+		for (const f of seg.matchAll(/\{\s*key:\s*"(\w+)",\s*type:\s*"switch"([\s\S]{0,400}?)\n\t*\}/g)) {
+			if (/visibleWhen|requiresProvider/.test(f[2])) continue; // already gated by the canvas
+			(out[kinds[i][1]] ??= []).push(f[1]);
+		}
+	}
+	return out;
+}
+
+const OPTIONS = offeredOptions();
+
+/** snake_case option key → the Go struct field a provider would read (`iam_auth` → `IamAuth`). */
+const goFieldFor = (key) =>
+	key
+		.split("_")
+		.map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+		.join("");
+
+/** Which clouds' providers demonstrably READ this option (i.e. carry it into tfvars)? */
+function optionCarriers(key) {
+	const probe = new RegExp(`\\.${goFieldFor(key)}\\b`);
+	return new Set(CLOUDS.filter((c) => probe.test(goSrc[c])));
+}
+
+// Which option cells are ADJUDICATED — i.e. failing the build rather than merely reported.
+//
+// This is deliberately a short list, and it is NOT the offer vocabulary (that is derived above). It is
+// the adjudication queue. Seven of the derived options are provider-carried today, and turning them
+// all on at once would dump ~10 unclassified cells into offer-exclusions.yaml — where each entry is
+// supposed to be a DECISION ("can never be honored" vs "real debt, here is the issue"), not a guess.
+// A file full of guesses is the "wall of red people stop reading" this guard's own comments warn
+// about. So options graduate one at a time, with their per-cloud decisions made deliberately.
+//
+// Everything carried-but-unadjudicated is still REPORTED below, so nothing is hidden and the follow-on
+// is visible in the output rather than living only in someone's head.
+const ADJUDICATED = new Set(["database:iam_auth"]);
+
+/** Does the template gate this option per ENGINE, and if so which engines does it cover?
+ *
+ * Carriage is cloud-level (`db.IamAuth` is read once), but honoring can be per-engine — which is
+ * exactly how gcp shipped Postgres keyless working and MySQL keyless silently dead until #1505.
+ * Evidence-based and conservative, like `enumeratedValues`: only lines mentioning the option token
+ * count, and only when at least one of them is engine-specific. A template that references the option
+ * uniformly is treated as covering every engine (passthrough is not a gap). */
+function optionEngineCoverage(cloud, key, variants) {
+	const lines = tf[cloud].split("\n").filter((l) => l.includes(key));
+	if (!lines.length) return null;
+	const seen = new Set();
+	let engineSpecific = false;
+	for (const l of lines) {
+		for (const v of variants) {
+			const rx = new RegExp(`==\\s*"${v}"|_${v}\\b|\\b${v}_`, "i");
+			if (rx.test(l)) {
+				seen.add(v);
+				engineSpecific = true;
+			}
+		}
+	}
+	// Also credit an engine named in an option-scoped local/variable elsewhere in the template
+	// (`database_flags_mysql`, `enable_mysql_entra`) — the gcp/azure shapes.
+	return engineSpecific ? seen : null;
 }
 
 // ── exclusions ──────────────────────────────────────────────────────────────────────
@@ -508,6 +602,66 @@ for (const [kind, variants] of Object.entries(AXES)) {
 	}
 }
 
+// ── option-level pass (`<kind>:<variant>:<option>`) ──────────────────────────────────
+//
+// One cell per (kind × variant × option × cloud). Carriage is measured cloud-level; engine coverage
+// is measured per variant, because the two fail independently — alibaba drops `iam_auth` entirely,
+// while gcp carried it and still had no MySQL branch until #1505.
+
+const optionCells = [];
+const unadjudicated = [];
+
+for (const [kind, keys] of Object.entries(OPTIONS)) {
+	const variants = AXES[kind];
+	if (!variants) continue; // no variant axis → no `<kind>:<variant>:<option>` cell to name
+	for (const key of keys) {
+		const carriers = optionCarriers(key);
+		// No provider reads it → the guard cannot see whether this option is a tfvars-carried capability
+		// at all (it may be console-only or template-default). Saying nothing is the honest result;
+		// claiming a gap on zero evidence is how a guard earns its way onto the ignore list.
+		if (carriers.size === 0) continue;
+		const offerBase = `${kind}:${key}`;
+		if (!ADJUDICATED.has(offerBase)) {
+			const missing = CLOUDS.filter((c) => !carriers.has(c) && variants.some((v) => offeredOn(c, kind, v)));
+			if (missing.length) unadjudicated.push({ offer: offerBase, missing });
+			continue;
+		}
+		for (const cloud of CLOUDS) {
+			const coverage = carriers.has(cloud) ? optionEngineCoverage(cloud, key, variants) : null;
+			for (const variant of variants) {
+				if (!offeredOn(cloud, kind, variant)) {
+					optionCells.push({ kind, variant, key, cloud, state: "not-offered", detail: "" });
+					continue;
+				}
+				const offer = `${kind}:${variant}:${key}`;
+				const exc = excluded(offer, cloud);
+				let state = "ok";
+				let detail = "";
+				if (exc) {
+					state = "excluded";
+					detail = exc.reason ?? "";
+				} else if (!carriers.has(cloud)) {
+					state = "no-carrier";
+					detail =
+						`the canvas offers \`${key}\` on every cloud, but the ${cloud} provider never reads ` +
+						`\`${goFieldFor(key)}\` — the switch is dropped between the canvas and the plan, so a user ` +
+						`turns it on and nothing happens.`;
+				} else if (coverage && !coverage.has(variant)) {
+					state = "missing-branch";
+					detail =
+						`the ${cloud} template gates \`${key}\` per engine (${[...coverage].join("/")}) and ${variant} ` +
+						`has no branch — carried into tfvars, then honored for the other engine only.`;
+				}
+				const known = state !== "ok" && state !== "excluded" ? baselined(offer, cloud) : null;
+				optionCells.push({ kind, variant, key, cloud, state, detail, known });
+				if (state !== "ok" && state !== "excluded") {
+					(known ? knownDebt : findings).push({ shape: state, cloud, offer, detail, known });
+				}
+			}
+		}
+	}
+}
+
 // ── matrix ──────────────────────────────────────────────────────────────────────────
 
 const GLYPH = {
@@ -552,6 +706,33 @@ nightly can promote a cell, and it does so in the e2e parity board.
 				return cell.known?.issue ? `${GLYPH[cell.state]} ${cell.known.issue}` : GLYPH[cell.state];
 			});
 			md += `| \`${variant}\` | ${row.join(" | ")} |\n`;
+		}
+	}
+
+	// ── option-level offers · a grid per option ────────────────────────────────────────
+	// A grid rather than a row list: an option is offered per (engine × cloud) exactly like a variant,
+	// and the thing worth seeing at a glance is which CELLS honor it — that is the shape that hid
+	// MySQL keyless.
+	if (optionCells.length) {
+		md += `\n## Option-level offers — a switch the canvas shows on every cloud\n
+Not every offer is an engine choice. \`iam_auth\` is a plain switch in the inspector with no
+per-cloud gate, so the canvas presents keyless database auth on **every** cloud for **both** engines.
+The variant grids above cannot see that, which is why shipping MySQL keyless broken was
+un-catchable until #1508.
+
+A cell here is 🚫 when the cloud's provider never reads the option (the switch is dropped between the
+canvas and the plan), or when the template gates it per engine and this engine has no branch.\n`;
+		for (const key of [...new Set(optionCells.map((c) => c.key))]) {
+			const kind = optionCells.find((c) => c.key === key).kind;
+			md += `\n### \`${kind}\` · \`${key}\`\n\n| Offer | ${CLOUDS.join(" | ")} |\n|---|${CLOUDS.map(() => ":---:").join("|")}|\n`;
+			for (const variant of AXES[kind]) {
+				const row = CLOUDS.map((c) => {
+					const cell = optionCells.find((x) => x.key === key && x.variant === variant && x.cloud === c);
+					if (!cell) return GLYPH["not-offered"];
+					return cell.known?.issue ? `${GLYPH[cell.state]} ${cell.known.issue}` : GLYPH[cell.state];
+				});
+				md += `| \`${variant}\` | ${row.join(" | ")} |\n`;
+			}
 		}
 	}
 
@@ -642,10 +823,23 @@ if (!GATED) {
 
 const day2Summary = day2Cells.reduce((acc, c) => ({ ...acc, [c.state]: (acc[c.state] ?? 0) + 1 }), {});
 
+// Options that ARE provider-carried on some clouds and not others, but have not been adjudicated yet.
+// Reported, never silent: these are the next cells to graduate into ADJUDICATED, and leaving them
+// invisible would recreate exactly the blind spot #1508 closed. Not fatal — nobody has decided them.
+if (unadjudicated.length) {
+	console.log(`  ${unadjudicated.length} carried option(s) not yet adjudicated (reported, not failing):`);
+	for (const u of unadjudicated) {
+		console.log(`    · ${u.offer} — carried on some clouds, not on: ${u.missing.join(", ")}`);
+	}
+	console.log(
+		`    Graduate one at a time via ADJUDICATED in this script, deciding each cloud deliberately.`,
+	);
+}
+
 if (findings.length === 0) {
 	console.log(
-		`✓ offer parity — ${cells.length} (offer × cloud) cells, ${exclusions.length} documented exclusion(s), ` +
-			`${baseline.length} on the baseline, no NEW silent gaps.`,
+		`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s), ` +
+			`${exclusions.length} documented exclusion(s), ${baseline.length} on the baseline, no NEW silent gaps.`,
 	);
 	console.log(
 		`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +
