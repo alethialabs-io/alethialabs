@@ -130,6 +130,14 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
+		// Size. `azure_cache_sku_name` is the EXACT Managed Redis sku and it wins over the legacy
+		// Basic/Standard/Premium map below (infra/templates/project/azure/azure-cache-redis.tf), so
+		// emitting it is what makes MemoryGB — the cloud-indifferent size the canvas offers — mean
+		// something on Azure. Without this, azure read no size axis at all: the only size-ish signal
+		// was NumCacheNodes>1 flipping the tier to "Standard".
+		if sku := resolveCacheNodeType("azure", cache); sku != "" {
+			tfvars["azure_cache_sku_name"] = sku
+		}
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
 		}
