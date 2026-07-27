@@ -34,6 +34,44 @@ nightly can promote a cell, and it does so in the e2e parity board.
 | `redis` | 🟡 | 🟡 | 🟡 | 🟡 | · | — |
 | `valkey` | · | 🟡 | · | 🟡 | — | — |
 
+## Day-2 posture — would a hazard be caught?
+
+Day 1 asks *could this ever be built*. Day 2 asks *what happens when you change it afterwards*: does a
+new engine version or size CONVERGE in place, or force-replace the data? That question is answered from
+a real `tofu plan -json` by `AnalyzeDay2` ([`test/e2e/t2_day2_offer.go`](../../test/e2e/t2_day2_offer.go))
+— it cannot be answered from template text, because whether an argument forces replacement lives in the
+provider schema.
+
+What IS derivable here, and all this table claims, is **gate coverage**: the resource backing each offer,
+and whether `day2StatefulTypes` knows it — because a data-bearing type the gate does not know is worse
+than an unguarded one. The gate returns *Safe*, so the offer looks proven when nothing checked it.
+
+One row per offer this cloud actually offers (an excluded offer has no day 2 to have). Legend:
+🟡 backing resource is in the repo **and** guarded — a hazard would be caught, awaiting a real-apply
+proof · 🚫 data-bearing but **not** in `day2StatefulTypes` — the gate would pass it vacuously ·
+? not evaluable from template text (the type is inside an external module; only a real plan shows it)
+
+As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorded in
+[`demos/proofs/provisioning-e2e-log.md`](../../demos/proofs/provisioning-e2e-log.md) and promoted in
+[`provisioning-e2e-parity.md`](./provisioning-e2e-parity.md).
+
+| Offer | Cloud | Backing resource | Day-2 | Note |
+|---|---|---|:---:|---|
+| `database:postgres` | alibaba | `alicloud_db_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
+| `database:mysql` | alibaba | `alicloud_db_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
+| `database:postgres` | aws | `cloudposse/rds-cluster/aws` | ? | the backing type is inside an external module — not visible in template text; the real-apply harness resolves it. |
+| `database:mysql` | aws | `cloudposse/rds-cluster/aws` | ? | the backing type is inside an external module — not visible in template text; the real-apply harness resolves it. |
+| `database:postgres` | azure | `azurerm_postgresql_flexible_server` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `mysql` crosses backing resources — a delete + create, not an in-place change. |
+| `database:mysql` | azure | `azurerm_mysql_flexible_server` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `postgres` crosses backing resources — a delete + create, not an in-place change. |
+| `database:postgres` | gcp | `google_sql_database_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
+| `database:mysql` | gcp | `google_sql_database_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
+| `cache:redis` | alibaba | `alicloud_kvstore_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
+| `cache:redis` | aws | `cloudposse/elasticache-redis/aws` | ? | the backing type is inside an external module — not visible in template text; the real-apply harness resolves it. Switching to `valkey` crosses backing resources — a delete + create, not an in-place change. |
+| `cache:valkey` | aws | `terraform-aws-modules/elasticache/aws//modules/serverless-cache` | ? | the backing type is inside an external module — not visible in template text; the real-apply harness resolves it. Switching to `redis` crosses backing resources — a delete + create, not an in-place change. |
+| `cache:redis` | azure | `azurerm_managed_redis` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
+| `cache:redis` | gcp | `google_redis_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `valkey` crosses backing resources — a delete + create, not an in-place change. |
+| `cache:valkey` | gcp | `google_memorystore_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `redis` crosses backing resources — a delete + create, not an in-place change. |
+
 ## Documented exclusions
 
 | Offer | Cloud | Reason |
