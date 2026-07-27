@@ -134,6 +134,12 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		if db.IamAuth != nil {
 			tfvars["cloud_sql_iam_auth"] = *db.IamAuth
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). cloud_sql_iam_auth is
+		// reserved UNCONDITIONALLY: db.IamAuth == nil leaves it unset, and without this a
+		// provider_config key could switch keyless on for a cell the canvas never offered, walking
+		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no GCP template variable
+		// declares a Cloud SQL log-export set — so it is reserved rather than emitted undeclared.
+		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "cloud_sql_iam_auth")
 	}
 
 	if len(config.Caches) > 0 {

@@ -164,7 +164,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			rdsConfig["cluster_family"] = family
 		}
 		tfvars["rds_config"] = rdsConfig
-		tfvars["rds_logs_exports"] = awsRDSLogExports(engine)
+		tfvars["rds_logs_exports"] = awsRDSLogExports(engine, db.ProviderConfig)
 		if db.InstanceClass != "" {
 			tfvars["rds_instance_type"] = db.InstanceClass
 		}
@@ -178,6 +178,13 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			// auth would produce a DB that accepts tokens but no identity able to mint one.
 			tfvars["rds_iam_irsa"] = *db.IamAuth
 		}
+		// Generic passthrough for knobs with no typed field. `log_exports` is reserved because it is
+		// consumed above under a different tfvar name; the two IAM-auth flags are reserved
+		// UNCONDITIONALLY (not merely merge-if-absent) so keyless can never be switched on from
+		// provider_config for a cell the canvas did not offer — db.IamAuth == nil leaves them unset,
+		// and without this a passthrough key would sail past both #1508 and #1510.
+		mergeProviderConfig(tfvars, db.ProviderConfig,
+			"log_exports", "rds_iam_auth_enabled", "rds_iam_irsa")
 	}
 
 	if len(config.Caches) > 0 {
@@ -371,13 +378,50 @@ func awsAuroraFamily(engine, version string) string {
 	return ""
 }
 
-// awsRDSLogExports returns the CloudWatch log-export set valid for the engine. Aurora MySQL rejects
-// "postgresql" (and vice versa), so this must follow the engine or `tofu apply` fails at the cluster.
-func awsRDSLogExports(engine string) []string {
+// awsRDSLogExports returns the CloudWatch log-export set for the engine, honouring an explicit
+// provider_config `log_exports` when the tenant set one. Aurora MySQL rejects "postgresql" (and vice
+// versa), so the DEFAULT must follow the engine or `tofu apply` fails at the cluster.
+//
+// An explicit set is passed through verbatim, NOT sanitized against the engine: RDS-ENGINE-003
+// (checks_data.tf) already blocks an engine-invalid set fail-closed at apply, naming the valid types,
+// and silently dropping an entry would hide what the tenant actually asked for.
+//
+// `general` is absent from the MySQL default on purpose. The MySQL general log records every
+// statement with its literal parameter values, so defaulting it on ships whatever the application put
+// in a WHERE clause to the customer's CloudWatch, plus the ingest bill. `audit` covers the
+// security-forensics case without the statement text; anyone who wants full query logging opts in.
+func awsRDSLogExports(engine string, pc map[string]any) []string {
+	if v, ok := providerStringSlice(pc, "log_exports"); ok {
+		return v
+	}
 	if awsIsMySQLEngine(engine) {
-		return []string{"audit", "error", "general", "slowquery"}
+		return []string{"audit", "error", "slowquery"}
 	}
 	return []string{"postgresql"}
+}
+
+// providerStringSlice reads a []string from a provider_config key. JSON round-trips arrays as
+// []any of string, so both that and a native []string are accepted. An explicitly EMPTY list is a
+// real choice ("export nothing") and is returned as such, distinct from an absent key.
+func providerStringSlice(cfg map[string]any, key string) ([]string, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	switch v := cfg[key].(type) {
+	case []string:
+		return v, true
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				return nil, false // a non-string entry makes the whole list untrustworthy
+			}
+			out = append(out, s)
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 // s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the

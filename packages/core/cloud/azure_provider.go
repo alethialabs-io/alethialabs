@@ -120,6 +120,12 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if db.IamAuth != nil {
 			tfvars["azure_db_iam_auth"] = *db.IamAuth
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). azure_db_iam_auth is
+		// reserved UNCONDITIONALLY: db.IamAuth == nil leaves it unset, and without this a
+		// provider_config key could switch keyless on for a cell the canvas never offered, walking
+		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no Azure template
+		// variable declares a log-export set — so it is reserved rather than emitted undeclared.
+		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "azure_db_iam_auth")
 	}
 
 	if len(config.Caches) > 0 {
