@@ -119,6 +119,11 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if db.BackupRetentionDays != nil {
 			tfvars["rds_backup_retention_days"] = *db.BackupRetentionDays
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). No IAM-auth flag to reserve:
+		// Alibaba has no keyless DB cell (ApsaraDB exposes no data-plane token login we could find), so
+		// db.IamAuth is never emitted here and the offer-parity baseline records the gap. `log_exports`
+		// is AWS-only — no Alibaba template variable declares a log-export set.
+		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports")
 	}
 
 	if len(config.Caches) > 0 {
