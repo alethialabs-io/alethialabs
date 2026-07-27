@@ -217,11 +217,16 @@ func keylessCellSupported(provider, engine string) error {
 		return nil
 	case cellPending:
 		return fmt.Errorf("keyless %s on %s is not implemented yet (%s)", engine, provider, cell.reason)
-	default:
+	case cellExcluded:
 		// The reason is the whole message: it is written for the person reading it, and prefixing it
 		// with our own framing would bury the sentence that actually answers "why not".
 		return errors.New(cell.reason)
 	}
+	// Not a `default:` inside the switch — every state is named above so the exhaustive linter fails
+	// the build when a fourth is added, rather than letting it fall into a branch that was written
+	// without it in mind. Reaching here means a state exists that nobody taught this gate about, and
+	// a fail-closed table must not fail OPEN on one.
+	return fmt.Errorf("keyless %s on %s has an unrecognised cell state %q", engine, provider, cell.state)
 }
 
 // enginePort returns the conventional wire port for an engine family, as a string and an int — the
