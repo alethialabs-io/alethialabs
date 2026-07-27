@@ -570,6 +570,13 @@ jobs:
           #    referenced by the nightly. Off unless E2E_DAY2_ACCESS is set. ──
           ALETHIA_E2E_DAY2_ACCESS: ${{ vars.E2E_DAY2_ACCESS }}
           ALETHIA_E2E_DAY2_ACCESS_SUMMARY: ${{ runner.temp }}/day2-access-summary.json
+          # ── DAY-2 OFFER postures (#1440 classifier, #1495 harness). Where DAY2_ACCESS proves the
+          #    CLUSTER is reachable, this proves the OFFERS on it survive day-2: it plans a tunable
+          #    change, a resize and a teardown against live state and asserts tofu's own plan
+          #    converges in place and tears down to zero. PLAN-ONLY — nothing is applied. Off unless
+          #    E2E_DAY2_OFFER is set. ──
+          ALETHIA_E2E_DAY2_OFFER: ${{ vars.E2E_DAY2_OFFER }}
+          ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -634,6 +641,9 @@ jobs:
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
+          # Day-2 offer postures (#1495), written by the T2 test; folded into the bundle +
+          # step-summary verdict exactly like the soak summary above (absent ⇒ unchanged).
+          ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
