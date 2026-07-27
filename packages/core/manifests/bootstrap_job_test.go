@@ -264,3 +264,139 @@ func TestBootstrapJob_FailsClosed_OnMissingRunnerImage(t *testing.T) {
 		t.Error("expected an error when no runner image is set (db-bootstrap/db-token cannot run)")
 	}
 }
+
+func TestBootstrapJob_AWS_MySQL_Keyless(t *testing.T) {
+	// AWS MySQL renders the AWSAuthenticationPlugin dialect and applies it with the mysql client, but the
+	// ADMIN credential is unchanged: the RDS master from the ExternalSecret. Azure's minted-admin-token
+	// machinery must NOT be ported here — an IAM-token admin would itself have to be a pre-existing
+	// plugin user, and the master user is precisely who creates those (#1507).
+	res, err := RenderBootstrapJob(Options{
+		Provider:    "aws",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Databases: []types.ProjectDatabaseConfig{
+			{Name: "orders-db", EngineFamily: "mysql", IamAuth: boolPtr(true)},
+		},
+		Outputs: map[string]string{
+			"rds_cluster_endpoint":               "orders.cluster-abc.eu-central-1.rds.amazonaws.com",
+			"rds_database_name":                  "orders_prod",
+			"rds_master_credentials_secret_name": "alethia/orders/rds-master",
+		},
+	}, dbTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"--engine", "mysql", // the MySQL dialect, not the default Postgres one
+		mysqlClientImage, `name: "MYSQL_TCP_PORT"`, `value: "3306"`,
+		"--ssl-mode=REQUIRED",
+		"secretKeyRef", // admin username + password come from the ExternalSecret
+	} {
+		if !strings.Contains(res.JobYAML, want) {
+			t.Errorf("AWS MySQL Job missing %q:\n%s", want, res.JobYAML)
+		}
+	}
+	// The admin ExternalSecret IS present here (unlike Azure's keyless admin).
+	if res.AdminSecretYAML == "" {
+		t.Error("AWS MySQL bootstrap must materialize the RDS master via an admin ExternalSecret")
+	}
+	// The cleartext plugin is an Azure Entra-token quirk. Enabling it against a NATIVE password admin
+	// would let the client hand that password to the server in the clear on request — the single most
+	// important thing this test pins.
+	if strings.Contains(res.JobYAML, "--enable-cleartext-plugin") {
+		t.Errorf("AWS MySQL admin auth is a native password — the cleartext plugin must be absent:\n%s", res.JobYAML)
+	}
+	// Not the Postgres path, and no Azure admin-token machinery.
+	for _, bad := range []string{
+		postgresClientImage, "psql", "PGPASSWORD", "PGPORT", // Postgres constructs
+		"mint-admin-token", "db-token", "workload.identity", // Azure admin-identity machinery
+	} {
+		if strings.Contains(res.JobYAML, bad) {
+			t.Errorf("AWS MySQL Job must not contain %q:\n%s", bad, res.JobYAML)
+		}
+	}
+}
+
+func TestBootstrapJob_GCP_MySQL_Keyless(t *testing.T) {
+	// GCP MySQL is grants-only (tofu already created the CLOUD_IAM_SERVICE_ACCOUNT user, as on Postgres),
+	// applied with the mysql client as the built-in admin from the ExternalSecret. The --app-user value
+	// is the MySQL login form: Cloud SQL MySQL truncates the @ and domain (#1505).
+	res, err := RenderBootstrapJob(Options{
+		Provider:    "gcp",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Databases: []types.ProjectDatabaseConfig{
+			{Name: "orders-db", EngineFamily: "mysql", IamAuth: boolPtr(true)},
+		},
+		Outputs: map[string]string{
+			"cloud_sql_ip":                 "10.20.0.3",
+			"cloud_sql_database":           "orders_prod",
+			"cloud_sql_iam_user":           "alethia-app", // MySQL form, not "alethia-app@proj.iam"
+			"cloud_sql_credentials_secret": "projects/p/secrets/orders-sql",
+		},
+	}, dbTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"--engine", "mysql", "--app-user", "alethia-app",
+		mysqlClientImage, `value: "3306"`, "--ssl-mode=REQUIRED",
+		"secretKeyRef",
+	} {
+		if !strings.Contains(res.JobYAML, want) {
+			t.Errorf("GCP MySQL Job missing %q:\n%s", want, res.JobYAML)
+		}
+	}
+	if res.AdminSecretYAML == "" {
+		t.Error("GCP MySQL bootstrap must materialize the built-in admin via an admin ExternalSecret")
+	}
+	if strings.Contains(res.JobYAML, "--enable-cleartext-plugin") {
+		t.Errorf("GCP MySQL admin auth is a native password — the cleartext plugin must be absent:\n%s", res.JobYAML)
+	}
+	for _, bad := range []string{postgresClientImage, "psql", "PGPASSWORD", "mint-admin-token"} {
+		if strings.Contains(res.JobYAML, bad) {
+			t.Errorf("GCP MySQL Job must not contain %q:\n%s", bad, res.JobYAML)
+		}
+	}
+}
+
+func TestBootstrapJob_Postgres_RendersUnchanged_OnAWSAndGCP(t *testing.T) {
+	// The engine branch must not perturb the shipped Postgres path — an absent/blank EngineFamily still
+	// renders psql, which is what every existing environment is running.
+	for _, tc := range []struct {
+		provider string
+		outputs  map[string]string
+	}{
+		{"aws", map[string]string{
+			"rds_cluster_endpoint":               "orders.cluster-abc.eu-central-1.rds.amazonaws.com",
+			"rds_database_name":                  "orders_prod",
+			"rds_master_credentials_secret_name": "alethia/orders/rds-master",
+		}},
+		{"gcp", map[string]string{
+			"cloud_sql_ip":                 "10.20.0.3",
+			"cloud_sql_database":           "orders_prod",
+			"cloud_sql_iam_user":           "alethia-app@proj.iam",
+			"cloud_sql_credentials_secret": "projects/p/secrets/orders-sql",
+		}},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			res, err := RenderBootstrapJob(Options{
+				Provider:    tc.provider,
+				RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+				Databases: []types.ProjectDatabaseConfig{
+					{Name: "orders-db", IamAuth: boolPtr(true)}, // no EngineFamily → postgres
+				},
+				Outputs: tc.outputs,
+			}, dbTarget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(res.JobYAML, postgresClientImage) {
+				t.Errorf("%s postgres Job should still use the psql client:\n%s", tc.provider, res.JobYAML)
+			}
+			for _, bad := range []string{mysqlClientImage, "--engine", "MYSQL_TCP_PORT"} {
+				if strings.Contains(res.JobYAML, bad) {
+					t.Errorf("%s postgres Job must not contain the MySQL construct %q:\n%s", tc.provider, bad, res.JobYAML)
+				}
+			}
+		})
+	}
+}
