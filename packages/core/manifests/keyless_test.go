@@ -272,19 +272,93 @@ func TestKeyless_AWS_RDSIAMAuthProxy(t *testing.T) {
 	}
 }
 
-// TestKeyless_AlibabaExcluded: Alibaba ApsaraDB RDS has no token-based DB login → documented
-// exclusion. An iam_auth db on Alibaba keeps the password path even with the flag on.
-func TestKeyless_AlibabaExcluded(t *testing.T) {
-	apps, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "alibaba",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-		Outputs:       map[string]string{},
-	})
-	a := apps[0]
-	if len(a.Sidecars) != 0 || len(a.SecretEnv) != 2 {
-		t.Errorf("alibaba → password path (documented exclusion); sidecars=%+v secretEnv=%+v", a.Sidecars, a.SecretEnv)
+// TestKeyless_ExcludedCloudNeverSilentlyDowngrades: Alibaba ApsaraDB RDS has no token-based DB login
+// and Hetzner's in-cluster databases have no identity plane → documented exclusions. The binding must
+// fail CLOSED with the exclusion's reason.
+//
+// This test used to assert the opposite — that an `iam_auth: true` database on Alibaba quietly
+// acquired a PASSWORD (`secretEnv` of length 2). That is the defect #1510 fixes, and it contradicted
+// KeylessDBTarget's own doc comment ("must never quietly acquire a password"). A user who asked for
+// keyless and silently got a password has no way to find out; a user whose deploy refuses, citing
+// ApsaraDB's control-plane-only RAM, knows exactly what happened.
+func TestKeyless_ExcludedCloudNeverSilentlyDowngrades(t *testing.T) {
+	for _, provider := range []string{"alibaba", "hetzner"} {
+		t.Run(provider, func(t *testing.T) {
+			apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+				Provider:      provider,
+				KeylessDBAuth: true,
+				Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+				Outputs:       map[string]string{},
+			})
+			a := apps[0]
+			if len(a.Sidecars) != 0 {
+				t.Errorf("an excluded cell renders no proxy, got %+v", a.Sidecars)
+			}
+			if len(a.SecretEnv) != 0 {
+				t.Errorf("a db marked iam_auth must NOT acquire a password on an excluded cloud, got %+v", a.SecretEnv)
+			}
+			if _, ok := envValue(a.Env, "DATABASE_PASSWORD"); ok {
+				t.Error("fail-closed: no password env on an excluded cell")
+			}
+			// The refusal must carry the product-voice reason, not a bare "unsupported".
+			report := strings.Join(skipped, " ")
+			if !strings.Contains(report, "fail-closed") || !strings.Contains(report, "keeps a generated password") {
+				t.Errorf("want a fail-closed report carrying the cell's reason, got %v", skipped)
+			}
+		})
 	}
+}
+
+// TestKeylessDBTarget_IsProviderBlind pins the split that makes that refusal possible: KeylessDBTarget
+// answers "did the operator ask for this?" and nothing else. It used to answer "can we do it?" too, by
+// returning false for alibaba/hetzner — which is how the downgrade became silent, since a `false` here
+// routes the binding to the password path with no error raised anywhere.
+func TestKeylessDBTarget_IsProviderBlind(t *testing.T) {
+	dbs := []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}}
+	target := types.ServiceBindingTarget{Kind: "database", Name: "orders-db"}
+	if !KeylessDBTarget(target, dbs) {
+		t.Error("an iam_auth database is a keyless target regardless of cloud")
+	}
+	off := []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(false)}}
+	if KeylessDBTarget(target, off) {
+		t.Error("a password-auth database is not a keyless target")
+	}
+	if KeylessDBTarget(types.ServiceBindingTarget{Kind: "cache", Name: "orders-db"}, dbs) {
+		t.Error("only database targets are keyless targets")
+	}
+}
+
+// TestKeylessCellsTotal is the cloud-parity rule as a test. Absence used to mean "excluded", so
+// alibaba and hetzner were excluded by not being written down — and the canvas, which could not read
+// this table at all, went on offering the toggle for them. A cell nobody thought about must fail here
+// rather than compile into a hole.
+func TestKeylessCellsTotal(t *testing.T) {
+	for _, cloud := range []string{providerAWS, providerGCP, providerAzure, providerAlibaba, providerHetzner} {
+		for _, engine := range []string{enginePostgres, engineMySQL} {
+			cell, ok := keylessCells[cloud][engine]
+			if !ok {
+				t.Errorf("%s × %s has no cell — every cloud the console can place a database on needs one", cloud, engine)
+				continue
+			}
+			switch cell.state {
+			case cellLive:
+				if cell.reason != "" {
+					t.Errorf("%s × %s is live but carries a reason %q — a reason is what a REFUSAL says", cloud, engine, cell.reason)
+				}
+			case cellPending, cellExcluded:
+				if cell.reason == "" {
+					t.Errorf("%s × %s is %q with no reason — the canvas and the deploy error would have nothing to show", cloud, engine, cell.state)
+				}
+			default:
+				t.Errorf("%s × %s has unknown state %q", cloud, engine, cell.state)
+			}
+		}
+	}
+	// The list above is the five clouds a project can actually be placed on. It is deliberately NOT
+	// types.AllCloudProviders, which carries `digitalocean` and `civo` — enum values with no project
+	// template, so there is no keyless decision to make about them yet. The check that a PLACEABLE
+	// cloud never goes missing lives in gen-keyless-cells.mjs, which fails when a CloudProviderSlug
+	// has no cell: the slug union is the real placeable set and it only exists on the TypeScript side.
 }
 
 // TestKeyless_MissingConnectionName_FailsClosed: a keyless GCP binding with no connection-name output
@@ -468,9 +542,11 @@ func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 }
 
 // TestKeylessCellSupported_UnknownProviderOrEngine: the gate refuses anything it does not know about
-// rather than defaulting into a neighbouring cell's wiring.
+// rather than defaulting into a neighbouring cell's wiring — and an EXCLUDED cell is refused with the
+// cell's own reason, so the sentence that answers "why not" is the whole message rather than being
+// buried under our framing.
 func TestKeylessCellSupported_UnknownProviderOrEngine(t *testing.T) {
-	if err := keylessCellSupported("hetzner", enginePostgres); err == nil {
+	if err := keylessCellSupported("digitalocean", enginePostgres); err == nil {
 		t.Error("an unlisted provider must be refused")
 	}
 	if err := keylessCellSupported("aws", "mariadb"); err == nil {
@@ -478,6 +554,16 @@ func TestKeylessCellSupported_UnknownProviderOrEngine(t *testing.T) {
 	}
 	if err := keylessCellSupported("azure", engineMySQL); err != nil {
 		t.Errorf("azure/mysql is implemented, got %v", err)
+	}
+	for _, tc := range []struct{ provider, engine, want string }{
+		{"hetzner", enginePostgres, hetznerKeylessExclusion},
+		{"alibaba", enginePostgres, alibabaKeylessExclusion},
+		{"alibaba", engineMySQL, alibabaKeylessExclusion},
+	} {
+		err := keylessCellSupported(tc.provider, tc.engine)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("keylessCellSupported(%q, %q) = %v, want the exclusion reason verbatim", tc.provider, tc.engine, err)
+		}
 	}
 }
 

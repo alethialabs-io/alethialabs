@@ -123,10 +123,15 @@ func bootstrapJobName(t types.ServiceBindingTarget) string {
 // one keyless database target. It reads the per-cloud admin-connection outputs from opts.Outputs and
 // fails CLOSED — returning an error the caller reports — when a required output is missing, so we
 // never emit a Job that can't connect (which would wedge ArgoCD on a failing PreSync hook). Only
-// called for a target KeylessDBTarget already accepted; provider is one of aws|gcp|azure.
+// called for a target KeylessDBTarget already accepted — which since #1510 means only that the
+// OPERATOR asked for keyless, not that this cell can honor it. So the cell gate is applied here too,
+// and both lanes refuse an excluded cell with the same sentence.
 func RenderBootstrapJob(opts Options, t types.ServiceBindingTarget) (BootstrapJobResult, error) {
 	if opts.RunnerImage == "" {
 		return BootstrapJobResult{}, fmt.Errorf("no runner image for the keyless bootstrap Job (db-bootstrap/db-token)")
+	}
+	if err := keylessCellSupported(opts.Provider, dbEngineForTarget(opts, t)); err != nil {
+		return BootstrapJobResult{}, err
 	}
 	ns := opts.Namespace
 	if ns == "" {

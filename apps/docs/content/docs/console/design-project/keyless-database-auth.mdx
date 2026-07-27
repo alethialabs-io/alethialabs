@@ -138,11 +138,19 @@ The Job's *own* admin credential is keyless where the cloud allows it:
 
 ### Where it doesn't apply
 
-- **Alibaba Cloud (ApsaraDB RDS)** — ApsaraDB has no IAM/RAM token-based database login (its RAM
-  controls the *management* API, not database logins), so an Alibaba database stays on the
-  provisioned-password path even with IAM Auth on.
+On these clouds the canvas shows **IAM authentication** as unavailable and says why, so you cannot
+turn it on. If a database carries the setting anyway — imported from another cloud, written by the
+CLI, or created before this gate — the deploy **fails** with the same explanation. It does not fall
+back to a password: a database you marked as password-free never quietly gets one.
+
+- **Alibaba Cloud (ApsaraDB RDS)** — ApsaraDB has no IAM/RAM token-based database login. RAM controls
+  the *management* API, not database logins, so there is no token for a keyless connection to
+  authenticate with.
 - **Hetzner** — Hetzner databases are in-cluster ArgoCD add-ons, not a managed cloud service with an
-  IAM plane, so there is no keyless identity to use; they use the password path.
+  IAM plane, so there is no keyless identity to use.
+
+To use keyless auth on one of these, move the database to AWS, Google Cloud, or Azure. Otherwise
+leave IAM authentication off and use the generated-password path, which is fully supported.
 
 ## Rollout status
 

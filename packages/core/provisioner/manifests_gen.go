@@ -182,7 +182,7 @@ func writeBootstrapJobs(dir string, vc *types.ProjectConfig, mopts manifests.Opt
 	seen := map[string]bool{}
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
-			if !manifests.KeylessDBTarget(mopts.Provider, b.Target, vc.Databases) {
+			if !manifests.KeylessDBTarget(b.Target, vc.Databases) {
 				continue
 			}
 			key := string(b.Target.Kind) + "/" + b.Target.Name
@@ -519,7 +519,7 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 			// instead of a secretKeyRef, so there is no Secret to materialize here. Skip in lock-step
 			// with FromServices' keyless decision (same KeylessDBTarget predicate) so the two lanes
 			// never disagree about which bindings are keyless.
-			if keylessOn && manifests.KeylessDBTarget(string(vc.Provider), b.Target, vc.Databases) {
+			if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
 				continue
 			}
 			yaml, skipped, renderErr := manifests.RenderExternalSecret(manifests.ExternalSecretParams{
