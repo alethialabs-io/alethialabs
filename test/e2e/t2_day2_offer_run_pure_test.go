@@ -13,9 +13,11 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -79,7 +81,7 @@ func TestApplyDay2ResizeUsesPerCloudClass(t *testing.T) {
 				t.Fatalf("resize target %q equals the template default — the plan would be empty", target)
 			}
 			dbs := []types.ProjectDatabaseConfig{{Name: "db", InstanceClass: def}}
-			m := applyDay2Resize(dbs, provider)
+			m := applyDay2Resize(dbs, nil, provider)
 			if !m.Applied {
 				t.Fatalf("resize did not apply: %s", m.Detail)
 			}
@@ -90,25 +92,106 @@ func TestApplyDay2ResizeUsesPerCloudClass(t *testing.T) {
 	}
 }
 
+// TestApplyDay2ResizeMovesCachesOnEveryCloud is the cache half of the same invariant (#1526).
+//
+// Deliberately NOT a per-cloud target table: cache size is cloud-indifferent (MemoryGB), so the
+// target comes from the catalog and every cloud resolves it itself. What has to hold on all four
+// is that a resize is available at all and that it MOVES the size — a table here would just be a
+// second copy of catalog.json.
+func TestApplyDay2ResizeMovesCachesOnEveryCloud(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba"} {
+		t.Run(provider, func(t *testing.T) {
+			caches := []types.ProjectCacheConfig{{Name: "c", MemoryGB: 1}}
+			m := applyDay2Resize(nil, caches, provider)
+			if !m.Applied {
+				t.Fatalf("cache resize did not apply on %s: %s", provider, m.Detail)
+			}
+			if caches[0].MemoryGB <= 1 {
+				t.Errorf("memory_gb = %g, want a larger tier than the 1GB it started on", caches[0].MemoryGB)
+			}
+			// The database leg had nothing to do; the summary must not claim it anyway.
+			if !slices.Contains(m.Offers, "cache") || slices.Contains(m.Offers, "database") {
+				t.Errorf("offers = %v, want [cache] only", m.Offers)
+			}
+		})
+	}
+}
+
+// A stale explicit NodeType alongside the new size would make the config say two different things.
+// MemoryGB already wins at resolve time, so the resize clears it rather than leaving a contradiction
+// in the snapshot the proof is read from.
+func TestApplyDay2ResizeClearsLegacyCacheNodeType(t *testing.T) {
+	caches := []types.ProjectCacheConfig{{Name: "c", MemoryGB: 1, NodeType: "cache.t3.small"}}
+	if m := applyDay2Resize(nil, caches, "aws"); !m.Applied {
+		t.Fatalf("cache resize did not apply: %s", m.Detail)
+	}
+	if caches[0].NodeType != "" {
+		t.Errorf("node_type = %q, want it cleared so the config names one size", caches[0].NodeType)
+	}
+}
+
 // TestApplyDay2ResizeRefusesNoOp is the vacuity guard: resizing to the class the offer already
 // runs plans nothing, so it must be reported as not-applied rather than handed on as a mutation.
+// The same holds for a cache already at the provider's largest tier — there is nowhere up to go.
 func TestApplyDay2ResizeRefusesNoOp(t *testing.T) {
-	dbs := []types.ProjectDatabaseConfig{{Name: "db", InstanceClass: day2ResizeClass["gcp"]}}
-	m := applyDay2Resize(dbs, "gcp")
-	if m.Applied {
-		t.Error("resize to the CURRENT class reported as applied — that plans no change")
-	}
+	t.Run("database already at the target class", func(t *testing.T) {
+		dbs := []types.ProjectDatabaseConfig{{Name: "db", InstanceClass: day2ResizeClass["gcp"]}}
+		m := applyDay2Resize(dbs, nil, "gcp")
+		if m.Applied {
+			t.Error("resize to the CURRENT class reported as applied — that plans no change")
+		}
+	})
+
+	t.Run("cache already at the top tier", func(t *testing.T) {
+		top := 0.0
+		for _, tier := range catalog.MustLoad().Cache["aws"].Tiers {
+			if tier.MemoryGB > top {
+				top = tier.MemoryGB
+			}
+		}
+		caches := []types.ProjectCacheConfig{{Name: "c", MemoryGB: top}}
+		m := applyDay2Resize(nil, caches, "aws")
+		if m.Applied {
+			t.Error("cache resize applied at the largest tier — there is no larger one to plan")
+		}
+		if caches[0].MemoryGB != top {
+			t.Errorf("memory_gb = %g — an unapplied resize must not mutate the config", caches[0].MemoryGB)
+		}
+	})
 }
 
 // TestApplyDay2ResizeUnknownProvider — a provider with no recorded target is an honest skip.
 func TestApplyDay2ResizeUnknownProvider(t *testing.T) {
 	dbs := []types.ProjectDatabaseConfig{{Name: "db", InstanceClass: "whatever"}}
-	m := applyDay2Resize(dbs, "hetzner")
+	m := applyDay2Resize(dbs, nil, "hetzner")
 	if m.Applied {
 		t.Error("resize applied on a provider with no recorded target")
 	}
 	if dbs[0].InstanceClass != "whatever" {
 		t.Error("an unapplied resize must not mutate the config")
+	}
+}
+
+// OffersExercised is built from what a mutation TOUCHED, never from the op — an environment with
+// databases and no caches runs the resize op and must still report only the database.
+func TestDay2ExercisedReportsCoverageNotIntent(t *testing.T) {
+	dbs := []types.ProjectDatabaseConfig{{Name: "db", InstanceClass: "db-f1-micro"}}
+	m := applyDay2Resize(dbs, nil, "gcp")
+	if !m.Applied {
+		t.Fatalf("resize did not apply: %s", m.Detail)
+	}
+	got := day2Exercised(m)
+	if len(got) != 1 || got[0] != "database (resize)" {
+		t.Errorf("exercised = %v, want [database (resize)] — no cache was touched", got)
+	}
+
+	both := applyDay2Resize(
+		[]types.ProjectDatabaseConfig{{Name: "db", InstanceClass: "db-f1-micro"}},
+		[]types.ProjectCacheConfig{{Name: "c", MemoryGB: 1}},
+		"gcp",
+	)
+	if want := []string{"database (resize)", "cache (resize)"}; !slices.Equal(day2Exercised(both), want) {
+		t.Errorf("exercised = %v, want %v", day2Exercised(both), want)
 	}
 }
 

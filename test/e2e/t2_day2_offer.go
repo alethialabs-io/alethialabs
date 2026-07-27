@@ -65,6 +65,7 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -319,6 +320,11 @@ type Day2Mutation struct {
 	Field   string `json:"field"`
 	Detail  string `json:"detail"`
 	Applied bool   `json:"applied"`
+	// Offers names what this mutation ACTUALLY touched ("database", "cache"). Applied says the
+	// plan is worth running; this says what the plan COVERS, and they are not the same once an op
+	// spans more than one offer. An environment with databases but no caches must not be read as
+	// cache coverage — OffersExercised is built from this, never from the op alone.
+	Offers []string `json:"offers,omitempty"`
 }
 
 // applyDay2Update mutates a TUNABLE on every database offer: backup retention, +1 day.
@@ -329,9 +335,20 @@ type Day2Mutation struct {
 // rejected: a version string valid on one cloud is invalid on the next, and an invalid one
 // fails at plan time — which would look identical to the hazard this gate hunts for.
 //
-// Caches are deliberately NOT mutated here: no cache tunable is wired on all four clouds
-// (MemoryGB reaches aws+gcp only, NumCacheNodes aws+gcp+azure), so any choice would be a
-// half-dead per-cloud table. The summary records which offers were exercised.
+// Caches are still NOT mutated on the UPDATE leg — but for a narrower reason than before #1526,
+// and no longer for the reason the old comment gave. MemoryGB now reaches all four clouds (#1526
+// gave azure the axis; alibaba already had it), so the SIZE axis is covered — on the RESIZE leg,
+// where it belongs. What the cache offer still has no candidate for is a NON-size tunable that
+// converges in place everywhere:
+//
+//	NumCacheNodes  — aws + gcp + azure only; alibaba never reads it.
+//	EngineVersion  — per-cloud vocabulary, exactly the reason retention beat it for databases.
+//	MultiAz        — universal, but it is a TOPOLOGY change: on several clouds it legitimately
+//	                 plans a replace, so an update leg built on it would report a hazard that
+//	                 says nothing about whether updates converge.
+//
+// So the update leg stays database-only and says so, rather than reaching for MultiAz to make the
+// table look full. The summary records which offers each op actually exercised.
 func applyDay2Update(dbs []types.ProjectDatabaseConfig) Day2Mutation {
 	m := Day2Mutation{Op: Day2Update, Field: "databases[].backup_retention_days"}
 	if len(dbs) == 0 {
@@ -347,38 +364,133 @@ func applyDay2Update(dbs []types.ProjectDatabaseConfig) Day2Mutation {
 		dbs[i].BackupRetentionDays = &next
 	}
 	m.Applied = true
+	m.Offers = []string{"database"}
 	m.Detail = fmt.Sprintf("backup retention +1 day on %d database offer(s)", len(dbs))
 	return m
 }
 
-// applyDay2Resize mutates the SIZE axis on every database offer — the instance class, to the
-// per-cloud target in day2ResizeClass. A provider with no entry yields Applied=false, which the
-// caller reports as an honest skip rather than a pass.
-func applyDay2Resize(dbs []types.ProjectDatabaseConfig, provider string) Day2Mutation {
-	m := Day2Mutation{Op: Day2Resize, Field: "databases[].instance_class"}
-	target, ok := day2ResizeClass[provider]
-	if !ok {
-		m.Detail = fmt.Sprintf("no resize target recorded for provider %q", provider)
-		return m
-	}
-	if len(dbs) == 0 {
-		m.Detail = "no database offer in this environment"
-		return m
-	}
-	// A resize to the class the offer already runs plans nothing. Refuse rather than emit a
-	// mutation the caller would read as applied and then fail on an empty changeset.
-	for i := range dbs {
-		if dbs[i].InstanceClass == target {
-			m.Detail = fmt.Sprintf("database already runs %s — no resize to propose", target)
-			return m
+// applyDay2Resize mutates the SIZE axis on every database AND cache offer.
+//
+// The two offers reach it differently, and that asymmetry is the point. A database's size is
+// `InstanceClass`, a concrete provider SKU, so its target has to be named per cloud
+// (day2ResizeClass). A cache's size is `MemoryGB` — cloud-indifferent since #1526, read by all
+// four providers — so its target needs NO per-cloud table: ask the catalog for the next tier up
+// and every cloud resolves that number to its own SKU. A hand-kept cache table would have been a
+// second copy of packages/core/catalog/catalog.json, drifting from it on the first refresh.
+//
+// Each leg applies independently: a provider with no database target, or an environment with no
+// caches, skips that leg and the other still runs. Applied is true when EITHER did, and Offers
+// records which — so a database-only environment can never be read as cache coverage.
+func applyDay2Resize(
+	dbs []types.ProjectDatabaseConfig,
+	caches []types.ProjectCacheConfig,
+	provider string,
+) Day2Mutation {
+	m := Day2Mutation{Op: Day2Resize}
+	var fields, details, skipped []string
+
+	// ── databases: a per-cloud SKU ────────────────────────────────────────────────────────
+	switch target, ok := day2ResizeClass[provider]; {
+	case !ok:
+		skipped = append(skipped, fmt.Sprintf("database: no resize target recorded for provider %q", provider))
+	case len(dbs) == 0:
+		skipped = append(skipped, "database: no database offer in this environment")
+	default:
+		// A resize to the class the offer already runs plans nothing. Refuse rather than emit a
+		// mutation the caller would read as applied and then fail on an empty changeset.
+		already := false
+		for i := range dbs {
+			if dbs[i].InstanceClass == target {
+				already = true
+			}
+		}
+		if already {
+			skipped = append(skipped, fmt.Sprintf("database: already runs %s — no resize to propose", target))
+		} else {
+			for i := range dbs {
+				dbs[i].InstanceClass = target
+			}
+			m.Offers = append(m.Offers, "database")
+			fields = append(fields, "databases[].instance_class")
+			details = append(details, fmt.Sprintf("instance class → %s on %d database offer(s)", target, len(dbs)))
 		}
 	}
-	for i := range dbs {
-		dbs[i].InstanceClass = target
+
+	// ── caches: the cloud-indifferent size ────────────────────────────────────────────────
+	if len(caches) == 0 {
+		skipped = append(skipped, "cache: no cache offer in this environment")
+	} else if next, tier, ok := day2NextCacheTier(provider, caches); !ok {
+		skipped = append(skipped, fmt.Sprintf("cache: no larger tier than the current one on %s", provider))
+	} else {
+		for i := range caches {
+			caches[i].MemoryGB = next
+			// A stale explicit SKU would shadow nothing (MemoryGB wins in resolveCacheNodeType),
+			// but leaving it would make the config say two different sizes. Clear it so the
+			// snapshot and the plan agree about what was asked for.
+			caches[i].NodeType = ""
+		}
+		m.Offers = append(m.Offers, "cache")
+		fields = append(fields, "caches[].memory_gb")
+		details = append(details, fmt.Sprintf("memory → %gGB (%s) on %d cache offer(s)", next, tier, len(caches)))
 	}
-	m.Applied = true
-	m.Detail = fmt.Sprintf("instance class → %s on %d database offer(s)", target, len(dbs))
+
+	m.Applied = len(m.Offers) > 0
+	m.Field = strings.Join(fields, " + ")
+	if m.Applied {
+		m.Detail = strings.Join(details, "; ")
+		if len(skipped) > 0 {
+			m.Detail += " (" + strings.Join(skipped, "; ") + ")"
+		}
+	} else {
+		m.Detail = strings.Join(skipped, "; ")
+	}
 	return m
+}
+
+// day2Exercised renders a mutation's Offers as its OffersExercised entries — "cache (resize)".
+//
+// It reads Offers, never the op, because the two answer different questions: the op is what was
+// attempted, Offers is what the plan actually covers. An environment with databases and no caches
+// runs the resize op and must still report only "database (resize)", or the summary claims a
+// coverage the nightly never proved — the vacuity this whole surface exists to refuse.
+func day2Exercised(m Day2Mutation) []string {
+	out := make([]string, 0, len(m.Offers))
+	for _, offer := range m.Offers {
+		out = append(out, fmt.Sprintf("%s (%s)", offer, m.Op))
+	}
+	return out
+}
+
+// day2NextCacheTier returns the memory size of the catalog tier ABOVE the one these caches
+// currently resolve to on this provider, plus that tier's SKU for the summary line.
+//
+// "Above the LARGEST of them" — with several caches in one environment, moving to a tier one of
+// them already occupies would plan nothing for that one. Reports false at the top of the
+// provider's inventory, which the caller records as an honest skip.
+func day2NextCacheTier(provider string, caches []types.ProjectCacheConfig) (float64, string, bool) {
+	cp, ok := catalog.MustLoad().Cache[provider]
+	if !ok || len(cp.Tiers) == 0 {
+		return 0, "", false
+	}
+	// The floor to beat. An unsized cache (MemoryGB 0) runs the template's own default, so the
+	// smallest tier still counts as a move away from it.
+	var current float64
+	for i := range caches {
+		if caches[i].MemoryGB > current {
+			current = caches[i].MemoryGB
+		}
+	}
+	var next *catalog.CacheTier
+	for i := range cp.Tiers {
+		t := &cp.Tiers[i]
+		if t.MemoryGB > current && (next == nil || t.MemoryGB < next.MemoryGB) {
+			next = t
+		}
+	}
+	if next == nil {
+		return 0, "", false
+	}
+	return next.MemoryGB, next.Value, true
 }
 
 // planFromMap converts the provisioner's PlanResult.PlanJSON (an untyped map, because it
@@ -411,8 +523,11 @@ type OfferSummary struct {
 	Postures  []*Day2Posture `json:"postures,omitempty"`
 	Mutations []Day2Mutation `json:"mutations,omitempty"`
 	Skipped   []string       `json:"skipped,omitempty"`
-	// OffersExercised names what update/resize actually touched. The gate covers the database
-	// offer on every cloud; caches are covered by destroy only (see applyDay2Update).
+	// OffersExercised names what update/resize actually touched, built from each mutation's
+	// Offers rather than from the op — so it reports coverage, not intent. The gate covers the
+	// database offer on every cloud for both ops, and the cache offer on resize (#1526); a cache
+	// UPDATE has no cloud-indifferent tunable to move, so caches remain destroy-only there (the
+	// reasoning is on applyDay2Update).
 	OffersExercised []string `json:"offers_exercised,omitempty"`
 	Verdict         string   `json:"verdict"`
 }
