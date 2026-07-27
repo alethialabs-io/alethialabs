@@ -77,8 +77,10 @@ import {
 	type CloudProviderSlug,
 	type ConversionWarning,
 	convertProjectConfig,
+	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
 	getProvider,
+	keylessUnavailableReasonForCloud,
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
@@ -124,6 +126,23 @@ function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
 		`Database "${name}": ${label} databases can't be provisioned on Hetzner — the in-cluster ` +
 			"CloudNativePG operator supports PostgreSQL only. Switch the database engine to PostgreSQL " +
 			"or move the stack to a cloud with a managed service for this engine.",
+	);
+}
+
+/**
+ * Deploy-time honesty gate (fail-closed), same shape/placement as hetznerDbEngineGateError: reject a
+ * database marked `iam_auth` on a cloud × engine cell that cannot honor it.
+ *
+ * The canvas disables the toggle with this exact reason, but the canvas is not a boundary — the CLI
+ * writes `iam_auth` on any cloud (lib/cli/project-components.ts), an AI-composed graph can carry it,
+ * and legacy rows predate the gate. This is the authoritative layer, and it THROWS rather than
+ * clearing the flag: silently turning off a security setting at deploy time is the same defect one
+ * layer up from the one #1510 fixes. The renderer refuses these cells too, with the same sentence.
+ */
+function keylessAuthGateError(name: string, reason: string): Error {
+	return new Error(
+		`Database "${name}": ${reason} Turn IAM authentication off for this database, or move it to a ` +
+			"cloud that supports keyless database auth.",
 	);
 }
 
@@ -959,6 +978,19 @@ async function buildConfigSnapshot(
 		// Map them to install specs and append — the runner renders each as an ArgoCD
 		// Application via the same generic add-on path (packages/core/argocd). The data-component
 		// rows still ride the snapshot for the UI; the Hetzner tofu template ignores them.
+		// Fail-closed keyless gate (#1510): a database marked `iam_auth` on a cell that cannot
+		// honor it. The canvas disables the toggle with this same reason, but the CLI, an
+		// AI-composed graph and legacy rows all reach here without passing the canvas — and the
+		// old behaviour was to hand such a database a PASSWORD with no error anywhere.
+		for (const db of databases) {
+			if (!db.iam_auth) continue;
+			const reason = keylessUnavailableReasonForCloud(
+				identity.provider,
+				dbEngineFamily(db),
+			);
+			if (reason) throw keylessAuthGateError(db.name, reason);
+		}
+
 		if (identity.provider === "hetzner") {
 			// Fail-closed engine gate: the mapper only charts what it supports (a NULL
 			// engine_family defaults to postgres), so anything else must throw here rather

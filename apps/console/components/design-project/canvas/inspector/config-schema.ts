@@ -12,9 +12,11 @@ import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
+	dbEngineFamily,
 	getProvider,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
+	keylessUnavailableReason,
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
@@ -287,6 +289,21 @@ export interface FieldDef<C = AnyConfig> {
 	/** Hide the field unless the predicate holds (e.g. only when a toggle is on, or only
 	 * for a given provider via the context). One-arg closures keep working unchanged. */
 	visibleWhen?: (config: C, ctx: FieldCtx<C>) => boolean;
+	/**
+	 * Why this field cannot be honored on the CURRENT cell (cloud × config), or null when it can.
+	 *
+	 * Orthogonal to `visibleWhen`, and both may be present. `visibleWhen` says the field is not part
+	 * of this shape at all — Hetzner has no ACU capacity, so a capacity knob there is meaningless.
+	 * This says the field IS part of the shape and this particular cell cannot honor it, so the
+	 * control renders DISABLED with the reason in place of its description. An option that silently
+	 * isn't there reads as a bug, while one that says why is an answer (connector-select.tsx).
+	 *
+	 * NOT `OptionAdvisory`. That is ink-only and must never map to `disabled` (#918); this is the
+	 * separate, deliberately-named channel for a real gate, so the two can never be confused.
+	 *
+	 * A hidden field is never asked — `visibleWhen` filters first, and this never filters.
+	 */
+	unavailableWhen?: (config: C, ctx: FieldCtx<C>) => string | null;
 	/** Normalize raw text input (e.g. lowercasing a name). */
 	transform?: (raw: string) => string;
 	/** Nested read escape hatch (e.g. `instance_types[0]`). */
@@ -359,17 +376,14 @@ const CAPACITY_MODE_DESC: Record<string, string> = {
 	provisioned: "Fixed throughput; cheaper at steady, predictable load.",
 };
 
-/** Human label for the current DB engine family. */
+/** Human label for the current DB engine family. Normalization (including the legacy concrete
+ * `engine` column and the implicit postgres default) lives in `dbEngineFamily` — one place, since
+ * the keyless gate and the store normalizer key on the same answer. */
 function engineLabel(config: {
 	engine_family?: string | null;
 	engine?: string | null;
 }): string {
-	const fam =
-		config.engine_family ??
-		(typeof config.engine === "string" && config.engine.includes("mysql")
-			? "mysql"
-			: "postgres");
-	return fam === "mysql" ? "MySQL" : "PostgreSQL";
+	return dbEngineFamily(config) === "mysql" ? "MySQL" : "PostgreSQL";
 }
 
 // ── per-kind config ─────────────────────────────────────────────────────────
@@ -1104,6 +1118,17 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "switch",
 						label: "IAM authentication",
 						description: "Authenticate with short-lived cloud IAM tokens instead of a password.",
+						// A cloud must be chosen before this question has an answer — and picking it
+						// up front is also what stops "toggle it on first, land on Hetzner second".
+						requiresProvider: true,
+						// Gated to the cells the RENDERER can actually build, read from the generated
+						// mirror of packages/core/manifests/keyless.go. Disabled-with-a-reason rather
+						// than hidden: keyless is a thing people come looking for, and on Hetzner the
+						// Security section would otherwise simply be missing it, with nothing to say
+						// why. The reason string IS the Go table's, so this copy cannot fork from the
+						// deploy-time refusal or the offer-parity matrix (#1510).
+						unavailableWhen: (config, { provider }) =>
+							keylessUnavailableReason(provider, dbEngineFamily(config)),
 					},
 					{
 						key: "backup_retention_days",

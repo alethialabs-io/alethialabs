@@ -610,10 +610,11 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 	var r bindingResolution
 	proxied := map[string]bool{} // one auth proxy per keyless target (dedup across bindings)
 	for _, b := range bindings {
-		// A binding uses keyless auth when the flag is on AND the bound database has IAM/AAD auth on
-		// a provider that supports it (gcp/azure). Otherwise the existing password/ExternalSecret
-		// path is used, unchanged.
-		keyless := opts.KeylessDBAuth && KeylessDBTarget(opts.Provider, b.Target, opts.Databases)
+		// A binding uses keyless auth when the flag is on AND the operator marked the bound database
+		// `iam_auth`. Whether this cloud × engine cell CAN honor that is a separate question, asked by
+		// keylessDBSidecar below — it fails the binding closed with the cell's reason rather than
+		// falling back to a password the operator never asked for.
+		keyless := opts.KeylessDBAuth && KeylessDBTarget(b.Target, opts.Databases)
 		if keyless {
 			// The workload connects to a LOCAL auth proxy sidecar. Build it first: if it can't be
 			// wired (a missing tofu output — connection name / runner image), the whole binding

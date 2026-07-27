@@ -7,13 +7,20 @@
 // database binding renders a proxy or fails closed. Turning a cell OFF is a claim — "one of this
 // cell's legs is not built" — and that claim rots silently in both directions:
 //
-//   A · DEAD CELL     every leg shipped, the cell stayed off. The binding fails closed citing lanes
-//                     that are already merged, so a working capability is unreachable and reads as
-//                     unbuilt. This is the state aws × mysql and gcp × mysql sat in after #1504,
-//                     #1505, #1506 and #1507 each landed their half and none flipped the boolean.
-//   B · OVER-OPEN     a leg is missing, the cell is on. The pod renders cleanly and then cannot
+//   A · DEAD CELL     every leg shipped, the cell stayed `pending`. The binding fails closed citing
+//                     lanes that are already merged, so a working capability is unreachable and reads
+//                     as unbuilt. This is the state aws × mysql and gcp × mysql sat in after #1504,
+//                     #1505, #1506 and #1507 each landed their half and none flipped the cell.
+//   B · OVER-OPEN     a leg is missing, the cell is `live`. The pod renders cleanly and then cannot
 //                     authenticate at runtime — precisely the lie the fail-closed table exists to
 //                     prevent, and the most expensive way to discover it is in production.
+//   C · UNREASONED    a non-live cell with no reason. Since #1510 the reason is USER-FACING copy on
+//                     three surfaces — the canvas's disabled toggle, the deploy refusal, and the
+//                     offer-parity matrix — so an empty one ships a gate that withholds a capability
+//                     and declines to say why, which reads as a bug.
+//
+// `excluded` is deliberately exempt from A: it is a permanent product boundary, not debt, so legs
+// existing for it proves nothing. Only `pending` makes a checkable claim about missing work.
 //
 // Nothing else catches either shape. check-offer-parity.mjs reads the TEMPLATES, so once the tofu
 // side of a cell ships it reports `database:<engine>:iam_auth` as buildable and goes green while the
@@ -39,83 +46,25 @@
 
 import { readFileSync } from "node:fs";
 
+import {
+	funcBody,
+	neutralizeBracesInStrings,
+	readKeylessCells,
+	stripComments,
+} from "./lib/keyless-cells.mjs";
+
 const ROOT = "../..";
 const CELLS_SRC = `${ROOT}/packages/core/manifests/keyless.go`;
 const JOB_SRC = `${ROOT}/packages/core/manifests/bootstrap_job.go`;
 const SQL_SRC = `${ROOT}/apps/runner/internal/agent/db_bootstrap.go`;
 
-// ── helpers ─────────────────────────────────────────────────────────────────────────
-
-/** Blank BRACES inside Go string literals, and nothing else.
- *
- * Load-bearing for the brace matcher below: the bootstrap SQL is full of `DO $$ … END $$;` and
- * backtick-quoted identifiers, and a stray brace inside one would end a function body early — the
- * guard would then read a truncated body and report a missing leg that is right there.
- *
- * Blanking the whole literal instead is the obvious version and it is wrong: the provider switch is
- * matched ON string literals (`case "aws":`), so erasing them made every cell look unimplemented. */
-function neutralizeBracesInStrings(src) {
-	const scrub = (m) => m.replace(/[{}]/g, " ");
-	return src.replace(/`[^`]*`/g, scrub).replace(/"(?:[^"\\\n]|\\.)*"/g, scrub);
-}
-
-/** Strip `//` line comments, so a leg only DESCRIBED in a doc comment never counts as implemented.
- * `mysqlBootstrapSQL`'s doc comment names all three clouds above a body that might implement one. */
-function stripComments(src) {
-	return src
-		.split("\n")
-		.map((l) => l.replace(/(^|\s)\/\/.*$/, ""))
-		.join("\n");
-}
-
-/** The body of a top-level Go func, brace-matched. Returns "" when the func is absent — an absent
- * renderer is a missing leg, which is the honest reading. */
-function funcBody(src, name) {
-	const start = src.indexOf(`func ${name}(`);
-	if (start === -1) return "";
-	const open = src.indexOf("{", start);
-	if (open === -1) return "";
-	let depth = 0;
-	for (let i = open; i < src.length; i++) {
-		if (src[i] === "{") depth++;
-		else if (src[i] === "}" && --depth === 0) return src.slice(open + 1, i);
-	}
-	return "";
-}
-
-/** `providerAWS` → "aws", `engineMySQL` → "mysql". The table keys are Go constants aliasing the cloud
- * enum, so the lowercased suffix is the same token the switch labels use. */
-const tokenOf = (ident) => ident.replace(/^(provider|engine)/, "").toLowerCase();
-
 // ── the declared side: the keylessCells table ───────────────────────────────────────
 
-const cellsSrc = stripComments(neutralizeBracesInStrings(readFileSync(CELLS_SRC, "utf8")));
-const tableStart = cellsSrc.indexOf("var keylessCells =");
-if (tableStart === -1) {
-	console.error("✗ keyless cells — no `var keylessCells =` in packages/core/manifests/keyless.go.");
-	console.error("  The guard reads that table by name; if it moved or was renamed, update CELLS_SRC here.");
-	process.exit(1);
-}
-const tableBody = (() => {
-	const open = cellsSrc.indexOf("{", tableStart);
-	let depth = 0;
-	for (let i = open; i < cellsSrc.length; i++) {
-		if (cellsSrc[i] === "{") depth++;
-		else if (cellsSrc[i] === "}" && --depth === 0) return cellsSrc.slice(open + 1, i);
-	}
-	return "";
-})();
-
-/** [{cloud, engine, on}] — every cell the table declares. */
-const declared = [];
-for (const m of tableBody.matchAll(/(provider[A-Za-z]+):\s*\{([\s\S]*?)\n\t\}/g)) {
-	const cloud = tokenOf(m[1]);
-	for (const e of m[2].matchAll(/(engine[A-Za-z]+):\s*\{([^}]*)\}/g)) {
-		declared.push({ cloud, engine: tokenOf(e[1]), on: /\bok:\s*true\b/.test(e[2]) });
-	}
-}
-if (declared.length === 0) {
-	console.error("✗ keyless cells — parsed the keylessCells table but found no cells in it.");
+let declared;
+try {
+	declared = readKeylessCells(CELLS_SRC).cells;
+} catch (err) {
+	console.error(`✗ keyless cells — ${err.message}`);
 	process.exit(1);
 }
 
@@ -152,27 +101,50 @@ const findings = [];
 for (const cell of declared) {
 	const legs = legsOf(cell.cloud, cell.engine);
 	const missing = legs.filter((l) => !l.ok);
-	if (!cell.on && missing.length === 0) {
+
+	// A cell that is not live must say why. The reason is not an internal note — it is the sentence
+	// the canvas prints on the disabled toggle and the deploy prints when it refuses, so an empty one
+	// ships a gate with nothing behind it.
+	if (cell.state !== "live" && cell.reason.trim() === "") {
+		findings.push({
+			shape: "unreasoned-cell",
+			cell,
+			detail: `the cell is "${cell.state}" with no reason — the canvas would disable the toggle and say nothing, and the deploy would refuse with an empty message.`,
+		});
+	}
+	if (cell.state === "live" && cell.reason.trim() !== "") {
+		findings.push({
+			shape: "reasoned-live-cell",
+			cell,
+			detail: `the cell is live but carries a reason — a reason is what a REFUSAL says, so this one is never read and will rot.`,
+		});
+	}
+
+	// `pending` is the only state that can be DEAD: it claims a leg is missing, and that claim is
+	// checkable. `excluded` is a permanent product boundary — alibaba has no data-plane token login
+	// however many legs we build — so legs existing there proves nothing and must not fail the guard.
+	if (cell.state === "pending" && missing.length === 0) {
 		findings.push({
 			shape: "dead-cell",
 			cell,
-			detail: `every leg is implemented, but the cell is off — the binding fails closed on a capability that is built.\n      proof: ${legs.map((l) => l.src).join("\n             ")}`,
+			detail: `every leg is implemented, but the cell is still pending — the binding fails closed on a capability that is built.\n      proof: ${legs.map((l) => l.src).join("\n             ")}`,
 		});
 	}
-	if (cell.on && missing.length > 0) {
+	if (cell.state === "live" && missing.length > 0) {
 		findings.push({
 			shape: "over-open",
 			cell,
-			detail: `the cell is on, but ${missing.length} leg(s) are missing — it renders a proxy that cannot authenticate.\n      missing: ${missing.map((l) => `${l.name} → ${l.src}`).join("\n               ")}`,
+			detail: `the cell is live, but ${missing.length} leg(s) are missing — it renders a proxy that cannot authenticate.\n      missing: ${missing.map((l) => `${l.name} → ${l.src}`).join("\n               ")}`,
 		});
 	}
 }
 
-const on = declared.filter((c) => c.on).length;
+const count = (state) => declared.filter((c) => c.state === state).length;
 if (findings.length === 0) {
 	console.log(
-		`✓ keyless cells — ${declared.length} cloud × engine cell(s): ${on} open, ${declared.length - on} fail-closed, ` +
-			`each agreeing with its bootstrap SQL dialect and Job renderer.`,
+		`✓ keyless cells — ${declared.length} cloud × engine cell(s): ${count("live")} live, ` +
+			`${count("pending")} pending, ${count("excluded")} excluded, each agreeing with its bootstrap ` +
+			`SQL dialect and Job renderer, and each non-live cell carrying the reason the canvas shows.`,
 	);
 	process.exit(0);
 }
@@ -184,9 +156,17 @@ for (const f of findings) {
 }
 console.error(`
 The table in packages/core/manifests/keyless.go is a claim about what is built. Make it true:
-  · [dead-cell]  flip the cell to {ok: true} — the legs it was waiting for have landed. Update the
-                 matching row in keyless_test.go so it asserts a rendered proxy on the engine's port.
-  · [over-open]  build the missing leg, or turn the cell back off with a \`why\` naming the lane. A cell
-                 that renders without its legs authenticates as nobody, and only a real apply finds out.
+  · [dead-cell]        flip the cell to {state: cellLive} — the legs it was waiting for have landed.
+                       Update the matching row in keyless_test.go so it asserts a rendered proxy on
+                       the engine's port.
+  · [over-open]        build the missing leg, or set the cell back to cellPending with a reason naming
+                       the lane. A cell that renders without its legs authenticates as nobody, and only
+                       a real apply finds out.
+  · [unreasoned-cell]  write the reason in the product's voice — it is user-facing copy on three
+                       surfaces (canvas toggle, deploy error, offer-parity matrix), not a TODO.
+  · [reasoned-live-cell] drop the reason; a live cell never refuses, so nothing would ever print it.
+
+Then run \`pnpm -F console gen:keyless-cells\` — the TypeScript mirror the canvas reads is generated
+from this table, and CI diff-checks it.
 `);
 process.exit(1);
