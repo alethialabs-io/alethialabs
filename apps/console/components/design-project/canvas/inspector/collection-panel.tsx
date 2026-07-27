@@ -11,6 +11,10 @@ import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import {
+	environmentSecretsStore,
+	secretsStoreLabel,
+} from "@/lib/canvas/secrets-store";
+import {
 	NODE_STATUS_META,
 	resolveNodeStatusFor,
 } from "@/lib/canvas/node-status";
@@ -31,6 +35,8 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const env = useEnvironmentStatus();
 	const addNode = useCanvasStore((s) => s.addNode);
+	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
+	const setEnvSettingsOpen = useCanvasStore((s) => s.setEnvSettingsOpen);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const [filter, setFilter] = useState("");
@@ -40,6 +46,11 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const shown = needle
 		? members.filter((n) => (configName(n.data) ?? "").toLowerCase().includes(needle))
 		: members;
+
+	// Secrets read through ONE store per environment (#1412). Surface which one here, where the
+	// secrets are managed, even though the choice is made in the environment-settings sheet — someone
+	// looking at a list of secrets is exactly who needs to know where they come from.
+	const secretsStore = kind === "secret" ? environmentSecretsStore(nodes) : null;
 
 	const title = def.collection?.title ?? def.label;
 	const singular = def.collection?.singular ?? def.label.toLowerCase();
@@ -74,6 +85,22 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 					<X className="h-4 w-4" />
 				</Button>
 			</div>
+
+			{secretsStore && members.length > 0 ? (
+				<button
+					type="button"
+					onClick={() => setEnvSettingsOpen(true)}
+					className="flex items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-accent"
+				>
+					<span className="text-xs text-muted-foreground">
+						Store{" "}
+						<span className="font-mono text-foreground">
+							{secretsStoreLabel(secretsStore.provider)}
+						</span>
+					</span>
+					<span className="vx-eyebrow text-[10px] text-muted-foreground">Change</span>
+				</button>
+			) : null}
 
 			<div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
 				{/* A vault with forty entries needs a filter, or the list is as unusable as forty cards. */}

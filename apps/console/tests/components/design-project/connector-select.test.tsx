@@ -98,4 +98,57 @@ describe("ConnectorSelect", () => {
 			provider_config: {},
 		});
 	});
+
+	// #1412 — the `secrets` category has a platform default (the cluster's own secret manager), so the
+	// control must offer a way back to it. Without this a project that tried Vault could never revert.
+	it("offers the native default and clears both keys when it is chosen", async () => {
+		const onChange = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<ConnectorSelect
+				category="helm_registry"
+				value="helm-https"
+				providerConfig={{ repo_url: "https://charts.acme.io" }}
+				onChange={onChange}
+				nativeOption={{ label: "Cluster native", description: "cloud secret manager" }}
+			/>,
+		);
+
+		await user.click(screen.getByRole("combobox"));
+		await user.click(screen.getByRole("option", { name: /cluster native/i }));
+
+		// provider NULL is the column's own sentinel for "no connector" — never the UI token — and the
+		// knobs go with it, since they describe a provider that is no longer selected.
+		expect(onChange).toHaveBeenCalledWith({ provider: null, provider_config: {} });
+	});
+
+	// A provider that is connectable but cannot work here is shown DISABLED with the reason. Hiding it
+	// would read as a bug ("where did Infisical go?"); saying why is an answer.
+	it("disables an unavailable provider instead of hiding it", async () => {
+		const user = userEvent.setup();
+		render(
+			<ConnectorSelect
+				category="helm_registry"
+				value={null}
+				providerConfig={{}}
+				onChange={vi.fn()}
+				unavailable={(p) => (p.slug === "helm-https" ? "no in-cluster read yet" : null)}
+			/>,
+		);
+
+		await user.click(screen.getByRole("combobox"));
+		// Matched on content rather than accessible name: the connector icon contributes a letter
+		// fallback, so the computed name is "Hhelm-https…" and a name query would be brittle.
+		const options = await screen.findAllByRole("option");
+		const blocked = options.find((o) => o.textContent?.includes("helm-https"));
+		const allowed = options.find((o) => o.textContent?.includes("oci-generic-cr"));
+
+		// Shown, not hidden — and carrying the reason.
+		expect(blocked).toBeDefined();
+		expect(blocked).toHaveAttribute("aria-disabled", "true");
+		expect(blocked?.textContent).toMatch(/no in-cluster read yet/i);
+		// The selectable one is untouched.
+		expect(allowed).toBeDefined();
+		expect(allowed).not.toHaveAttribute("aria-disabled", "true");
+	});
 });

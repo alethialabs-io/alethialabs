@@ -37,9 +37,12 @@ import type {
 	NodeSize,
 	NosqlProviderConfig,
 	RegistryProviderConfig,
+	SecretsProviderConfig,
 	StorageProviderConfig,
 	TopicSubscription,
 } from "@/types/jsonb.types";
+import { toRecord } from "@/lib/coerce";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 
 // Insert schemas derived from the Drizzle tables (drizzle-zod) — the replacement
 // for the retired supazod `public*InsertSchema` schemas. JSONB columns get their
@@ -101,7 +104,50 @@ const topicsInsert = createInsertSchema(projectTopics).extend({
 const nosqlInsert = createInsertSchema(projectNosqlTables, {
 	provider_config: z.custom<NosqlProviderConfig>().optional(),
 });
-const secretsInsert = createInsertSchema(projectSecrets);
+// Every non-secret knob any `secrets` connector declares, and nothing else.
+//
+// SHAPED AND STRIPPED, not `z.custom` (which is a type assertion with no runtime effect), because
+// this object is spread WHOLE into the Postgres-persisted `config_snapshot`. An unrecognised key —
+// a token someone pasted into the wrong place, a knob from a connector that has since changed —
+// would otherwise be stored verbatim and ride into the snapshot. That is the shape of the W4 add-on
+// leak (plaintext secrets in `project_addons.values`) and of A0.0; a secret belongs in
+// `connector_credentials`, encrypted and attached out-of-band at job claim.
+//
+// Annotated with the column's own JSONB interface so the two can't drift: add a knob to
+// SecretsProviderConfig and this stops compiling until the validator learns about it. A test pins
+// the key set against catalog.json from the other direction, so a NEW connector knob can't be
+// silently stripped either — the failure that would cause (a Doppler project quietly dropped, the
+// store then reading the wrong scope) is invisible until deploy.
+const secretsProviderConfigSchema: z.ZodType<SecretsProviderConfig> = z
+	.object({
+		// vault / generic
+		mount_path: z.string().optional(),
+		kv_version: z.string().optional(),
+		// doppler
+		project: z.string().optional(),
+		config: z.string().optional(),
+		// infisical
+		host: z.string().optional(),
+		workspace_id: z.string().optional(),
+		env_slug: z.string().optional(),
+		folder_path: z.string().optional(),
+		// onepassword
+		vault: z.string().optional(),
+		// cross-account keyless cloud secret managers (*-xacct) — references, never keys
+		target_account_id: z.string().optional(),
+		target_project_id: z.string().optional(),
+		target_subscription_id: z.string().optional(),
+		region: z.string().optional(),
+		target_role_arn: z.string().optional(),
+		vault_url: z.string().optional(),
+		target_oidc_provider_arn: z.string().optional(),
+		external_id: z.string().optional(),
+	})
+	.strip();
+
+const secretsInsert = createInsertSchema(projectSecrets, {
+	provider_config: secretsProviderConfigSchema.optional(),
+});
 const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 	provider_config: z.custom<StorageProviderConfig>().optional(),
 });
@@ -405,12 +451,64 @@ const nosqlItemSchema = nosqlInsert
 		partition_key: z.string().min(1, "Hash key is required"),
 	});
 
-const secretItemSchema = secretsInsert.omit({
-	...autoFields,
-	project_id: true,
-	status: true,
-	status_message: true,
-}).extend({ name: z.string().min(1, "Secret name is required") });
+// Where this secret is read from. `provider` NULL / "native" is the cluster cloud's own secret store
+// (the default); anything else names a connected `secrets` connector.
+//
+// The refinement makes a pluggable selection FAIL-CLOSED. `provider` and `provider_config` are
+// nullable columns, so the generated schema alone would persist a slug that doesn't exist, one that
+// isn't available yet, or one missing the knobs it can't work without — and the failure would only
+// surface at deploy, as a skipped ExternalSecret or a store that never reads. Mirrors the
+// helm_registry guard below and the `Validate` implementations in packages/core/categories/secrets_*.go.
+//
+// Deliberately NOT rejected here: `infisical` and `onepassword`. They are `active` and the runtime
+// accepts them, so failing them closed would break projects already configured through the CLI. They
+// have no in-cluster read path on the pinned chart, which is a UI concern — the picker renders them
+// disabled with that reason rather than letting a new one be chosen.
+const secretItemSchema = secretsInsert
+	.omit({
+		...autoFields,
+		project_id: true,
+		status: true,
+		status_message: true,
+	})
+	.extend({ name: z.string().min(1, "Secret name is required") })
+	.superRefine((value, ctx) => {
+		// Native is the default and needs no connector.
+		if (!value.provider || value.provider === "native") return;
+
+		const provider = getConnectorProviderBySlug(value.provider);
+		if (!provider || provider.category !== "secrets") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected secret store",
+			});
+			return;
+		}
+		if (provider.status === "coming_soon") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This secret store isn't available yet",
+			});
+			return;
+		}
+		// A required knob is what the store is addressed BY (Vault's mount path, Doppler's project +
+		// config, a cross-account target). Without it the store renders but reads nothing.
+		const knobs = toRecord(value.provider_config);
+		for (const field of provider.providerConfigFields) {
+			if (!field.required || field.secret) continue;
+			const raw = knobs[field.key];
+			if (typeof raw !== "string" || raw.trim() === "") {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["provider_config"],
+					message: `${provider.name} needs ${field.label}`,
+				});
+				return;
+			}
+		}
+	});
 
 // S3-safe bucket naming (the strictest cloud rules, so one name works everywhere):
 // 3–63 chars, lowercase letters / digits / hyphens, no leading or trailing hyphen.

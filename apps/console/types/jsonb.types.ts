@@ -476,9 +476,19 @@ export interface HelmRegistryProviderConfig {
 // anchor (an identity/resource REFERENCE, never a key) live here and are read by
 // categories.KeylessSecretTarget on the runner. Exactly one provider's field set applies per store.
 export interface SecretsProviderConfig {
-	// Vault (credential-based)
+	// Vault / generic (credential-based)
 	mount_path?: string;
 	kv_version?: string;
+	// Doppler — which project + config (its name for an environment) the token reads.
+	project?: string;
+	config?: string;
+	// Infisical
+	host?: string;
+	workspace_id?: string;
+	env_slug?: string;
+	folder_path?: string;
+	// 1Password — the vault the service account may read.
+	vault?: string;
 	// Cross-account keyless cloud secret managers (*-xacct)
 	target_account_id?: string; // aws-sm-xacct / alibaba-kms-xacct (target RAM account)
 	target_project_id?: string; // gcp-sm-xacct
