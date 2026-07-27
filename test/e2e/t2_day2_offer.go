@@ -141,9 +141,14 @@ var day2StatefulTypes = map[string]bool{
 	"google_sql_database_instance": true,
 	"google_redis_instance":        true,
 	"google_memorystore_instance":  true,
-	// Azure — Flexible Servers + Redis.
+	// Azure — Flexible Servers + Redis. `azurerm_managed_redis` is what the template ACTUALLY builds
+	// (infra/templates/project/azure/modules/azure-cache-redis): Azure Cache for Redis is retiring and
+	// `azurerm_redis_cache` can no longer be created. Its absence here was a silent false PASS — the
+	// gate saw an unknown type, called replacing Azure's cache Safe, and the offer read as proven when
+	// nothing had checked it. The retired types stay: state predating the migration still carries them.
 	"azurerm_postgresql_flexible_server": true,
 	"azurerm_mysql_flexible_server":      true,
+	"azurerm_managed_redis":              true,
 	"azurerm_redis_cache":                true,
 	"azurerm_redis_enterprise_cluster":   true,
 	"azurerm_redis_enterprise_database":  true,
