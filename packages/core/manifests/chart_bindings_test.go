@@ -57,7 +57,7 @@ func TestResolveChartWorkloadBindings_Satisfiable(t *testing.T) {
 		"rds_master_credentials_secret_name": "arn:aws:secretsmanager:...:db-master",
 	}
 
-	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns")
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil)
 
 	wantPatches := map[string]any{
 		"externalDatabase.host": "db.internal:5432",
@@ -99,7 +99,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (a) No ESO store for the cloud (hetzner) → unsatisfied, no patch, no ExternalSecret.
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns")
+		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil)
 	if len(res.Patches) != 0 || len(res.ExternalSecrets) != 0 {
 		t.Fatalf("hetzner should reference nothing: patches=%v es=%v", res.Patches, res.ExternalSecrets)
 	}
@@ -109,7 +109,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (b) Store exists but the resource exported no master secret → unsatisfied, no dangling ref.
 	res = ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{}, "aws", "ns")
+		map[string]string{}, "aws", "ns", nil)
 	if _, referenced := res.Patches["auth.existingSecret"]; referenced {
 		t.Fatal("must not reference an existingSecret that will not be materialized")
 	}
@@ -121,7 +121,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 func TestResolveChartWorkloadBindings_MissingPath(t *testing.T) {
 	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"})
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding},
-		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns")
+		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil)
 	if len(res.Patches) != 0 {
 		t.Fatalf("no value-path → no patch, got %v", res.Patches)
 	}
@@ -150,5 +150,36 @@ func TestSetByPath(t *testing.T) {
 	inner2, _ := over["a"].(map[string]any)
 	if inner2["b"] != 2 {
 		t.Fatalf("non-map intermediate not replaced: %#v", over)
+	}
+}
+
+// TestResolveChartWorkloadBindings_EngineAwarePort: a BYO chart bound to a MySQL database gets 3306,
+// not Postgres's 5432. This is independent of keyless — the port facet was engine-blind on the
+// password path too, so a MySQL-backed chart was handed a port nothing listens on.
+func TestResolveChartWorkloadBindings_EngineAwarePort(t *testing.T) {
+	binding := chartDBBinding([2]string{"DB_PORT", "port"})
+	valuePaths := map[string]string{
+		ChartBindingKnob("database", "orders", "port"): "externalDatabase.port",
+	}
+	cases := []struct {
+		name     string
+		dbs      []types.ProjectDatabaseConfig
+		wantPort string
+	}{
+		{"mysql", []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "mysql"}}, "3306"},
+		{"postgres", []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "postgres"}}, "5432"},
+		// An unset family, or a database absent from the config, keeps the pre-MySQL default so
+		// existing charts render byte-identically.
+		{"unset", []types.ProjectDatabaseConfig{{Name: "orders"}}, "5432"},
+		{"absent", nil, "5432"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
+				map[string]string{}, "aws", "ns", tc.dbs)
+			if got := res.Patches["externalDatabase.port"]; got != tc.wantPort {
+				t.Errorf("port = %v, want %s", got, tc.wantPort)
+			}
+		})
 	}
 }

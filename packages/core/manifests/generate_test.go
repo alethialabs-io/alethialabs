@@ -635,3 +635,51 @@ func TestRenderApp_SecretEnv(t *testing.T) {
 		t.Errorf("must never render :latest:\n%s", y)
 	}
 }
+
+// TestFromServices_DatabasePortFollowsEngine: the `port` facet follows the bound database's ENGINE,
+// on the ordinary password path as much as the keyless one. Before #1503 defaultPort returned 5432
+// unconditionally, so every MySQL binding — on any cloud, keyless or not — injected a port nothing
+// listens on. The postgres/unset rows are the regression proof that existing renders are unchanged.
+func TestFromServices_DatabasePortFollowsEngine(t *testing.T) {
+	svc := types.ProjectServiceConfig{
+		Name:   "api",
+		Type:   "deployment",
+		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
+		Bindings: []types.ServiceBinding{{
+			Target: types.ServiceBindingTarget{Kind: "database", Name: "main"},
+			Inject: []types.ServiceBindingInjection{
+				{Env: "DB_HOST", From: "endpoint"},
+				{Env: "DB_PORT", From: "port"},
+			},
+		}},
+	}
+	cases := []struct {
+		name     string
+		dbs      []types.ProjectDatabaseConfig
+		wantPort string
+	}{
+		{"mysql", []types.ProjectDatabaseConfig{{Name: "main", EngineFamily: "mysql"}}, "3306"},
+		{"postgres", []types.ProjectDatabaseConfig{{Name: "main", EngineFamily: "postgres"}}, "5432"},
+		{"unset", []types.ProjectDatabaseConfig{{Name: "main"}}, "5432"},
+		{"absent", nil, "5432"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			apps, skipped := FromServices([]types.ProjectServiceConfig{svc}, Options{
+				Provider:  "aws",
+				Databases: tc.dbs,
+				Outputs:   map[string]string{"rds_cluster_endpoint": "db.internal"},
+			})
+			if len(skipped) != 0 {
+				t.Fatalf("nothing should skip, got %v", skipped)
+			}
+			got, ok := envValue(apps[0].Env, "DB_PORT")
+			if !ok {
+				t.Fatal("no DB_PORT injected")
+			}
+			if got != tc.wantPort {
+				t.Errorf("DB_PORT = %q, want %q", got, tc.wantPort)
+			}
+		})
+	}
+}
