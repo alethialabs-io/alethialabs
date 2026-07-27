@@ -18,10 +18,12 @@
 :root {
   --shadow-md: 0 4px 14px oklch(0 0 0 / 0.08);
   --shadow-lg: 0 14px 40px oklch(0 0 0 / 0.12);
+  --shadow-xl: 0 26px 70px oklch(0 0 0 / 0.16);
 }
 .dark {
   --shadow-md: 0 4px 14px oklch(0 0 0 / 0.45);
   --shadow-lg: 0 18px 48px oklch(0 0 0 / 0.55);
+  --shadow-xl: 0 30px 80px oklch(0 0 0 / 0.62);
 }
 
 /* blinking terminal caret */
@@ -216,4 +218,71 @@
   .en-deploy-cell:nth-child(n + 2) { border-top: 1px solid var(--border) !important; }
   .en-plan-inc { grid-template-columns: 1fr !important; }
   .en-hide-sm { display: none !important; }
+}
+
+/* ============================================================
+   Motion layer (mo-*) — the frontier-rebuild motion language. Framer/three.js
+   drive the JS beats; these are the CSS-cleaner loops (marquee, shimmer). Every
+   rule here is neutralized under prefers-reduced-motion at the foot of the file.
+   ============================================================ */
+
+/* Runs-on marquee — two identical copies translate -50% for a seamless loop.
+   Pauses on hover so a reader can settle on a logo. */
+@keyframes ah-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ah-marquee-track {
+  animation: ah-marquee 46s linear infinite;
+  will-change: transform;
+}
+.ah-marquee:hover .ah-marquee-track {
+  animation-play-state: paused;
+}
+
+/* Shimmer — a single pass of light sweeping across a surface (skeletons, the
+   proof card's inner edge, "keep proving it" beats). Grayscale by construction. */
+@keyframes ah-shimmer {
+  0% { background-position: -160% 0; }
+  100% { background-position: 260% 0; }
+}
+.ah-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--text-primary) 12%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: ah-shimmer 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ah-marquee-track,
+  .ah-shimmer {
+    animation: none !important;
+  }
+  .ah-shimmer {
+    background-image: none !important;
+  }
+}
+
+/* ============================================================
+   Reduced-motion safety net — the last word. Every animated beat above already
+   ships a legible static fallback (the framer/three.js islands via the reduced-
+   motion hook; the CSS loops via their own guards). This universal rule is
+   insurance: it collapses any remaining infinite loop to a single, near-instant
+   pass so nothing keeps moving under prefers-reduced-motion, while leaving the
+   final composed frame intact.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
