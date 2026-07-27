@@ -1,477 +1,149 @@
-# Alethia — Development Guidelines
+# Alethia — the operating contract
+
+This file is what every instance reads before it acts. It holds **only** what you must know
+*before* touching anything; everything else is one link away in the routing table at the end.
+
+Keep it that way. It is verified by `pnpm check:docs-contract` (CI, `Authz / open-core guards`):
+every path and `pnpm` script named here must exist, and no doc may recommend a command the
+runtime guard blocks. It grew to 477 lines once and accumulated ~25 wrong statements — wrong
+instructions here cost a wrong *action*, not just confusion.
 
 Do not include any Co-Authored-By or attribution lines in commit messages.
 
-## Monorepo Conventions
+---
 
-- **Package manager**: pnpm 9+ with workspaces (`apps/*`, `packages/*`)
-- **Task runner**: Turborepo — `turbo dev`, `turbo build`, `turbo lint`, `turbo check-types`
-- **Go workspaces**: `go.work` links `apps/cli`, `apps/runner`, and `packages/core`
-- **Releases**: release-please for automated versioning; GoReleaser for alethia CLI binaries and Homebrew tap
+## 1. Non-negotiables
 
-## Local stack (multi-instance rule)
+- **Never commit in the main checkout (`app/`).** It is pinned to `dev` and shared by every
+  session. One `git add -A` there once swept three features into one commit.
+- **Never work in a worktree another live instance holds.** Check with `pnpm wt:who`.
+- **Never target `staging` or `main` with a PR**, and never push to them. Feature work goes to
+  `dev`; the maintainer promotes `dev → staging → main`.
+- **Never run `tofu apply`, `terraform apply`, or a destructive `plan -destroy`.** Humans apply.
+  The one exception is when the maintainer instructs a specific named operation.
+- **Never run the app on this Mac.** See §3.
+- **Never generate a migration on a stale branch, or in two worktrees at once.** See §5.
+- **Escape hatches are the maintainer's, not yours**: `--no-verify`,
+  `ALETHIA_ALLOW_MAIN_COMMIT`, `ALETHIA_ALLOW_FOREIGN_WT`, `ALETHIA_LOCAL_DEV`.
 
-The compose project name is hardcoded (`name: alethia` in `docker-compose.yml`), so **every
-terminal / Claude window shares one stack** — there is never a duplicate app. The only hazard is
-two `docker compose up --build` racing the same builder at once.
+## 2. One worktree per instance (enforced)
 
-- **The local stack is no longer the way you run this app** — see *Running the app* below;
-  `compose:up` is blocked on the Mac. It remains the deploy-check path, run on the box.
-- **Never run `docker compose up --build` directly, and never in parallel across windows.**
-- Other windows inspect the running stack with `pnpm compose:ps` / `pnpm compose:logs`.
-- Default `compose:up` is the **lite** stack (`caddy app docs blog` + auto postgres/seaweedfs/migrate),
-  served at `http://localhost`. The heavy `runner` (~3–5 GB, ~10–20 min build; only useful with real
-  cloud creds) is opt-in via `pnpm compose:up:full`.
-- `pnpm compose:down` stops the stack (keeps data); `db:reset` / `compose:down -v` wipe volumes.
+`pnpm wt <name>` creates `../wt-<name>` on `feat/<name>` off `dev`. Commit there, push, open a
+PR into `dev`. `pnpm wt:ls` lists them · `pnpm wt:who` shows holders · `pnpm wt:rm <name>` ·
+`pnpm wt:prune` sweeps merged ones · `pnpm wt:release` · `pnpm wt:steal <name>`.
 
-### One worktree per instance (source isolation — enforced)
+A worktree is **owned** while you work in it. Creating, reusing, or writing into one takes a
+lease (`scripts/lib/wt-lease.sh`) keyed on your Claude process. Another instance then cannot
+reuse, remove, edit, or commit from it — it is told who holds it. Reads stay allowed
+(`git -C ../wt-other log`). Leases release automatically when the instance exits.
 
-The stack is shared, but the **source tree must not be**. Multiple Claude/human sessions in the
-same checkout tangle: a single `git add -A` once swept three features into one mega-commit. So:
+*Why:* on 2026-07-26 a second instance was handed a live worktree ("already exists … Reusing
+it") and committed the first instance's **uncommitted** work under its own message (#1247).
 
-- **`app/` (the main checkout) is pinned to `dev`** — the integration branch. **Never commit
-  feature work there**, and **never `git add -A` there**.
-- **Each piece of work gets its own worktree:** `pnpm wt <name>` creates a sibling
-  `../wt-<name>` on `feat/<name>` off `dev`, and prints the `cd` + a free `PORT`
-  (`PORT=3100 pnpm dev:up` — one console per worktree; separate `.next` = no lock clash).
-  `pnpm wt:ls` lists them, `pnpm wt:rm <name>` removes one. Commit there, push, PR into `dev`.
-- **A worktree is OWNED while you work in it.** Creating one, reusing one, or writing into one takes
-  a **lease** (`scripts/lib/wt-lease.sh`) keyed on your Claude process. Another instance then cannot
-  reuse it, remove it, edit files in it, or commit/push from it — it gets told who holds it.
-  **`pnpm wt:who`** shows every worktree and its holder (`live` / `stale` / `free`); `pnpm wt:release`
-  hands yours back; `pnpm wt:steal <name>` takes one whose holder is genuinely gone. A lease is
-  released automatically when the instance exits — there is nothing to clean up, and a dead holder's
-  worktree is reclaimed on next use. **Reads into another instance's worktree stay allowed**
-  (`git -C ../wt-other status|log|diff`); everything else there is blocked.
-  *Why:* on 2026-07-26 a second instance ran `pnpm wt <name>`, was handed a live tree ("already
-  exists … Reusing it"), and its `git add`+`git commit` swept the first instance's **uncommitted**
-  work into a commit under its own message (#1247).
-- **This is enforced**, not just advised:
-  - `.githooks/pre-commit` (wired via `core.hooksPath`, set by the root `prepare` script) blocks
-    commits on `dev`/`staging`/`main`, blocks any commit in the main checkout, blocks a commit in a
-    worktree another live instance holds, and runs the migration-chain guard when a migration is
-    staged. `.githooks/pre-push` blocks direct pushes to protected branches and pushes from a
-    foreign worktree.
-  - `.claude/hooks/guard-worktree.sh` (a `PreToolUse` hook on **Bash and Write/Edit/EnterWorktree**)
-    blocks `git commit` / `git add -A` in the main checkout, and any write into a worktree another
-    live instance holds.
-  - **Escape hatches** (emergencies only): `git commit --no-verify` (all),
-    `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only), or
-    `ALETHIA_ALLOW_FOREIGN_WT=1 …` (the worktree-lease rule only). These are for the
-    maintainer — **instances must not use them.**
-- **Merging into `dev` — the Mergify queue (NOT direct merge):** the `protect-dev` ruleset (`infra/github`)
-  requires **green CI** and **no approval**, and the merge queue is **Mergify** (`.mergify.yml`), not GitHub's
-  native queue. So you **do NOT run `gh pr merge` at all** — **just open a non-draft PR into `dev`.** Mergify
-  auto-queues every non-draft, conflict-free dev PR and **squash-merges it in order once the required checks
-  pass**, validating each PR on its own branch (it rebases/updates candidates itself). This kills the
-  stale-green race — you never merge against a `dev` that moved under you — and, because Mergify uses no
-  `merge_group` event, the old `merge_group`-only "Provisioning E2E (T1)" job no longer wedges the queue.
-  Keep WIP as a **draft** (drafts are excluded); if Mergify reports a **conflict**, rebase onto `origin/dev`
-  and push (it re-queues automatically). You can nudge Mergify with a `@mergifyio requeue`/`refresh` comment.
-  Never merge a red PR; never merge directly / `gh pr merge --admin` (bypasses the queue); never target
-  `staging`/`main` directly (`branch-flow-guard` blocks it). The maintainer reviews the integrated `dev`
-  (`dev.alethialabs.io`) and promotes `dev → staging → main`.
-- **Instance kickoff (parallel sessions):** if you're one of several instances, your first move is
-  `pnpm wt <name>` → `cd ../wt-<name>` → work there → **open a non-draft PR into `dev`** (Mergify lands it on
-  green — no `gh pr merge`). One worktree per piece of work; never work in `app/` or touch another instance's
-  worktree.
-- **Claim work from the board (the coordination protocol):** when a program is decomposed into a
-  GitHub-Issues board, don't hand-pick work — read **`.claude/COORDINATION.md`** and run
-  **`scripts/claim-work.sh --class backend`** to atomically claim the next ready unit (mkdir-lock
-  serialized, so no two instances grab the same one), then `pnpm wt` the printed slug. Build only within
-  the issue's `scope:` globs; PR into `dev` with `Closes #<n>`; **backend opens a non-draft PR and Mergify
-  lands it on green, UI is human-gated** (deliverable = a data-model-grounded design spec for Claude Design;
-  a human takes the UI PR out of draft, which flows through the same Mergify queue).
-  `scripts/coordinate.sh` reclaims dead instances' claims + reports the board.
-- **Migrations stay serial:** `pnpm -F console db:generate` is lock-guarded
-  (`scripts/db-generate.sh`, atomic `/tmp/alethia-migrate.lock`) and warns if you're not rebased on
-  `dev` — never generate in two worktrees at once (the drizzle snapshot chain is un-mergeable; see
-  the DB pipeline section).
+Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with `pnpm env:check`.
 
-### Running the app — the Mac is not a runtime
+## 3. Running the app — the Mac is not a runtime
 
-**Everything that RUNS the product runs on the sandbox box, one environment per branch.**
-The Mac keeps the editor, git, and the cheap checks. This is enforced:
-`.claude/hooks/guard-runtime.sh` blocks `pnpm dev:up`, `dev:stack`, `dev:console`, a bare
-`next dev`, `compose:up`, `db:reset` and `docker compose down -v`.
-
-Why: the laptop measured **92% disk and 86% swap** with `go build` failing on ENOSPC. The
-containers were never the problem — the whole datastore tier is ~300 MiB RSS — it is
-`next dev` (~2 GB each), Turbopack, Go caches, and hydrated worktrees at ~2.4 GB apiece.
+Everything that *runs* the product runs on the sandbox box, one environment per branch:
 
 ```
 pnpm env:up      # this branch gets a database, storage, an OpenFGA store, a URL
 pnpm env:push    # after editing — rsync the working tree  (--watch to automate)
 pnpm env:logs    # tail the console  ← sign-in codes are printed here
 pnpm env:status  # every env, who holds it, capacity
-pnpm env:down    # release the slot
 ```
 
-- Branch envs are `https://<slug>.dev.alethialabs.io`; the primary is
-  `dev.alethialabs.io`. **There is no hot reload** — the sync is on command.
-- **Social sign-in and Stripe webhooks only work on the primary env** (OAuth redirect
-  URIs cannot be wildcarded). Branch envs are email-OTP only, and no credential is
-  copied to the box — with no SES region set the console *logs* the code, so read it
-  from `pnpm env:logs`.
-- **Cap of 3 concurrent envs.** The fourth is refused, naming the holders; nothing is
-  evicted automatically.
-- **The box is reaped when idle** — snapshotted and *deleted*, because a stopped Hetzner
-  server still bills. Hostnames return Cloudflare 1033 while it is down; `pnpm env:box`
-  restores it in 1–2 min. Creating it runs `tofu apply`, which is a human action.
-- Worktrees are **de-hydrated** (no local `node_modules`); run their checks with
-  `pnpm env:check`. `pnpm dev:doctor` reports local disk, Docker and worktree health.
-
-Full detail: **`.claude/skills/dev/SKILL.md`** (model-invocable) and
-`infra/sandbox/README.md`. Still local: build, type-check, lint, unit tests, git, and
-read-only Docker. Deliberate local runtime: `export ALETHIA_LOCAL_DEV=1` **before**
-launching `claude` — an inline prefix cannot reach a PreToolUse hook.
-
-### Local resource hygiene
-
-- Don't leave unrelated Docker stacks running (e.g. a `supabase start` instance) — they idle at high
-  CPU. Stop with `docker stop $(docker ps -q --filter label=com.docker.compose.project=<name>)`.
-- The OrbStack VM is capped at 6 GB / 6 cores (`orb config show`) to keep macOS responsive during
-  builds; changing it needs an `orb stop` to apply.
-
----
-
-## Alethia (Web Control Plane)
-
-### Database Schema Pipeline (Drizzle)
-
-The DB tier is **Drizzle ORM + postgres-js** on self-hosted Postgres. Schema changes
-follow a strict pipeline. **Never edit generated migration files manually.**
-
-1. Edit the schema in `lib/db/schema/*.ts` (one file per domain: jobs, runners, projects, …).
-2. Run `pnpm -F console db:generate` — drizzle-kit diffs the schema and writes a new SQL migration to
-   `lib/db/migrations/` (+ updates the `meta/` journal).
-3. Migrations apply via `scripts/migrate.mjs` (the `migrate` Docker target / compose one-shot): it runs
-   the generated migrations, then `lib/db/programmables.sql` (functions, triggers, RLS), then sets the
-   least-privileged app-role password from `ALETHIA_APP_DB_PASSWORD`.
-
-**Generate migrations on ONE up-to-date branch — never in parallel.** drizzle's `meta/*_snapshot.json`
-files are a single **linear chain** (each points at its parent's id) and *cannot be merged*. If two
-branches / worktrees / Claude windows each run `db:generate` off the same base and then merge, two
-snapshots end up with the same `prevId` → a permanent "collision" that jams `db:generate` for everyone
-(and people then hand-author SQL without snapshots, compounding the drift). So:
-- **Always rebase onto the target branch *before* `pnpm -F console db:generate`.** Never generate
-  concurrently across windows/worktrees (the multi-instance rule applies to migrations too).
-- If your branch and the target both added a migration, **delete your generated migration + snapshot,
-  rebase, and re-generate** so it chains off the latest snapshot.
-- `db:generate` self-checks via `scripts/check-migrations.mjs`, and CI runs `pnpm -F console
-  check:migrations` (the guards job) — a forked history fails the build. Run it yourself anytime to
-  verify the chain is linear.
-- The runtime migrator reads only `_journal.json` + the `.sql` files (never the snapshots), so a
-  one-time meta repair can safely rebuild `meta/` without touching applied history.
-
-### How JSONB typing works
-
-- Column types are inferred straight from the Drizzle schema (`typeof table.$inferSelect` /
-  `$inferInsert`) — there is **no** generated `database.types.ts`.
-- For JSONB columns with a known shape, type them on the column with
-  `jsonb().$type<SomeInterface>()`; the interface lives in `types/jsonb.types.ts`
-  (CloudCredentials, CachedResources, ClusterAdmin, TopicSubscription, etc.).
-- **Never** use `Record<string, unknown>` for a JSONB field that has a known shape — define the
-  interface in `jsonb.types.ts`.
-
-### Zod schemas (drizzle-zod)
-
-Derive validators from the schema with `drizzle-zod` rather than hand-writing them:
-
-```typescript
-import { createInsertSchema } from "drizzle-zod";
-import { projectCluster } from "@/lib/db/schema";
-
-const clusterInsert = createInsertSchema(projectCluster, {
-  // refine JSONB columns with their interface types
-  cluster_admins: z.custom<ClusterAdmin[]>().optional(),
-  provider_config: z.custom<ClusterProviderConfig>().optional(),
-});
-```
-
-Form/input schemas live in `lib/validations/`. Reusable typed query builders belong in `lib/queries/`.
-
-### Alethia Code Style
-
-- All functions must have a brief JSDoc comment explaining what they do.
-- Group components by feature/domain, not by type. Example: `components/integrations/`, `components/design-project/`, not `components/buttons/`, `components/modals/`.
-- Component files that are renamed should be deleted, not left behind with re-exports.
-- Never use `Record<string, unknown>` for JSONB fields that have a known shape. Define a proper interface in `jsonb.types.ts`.
-- Prefer `useFormContext` + `useFieldArray` over prop drilling for form sections.
-
-### Alethia Project Structure
-
-```
-apps/console/
-  app/                    # Next.js app router
-    (private)/dashboard/  # Authenticated routes
-    (public)/auth/        # Sign-in, email confirmation
-    api/                  # API routes (auth, jobs, runners, CLI)
-    server/actions/       # Server actions (grouped by domain)
-  components/             # App-specific feature components (shadcn primitives are in @repo/ui)
-  lib/
-    db/                   # Drizzle schema, migrations, client (getServiceDb/withOwnerScope)
-    auth/                 # Better Auth config, client, owner/session helpers
-    queries/              # Reusable typed Drizzle query builders
-    validations/          # Zod schemas (drizzle-zod)
-    storage/              # S3-compatible object storage (@aws-sdk/client-s3)
-    cloud-providers/      # AWS, GCP, Azure integration helpers
-    stores/               # Zustand state stores
-  types/
-    jsonb.types.ts  # JSONB field interfaces ($type<>() on the schema)
-```
-
-### Alethia Key Patterns
-
-- Cloud integrations follow the same pattern across AWS/GCP/Azure: server actions in `app/(private)/dashboard/providers/`, connection components in `components/connector/`.
-- All `cloud_identities` queries must filter by `provider` to prevent cross-provider data leaks.
-- The runner (Go) switches on `cloud_identity.provider` for auth — AWS uses `AssumeRole`, GCP uses WIF, Azure uses federated identity.
-
----
-
-## alethia (CLI)
-
-### Structure
-
-- **Entry point**: `apps/cli/main.go` → `cmd.Execute()`
-- **Commands** (`apps/cli/cmd/`): Cobra-based CLI with 27+ commands organized into groups:
-  - **Auth**: `login`, `logout` — device code flow with browser automation, JWT tokens
-  - **Projects**: `project list|get` — infrastructure configuration browsing
-  - **Jobs**: `jobs list|get|logs|cancel|wait` — provisioning job management
-  - **Provisioning**: `project plan`, `project apply`, `project destroy` — queue IaC operations
-  - **Runners**: `runner deploy|list|destroy|remove` — runner lifecycle
-  - **Clusters**: `clusters list` — Kubernetes cluster management
-
-### Conventions
-
-- Interactive selection uses Charmbracelet's `huh` forms with spinners during data fetching.
-- Tables use Bubble Tea with keyboard navigation (`j/k`, arrows, `s` to sort, `q` to quit).
-- Consistent color scheme via Lipgloss: purple (63) headers, cyan (86) accents, green (42) success, red (196) errors, gray (240) secondary.
-- Version is set at build time via `-ldflags` (`internal/version/version.go`).
-
-### Build & Release
-
-- **GoReleaser** (`.goreleaser.yml`): cross-platform builds (Linux/macOS, amd64/arm64), Homebrew tap publishing
-- **Docker** (`Dockerfile`): multi-stage alpine build with runtime deps (bash, curl, git, aws-cli, kubectl, helm), non-root `alethia` user
-
-### Environment Variables
-
-- `ALETHIA_WEB_ORIGIN` — Alethia control-plane URL (required; no default)
-- `ALETHIA_RUNNER_OPERATOR` — Runner operator (`managed` or `self`). Legacy `ALETHIA_RUNNER_MODE` (`cloud-hosted`/`self-hosted`) still works as a back-compat fallback (cloud-hosted→managed, self-hosted→self).
-- `ALETHIA_RUNNER_ID` / `ALETHIA_RUNNER_TOKEN` — Runner registration credentials
-- `ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION`, `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY` — Artifact / state storage (S3-compatible)
-
----
-
-## Runner (Provisioning Agent)
-
-- **Location**: `apps/runner/`
-- **Structure**: `cmd/` (entry point), `internal/` (business logic), `internal/agent/` (job execution engine)
-- **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes OpenTofu operations, and streams logs back.
-- **Deployment**: Docker image on ECS Fargate, auto-registered with Alethia via HTTP on startup.
-- **Runner operator/provisioning**: `operator=managed` (Alethia runs it in the platform account, assumes role into customer accounts, billed by provisioned hours via the `runner_usage_sessions` ledger) or `operator=self` (runs in the customer's cloud with native permissions). Self runners are further split by `provisioning`: `deployed` (provisioned into the customer's cloud by an existing runner running Terraform) or `registered` (customer brought their own — own Terraform or `alethia runner start`).
-- **Verification gate (elench)**: between `tofu plan` and `tofu apply`, `provisioner.RunDeployV2` runs `packages/core/verify` over the plan JSON and attaches a `verify.Report` to the result. A real apply is **fail-closed** — a hard control failure blocks before `tofu apply` unless an authorized `verify.Override` waives it. The runner forwards the report on `execution_metadata["verify_result"]` (PLAN + DEPLOY); the console renders it in the agent artifact panel's Plan tab. See `packages/core/verify/README.md`.
-
----
-
-## core (Shared Go Library)
-
-- **Location**: `packages/core/`
-- **Purpose**: Shared types, cloud provider interfaces, and embedded OpenTofu templates used by both alethia and Node.
-- **OpenTofu templates**: the seed bootstrap lives in `assets/tofu/seed/`; the full per-cloud project templates are in `infra/templates/project/{aws,gcp,azure,alibaba}` (applied at provision time). Templates are parameterised by tofu variables, not rendered — `provisioner/deploy.go` copies them verbatim and writes a tfvars map (`tofu.OverrideTfvarsFromMap`) from `ProviderTfvars`.
-- **Key packages**: Config types (`ProjectConfig`), cloud provider abstraction (`CloudProvider` interface → `ProviderTfvars`), ArgoCD application rendering via Go `text/template` (`argocd/render.go`), and the **`verify`** package — the deterministic, fail-closed policy gate over the OpenTofu plan JSON (keyless / least-privilege / OIDC-sub controls; honest `not_evaluable` for what the plan can't show; ed25519-signed evidence receipt). Engine-agnostic `Evaluate` seam; pure-Go in Phase 0, OPA/Rego swap-in later. The **`drift`** package turns a `plan -refresh-only -json` into a per-env drift `Posture` (the "keep proving it" half).
-
----
-
-## Shared web packages (`packages/@repo/*`)
-
-Code used by more than one web app (`apps/console`, `apps/marketing`) lives in a workspace package —
-**promote shared web code to `@repo/*`; never duplicate it across the two apps.** This is how the
-marketing extraction kept one source of truth (and how a redo of CI immediately caught drift).
-
-- **`@repo/ui`** — the shared **shadcn/ui design system**: every primitive (`@repo/ui/button`,
-  `@repo/ui/dialog`, …), plus `@repo/ui/utils` (`cn`), `@repo/ui/countries`, `@repo/ui/provider-icon`,
-  `@repo/ui/copy-button`. Import UI from here, **not** `@/components/ui/*` (that path no longer exists).
-  App-specific *feature* components still live in each app's own `components/`.
-- **`@repo/brand`** — `@repo/brand/alethia-logo`, `@repo/brand/tokens.css` (the design-token
-  foundation), and the brand **metadata generators** (`icon`/`apple-icon`/`opengraph-image`/
-  `twitter-image`/`manifest` + `robots`/`sitemap` factories). Each app's `app/<route>` file is a thin
-  re-export of these (Next.js requires one route file per app; the logic is shared).
-- **`@repo/plan-catalog`** — the plan display catalog (`PLAN_CATALOG`, `planMeta`, `PlanId`); shared by
-  console billing and the marketing pricing page so the copy never drifts.
-- **`@repo/assets`** — static files only (`static/`: cloud/git provider icons + brand SVGs). Synced
-  into each app's `public/` by `scripts/sync-public-assets.mjs` (wired into every app's `dev`/`build`,
-  so it runs in local/Docker/Vercel); the synced paths are **gitignored** — the package is the single
-  source. No build scripts (it's a file bundle).
-- **`@repo/email`** — transactional-email infra: `@repo/email/send` (SES `sendEmail`),
-  `@repo/email/config` (`getEmailConfig`), `@repo/email/components/*` (react-email building blocks).
-  Email *templates* (welcome/invite/confirmation-code/alert in console, contact-lead in marketing) stay
-  per-app and import these.
-- **`@repo/eslint-config`, `@repo/typescript-config`** — shared lint/tsconfig presets (packages extend
-  them). The Go shared library is `packages/core` (see *core* above), not a `@repo/*` package.
-
-**Consuming a code package:** add it to the app's `transpilePackages` (`apps/<app>/next.config.ts`)
-**and** `@source "../../../packages/<pkg>/src"` in the app's `app/globals.css` (so Tailwind scans its
-class names). Give any **new** package `lint` + `check-types` scripts (+ `eslint.config.mjs` +
-`tsconfig.json`) so the turbo-fan-out CI type-checks/lints it automatically.
-
----
-
-## docs (Documentation)
-
-- **Location**: `apps/docs/`
-- **Framework**: Next.js 16 + Fumadocs + fumadocs-mdx
-- **Content**: `content/docs/` — MDX files organized by topic
-- **Dev**: `turbo dev --filter=docs`
-
----
-
-## marketing (Public Marketing Site)
-
-- **Location**: `apps/marketing/` (Next.js 16). The **open-source / self-hosted console ships
-  NO marketing** — `apps/console` redirects `/` to sign-in. The hosted alethialabs.io site is
-  `apps/marketing`: landing (`/`), `/pricing`, `/enterprise`, `/contact/*`, and the legal pages
-  (`/terms`, `/privacy`, `/cookies`, `/acceptable-use`).
-- **Stitching (one path map, two backends):**
-  - **Hosted (Vercel):** `@vercel/microfrontends`. Console is the **default zone** (owns the
-    `/{org}` wildcard + everything else); marketing is a **child zone** owning the curated root
-    paths. Source of truth: `apps/console/microfrontends.json`. Console owns the bare root so
-    marketing uses a custom `assetPrefix: mkt-assets` (its `next.config.ts`) to avoid `/_next/*`
-    collisions. `apps/marketing/proxy.ts` bounces an authenticated `/` to the console.
-  - **Off-Vercel (Caddy):** `deploy/caddy/marketing.caddy.example` mirrors the same paths +
-    `mkt-assets` prefix + the authed-root cookie hand-off. Marketing is **opt-in self-host** (the
-    default OSS stack still ships none): there's now an `apps/marketing/Dockerfile` (standalone,
-    listens :3000) + a `marketing` compose service behind the **`marketing` profile**, and CI
-    publishes `ghcr.io/alethialabs-io/marketing`. To enable: `pnpm compose:up:site` (or
-    `COMPOSE_PROFILES=marketing`) **and** copy `marketing.caddy.example` → `marketing.caddy` +
-    uncomment `import marketing*.caddy`. Hosted stays Vercel (native Git integration).
-- **The root-namespace rule (don't hand-maintain the list):** `microfrontends.json` is the source
-  of truth; `lib/marketing-zone.ts` **derives** the reserved marketing segments from it and
-  `RESERVED_SLUGS` (`lib/routing.ts`) `= STATIC ∪ derived`, enforced by `isOrgSlugAvailable` so no org
-  can claim e.g. `/pricing`. `scripts/check-marketing-routes.mjs` (CI `guards` job) fails if a
-  marketing `app/` route isn't registered in `microfrontends.json` or the Caddy mirror drifts. To
-  add/rename a marketing route: edit `microfrontends.json` + `marketing.caddy.example`; the reservation
-  follows automatically.
-- **Vercel project names:** the `microfrontends.json` application keys (`console`/`marketing`) must
-  equal the real Vercel **project names** — adjust them (or add `packageName`) when wiring the projects.
-- **Shared workspace packages:** console + marketing share `@repo/{ui,brand,plan-catalog,assets,email}`
-  — see **Shared web packages** above for the full list + the consuming rules (`transpilePackages` +
-  `@source`). The marketing site pulls UI, brand/logo/metadata, plan catalog, the synced static assets,
-  and the email infra from those packages — no console-vs-marketing duplication.
-- **Shared static assets:** `@repo/assets/static` is the single source for the provider-icon PNGs +
-  brand SVGs. `scripts/sync-public-assets.mjs` copies them into each app's `public/` at `dev`/`build`
-  (runs in local/Docker/Vercel via the app `build` script); the synced paths are **gitignored**.
-- **Env:** `NEXT_PUBLIC_LEGAL_URL` (console legal links → marketing, default `https://alethialabs.io`),
-  `NEXT_PUBLIC_SITE_URL` (marketing robots/sitemap origin), `STRIPE_SECRET_KEY` / `STRIPE_PRICE_TEAM`
-  (live pricing label, falls back to the static catalog). All in `.env.example`.
-- **Dev**: `turbo dev --filter=marketing` (port 3010); use the microfrontends local proxy to
-  serve console + marketing under one origin.
-
----
-
-## Infrastructure (`infra/`)
-
-### Managed fleet (in-app scaler)
-
-The hosted managed runner fleet is driven by the **in-app scaler** (`apps/console/lib/fleet/`): a 60s
-loop sizes per-provider warm pools by queue depth and converges them through a `FleetProvider`. The
-**Hetzner** provider (`FLEET_PROVIDER=hcloud`) creates/destroys cheap VMs whose cloud-init runs a
-per-cloud runner image (from GHCR) that **self-registers** via `ALETHIA_RUNNER_BOOTSTRAP_TOKEN`. The
-legacy AWS ECS fleet + Lambda scaler (`infra/fleet-aws`) was retired.
-
-### Templates (`infra/templates/`)
-
-- `project/aws/` — AWS EKS + VPC + RDS + security groups
-- `project/gcp/` — GCP GKE + Cloud SQL + networking
-- `project/azure/` — Azure AKS + managed resources
-- `runner/aws/` — Self-hosted runner deployment template
-- `argocd/` — ArgoCD configuration templates
-
-### Connector (`infra/connector/`)
-
-Cloud account bootstrap scripts:
-- `aws/` — IAM cross-account roles and trust policies
-- `gcp/` — Workload identity federation setup
-
-### IaC / Terraform rules (OpenTofu)
-
-Every change under `infra/` follows these — they keep the templates reviewable and the CI
-`iac-checks` (fmt + tflint + Trivy) green:
-
-1. **Format + validate after every change.** Run `tofu fmt -recursive`, then `tofu init` and
-   `tofu validate` on each touched stack/template before committing.
-2. **Add `check` blocks in `checks.tf` for all new resources** — assert the resource's invariants
-   (naming, hardening, expected attributes) so drift/misconfig fails loudly.
-3. **`tofu/terraform apply` and `plan -destroy` are FORBIDDEN for agents.** Only humans apply, from
-   the correct branch with the required `-var`s. Never run a bare/destructive plan or apply.
-4. **One file per component.** Split by resource group — `iam.tf`, `instances.tf`, `databases.tf`,
-   `network.tf`, `provider.tf`, `variables.tf`, `outputs.tf`, `checks.tf` — not one monolith.
-5. **Validate module/provider versions and inputs.** Check the module out (or its registry docs) and
-   confirm the argument names against the pinned provider version; new components use the **latest**
-   version. (e.g. azurerm 4.x renamed/removed several AKS args — validate, don't assume.)
-6. **Update docs + examples every iteration.** Refresh the stack's README + `*.example` files (and
-   improve them, don't just append) so they match the config.
-
-Reviewed Trivy suppressions live in **`infra/.trivyignore`** (the mechanism Trivy honours — the
-config-file `misconfiguration.exclude` key is a silent no-op), wired via `TRIVY_IGNOREFILE` in
-`.github/actions/iac-checks`. Add an id there only with a one-line rationale, never to hide a real fix.
-
----
-
-## CI/CD (`.github/workflows/`)
-
-- **`ci.yml`** — PR + push gate. `check-types` / `lint` / `test` run via **turbo fan-out** across
-  every workspace project that defines the script (console, marketing, docs, blog, `@alethia/ee`,
-  `@repo/{ui,brand,plan-catalog,email}`) — no hardcoded app list — plus a build smoke for console ·
-  marketing · docs, the Go matrix (cli/runner/core), authz/open-core guards, and gitleaks.
-  (`@repo/assets` is a file bundle with no scripts, so it's intentionally not type-checked/linted.)
-- **`deploy-console.yml`** — Push-to-main (path-filtered) + manual: build the self-host images
-  (console, console-migrate, docs, blog, **marketing**, runner + per-cloud runners) → push to GHCR →
-  SSH `compose pull && up -d` (base + `deploy/prod/docker-compose.prod.yml`).
-- **`release-please.yml`** → **`release-cli.yml`** (GoReleaser: CLI binaries + Homebrew tap) and
-  **`release-runner.yml`** (runner image → ECR + GHCR → ECS roll). Versioned components: CLI + runner.
-- **Marketing (hosted)** deploys via **Vercel's native Git integration** (console = default zone,
-  marketing = child zone); `ci.yml` is the merge gate. The `marketing` GHCR image above is the
-  separate opt-in self-host path.
-
----
-
-## Working discipline (every instance, at kickoff)
-
-Reach for the right thinking tool by default — a skill only fires if you invoke it, so this is the rule that
-makes the habit stick. Skills live in `.claude/skills/` and are **synced from the source-of-truth repo
-`alethialabs-io/skills`** (edit them there; `bash scripts/sync-skills.sh` pulls updates) — see
-`.claude/skills/README.md`.
-
-- **Big or ambiguous task** (spans more than one session, or the approach/architecture isn't obvious) →
-  **wayfind**: decompose it onto the coordination board (`.claude/COORDINATION.md`), interface-first, before
-  writing code. (Reinforces "never start coding without a plan.") The board **is** our wayfinder.
-- **Any non-trivial plan or spec, before building** → **grill** it first (the `grill`/`grilling` skill): an
-  adversarial one-question-at-a-time pass that sharpens it and writes the resolved decisions into the
-  `management/spec/features/` doc or memory. In plan mode, `AskUserQuestion` is the vehicle.
-- **Unknowns — a new library, an API's real behavior, a fact you're tempted to assume** → **research** it
-  against primary sources (the `research` skill for a quick cited dig; `/deep-research` for a heavy fan-out).
-  Never guess where a primary source exists.
-- **Security-sensitive change** (auth/authz, RLS/tenant data, secrets, keyless/credentials, the BYO-IaC
-  sandbox, the `ee/` boundary, the runner, provisioning) → run **`alethia-security-review`** before shipping.
-- **Handing context to another instance or a fresh session** → **handoff** (compact, redacted, references
-  the claimed issue — don't re-explain what the issue/diff already says).
-- **Designing a module boundary/seam** → the `codebase-design` / `domain-modeling` vocabulary (deep modules
-  behind simple interfaces; the interface-first "seams" the board seeds each wave with).
-
-## General Rules
-
-- Never use `any`. Use the actual type or `unknown` with proper narrowing.
-- Never use `as` type casts (`as any`, `as string`, etc.). Use generated types from `database.schemas.ts`.
-- Use `react-hook-form` for all form handling. Never use raw `useState` for form state.
-- Use `zod` schema validation for all user inputs. No manual string matching.
-- Use Tailwind CSS with the shared shadcn/ui design system in **`@repo/ui`** — import `@repo/ui/button` (not `@/components/ui/button`, which no longer exists). Vercel-like aesthetic: minimalist, monochrome, no excessive gradients.
-- **List-page filters follow the console filter standard** — zustand store + URL sync + debounce +
-  normalized TanStack key + server-side filtering; see `apps/console/lib/query/README.md` → "Server-side filters (the standard)". Never invent per-page filter plumbing; no stat-card strips, no Selects in filter bars.
-- Shared code used by more than one app lives in `packages/@repo/*` — **promote, don't duplicate** across `apps/console` ↔ `apps/marketing` (see *Shared web packages*).
-- Feature planning goes in `dataroom/spec/features/` (the private `alethialabs-io/dataroom` repo) with checkable task lists.
+The local dev servers and the destructive resets are **blocked** by
+`.claude/hooks/guard-runtime.sh`. Measured reason: the laptop sat at 92% disk and 86% swap with
+`go build` failing on ENOSPC, and the containers were never the cost — `next dev` was.
+
+Read **`.claude/skills/dev/SKILL.md`** before running anything. Still local: build,
+type-check, lint, unit tests, git, read-only Docker.
+
+## 4. Landing work
+
+Open a **non-draft PR into `dev`**. Mergify (`.mergify.yml`) auto-queues every non-draft,
+conflict-free dev PR and squash-merges it once the **8 required checks** pass, validating each
+PR on its own branch — so you never merge against a `dev` that moved under you. Keep WIP as a
+draft. On a conflict, rebase onto `origin/dev` and push; it re-queues itself.
+
+Letting Mergify land it is the default and almost always right. Merging a **dev**-targeted PR
+yourself is permitted when you have a reason. Merging into `staging`/`main` is not, and neither
+is `--admin`, which bypasses the queue entirely. Never merge a red PR.
+
+**Claiming board work:** don't hand-pick. Read **`.claude/COORDINATION.md`** and run
+`scripts/claim-work.sh --class backend`, then `pnpm wt` the printed slug. Build only within the
+issue's `scope:` globs and reference `Closes #<n>` in the PR.
+
+## 5. Database & migrations
+
+The drizzle snapshot chain is **linear and un-mergeable**. Two branches that each run
+`db:generate` off the same base produce two snapshots with the same parent — a permanent
+collision that jams generation for everyone.
+
+So: **rebase onto the target branch first**, and never generate in two worktrees at once
+(`scripts/db-generate.sh` is lock-guarded and warns). If both your branch and the target added
+a migration, delete yours, rebase, regenerate.
+
+Full pipeline, JSONB typing and drizzle-zod: **`.claude/skills/db-pipeline/SKILL.md`**.
+
+## 6. Code style
+
+- Never use `any`. Use the real type, or `unknown` with narrowing.
+- Never use `as` casts. Types are inferred from the Drizzle schema — there is no generated
+  types file.
+- Never use `Record<string, unknown>` for a JSONB field with a known shape; define the
+  interface in `apps/console/types/jsonb.types.ts`.
+- All functions get a brief JSDoc saying what they do.
+- `react-hook-form` for all forms (never raw `useState`); `zod` for all user input.
+- Group components by feature/domain (`components/connector/`), not by type.
+- Renamed component files are **deleted**, not left as re-exports.
+- Tailwind + the shared shadcn/ui system in `@repo/ui` — import `@repo/ui/button`.
+  `apps/console/components/ui/` still exists but holds only a few app-specific primitives.
+- Shared web code is **promoted** to `packages/<name>` (npm scope `@repo/*`), never duplicated
+  across apps.
+- List-page filters follow the console filter standard (`apps/console/lib/query/README.md`).
+  No stat-card strips.
 - Never start coding without a plan and explicit approval.
-- **Branch flow is `feature → dev → staging → main`.** Cut feature branches from `dev`, and open PRs
-  **ONLY into `dev`**. NEVER open or merge a PR into `main` or `staging` — those receive only the
-  `staging → main` / `dev → staging` promotions (or a `hotfix/*` branch). This is enforced by the
-  `branch-flow-guard` required check, but don't rely on it — target `dev`.
+
+## 7. The harness itself
+
+Four hooks gate every session (`.claude/settings.json`):
+
+| Hook | Event | What it does |
+|---|---|---|
+| `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits in the main checkout |
+| `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
+| `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
+| `.claude/hooks/session-runtime.sh` | SessionStart | Prints the Runtime banner (branch, env, box, disk) |
+
+**A footgun worth knowing:** `guard-runtime.sh` matches **inside quotes**, deliberately — so
+`sh -c "…"` cannot smuggle a blocked command past it. The cost is that merely *writing* a
+blocked command into a file from a Bash heredoc is also refused. Use the Write/Edit tools for
+that; they are not matched.
+
+`.githooks/pre-commit` and `pre-push` are the second layer: they run at commit time with the
+real working directory, and they also check the migration chain and SPDX headers.
+
+## 8. Where the truth lives
+
+| Topic | Source |
+|---|---|
+| Running the app, envs, the box | `.claude/skills/dev/SKILL.md`, `infra/sandbox/README.md` |
+| Claiming work, the board, the autonomous loop | `.claude/COORDINATION.md` |
+| DB pipeline, JSONB, drizzle-zod | `.claude/skills/db-pipeline/SKILL.md` |
+| Per-component architecture (console · CLI · runner · core · packages · marketing · docs · admin · ee) | `ARCHITECTURE.md` |
+| Testing bar, coverage gates | `TESTING.md` |
+| Contributing, branch flow, CI | `CONTRIBUTING.md` |
+| Docs style bar (Diátaxis + Vale) | `apps/docs/README.md`, `.claude/skills/alethia-docs/SKILL.md` |
+| Security review before shipping | `.claude/skills/alethia-security-review/SKILL.md` |
+| IaC rules | `infra/README.md` |
+| Open-core boundary | `ee/README.md`, `LICENSING.md` |
+| The verification gate (elench) | `ELENCH.md`, `packages/core/verify/README.md` |
+
+**Working discipline** — reach for the right tool by default. Big or ambiguous task → decompose
+onto the board (`.claude/skills/decompose/SKILL.md`). Any non-trivial plan → grill it first
+(`.claude/skills/grilling/SKILL.md`). Unknowns → research against primary sources
+(`.claude/skills/research/SKILL.md`). Security-sensitive change → run the security review.
+Handing off → `.claude/skills/handoff/SKILL.md`. Module boundaries →
+`.claude/skills/codebase-design/SKILL.md`.

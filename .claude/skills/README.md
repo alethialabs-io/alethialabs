@@ -12,7 +12,8 @@ Synced (from `alethialabs-io/skills`): `grilling`, `grill-me`, `research`, `hand
 `codebase-design`, `alethia-security-review`, `alethia-design`, `alethia-docs` (+ `NOTICE`, the MIT
 attribution).
 
-App-only (not from the source repo, edit here): `vercel-microfrontends`, `dev`.
+App-only (not from the source repo, edit here): `vercel-microfrontends`, `dev`, `db-pipeline`,
+`foundry`, `decompose`.
 
 `dev` is app-only on purpose: it describes *this* repo's sandbox box and `pnpm env:*`
 commands, which mean nothing in another codebase. `sync-skills.sh` never prunes skills
