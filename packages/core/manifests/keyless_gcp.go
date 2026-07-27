@@ -11,9 +11,9 @@ import "fmt"
 //
 // The proxy image is engine-agnostic — --auto-iam-authn works for Postgres and MySQL alike, and only
 // the listen port differs — so the engine is threaded through to the port rather than branching the
-// wiring. The gcp × mysql CELL is nonetheless off in keylessCells until #1505 lands the Cloud SQL
-// MySQL IAM-auth flag: without it tofu never enables IAM auth on the instance, so the proxy would
-// render cleanly and then fail to authenticate. When #1505 lands, this function needs no change.
+// wiring. Both gcp cells are open in keylessCells: #1505 landed the Cloud SQL MySQL IAM-auth flag
+// (the UNDERSCORED `cloudsql_iam_authentication`), without which the proxy would render cleanly and
+// then fail to authenticate against an instance whose IAM auth tofu never enabled.
 func gcpProxyWiring(opts Options, engine string) (keylessWiring, error) {
 	conn := opts.Outputs["cloud_sql_connection_name"]
 	if conn == "" {
