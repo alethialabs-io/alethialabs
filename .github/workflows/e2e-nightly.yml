@@ -342,7 +342,7 @@ jobs:
       - uses: actions/setup-go@v7
         if: steps.gate.outputs.run == 'true'
         with:
-          go-version: "1.25"
+          go-version: "1.26"
       - uses: opentofu/setup-opentofu@v2
         if: steps.gate.outputs.run == 'true'
         with:
