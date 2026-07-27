@@ -2038,11 +2038,19 @@ export async function getProjectAsFormData(
 			capacity_mode: t.capacity_mode ?? undefined,
 			point_in_time_recovery: t.point_in_time_recovery ?? undefined,
 		})),
+		// provider/provider_config are DESIGN (which secret store this environment reads through),
+		// not provisioned state — they must round-trip. Omitting them was a silent data-loss bug:
+		// updateProjectDesign reconciles delete-then-insert, so a canvas deploy re-inserted every
+		// secret without its provider and the environment fell back to the cluster's native store
+		// with no error. Same shape as the chart-repo wipe fixed in #1301; the registries below
+		// have always carried them.
 		secrets: source.components.secrets.map((s) => ({
 			name: s.name,
 			generate: s.generate ?? undefined,
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
+			provider: s.provider ?? undefined,
+			provider_config: s.provider_config ?? undefined,
 		})),
 		storage_buckets: source.components.storage_buckets.map((b) => ({
 			name: b.name,

@@ -31,6 +31,7 @@ import { ProviderConfigFields } from "@/components/connector/provider-config-fie
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
 import {
 	getConnectorProviderBySlug,
+	type ConnectorProviderMeta,
 	type PluggableCategory,
 } from "@/lib/connectors/registry.generated";
 
@@ -48,7 +49,34 @@ interface ConnectorSelectProps {
 	id?: string;
 	/** Per-`provider_config`-key validation messages. */
 	errors?: Record<string, string>;
+	/**
+	 * Renders a first option meaning "no connector — use the platform default", which writes
+	 * `{provider: null, provider_config: {}}`.
+	 *
+	 * Only for categories that HAVE a default. `secrets` does (the cluster cloud's own secret store,
+	 * which is what a project gets until it picks one), so it must also be possible to go back to it.
+	 * `helm_registry` doesn't — there is no implicit chart repo — so it omits this and the control
+	 * stays as it was.
+	 */
+	nativeOption?: { label: string; description?: string };
+	/**
+	 * Why a connected provider cannot be selected, or null when it can. A non-null reason renders the
+	 * option DISABLED with that text rather than hiding it — an option that silently isn't there reads
+	 * as a bug, while one that says why is an answer.
+	 *
+	 * Distinct from the `coming_soon` filter below, which is about a provider that isn't finished.
+	 * This is for one that is finished and connectable but cannot work HERE.
+	 */
+	unavailable?: (provider: ConnectorProviderMeta) => string | null;
 }
+
+/**
+ * The value the Select carries for `nativeOption`. A Select item cannot hold "" (that is the
+ * "nothing selected" sentinel and would render the placeholder), so the platform default needs a
+ * token of its own. It is UI-only: choosing it writes `provider: null`, never this string — the
+ * column's own sentinel for "no connector" is NULL.
+ */
+const NATIVE_VALUE = "__native__";
 
 /** Only strings/booleans reach `provider_config`; anything else is a stale value we ignore. */
 function toKnobValues(
@@ -68,6 +96,8 @@ export function ConnectorSelect({
 	onChange,
 	id,
 	errors,
+	nativeOption,
+	unavailable,
 }: ConnectorSelectProps) {
 	const params = useParams<{ org?: string }>();
 	const connected = useConnectedProviders(category);
@@ -96,7 +126,9 @@ export function ConnectorSelect({
 
 	const connectorsHref = params?.org ? `/${params.org}/~/connectors` : "/";
 
-	if (options.length === 0 && !value) {
+	// With a native default there is always something to choose, so the "connect one" empty state
+	// would be wrong — it would hide the very option the project is currently using.
+	if (options.length === 0 && !value && !nativeOption) {
 		return (
 			<div className="flex items-center justify-between gap-3 rounded-none border border-dashed border-border p-3">
 				<div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -113,8 +145,14 @@ export function ConnectorSelect({
 	return (
 		<div className="flex flex-col gap-3">
 			<Select
-				value={value ?? ""}
+				value={value ?? (nativeOption ? NATIVE_VALUE : "")}
 				onValueChange={(slug) => {
+					// Back to the platform default: drop the knobs too, since they describe a provider
+					// that is no longer selected and would otherwise ride into the config snapshot.
+					if (slug === NATIVE_VALUE) {
+						onChange({ provider: null, provider_config: {} });
+						return;
+					}
 					const next = getConnectorProviderBySlug(slug);
 					// Carry over only the knobs the NEW provider actually declares. Otherwise switching
 					// (say) an HTTPS repo to a GHCR one leaves a stale `repo_url` behind in the JSONB,
@@ -135,16 +173,34 @@ export function ConnectorSelect({
 					<SelectValue placeholder="Select a connector" />
 				</SelectTrigger>
 				<SelectContent>
-					{options.map((provider) => (
-						<SelectItem key={provider.slug} value={provider.slug}>
+					{nativeOption ? (
+						<SelectItem value={NATIVE_VALUE}>
 							<span className="flex items-center gap-2">
-								<span className="flex h-4 w-4 items-center justify-center">
-									<ConnectorIcon src={provider.icon_url} name={provider.name} size={16} />
-								</span>
-								{provider.name}
+								{nativeOption.label}
+								{nativeOption.description ? (
+									<span className="vx-eyebrow text-[10px] text-muted-foreground">
+										{nativeOption.description}
+									</span>
+								) : null}
 							</span>
 						</SelectItem>
-					))}
+					) : null}
+					{options.map((provider) => {
+						const reason = unavailable?.(provider) ?? null;
+						return (
+							<SelectItem key={provider.slug} value={provider.slug} disabled={Boolean(reason)}>
+								<span className="flex items-center gap-2">
+									<span className="flex h-4 w-4 items-center justify-center">
+										<ConnectorIcon src={provider.icon_url} name={provider.name} size={16} />
+									</span>
+									{provider.name}
+									{reason ? (
+										<span className="vx-eyebrow text-[10px] text-muted-foreground">{reason}</span>
+									) : null}
+								</span>
+							</SelectItem>
+						);
+					})}
 					{staleSelection && value ? (
 						<SelectItem value={value}>
 							<span className="flex items-center gap-2">

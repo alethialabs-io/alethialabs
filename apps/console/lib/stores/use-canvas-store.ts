@@ -307,6 +307,10 @@ interface CanvasStore {
 	edges: CanvasEdge[];
 	selectedIds: string[];
 	inspectorNodeId: string | null;
+	/** Whether the environment-settings sheet is open. Lifted out of the sheet so other surfaces can
+	 * send you there — the Secrets panel shows which store the environment reads through, and the
+	 * choice itself is made in the sheet. */
+	envSettingsOpen: boolean;
 	dirty: boolean;
 	/** Undo/redo snapshot stacks (node sets; edges re-derived on restore). */
 	past: CanvasNode[][];
@@ -369,6 +373,7 @@ interface CanvasStore {
 	removeNodes: (ids: string[]) => void;
 	duplicateNodes: (ids: string[]) => void;
 	openInspector: (id: string | null) => void;
+	setEnvSettingsOpen: (open: boolean) => void;
 	commit: () => void;
 	undo: () => void;
 	redo: () => void;
@@ -434,6 +439,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			iacOutputs: [],
 			selectedIds: [],
 			inspectorNodeId: null,
+			envSettingsOpen: false,
 			dirty: false,
 			past: [],
 			future: [],
@@ -802,6 +808,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			openInspector: (id) => set({ inspectorNodeId: id }),
+			setEnvSettingsOpen: (open) => set({ envSettingsOpen: open }),
 
 			undo: () => {
 				const { past, nodes, future } = get();
