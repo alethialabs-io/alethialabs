@@ -104,6 +104,26 @@ type Sidecar struct {
 	Env    []types.ServiceEnvVar
 	Ports  []int // containerPorts to expose (e.g. the local proxy listener)
 	Mounts []VolumeMount
+	// Compute requests/limits; nil → defaultSidecarResources. An auth proxy is infrastructure the
+	// workload does not know it has, so this is a package default rather than a canvas field — but
+	// it stays overridable for a caller that knows better.
+	Resources *types.ServiceResources
+}
+
+// defaultSidecarResources is the compute envelope every auxiliary container gets unless its caller
+// overrides it. Sidecars here are auth proxies and token refreshers: near-idle at steady state, with
+// work proportional to CONNECTION SETUP rather than request volume, so the requests are small.
+//
+// RESOURCES-001 requires BOTH a cpu and a memory limit, and the cpu limit is deliberately loose. The
+// keyless proxy sits on the hot path of every database connection, and a tight cpu limit does not
+// shed load — it becomes CFS throttling, which surfaces as connection latency under exactly the
+// burst a pod is least able to explain. Generous-but-present satisfies the control without inventing
+// a throughput ceiling nothing has measured. #1511's real-apply is the first thing that could.
+func defaultSidecarResources() *types.ServiceResources {
+	return &types.ServiceResources{
+		Requests: types.ServiceResourceQuantities{CPU: "10m", Memory: "32Mi"},
+		Limits:   types.ServiceResourceQuantities{CPU: "200m", Memory: "128Mi"},
+	}
 }
 
 // VolumeMount mounts a pod Volume into a container at MountPath.
@@ -146,6 +166,18 @@ func (a App) normalize() App {
 		p := *a.Probe
 		p.Port = a.Port
 		a.Probe = &p
+	}
+	// Copy before defaulting: App is taken by value but a slice header is not, so writing through
+	// a.Sidecars[i] would mutate the caller's slice (same reason Probe is copied above).
+	if len(a.Sidecars) > 0 {
+		sidecars := make([]Sidecar, len(a.Sidecars))
+		copy(sidecars, a.Sidecars)
+		for i := range sidecars {
+			if sidecars[i].Resources == nil {
+				sidecars[i].Resources = defaultSidecarResources()
+			}
+		}
+		a.Sidecars = sidecars
 	}
 	return a
 }
@@ -286,6 +318,13 @@ spec:
               {{- end }}
             {{- end }}
           {{- end }}
+          resources:
+            requests:
+              cpu: {{ .Resources.Requests.CPU }}
+              memory: {{ .Resources.Requests.Memory }}
+            limits:
+              cpu: {{ .Resources.Limits.CPU }}
+              memory: {{ .Resources.Limits.Memory }}
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
