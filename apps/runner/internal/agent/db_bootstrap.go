@@ -10,6 +10,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
 // db-bootstrap is the LEAST-PRIVILEGE half of keyless DB auth (#722). The cloud identity the app logs
@@ -43,8 +45,12 @@ import (
 //     GRANTs only. The target is the MySQL login form — Cloud SQL MySQL truncates the '@' and domain,
 //     so it is the lowercase SA local part, not the Postgres "sa@project.iam" form (#1505).
 
-// keylessBootstrapRole is the least-priv role/user AWS/Azure converge on (matches manifests.keylessDBUser).
-const keylessBootstrapRole = "alethia_app"
+// keylessBootstrapRole is the least-priv role/user AWS/Azure converge on. It is NOT a second literal:
+// it aliases packages/core's exported constant, so the login this Job CREATEs and the one the rendered
+// manifests tell the app to connect as cannot drift apart. The third site — the AWS IAM policy ARN in
+// infra/templates/project/aws/irsa.tf — cannot import Go, and is asserted against the same constant by
+// TestKeylessDBUserMatchesIRSAPolicy in packages/core/manifests.
+const keylessBootstrapRole = manifests.KeylessDBUser
 
 // Database engines the bootstrap SQL generator supports. An empty --engine is treated as postgres for
 // back-compatibility with the pre-MySQL callers.
