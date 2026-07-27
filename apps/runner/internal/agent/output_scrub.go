@@ -34,6 +34,7 @@ var sensitiveOutputSubstrings = []string{
 	"kubeconfig",
 	"kube_config",
 	"talosconfig",
+	"talos_admin_config", // the persisted-at-rest admin credential column name (#1389) — the "talosconfig" substring above does NOT match it
 	"client_key",
 	"client_certificate",
 	"private_key",

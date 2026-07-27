@@ -60,6 +60,15 @@ locals {
       proxy = {
         disabled = true
       }
+      # Short-lived admin kubeconfig (#1389 placement parity). The Talos machine API mints a FRESH
+      # admin cert on every `Kubeconfig` call (the runner re-mints per placement from the persisted
+      # talosconfig), but the cert's TTL is a cluster-side setting whose default is 1 YEAR. Pin it low so
+      # both a placement's minted kubeconfig AND the dedicated deploy's `kubeconfig` output are
+      # short-lived — the runner consumes either within the deploy window, and placements always re-mint.
+      # 24h comfortably covers a slow provision while keeping the credential ephemeral.
+      adminKubeconfig = {
+        certLifetime = var.admin_kubeconfig_cert_lifetime
+      }
     }
   }
 

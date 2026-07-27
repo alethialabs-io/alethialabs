@@ -357,6 +357,11 @@ func buildChildEnv(parentEnv []string, workDir string) []string {
 	if v, ok := get("ALETHIA_STAGE_ADDON_SECRETS"); ok {
 		out = append(out, "ALETHIA_STAGE_ADDON_SECRETS="+v)
 	}
+	// hetzner-talos Fabric admin talosconfig (#1389) the child mints a placement kubeconfig from via the
+	// Talos machine API. Same ALETHIA_STAGE_* rail — never the persisted payload.
+	if v, ok := get("ALETHIA_STAGE_TALOS_CONFIG"); ok {
+		out = append(out, "ALETHIA_STAGE_TALOS_CONFIG="+v)
+	}
 	sort.Strings(out)
 	return out
 }

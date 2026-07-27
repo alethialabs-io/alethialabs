@@ -1,0 +1,1 @@
+ALTER TABLE "project_fabrics" ADD COLUMN "talos_admin_config" jsonb;

@@ -41,6 +41,10 @@ type DestroyParams struct {
 	// DeployParams.KubeConn — runner-injected, keeps the gcp/azure auth SDKs out of packages/core).
 	// Nil for aws (resolved in-core from the name) and for dedicated destroys.
 	KubeConn KubeConnResolver
+	// TalosKubeconfig mints a kubeconfig from a hetzner-talos Fabric's persisted talosconfig for a
+	// vcluster teardown that must reach the HOST to deregister the virtual cluster (same seam as
+	// DeployParams.TalosKubeconfig — runner-injected). Nil for every non-hetzner cloud and dedicated destroys.
+	TalosKubeconfig TalosKubeconfigMinter
 }
 
 // RunDestroy tears down a project environment. It rebuilds the tofu workdir from

@@ -64,14 +64,15 @@ func TestBuildVClusterSpecFailsClosed(t *testing.T) {
 // TestSelectPlacementPathVcluster locks the activation gate: vcluster is routed to the vcluster path only
 // on a re-mint-wired cloud (aws today) and fails closed everywhere else — cloud parity is explicit.
 func TestSelectPlacementPathVcluster(t *testing.T) {
-	// Activated clouds route to the vcluster path (aws in-core; gcp/azure via the runner-injected resolver).
-	for _, provider := range []string{"aws", "gcp", "azure"} {
+	// Activated clouds route to the vcluster path (aws in-core; gcp/azure via the runner-injected resolver;
+	// hetzner via the injected Talos-API minter from the persisted talosconfig).
+	for _, provider := range []string{"aws", "gcp", "azure", "hetzner"} {
 		if got := selectPlacementPath(types.PlacementModeVcluster, provider); got != placementVcluster {
 			t.Errorf("vcluster on %q = %v, want placementVcluster", provider, got)
 		}
 	}
-	// alibaba is a per-cloud follow-up; hetzner-talos is a permanent exclusion — all fail closed.
-	for _, provider := range []string{"alibaba", "hetzner", "hetzner-talos", ""} {
+	// alibaba is a per-cloud follow-up; the "hetzner-talos" non-slug and empty string are not providers.
+	for _, provider := range []string{"alibaba", "hetzner-talos", ""} {
 		if got := selectPlacementPath(types.PlacementModeVcluster, provider); got != placementUnactivated {
 			t.Errorf("vcluster on %q = %v, want placementUnactivated (fail-closed parity)", provider, got)
 		}
@@ -87,16 +88,16 @@ func TestSelectPlacementPathVcluster(t *testing.T) {
 
 // TestVClusterRemintWired locks the single activation control (aws-first, everything else fail-closed).
 func TestVClusterRemintWired(t *testing.T) {
-	for _, provider := range []string{"aws", "gcp", "azure"} {
+	for _, provider := range []string{"aws", "gcp", "azure", "hetzner"} {
 		if !vclusterRemintWired(provider) {
 			t.Errorf("%q should be wired for vcluster re-mint", provider)
 		}
 	}
-	// alibaba is a parity follow-up (needs its signing-client resolver leg); hetzner-talos is a
-	// permanent exclusion (no cloud API to re-mint).
-	for _, provider := range []string{"alibaba", "hetzner", "hetzner-talos"} {
+	// alibaba is a parity follow-up (needs its signing-client resolver leg); "hetzner-talos" is not a
+	// provider slug (the slug is "hetzner").
+	for _, provider := range []string{"alibaba", "hetzner-talos"} {
 		if vclusterRemintWired(provider) {
-			t.Errorf("%q must not be wired yet (parity follow-up / permanent exclusion)", provider)
+			t.Errorf("%q must not be wired (parity follow-up / not a slug)", provider)
 		}
 	}
 }
