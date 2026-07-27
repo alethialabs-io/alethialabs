@@ -440,7 +440,7 @@ export const CONNECTOR_PROVIDERS: ConnectorProviderMeta[] = [
 		sort_order: 44,
 		modulePath: "",
 		credentialFields: [],
-		providerConfigFields: [{"key":"target_account_id","label":"Target AWS Account ID","type":"text","required":true,"help":"The AWS account that owns the Secrets Manager secrets (the account the cluster reads from cross-account)."},{"key":"region","label":"Region","type":"text","required":true,"help":"The Secrets Manager region, e.g. us-east-1."},{"key":"target_role_arn","label":"Target Role ARN","type":"text","required":true,"help":"An IAM role in the secrets account that trusts this cluster's external-secrets IRSA role and grants secretsmanager:GetSecretValue. You create this in the secrets account."}],
+		providerConfigFields: [{"key":"target_account_id","label":"Target AWS Account ID","type":"text","required":true,"help":"The AWS account that owns the Secrets Manager secrets (the account the cluster reads from cross-account)."},{"key":"region","label":"Region","type":"text","required":true,"help":"The Secrets Manager region, e.g. us-east-1."},{"key":"target_role_arn","label":"Target Role ARN","type":"text","required":true,"help":"An IAM role in the secrets account that trusts this cluster's external-secrets IRSA role and grants secretsmanager:GetSecretValue. You create this in the secrets account."},{"key":"external_id","label":"External ID","type":"text","required":false,"help":"Only if the target role's trust policy carries an sts:ExternalId condition — enter the same value you set on the bootstrap module's external_id. Leave blank when it does not; STS rejects the assume when the two disagree."}],
 	},
 	{
 		category: "secrets",

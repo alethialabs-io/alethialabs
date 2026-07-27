@@ -1362,6 +1362,13 @@
 						"type": "text",
 						"required": true,
 						"help": "An IAM role in the secrets account that trusts this cluster's external-secrets IRSA role and grants secretsmanager:GetSecretValue. You create this in the secrets account."
+					},
+					{
+						"key": "external_id",
+						"label": "External ID",
+						"type": "text",
+						"required": false,
+						"help": "Only if the target role's trust policy carries an sts:ExternalId condition — enter the same value you set on the bootstrap module's external_id. Leave blank when it does not; STS rejects the assume when the two disagree."
 					}
 				]
 			}
