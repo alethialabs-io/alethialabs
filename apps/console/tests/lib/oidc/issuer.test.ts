@@ -7,7 +7,7 @@
 // right iss/sub/aud, the JWKS never leaks private key material, expiry is enforced, and audience scoping
 // prevents cross-cloud replay.
 
-import { createPublicKey, generateKeyPairSync } from "node:crypto";
+import { createPublicKey } from "node:crypto";
 import * as jose from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -19,15 +19,20 @@ import {
 	oidcIssuerConfigured,
 	WORKLOAD_SUBJECT,
 } from "@/lib/oidc/issuer";
+import { testRsaKey } from "../../fixtures/rsa-keys";
 
 const APP_URL = "https://alethialabs.io";
 const saved: Record<string, string | undefined> = {};
 
-/** Generates an RSA-2048 keypair; returns the PKCS8 PEM + its base64 (the env-var encoding). */
-function makeKey(): { pem: string; b64: string } {
-	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-	const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-	return { pem, b64: Buffer.from(pem, "utf8").toString("base64") };
+/**
+ * An RSA-2048 test key as PKCS8 PEM + its base64 (the env-var encoding), cached per slot.
+ *
+ * `slot` matters only to the rotation suite below, which needs a primary and a DISTINCT previous
+ * key: it asserts the JWKS publishes BOTH, so one shared key would silently dedupe to a single entry
+ * and make that assertion vacuous. Every other caller wants slot 0.
+ */
+function makeKey(slot = 0): { pem: string; b64: string } {
+	return testRsaKey(slot);
 }
 
 /** Generates an RSA-2048 keypair and installs its base64(PKCS8 PEM) as the signing key env. */
@@ -153,8 +158,8 @@ describe("OIDC workload-identity issuer", () => {
 describe("OIDC issuer key rotation (overlap JWKS)", () => {
 	/** Installs a primary (signing) key + a published-only previous key — the mid-rotation state. */
 	function installRotating(): { primary: { pem: string; b64: string }; previous: { pem: string; b64: string } } {
-		const primary = makeKey();
-		const previous = makeKey();
+		const primary = makeKey(0);
+		const previous = makeKey(1); // MUST differ from the primary — the JWKS is asserted to hold both
 		process.env.ALETHIA_OIDC_SIGNING_KEY = primary.b64; // gitleaks:allow — freshly generated in-test, not a secret
 		process.env.ALETHIA_OIDC_SIGNING_KEY_PREVIOUS = previous.b64; // gitleaks:allow — freshly generated in-test, not a secret
 		process.env.NEXT_PUBLIC_APP_URL = APP_URL;
