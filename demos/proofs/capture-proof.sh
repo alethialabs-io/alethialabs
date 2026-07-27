@@ -180,6 +180,21 @@ if [ -n "$xacct_summary" ] && [ -f "$xacct_summary" ]; then
 	[ -n "$xacct_verdict" ] && echo "  · xacct-secrets: $xacct_verdict"
 fi
 
+# ── Day-2 access summary (P2-E). The T2 test writes its verdict to ALETHIA_E2E_DAY2_ACCESS_SUMMARY
+#    (endpoint surfaced + kube reachable/authorized + node count — booleans and counts, no secrets).
+#    It was written but never read (#1525): fold it into the bundle (scrubbed as a backstop) and
+#    surface a one-line verdict, exactly like the soak. Absent ⇒ the scenario was disabled/never ran
+#    and the capture is unchanged. ──
+day2_access_summary="${ALETHIA_E2E_DAY2_ACCESS_SUMMARY:-}"
+day2_access_verdict=""
+if [ -n "$day2_access_summary" ] && [ -f "$day2_access_summary" ]; then
+	scrub_stream <"$day2_access_summary" >"$out/day2-access-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/day2-access-summary.json" ]; then
+		day2_access_verdict="$(jq -r '.verdict // empty' "$out/day2-access-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$day2_access_verdict" ] && echo "  · day2-access: $day2_access_verdict"
+fi
+
 # ── Day-2 OFFER postures (#1440 classifier / #1495 harness). The T2 layer writes per-op
 #    postures to ALETHIA_E2E_DAY2_OFFER_SUMMARY — resource addresses, booleans and counts,
 #    never a secret. Fold it in (scrubbed as a backstop) and surface a one-line verdict.
@@ -275,6 +290,7 @@ receipt:   signed=$receipt_signed sha256=${receipt_plan_sha:-n/a}
 teardown:  destroyed=$destroyed (${resources_destroyed:-?} resources)
 duration:  ${duration_s:-?}s
 soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
+day2-access: ${day2_access_verdict:-n/a (P2-E day-2 access off or not reached)}
 day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 EOF
 
@@ -304,6 +320,7 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| teardown | destroyed=${destroyed} (${resources_destroyed:-n/a} resources) |"
 	echo "| duration | ${duration_s:-n/a}s |"
 	echo "| day-2 soak (A0.3) | ${soak_verdict:-n/a} |"
+	echo "| day-2 access (P2-E) | ${day2_access_verdict:-n/a} |"
 	echo "| day-2 offer postures | ${day2_offer_verdict:-n/a} |"
 	echo "| commit | \`${git_sha}\` |"
 	echo
