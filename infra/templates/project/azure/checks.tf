@@ -61,3 +61,17 @@ check "aks_cluster_version_present" {
     error_message = "provision_aks is true but aks_cluster_version is empty."
   }
 }
+
+# The ACR module and the output that reads it must agree about whether it exists.
+#
+# They didn't: the module's count required `registry_provider == "native"` while the output only
+# checked `provision_acr`, and the console derives that flag from the PRESENCE of a registry row, not
+# its provider. Selecting any registry connector therefore indexed [0] of an empty module and failed
+# the whole apply with "Invalid index". The output now guards on `length(module.acr)`; this asserts
+# the pairing so a future edit can't reintroduce the skew silently.
+check "acr_output_matches_module" {
+  assert {
+    condition     = (length(module.acr) > 0) == (var.provision_acr && var.registry_provider == "native")
+    error_message = "The ACR module count and its provisioning predicate have diverged — a pluggable registry_provider means the ACR is not created, and any output reading module.acr[0] would fail the apply."
+  }
+}
