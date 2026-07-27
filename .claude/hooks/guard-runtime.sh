@@ -46,9 +46,21 @@ if [ "${1:-}" = "--self-test" ]; then
 	t block 'docker compose -f docker-compose.dev.yml down --volumes'
 	t block 'cd apps/console && next dev --turbopack'
 	t block 'npx turbo dev'
-	# The reason quoted spans are NOT stripped before matching:
+	# The reason quoted spans are NOT stripped before matching. No shell/exec verb is in
+	# the inspect allowlist, so all of these still have an executable remainder.
 	t block 'sh -c "pnpm dev:up"'
 	t block "bash -lc 'next dev'"
+	t block 'env FOO=1 pnpm dev:up'
+	t block 'nohup pnpm dev:up &'
+	t block 'echo x && pnpm dev:up'
+
+	# Inspecting a blocked command is data, not execution. Refusing these made it
+	# impossible to find or fix the docs that recommend them.
+	t allow 'grep -n "turbo dev" README.md'
+	t allow "rg 'pnpm dev:up' --files-with-matches"
+	t allow 'git grep -n "next dev"'
+	t allow 'cat docs.md | grep "pnpm compose:up"'
+	t allow "sed -i '' 's/turbo dev/pnpm env:up/' README.md"
 
 	# Everything the split is supposed to leave alone.
 	t allow 'pnpm build'
@@ -87,13 +99,33 @@ else
 fi
 [ -n "$cmd" ] || exit 0
 
-# Matching is on the command text, INCLUDING inside quotes. So
-# `echo "pnpm dev:up is blocked"` is refused even though it starts nothing. That is
-# deliberate and follows the same asymmetry the other guards state: a spurious BLOCK is
-# recoverable (reword, or use the escape hatch), a spurious ALLOW is not — and the
-# alternative, stripping quoted spans before matching, would wave through
-# `sh -c "pnpm dev:up"` and `bash -lc 'next dev'`, which are exactly what this exists to
-# stop. Exercised both ways by --self-test.
+# Matching is on the command text, INCLUDING inside quotes: stripping quoted spans would
+# wave through `sh -c "…"` and `bash -lc '…'`, which are exactly what this exists to stop.
+#
+# But quote-inclusive matching alone was too blunt. It refused three legitimate operations
+# in a single session — grepping the docs for a blocked command, and twice writing one into
+# a file from a heredoc — all while fixing the very docs that recommend those commands.
+# "Reword it or restart claude" is not a reasonable answer to `grep -n "turbo dev" README.md`.
+#
+# So: if the command's leading word is a SEARCH-OR-PRINT tool, its arguments are data, not
+# something about to run, and the segment is skipped. The allowlist is deliberately tiny and
+# contains no shell/exec verb — `sh`, `bash`, `zsh`, `eval`, `env`, `xargs`, `nohup` are all
+# absent, so the smuggling cases stay blocked. Both directions are pinned by --self-test.
+INSPECT_RE='^[[:space:]]*(sudo[[:space:]]+)?(grep|egrep|fgrep|rg|ag|ack|sed|awk|cut|sort|uniq|comm|diff|jq|yq|cat|bat|head|tail|less|more|wc|tr|column|printf|echo|find|fd|git[[:space:]]+grep|git[[:space:]]+log)\b'
+
+# Split on shell separators and drop the inspect-only segments. What remains is the text
+# that could actually execute something.
+exec_text=""
+while IFS= read -r seg; do
+	printf '%s' "$seg" | grep -Eq "$INSPECT_RE" && continue
+	exec_text="$exec_text
+$seg"
+done <<SEGMENTS
+$(printf '%s' "$cmd" | tr ';&|' '\n')
+SEGMENTS
+# A command that is nothing but inspection has no executable remainder — allow it.
+printf '%s' "$exec_text" | grep -q '[^[:space:]]' || exit 0
+cmd="$exec_text"
 
 # Escape hatch. MUST be exported before `claude` starts — a PreToolUse hook is spawned
 # before the Bash tool runs, so an inline `ALETHIA_LOCAL_DEV=1 pnpm dev:up` prefix is

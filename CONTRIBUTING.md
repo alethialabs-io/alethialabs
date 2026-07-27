@@ -21,8 +21,8 @@ hosted at `github.com/alethialabs-io/alethialabs`.)
   only the Individual CLA.
 
 **Why a CLA?** Alethia Labs offers both an AGPL core and a commercial edition. To
-keep offering both, Alethia Labs DPK needs the right to license your contribution under
-both licenses. The CLA grants Alethia Labs DPK that right while **you keep the copyright
+keep offering both, Alethia Labs needs the right to license your contribution under
+both licenses. The CLA grants Alethia Labs that right while **you keep the copyright
 to your contribution** — it is a license, not an assignment. Without it, a single
 AGPL-only contribution would block us from shipping the commercial edition.
 
@@ -47,7 +47,7 @@ receives merges from `staging`.
 
 | Branch | Role | Merges from | Deploy |
 |---|---|---|---|
-| `dev` | integration — all feature/fix PRs land here | feature branches (PR + green CI, **via merge queue**) | — (CI only) |
+| `dev` | integration — all feature/fix PRs land here | feature branches (non-draft PR + green CI, **via the Mergify queue**) | — (CI only) |
 | `staging` | release candidate | `dev` (PR + green CI) | — (built/tested; no deploy yet) |
 | `main` | production | `staging` **only** (PR + green CI, linear history) | auto → alethialabs.io (`deploy-console.yml`) |
 
@@ -55,16 +55,19 @@ receives merges from `staging`.
   linear history; force-push/deletion blocked; admins included. No direct pushes — ever.
   **0 required approvals** (solo repo — you can't approve your own PR); bump
   `required_approving_review_count` in `infra/github` when a second reviewer exists.
-- **`dev` uses a merge queue.** Don't merge your PR directly. When CI is green, enable auto-merge —
-  `gh pr merge --auto --squash` — and GitHub adds it to the queue: it rebuilds your PR on the
-  *projected* `dev` tip (its base plus any PRs ahead of you), re-runs the required checks via the
-  `merge_group` event, and squash-merges in order. This is what makes concurrent PRs safe — every
-  merge is validated against the `dev` it will actually land on, so two green-against-stale PRs can't
-  race and break the branch. Auto-merge needs a conflict-free PR; if GitHub flags a conflict, rebase
-  onto `origin/dev`, push, and re-enable auto-merge. The queue gates on the 7 fast required checks; the
-  heavy real-runner + browser E2Es run at queue time as observe-only signals (tracked by
-  `scripts/merge-signal-health.sh` / the weekly *Merge-signal health* workflow, promoted to required
-  once proven reliable).
+- **`dev` uses a merge queue — Mergify, not GitHub's native one.** Just open a **non-draft**
+  PR into `dev`. Mergify (`.mergify.yml`) auto-queues every non-draft, conflict-free dev PR and
+  squash-merges it in order once the **8 required checks** pass, validating each PR on its own
+  branch (it rebases candidates itself). That is what makes concurrent PRs safe: you never merge
+  against a `dev` that moved under you, so two green-against-stale PRs cannot race and break the
+  branch. Keep work-in-progress as a **draft** — drafts are excluded. If Mergify reports a
+  conflict, rebase onto `origin/dev` and push; it re-queues automatically. You can nudge it with
+  a `@mergifyio requeue` comment.
+
+  You do not need to merge anything yourself, and you must never use `--admin` (it bypasses the
+  queue) or merge a red PR. The heavy real-runner and browser E2Es run as observe-only signals,
+  tracked by `scripts/merge-signal-health.sh` and the weekly *Merge-signal health* workflow.
+
 - **`staging` is protected too** (PR + green CI), lighter than `main`.
 - **release-please** runs on `main` and opens the release PRs (CLI + runner version
   bumps); this flow is unchanged by the branch model.
@@ -83,5 +86,5 @@ security@alethialabs.io instead.
 ## License
 
 By contributing, you agree that your contributions are licensed under
-`AGPL-3.0-only` and, per the CLA, may also be offered by Alethia Labs DPK under its
+`AGPL-3.0-only` and, per the CLA, may also be offered by Alethia Labs under its
 commercial license. See [LICENSE](LICENSE) and [LICENSING.md](LICENSING.md).
