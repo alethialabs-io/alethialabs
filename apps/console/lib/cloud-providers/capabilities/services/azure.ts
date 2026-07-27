@@ -55,7 +55,7 @@ export interface NormalizedService {
 	region: string;
 	service_kind: CapabilityServiceKind;
 	// Provider-native id, made distinct ACROSS kinds (softRemoveUnseen keys on native_id per identity):
-	// k8s version ("1.29"), `${engine}-${version}` ("postgres-16"), Redis SKU ("Standard_C1"), or "Cosmos DB".
+	// k8s version ("1.29"), `${engine}-${version}` ("postgres-16"), Managed Redis SKU ("Balanced_B1"), or "Cosmos DB".
 	native_id: string;
 	name: string;
 	engine: string | null;
@@ -106,34 +106,26 @@ interface ArmProvider {
 	resourceTypes?: { resourceType?: string; locations?: string[] }[];
 }
 
-// ── Static Redis SKU catalog (no dynamic ARM list op for Microsoft.Cache/redis) ─────
-// Basic/Standard family C (C0–C6) + Premium family P (P1–P5), with the cache size in GB. name = the
-// create-time `${sku.name}_C${capacity}` shape so Basic C1 and Standard C1 stay distinct offerings.
+// ── Static Managed Redis SKU catalog (no dynamic ARM list op for Microsoft.Cache) ────
+// Azure Cache for Redis (Basic/Standard/Premium family C) is RETIRING — Azure no longer creates it
+// and directs callers to Azure Managed Redis instead. The Azure template provisions
+// `azurerm_managed_redis` (infra/templates/project/azure/azure-cache-redis.tf), whose `sku_name`
+// accepts only Balanced_*/MemoryOptimized_*/ComputeOptimized_*/FlashOptimized_*. We mirror
+// catalog.json's Balanced_* inventory (packages/core/catalog/catalog.json → cache.azure.tiers) so the
+// picker names the same size the plan resolves — the two copies must not drift. Balanced-only on
+// purpose: the tofu legacy-tier map emits only Balanced_* skus, so a memory:vCPU ratio axis the
+// template cannot express would be a new parity gap (#1570). name = the ARM `sku_name` directly.
 interface RedisTier {
-	sku: string; // Basic | Standard | Premium
-	code: string; // C0..C6 | P1..P5
+	sku: string; // Managed Redis sku_name, e.g. Balanced_B0
 	memGb: number;
 }
 const REDIS_TIERS: RedisTier[] = [
-	{ sku: "Basic", code: "C0", memGb: 0.25 },
-	{ sku: "Basic", code: "C1", memGb: 1 },
-	{ sku: "Basic", code: "C2", memGb: 2.5 },
-	{ sku: "Basic", code: "C3", memGb: 6 },
-	{ sku: "Basic", code: "C4", memGb: 13 },
-	{ sku: "Basic", code: "C5", memGb: 26 },
-	{ sku: "Basic", code: "C6", memGb: 53 },
-	{ sku: "Standard", code: "C0", memGb: 0.25 },
-	{ sku: "Standard", code: "C1", memGb: 1 },
-	{ sku: "Standard", code: "C2", memGb: 2.5 },
-	{ sku: "Standard", code: "C3", memGb: 6 },
-	{ sku: "Standard", code: "C4", memGb: 13 },
-	{ sku: "Standard", code: "C5", memGb: 26 },
-	{ sku: "Standard", code: "C6", memGb: 53 },
-	{ sku: "Premium", code: "P1", memGb: 6 },
-	{ sku: "Premium", code: "P2", memGb: 13 },
-	{ sku: "Premium", code: "P3", memGb: 26 },
-	{ sku: "Premium", code: "P4", memGb: 53 },
-	{ sku: "Premium", code: "P5", memGb: 120 },
+	{ sku: "Balanced_B0", memGb: 0.5 },
+	{ sku: "Balanced_B1", memGb: 1 },
+	{ sku: "Balanced_B3", memGb: 3 },
+	{ sku: "Balanced_B5", memGb: 6 },
+	{ sku: "Balanced_B10", memGb: 12 },
+	{ sku: "Balanced_B20", memGb: 24 },
 ];
 
 // ── Pure normalizers (exported for the fixture test) ─────────────────────────────────
@@ -268,9 +260,10 @@ export function normalizeFlexibleServerSkus(
 	return out;
 }
 
-/** Azure Cache for Redis tiers (static enum) → one `cache` offering per SKU tier. `registered` is the
+/** Azure Managed Redis SKUs (static enum) → one `cache` offering per SKU. `registered` is the
  * Microsoft.Cache RP registration state: registered ⇒ launchable; otherwise the account can't launch
- * Redis, so the tiers are surfaced as not_launchable (account-accurate, not silent). */
+ * Redis, so the SKUs are surfaced as not_launchable (account-accurate, not silent). native_id is the
+ * ARM `sku_name` so the picker names the exact size the plan resolves. */
 export function normalizeRedisTiers(
 	region: string,
 	registered: boolean,
@@ -278,11 +271,11 @@ export function normalizeRedisTiers(
 	return REDIS_TIERS.map((t) => ({
 		region,
 		service_kind: "cache" as const,
-		native_id: `${t.sku}_${t.code}`,
-		name: `${t.sku} ${t.code} (${t.memGb} GB)`,
+		native_id: t.sku,
+		name: `${t.sku.replace("_", " ")} (${t.memGb} GB)`,
 		engine: "redis",
 		version: null,
-		tier: t.code,
+		tier: t.sku,
 		mem_gb: t.memGb,
 		launchable: registered ? ("launchable" as const) : ("not_launchable" as const),
 		launchable_reason: registered

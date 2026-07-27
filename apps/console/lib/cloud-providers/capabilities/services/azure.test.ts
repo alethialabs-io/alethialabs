@@ -157,19 +157,21 @@ describe("normalizeFlexibleServerVersions", () => {
 describe("normalizeRedisTiers", () => {
 	it("emits the full static SKU catalog as launchable when the RP is registered", () => {
 		const rows = normalizeRedisTiers("eastus", true);
-		expect(rows).toHaveLength(19); // Basic C0–C6 (7) + Standard C0–C6 (7) + Premium P1–P5 (5)
+		expect(rows).toHaveLength(6); // Managed Redis Balanced_B0/B1/B3/B5/B10/B20
 		expect(rows.every((r) => r.service_kind === "cache")).toBe(true);
 		expect(rows.every((r) => r.engine === "redis")).toBe(true);
 		expect(rows.every((r) => r.launchable === "launchable")).toBe(true);
-		// Basic C1 and Standard C1 are distinct offerings (distinct native_id).
-		expect(rows.find((r) => r.native_id === "Basic_C1")?.mem_gb).toBe(1);
-		expect(rows.find((r) => r.native_id === "Standard_C1")?.mem_gb).toBe(1);
-		expect(rows.find((r) => r.native_id === "Premium_P5")?.mem_gb).toBe(120);
+		// native_id is the ARM sku_name, mirroring catalog.json's azure cache tiers.
+		expect(rows.find((r) => r.native_id === "Balanced_B0")?.mem_gb).toBe(0.5);
+		expect(rows.find((r) => r.native_id === "Balanced_B1")?.mem_gb).toBe(1);
+		expect(rows.find((r) => r.native_id === "Balanced_B20")?.mem_gb).toBe(24);
+		// no retired Azure Cache for Redis SKU is offered anymore.
+		expect(rows.some((r) => /_C[0-6]$|_P[1-5]$/.test(r.native_id))).toBe(false);
 	});
 
 	it("surfaces the tiers as not_launchable when the RP is not registered (account-accurate, not silent)", () => {
 		const rows = normalizeRedisTiers("eastus", false);
-		expect(rows).toHaveLength(19);
+		expect(rows).toHaveLength(6);
 		expect(rows.every((r) => r.launchable === "not_launchable")).toBe(true);
 		expect(
 			rows.every((r) => r.launchable_reason === "not_available_for_subscription"),
