@@ -97,16 +97,11 @@ func TestRenderedKeylessManifestsPassVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify.EvaluateManifests: %v", err)
 	}
-	// RESOURCES-001 is a WARN (medium), so it does not block a fail-closed apply — but no sidecar in
-	// this repo declares CPU/memory limits, so it fires on db-authproxy. That is epic #1500's gate F
-	// (sidecar resources + securityContext), a lane of its own covering every sidecar renderer, not
-	// just this one. It is tolerated HERE and nowhere else: any other finding, and any RESOURCES-001
-	// finding against a container other than the sidecar, fails this test.
+	// No exemptions. This used to tolerate RESOURCES-001 on the db-authproxy sidecar while gate F
+	// (#1531) was open; the sidecar now declares CPU + memory limits, so the keyless pod is clean
+	// under every control and this asserts it the same way its sibling above does.
 	for _, c := range rep.Controls {
 		for _, f := range c.Findings {
-			if c.ID == "RESOURCES-001" && strings.HasSuffix(f.Address, ":db-authproxy") {
-				continue // known, boarded: gate F
-			}
 			t.Errorf("verify finding on rendered keyless manifests [%s]: %s — %s", c.ID, f.Address, f.Message)
 		}
 	}
@@ -115,5 +110,123 @@ func TestRenderedKeylessManifestsPassVerify(t *testing.T) {
 	// third-party bitnami/pgbouncer image that nothing here ever gate-checked.
 	if rep.Blocking() {
 		t.Errorf("keyless manifests must clear the fail-closed gate, got verdict %v", rep.Verdict)
+	}
+}
+
+// assertManifestsPassVerify runs YAML docs through the elench gate and fails on ANY finding. The two
+// tests above predate it and keep their bespoke messages; new renderers use this.
+func assertManifestsPassVerify(t *testing.T, label string, yamls ...string) {
+	t.Helper()
+	var all strings.Builder
+	for _, y := range yamls {
+		if y == "" {
+			continue
+		}
+		all.WriteString(y)
+		all.WriteString("\n---\n")
+	}
+	rep, err := verify.EvaluateManifests([]byte(all.String()))
+	if err != nil {
+		t.Fatalf("%s: verify.EvaluateManifests: %v", label, err)
+	}
+	for _, c := range rep.Controls {
+		for _, f := range c.Findings {
+			t.Errorf("verify finding on %s [%s]: %s — %s", label, c.ID, f.Address, f.Message)
+		}
+	}
+	if rep.Blocking() {
+		t.Errorf("%s must clear the fail-closed gate, got verdict %v", label, rep.Verdict)
+	}
+}
+
+// The three renderers below emit their own workload objects — two standalone Deployments and a Job —
+// and NONE of them was covered by this gate before #1531. That is why their gaps survived: the
+// refresher Deployments declared a memory limit but no cpu limit (RESOURCES-001 needs both) and no
+// securityContext at all (CONTAINERSECURITY-001), and the bootstrap Job declared no resources on
+// either its init or its main container. `Job` is in verify.workloadKinds, so it was always in
+// scope for these controls — nothing was asking.
+
+func TestRenderedRegistryRefresherPassesVerify(t *testing.T) {
+	y, err := RenderRegistryRefresher(RegistryRefresher{
+		Provider:      "aws",
+		Namespace:     "default",
+		SecretName:    "ecr-xacct-pull",
+		RegistryHost:  "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+		Region:        "us-east-1",
+		TargetRoleArn: "arn:aws:iam::999:role/pull",
+		RunnerImage:   "ghcr.io/alethialabs-io/runner@sha256:9c1e0b2a3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+		SAAnnotations: map[string]string{"eks.amazonaws.com/role-arn": "arn:aws:iam::111:role/ecr-pull"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertManifestsPassVerify(t, "rendered registry refresher", y)
+}
+
+func TestRenderedHelmRepoRefresherPassesVerify(t *testing.T) {
+	y, err := RenderHelmRepoRefreshers([]HelmRepoRefresher{{
+		SecretName:    "repo-helm-abc123",
+		RepoURL:       "oci://111.dkr.ecr.us-east-1.amazonaws.com",
+		Region:        "us-east-1",
+		TargetRoleArn: "arn:aws:iam::111:role/pull",
+	}},
+		"arn:aws:iam::999:role/helm-pull",
+		"ghcr.io/alethialabs-io/runner@sha256:9c1e0b2a3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertManifestsPassVerify(t, "rendered helm repo refresher", y)
+}
+
+func TestRenderedBootstrapJobPassesVerify(t *testing.T) {
+	const runnerImage = "ghcr.io/alethialabs-io/runner@sha256:9c1e0b2a3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+	// Provider × engine, because both axes change the container set: AWS/GCP add an admin-credential
+	// init container where Azure mints a token instead, and the apply step is psqlContainer for
+	// Postgres but mysqlContainer for MySQL. One cell passing says nothing about the others.
+	awsOutputs := map[string]string{
+		"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+		"rds_database_name":                  "ordersdb",
+		"rds_master_credentials_secret_name": "alethia/rds/orders",
+	}
+	gcpOutputs := map[string]string{
+		"cloud_sql_ip":                 "10.0.0.5",
+		"cloud_sql_database":           "orders-prod",
+		"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+		"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+	}
+	azureOutputs := map[string]string{
+		"azure_db_fqdn":            "orders.postgres.database.azure.com",
+		"azure_db_name":            "ordersdb",
+		"azure_db_admin_user":      "alethia_admin",
+		"azure_db_admin_client_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		"azure_db_app_oid":         "99999999-8888-7777-6666-555555555555",
+		"azure_db_client_id":       "11111111-2222-3333-4444-555555555555",
+	}
+	for _, tc := range []struct {
+		provider string
+		engine   string
+		outputs  map[string]string
+	}{
+		{"aws", enginePostgres, awsOutputs},
+		{"aws", engineMySQL, awsOutputs},
+		{"gcp", enginePostgres, gcpOutputs},
+		{"gcp", engineMySQL, gcpOutputs},
+		{"azure", enginePostgres, azureOutputs},
+		{"azure", engineMySQL, azureOutputs},
+	} {
+		t.Run(tc.provider+"/"+tc.engine, func(t *testing.T) {
+			res, err := RenderBootstrapJob(Options{
+				Provider:    tc.provider,
+				RunnerImage: runnerImage,
+				Outputs:     tc.outputs,
+				Databases: []types.ProjectDatabaseConfig{
+					{Name: "orders-db", EngineFamily: tc.engine, IamAuth: boolPtr(true)},
+				},
+			}, dbTarget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertManifestsPassVerify(t, tc.provider+"/"+tc.engine+" bootstrap job", res.JobYAML, res.AdminSecretYAML)
+		})
 	}
 }
