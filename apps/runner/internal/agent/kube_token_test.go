@@ -61,14 +61,15 @@ func TestRunKubeToken_UnsupportedProvider(t *testing.T) {
 	}
 }
 
-func TestRunKubeToken_AlibabaNotYetWired(t *testing.T) {
-	// alibaba is a recognized seam (#1129) — it must fail closed with a follow-up-naming error, not
-	// mint a token and not fall through to the opaque "unsupported provider" default.
+func TestRunKubeToken_AlibabaByDesignNoExecPlugin(t *testing.T) {
+	// ACK uses a full client-cert kubeconfig (DescribeClusterUserKubeconfig), NOT an exec-plugin bearer
+	// like EKS/GKE/AKS — so kube-token has no alibaba provider BY DESIGN. A stray call must fail with that
+	// reason (recognized seam), not mint a token and not fall through to the opaque "unsupported" default.
 	err := RunKubeToken(context.Background(), []string{"--provider", "alibaba", "--cluster", "ack-fabric", "--region", "ap-southeast-1"})
 	if err == nil {
-		t.Fatal("expected fail-closed error for alibaba (namespace re-mint not yet wired), got nil")
+		t.Fatal("expected an error for alibaba (kube-token is not used for ACK), got nil")
 	}
-	if !strings.Contains(err.Error(), "#1129") {
-		t.Errorf("alibaba error %q should name the follow-up (#1129)", err.Error())
+	if !strings.Contains(err.Error(), "client-cert kubeconfig") {
+		t.Errorf("alibaba error %q should explain ACK uses a client-cert kubeconfig (kube-token not used)", err.Error())
 	}
 }

@@ -56,13 +56,18 @@ const (
 // here as soon as its host re-mint (the KubeConnResolver) is wired, ahead of the namespace tier.
 //
 //   - aws: EKS DescribeCluster (in-core, ambient) — ConfigureKubeconfig resolves from the name.
+//
 //   - gcp: GKE clusters.get via the runner-injected KubeConnResolver (mintGCPToken + ResolveGKEClusterConn);
 //     project = CloudAccountID, location = Region (the shared cluster's region).
+//
 //   - azure: AKS ManagedClusters get/list + listClusterUserCredentials via the runner-injected resolver
 //     (ARM token + ResolveAKSResourceGroup by name + ResolveAKSClusterConn); subscription = CloudAccountID.
 //
-// alibaba is the next parity step (its ConfigureKubeconfig reads a full kubeconfig output, and its cloud
-// API signs requests rather than using a bearer).
+//   - alibaba: ACK resolved output-free IN-CORE (like aws) — alibabaProvider.ConfigureKubeconfig builds
+//     the keyless RRSA-signing http.Client (packages/core/cloud/alibaba_sign.go) and resolves the cluster
+//     by name → ClusterId → a short-lived user kubeconfig (DescribeClusterUserKubeconfig). ACK embeds an
+//     x509 client cert (no exec-plugin bearer), so it needs no KubeConnResolver (absent from
+//     namespaceClusterConnKeys, like aws).
 //
 //   - hetzner: no cloud API to re-mint — the runner-injected TalosKubeconfigMinter mints a fresh kubeconfig
 //     from the Fabric's PERSISTED talosconfig (delivered encrypted on the job claim), which mintClusterOutputs
@@ -74,6 +79,7 @@ var vclusterRemintProviders = map[string]bool{
 	"aws":     true,
 	"gcp":     true,
 	"azure":   true,
+	"alibaba": true,
 	"hetzner": true,
 }
 
@@ -82,7 +88,7 @@ func vclusterRemintWired(provider string) bool { return vclusterRemintProviders[
 
 // vclusterRemintNotWired is the fail-closed error for a cloud whose vcluster host re-mint isn't wired.
 func vclusterRemintNotWired(provider string) error {
-	return fmt.Errorf("vcluster placement: output-free keyless host re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters) and hetzner (Talos-API kubeconfig from the persisted talosconfig) today; alibaba is a per-cloud follow-up (#1129)", provider)
+	return fmt.Errorf("vcluster placement: output-free keyless host re-mint is not wired for provider %q — activated for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters), alibaba (ACK DescribeClusterUserKubeconfig, keyless RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig) today", provider)
 }
 
 // buildVClusterSpec derives the vcluster provisioning spec for a `vcluster`-placement env from its config
