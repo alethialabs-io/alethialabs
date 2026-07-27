@@ -230,6 +230,14 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
+              cpu: 200m
               memory: 64Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
 {{- end }}
 `))
