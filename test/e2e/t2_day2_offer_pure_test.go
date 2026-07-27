@@ -130,6 +130,28 @@ func TestAnalyzeDay2_GCPRedisToValkeyIsHazard(t *testing.T) {
 	}
 }
 
+func TestAnalyzeDay2_AzureManagedRedisReplaceIsHazard(t *testing.T) {
+	// Azure's template builds `azurerm_managed_redis` — Azure Cache for Redis (azurerm_redis_cache)
+	// is retiring and cannot be created any more. While that type was missing from
+	// day2StatefulTypes the gate scored this exact plan as SAFE: an unknown type is not stateful, so
+	// force-replacing the whole cache reported no hazard at all. The offer-parity generator
+	// (apps/console/scripts/check-offer-parity.mjs) now derives gate coverage from the templates and
+	// fails on a data-bearing type the gate does not know, which is what surfaced this.
+	plan := day2PlanOf(
+		day2Managed("module.redis.azurerm_managed_redis.this", "azurerm_managed_redis", aDelete, aCreate),
+	)
+	p, err := AnalyzeDay2(Day2Update, plan)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Safe {
+		t.Fatal("force-replacing azurerm_managed_redis loses the cache — must NOT be safe")
+	}
+	if len(p.DataLossHazards) != 1 || p.DataLossHazards[0].Type != "azurerm_managed_redis" {
+		t.Fatalf("DataLossHazards = %+v, want the managed-redis replace", p.DataLossHazards)
+	}
+}
+
 func TestAnalyzeDay2_ResizeInPlaceEndpointSurvives(t *testing.T) {
 	// A storage grow / capacity bump the provider does in place — the endpoint survives.
 	plan := day2PlanOf(
@@ -241,7 +263,8 @@ func TestIsDay2StatefulType(t *testing.T) {
 		"aws_elasticache_serverless_cache", "google_sql_database_instance",
 		"google_redis_instance", "google_memorystore_instance",
 		"azurerm_postgresql_flexible_server", "azurerm_mysql_flexible_server",
-		"azurerm_redis_cache", "alicloud_db_instance", "alicloud_kvstore_instance",
+		"azurerm_redis_cache", "azurerm_managed_redis",
+		"alicloud_db_instance", "alicloud_kvstore_instance",
 	}
 	for _, tp := range stateful {
 		if !isDay2StatefulType(tp) {
