@@ -76,9 +76,6 @@ const webRow = {
 		{ name: "http", container_port: 8080, protocol: "TCP" },
 		{ name: "metrics", container_port: 9090, protocol: "UDP" },
 	],
-	// W3 — present on the wire (default []); the binding value shape is locked by the Go round-trip
-	// + zod refuter tests. A real target here would need a matching component seeded (the gate).
-	bindings: [],
 	replicas: 3,
 	resources: {
 		requests: { cpu: "100m", memory: "128Mi" },
@@ -271,11 +268,13 @@ describe("W1 services contract-lock (#572)", () => {
 			.config_snapshot;
 
 		// The snapshot wire = each row spread + its resolved placement (NULL placement inherits
-		// the project's identity/region — what the runner actually keys its cloud auth on).
+		// the project's identity/region — what the runner actually keys its cloud auth on). `bindings`
+		// is reconstructed from the service_bindings child table (JSONB dropped, #1426) — [] here since
+		// the mock seeds no binding rows, byte-identical to the pre-contract wire.
 		const placement = { cloud_provider: "hetzner", cloud_identity_id: "ci-1", region: "nbg1" };
 		expect(snapshot.services).toEqual([
-			{ ...webRow, ...placement },
-			{ ...workerRow, ...placement },
+			{ ...webRow, bindings: [], ...placement },
+			{ ...workerRow, bindings: [], ...placement },
 		]);
 
 		// Freeze the wire into the shared fixture the Go contract test consumes.

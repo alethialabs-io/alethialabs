@@ -32,6 +32,7 @@ import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
 import { replaceServiceBindings } from "@/lib/db/service-bindings-sync";
+import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
 import {
 	chartWorkloadBindingsSchema,
 	chartWorkloadConfigSchema,
@@ -253,15 +254,14 @@ export async function getProjectChartWorkloads(
 ): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const rows = await withActorScope(actor, async (tx) =>
-		tx
+	const { rows, bindingsByWorkload } = await withActorScope(actor, async (tx) => {
+		const rows = await tx
 			.select({
 				id: projectChartWorkloads.id,
 				chartId: projectAddons.addon_id,
 				name: projectChartWorkloads.name,
 				kind: projectChartWorkloads.workload_kind,
 				rendered: projectChartWorkloads.rendered,
-				bindings: projectChartWorkloads.bindings,
 				config: projectChartWorkloads.config,
 				valuePaths: projectChartWorkloads.value_paths,
 			})
@@ -275,8 +275,14 @@ export async function getProjectChartWorkloads(
 					eq(projectChartWorkloads.project_id, projectId),
 					eq(projectChartWorkloads.environment_id, envId),
 				),
-			),
-	);
+			);
+		// Bindings live in the service_bindings child table (JSONB dropped, #1426).
+		const bindingsByWorkload = await serviceBindingsByOwner(tx, {
+			serviceIds: [],
+			chartWorkloadIds: rows.map((r) => r.id),
+		});
+		return { rows, bindingsByWorkload };
+	});
 	return {
 		environmentId: envId,
 		workloads: rows.map((r) => ({
@@ -285,7 +291,7 @@ export async function getProjectChartWorkloads(
 			name: r.name,
 			kind: r.kind,
 			rendered: r.rendered,
-			bindings: r.bindings,
+			bindings: bindingsByWorkload.get(r.id) ?? [],
 			config: r.config,
 			valuePaths: r.valuePaths,
 		})),
@@ -389,15 +395,15 @@ export async function setChartWorkloadBindings(input: {
 		const value_paths: ChartValuePathMap = { ...inferred, ...row.value_paths };
 		await tx
 			.update(projectChartWorkloads)
-			.set({ bindings, value_paths, updated_at: new Date() })
+			.set({ value_paths, updated_at: new Date() })
 			.where(
 				and(
 					eq(projectChartWorkloads.id, input.workloadId),
 					eq(projectChartWorkloads.project_id, input.projectId),
 				),
 			);
-		// Dual-write: keep the normalized service_bindings in step with the JSONB overlay. This is a
-		// granular UPDATE (not delete-all-reinsert), so replace this workload's binding rows.
+		// The bindings JSONB was dropped in the contract phase (#1426); service_bindings is the store.
+		// This is a granular UPDATE (not delete-all-reinsert), so replace this workload's binding rows.
 		await replaceServiceBindings(
 			tx,
 			{ chart_workload_id: input.workloadId },
