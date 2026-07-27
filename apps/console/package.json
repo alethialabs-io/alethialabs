@@ -15,6 +15,7 @@
 		"check:offer-parity": "node scripts/check-offer-parity.mjs",
 		"gen:offer-parity": "node scripts/check-offer-parity.mjs --matrix",
 		"check:keyless-cells": "node scripts/check-keyless-cells.mjs",
+		"check:tofu-lockfiles": "node scripts/check-tofu-lockfiles.mjs",
 		"check:migrations": "node scripts/check-migrations.mjs",
 		"check:compat": "node scripts/check-compat.mjs",
 		"gen:connectors": "node scripts/gen-connectors.mjs",
