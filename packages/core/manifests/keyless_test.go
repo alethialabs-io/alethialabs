@@ -309,8 +309,8 @@ func TestKeyless_MissingConnectionName_FailsClosed(t *testing.T) {
 }
 
 // TestEnginePort locks the engine→port mapping both the binding facet and the proxy's --listen /
-// --upstream flags read. It is tested directly, not only through a rendered cell, so the MySQL branch
-// stays covered while the aws/gcp MySQL cells are still gated off (#1504/#1505/#1506).
+// --upstream flags read. It is tested directly, not only through a rendered cell, so a regression in
+// the mapping is attributed here rather than surfacing as six confusing cell failures.
 func TestEnginePort(t *testing.T) {
 	cases := []struct {
 		engine   string
@@ -367,17 +367,20 @@ func keylessOutputsFor(provider string) map[string]string {
 	return map[string]string{}
 }
 
-// TestKeylessCells_PerCloudPerEngine is the cloud × engine matrix: every cell either renders a proxy
-// wired to the ENGINE's port, or fails closed naming the lane that will deliver it. This is the test
-// that would have caught "MySQL renders a Postgres proxy on 5432" — the bug #1503 exists to fix.
+// TestKeylessCells_PerCloudPerEngine is the cloud × engine matrix: every cell renders a proxy wired to
+// the ENGINE's port. This is the test that would have caught "MySQL renders a Postgres proxy on 5432" —
+// the bug #1503 exists to fix.
+//
+// Every managed cell is implemented, so no row here fails closed. That path stays covered end to end by
+// TestKeyless_MissingConnectionName_FailsClosed (a cell that cannot resolve its outputs) and at the gate
+// itself by TestKeylessCellSupported_UnknownProviderOrEngine.
 func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 	cases := []struct {
 		provider    string
 		engine      string
-		wantSidecar string // "" → the cell must fail closed
+		wantSidecar string
 		wantPort    int
 		wantArgs    []string
-		wantReason  string // substring of the fail-closed report
 	}{
 		{
 			provider: "aws", engine: enginePostgres,
@@ -385,8 +388,11 @@ func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 			wantArgs: []string{"--engine postgres", "--upstream orders.abc.rds.amazonaws.com:5432", "--listen 127.0.0.1:5432"},
 		},
 		{
+			// Aurora-MySQL: #1504 template + `iam_database_authentication_enabled`, #1506's
+			// AWSAuthenticationPlugin bootstrap SQL, #1507's mysql-client apply container. 3306 end to end.
 			provider: "aws", engine: engineMySQL,
-			wantReason: "#1504",
+			wantSidecar: "db-authproxy", wantPort: 3306,
+			wantArgs: []string{"--engine mysql", "--upstream orders.abc.rds.amazonaws.com:3306", "--listen 127.0.0.1:3306"},
 		},
 		{
 			provider: "gcp", engine: enginePostgres,
@@ -394,8 +400,11 @@ func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 			wantArgs: []string{"--auto-iam-authn", "--port=5432"},
 		},
 		{
+			// Cloud SQL MySQL: #1505's underscored `cloudsql_iam_authentication` flag. The native proxy
+			// is engine-agnostic, so only the listener moves to 3306.
 			provider: "gcp", engine: engineMySQL,
-			wantReason: "#1505",
+			wantSidecar: "cloudsql-proxy", wantPort: 3306,
+			wantArgs: []string{"--auto-iam-authn", "--port=3306"},
 		},
 		{
 			provider: "azure", engine: enginePostgres,
@@ -422,25 +431,6 @@ func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 				Outputs: keylessOutputsFor(tc.provider),
 			})
 			a := apps[0]
-
-			if tc.wantSidecar == "" {
-				// Fail closed: no sidecar, no endpoint pointed at an absent proxy, and a report that
-				// names the lane — so an operator reads "not built yet, tracked in #N".
-				if len(a.Sidecars) != 0 {
-					t.Fatalf("unimplemented cell must render no proxy, got %+v", a.Sidecars)
-				}
-				if _, ok := envValue(a.Env, "DATABASE_HOST"); ok {
-					t.Error("unimplemented cell must omit the endpoint, not point it at 127.0.0.1")
-				}
-				report := strings.Join(skipped, " ")
-				if !strings.Contains(report, tc.wantReason) {
-					t.Errorf("fail-closed report must name %s, got %v", tc.wantReason, skipped)
-				}
-				if !strings.Contains(report, "fail-closed") {
-					t.Errorf("want a fail-closed report, got %v", skipped)
-				}
-				return
-			}
 
 			if len(skipped) != 0 {
 				t.Fatalf("implemented cell must render cleanly, got %v", skipped)
