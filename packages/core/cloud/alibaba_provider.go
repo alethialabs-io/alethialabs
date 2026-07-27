@@ -329,6 +329,9 @@ func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 func buildAlibabaSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
+		if !secretProvisionedNatively(s.Provider) {
+			continue // read via ESO from its pluggable/cross-account store, not created here
+		}
 		result = append(result, map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,

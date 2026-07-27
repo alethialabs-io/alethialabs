@@ -466,6 +466,9 @@ func ecrRepoBaseName(name string) string {
 func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
+		if !secretProvisionedNatively(s.Provider) {
+			continue // read via ESO from its pluggable/cross-account store, not created here
+		}
 		entry := map[string]interface{}{
 			"secret_name": s.Name,
 		}
