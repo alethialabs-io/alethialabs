@@ -53,6 +53,12 @@ type App struct {
 	// emitted (ServiceAccount, if set, is assumed to already exist — e.g. a chart-created KSA).
 	ServiceAccountAnnotations map[string]string
 	ServiceAccountLabels      map[string]string
+	// PodLabels are extra labels stamped on the POD TEMPLATE (never on the selector, which must stay
+	// stable). Some identity webhooks key on the pod rather than its ServiceAccount — the
+	// azure-workload-identity webhook injects AZURE_FEDERATED_TOKEN_FILE only into pods carrying
+	// `azure.workload.identity/use`, so a keyless Azure pod whose label sat only on the SA could never
+	// mint a token. Empty → not rendered (output byte-identical to a plain app).
+	PodLabels map[string]string
 	// Plain environment variables (values rendered quoted). Includes W3 binding-derived
 	// non-secret facets (a backing resource's endpoint/port, resolved from tofu outputs).
 	Env []types.ServiceEnvVar
@@ -182,6 +188,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ .Name }}
+        {{- range $k, $v := .PodLabels }}
+        {{ $k }}: {{ printf "%q" $v }}
+        {{- end }}
     spec:
       {{- if .ServiceAccount }}
       serviceAccountName: {{ .ServiceAccount }}
@@ -463,10 +472,16 @@ func endpointOutputKey(provider, kind string) string {
 }
 
 // defaultPort is the conventional port for a backing kind (no port output is emitted today).
-func defaultPort(kind string) string {
+//
+// A database's port depends on its ENGINE, not just its kind: MySQL is 3306, Postgres 5432. Passing
+// the wrong one hands the workload a DATABASE_PORT it cannot connect on — and on the keyless path it
+// would also have to match the port the local auth proxy listens on. `engine` is ignored for the
+// other kinds; empty means postgres, which is what every pre-MySQL caller assumed.
+func defaultPort(kind, engine string) string {
 	switch kind {
 	case "database":
-		return "5432"
+		port, _ := enginePort(engine)
+		return port
 	case "cache":
 		return "6379"
 	case "queue":
@@ -548,6 +563,7 @@ type bindingResolution struct {
 	saName        string            // keyless Workload-Identity KSA the pod must run as (overrides opts.ServiceAccount)
 	saAnnotations map[string]string // rendered onto the emitted KSA (GCP GSA / Azure client-id)
 	saLabels      map[string]string
+	podLabels     map[string]string // stamped on the pod template (Azure WI webhook keys on the POD)
 	unresolved    []string
 }
 
@@ -582,6 +598,7 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					r.saName = w.saName
 					r.saAnnotations = w.saAnnotations
 					r.saLabels = w.saLabels
+					r.podLabels = w.podLabels
 				}
 			}
 		}
@@ -663,11 +680,12 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 				}
 			case "port":
 				// BYO-IaC may export a port output; otherwise (and for first-class) use the
-				// conventional default for the kind.
+				// conventional default for the kind — engine-aware for databases, so a MySQL
+				// binding gets 3306 rather than silently inheriting Postgres's 5432.
 				if k := byoPortKey(b.Target); k != "" {
 					value = opts.Outputs[k]
 				} else {
-					value = defaultPort(string(b.Target.Kind))
+					value = defaultPort(string(b.Target.Kind), dbEngineForTarget(opts, b.Target))
 				}
 			}
 			if value == "" {
@@ -740,6 +758,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 			ServiceAccount:            sa,
 			ServiceAccountAnnotations: binds.saAnnotations,
 			ServiceAccountLabels:      binds.saLabels,
+			PodLabels:                 binds.podLabels,
 			Env:                       env,
 			SecretEnv:                 binds.secretEnv,
 			Sidecars:                  binds.sidecars,
