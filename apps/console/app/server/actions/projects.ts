@@ -11,10 +11,7 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
-import {
-	clusterAdminsByCluster,
-	topicSubscriptionsByTopic,
-} from "@/lib/db/normalized-reads";
+import { clusterAdminsByCluster } from "@/lib/db/normalized-reads";
 import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
 import {
 	auditLog,
@@ -59,6 +56,10 @@ import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
+import {
+	envScope,
+	readEnvComponents,
+} from "@/lib/queries/project-components-read";
 import { listAssignmentsFor } from "@/lib/queries/classification";
 import {
 	type EnvironmentSpec,
@@ -86,7 +87,7 @@ import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { ClusterAdmin, TopicSubscription } from "@/types/jsonb.types";
 import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
-import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 /**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
@@ -246,18 +247,6 @@ export interface CreateProjectInput {
 /** A withOwnerScope transaction handle (the arg drizzle passes the callback). */
 type ComponentTx = Parameters<Parameters<typeof withActorScope>[1]>[0];
 
-/** `project_id = … AND environment_id = …` — component rows are scoped to one environment, so
- * every component read/delete filters on both. */
-function envScope(
-	table: { project_id: AnyColumn; environment_id: AnyColumn },
-	projectId: string,
-	environmentId: string,
-) {
-	return and(
-		eq(table.project_id, projectId),
-		eq(table.environment_id, environmentId),
-	);
-}
 
 /** Inserts a form's component rows for one (project, environment). The single source of the
  * per-table form→column mapping, shared by createProject / updateProjectDesign /
@@ -586,98 +575,28 @@ export async function getProject(
 
 		/** Reads one environment's component rows (env-scoped). */
 		async function readComponents(envId: string) {
-			const [network] = await tx
-				.select()
-				.from(projectNetwork)
-				.where(envScope(projectNetwork, projectId, envId))
-				.limit(1);
-			const [cluster] = await tx
-				.select()
-				.from(projectCluster)
-				.where(envScope(projectCluster, projectId, envId))
-				.limit(1);
-			const [dns] = await tx
-				.select()
-				.from(projectDns)
-				.where(envScope(projectDns, projectId, envId))
-				.limit(1);
-			const [repos] = await tx
-				.select()
-				.from(projectRepositories)
-				.where(envScope(projectRepositories, projectId, envId))
-				.limit(1);
-			const sourceRepos = await tx
-				.select()
-				.from(projectSourceRepos)
-				.where(envScope(projectSourceRepos, projectId, envId));
-			const databases = await tx
-				.select()
-				.from(projectDatabases)
-				.where(envScope(projectDatabases, projectId, envId));
-			const caches = await tx
-				.select()
-				.from(projectCaches)
-				.where(envScope(projectCaches, projectId, envId));
-			const queues = await tx
-				.select()
-				.from(projectQueues)
-				.where(envScope(projectQueues, projectId, envId));
-			const topics = await tx
-				.select()
-				.from(projectTopics)
-				.where(envScope(projectTopics, projectId, envId));
-			const nosqlTables = await tx
-				.select()
-				.from(projectNosqlTables)
-				.where(envScope(projectNosqlTables, projectId, envId));
-			const secrets = await tx
-				.select()
-				.from(projectSecrets)
-				.where(envScope(projectSecrets, projectId, envId));
-			const storageBuckets = await tx
-				.select()
-				.from(projectStorageBuckets)
-				.where(envScope(projectStorageBuckets, projectId, envId));
-			const containerRegistries = await tx
-				.select()
-				.from(projectContainerRegistries)
-				.where(envScope(projectContainerRegistries, projectId, envId));
-			const helmRegistries = await tx
-				.select()
-				.from(projectHelmRegistries)
-				.where(envScope(projectHelmRegistries, projectId, envId));
-			const services = await tx
-				.select()
-				.from(projectServices)
-				.where(envScope(projectServices, projectId, envId));
-			const topicSubs = await topicSubscriptionsByTopic(
-				tx,
-				topics.map((t) => t.id),
-			);
-			const clusterAdminsList = cluster
-				? await clusterAdminsByCluster(tx, cluster.id)
-				: [];
+			const c = await readEnvComponents(tx, projectId, envId);
 			return {
-				network: network ?? null,
-				cluster: cluster
-					? { ...cluster, cluster_admins: clusterAdminsList }
+				network: c.network ?? null,
+				cluster: c.cluster
+					? { ...c.cluster, cluster_admins: c.clusterAdmins }
 					: null,
-				dns: dns ?? null,
-				repositories: repos ?? null,
-				source_repos: sourceRepos,
-				databases,
-				caches,
-				queues,
-				topics: topics.map((t) => ({
+				dns: c.dns ?? null,
+				repositories: c.repositories ?? null,
+				source_repos: c.sourceRepos,
+				databases: c.databases,
+				caches: c.caches,
+				queues: c.queues,
+				topics: c.topics.map((t) => ({
 					...t,
-					subscriptions: topicSubs.get(t.id) ?? [],
+					subscriptions: c.topicSubs.get(t.id) ?? [],
 				})),
-				nosql_tables: nosqlTables,
-				secrets,
-				storage_buckets: storageBuckets,
-				container_registries: containerRegistries,
-				helm_registries: helmRegistries,
-				services,
+				nosql_tables: c.nosqlTables,
+				secrets: c.secrets,
+				storage_buckets: c.storageBuckets,
+				container_registries: c.containerRegistries,
+				helm_registries: c.helmRegistries,
+				services: c.services,
 			};
 		}
 
@@ -802,11 +721,6 @@ async function buildConfigSnapshot(
 
 		// Snapshot the TARGET environment's components (config is environment-scoped).
 		const envId = environment.id;
-		const [network] = await tx
-			.select()
-			.from(projectNetwork)
-			.where(envScope(projectNetwork, projectId, envId))
-			.limit(1);
 		// The cluster belongs to the FABRIC, not the env: a `dedicated` env resolves to its own 1:1
 		// cluster, while a `namespace`/`vcluster` env placed on a shared Fabric resolves to that
 		// Fabric's single cluster — it has no env-keyed row of its own. Resolving via the Fabric is
@@ -818,64 +732,26 @@ async function buildConfigSnapshot(
 		const clusterAdminsList = cluster
 			? await clusterAdminsByCluster(tx, cluster.id)
 			: [];
-		const [dns] = await tx
-			.select()
-			.from(projectDns)
-			.where(envScope(projectDns, projectId, envId))
-			.limit(1);
-		const [repos] = await tx
-			.select()
-			.from(projectRepositories)
-			.where(envScope(projectRepositories, projectId, envId))
-			.limit(1);
-		const sourceRepos = await tx
-			.select()
-			.from(projectSourceRepos)
-			.where(envScope(projectSourceRepos, projectId, envId));
-		const databases = await tx
-			.select()
-			.from(projectDatabases)
-			.where(envScope(projectDatabases, projectId, envId));
-		const caches = await tx
-			.select()
-			.from(projectCaches)
-			.where(envScope(projectCaches, projectId, envId));
-		const queues = await tx
-			.select()
-			.from(projectQueues)
-			.where(envScope(projectQueues, projectId, envId));
-		const topics = await tx
-			.select()
-			.from(projectTopics)
-			.where(envScope(projectTopics, projectId, envId));
-		const topicSubs = await topicSubscriptionsByTopic(
-			tx,
-			topics.map((t) => t.id),
-		);
-		const nosqlTables = await tx
-			.select()
-			.from(projectNosqlTables)
-			.where(envScope(projectNosqlTables, projectId, envId));
-		const secrets = await tx
-			.select()
-			.from(projectSecrets)
-			.where(envScope(projectSecrets, projectId, envId));
-		const containerRegistries = await tx
-			.select()
-			.from(projectContainerRegistries)
-			.where(envScope(projectContainerRegistries, projectId, envId));
-		const helmRegistries = await tx
-			.select()
-			.from(projectHelmRegistries)
-			.where(envScope(projectHelmRegistries, projectId, envId));
-		const storageBuckets = await tx
-			.select()
-			.from(projectStorageBuckets)
-			.where(envScope(projectStorageBuckets, projectId, envId));
-		const services = await tx
-			.select()
-			.from(projectServices)
-			.where(envScope(projectServices, projectId, envId));
+		// Shared env-scoped component read (cluster:"none" — the snapshot uses the serving cluster
+		// resolved above, not the env-keyed row). Snapshot-only reads (observability/addons/
+		// chart_workloads/iac_sources/classification) stay below.
+		const {
+			network,
+			dns,
+			repositories: repos,
+			sourceRepos,
+			databases,
+			caches,
+			queues,
+			topics,
+			topicSubs,
+			nosqlTables,
+			secrets,
+			storageBuckets,
+			containerRegistries,
+			helmRegistries,
+			services,
+		} = await readEnvComponents(tx, projectId, envId, { cluster: "none" });
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
