@@ -255,8 +255,15 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 // postgres when the db is absent or its family is unset/unknown — the pre-MySQL behaviour, so existing
 // Postgres bindings render unchanged.
 func dbEngineForTarget(opts Options, t types.ServiceBindingTarget) string {
-	for _, db := range opts.Databases {
-		if db.Name == t.Name {
+	return dbEngineForName(opts.Databases, t.Name)
+}
+
+// dbEngineForName is the same resolution against a bare database list, for the callers that have no
+// Options (the BYO-chart binding lane). One implementation so the two lanes cannot disagree about a
+// database's engine — which is how a MySQL binding ends up rendered with Postgres's port.
+func dbEngineForName(dbs []types.ProjectDatabaseConfig, name string) string {
+	for _, db := range dbs {
+		if db.Name == name {
 			if db.EngineFamily == engineMySQL {
 				return engineMySQL
 			}
