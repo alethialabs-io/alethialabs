@@ -447,6 +447,8 @@ jobs:
           pnpm -F console gen:offer-parity
           git diff --exit-code -- docs/testing/offer-parity.md \
             || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -F console gen:offer-parity' and commit."; exit 1; }
+      - name: Keyless cells agree with the code that implements them
+        run: pnpm -F console check:keyless-cells
       - name: Shipped version defaults are mutually compatible (compat matrix)
         run: pnpm -F console check:compat
       - name: CLI contract fixtures are in sync with the Zod contract
