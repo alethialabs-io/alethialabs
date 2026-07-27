@@ -75,3 +75,17 @@ func ExtractClusterEndpoint(outputs map[string]interface{}) string {
 	// BYO-IaC generic fallback.
 	return extractOutputString(outputs, "cluster_endpoint")
 }
+
+// secretProvisionedNatively reports whether a project secret should be created in THIS cloud's native
+// secret store (AWS Secrets Manager / GCP Secret Manager / Azure Key Vault / Alibaba KMS). Only a
+// NATIVE secret ("" or "native") is: a pluggable-provider secret — a SaaS store (Vault / Doppler /
+// generic) or a cross-account *-xacct manager — is read from that external store via ESO and must NOT
+// get a stray native secret. Mirrors the same native-only skip in buildECRNamesMap.
+//
+// This gate is per-SECRET, unlike custom_secrets.tf's dominant-level `secrets_provider == "native"`
+// ternary. That template gate only closes when the project's DOMINANT provider is non-native; an
+// ADDITIVE *-xacct secret leaves `secrets_provider` at "native", so the list passes the template
+// gate and — without this filter — provisions an empty secret in the cluster's own account (#1411).
+func secretProvisionedNatively(provider string) bool {
+	return provider == "" || provider == "native"
+}
