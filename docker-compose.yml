@@ -29,6 +29,10 @@ services:
     volumes:
       - seaweedfs-data:/data
       - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    # No compose file here declared any resource limit; on a laptop OrbStack's cap hid
+    # that, and on a server nothing did. These are the datastores — bounded workloads
+    # with predictable footprints (measured: seaweedfs ~95 MiB, postgres ~30 MiB).
+    mem_limit: 1g
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9333/cluster/healthz"]
       interval: 10s

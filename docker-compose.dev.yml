@@ -41,6 +41,11 @@ x-dev-env: &dev-env
   # Turbopack/webpack file watching over bind mounts → polling.
   WATCHPACK_POLLING: "true"
   CHOKIDAR_USEPOLLING: "true"
+  # Cap the V8 heap. Lives on the ENV anchor, not the app anchor, because services
+  # merge this map with `<<: *dev-env` — a service's own `environment:` block would
+  # shadow a key set on the app anchor instead of merging with it. Matches the per-env
+  # cap the sandbox box applies in scripts/box/env-mode.sh.
+  NODE_OPTIONS: "--max-old-space-size=3072"
   # Datastores via container DNS.
   ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
   ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
@@ -57,6 +62,11 @@ x-dev-app: &dev-app
   env_file: .env
   working_dir: /app
   volumes: *dev-volumes
+  # Four `next dev` servers with no ceiling were free to take the whole VM between
+  # them — neither compose file declared ANY limit, and Turbopack grows until the OOM
+  # killer picks a victim (often Postgres, so the failure presents as a database bug
+  # rather than as memory pressure).
+  mem_limit: 3g
   restart: unless-stopped
 
 services:

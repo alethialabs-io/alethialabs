@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Copy to terraform.tfvars (gitignored) and fill in. `pnpm env:up` reads the same
+# file, so you only write this once.
+
+# Hetzner Cloud API token for the SANDBOX project (Security > API tokens, Read+Write).
+# Keep this project separate from alethia-console-prod / alethia-runners-prod so a
+# mistake here can never touch production.
+hcloud_token = "..."
+
+# Cloudflare API token needing, on the alethialabs.io zone:
+#   Zone > DNS > Edit          (the wildcard + primary records)
+#   Account > Cloudflare Tunnel > Edit   (create the tunnel)
+cloudflare_api_token  = "..."
+cloudflare_zone_id    = "..."
+cloudflare_account_id = "..."
+
+# Your laptop's public key — this is the only way onto the box.
+ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
+
+# Strongly recommended: narrow SSH to your own address. Find it with `curl -s ifconfig.me`.
+# ssh_allowed_cidrs = ["203.0.113.4/32"]
+
+# ── Optional overrides ────────────────────────────────────────────────────────────
+# domain        = "alethialabs.io"
+# env_subdomain = "dev"            # envs served at <slug>.dev.alethialabs.io
+# location      = "nbg1"
+#
+# server_type: default cpx42 (8c/16GB/320GB, EUR 69.49/mo sticker, ~EUR 20/mo at 8h x 22d
+# with reaping). See the long comment in variables.tf for why this is x86 and not the
+# 3x-cheaper ARM cax31 — chiefly that ARM is out of stock EU-wide and that snapshots are
+# architecture-bound, so a reaped ARM box cannot be restored during a capacity crunch.
+#   cpx32 (4c/8GB,  EUR 35.49) — cheaper, comfortable for 2 envs; set env_cap = 2.
+#   cpx62 (16c/32GB, EUR 138.49) — if you want 3 envs hot plus parallel builds.
+# server_type = "cpx42"
+# env_cap     = 3

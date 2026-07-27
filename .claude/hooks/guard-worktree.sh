@@ -187,13 +187,26 @@ $targets
 EOF
 fi
 
-# ── R-MAIN: the original main-checkout rule, unchanged ──────────────────────────────────────────
-# Only care about `git commit` or `git add -A|--all|.` — bail fast on anything else.
-if ! printf '%s' "$input" | grep -Eq 'git[[:space:]]+commit([[:space:]]|"|\\|$)|git[[:space:]]+add[[:space:]]+(-A|--all|\.)([[:space:]]|"|\\|$)'; then
+# ── R-MAIN: the original main-checkout rule ─────────────────────────────────────────────────────
+# Only care about a commit / stage-everything invocation — bail fast on anything else.
+#
+# Scan the COMMAND FIELD, not the raw payload. Scanning the whole JSON meant any
+# Write/Edit whose CONTENT merely mentioned the blocked phrases was rejected as if it
+# were a commit — this guard blocked an edit to its own message text, and it blocks
+# documenting the rule anywhere in the repo. A Bash payload is the only one with a
+# `command` key, so this also scopes R-MAIN to Bash without dispatching on tool_name
+# (the same key-probing rationale as payload_field above).
+cmd_text="$(payload_field command)"
+[ -n "$cmd_text" ] || exit 0
+if ! printf '%s' "$cmd_text" | grep -Eq 'git[[:space:]]+commit([[:space:]]|"|\\|$)|git[[:space:]]+add[[:space:]]+(-A|--all|\.)([[:space:]]|"|\\|$)'; then
 	exit 0
 fi
 
-# Deliberate override (matches the git hook's escape).
+# Deliberate override. It must be EXPORTED BEFORE `claude` starts. This is a PreToolUse
+# hook, spawned before the Bash tool runs, so an inline `VAR=1 …` prefix inside the
+# command text is never in THIS process's environment. The same prefix DOES work for
+# .githooks/pre-commit, which git spawns as its own child — the two layers genuinely
+# need different advice, which is why the block message below spells both out.
 [ "${ALETHIA_ALLOW_MAIN_COMMIT:-}" = "1" ] && exit 0
 
 # --- Where will this commit ACTUALLY run? ---------------------------------------------------------
@@ -241,7 +254,7 @@ gcd="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null || echo _gcd)"
 
 # Main checkout ⇔ git-dir == git-common-dir. Linked worktrees differ, so they pass.
 if [ "$gd" = "$gcd" ]; then
-	echo "BLOCKED: this commit would land in the shared main checkout ($dir). Don't \`git commit\` or \`git add -A\` here — parallel sessions share this tree and it tangles their WIP (this is how the ba0c664 mega-commit happened). Work in your own worktree: \`pnpm wt <name>\` → ../wt-<name>, and commit there (\`cd ../wt-<name> && git commit …\`). Deliberate main commit: prefix ALETHIA_ALLOW_MAIN_COMMIT=1, or git commit --no-verify." >&2
+	echo "BLOCKED: this would commit into the shared main checkout ($dir). Parallel sessions share this tree and it tangles their WIP (this is how the ba0c664 mega-commit happened). Work in your own worktree: \`pnpm wt <name>\` → ../wt-<name>, then commit from there — a \`git -C ../wt-<name> …\` invocation is parsed by this guard and allowed. Deliberate main commit: export ALETHIA_ALLOW_MAIN_COMMIT=1 BEFORE launching claude — an inline VAR=1 prefix cannot work here, because this hook is spawned before the command runs; and --no-verify skips only the git hook, not this one." >&2
 	exit 2
 fi
 exit 0
