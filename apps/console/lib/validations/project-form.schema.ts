@@ -41,8 +41,6 @@ import type {
 	StorageProviderConfig,
 	TopicSubscription,
 } from "@/types/jsonb.types";
-import { toRecord } from "@/lib/coerce";
-import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 
 // Insert schemas derived from the Drizzle tables (drizzle-zod) — the replacement
 // for the retired supazod `public*InsertSchema` schemas. JSONB columns get their
