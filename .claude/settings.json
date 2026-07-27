@@ -21,6 +21,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-runtime.sh\"",
             "statusMessage": "Checking runtime guard"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-merge.sh\"",
+            "statusMessage": "Checking merge target"
           }
         ]
       },
@@ -45,6 +50,69 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-migration-chain.sh\"",
+            "statusMessage": "Checking migration chain"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(tofu apply:*)",
+      "Bash(tofu destroy:*)",
+      "Bash(terraform apply:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin staging:*)",
+      "Bash(git push --force origin main:*)",
+      "Bash(git push --force origin staging:*)",
+      "Bash(docker compose down -v:*)",
+      "Bash(docker system prune:*)",
+      "Read(//Users/**/.aws/**)",
+      "Read(//Users/**/.ssh/**)",
+      "Read(//Users/**/.config/gcloud/**)",
+      "Read(//Users/**/.cloudflared/**)",
+      "Edit(//Users/**/.aws/**)",
+      "Edit(//Users/**/.ssh/**)",
+      "Edit(.env)",
+      "Edit(deploy/prod/secrets.local.env)",
+      "Read(deploy/prod/secrets.local.env)"
+    ],
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm check-types:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm check:docs-contract:*)",
+      "Bash(pnpm env:status:*)",
+      "Bash(pnpm dev:doctor:*)",
+      "Bash(pnpm wt:who:*)",
+      "Bash(pnpm wt:ls:*)",
+      "Bash(pnpm compose:ps:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker compose ps:*)",
+      "Bash(docker compose logs:*)",
+      "Bash(tofu fmt:*)",
+      "Bash(tofu validate:*)",
+      "Bash(tofu output:*)"
     ]
   }
 }

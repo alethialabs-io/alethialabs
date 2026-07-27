@@ -142,11 +142,14 @@ function withoutFences(text) {
 const PATH_GONE =
 	/\b(retired|removed|renamed|deleted|dropped|no longer exists?|superseded|used to (be|live)|was replaced)\b/i;
 
-// A command named only to say it is PROHIBITED. PARAGRAPH scope, because the verb and its
+// A command named only to say it is PROHIBITED. `deny`/`denies` are in the vocabulary
+// because a permission DENY LIST is prohibition prose by definition — documenting one is
+// exactly what we want, and the first draft flagged the repo's own deny list.
+// PARAGRAPH scope, because the verb and its
 // objects routinely wrap: a sentence like "guard-runtime.sh blocks `pnpm dev:up`, dev:stack,
 // a bare next dev" puts the verb and its objects on different lines.
 const CMD_PROHIBITED =
-	/\b(block\w*|forbidden|never|don'?t|do NOT|refus\w*|instead of|rather than|is dead|are dead)\b/i;
+	/\b(block\w*|forbidden|never|don'?t|do NOT|refus\w*|instead of|rather than|is dead|are dead|deny|denies|denied|prohibit\w*|may not|cannot be undone)\b/i;
 
 /** The sentence around a token, for PATH_GONE. */
 function sentenceAround(line, token) {
