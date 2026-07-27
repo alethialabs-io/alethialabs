@@ -238,9 +238,6 @@ const servicesInsert = createInsertSchema(projectServices, {
 	build: serviceBuildSchema.nullable().optional(),
 	env: z.array(serviceEnvSchema),
 	ports: z.array(servicePortSchema),
-	// A service with no backing-infra needs carries no bindings — optional, defaults to [] like the
-	// DB column, so services authored before W3 (and every existing fixture) still parse.
-	bindings: z.array(serviceBindingSchema).default([]),
 	resources: serviceResourcesSchema.nullable().optional(),
 	probe: serviceProbeSchema.nullable().optional(),
 });
@@ -502,6 +499,10 @@ const serviceItemSchema = servicesInsert
 		type: z
 			.enum(["deployment", "job", "cronjob", "statefulset"])
 			.default("deployment"),
+		// bindings live in the service_bindings child table (JSONB column dropped, #1426), so this is a
+		// form-only field: the user designs the edges on the canvas and the save path normalizes them
+		// into service_bindings. Optional, defaults to [] so pre-W3 services (and fixtures) still parse.
+		bindings: z.array(serviceBindingSchema).default([]),
 	});
 
 export const projectFormSchema = z.object({

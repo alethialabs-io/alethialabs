@@ -44,7 +44,6 @@ import type {
 	RegistryProviderConfig,
 	ScanStatus,
 	SecretsProviderConfig,
-	ServiceBinding,
 	ServiceBuild,
 	ServiceEnvVar,
 	ServicePort,
@@ -829,10 +828,8 @@ export const projectServices = pgTable(
 		build: jsonb().$type<ServiceBuild>(),
 		// Plain environment variables (secret env-from is W4).
 		env: jsonb().$type<ServiceEnvVar[]>().default([]).notNull(),
-		// W3 — declared edges to backing resources (service→database/cache/queue/secret) plus the
-		// env each injects. The runner resolves each binding to the provisioned resource's endpoint
-		// (tofu output) / credentials (ExternalSecret → k8s Secret) at deploy time.
-		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
+		// W3 bindings (service→database/cache/queue/secret edges + injected env) live in the
+		// service_bindings child table — the JSONB column was dropped in the contract phase (#1426).
 		// Container ports the workload exposes.
 		ports: jsonb().$type<ServicePort[]>().default([]).notNull(),
 		replicas: integer().default(2).notNull(),
@@ -885,10 +882,9 @@ export const projectChartWorkloads = pgTable(
 		// The pure description extracted from `helm template` output — OVERWRITTEN wholesale on every
 		// re-scan (it mirrors the chart, not the user).
 		rendered: jsonb().$type<ChartWorkloadRendered>().notNull(),
-		// W3 — the user's declared bindings to backing resources. PRESERVED across re-scans. On deploy
-		// (Lane 2) each binding writes into the chart's values at the declared value-path (a keyless
-		// secret-ref for credential facets), never re-rendering the workload.
-		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
+		// W3 bindings (declared edges to backing resources) live in the service_bindings child table —
+		// the JSONB column was dropped in the contract phase (#1426); service_bindings is preserved
+		// across re-scans and each binding writes into the chart's values at deploy (Lane 2).
 		// The user's editable overlay (v1: replicas + env), written back into the chart's values on
 		// deploy. PRESERVED across re-scans.
 		config: jsonb().$type<ChartWorkloadConfig>().default({}).notNull(),

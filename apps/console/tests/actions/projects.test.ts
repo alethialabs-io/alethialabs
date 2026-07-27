@@ -68,8 +68,41 @@ import {
 	projects,
 	resourceHierarchy,
 	runners,
+	serviceBindingInjections,
+	serviceBindings,
 } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
+import type { ServiceBinding } from "@/types/jsonb.types";
+
+/**
+ * Convert the ServiceBinding[] these tests author into the service_bindings + injection child rows the
+ * reader reconstructs from — bindings moved off the parent JSONB into those tables (#1426). Mirrors the
+ * writer (`insertServiceBindings`); `ordinal` = array index on both levels. The mock tx ignores WHERE
+ * clauses, so seeding these under [serviceBindings]/[serviceBindingInjections] drives the reconstruction.
+ */
+function bindingChildRows(serviceId: string, bindings: ServiceBinding[]) {
+	const sbRows: Record<string, unknown>[] = [];
+	const injRows: Record<string, unknown>[] = [];
+	bindings.forEach((b, i) => {
+		const id = `${serviceId}-b${i}`;
+		sbRows.push({
+			id,
+			service_id: serviceId,
+			chart_workload_id: null,
+			target_kind: b.target.kind,
+			target_name: b.target.name,
+			target_address: b.target.address ?? null,
+			output_endpoint: b.target.output_keys?.endpoint ?? null,
+			output_port: b.target.output_keys?.port ?? null,
+			output_credential_secret: b.target.output_keys?.credential_secret ?? null,
+			ordinal: i,
+		});
+		b.inject.forEach((inj, j) =>
+			injRows.push({ binding_id: id, env: inj.env, from_facet: inj.from, ordinal: j }),
+		);
+	});
+	return { sbRows, injRows };
+}
 
 /**
  * Stubs getServiceDb so the defense-in-depth assigned-runner lookup
@@ -691,7 +724,7 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 	it("round-trips a service's W3 bindings into the design/form view (bindings ARE design input)", async () => {
 		// Unlike resolved_image (a build OUTPUT, stripped), bindings are the user's declared
 		// service→infra edges — they must survive into the form so the canvas can re-render them.
-		const bindings = [
+		const bindings: ServiceBinding[] = [
 			{
 				target: { kind: "database", name: "orders-db" },
 				inject: [
@@ -700,26 +733,29 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 				],
 			},
 		];
-		setupDb({
-			select: selectWithService({
-				name: "api",
-				type: "deployment",
-				source: {
-					kind: "repo",
-					repo_url: "https://github.com/acme/api",
-					path: ".",
-				},
-				env: [],
-				bindings,
-				ports: [],
-				replicas: 2,
-				resources: null,
-				probe: null,
-				resolved_image: null,
-			}),
+		const { sbRows, injRows } = bindingChildRows("svc-api", bindings);
+		const select = selectWithService({
+			id: "svc-api",
+			name: "api",
+			type: "deployment",
+			source: {
+				kind: "repo",
+				repo_url: "https://github.com/acme/api",
+				path: ".",
+			},
+			env: [],
+			ports: [],
+			replicas: 2,
+			resources: null,
+			probe: null,
+			resolved_image: null,
 		});
+		select.set(serviceBindings, sbRows);
+		select.set(serviceBindingInjections, injRows);
+		setupDb({ select });
 
 		const { formData } = await getProjectAsFormData("p1");
+		// Reconstructed from the child tables (JSONB dropped, #1426) — must round-trip byte-identically.
 		expect(formData.services[0].bindings).toEqual(bindings);
 	});
 });
@@ -1118,12 +1154,13 @@ describe("planProject", () => {
 	});
 
 	it("carries a service's W3 bindings into the deploy snapshot when the target exists — #615", async () => {
-		const bindings = [
+		const bindings: ServiceBinding[] = [
 			{
 				target: { kind: "database", name: "orders-db" },
 				inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
 			},
 		];
+		const { sbRows, injRows } = bindingChildRows("svc-api", bindings);
 		const { valuesSpy } = setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1132,6 +1169,7 @@ describe("planProject", () => {
 						projectServices,
 						[
 							{
+								id: "svc-api",
 								name: "api",
 								type: "deployment",
 								source: {
@@ -1140,7 +1178,6 @@ describe("planProject", () => {
 									path: ".",
 								},
 								env: [],
-								bindings,
 								ports: [],
 								replicas: 2,
 								cloud_identity_id: null,
@@ -1148,6 +1185,8 @@ describe("planProject", () => {
 							},
 						],
 					],
+					[serviceBindings, sbRows],
+					[serviceBindingInjections, injRows],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
@@ -1167,6 +1206,13 @@ describe("planProject", () => {
 	it("fails closed when a service binds to a resource that does not exist in the env — #615", async () => {
 		// The fail-closed target gate: a dangling {kind,name} would reach the runner and fail to
 		// resolve at deploy (no endpoint/secret to inject). Catch it at snapshot build, loudly.
+		const bindings: ServiceBinding[] = [
+			{
+				target: { kind: "database", name: "ghost-db" },
+				inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
+			},
+		];
+		const { sbRows, injRows } = bindingChildRows("svc-api", bindings);
 		setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1175,6 +1221,7 @@ describe("planProject", () => {
 						projectServices,
 						[
 							{
+								id: "svc-api",
 								name: "api",
 								type: "deployment",
 								source: {
@@ -1183,12 +1230,6 @@ describe("planProject", () => {
 									path: ".",
 								},
 								env: [],
-								bindings: [
-									{
-										target: { kind: "database", name: "ghost-db" },
-										inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
-									},
-								],
 								ports: [],
 								replicas: 2,
 								cloud_identity_id: null,
@@ -1196,6 +1237,9 @@ describe("planProject", () => {
 							},
 						],
 					],
+					// The gate now reads bindings from the child table (JSONB dropped, #1426).
+					[serviceBindings, sbRows],
+					[serviceBindingInjections, injRows],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),

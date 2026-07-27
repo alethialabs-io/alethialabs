@@ -7,6 +7,7 @@ import { type AnyColumn, and, eq } from "drizzle-orm";
 import type { Db, Tx } from "@/lib/db";
 import {
 	clusterAdminsByCluster,
+	serviceBindingsByOwner,
 	topicSubscriptionsByTopic,
 } from "@/lib/db/normalized-reads";
 import {
@@ -26,7 +27,11 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 } from "@/lib/db/schema";
-import type { ClusterAdmin, TopicSubscription } from "@/types/jsonb.types";
+import type {
+	ClusterAdmin,
+	ServiceBinding,
+	TopicSubscription,
+} from "@/types/jsonb.types";
 
 type Executor = Db | Tx;
 
@@ -46,8 +51,9 @@ export function envScope(
 }
 
 /**
- * Raw component rows for one (project, environment), plus the two normalized-child derivations
- * (`topicSubs` map, `clusterAdmins` list). Callers apply their own transforms on top: the frontend
+ * Raw component rows for one (project, environment), plus the three normalized-child derivations
+ * (`topicSubs` map, `clusterAdmins` list, `serviceBindings` map). Callers apply their own transforms
+ * on top: the frontend
  * (`getProject`) enriches topics/cluster into `ProjectFormData` shape; `buildConfigSnapshot` layers
  * placement resolution + gates onto these same rows. Returning raw pieces (not a pre-shaped object)
  * keeps each caller's transform — and the frozen config_snapshot bytes — unchanged.
@@ -76,6 +82,13 @@ export interface EnvComponentRows {
 	containerRegistries: (typeof projectContainerRegistries.$inferSelect)[];
 	helmRegistries: (typeof projectHelmRegistries.$inferSelect)[];
 	services: (typeof projectServices.$inferSelect)[];
+	/**
+	 * W3 bindings keyed by SERVICE id (service_bindings child table). Services with no bindings are
+	 * absent from the map — callers default to `[]`, matching the dropped JSONB column's `.default([])`.
+	 * Chart-workload bindings share the same child table but are read separately by the snapshot
+	 * (`project_chart_workloads` is snapshot-only, so it is not one of this layer's tables).
+	 */
+	serviceBindings: Map<string, ServiceBinding[]>;
 }
 
 /**
@@ -166,6 +179,10 @@ export async function readEnvComponents(
 	const clusterAdmins = cluster
 		? await clusterAdminsByCluster(tx, cluster.id)
 		: [];
+	const serviceBindings = await serviceBindingsByOwner(tx, {
+		serviceIds: services.map((s) => s.id),
+		chartWorkloadIds: [],
+	});
 	return {
 		network,
 		cluster,
@@ -184,5 +201,6 @@ export async function readEnvComponents(
 		containerRegistries,
 		helmRegistries,
 		services,
+		serviceBindings,
 	};
 }
