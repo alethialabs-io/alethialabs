@@ -24,13 +24,16 @@ import (
 // the upstream credential. Because the token is ~1h-lived but the pod runs for days, it loops and
 // re-writes before expiry — the app itself stays password-free and unaware.
 //
-// Azure: the Entra token for the Postgres AAD resource, via the federated workload identity the AKS
+// Azure: the Entra token for the OSS-RDBMS AAD resource, via the federated workload identity the AKS
 // webhook injects (AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_FEDERATED_TOKEN_FILE) — same mechanism
-// as kube-token's mintAzureToken, different scope.
+// as kube-token's mintAzureToken, different scope. The token is protocol-independent: Azure Database
+// for PostgreSQL, MySQL and MariaDB Flexible Server all accept an Entra access token minted for the
+// same ossrdbms-aad resource, so this minter serves every keyless Azure engine unchanged.
 
 const (
-	// pgAADScope is the Entra resource for Azure Database for PostgreSQL Flexible Server AAD login.
-	pgAADScope = "https://ossrdbms-aad.database.windows.net/.default"
+	// ossrdbmsAADScope is the Entra resource for Azure Database Flexible Server AAD login. It is shared
+	// by the PostgreSQL, MySQL and MariaDB engines — the token is the same regardless of wire protocol.
+	ossrdbmsAADScope = "https://ossrdbms-aad.database.windows.net/.default"
 	// tokenRefreshLead is how far before expiry we re-mint, so a fresh token is always on disk.
 	tokenRefreshLead = 5 * time.Minute
 	// tokenRefreshFloor bounds the loop so a short/zero TTL can't busy-spin.
@@ -162,17 +165,17 @@ func mintAWSDBToken(ctx context.Context, endpoint, region, user string) (string,
 	return tok, time.Now().Add(awsRDSTokenTTL), nil
 }
 
-// mintAzureDBToken mints an Entra access token for Azure Postgres via the pod's federated workload
-// identity — the same NewWorkloadIdentityCredential path as kube-token's mintAzureToken, with the
-// Postgres AAD scope instead of the AKS one.
+// mintAzureDBToken mints an Entra access token for Azure Database (PostgreSQL/MySQL/MariaDB) via the
+// pod's federated workload identity — the same NewWorkloadIdentityCredential path as kube-token's
+// mintAzureToken, with the shared ossrdbms-aad DB scope instead of the AKS one.
 func mintAzureDBToken(ctx context.Context) (string, time.Time, error) {
 	cred, err := azidentity.NewWorkloadIdentityCredential(nil)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("azure workload identity credential: %w", err)
 	}
-	tok, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{pgAADScope}})
+	tok, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{ossrdbmsAADScope}})
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("obtain Postgres AAD token: %w", err)
+		return "", time.Time{}, fmt.Errorf("obtain Entra DB token: %w", err)
 	}
 	return tok.Token, tok.ExpiresOn, nil
 }
