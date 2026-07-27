@@ -2763,34 +2763,40 @@ export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = {
 		],
 		"azure": [
 			{
-				"value": "C0",
-				"label": "Basic C0",
-				"memoryGb": 0.25,
-				"cost": "~$15/mo"
+				"value": "Balanced_B0",
+				"label": "Balanced B0",
+				"memoryGb": 0.5,
+				"cost": "~$12/mo"
 			},
 			{
-				"value": "C1",
-				"label": "Basic C1",
+				"value": "Balanced_B1",
+				"label": "Balanced B1",
 				"memoryGb": 1,
-				"cost": "~$35/mo"
+				"cost": "~$23/mo"
 			},
 			{
-				"value": "C2",
-				"label": "Standard C2",
-				"memoryGb": 2.5,
-				"cost": "~$80/mo"
+				"value": "Balanced_B3",
+				"label": "Balanced B3",
+				"memoryGb": 3,
+				"cost": "~$47/mo"
 			},
 			{
-				"value": "C3",
-				"label": "Standard C3",
+				"value": "Balanced_B5",
+				"label": "Balanced B5",
 				"memoryGb": 6,
-				"cost": "~$155/mo"
+				"cost": "~$114/mo"
 			},
 			{
-				"value": "P1",
-				"label": "Premium P1",
-				"memoryGb": 6,
-				"cost": "~$210/mo"
+				"value": "Balanced_B10",
+				"label": "Balanced B10",
+				"memoryGb": 12,
+				"cost": "~$230/mo"
+			},
+			{
+				"value": "Balanced_B20",
+				"label": "Balanced B20",
+				"memoryGb": 24,
+				"cost": "~$459/mo"
 			}
 		],
 		"hetzner": [
@@ -2893,7 +2899,7 @@ export const CACHE_ENGINES: Record<CloudProviderSlug, CacheEngineOption[]> = {
 export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = {
 		"aws": "cache.t3.medium",
 		"gcp": "M1",
-		"azure": "C1",
+		"azure": "Balanced_B1",
 		"hetzner": "1",
 		"alibaba": "redis.master.small.default"
 	};
@@ -2910,11 +2916,11 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"cache.r6g.xlarge": "M4"
 			},
 			"azure": {
-				"cache.t3.micro": "C0",
-				"cache.t3.small": "C1",
-				"cache.t3.medium": "C2",
-				"cache.r6g.large": "C3",
-				"cache.r6g.xlarge": "P1"
+				"cache.t3.micro": "Balanced_B0",
+				"cache.t3.small": "Balanced_B3",
+				"cache.t3.medium": "Balanced_B5",
+				"cache.r6g.large": "Balanced_B20",
+				"cache.r6g.xlarge": "Balanced_B20"
 			},
 			"hetzner": {
 				"cache.t3.micro": "1",
@@ -2940,10 +2946,10 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"M4": "cache.r6g.xlarge"
 			},
 			"azure": {
-				"M1": "C1",
-				"M2": "C2",
-				"M3": "C3",
-				"M4": "P1"
+				"M1": "Balanced_B1",
+				"M2": "Balanced_B5",
+				"M3": "Balanced_B10",
+				"M4": "Balanced_B20"
 			},
 			"hetzner": {
 				"M1": "1",
@@ -2961,32 +2967,36 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 		"azure": {
 			"azure": {},
 			"aws": {
-				"C0": "cache.t3.micro",
-				"C1": "cache.t3.small",
-				"C2": "cache.t3.medium",
-				"C3": "cache.r6g.large",
-				"P1": "cache.r6g.xlarge"
+				"Balanced_B0": "cache.t3.micro",
+				"Balanced_B1": "cache.t3.small",
+				"Balanced_B3": "cache.t3.medium",
+				"Balanced_B5": "cache.r6g.large",
+				"Balanced_B10": "cache.r6g.large",
+				"Balanced_B20": "cache.r6g.xlarge"
 			},
 			"gcp": {
-				"C0": "M1",
-				"C1": "M1",
-				"C2": "M2",
-				"C3": "M3",
-				"P1": "M4"
+				"Balanced_B0": "M1",
+				"Balanced_B1": "M1",
+				"Balanced_B3": "M2",
+				"Balanced_B5": "M3",
+				"Balanced_B10": "M4",
+				"Balanced_B20": "M4"
 			},
 			"hetzner": {
-				"C0": "1",
-				"C1": "1",
-				"C2": "2",
-				"C3": "4",
-				"P1": "4"
+				"Balanced_B0": "1",
+				"Balanced_B1": "1",
+				"Balanced_B3": "4",
+				"Balanced_B5": "4",
+				"Balanced_B10": "4",
+				"Balanced_B20": "4"
 			},
 			"alibaba": {
-				"C0": "redis.master.small.default",
-				"C1": "redis.master.small.default",
-				"C2": "redis.master.mid.default",
-				"C3": "redis.master.large.default",
-				"P1": "redis.master.large.default"
+				"Balanced_B0": "redis.master.small.default",
+				"Balanced_B1": "redis.master.small.default",
+				"Balanced_B3": "redis.master.large.default",
+				"Balanced_B5": "redis.master.large.default",
+				"Balanced_B10": "redis.master.large.default",
+				"Balanced_B20": "redis.master.large.default"
 			}
 		},
 		"hetzner": {
@@ -3002,9 +3012,9 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"4": "M3"
 			},
 			"azure": {
-				"1": "C1",
-				"2": "C2",
-				"4": "C3"
+				"1": "Balanced_B1",
+				"2": "Balanced_B3",
+				"4": "Balanced_B5"
 			},
 			"alibaba": {
 				"1": "redis.master.small.default",
@@ -3025,9 +3035,9 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"redis.master.large.default": "M2"
 			},
 			"azure": {
-				"redis.master.small.default": "C1",
-				"redis.master.mid.default": "C2",
-				"redis.master.large.default": "C3"
+				"redis.master.small.default": "Balanced_B1",
+				"redis.master.mid.default": "Balanced_B3",
+				"redis.master.large.default": "Balanced_B5"
 			},
 			"hetzner": {
 				"redis.master.small.default": "1",
