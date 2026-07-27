@@ -151,4 +151,53 @@ describe("ConnectorSelect", () => {
 		expect(allowed).toBeDefined();
 		expect(allowed).not.toHaveAttribute("aria-disabled", "true");
 	});
+
+	// #1412 — dns owns `zone_id` as its own column-backed field, so the connector must not render a
+	// second input for it. Two inputs for one concept, writing to two places, is worse than either.
+	it("hides a knob the surface owns elsewhere, and won't carry it through a switch", async () => {
+		const onChange = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<ConnectorSelect
+				category="helm_registry"
+				value="helm-https"
+				providerConfig={{ repo_url: "https://charts.acme.io" }}
+				onChange={onChange}
+				hiddenKnobs={(f) => f.key === "repo_url"}
+			/>,
+		);
+
+		// Not rendered...
+		expect(screen.queryByLabelText(/repository url/i)).not.toBeInTheDocument();
+
+		// ...and not carried over when the provider changes. Suppressing only the render half would
+		// let it survive a switch and ride into the config snapshot.
+		await user.click(screen.getByRole("combobox"));
+		await user.click(await screen.findByRole("option", { name: /oci-generic-cr/i }));
+		expect(onChange).toHaveBeenCalledWith({
+			provider: "oci-generic-cr",
+			provider_config: {},
+		});
+	});
+
+	// A hidden knob can already be in the bag (CLI-set, or set before this surface took ownership),
+	// and it would keep winning over the field that replaced it. Editing any knob drops it.
+	it("drops an already-stored hidden knob when another knob is edited", async () => {
+		const onChange = vi.fn();
+		const user = userEvent.setup();
+		render(
+			<ConnectorSelect
+				category="helm_registry"
+				value="oci-generic-cr"
+				providerConfig={{ registry_host: "harbor.acme.io", sneaky_token: "stale" }}
+				onChange={onChange}
+				hiddenKnobs={(f) => f.key === "sneaky_token"}
+			/>,
+		);
+
+		await user.type(screen.getByLabelText(/registry host/i), "x");
+
+		const last = onChange.mock.calls.at(-1)?.[0];
+		expect(last.provider_config).not.toHaveProperty("sneaky_token");
+	});
 });

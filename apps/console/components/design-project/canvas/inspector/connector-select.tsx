@@ -14,7 +14,7 @@
 // Category-generic on purpose. `helm_registry` is the first consumer; `registry`, `secrets` and
 // `dns` are the same shape and can adopt it with one field entry in their CONFIG_SCHEMA block.
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Plug } from "lucide-react";
@@ -31,6 +31,7 @@ import { ProviderConfigFields } from "@/components/connector/provider-config-fie
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
 import {
 	getConnectorProviderBySlug,
+	type ConnectorField,
 	type ConnectorProviderMeta,
 	type PluggableCategory,
 } from "@/lib/connectors/registry.generated";
@@ -68,6 +69,18 @@ interface ConnectorSelectProps {
 	 * This is for one that is finished and connectable but cannot work HERE.
 	 */
 	unavailable?: (provider: ConnectorProviderMeta) => string | null;
+	/**
+	 * Knobs this surface owns ELSEWHERE, so the connector must not render a second, divergent input
+	 * for them.
+	 *
+	 * DNS is the case: `project_dns.zone_id` is a real column with its own field, and the Cloudflare
+	 * connector also declares a `zone_id` knob. Two inputs writing to two places for one concept is
+	 * worse than either alone, so the column wins and this hides the knob. It cannot be expressed in
+	 * the catalog instead — `ConnectorField` is generated from catalog.json, which is also the
+	 * runtime's contract, and dns_cloudflare.go genuinely reads provider_config.zone_id (it just
+	 * falls back to the column, which is what makes suppression safe).
+	 */
+	hiddenKnobs?: (field: ConnectorField) => boolean;
 }
 
 /**
@@ -98,6 +111,7 @@ export function ConnectorSelect({
 	errors,
 	nativeOption,
 	unavailable,
+	hiddenKnobs,
 }: ConnectorSelectProps) {
 	const params = useParams<{ org?: string }>();
 	const connected = useConnectedProviders(category);
@@ -115,9 +129,32 @@ export function ConnectorSelect({
 	// flagged `secret` is dropped rather than rendered: a secret belongs in `connector_credentials`
 	// (encrypted, attached out-of-band at job claim), never on a snapshot. No catalog entry declares
 	// one today — this keeps it that way when `secrets`/`registry`/`dns` adopt this field.
-	const knobs = useMemo(
-		() => (selected?.providerConfigFields ?? []).filter((f) => !f.secret),
-		[selected],
+	// ONE filter for both the knobs we RENDER and the knobs we CARRY OVER on a provider switch.
+	// They were two copies of `!f.secret`; suppressing in only the render half would let a hidden
+	// knob survive a switch and ride into the config snapshot — exactly what the carry-over logic
+	// below exists to prevent.
+	const visibleKnobs = useCallback(
+		(provider: ConnectorProviderMeta | undefined) =>
+			(provider?.providerConfigFields ?? []).filter(
+				(f) => !f.secret && !(hiddenKnobs?.(f) ?? false),
+			),
+		[hiddenKnobs],
+	);
+	const knobs = useMemo(() => visibleKnobs(selected), [visibleKnobs, selected]);
+	// Drop knobs this surface doesn't own from a stored bag, so they can't outlive the field that
+	// replaced them.
+	const sanitize = useCallback(
+		(config: Record<string, unknown>) => {
+			if (!hiddenKnobs) return config;
+			const out: Record<string, unknown> = {};
+			for (const [key, v] of Object.entries(config)) {
+				const field = selected?.providerConfigFields?.find((f) => f.key === key);
+				if (field && hiddenKnobs(field)) continue;
+				out[key] = v;
+			}
+			return out;
+		},
+		[hiddenKnobs, selected],
 	);
 	// The stored connector may have been disconnected since this was configured. Showing it (marked)
 	// beats rendering an empty Select that reads as "nothing chosen" — the row is still pointing at
@@ -157,11 +194,7 @@ export function ConnectorSelect({
 					// Carry over only the knobs the NEW provider actually declares. Otherwise switching
 					// (say) an HTTPS repo to a GHCR one leaves a stale `repo_url` behind in the JSONB,
 					// which then rides into the config snapshot and the seeded credential.
-					const keep = new Set(
-						(next?.providerConfigFields ?? [])
-							.filter((f) => !f.secret)
-							.map((f) => f.key),
-					);
+					const keep = new Set(visibleKnobs(next).map((f) => f.key));
 					const carried: Record<string, unknown> = {};
 					for (const [key, v] of Object.entries(providerConfig)) {
 						if (keep.has(key)) carried[key] = v;
@@ -231,7 +264,12 @@ export function ConnectorSelect({
 					onChange={(key, next) =>
 						onChange({
 							provider: value,
-							provider_config: { ...providerConfig, [key]: next },
+							// Sanitize on the way out, not just on a provider switch. A hidden knob can
+							// already be in the bag — set by the CLI, or by this connector before the
+							// surface took ownership of it — and it would then keep winning over the field
+							// that owns it (dns_cloudflare.go PREFERS provider_config.zone_id over the
+							// column). Editing any knob is the moment to drop it.
+							provider_config: { ...sanitize(providerConfig), [key]: next },
 						})
 					}
 					errors={errors}

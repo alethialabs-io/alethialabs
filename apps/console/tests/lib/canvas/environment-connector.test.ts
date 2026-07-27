@@ -6,11 +6,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	NATIVE_SECRETS_LABEL,
-	environmentSecretsStore,
-	secretsStoreLabel,
+	NATIVE_LABELS,
+	connectorLabel,
+	environmentConnector,
+	registryUnavailable,
 	secretsStoreUnavailable,
-} from "@/lib/canvas/secrets-store";
+} from "@/lib/canvas/environment-connector";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 
 /** A minimal secret node — only `kind` and `config` are read. */
@@ -23,25 +24,25 @@ function secretNode(id: string, config: Record<string, unknown>): CanvasNode {
 	} as unknown as CanvasNode;
 }
 
-describe("environmentSecretsStore", () => {
+describe("environmentConnector", () => {
 	it("reports the native store when no secret names a provider", () => {
-		const store = environmentSecretsStore([
+		const store = environmentConnector([
 			secretNode("a", { name: "api-key" }),
 			secretNode("b", { name: "other", provider: "native" }),
-		]);
+		], "secret");
 		expect(store.provider).toBeNull();
 		expect(store.providerConfig).toEqual({});
-		expect(store.secretCount).toBe(2);
+		expect(store.count).toBe(2);
 	});
 
 	it("reads the selected store and its knobs", () => {
-		const store = environmentSecretsStore([
+		const store = environmentConnector([
 			secretNode("a", {
 				name: "api-key",
 				provider: "vault",
 				provider_config: { mount_path: "secret" },
 			}),
-		]);
+		], "secret");
 		expect(store.provider).toBe("vault");
 		expect(store.providerConfig).toEqual({ mount_path: "secret" });
 	});
@@ -51,28 +52,28 @@ describe("environmentSecretsStore", () => {
 	// not. Resolve it the way the RUNTIME does (first pluggable row wins), or the console would show
 	// one store while the deploy used another.
 	it("resolves a disagreeing environment the way the deploy will — first pluggable row wins", () => {
-		const store = environmentSecretsStore([
+		const store = environmentConnector([
 			secretNode("a", { name: "native-one" }),
 			secretNode("b", { name: "vaulted", provider: "vault", provider_config: { mount_path: "kv" } }),
 			secretNode("c", { name: "dopplered", provider: "doppler" }),
-		]);
+		], "secret");
 		expect(store.provider).toBe("vault");
 		expect(store.providerConfig).toEqual({ mount_path: "kv" });
 	});
 
 	it("ignores a malformed provider_config rather than passing it on", () => {
-		const store = environmentSecretsStore([
+		const store = environmentConnector([
 			secretNode("a", { name: "x", provider: "vault", provider_config: "not-an-object" }),
-		]);
+		], "secret");
 		expect(store.provider).toBe("vault");
 		expect(store.providerConfig).toEqual({});
 	});
 
 	it("counts an empty environment as having no store to configure", () => {
-		expect(environmentSecretsStore([])).toEqual({
+		expect(environmentConnector([], "secret")).toEqual({
 			provider: null,
 			providerConfig: {},
-			secretCount: 0,
+			count: 0,
 		});
 	});
 });
@@ -90,19 +91,19 @@ describe("secretsStoreUnavailable", () => {
 	});
 });
 
-describe("secretsStoreLabel", () => {
+describe("connectorLabel", () => {
 	it("names the native store for null and the 'native' sentinel alike", () => {
-		expect(secretsStoreLabel(null)).toBe(NATIVE_SECRETS_LABEL);
-		expect(secretsStoreLabel("native")).toBe(NATIVE_SECRETS_LABEL);
+		expect(connectorLabel(null, NATIVE_LABELS.secret)).toBe(NATIVE_LABELS.secret);
+		expect(connectorLabel("native", NATIVE_LABELS.secret)).toBe(NATIVE_LABELS.secret);
 	});
 
 	it("uses the connector's own name", () => {
-		expect(secretsStoreLabel("vault")).toBe("HashiCorp Vault");
+		expect(connectorLabel("vault", NATIVE_LABELS.secret)).toBe("HashiCorp Vault");
 	});
 
 	// A slug the catalog no longer has must still render as itself — falling back to the native
 	// label would tell the user their secrets come from somewhere they don't.
 	it("falls back to the slug for an unknown provider", () => {
-		expect(secretsStoreLabel("retired-store")).toBe("retired-store");
+		expect(connectorLabel("retired-store", NATIVE_LABELS.secret)).toBe("retired-store");
 	});
 });
