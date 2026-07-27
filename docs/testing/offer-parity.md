@@ -34,6 +34,23 @@ nightly can promote a cell, and it does so in the e2e parity board.
 | `redis` | 🟡 | 🟡 | 🟡 | 🟡 | · | — |
 | `valkey` | · | 🟡 | · | 🟡 | — | — |
 
+## Option-level offers — a switch the canvas shows on every cloud
+
+Not every offer is an engine choice. `iam_auth` is a plain switch in the inspector with no
+per-cloud gate, so the canvas presents keyless database auth on **every** cloud for **both** engines.
+The variant grids above cannot see that, which is why shipping MySQL keyless broken was
+un-catchable until #1508.
+
+A cell here is 🚫 when the cloud's provider never reads the option (the switch is dropped between the
+canvas and the plan), or when the template gates it per engine and this engine has no branch.
+
+### `database` · `iam_auth`
+
+| Offer | alibaba | aws | azure | gcp | hetzner | local |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `postgres` | 🚫 #1510 | 🟡 | 🟡 | 🟡 | — | — |
+| `mysql` | 🚫 #1510 | 🟡 | 🟡 | 🟡 | · | — |
+
 ## Day-2 posture — would a hazard be caught?
 
 Day 1 asks *could this ever be built*. Day 2 asks *what happens when you change it afterwards*: does a
@@ -84,6 +101,9 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `database:mysql` | local | A local kind cluster has no managed services — data services run in-cluster. |
 | `cache:redis` | local | A local kind cluster has no managed services — data services run in-cluster. |
 | `cache:valkey` | local | A local kind cluster has no managed services — data services run in-cluster. |
+| `database:postgres:iam_auth` | hetzner | Postgres runs in-cluster via CloudNativePG — no managed instance and no cloud identity plane to mint DB tokens against. |
+| `database:postgres:iam_auth` | local | A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against. |
+| `database:mysql:iam_auth` | local | A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against. |
 
 ---
 

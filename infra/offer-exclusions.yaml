@@ -61,6 +61,22 @@ exclusions:
     cloud: local
     reason: A local kind cluster has no managed services — data services run in-cluster.
 
+  # ── Keyless DB auth where there is no managed database to authenticate TO ────────────
+  # `iam_auth` trades a password for a short-lived cloud IAM token. That needs two things the
+  # in-cluster path has neither of: a managed instance the cloud controls, and a cloud identity plane
+  # to mint tokens against. Hetzner and local run Postgres as a CloudNativePG chart inside the
+  # cluster, so there is no cloud-side login to bind an identity to. Same architectural ceiling as
+  # the database:postgres entries above — not unfinished work.
+  - offer: database:postgres:iam_auth
+    cloud: hetzner
+    reason: Postgres runs in-cluster via CloudNativePG — no managed instance and no cloud identity plane to mint DB tokens against.
+  - offer: database:postgres:iam_auth
+    cloud: local
+    reason: A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against.
+  - offer: database:mysql:iam_auth
+    cloud: local
+    reason: A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against.
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
@@ -71,7 +87,24 @@ exclusions:
 # Delete the entry in the same PR that fixes the gap.
 
 baseline:
-  # Empty. Every offer the canvas makes either builds on the cloud it is offered for, or is a
-  # documented exclusion above with the reason it cannot. Keep it that way: an entry here is debt
-  # with a tracking issue, and the guard fails the moment one stops reproducing.
+  # Alibaba keyless database auth (#1508 made this visible; #1510 decides it).
+  #
+  # `alibaba_provider.go` never reads `IamAuth`, so the canvas offers the toggle and the plan drops
+  # it. This is BASELINE rather than an exclusion on purpose: an exclusion asserts a cloud can NEVER
+  # honor an offer, and that is not established here. RAM governs ApsaraDB's CONTROL plane, but I
+  # found no ApsaraDB RDS equivalent of `rds-db:connect` / Cloud SQL IAM auth / Entra — a DATA-plane
+  # token login. Absence of evidence is not evidence of absence, so claiming "never" would be
+  # overclaiming in a file whose whole point is that entries are decisions.
+  #
+  # #1510 resolves it either way: it gates the toggle to cells that can honor it (which would make
+  # this an exclusion), or the investigation finds a RAM DB-login path and it becomes implementation
+  # work. Delete these two entries in whichever PR settles it.
+  - offer: database:postgres:iam_auth
+    cloud: alibaba
+    reason: The provider never carries IamAuth; whether ApsaraDB RDS offers a RAM data-plane login is undetermined.
+    issue: "#1510"
+  - offer: database:mysql:iam_auth
+    cloud: alibaba
+    reason: The provider never carries IamAuth; whether ApsaraDB RDS offers a RAM data-plane login is undetermined.
+    issue: "#1510"
 
