@@ -347,6 +347,29 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         with:
           tofu_version: "1.9.0"
+
+      # Provider plugin cache. Unlike production — where the runner IMAGE bakes a pre-initialized
+      # .terraform tree and copyDir carries it into each job workdir — this harness drives a natively
+      # built runner against the templates straight from the checkout, so its `tofu init` starts cold.
+      #
+      # The committed .terraform.lock.hcl already removes the checksum/signature fetch (the call that
+      # 500'd on 2026-07-27 and killed the run at 47s having provisioned nothing). This removes the
+      # DOWNLOAD too, so a warm nightly needs the registry for nothing. Keyed on the lock files: a
+      # provider bump changes the key and repopulates.
+      - name: Cache OpenTofu provider plugins
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: tofu-plugins-1.9.0-${{ runner.os }}-${{ hashFiles('infra/templates/project/*/.terraform.lock.hcl') }}
+          restore-keys: |
+            tofu-plugins-1.9.0-${{ runner.os }}-
+      - name: Point OpenTofu at the plugin cache
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          echo "TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache" >> "$GITHUB_ENV"
+
       - uses: azure/setup-helm@v5
         if: steps.gate.outputs.run == 'true'
         with:
