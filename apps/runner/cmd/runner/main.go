@@ -42,6 +42,20 @@ func main() {
 		return
 	}
 
+	// Keyless DB-auth PROXY mode (#722, epic #1500): as a sidecar next to a workload bound to a
+	// cloud-native-auth database, serve an ordinary password-free endpoint on 127.0.0.1 and, per NEW
+	// upstream connection, mint a short-lived DB token from the pod's Workload Identity, authenticate
+	// upstream over TLS with it as a cleartext password, and splice. Replaces the pgbouncer sidecar
+	// (whose PGB_* env vars no image ever consumed) and needs no token file at all — nothing is ever
+	// at rest. Long-running (until SIGTERM), so handled before the normal runner boot.
+	if len(os.Args) > 1 && os.Args[1] == "db-authproxy" {
+		if err := agent.RunDBAuthProxy(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "db-authproxy error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Keyless DB least-privilege bootstrap (#722): a one-shot Job runs this as the DB admin to create
 	// the scoped app role (the alternative to handing the app superuser/AAD-admin). Emits the SQL.
 	if len(os.Args) > 1 && os.Args[1] == "db-bootstrap" {
