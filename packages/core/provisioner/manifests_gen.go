@@ -39,9 +39,14 @@ import (
 // whether a project secret backed by a CROSS-ACCOUNT keyless secret manager is readable — the store
 // is applied by the runner, so the manifest lane must read the same render gate rather than assume.
 // nil is safe: no cross-account secret binding resolves (fail-closed).
-func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, token string, facts *argocd.InfraFacts, stdout, stderr io.Writer) (warnings []string, err error) {
+//
+// Returns `keyless`: the per-binding keyless decision record (#1511), forwarded by the runner to
+// execution_metadata["keyless_bindings"]. Note the BOUNDARY this creates — the record exists only on
+// the GitOps path, because that is the only path on which our render reaches a cluster at all. A
+// project with no apps repo returns before any of this, and so does a bring-your-own repo.
+func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, token string, facts *argocd.InfraFacts, stdout, stderr io.Writer) (warnings []string, keyless []manifests.KeylessBindingDecision, err error) {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Normalize the tofu outputs to string values so the pure renderer can resolve a service's
 	// W3 binding endpoints (a database's endpoint, etc.) into concrete env values.
@@ -79,34 +84,44 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		ImagePullSecrets: pullSecrets,
 		SecretStores:     secretStores, // secret-kind binding → pluggable SaaS store (runtime-read, #1207)
 	}
-	apps, skipped := manifests.FromServices(vc.Services, mopts)
+	apps, skipped, keylessDecisions := manifests.FromServices(vc.Services, mopts)
+	keyless = keylessDecisions
 	for _, reason := range skipped {
 		fmt.Fprintf(stdout, "Manifest generation skipped %s\n", reason)
 	}
 	warnings = append(warnings, skipped...)
+	// Logged as well as recorded: the job log is where an operator watching a deploy sees it, and a
+	// fail-closed keyless binding is the one outcome nobody should have to go digging for.
+	for _, d := range keyless {
+		fmt.Fprintf(stdout, "Keyless DB binding %s→%s/%s (%s): %s — %s\n",
+			d.Service, d.TargetKind, d.TargetName, d.Engine, d.Status, d.Reason)
+	}
 	if len(apps) == 0 {
-		return warnings, nil // no renderable services to scaffold (but report why they were skipped)
+		return warnings, keyless, nil // no renderable services to scaffold (but report why they were skipped)
 	}
 
 	dir, err := os.MkdirTemp("", "alethia-apps-*")
 	if err != nil {
-		return warnings, err
+		return warnings, keyless, err
 	}
 	defer os.RemoveAll(dir)
 
 	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
 	if err := repo.Clone(ctx, "", false); err != nil {
-		return warnings, fmt.Errorf("clone apps repo: %w", err)
+		return warnings, keyless, fmt.Errorf("clone apps repo: %w", err)
 	}
 
 	if hasManifests(dir) {
 		fmt.Fprintf(stdout, "Apps repo already contains manifests — leaving it untouched (bring-your-own).\n")
-		return nil, nil // BYO owns the manifests; our render + its warnings don't apply
+		// BYO owns the manifests; our render — its warnings AND its keyless decisions — doesn't apply.
+		// Dropping the decisions here is deliberate: we rendered a keyless pod that will never be
+		// deployed, and reporting it as `wired` would claim a proxy the cluster never receives.
+		return nil, nil, nil
 	}
 
 	written, err := manifests.WriteManifests(dir, apps)
 	if err != nil {
-		return warnings, err
+		return warnings, keyless, err
 	}
 	// W3 — the keyless credential last hop: for each service's credential-facet bindings, write an
 	// ExternalSecret alongside the app manifests. ArgoCD applies it; ESO (via the per-cloud
@@ -115,7 +130,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// emitted for this service (per-service, so no two ExternalSecrets fight over one Secret).
 	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, secretStores, stdout)
 	if err != nil {
-		return warnings, err
+		return warnings, keyless, err
 	}
 	warnings = append(warnings, esSkips...)
 	// Keyless least-priv bootstrap (#722 R5): for each keyless database, write the one-shot ArgoCD
@@ -124,7 +139,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// rendered (a missing admin output) is REPORTED, not fatal — consistent with the binding lane.
 	jobSkips, jobCount, err := writeBootstrapJobs(dir, vc, mopts, stdout)
 	if err != nil {
-		return warnings, err
+		return warnings, keyless, err
 	}
 	warnings = append(warnings, jobSkips...)
 	// Cross-account keyless registry (PR B): if the project pulls from a foreign-account ECR/GAR/ACR
@@ -133,18 +148,18 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// fresh — minted keylessly in-cluster. Off (or no keyless registry) → nothing rendered.
 	refSkips, err := writeRegistryRefresher(dir, vc, strOutputs, stdout)
 	if err != nil {
-		return warnings, err
+		return warnings, keyless, err
 	}
 	warnings = append(warnings, refSkips...)
 	if err := repo.AddAndCommit("chore: scaffold app manifests (alethia)"); err != nil {
-		return warnings, fmt.Errorf("commit generated manifests: %w", err)
+		return warnings, keyless, fmt.Errorf("commit generated manifests: %w", err)
 	}
 	if err := repo.Push(); err != nil {
-		return warnings, fmt.Errorf("push generated manifests: %w", err)
+		return warnings, keyless, fmt.Errorf("push generated manifests: %w", err)
 	}
 	fmt.Fprintf(stdout, "Scaffolded %d app manifest(s)%s%s into the GitOps repo: %s\n",
 		len(written), esCountSuffix(esCount), jobCountSuffix(jobCount), strings.Join(written, ", "))
-	return warnings, nil
+	return warnings, keyless, nil
 }
 
 // appNamespace is the namespace both the generated Deployments (via App.normalize's default) and

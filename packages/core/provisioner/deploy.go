@@ -24,6 +24,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -191,6 +192,12 @@ type PlanResult struct {
 	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
 	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
 	InfraServices []argocd.InfraServiceDecision
+	// KeylessBindings is the per-binding keyless DB-auth decision set (#1511): for every database
+	// the operator marked `iam_auth`, whether the auth proxy was WIRED or the binding failed CLOSED,
+	// and why. Empty when the project has no keyless binding — and, by construction, on any deploy
+	// where our manifest render never reaches a cluster (no apps repo, or a bring-your-own one).
+	// Non-sensitive — names, a state and product copy; the runner forwards it verbatim.
+	KeylessBindings []manifests.KeylessBindingDecision
 	// GitopsStatus is the GitOps wiring outcome + apps-Application health snapshot
 	// (issue #574): mode (gitops/direct), apps repo, synced revision, per-service
 	// health from the `apps` Application's resources — and, when the deploy died
@@ -1036,10 +1043,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		manifestWarnings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, facts, stdout, stderr)
+		manifestWarnings, keylessBindings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, facts, stdout, stderr)
 		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
+		// Attached to the RESULT, not to GitopsStatus: the keyless decisions are a security posture
+		// fact about the deploy, and GitopsStatus is nil on every path that skipped the wiring. They
+		// survive a genErr for the same reason the warnings do — a partial render's decisions are
+		// exactly what explains a half-wired app.
+		result.KeylessBindings = keylessBindings
 
 		setStage("addons")
 		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos

@@ -15,7 +15,7 @@ import (
 func TestFromServices_ResolvedImageWins(t *testing.T) {
 	// A built repo-sourced service renders with its ResolvedImage digest URI — the W2
 	// contract — and the options land on the app.
-	apps, skipped := FromServices([]types.ProjectServiceConfig{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{
 		{
 			Name:          "api",
 			Type:          "deployment",
@@ -44,7 +44,7 @@ func TestFromServices_ResolvedImageWins(t *testing.T) {
 }
 
 func TestFromServices_PrebuiltImageAndSkips(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{
 		// Prebuilt image → renders with Source.Image.
 		{Name: "worker", Type: "deployment", Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/worker:1.2.3"}},
 		// Repo-sourced but never BUILT → skipped, never a fabricated ":latest".
@@ -277,7 +277,7 @@ func keys(m map[string]string) []string {
 // provision's tofu outputs, credential facets as secretKeyRef into the ExternalSecret-materialized
 // Secret. User-authored env is preserved and ordered first.
 func TestFromServices_ResolvesBindings(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{
 		{
 			Name:   "api",
 			Type:   "deployment",
@@ -348,7 +348,7 @@ func TestFromServices_ResolvesSecretBinding(t *testing.T) {
 	}}
 
 	// Readable store → secretKeyRef emitted (key "value").
-	apps, skipped := FromServices(svc, Options{
+	apps, skipped, _ := FromServices(svc, Options{
 		Provider:     "hetzner", // cloud-agnostic
 		SecretStores: map[string]SecretStoreRef{"stripe-key": {StoreName: "secretstore-vault", ValueProperty: "value"}},
 	})
@@ -362,7 +362,7 @@ func TestFromServices_ResolvesSecretBinding(t *testing.T) {
 	}
 
 	// No readable store (empty SecretStores → native/excluded provider) → fail-closed: no secretKeyRef.
-	apps2, _ := FromServices(svc, Options{Provider: "hetzner"})
+	apps2, _, _ := FromServices(svc, Options{Provider: "hetzner"})
 	if len(apps2[0].SecretEnv) != 0 {
 		t.Errorf("an unreadable secret must emit NO secretKeyRef, got %+v", apps2[0].SecretEnv)
 	}
@@ -385,7 +385,7 @@ func TestFromServices_ResolvesBindings_PerCloud(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.provider, func(t *testing.T) {
-			apps, skipped := FromServices([]types.ProjectServiceConfig{{
+			apps, skipped, _ := FromServices([]types.ProjectServiceConfig{{
 				Name:   "api",
 				Type:   "deployment",
 				Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
@@ -433,7 +433,7 @@ func TestFromServices_ResolvesBindings_PerCloud(t *testing.T) {
 // nothing; an absent required env fails loudly instead. The port facet (a kind default, not an
 // output lookup) still resolves, and the app still renders.
 func TestFromServices_UnresolvableBindingFailsClosed(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{
 		{
 			Name:   "api",
 			Type:   "deployment",
@@ -499,7 +499,7 @@ func byoDBTarget() types.ServiceBindingTarget {
 // credential facet becomes a secretKeyRef when the module exported a master-secret output the ESO
 // store can read — mirroring the first-class contract but keyed off the target's OutputKeys.
 func TestFromServices_ResolvesBYOIaCBinding(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{{
 		Name:   "api",
 		Type:   "deployment",
 		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
@@ -549,7 +549,7 @@ func TestFromServices_ResolvesBYOIaCBinding(t *testing.T) {
 // OMITTED (never injected empty), exactly like the first-class unresolvable case.
 func TestFromServices_BYOIaCEndpointUnsatisfiable(t *testing.T) {
 	tgt := byoDBTarget()
-	_, skipped := FromServices([]types.ProjectServiceConfig{{
+	_, skipped, _ := FromServices([]types.ProjectServiceConfig{{
 		Name:   "api",
 		Type:   "deployment",
 		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
@@ -580,7 +580,7 @@ func TestFromServices_BYOIaCCredentialUnsatisfiable(t *testing.T) {
 		// Endpoint declared, but NO CredentialSecret output — the module keeps no cloud secret.
 		OutputKeys: &types.ServiceBindingOutputKeys{Endpoint: "db_endpoint"},
 	}
-	apps, skipped := FromServices([]types.ProjectServiceConfig{{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{{
 		Name:   "api",
 		Type:   "deployment",
 		Source: types.ProjectServiceSource{Kind: "image", Image: "ghcr.io/acme/api:1"},
@@ -665,7 +665,7 @@ func TestFromServices_DatabasePortFollowsEngine(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			apps, skipped := FromServices([]types.ProjectServiceConfig{svc}, Options{
+			apps, skipped, _ := FromServices([]types.ProjectServiceConfig{svc}, Options{
 				Provider:  "aws",
 				Databases: tc.dbs,
 				Outputs:   map[string]string{"rds_cluster_endpoint": "db.internal"},
