@@ -20,9 +20,14 @@ WORKDIR /home/runner
 # Pre-initialize each project template at build time so job-time `tofu init` does no network work — see
 # Dockerfile.base for the rationale. Each arch is built natively so the baked .terraform matches the
 # runtime arch. TF_PLUGIN_CACHE_DIR is inherited from the base.
+#
+# NO `-upgrade`: the committed .terraform.lock.hcl decides the provider versions, and `-upgrade`
+# disregards the lock file and re-resolves against the registry. With it, the image would bake whatever
+# was newest at BUILD time while the e2e nightly resolved separately — so the run that proves
+# production works would install a different provider set than production ships (#1259).
 RUN for d in aws azure gcp alibaba hetzner; do \
       echo "Pre-initializing ${d} template (providers + modules)..." && \
-      (cd "/home/runner/project-templates/${d}" && tofu init -backend=false -input=false -upgrade) ; \
+      (cd "/home/runner/project-templates/${d}" && tofu init -backend=false -input=false) ; \
     done
 
 ENTRYPOINT ["runner"]

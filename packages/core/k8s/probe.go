@@ -37,7 +37,8 @@ func probeImage() string {
 // from the user. `requireNode` waits for >=1 Ready node (node-group clusters); pass false
 // when nodes are provisioned on-demand (e.g. Karpenter-only) so API-reachability is the bar.
 func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bool, stdout io.Writer) error {
-	deadline := time.Now().Add(timeout)
+	started := time.Now()
+	deadline := started.Add(timeout)
 	fmt.Fprintf(stdout, "Waiting for the cluster to become reachable (timeout %s)...\n", timeout)
 
 	// 1. API server reachable — poll readyz, but keep WHY it fails (auth vs network vs not-ready)
@@ -53,7 +54,7 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 				return nil
 			}
 			lastErr, lastOut = e, out
-			if classifyReachability(e, out) == reachAuth {
+			if isAuthRejection(classifyReachability(e, out)) {
 				authRejections++
 				if authRejections >= authRejectFastFail {
 					return fmt.Errorf("auth rejected on %d consecutive probes", authRejections)
@@ -75,8 +76,11 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 		if lastErr == nil {
 			lastErr = apiErr
 		}
-		return fmt.Errorf("cluster API server did not become reachable within %s — %s: %w",
-			timeout, classifyReachability(lastErr, lastOut), lastErr)
+		// Report ELAPSED, not the configured timeout. The fast-fail path gives up after ~60s, so
+		// quoting the 15m budget made a rejected token read as a hang and sent readers looking for a
+		// slow endpoint (#1259).
+		return fmt.Errorf("cluster API server did not become reachable after %s (timeout %s) — %s: %w",
+			time.Since(started).Round(time.Second), timeout, classifyReachability(lastErr, lastOut), lastErr)
 	}
 	fmt.Fprintln(stdout, "Cluster API server is reachable.")
 
@@ -117,15 +121,27 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 type reachClass string
 
 const (
-	reachAuth     reachClass = "AUTH REJECTED (the runner's identity is not authorized on the cluster — check the access entry / RBAC ↔ the kube-token identity)"
+	// AUTHENTICATION (401) and AUTHORIZATION (403) are deliberately SEPARATE verdicts: they send the
+	// reader to opposite halves of the stack. Conflating them cost nine nights on #1259 — a malformed
+	// EKS presigned token (missing X-Amz-Expires, #1040) returns 401, but the single combined message
+	// said "check the access entry / RBAC", so the investigation went to the EKS access entry and the
+	// OpenTofu template, both of which were correct, instead of to the token minter. 401 = the cluster
+	// never accepted who we are; 403 = it did, and said no.
+	reachAuthN    reachClass = "AUTHENTICATION REJECTED — 401 (the cluster did not accept the runner's token at all: the minted kube-token is malformed, expired, or issued for another cluster — look at the token minter and the exec-plugin output, not at cluster permissions)"
+	reachAuthZ    reachClass = "AUTHORIZATION REJECTED — 403 (the identity authenticated but is not permitted — check the access entry / RBAC ↔ the kube-token identity)"
 	reachNetwork  reachClass = "NETWORK UNREACHABLE (the API endpoint is not reachable from the runner — check the public-access CIDR allowlist / security groups / VPC)"
 	reachNotReady reachClass = "API NOT READY (the endpoint answered but readyz is not green yet)"
 	reachUnknown  reachClass = "UNKNOWN (see the last probe error)"
 )
 
+// isAuthRejection reports whether a verdict is an auth rejection of either kind. Both fast-fail:
+// neither a rejected token nor a missing permission resolves by waiting.
+func isAuthRejection(c reachClass) bool { return c == reachAuthN || c == reachAuthZ }
+
 // authRejectFastFail is the number of CONSECUTIVE auth rejections after which WaitClusterReady stops
-// waiting: an access-entry/RBAC misconfig never resolves by waiting, so burning the full timeout is
-// wasted. Big enough to ride out token/endpoint warm-up jitter (~60s at the 10s poll interval).
+// waiting: neither a rejected token nor an access-entry/RBAC misconfig resolves by waiting, so
+// burning the full timeout is wasted. Big enough to ride out token/endpoint warm-up jitter (~60s at
+// the 10s poll interval).
 const authRejectFastFail = 6
 
 // classifyReachability maps a kubectl reachability-probe error + its output to the failing layer.
@@ -136,10 +152,16 @@ func classifyReachability(err error, out string) reachClass {
 	}
 	s := strings.ToLower(err.Error() + " " + out)
 	switch {
+	// 403 is checked FIRST: "forbidden" is unambiguous, whereas a 403 body can also mention
+	// credentials. A message carrying both markers is an authorization failure — the request got far
+	// enough to be evaluated against a policy.
+	case containsAny(s, "forbidden", "error from server (forbidden)"):
+		return reachAuthZ
 	case containsAny(s,
-		"unauthorized", "forbidden", "the server has asked for the client to provide credentials",
-		"you must be logged in", "u_a_authentication", "error from server (forbidden)"):
-		return reachAuth
+		"unauthorized", "the server has asked for the client to provide credentials",
+		"you must be logged in", "u_a_authentication", "invalid bearer token",
+		"the token could not be validated"):
+		return reachAuthN
 	case containsAny(s,
 		"no route to host", "i/o timeout", "connection refused", "dial tcp", "could not resolve host",
 		"no such host", "network is unreachable", "connection timed out", "context deadline exceeded",

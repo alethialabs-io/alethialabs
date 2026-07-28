@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	latestSqlVersionByFamily,
+	sqlVersionsByFamily,
 	normalizeGcpServices,
 	offeredK8sMinors,
 	parseSqlVersion,
@@ -42,8 +42,9 @@ const SQL_FLAGS_FIXTURE = {
 
 const TIERS_FIXTURE = {
 	items: [
-		{ tier: "db-custom-2-7680", region: ["us-central1", "europe-west1"] },
-		{ tier: "db-custom-4-15360", region: ["us-central1"] },
+		// `RAM` is BYTES, delivered as a string on the JSON wire (7.5 GB / 15 GB).
+		{ tier: "db-custom-2-7680", region: ["us-central1", "europe-west1"], RAM: "8053063680" },
+		{ tier: "db-custom-4-15360", region: ["us-central1"], RAM: "16106127360" },
 	],
 };
 
@@ -82,17 +83,20 @@ describe("parseSqlVersion", () => {
 	});
 });
 
-describe("latestSqlVersionByFamily", () => {
-	it("picks the highest offered version per family across all flags", () => {
-		const m = latestSqlVersionByFamily(SQL_FLAGS_FIXTURE);
-		expect(m.get("POSTGRES")).toBe("16");
-		expect(m.get("MYSQL")).toBe("8.0");
-		// SQL Server was dropped.
+// Inverted by #1351: this was `latestSqlVersionByFamily`, asserting ONE version per family. The full
+// version set was always present in the flags' `appliesTo` union — it was simply being discarded.
+describe("sqlVersionsByFamily", () => {
+	it("collects EVERY offered version per family, newest-first, deduped across flags", () => {
+		const m = sqlVersionsByFamily(SQL_FLAGS_FIXTURE);
+		// POSTGRES_15 and _16 both appear, and 16 appears in two flags — one entry each, newest first.
+		expect(m.get("POSTGRES")).toEqual(["16", "15"]);
+		expect(m.get("MYSQL")).toEqual(["8.0", "5.7"]);
+		// SQL Server is not a family the picker models.
 		expect(m.has("SQLSERVER")).toBe(false);
 	});
 
 	it("returns an empty map for null flags", () => {
-		expect(latestSqlVersionByFamily(null).size).toBe(0);
+		expect(sqlVersionsByFamily(null).size).toBe(0);
 	});
 });
 
@@ -119,14 +123,19 @@ describe("normalizeGcpServices", () => {
 		expect(k8s.every((r) => r.launchable === "launchable")).toBe(true);
 
 		const db = rows.filter((r) => r.service_kind === "database");
+		// One row per (engine, version) now — every offered major, not just the newest (#1351).
 		expect(db.map((r) => r.native_id).sort()).toEqual([
-			"cloudsql-mysql",
-			"cloudsql-postgresql",
+			"cloudsql-mysql-5.7",
+			"cloudsql-mysql-8.0",
+			"cloudsql-postgresql-15",
+			"cloudsql-postgresql-16",
 		]);
-		const pg = db.find((r) => r.native_id === "cloudsql-postgresql");
+		const pg = db.find((r) => r.native_id === "cloudsql-postgresql-16");
 		expect(pg?.version).toBe("16");
 		expect(pg?.name).toBe("Cloud SQL PostgreSQL");
-		expect(pg?.engine).toBe("postgres");
+		// The CATALOG value, not the lowercased family — synced rows and the static DB_ENGINES
+		// fallback must share one value space or the fail-open path swaps the engine identity.
+		expect(pg?.engine).toBe("cloudsql-postgresql");
 		// tiers present ⇒ launchable.
 		expect(db.every((r) => r.launchable === "launchable")).toBe(true);
 
@@ -135,8 +144,31 @@ describe("normalizeGcpServices", () => {
 		expect(nosql[0].native_id).toBe("Firestore");
 		expect(nosql[0].launchable).toBe("launchable");
 
-		// cache is the documented exclusion — never emitted.
+		// database_instance_class — the tiers.list items ARE the Cloud SQL machine types.
+		const skus = rows.filter((r) => r.service_kind === "database_instance_class");
+		expect(skus.map((r) => r.native_id)).toEqual(["db-custom-2-7680", "db-custom-4-15360"]);
+		expect(skus[0].tier).toBe("db-custom-2-7680");
+		// Engine-agnostic: Cloud SQL offers tiers per PROJECT, and the API says nothing about which
+		// engine a tier belongs to. Claiming one would be a verdict we never obtained.
+		expect(skus.every((r) => r.engine === null)).toBe(true);
+		expect(skus[0].mem_gb).toBe(7.5);
+
+		// cache + cache_version are the documented exclusions — never emitted.
 		expect(rows.some((r) => r.service_kind === "cache")).toBe(false);
+		expect(rows.some((r) => r.service_kind === "cache_version")).toBe(false);
+	});
+
+	it("reports no SKU memory rather than 0 when tiers.list omits RAM", () => {
+		const rows = normalizeGcpServices({
+			...BASE,
+			k8s: null,
+			sqlTiers: { items: [{ tier: "db-f1-micro", region: ["us-central1"] }] },
+			sqlFlags: null,
+			firestore: null,
+		});
+		const sku = rows.find((r) => r.service_kind === "database_instance_class");
+		expect(sku?.native_id).toBe("db-f1-micro");
+		expect(sku?.mem_gb).toBeNull();
 	});
 
 	it("marks DB not_evaluable when tiers.list returned nothing (Cloud SQL access unproven)", () => {

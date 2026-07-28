@@ -6,6 +6,7 @@ package cloud
 import (
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -29,9 +30,16 @@ func TestResolveRegion(t *testing.T) {
 
 // TestResolveDBEngine: abstract family resolves; legacy concrete engine passes through.
 func TestResolveDBEngine(t *testing.T) {
+	// Asserted against the catalog's own default rather than a literal: the behaviour under test is
+	// "an unversioned config picks up the catalog default", and pinning the string here just meant a
+	// version bump in catalog.json reds a resolver test that isn't about the version.
+	want, ok := catalog.MustLoad().DBEngine("aws", "postgres")
+	if !ok {
+		t.Fatal("catalog has no aws/postgres engine")
+	}
 	eng, ver := resolveDBEngine("aws", types.ProjectDatabaseConfig{EngineFamily: "postgres"})
-	if eng != "aurora-postgresql" || ver != "16.6" {
-		t.Errorf("aws postgres = (%q,%q), want (aurora-postgresql,16.6)", eng, ver)
+	if eng != "aurora-postgresql" || ver != want.DefaultVersion {
+		t.Errorf("aws postgres = (%q,%q), want (aurora-postgresql,%s)", eng, ver, want.DefaultVersion)
 	}
 	eng, _ = resolveDBEngine("gcp", types.ProjectDatabaseConfig{EngineFamily: "mysql"})
 	if eng != "cloudsql-mysql" {

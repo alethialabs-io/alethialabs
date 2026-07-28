@@ -5,11 +5,16 @@
 import { notFound } from "next/navigation";
 import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
+import { helmRegistryProviderConfigSchema } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
+import {
+	clusterAdminsByCluster,
+	serviceBindingsByOwner,
+} from "@/lib/db/normalized-reads";
 import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
 import {
 	auditLog,
@@ -54,8 +59,15 @@ import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
+import {
+	envScope,
+	readEnvComponents,
+} from "@/lib/queries/project-components-read";
 import { listAssignmentsFor } from "@/lib/queries/classification";
-import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
+import {
+	type EnvironmentSpec,
+	insertProjectWithDefaultFabric,
+} from "@/lib/queries/projects";
 import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
@@ -65,8 +77,10 @@ import {
 	type CloudProviderSlug,
 	type ConversionWarning,
 	convertProjectConfig,
+	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
 	getProvider,
+	keylessUnavailableReasonForCloud,
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
@@ -75,9 +89,14 @@ import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
+import type {
+	ClusterAdmin,
+	ServiceBinding,
+	TopicSubscription,
+} from "@/types/jsonb.types";
 import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { repoLabel } from "@/lib/repos/repo-label";
-import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 /**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
@@ -107,6 +126,23 @@ function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
 		`Database "${name}": ${label} databases can't be provisioned on Hetzner — the in-cluster ` +
 			"CloudNativePG operator supports PostgreSQL only. Switch the database engine to PostgreSQL " +
 			"or move the stack to a cloud with a managed service for this engine.",
+	);
+}
+
+/**
+ * Deploy-time honesty gate (fail-closed), same shape/placement as hetznerDbEngineGateError: reject a
+ * database marked `iam_auth` on a cloud × engine cell that cannot honor it.
+ *
+ * The canvas disables the toggle with this exact reason, but the canvas is not a boundary — the CLI
+ * writes `iam_auth` on any cloud (lib/cli/project-components.ts), an AI-composed graph can carry it,
+ * and legacy rows predate the gate. This is the authoritative layer, and it THROWS rather than
+ * clearing the flag: silently turning off a security setting at deploy time is the same defect one
+ * layer up from the one #1510 fixes. The renderer refuses these cells too, with the same sentence.
+ */
+function keylessAuthGateError(name: string, reason: string): Error {
+	return new Error(
+		`Database "${name}": ${reason} Turn IAM authentication off for this database, or move it to a ` +
+			"cloud that supports keyless database auth.",
 	);
 }
 
@@ -169,14 +205,23 @@ export interface CreateProjectInput {
 		iac_version: string;
 		// The default (Production) env's placement onto its first Fabric. Optional — defaults to
 		// `dedicated` (the new Fabric's owner). Threaded so the placement selector (#844) can set it
-		// instead of it being a literal; see insertProjectWithDefaultFabric.
+		// instead of it being a literal; see insertProjectWithDefaultFabric. Ignored when
+		// `environments` is present (the matrix carries its own per-env placement).
 		placement_mode?: PlacementMode;
+		// The full environment matrix from the placement selector (#844). When present, createProject
+		// fans it out into a Fabric per `dedicated` env + one shared Fabric for the shared placements;
+		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept (see the core helper).
+		environments?: EnvironmentSpec[];
 	};
 	network: ComponentInsert<typeof projectNetwork.$inferInsert>;
 	cluster: Omit<
 		ComponentInsert<typeof projectCluster.$inferInsert>,
 		"cluster_name" | "cluster_endpoint"
-	>;
+	> & {
+		// Form-only field (not a project_cluster column since the contract phase): admins persist to
+		// the cluster_admins child table via the dual-child insert below.
+		cluster_admins?: ClusterAdmin[];
+	};
 	dns: ComponentInsert<typeof projectDns.$inferInsert>;
 	repositories: Omit<
 		typeof projectRepositories.$inferInsert,
@@ -195,7 +240,11 @@ export interface CreateProjectInput {
 		"endpoint"
 	>[];
 	queues?: ComponentInsert<typeof projectQueues.$inferInsert>[];
-	topics?: ComponentInsert<typeof projectTopics.$inferInsert>[];
+	topics?: (ComponentInsert<typeof projectTopics.$inferInsert> & {
+		// Form-only field (not a project_topics column since the contract phase): subscriptions
+		// persist to the topic_subscriptions child table via the dual-child insert below.
+		subscriptions?: TopicSubscription[];
+	})[];
 	nosql_tables?: ComponentInsert<typeof projectNosqlTables.$inferInsert>[];
 	secrets?: ComponentInsert<typeof projectSecrets.$inferInsert>[];
 	storage_buckets?: ComponentInsert<
@@ -211,10 +260,14 @@ export interface CreateProjectInput {
 	>[];
 	// W1 — first-class application workloads. resolved_image is the W2 build's write-back
 	// slot (output column, like registries.repository_url) — never part of a create/save.
-	services?: Omit<
+	services?: (Omit<
 		ComponentInsert<typeof projectServices.$inferInsert>,
 		"resolved_image"
-	>[];
+	> & {
+		// Form-only field (not a project_services column since the contract phase, #1426): bindings
+		// persist to the service_bindings child table via insertServiceBindings below.
+		bindings?: ServiceBinding[];
+	})[];
 }
 
 // ============================================================
@@ -224,18 +277,6 @@ export interface CreateProjectInput {
 /** A withOwnerScope transaction handle (the arg drizzle passes the callback). */
 type ComponentTx = Parameters<Parameters<typeof withActorScope>[1]>[0];
 
-/** `project_id = … AND environment_id = …` — component rows are scoped to one environment, so
- * every component read/delete filters on both. */
-function envScope(
-	table: { project_id: AnyColumn; environment_id: AnyColumn },
-	projectId: string,
-	environmentId: string,
-) {
-	return and(
-		eq(table.project_id, projectId),
-		eq(table.environment_id, environmentId),
-	);
-}
 
 /** Inserts a form's component rows for one (project, environment). The single source of the
  * per-table form→column mapping, shared by createProject / updateProjectDesign /
@@ -322,15 +363,28 @@ async function writeComponents(
 			.insert(projectContainerRegistries)
 			.values(data.container_registries.map((r) => ({ ...base, ...r })));
 	if (data.helm_registries?.length)
-		await tx
-			.insert(projectHelmRegistries)
-			.values(data.helm_registries.map((r) => ({ ...base, ...r })));
+		await tx.insert(projectHelmRegistries).values(
+			data.helm_registries.map((r) => ({
+				...base,
+				...r,
+				// Re-validate provider_config at the write seam, not only in the inspector. This action
+				// is a public entry point and provider_config is spread whole into config_snapshot, so a
+				// crafted request could otherwise persist an unknown/secret knob. `.strip()` drops any
+				// key the catalog never declared (a secret-flagged one included) and fails closed on a
+				// malformed host/URL that would break the seeded repo-cred prefix-match.
+				provider_config:
+					r.provider_config == null
+						? r.provider_config
+						: helmRegistryProviderConfigSchema.parse(r.provider_config),
+			})),
+		);
 	if (data.services?.length) {
-		// Dual-write: the service row keeps its bindings JSONB (rollback net) AND each binding is
-		// normalized into service_bindings (+ its injections). Keyed by service name (unique per env).
+		// Each binding is normalized into service_bindings (+ its injections), keyed by service name
+		// (unique per env). The parent `bindings` JSONB was dropped in the contract phase (#1426), so
+		// strip the form-only `bindings` field from the row insert — the child write below owns it.
 		const insertedServices = await tx
 			.insert(projectServices)
-			.values(data.services.map((s) => ({ ...base, ...s })))
+			.values(data.services.map(({ bindings: _bindings, ...s }) => ({ ...base, ...s })))
 			.returning({ id: projectServices.id, name: projectServices.name });
 		const svcIdByName = new Map(insertedServices.map((r) => [r.name, r.id]));
 		for (const s of data.services) {
@@ -421,6 +475,7 @@ export async function createProject(data: CreateProjectInput) {
 			iac_version: projectFields.iac_version,
 			environment_stage,
 			placement_mode: projectFields.placement_mode,
+			environments: projectFields.environments,
 			owner,
 			orgId,
 		});
@@ -551,86 +606,33 @@ export async function getProject(
 
 		/** Reads one environment's component rows (env-scoped). */
 		async function readComponents(envId: string) {
-			const [network] = await tx
-				.select()
-				.from(projectNetwork)
-				.where(envScope(projectNetwork, projectId, envId))
-				.limit(1);
-			const [cluster] = await tx
-				.select()
-				.from(projectCluster)
-				.where(envScope(projectCluster, projectId, envId))
-				.limit(1);
-			const [dns] = await tx
-				.select()
-				.from(projectDns)
-				.where(envScope(projectDns, projectId, envId))
-				.limit(1);
-			const [repos] = await tx
-				.select()
-				.from(projectRepositories)
-				.where(envScope(projectRepositories, projectId, envId))
-				.limit(1);
-			const sourceRepos = await tx
-				.select()
-				.from(projectSourceRepos)
-				.where(envScope(projectSourceRepos, projectId, envId));
-			const databases = await tx
-				.select()
-				.from(projectDatabases)
-				.where(envScope(projectDatabases, projectId, envId));
-			const caches = await tx
-				.select()
-				.from(projectCaches)
-				.where(envScope(projectCaches, projectId, envId));
-			const queues = await tx
-				.select()
-				.from(projectQueues)
-				.where(envScope(projectQueues, projectId, envId));
-			const topics = await tx
-				.select()
-				.from(projectTopics)
-				.where(envScope(projectTopics, projectId, envId));
-			const nosqlTables = await tx
-				.select()
-				.from(projectNosqlTables)
-				.where(envScope(projectNosqlTables, projectId, envId));
-			const secrets = await tx
-				.select()
-				.from(projectSecrets)
-				.where(envScope(projectSecrets, projectId, envId));
-			const storageBuckets = await tx
-				.select()
-				.from(projectStorageBuckets)
-				.where(envScope(projectStorageBuckets, projectId, envId));
-			const containerRegistries = await tx
-				.select()
-				.from(projectContainerRegistries)
-				.where(envScope(projectContainerRegistries, projectId, envId));
-			const helmRegistries = await tx
-				.select()
-				.from(projectHelmRegistries)
-				.where(envScope(projectHelmRegistries, projectId, envId));
-			const services = await tx
-				.select()
-				.from(projectServices)
-				.where(envScope(projectServices, projectId, envId));
+			const c = await readEnvComponents(tx, projectId, envId);
 			return {
-				network: network ?? null,
-				cluster: cluster ?? null,
-				dns: dns ?? null,
-				repositories: repos ?? null,
-				source_repos: sourceRepos,
-				databases,
-				caches,
-				queues,
-				topics,
-				nosql_tables: nosqlTables,
-				secrets,
-				storage_buckets: storageBuckets,
-				container_registries: containerRegistries,
-				helm_registries: helmRegistries,
-				services,
+				network: c.network ?? null,
+				cluster: c.cluster
+					? { ...c.cluster, cluster_admins: c.clusterAdmins }
+					: null,
+				dns: c.dns ?? null,
+				repositories: c.repositories ?? null,
+				source_repos: c.sourceRepos,
+				databases: c.databases,
+				caches: c.caches,
+				queues: c.queues,
+				topics: c.topics.map((t) => ({
+					...t,
+					subscriptions: c.topicSubs.get(t.id) ?? [],
+				})),
+				nosql_tables: c.nosqlTables,
+				secrets: c.secrets,
+				storage_buckets: c.storageBuckets,
+				container_registries: c.containerRegistries,
+				helm_registries: c.helmRegistries,
+				// W3 bindings live in the service_bindings child table (JSONB dropped, #1426), so the
+				// declared service→infra edges round-trip through form-data unchanged.
+				services: c.services.map((s) => ({
+					...s,
+					bindings: c.serviceBindings.get(s.id) ?? [],
+				})),
 			};
 		}
 
@@ -755,11 +757,6 @@ async function buildConfigSnapshot(
 
 		// Snapshot the TARGET environment's components (config is environment-scoped).
 		const envId = environment.id;
-		const [network] = await tx
-			.select()
-			.from(projectNetwork)
-			.where(envScope(projectNetwork, projectId, envId))
-			.limit(1);
 		// The cluster belongs to the FABRIC, not the env: a `dedicated` env resolves to its own 1:1
 		// cluster, while a `namespace`/`vcluster` env placed on a shared Fabric resolves to that
 		// Fabric's single cluster — it has no env-keyed row of its own. Resolving via the Fabric is
@@ -768,60 +765,33 @@ async function buildConfigSnapshot(
 		// Byte-identical for `dedicated` (env↔cluster == env↔Fabric↔cluster). See cluster-for-env.ts.
 		const cluster =
 			(await resolveServingCluster(tx, projectId, envId)) ?? undefined;
-		const [dns] = await tx
-			.select()
-			.from(projectDns)
-			.where(envScope(projectDns, projectId, envId))
-			.limit(1);
-		const [repos] = await tx
-			.select()
-			.from(projectRepositories)
-			.where(envScope(projectRepositories, projectId, envId))
-			.limit(1);
-		const sourceRepos = await tx
-			.select()
-			.from(projectSourceRepos)
-			.where(envScope(projectSourceRepos, projectId, envId));
-		const databases = await tx
-			.select()
-			.from(projectDatabases)
-			.where(envScope(projectDatabases, projectId, envId));
-		const caches = await tx
-			.select()
-			.from(projectCaches)
-			.where(envScope(projectCaches, projectId, envId));
-		const queues = await tx
-			.select()
-			.from(projectQueues)
-			.where(envScope(projectQueues, projectId, envId));
-		const topics = await tx
-			.select()
-			.from(projectTopics)
-			.where(envScope(projectTopics, projectId, envId));
-		const nosqlTables = await tx
-			.select()
-			.from(projectNosqlTables)
-			.where(envScope(projectNosqlTables, projectId, envId));
-		const secrets = await tx
-			.select()
-			.from(projectSecrets)
-			.where(envScope(projectSecrets, projectId, envId));
-		const containerRegistries = await tx
-			.select()
-			.from(projectContainerRegistries)
-			.where(envScope(projectContainerRegistries, projectId, envId));
-		const helmRegistries = await tx
-			.select()
-			.from(projectHelmRegistries)
-			.where(envScope(projectHelmRegistries, projectId, envId));
-		const storageBuckets = await tx
-			.select()
-			.from(projectStorageBuckets)
-			.where(envScope(projectStorageBuckets, projectId, envId));
-		const services = await tx
-			.select()
-			.from(projectServices)
-			.where(envScope(projectServices, projectId, envId));
+		const clusterAdminsList = cluster
+			? await clusterAdminsByCluster(tx, cluster.id)
+			: [];
+		// Shared env-scoped component read (cluster:"none" — the snapshot uses the serving cluster
+		// resolved above, not the env-keyed row). Snapshot-only reads (observability/addons/
+		// chart_workloads/iac_sources/classification) stay below.
+		const {
+			network,
+			dns,
+			repositories: repos,
+			sourceRepos,
+			databases,
+			caches,
+			queues,
+			topics,
+			topicSubs,
+			nosqlTables,
+			secrets,
+			storageBuckets,
+			containerRegistries,
+			helmRegistries,
+			services,
+			// W3 bindings live in the service_bindings child table (JSONB dropped, #1426) — used by
+			// the fail-closed gate below and the snapshot wire.
+			serviceBindings: bindingsByService,
+		} = await readEnvComponents(tx, projectId, envId, { cluster: "none" });
+
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
@@ -850,11 +820,11 @@ async function buildConfigSnapshot(
 		if (byoAddonIds.length > 0) {
 			const workloadRows = await tx
 				.select({
+					id: projectChartWorkloads.id,
 					addon_id: projectChartWorkloads.addon_id,
 					name: projectChartWorkloads.name,
 					rendered: projectChartWorkloads.rendered,
 					config: projectChartWorkloads.config,
-					bindings: projectChartWorkloads.bindings,
 					value_paths: projectChartWorkloads.value_paths,
 				})
 				.from(projectChartWorkloads)
@@ -864,13 +834,18 @@ async function buildConfigSnapshot(
 						inArray(projectChartWorkloads.addon_id, byoAddonIds),
 					),
 				);
+			// Chart-workload bindings live in service_bindings too (JSONB dropped, #1426).
+			const bindingsByWorkload = await serviceBindingsByOwner(tx, {
+				serviceIds: [],
+				chartWorkloadIds: workloadRows.map((w) => w.id),
+			});
 			for (const w of workloadRows) {
 				const list = workloadsByAddon.get(w.addon_id) ?? [];
 				list.push({
 					name: w.name,
 					rendered: w.rendered,
 					config: w.config,
-					bindings: w.bindings,
+					bindings: bindingsByWorkload.get(w.id) ?? [],
 					value_paths: w.value_paths,
 				});
 				workloadsByAddon.set(w.addon_id, list);
@@ -980,7 +955,7 @@ async function buildConfigSnapshot(
 			const queueNames = new Set(queues.map((q) => q.name));
 			const secretNames = new Set(secrets.map((s) => s.name));
 			for (const svc of services) {
-				for (const b of svc.bindings ?? []) {
+				for (const b of bindingsByService.get(svc.id) ?? []) {
 					const targetExists =
 						b.target.kind === "database"
 							? dbNames.has(b.target.name)
@@ -1003,6 +978,19 @@ async function buildConfigSnapshot(
 		// Map them to install specs and append — the runner renders each as an ArgoCD
 		// Application via the same generic add-on path (packages/core/argocd). The data-component
 		// rows still ride the snapshot for the UI; the Hetzner tofu template ignores them.
+		// Fail-closed keyless gate (#1510): a database marked `iam_auth` on a cell that cannot
+		// honor it. The canvas disables the toggle with this same reason, but the CLI, an
+		// AI-composed graph and legacy rows all reach here without passing the canvas — and the
+		// old behaviour was to hand such a database a PASSWORD with no error anywhere.
+		for (const db of databases) {
+			if (!db.iam_auth) continue;
+			const reason = keylessUnavailableReasonForCloud(
+				identity.provider,
+				dbEngineFamily(db),
+			);
+			if (reason) throw keylessAuthGateError(db.name, reason);
+		}
+
 		if (identity.provider === "hetzner") {
 			// Fail-closed engine gate: the mapper only charts what it supports (a NULL
 			// engine_family defaults to postgres), so anything else must throw here rather
@@ -1188,6 +1176,12 @@ async function buildConfigSnapshot(
 				cidr_block: network?.cidr_block ?? "10.0.0.0/16",
 				network_id: network?.network_id,
 				single_nat_gateway: network?.single_nat_gateway ?? true,
+				// Brownfield subnet selection (#1352) — emit ONLY when non-empty so the key is
+				// absent (not null/[]) when unset, keeping the byte-locked config-snapshot
+				// fixtures green and preserving auto-discover as the default.
+				...(network?.subnet_ids?.length
+					? { subnet_ids: network.subnet_ids }
+					: {}),
 			},
 			cluster: {
 				...resolvePlacement(cluster),
@@ -1201,7 +1195,7 @@ async function buildConfigSnapshot(
 				node_max_size: cluster?.node_max_size ?? 5,
 				node_desired_size: cluster?.node_desired_size ?? 2,
 				node_disk_size_gb: cluster?.node_disk_size_gb ?? null,
-				cluster_admins: cluster?.cluster_admins ?? [],
+				cluster_admins: clusterAdminsList,
 				provider_config: cluster?.provider_config ?? {},
 			},
 			dns: {
@@ -1233,7 +1227,11 @@ async function buildConfigSnapshot(
 			databases: databases.map((d) => ({ ...d, ...resolvePlacement(d) })),
 			caches: caches.map((c) => ({ ...c, ...resolvePlacement(c) })),
 			queues: queues.map((q) => ({ ...q, ...resolvePlacement(q) })),
-			topics: topics.map((t) => ({ ...t, ...resolvePlacement(t) })),
+			topics: topics.map((t) => ({
+				...t,
+				...resolvePlacement(t),
+				subscriptions: topicSubs.get(t.id) ?? [],
+			})),
 			nosql_tables: nosqlTables.map((n) => ({ ...n, ...resolvePlacement(n) })),
 			secrets: secrets.map((s) => ({ ...s, ...resolvePlacement(s) })),
 			container_registries: containerRegistries.map((r) => ({
@@ -1250,7 +1248,11 @@ async function buildConfigSnapshot(
 			})),
 			// W1 — first-class application workloads (the customer's own code). The runner renders
 			// each into k8s manifests; image build/push (from source when kind==="repo") is W2.
-			services: services.map((s) => ({ ...s, ...resolvePlacement(s) })),
+			services: services.map((s) => ({
+				...s,
+				bindings: bindingsByService.get(s.id) ?? [],
+				...resolvePlacement(s),
+			})),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
@@ -1385,7 +1387,12 @@ async function resolveTargetEnvironment(
 				),
 			)
 			.limit(1);
-		fabric = row ?? null;
+		// Strip the at-rest talosconfig credential (#1389): placement resolution needs the Fabric's
+		// identity/region/status, never its admin credential. Nulling it here keeps the EncryptedSecret
+		// envelope out of any downstream config_snapshot/response (the scrub denylist keys on `talosconfig`,
+		// which would NOT match the `talos_admin_config` column name). The credential is read only via the
+		// authenticated /jobs/[id]/talosconfig claim route.
+		fabric = row ? { ...row, talos_admin_config: null } : null;
 	}
 
 	// Effective ArgoCD destination namespace. `dedicated` owns the whole Fabric → no namespace
@@ -1963,6 +1970,9 @@ export async function getProjectAsFormData(
 					single_nat_gateway:
 						source.components.network.single_nat_gateway ?? true,
 					network_id: source.components.network.network_id ?? undefined,
+					// Carry the brownfield subnet selection across a clone/duplicate — an
+					// explicit copy is required, else the field is silently dropped (#1352).
+					subnet_ids: source.components.network.subnet_ids ?? [],
 				}
 			: {
 					provision_network: true,
@@ -1992,9 +2002,15 @@ export async function getProjectAsFormData(
 					cluster_admins: [],
 					provider_config: {},
 				},
+		// `provider` is DESIGN — which DNS backend this environment uses — and must round-trip.
+		// Omitting it while KEEPING provider_config was the worst version of this bug: the reconcile
+		// is delete-then-insert, so a canvas save re-inserted the Cloudflare knobs with no slug to
+		// give them meaning, and DNSProvider() silently fell back to the cloud's native backend. Same
+		// class as the secrets wipe; the registries below have always carried it.
 		dns: source.components.dns
 			? {
 					enabled: source.components.dns.enabled,
+					provider: source.components.dns.provider ?? undefined,
 					zone_id: source.components.dns.zone_id ?? undefined,
 					domain_name: source.components.dns.domain_name ?? undefined,
 					managed_certificate:
@@ -2042,7 +2058,7 @@ export async function getProjectAsFormData(
 		})),
 		topics: source.components.topics.map((t) => ({
 			name: t.name,
-			subscriptions: t.subscriptions ?? undefined,
+			subscriptions: t.subscriptions ?? [],
 		})),
 		nosql_tables: source.components.nosql_tables.map((t) => ({
 			name: t.name,
@@ -2054,11 +2070,19 @@ export async function getProjectAsFormData(
 			capacity_mode: t.capacity_mode ?? undefined,
 			point_in_time_recovery: t.point_in_time_recovery ?? undefined,
 		})),
+		// provider/provider_config are DESIGN (which secret store this environment reads through),
+		// not provisioned state — they must round-trip. Omitting them was a silent data-loss bug:
+		// updateProjectDesign reconciles delete-then-insert, so a canvas deploy re-inserted every
+		// secret without its provider and the environment fell back to the cluster's native store
+		// with no error. Same shape as the chart-repo wipe fixed in #1301; the registries below
+		// have always carried them.
 		secrets: source.components.secrets.map((s) => ({
 			name: s.name,
 			generate: s.generate ?? undefined,
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
+			provider: s.provider ?? undefined,
+			provider_config: s.provider_config ?? undefined,
 		})),
 		storage_buckets: source.components.storage_buckets.map((b) => ({
 			name: b.name,

@@ -13,6 +13,7 @@ import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-f
 import { configName } from "@/components/design-project/canvas/graph/node-config";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { buildDefaultFormValues } from "@/components/design-project/source-project";
+import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 import {
 	type ProjectFormData,
 	projectFormSchema,
@@ -48,7 +49,16 @@ function sampleForm(): ProjectFormData {
 				multi_az: false,
 			},
 		],
-		secrets: [{ name: "api-key", generate: true, length: 32, special_chars: true }],
+		secrets: [
+			{
+				name: "api-key",
+				generate: true,
+				length: 32,
+				special_chars: true,
+				provider: "vault",
+				provider_config: { mount_path: "secret", kv_version: "2" },
+			},
+		],
 		storage_buckets: [
 			{
 				name: "assets",
@@ -60,6 +70,14 @@ function sampleForm(): ProjectFormData {
 		],
 		container_registries: [
 			{ name: "apps", provider_config: { immutable_tags: true } },
+		],
+		helm_registries: [
+			{ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} },
+			{
+				name: "harbor-acme-io",
+				provider: "oci-generic-cr",
+				provider_config: { registry_host: "harbor.acme.io" },
+			},
 		],
 		services: [
 			{
@@ -143,5 +161,251 @@ describe("formToGraph / graphToForm round-trip", () => {
 		});
 		expect(parsed.data.services[0].env).toEqual([{ name: "LOG_LEVEL", value: "info" }]);
 		expect(parsed.data.services[0].ports[0].container_port).toBe(8080);
+	});
+
+	// #1412: dns is a singleton, so it round-trips through `first("dns")` rather than ofKind — a
+	// different code path from the array kinds, and one with zero prior coverage.
+	it("carries the DNS connector through the round-trip", () => {
+		const form = sampleForm();
+		form.dns = {
+			enabled: true,
+			provider: "cloudflare",
+			domain_name: "acme.io",
+			zone_id: "zone-123",
+			provider_config: { proxied: true },
+		};
+		const { nodes } = formToGraph(form, IDENTITIES);
+
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.dns).toEqual(
+			expect.objectContaining({
+				provider: "cloudflare",
+				zone_id: "zone-123",
+				provider_config: { proxied: true },
+			}),
+		);
+	});
+
+	// REGRESSION (#1412): the same silent-wipe shape, one table over. A secret's `provider` /
+	// `provider_config` say WHICH store the environment reads through; if they don't survive the
+	// round-trip, delete-then-insert re-creates every secret as native and the environment quietly
+	// stops using Vault — no error, just secrets that resolve from the wrong place.
+	it("carries the secret store through the round-trip so a deploy can't wipe it", () => {
+		const form = sampleForm();
+		const { nodes } = formToGraph(form, IDENTITIES);
+
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.secrets).toEqual([
+			expect.objectContaining({
+				name: "api-key",
+				provider: "vault",
+				provider_config: { mount_path: "secret", kv_version: "2" },
+			}),
+		]);
+	});
+
+	// REGRESSION: graphToForm used to omit `helm_registries` entirely. Because the field carries a
+	// zod `.default([])`, the omission parsed clean as an EMPTY array — and updateProjectDesign
+	// reconciles components by delete-then-insert, so every canvas deploy silently dropped the
+	// environment's chart repos (and with them the ArgoCD repo-credentials that let private charts
+	// pull). A silent `.default([])` is the trap: nothing errors, the rows just leave.
+	it("carries chart repos through the round-trip so a deploy can't wipe them", () => {
+		const form = sampleForm();
+		const { nodes } = formToGraph(form, IDENTITIES);
+		expect(nodes.filter((n) => n.data.kind === "helm_registry")).toHaveLength(2);
+
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.helm_registries).toHaveLength(2);
+		expect(parsed.data.helm_registries).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ name: "ghcr-io", provider: "oci-github-cr" }),
+				expect.objectContaining({
+					name: "harbor-acme-io",
+					provider: "oci-generic-cr",
+					provider_config: { registry_host: "harbor.acme.io" },
+				}),
+			]),
+		);
+	});
+});
+
+describe("secret store selection validation", () => {
+	const parseSecret = (row: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...sampleForm(), secrets: [row] });
+
+	// Native is the default and needs no connector — the common case must stay valid.
+	it.each([
+		["no provider at all", { name: "api-key" }],
+		["the explicit native sentinel", { name: "api-key", provider: "native" }],
+	])("accepts a native secret with %s", (_label, row) => {
+		expect(parseSecret(row).success).toBe(true);
+	});
+
+	it("accepts a store whose required knobs are filled", () => {
+		const res = parseSecret({
+			name: "api-key",
+			provider: "vault",
+			provider_config: { mount_path: "secret" },
+		});
+		expect(res.success).toBe(true);
+	});
+
+	// Fail-closed: without the mount path the store renders but reads nothing, and the failure only
+	// shows up at deploy as a secret that never syncs.
+	it("rejects a store missing a required knob", () => {
+		const res = parseSecret({ name: "api-key", provider: "vault", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a slug the catalog doesn't have", () => {
+		expect(parseSecret({ name: "api-key", provider: "not-a-store" }).success).toBe(false);
+	});
+
+	it("rejects a store that isn't available yet", () => {
+		// The *-xacct stores are coming_soon until their in-cluster e2e is green (#1268).
+		const res = parseSecret({
+			name: "api-key",
+			provider: "aws-sm-xacct",
+			provider_config: {
+				target_account_id: "222222222222",
+				region: "us-east-1",
+				target_role_arn: "arn:aws:iam::222222222222:role/read",
+			},
+		});
+		expect(res.success).toBe(false);
+	});
+
+	// NOT rejected: these are `active` and the runtime accepts them, so failing them closed would
+	// break projects already configured through the CLI. The picker disables them instead.
+	it.each(["infisical", "onepassword"])(
+		"accepts %s at the schema level — the UI is what steers away from it",
+		(provider) => {
+			const knobs =
+				provider === "infisical" ? { workspace_id: "ws-1" } : { vault: "Private" };
+			expect(parseSecret({ name: "api-key", provider, provider_config: knobs }).success).toBe(
+				true,
+			);
+		},
+	);
+});
+
+describe("helm registry selection validation", () => {
+	const parseRow = (row: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...sampleForm(), helm_registries: [row] });
+
+	it("rejects a selection with no provider — the runner would skip it silently", () => {
+		const res = parseRow({ name: "charts" });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects an any-host provider with no registry host", () => {
+		const res = parseRow({ name: "charts", provider: "oci-generic-cr", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a classic HTTPS repo with no repository URL", () => {
+		const res = parseRow({ name: "charts", provider: "helm-https", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("rejects a coming_soon provider", () => {
+		const res = parseRow({ name: "charts", provider: "oci-ecr", provider_config: {} });
+		expect(res.success).toBe(false);
+	});
+
+	it("accepts a fixed-host provider with no config at all", () => {
+		const res = parseRow({ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} });
+		expect(res.success).toBe(true);
+	});
+
+	// Both knobs are concatenated into the seeded credential's URL, so a value that merely "looks
+	// filled in" still breaks the repoURL prefix match ArgoCD authenticates by. Catch the shape here,
+	// where the field is on screen, rather than at deploy.
+	it("rejects a registry host carrying a scheme or a path", () => {
+		for (const registry_host of [
+			"https://harbor.acme.io",
+			"harbor.acme.io/charts",
+			"oci://harbor.acme.io",
+		]) {
+			const res = parseRow({
+				name: "charts",
+				provider: "oci-generic-cr",
+				provider_config: { registry_host },
+			});
+			expect(res.success, `${registry_host} should be rejected`).toBe(false);
+		}
+	});
+
+	it("accepts a registry host with a port", () => {
+		const res = parseRow({
+			name: "charts",
+			provider: "oci-generic-cr",
+			provider_config: { registry_host: "harbor.acme.io:5000" },
+		});
+		expect(res.success).toBe(true);
+	});
+
+	it("rejects a non-https repository URL", () => {
+		for (const repo_url of ["charts.acme.io", "http://charts.acme.io"]) {
+			const res = parseRow({
+				name: "charts",
+				provider: "helm-https",
+				provider_config: { repo_url },
+			});
+			expect(res.success, `${repo_url} should be rejected`).toBe(false);
+		}
+	});
+});
+
+// ── the provider_config schema must cover every knob the catalog declares ────────────────────
+//
+// secretsProviderConfigSchema STRIPS unknown keys (so a stray token can't ride into the persisted
+// config_snapshot). The cost of stripping is that a knob the schema doesn't know about is dropped
+// SILENTLY — a Doppler `project` quietly lost, the store then reading the wrong scope, with nothing
+// failing until deploy. This pins the schema against the catalog so that can't happen unnoticed.
+//
+// It was already out of sync before this guard existed: the JSONB interface knew nothing about
+// doppler's project/config, infisical's four knobs, or 1Password's vault.
+describe("secrets provider_config schema covers the catalog", () => {
+	it("keeps every non-secret knob any secrets connector declares", () => {
+		const declared = new Set<string>();
+		for (const provider of getProvidersForCategory("secrets")) {
+			for (const field of provider.providerConfigFields) {
+				if (!field.secret) declared.add(field.key);
+			}
+		}
+		expect(declared.size).toBeGreaterThan(0);
+
+		// Round-trip a bag holding every declared knob; anything the schema doesn't know is stripped.
+		const input = Object.fromEntries([...declared].map((k) => [k, `v-${k}`]));
+		const parsed = projectFormSchema.safeParse({
+			...sampleForm(),
+			secrets: [{ name: "probe", provider: "native", provider_config: input }],
+		});
+		if (!parsed.success) throw parsed.error;
+
+		const kept = new Set(Object.keys(parsed.data.secrets[0].provider_config ?? {}));
+		const dropped = [...declared].filter((k) => !kept.has(k));
+		expect(dropped).toEqual([]);
+	});
+
+	it("strips a key no connector declares, so it can't reach the config snapshot", () => {
+		const parsed = projectFormSchema.safeParse({
+			...sampleForm(),
+			secrets: [
+				{
+					name: "probe",
+					provider: "native",
+					// The failure this guards: a token pasted into the wrong field would otherwise be
+					// stored verbatim and spread whole into the Postgres-persisted config_snapshot.
+					provider_config: { mount_path: "secret", token: "s3cr3t-should-not-persist" },
+				},
+			],
+		});
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.secrets[0].provider_config).toEqual({ mount_path: "secret" });
 	});
 });

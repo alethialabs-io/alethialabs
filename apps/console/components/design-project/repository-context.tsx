@@ -42,17 +42,9 @@ export function RepositoryProvider({ children }: { children: ReactNode }) {
 	const [loadingRepos, setLoadingRepos] = useState(false);
 	const fetchedRef = useRef(new Set<string>());
 
-	useEffect(() => {
-		getLinkedProviders().then((providers) => {
-			setLinkedProviders(providers);
-			setLoadingProviders(false);
-
-			if (providers.length > 0) {
-				fetchReposInternal(providers[0]);
-			}
-		});
-	}, []);
-
+	// Declared before the mount effect that calls it: the effect body runs after
+	// render so the old ordering happened to work, but referencing the binding
+	// above its declaration is a TDZ hazard (react-hooks/immutability).
 	const fetchReposInternal = useCallback(
 		async (provider: PublicGitProvider) => {
 			if (fetchedRef.current.has(provider)) return;
@@ -75,6 +67,17 @@ export function RepositoryProvider({ children }: { children: ReactNode }) {
 		},
 		[],
 	);
+
+	useEffect(() => {
+		getLinkedProviders().then((providers) => {
+			setLinkedProviders(providers);
+			setLoadingProviders(false);
+
+			if (providers.length > 0) {
+				fetchReposInternal(providers[0]);
+			}
+		});
+	}, [fetchReposInternal]);
 
 	const fetchRepos = useCallback(
 		async (provider: PublicGitProvider) => {

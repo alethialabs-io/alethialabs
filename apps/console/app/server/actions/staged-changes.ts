@@ -98,6 +98,13 @@ function diffConfig(
 			desired.container_registries ?? [],
 		),
 	);
+	rows.push(
+		...diffArray(
+			"helm_registry",
+			live?.helm_registries ?? [],
+			desired.helm_registries ?? [],
+		),
+	);
 	return rows;
 }
 

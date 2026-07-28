@@ -1,7 +1,11 @@
-go 1.25.8
+go 1.26.5
 
 use (
 	./apps/cli
 	./apps/runner
 	./packages/core
+	// The e2e harness is a fourth module that `require`s packages/core. It belongs here so a
+	// dependency change in core surfaces in a local `go build ./...` — CI tidies and vets all four
+	// with GOWORK=off, and leaving this one out of the workspace is what let a stale go.mod reach CI.
+	./test/e2e
 )

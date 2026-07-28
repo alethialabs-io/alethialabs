@@ -7,11 +7,13 @@
 
 import type { CacheEngineVersion } from "@aws-sdk/client-elasticache";
 import type { ClusterVersionInformation } from "@aws-sdk/client-eks";
-import type { DBEngineVersion } from "@aws-sdk/client-rds";
+import type { DBEngineVersion, OrderableDBInstanceOption } from "@aws-sdk/client-rds";
 import { describe, expect, it } from "vitest";
 import {
 	normalizeCacheTierRows,
+	normalizeCacheVersionRows,
 	normalizeDatabaseRows,
+	normalizeDbInstanceClassRows,
 	normalizeK8sVersionRows,
 	normalizeNosqlRows,
 	type ServiceNormalizeCtx,
@@ -52,7 +54,10 @@ describe("normalizeK8sVersionRows", () => {
 });
 
 describe("normalizeDatabaseRows", () => {
-	it("emits one row per PLATFORM engine at its latest major, ignoring non-platform engines", () => {
+	// Inverted by #1351: this used to assert one row per engine AT ITS LATEST major. That collapse is
+	// what made an engine-version picker impossible, so the lane now emits every offered major and the
+	// read layer groups them back into one engine with a version list.
+	it("emits one row per PLATFORM engine AND major, ignoring non-platform engines", () => {
 		const fixture: DBEngineVersion[] = [
 			{ Engine: "aurora-postgresql", MajorEngineVersion: "15", EngineVersion: "15.4" },
 			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.6" },
@@ -61,19 +66,41 @@ describe("normalizeDatabaseRows", () => {
 			{ Engine: "oracle-ee", MajorEngineVersion: "19" }, // not a platform engine → ignored
 		];
 		const rows = normalizeDatabaseRows(fixture, ctx);
-		const byEngine = new Map(rows.map((r) => [r.engine, r]));
-		expect([...byEngine.keys()].sort()).toEqual(["aurora-mysql", "aurora-postgresql"]);
 
-		const pg = byEngine.get("aurora-postgresql");
-		expect(pg?.service_kind).toBe("database");
-		expect(pg?.native_id).toBe("aurora-postgresql");
-		expect(pg?.version).toBe("16"); // 16 > 15 by numeric major compare
-		expect(pg?.name).toBe("Aurora PostgreSQL"); // label from the catalog
-		expect(pg?.launchable).toBe("launchable");
+		// Both PG majors survive, newest-first, each under a composite native_id — the unique key
+		// carries native_id but not version, so a bare-engine id would overwrite the older major.
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"aurora-postgresql-16",
+			"aurora-postgresql-15",
+			"aurora-mysql-8.0",
+		]);
 
-		const mysql = byEngine.get("aurora-mysql");
+		const pg16 = rows.find((r) => r.native_id === "aurora-postgresql-16");
+		expect(pg16?.service_kind).toBe("database");
+		expect(pg16?.engine).toBe("aurora-postgresql"); // the catalog value, not the composite
+		expect(pg16?.version).toBe("16");
+		expect(pg16?.name).toBe("Aurora PostgreSQL"); // label from the catalog
+		expect(pg16?.launchable).toBe("launchable");
+
+		// The older major is a peer row, not a casualty.
+		expect(rows.find((r) => r.native_id === "aurora-postgresql-15")?.version).toBe("15");
+
+		const mysql = rows.find((r) => r.engine === "aurora-mysql");
 		expect(mysql?.version).toBe("8.0");
 		expect(mysql?.name).toBe("Aurora MySQL");
+	});
+
+	it("collapses the many MINORS the API returns into one row per major", () => {
+		// DescribeDBEngineVersions returns a row per minor; the platform provisions at major grain, so
+		// 16.4/16.6/16.8 must not become three separate offerings.
+		const fixture: DBEngineVersion[] = [
+			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.4" },
+			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.6" },
+			{ Engine: "aurora-postgresql", MajorEngineVersion: "16", EngineVersion: "16.8" },
+		];
+		const rows = normalizeDatabaseRows(fixture, ctx);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].native_id).toBe("aurora-postgresql-16");
 	});
 
 	it("returns no rows when the account offers no platform engines", () => {
@@ -96,6 +123,81 @@ describe("normalizeCacheTierRows", () => {
 
 	it("returns no rows (fail-open) when ElastiCache exposes no engines", () => {
 		expect(normalizeCacheTierRows([], ctx)).toEqual([]);
+	});
+});
+
+describe("normalizeCacheVersionRows", () => {
+	it("emits one row per (engine, version), newest-first, from the SAME gating response", () => {
+		const engines: CacheEngineVersion[] = [
+			{ Engine: "redis", EngineVersion: "7.1" },
+			{ Engine: "redis", EngineVersion: "6.2" },
+			{ Engine: "redis", EngineVersion: "7.1" }, // dup → collapsed
+			{ Engine: "valkey", EngineVersion: "8.0" },
+			{ Engine: "memcached" }, // no version → skipped
+		];
+		const rows = normalizeCacheVersionRows(engines, ctx);
+		expect(rows.map((r) => r.native_id)).toEqual(["redis-7.1", "redis-6.2", "valkey-8.0"]);
+		const redis71 = rows[0];
+		expect(redis71.service_kind).toBe("cache_version");
+		expect(redis71.engine).toBe("redis");
+		expect(redis71.version).toBe("7.1");
+		expect(redis71.tier).toBeNull();
+		expect(redis71.launchable).toBe("launchable");
+	});
+
+	it("never collides with the cache TIER rows built from the same response", () => {
+		const engines: CacheEngineVersion[] = [{ Engine: "redis", EngineVersion: "7.1" }];
+		const tiers = normalizeCacheTierRows(engines, ctx);
+		const versions = normalizeCacheVersionRows(engines, ctx);
+		// Both kinds land in one table and the sweep soft-removes by native_id across kinds, so an
+		// overlap would let one axis retire the other's rows.
+		const overlap = tiers
+			.map((t) => t.native_id)
+			.filter((id) => versions.some((v) => v.native_id === id));
+		expect(overlap).toEqual([]);
+	});
+
+	it("returns no rows (fail-open) for an empty response", () => {
+		expect(normalizeCacheVersionRows([], ctx)).toEqual([]);
+	});
+});
+
+describe("normalizeDbInstanceClassRows", () => {
+	it("dedupes the (version × AZ) repeats into one row per (engine, SKU)", () => {
+		const fixture: OrderableDBInstanceOption[] = [
+			{ Engine: "aurora-postgresql", EngineVersion: "16.6", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "aurora-postgresql", EngineVersion: "15.4", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "aurora-postgresql", EngineVersion: "16.6", DBInstanceClass: "db.r6g.xlarge" },
+			{ Engine: "aurora-mysql", EngineVersion: "8.0", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "postgres", DBInstanceClass: "db.t4g.micro" }, // not a platform engine → ignored
+			{ Engine: "aurora-postgresql" }, // no class → skipped
+		];
+		const rows = normalizeDbInstanceClassRows(fixture, ctx);
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"aurora-postgresql-db.r6g.large",
+			"aurora-postgresql-db.r6g.xlarge",
+			"aurora-mysql-db.r6g.large",
+		]);
+		const first = rows[0];
+		expect(first.service_kind).toBe("database_instance_class");
+		expect(first.engine).toBe("aurora-postgresql");
+		// The bare SKU lives in `tier` — that is what the picker offers; native_id is only the key.
+		expect(first.tier).toBe("db.r6g.large");
+		expect(first.version).toBeNull();
+	});
+
+	it("keeps the same SKU under two engines as two offerings", () => {
+		const fixture: OrderableDBInstanceOption[] = [
+			{ Engine: "aurora-postgresql", DBInstanceClass: "db.r6g.large" },
+			{ Engine: "aurora-mysql", DBInstanceClass: "db.r6g.large" },
+		];
+		const rows = normalizeDbInstanceClassRows(fixture, ctx);
+		expect(rows).toHaveLength(2);
+		expect(new Set(rows.map((r) => r.native_id)).size).toBe(2);
+	});
+
+	it("returns no rows (fail-open) for an empty response", () => {
+		expect(normalizeDbInstanceClassRows([], ctx)).toEqual([]);
 	});
 });
 

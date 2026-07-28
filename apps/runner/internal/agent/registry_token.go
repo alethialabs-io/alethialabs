@@ -191,14 +191,16 @@ func dockerConfigJSON(host, username, password string) string {
 	return string(b)
 }
 
-// mintECRDockerConfig assumes the customer's cross-account target role (which trusts this cluster's
-// IRSA and grants ECR pull), fetches an ECR authorization token in the target account, and renders the
-// dockerconfigjson. The ECR authorization token IS base64("AWS:<password>") — exactly the dockerconfig
-// `auth` field — so we decode it to username/password for a well-formed entry.
-func mintECRDockerConfig(ctx context.Context, region, targetRoleArn, host string) (string, time.Time, error) {
+// mintECRAuth assumes the customer's cross-account target role (which trusts this cluster's IRSA and
+// grants ECR pull), fetches an ECR authorization token in the target account, and returns the decoded
+// docker username/password + its expiry. The ECR authorization token IS base64("AWS:<password>") — the
+// same token the image dockerconfigjson path and the OCI Helm repo-cred path both consume — so this is
+// shared by mintECRDockerConfig (image pull) and the helm-repo-token refresher (#1185). targetRoleArn
+// empty ⇒ mint under the pod's own IRSA (same-account ECR).
+func mintECRAuth(ctx context.Context, region, targetRoleArn string) (user, pass string, exp time.Time, err error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("load AWS config: %w", err)
+		return "", "", time.Time{}, fmt.Errorf("load AWS config: %w", err)
 	}
 	if targetRoleArn != "" {
 		// Cross-account: assume the target-account role (base creds = this pod's IRSA identity).
@@ -207,18 +209,27 @@ func mintECRDockerConfig(ctx context.Context, region, targetRoleArn, host string
 	}
 	out, err := ecr.NewFromConfig(cfg).GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("ecr GetAuthorizationToken: %w", err)
+		return "", "", time.Time{}, fmt.Errorf("ecr GetAuthorizationToken: %w", err)
 	}
 	if len(out.AuthorizationData) == 0 || out.AuthorizationData[0].AuthorizationToken == nil {
-		return "", time.Time{}, fmt.Errorf("ecr returned no authorization data")
+		return "", "", time.Time{}, fmt.Errorf("ecr returned no authorization data")
 	}
-	user, pass, err := decodeECRAuth(*out.AuthorizationData[0].AuthorizationToken)
+	user, pass, err = decodeECRAuth(*out.AuthorizationData[0].AuthorizationToken)
 	if err != nil {
-		return "", time.Time{}, err
+		return "", "", time.Time{}, err
 	}
-	exp := time.Now().Add(ecrTokenTTLFallback)
+	exp = time.Now().Add(ecrTokenTTLFallback)
 	if out.AuthorizationData[0].ExpiresAt != nil {
 		exp = *out.AuthorizationData[0].ExpiresAt
+	}
+	return user, pass, exp, nil
+}
+
+// mintECRDockerConfig renders the image-pull dockerconfigjson from a cross-account ECR auth token.
+func mintECRDockerConfig(ctx context.Context, region, targetRoleArn, host string) (string, time.Time, error) {
+	user, pass, exp, err := mintECRAuth(ctx, region, targetRoleArn)
+	if err != nil {
+		return "", time.Time{}, err
 	}
 	return dockerConfigJSON(host, user, pass), exp, nil
 }

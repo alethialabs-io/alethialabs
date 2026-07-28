@@ -215,6 +215,16 @@ func TestE2EProvisionWiringClusterless(t *testing.T) {
 	if result.VerifyReport.Verdict == "" {
 		t.Fatal("verification report has no verdict — the gate produced nothing")
 	}
+	// The compat gate rides the SAME apply spine (#1215): its report must be attached
+	// on every apply so the console can render it (#1219). This config leaves the K8s
+	// version unset, so the honest verdict is not_evaluable (non-blocking) — but the
+	// report must still be present with a concrete verdict (never a silent nil-as-pass).
+	if result.CompatReport == nil {
+		t.Fatal("CompatReport is nil — the compatibility gate did not run on the config")
+	}
+	if result.CompatReport.Verdict == "" {
+		t.Fatal("compatibility report has no verdict — the gate produced nothing")
+	}
 	assertSealedSignedReceipt(t, result.VerifyReceipt, pub)
 }
 

@@ -63,6 +63,10 @@ func chartCredentialSecretOutputKey(kind string) string {
 // keyed by the workload's `valuePaths`. It never inlines a credential and never references a Secret
 // that can't be materialized. `namespace` is where the ExternalSecret (and the chart) live so the
 // secretKeyRef reads the same namespace.
+//
+// `dbs` is the project's database configs, needed only to resolve a database target's engine family
+// so its `port` facet is 3306 for MySQL rather than Postgres's 5432. A BYO chart bound to MySQL would
+// otherwise be handed a port it cannot connect on — the same engine-blindness the keyless lane fixed.
 func ResolveChartWorkloadBindings(
 	workloadName string,
 	bindings []types.ServiceBinding,
@@ -70,6 +74,7 @@ func ResolveChartWorkloadBindings(
 	outputs map[string]string,
 	provider string,
 	namespace string,
+	dbs []types.ProjectDatabaseConfig,
 ) ChartBindingResult {
 	res := ChartBindingResult{Patches: map[string]any{}}
 
@@ -119,7 +124,7 @@ func ResolveChartWorkloadBindings(
 			case "endpoint":
 				value = outputs[endpointOutputKey(provider, string(b.Target.Kind))]
 			case "port":
-				value = defaultPort(string(b.Target.Kind))
+				value = defaultPort(string(b.Target.Kind), dbEngineForName(dbs, b.Target.Name))
 			}
 			if value == "" {
 				res.Unsatisfied = append(res.Unsatisfied, knob)

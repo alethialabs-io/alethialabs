@@ -1,0 +1,554 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The three invariants of the capability seam. These are the rules the #939/#977/#980 lanes build
+// against, and each one, if broken, fails SILENTLY in the product — an empty picker, another cloud's
+// SKUs, or a quota we couldn't check rendered as one we verified. So they're pinned here rather than
+// left to review.
+
+import { describe, expect, it } from "vitest";
+import {
+	advisoryFor,
+	dbEngineOptions,
+	dbInstanceClassOptions,
+	dbVersionOptions,
+	cacheTierOptions,
+	cacheVersionOptions,
+	existingNetworkOptions,
+	instanceTypeOptions,
+	intersectWithFloor,
+	k8sVersionOptions,
+	nosqlKeyTypeOptions,
+	provenanceNote,
+	regionCodes,
+	subnetOptions,
+	withSelected,
+} from "@/components/design-project/canvas/inspector/capability-options";
+import {
+	NO_CAPABILITIES,
+	type CapabilityBag,
+	type FieldCtx,
+} from "@/components/design-project/canvas/inspector/config-schema";
+import { dbEngine, type CloudProviderSlug } from "@/lib/cloud-providers";
+
+/** A ctx whose bag describes the SAME provider as the node — the happy path. */
+const ctxWith = (
+	provider: CloudProviderSlug,
+	bag: Partial<CapabilityBag> = {},
+): FieldCtx => ({
+	provider,
+	config: {},
+	caps: { ...NO_CAPABILITIES, provider, identityId: "id-1", state: "ready", ...bag },
+});
+
+/** A ctx with NO account data at all (fresh create flow, or nothing synced). */
+const ctxStatic = (provider: CloudProviderSlug): FieldCtx => ({
+	provider,
+	config: {},
+	caps: NO_CAPABILITIES,
+});
+
+describe("invariant 1 — fail open (#918): the picker is never empty", () => {
+	it("falls back to the static catalog for every axis when the account reports nothing", () => {
+		const ctx = ctxStatic("aws");
+		expect(regionCodes(ctx).length).toBeGreaterThan(0);
+		expect(instanceTypeOptions(ctx).length).toBeGreaterThan(0);
+		expect(k8sVersionOptions(ctx).length).toBeGreaterThan(0);
+		expect(cacheTierOptions(ctx).length).toBeGreaterThan(0);
+		expect(nosqlKeyTypeOptions(ctx).length).toBeGreaterThan(0);
+	});
+
+	it("carries no advisory on a static row — no signal must not read as a verdict", () => {
+		for (const o of instanceTypeOptions(ctxStatic("aws"))) {
+			expect(o.advisory).toBeUndefined();
+		}
+	});
+
+	it("prefers account rows once they exist", () => {
+		const ctx = ctxWith("aws", {
+			instanceTypes: [{ value: "m9.mega", label: "m9.mega", launchable: "launchable" }],
+		});
+		expect(instanceTypeOptions(ctx).map((o) => o.value)).toEqual(["m9.mega"]);
+	});
+});
+
+describe("invariant 2 — the tri-state is guidance, never a gate", () => {
+	it("gives NO advisory for launchable or for a static row", () => {
+		expect(advisoryFor("launchable", "available")).toBeUndefined();
+		expect(advisoryFor(undefined, null)).toBeUndefined();
+	});
+
+	it("marks not_launchable unavailable and not_evaluable unverified — never 'available'", () => {
+		expect(advisoryFor("not_launchable", "quota_zero")?.level).toBe("unavailable");
+		expect(advisoryFor("not_evaluable", "quota_unknown")?.level).toBe("unverified");
+		// There is no positive level in the vocabulary at all — that is what makes
+		// "not_evaluable must never render as available" structural rather than a review rule.
+		const levels = (["not_launchable", "not_evaluable"] as const).map(
+			(l) => advisoryFor(l, null)?.level,
+		);
+		expect(levels).not.toContain("available");
+	});
+
+	it("maps the reason from the bounded enum and never echoes an unknown value", () => {
+		expect(advisoryFor("not_launchable", "sold_out")?.note).toMatch(/sold out/i);
+		// An unrecognised reason must not reach the DOM — it degrades to the honest wording.
+		const note = advisoryFor("not_launchable", "<img src=x onerror=1>")?.note;
+		expect(note).not.toContain("<img");
+		expect(note).toMatch(/can't be checked/i);
+	});
+
+	it("still OFFERS a not_launchable option (advisory is ink, not a filter)", () => {
+		const ctx = ctxWith("aws", {
+			instanceTypes: [
+				{ value: "a", label: "a", launchable: "not_launchable", launchableReason: "quota_zero" },
+			],
+		});
+		const opts = instanceTypeOptions(ctx);
+		expect(opts.map((o) => o.value)).toEqual(["a"]);
+		expect(opts[0].advisory?.level).toBe("unavailable");
+	});
+});
+
+describe("invariant 3 — provider mismatch degrades to static, never to another cloud", () => {
+	it("ignores a bag describing a different provider", () => {
+		const ctx: FieldCtx = {
+			provider: "aws",
+			config: {},
+			caps: {
+				...NO_CAPABILITIES,
+				provider: "gcp",
+				identityId: "id-1",
+				instanceTypes: [{ value: "n2-standard-4", label: "n2-standard-4" }],
+			},
+		};
+		const values = instanceTypeOptions(ctx).map((o) => o.value);
+		expect(values).not.toContain("n2-standard-4");
+		expect(values.length).toBeGreaterThan(0); // fell back to AWS static, not empty
+	});
+
+	it("returns no placement inventory on mismatch rather than another account's networks", () => {
+		const ctx: FieldCtx = {
+			provider: "aws",
+			config: {},
+			caps: {
+				...NO_CAPABILITIES,
+				provider: "gcp",
+				networks: [
+					{ nativeId: "vpc-x", name: null, region: null, cidrBlock: null, isDefault: false },
+				],
+			},
+		};
+		expect(existingNetworkOptions(ctx)).toEqual([]);
+	});
+});
+
+describe("withSelected — a stored value can never vanish from the list", () => {
+	it("pins an unknown stored value in, marked unverified", () => {
+		const opts = withSelected([{ value: "a", label: "A" }], "legacy-sku");
+		expect(opts.map((o) => o.value)).toEqual(["a", "legacy-sku"]);
+		expect(opts[1].advisory?.level).toBe("unverified");
+	});
+
+	it("leaves the list alone when the value is present, or empty", () => {
+		const list = [{ value: "a", label: "A" }];
+		expect(withSelected(list, "a")).toBe(list);
+		expect(withSelected(list, "")).toBe(list);
+	});
+});
+
+describe("enum-bound axes drop out-of-enum capability values", () => {
+	it("keeps only S/N/B for nosql key types", () => {
+		// `nosql_key_type` is a pgEnum. A federated value outside it would save through the form and
+		// then fail on INSERT, so it must never be offered.
+		const ctx = ctxWith("aws", {
+			nosqlKeyTypes: [
+				{ value: "S", label: "String" },
+				{ value: "GEOPOINT", label: "Geo point" },
+			],
+		});
+		expect(nosqlKeyTypeOptions(ctx).map((o) => o.value)).toEqual(["S"]);
+	});
+
+	it("falls back to static when every account value is out of enum", () => {
+		const ctx = ctxWith("aws", {
+			nosqlKeyTypes: [{ value: "GEOPOINT", label: "Geo point" }],
+		});
+		expect(nosqlKeyTypeOptions(ctx).length).toBeGreaterThan(0);
+		expect(nosqlKeyTypeOptions(ctx).map((o) => o.value)).not.toContain("GEOPOINT");
+	});
+});
+
+describe("intersectWithFloor — the deploy-time floor wins on an empty intersection", () => {
+	const floor = [
+		{ value: "postgres", label: "PostgreSQL" },
+		{ value: "mysql", label: "MySQL" },
+	];
+
+	it("narrows the floor to what the account reports", () => {
+		const kept = intersectWithFloor(floor, [{ value: "postgres", label: "pg" }]);
+		expect(kept.map((o) => o.value)).toEqual(["postgres"]);
+	});
+
+	it("returns the floor untouched when the account reports nothing", () => {
+		expect(intersectWithFloor(floor, [])).toEqual(floor);
+	});
+
+	it("returns the FLOOR when the intersection is empty — never an empty radio", () => {
+		// e.g. Hetzner, whose chart mapper only knows CNPG/Valkey, with a capability sync that
+		// reported only engines the mapper can't deploy. An empty engine radio is a #918 violation.
+		const kept = intersectWithFloor(floor, [{ value: "oracle", label: "Oracle" }]);
+		expect(kept).toEqual(floor);
+	});
+
+	it("carries the advisory through on a kept option", () => {
+		const kept = intersectWithFloor(floor, [
+			{ value: "postgres", label: "pg", launchable: "not_evaluable", launchableReason: "quota_unknown" },
+		]);
+		expect(kept[0].advisory?.level).toBe("unverified");
+	});
+});
+
+describe("placement inventory (#980)", () => {
+	const bag: Partial<CapabilityBag> = {
+		networks: [
+			{
+				nativeId: "vpc-abc",
+				name: "prod",
+				region: "us-east-1",
+				cidrBlock: "10.0.0.0/16",
+				isDefault: true,
+			},
+		],
+		subnets: [
+			{
+				nativeId: "subnet-1",
+				name: "a",
+				region: "us-east-1",
+				cidrBlock: "10.0.1.0/24",
+				isDefault: false,
+				availabilityZone: "us-east-1a",
+				isPublic: true,
+				networkRowId: "vpc-abc",
+			},
+			{
+				nativeId: "subnet-2",
+				name: "b",
+				region: "us-east-1",
+				cidrBlock: "10.9.1.0/24",
+				isDefault: false,
+				availabilityZone: "us-east-1b",
+				isPublic: false,
+				networkRowId: "vpc-other",
+			},
+		],
+	};
+
+	it("values the network option on the NATIVE id, not a row uuid", () => {
+		// project_network.network_id stores `vpc-…`; writing a uuid there breaks the tofu path.
+		const opts = existingNetworkOptions(ctxWith("aws", bag));
+		expect(opts[0].value).toBe("vpc-abc");
+		expect(opts[0].label).toContain("vpc-abc");
+	});
+
+	it("narrows subnets to the selected network", () => {
+		const opts = subnetOptions(ctxWith("aws", bag), "vpc-abc");
+		expect(opts.map((o) => o.value)).toEqual(["subnet-1"]);
+	});
+
+	it("lists every subnet when no network is selected", () => {
+		expect(subnetOptions(ctxWith("aws", bag)).length).toBe(2);
+	});
+});
+
+describe("provenanceNote — the fail-open must be legible", () => {
+	const withState = (
+		state: CapabilityBag["state"],
+		source: "account" | "catalog",
+	): FieldCtx => ({
+		provider: "aws",
+		config: {},
+		caps: {
+			...NO_CAPABILITIES,
+			provider: "aws",
+			state,
+			axisSource: { ...NO_CAPABILITIES.axisSource, instance_type: source },
+		},
+	});
+
+	it("says nothing for a field with no capability axis", () => {
+		expect(provenanceNote(withState("ready", "account"), undefined, 5)).toBeNull();
+	});
+
+	it("counts the options when the list IS this account's", () => {
+		expect(provenanceNote(withState("ready", "account"), "instance_type", 12)).toBe(
+			"12 available to this account.",
+		);
+	});
+
+	it("distinguishes still-enumerating from asked-and-got-nothing", () => {
+		// These resolve differently: one fixes itself, the other doesn't. Saying "checking…" forever
+		// would be the worst of both.
+		expect(provenanceNote(withState("syncing", "catalog"), "instance_type", 340)).toMatch(
+			/checking/i,
+		);
+		expect(provenanceNote(withState("ready", "catalog"), "instance_type", 340)).toBe(
+			"Showing the full catalog.",
+		);
+	});
+
+	it("owns up when the read failed", () => {
+		expect(provenanceNote(withState("error", "catalog"), "instance_type", 340)).toMatch(
+			/couldn't read your account/i,
+		);
+	});
+});
+
+describe("dbEngineOptions — the deploy-time floor is not negotiable", () => {
+	it("narrows the floor to the account's engines", () => {
+		const ctx = ctxWith("aws", {
+			dbEngines: [
+				{ value: "postgres", label: "PostgreSQL", versions: ["16"], launchable: "launchable" },
+			],
+		});
+		expect(dbEngineOptions(ctx).map((o) => o.value)).toEqual(["postgres"]);
+	});
+
+	it("returns the full floor when the account reports nothing", () => {
+		const values = dbEngineOptions(ctxStatic("aws")).map((o) => o.value);
+		expect(values).toContain("postgres");
+		expect(values.length).toBeGreaterThan(0);
+	});
+
+	it("keeps the floor when the account reports only engines the mapper can't deploy", () => {
+		// Hetzner runs databases in-cluster via CloudNativePG — postgres only, whatever the account
+		// says. An empty engine radio would be a #918 violation.
+		const ctx = ctxWith("hetzner", {
+			dbEngines: [
+				{ value: "oracle", label: "Oracle", versions: ["19"], launchable: "launchable" },
+			],
+		});
+		const values = dbEngineOptions(ctx).map((o) => o.value);
+		expect(values).toEqual(["postgres"]);
+	});
+});
+
+describe("dbVersionOptions — the engine-version axis (#1351)", () => {
+	/** A ctx with a chosen engine family, which is what this resolver keys on. */
+	const dbCtx = (
+		provider: CloudProviderSlug,
+		family: string | null,
+		bag: Partial<CapabilityBag> = {},
+	): FieldCtx => ({
+		provider,
+		config: family === null ? {} : { engine_family: family },
+		caps: { ...NO_CAPABILITIES, provider, identityId: "id-1", state: "ready", ...bag },
+	});
+
+	it("offers every version the account reports for the selected engine, newest-first", () => {
+		const ctx = dbCtx("aws", "postgres", {
+			dbEngines: [
+				{
+					value: "aurora-postgresql",
+					label: "Aurora PostgreSQL",
+					versions: ["16", "15", "14"],
+					launchable: "launchable",
+				},
+			],
+		});
+		expect(dbVersionOptions(ctx).map((o) => o.value)).toEqual(["16", "15", "14"]);
+	});
+
+	// The join this resolver exists for: the canvas stores the FAMILY, capability rows are keyed on
+	// the provider's engine VALUE, and getting that backwards silently yields an empty picker.
+	it("joins the abstract family to the provider's engine value", () => {
+		const ctx = dbCtx("gcp", "mysql", {
+			dbEngines: [
+				{ value: "cloudsql-mysql", label: "Cloud SQL MySQL", versions: ["8.0"], launchable: "launchable" },
+				{ value: "cloudsql-postgresql", label: "Cloud SQL PostgreSQL", versions: ["16"], launchable: "launchable" },
+			],
+		});
+		expect(dbVersionOptions(ctx).map((o) => o.value)).toEqual(["8.0"]);
+	});
+
+	it("falls open to the catalog's whole version baseline when the account reports nothing (#918)", () => {
+		const opts = dbVersionOptions(dbCtx("aws", "postgres"));
+		const catalogEngine = dbEngine("aws", "postgres");
+		expect(opts.map((o) => o.value)).toEqual(catalogEngine?.versions);
+		// The point of #1373: an unsynced account gets a real axis, not a one-option "picker".
+		expect(opts.length).toBeGreaterThan(1);
+		expect(opts.map((o) => o.value)).toContain(catalogEngine?.default_version);
+		// Static rows carry NO advisory — absence of signal must not read as a verdict.
+		for (const o of opts) expect(o.advisory).toBeUndefined();
+	});
+
+	it("falls open when the account reports OTHER engines but not this one", () => {
+		const ctx = dbCtx("aws", "postgres", {
+			dbEngines: [
+				{ value: "aurora-mysql", label: "Aurora MySQL", versions: ["8.0"], launchable: "launchable" },
+			],
+		});
+		// Never empty: the selected engine still needs a version to pin.
+		expect(dbVersionOptions(ctx).length).toBeGreaterThan(0);
+	});
+
+	it("carries the engine's advisory onto each of its versions", () => {
+		const ctx = dbCtx("aws", "postgres", {
+			dbEngines: [
+				{
+					value: "aurora-postgresql",
+					label: "Aurora PostgreSQL",
+					versions: ["16", "15"],
+					launchable: "not_evaluable",
+					launchableReason: "quota_unknown",
+				},
+			],
+		});
+		const opts = dbVersionOptions(ctx);
+		expect(opts).toHaveLength(2);
+		for (const o of opts) expect(o.advisory?.level).toBe("unverified");
+	});
+
+	it("ignores a bag that describes a DIFFERENT provider", () => {
+		const ctx: FieldCtx = {
+			provider: "aws",
+			config: { engine_family: "postgres" },
+			caps: {
+				...NO_CAPABILITIES,
+				provider: "gcp", // another cloud's rows must never leak in
+				identityId: "id-1",
+				state: "ready",
+				dbEngines: [
+					{ value: "cloudsql-postgresql", label: "PG", versions: ["99"], launchable: "launchable" },
+				],
+			},
+		};
+		expect(dbVersionOptions(ctx).map((o) => o.value)).not.toContain("99");
+	});
+
+	it("returns nothing when no engine is chosen yet, rather than guessing one", () => {
+		expect(dbVersionOptions(dbCtx("aws", null))).toEqual([]);
+	});
+
+	it("returns nothing without a provider", () => {
+		const ctx: FieldCtx = {
+			provider: null,
+			config: { engine_family: "postgres" },
+			caps: NO_CAPABILITIES,
+		};
+		expect(dbVersionOptions(ctx)).toEqual([]);
+	});
+});
+
+// ── the two catalog-less axes (#977 residue) ────────────────────────────────────────────────────
+//
+// These two resolvers are the exception to invariant 1, deliberately: their fields are COMBOBOXES,
+// so the options are suggestions and an empty list is a fine answer — the control still accepts any
+// value. That matters because there is no Catalog #2 slice to fail open to (a SKU is the
+// non-portable escape hatch the catalog omits), and because the lanes cannot enumerate exhaustively
+// anyway. Returning [] rather than inventing a list is the honest behaviour; keeping the value
+// typeable is the control's job, tested in config-fields-combobox.test.tsx.
+
+describe("dbInstanceClassOptions", () => {
+	const skuCtx = (bag: Partial<CapabilityBag> = {}, engineFamily = "postgres"): FieldCtx => ({
+		provider: "aws",
+		config: { engine_family: engineFamily },
+		caps: { ...NO_CAPABILITIES, provider: "aws", identityId: "id-1", state: "ready", ...bag },
+	});
+
+	it("suggests nothing when nothing is synced, rather than inventing a list", () => {
+		expect(dbInstanceClassOptions(skuCtx())).toEqual([]);
+	});
+
+	it("narrows the account's SKUs to the selected engine, keeping engine-agnostic rows", () => {
+		const opts = dbInstanceClassOptions(
+			skuCtx({
+				dbInstanceClasses: [
+					{ value: "db.r6g.large", label: "db.r6g.large", engine: "aurora-postgresql" },
+					{ value: "db.m5.large", label: "db.m5.large", engine: "aurora-mysql" },
+					{ value: "anywhere", label: "anywhere", engine: null },
+				],
+			}),
+		);
+		expect(opts.map((o) => o.value)).toEqual(["db.r6g.large", "anywhere"]);
+	});
+
+	it("does not narrow when no engine is chosen — the whole account set beats none", () => {
+		const opts = dbInstanceClassOptions(
+			skuCtx(
+				{
+					dbInstanceClasses: [
+						{ value: "db.r6g.large", label: "db.r6g.large", engine: "aurora-postgresql" },
+						{ value: "db.m5.large", label: "db.m5.large", engine: "aurora-mysql" },
+					],
+				},
+				"",
+			),
+		);
+		expect(opts.map((o) => o.value)).toEqual(["db.r6g.large", "db.m5.large"]);
+	});
+
+	it("ignores a bag describing another cloud", () => {
+		const ctx: FieldCtx = {
+			provider: "aws",
+			config: { engine_family: "postgres" },
+			caps: {
+				...NO_CAPABILITIES,
+				provider: "gcp",
+				identityId: "id-1",
+				state: "ready",
+				dbInstanceClasses: [{ value: "db-custom-2-7680", label: "x", engine: null }],
+			},
+		};
+		expect(dbInstanceClassOptions(ctx)).toEqual([]);
+	});
+});
+
+describe("cacheVersionOptions", () => {
+	it("suggests nothing where the cloud documents an exclusion — the field is still typeable", () => {
+		expect(cacheVersionOptions(ctxStatic("gcp"))).toEqual([]);
+	});
+
+	it("suggests the account's versions, newest-first as the reader ordered them", () => {
+		const opts = cacheVersionOptions(
+			ctxWith("aws", {
+				cacheVersions: [
+					{ value: "7.1", label: "7.1", launchable: "launchable" },
+					{ value: "6.2", label: "6.2", launchable: "launchable" },
+				],
+			}),
+		);
+		expect(opts.map((o) => o.value)).toEqual(["7.1", "6.2"]);
+	});
+});
+
+describe("provenanceNote — a catalog-less axis must not claim a catalog", () => {
+	const bagWith = (source: "account" | "catalog"): FieldCtx => ({
+		provider: "aws",
+		config: {},
+		caps: {
+			...NO_CAPABILITIES,
+			provider: "aws",
+			identityId: "id-1",
+			state: "ready",
+			axisSource: { ...NO_CAPABILITIES.axisSource, db_instance_class: source },
+		},
+	});
+
+	it("says there is no catalog rather than 'showing the full catalog'", () => {
+		expect(provenanceNote(bagWith("catalog"), "db_instance_class", 1)).toBe(
+			"No catalog for this field — the cloud's default is used.",
+		);
+	});
+
+	it("still reports the account count when the account HAS reported SKUs", () => {
+		expect(provenanceNote(bagWith("account"), "db_instance_class", 12)).toBe(
+			"12 available to this account.",
+		);
+	});
+
+	it("leaves the catalogued axes' wording alone", () => {
+		expect(provenanceNote(bagWith("catalog"), "instance_type", 340)).toBe(
+			"Showing the full catalog.",
+		);
+	});
+});

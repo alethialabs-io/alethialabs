@@ -65,7 +65,15 @@ output "cloud_sql_credentials_secret" {
 
 output "artifact_registry_urls" {
   description = "Map of Artifact Registry repository URLs"
-  value       = var.provision_artifact_registry ? module.artifact_registry[0].repository_urls : {}
+  # Guarded on the MODULE, not on a copy of its count predicate. `provision_artifact_registry` alone
+  # is NOT that predicate: the module also requires `registry_provider == "native"` (artifact-registry.tf),
+  # because a pluggable registry connector means Artifact Registry is not ours to create. The console
+  # sets `provision_artifact_registry` from the mere PRESENCE of a registry row, so selecting any
+  # connector left this indexing [0] of an empty module and failed the WHOLE apply with "Invalid
+  # index" — a crash a mile from its cause.
+  #
+  # length(module...) can't drift from the count the way a duplicated predicate did.
+  value = length(module.artifact_registry) > 0 ? module.artifact_registry[0].repository_urls : {}
 }
 
 #########################################################################
@@ -87,14 +95,25 @@ output "custom_secret_names" {
 ##                     Memorystore Outputs                             ##
 #########################################################################
 
+# ONE pair of cache outputs for both engines: `endpointOutputKey` (packages/core/manifests) maps
+# cloud+kind to a single output name, so a service bound to "the cache" reads `memorystore_host`
+# whichever engine backs it. A separate `valkey_*` key would force every consumer to learn the engine,
+# and one that forgot would resolve to null — which is the failure this lane exists to remove.
+# The two toggles are mutually exclusive, so at most one side is non-null.
 output "memorystore_host" {
   description = "Hostname or IP of the Memorystore Redis instance"
-  value       = var.create_memorystore ? module.memorystore[0].host : null
+  value = try(coalesce(
+    var.create_memorystore ? module.memorystore[0].host : null,
+    var.create_memorystore_valkey ? module.memorystore_valkey[0].host : null,
+  ), null)
 }
 
 output "memorystore_port" {
   description = "Port of the Memorystore Redis instance"
-  value       = var.create_memorystore ? module.memorystore[0].port : null
+  value = try(coalesce(
+    var.create_memorystore ? module.memorystore[0].port : null,
+    var.create_memorystore_valkey ? module.memorystore_valkey[0].port : null,
+  ), null)
 }
 
 #########################################################################
@@ -154,6 +173,6 @@ output "external_dns_service_account" {
 }
 
 output "external_secrets_service_account" {
-  description = "external-secrets operator Google service account email (Workload Identity; gates the gcpsm ClusterSecretStore render)"
-  value       = var.provision_gke ? google_service_account.external_secrets[0].email : null
+  description = "external-secrets operator Google service account email (Workload Identity; gates the gcpsm ClusterSecretStore render). The adopted GSA when external_secrets_service_account_email is set, otherwise the one this template created."
+  value       = var.provision_gke ? local.external_secrets_sa_email : null
 }

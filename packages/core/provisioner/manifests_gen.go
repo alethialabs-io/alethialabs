@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
@@ -34,7 +35,11 @@ import (
 // the console surfaces them — the render we deploy IS authoritative here, so these explain why a
 // service may boot misconfigured. A bring-your-own manifests repo returns no warnings: the
 // customer's manifests own the deploy, so our render (and its warnings) don't apply.
-func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, token string, stdout, stderr io.Writer) (warnings []string, err error) {
+// `facts` are the post-apply infra facts (argocd.BuildFromOutputs). They are needed only to decide
+// whether a project secret backed by a CROSS-ACCOUNT keyless secret manager is readable — the store
+// is applied by the runner, so the manifest lane must read the same render gate rather than assume.
+// nil is safe: no cross-account secret binding resolves (fail-closed).
+func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, token string, facts *argocd.InfraFacts, stdout, stderr io.Writer) (warnings []string, err error) {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil, nil
 	}
@@ -58,6 +63,11 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	if s := categories.DominantRegistryPullSecret(vc); s != "" {
 		pullSecrets = []string{s}
 	}
+	// The single source of truth for secret-kind bindings: project secret name → the ESO store it is
+	// read through (pluggable SaaS, or a cross-account keyless cloud secret manager). Shared by BOTH
+	// binding lanes below (resolveBindings via mopts, writeBindingExternalSecrets directly) so they
+	// never disagree about which secret bindings are satisfiable (fail-closed).
+	secretStores := secretStoreRefs(vc, facts)
 	mopts := manifests.Options{
 		Namespace:        appNamespace,
 		Domain:           vc.DNS.DomainName,
@@ -67,6 +77,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		Databases:        vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
 		RunnerImage:      os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
 		ImagePullSecrets: pullSecrets,
+		SecretStores:     secretStores, // secret-kind binding → pluggable SaaS store (runtime-read, #1207)
 	}
 	apps, skipped := manifests.FromServices(vc.Services, mopts)
 	for _, reason := range skipped {
@@ -102,7 +113,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// ClusterSecretStore) materializes the k8s Secret the workload's secretKeyRef reads. The Secret
 	// name matches BindingSecretName(s.Name, target) — exactly the secretKeyRef.name the renderer
 	// emitted for this service (per-service, so no two ExternalSecrets fight over one Secret).
-	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, stdout)
+	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, secretStores, stdout)
 	if err != nil {
 		return warnings, err
 	}
@@ -171,7 +182,7 @@ func writeBootstrapJobs(dir string, vc *types.ProjectConfig, mopts manifests.Opt
 	seen := map[string]bool{}
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
-			if !manifests.KeylessDBTarget(mopts.Provider, b.Target, vc.Databases) {
+			if !manifests.KeylessDBTarget(b.Target, vc.Databases) {
 				continue
 			}
 			key := string(b.Target.Kind) + "/" + b.Target.Name
@@ -283,6 +294,55 @@ func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[str
 	return nil, nil
 }
 
+// keylessHelmResult is the outcome of rendering the keyless OCI ECR Helm chart-repo refreshers (#1185).
+type keylessHelmResult struct {
+	Manifest          string   // the multi-doc YAML to apply post-apply (empty ⇒ nothing to apply)
+	DesiredSecrets    []string // placeholder repo-cred Secret names (kept by PruneHelmRepoCredentials)
+	DesiredRefreshers []string // refresher Deployment/Role/RoleBinding names (for PruneHelmRepoRefreshers)
+	Skip              string   // fail-closed reason (missing pull identity / render error) — no manifest
+	SkippedTargets    error    // partial: some connected ECR repos were misconfigured (non-fatal)
+}
+
+// renderKeylessHelmRefreshers decides + renders the keyless OCI ECR Helm chart-repo refreshers for a
+// project (#1185): the shared KSA + per-repo placeholder Secret + name-scoped Role/RoleBinding +
+// Deployment, which the caller applies post-apply into the argocd namespace. It does NOT gate on the
+// feature flag (the caller does) and does NOT apply — pure, so it is unit-testable. Fail-closed: keyless
+// targets present but an empty irsaRoleArn (or a render error) yields Skip set + no Manifest — a
+// refresher is never rendered without its pull identity. A misconfigured connected repo is skipped with
+// its error surfaced via SkippedTargets (non-fatal; mirrors categories.KeylessHelmRepoTargets).
+func renderKeylessHelmRefreshers(vc *types.ProjectConfig, irsaRoleArn, runnerImage string) keylessHelmResult {
+	targets, tErr := categories.KeylessHelmRepoTargets(vc)
+	res := keylessHelmResult{SkippedTargets: tErr}
+	if len(targets) == 0 {
+		return res
+	}
+	if irsaRoleArn == "" {
+		res.Skip = "keyless Helm ECR: missing tofu output \"helm_repo_pull_irsa_arn\" — refreshers not applied (fail-closed)"
+		return res
+	}
+	refreshers := make([]manifests.HelmRepoRefresher, 0, len(targets))
+	for _, t := range targets {
+		refreshers = append(refreshers, manifests.HelmRepoRefresher{
+			SecretName:    t.SecretName(),
+			RepoURL:       t.RepoURL(),
+			Region:        t.Region,
+			TargetRoleArn: t.TargetRoleArn,
+			Public:        t.Public,
+		})
+	}
+	y, rErr := manifests.RenderHelmRepoRefreshers(refreshers, irsaRoleArn, runnerImage)
+	if rErr != nil {
+		res.Skip = fmt.Sprintf("keyless Helm ECR refresher not rendered (fail-closed): %v", rErr)
+		return res
+	}
+	res.Manifest = y
+	for _, r := range refreshers {
+		res.DesiredSecrets = append(res.DesiredSecrets, r.SecretName)
+		res.DesiredRefreshers = append(res.DesiredRefreshers, r.DeploymentName())
+	}
+	return res
+}
+
 // credentialSecretOutputKey maps a binding kind to the tofu output holding the resource's
 // provisioned master-credentials secret name. AWS-first; "" → no provisioned credential secret for
 // that kind, so RenderExternalSecret reports the facet unsatisfiable (never silently dropped).
@@ -308,15 +368,149 @@ func credentialRemoteOutputKey(t types.ServiceBindingTarget) string {
 	return credentialSecretOutputKey(string(t.Kind))
 }
 
+// secretStoreRefs maps each project secret NAME → the ESO store it is read through (its name + the
+// remoteRef property the value lives under) for secret-kind bindings. Two kinds of store qualify:
+//
+//   - a pluggable SaaS store (categories.IsSaaSSecretStore — vault / doppler / generic), read
+//     in-cluster with a seeded token;
+//   - a CROSS-ACCOUNT keyless cloud secret manager (*-xacct), read by ESO across the account
+//     boundary with the cluster's own workload identity.
+//
+// Native and excluded (infisical, 1Password) providers get no entry, so a binding to them is
+// reported unsatisfiable (fail-closed) by BOTH binding lanes. Doppler secrets are flat (no
+// property); Vault-KV-compatible stores read the value under "value".
+func secretStoreRefs(vc *types.ProjectConfig, facts *argocd.InfraFacts) map[string]manifests.SecretStoreRef {
+	if len(vc.Secrets) == 0 {
+		return nil
+	}
+	// The cross-account store is applied by the RUNNER (argocd.EnsureExternalSecretsStore), not by an
+	// Application, so a secret may be read through it only when THIS deploy's facts actually render
+	// it. Four gates, all fail-closed:
+	//
+	//  0. facts == nil (a caller with no post-apply facts) → no cross-account entry at all.
+	//  1. DEDICATED placement only. Every *-xacct store carries spec.conditions denying namespaces
+	//     labelled alethia.io/placement=namespace (#1306), so a placed tenant must never be handed an
+	//     ExternalSecret against a FOREIGN-account store. generateAppManifests only runs on the
+	//     dedicated path today; this gate keeps that true if it is ever reused.
+	//  2. facts.XacctSecretStore() must yield a NAME — the SAME gate the render template reads, so we
+	//     can never point an ExternalSecret at a store that was not applied.
+	//  3. the secret's OWN provider must equal facts.SecretsXacctSlug. The store is DOMINANT per
+	//     project (categories.dominantProvider), so a secret selecting a DIFFERENT xacct slug has no
+	//     store and must stay absent rather than silently read the dominant account.
+	//
+	// And never a native fallback: an unsatisfiable xacct secret gets NO entry, never
+	// manifests.StoreNameFor(cloud), which would read the CLUSTER's own account instead of the
+	// customer's target — a silent cross-account read of the wrong account.
+	//
+	// The slug must also be non-empty in its own right. Gate 3 compares s.Provider to it, and a NATIVE
+	// secret carries Provider "" — so an empty SecretsXacctSlug would make every native secret match
+	// and silently resolve to the CROSS-ACCOUNT store. Every *-xacct provider hardcodes its slug today,
+	// so this is unreachable; it is asserted here because the failure it prevents is a silent read of
+	// the customer's foreign account for a secret that never should have left the cluster's own.
+	xacctStore := ""
+	if facts != nil && facts.SecretsXacctSlug != "" && vc.PlacementMode != types.PlacementModeNamespace {
+		xacctStore, _ = facts.XacctSecretStore()
+	}
+	// The SaaS store is dominant too, and for the same reason: categories.dominantProvider picks ONE
+	// slug for the whole project and externalSecretsStoreTemplate renders exactly that one. Keying an
+	// entry off each row's own provider therefore emitted `secretstore-doppler` for a doppler row in a
+	// vault-dominant project — an ExternalSecret pointing at a ClusterSecretStore that was never
+	// applied, and a pod blocked forever on a Secret nothing would create.
+	//
+	// facts.SecretsSaaS is the store the deploy actually rendered (categories.DominantSecretsSaaSStore,
+	// already Validate-gated against the connector credential), so comparing against its name is the
+	// same "gate on what shipped" rule the cross-account branch above follows. nil facts ⇒ nothing
+	// rendered ⇒ no SaaS entry, deliberately: a nil-facts fallback would keep the bug alive on exactly
+	// the path that has no way to check.
+	saasStore := ""
+	if facts != nil && facts.SecretsSaaS != nil {
+		saasStore = facts.SecretsSaaS.StoreName
+	}
+	out := make(map[string]manifests.SecretStoreRef, len(vc.Secrets))
+	for _, s := range vc.Secrets {
+		switch {
+		case categories.IsSaaSSecretStore(s.Provider) && saasStore == "secretstore-"+s.Provider:
+			prop := "value"
+			if s.Provider == "doppler" {
+				prop = "" // Doppler is flat key→value — no sub-property
+			}
+			out[s.Name] = manifests.SecretStoreRef{
+				StoreName:     saasStore,
+				ValueProperty: prop,
+			}
+		case xacctStore != "" && s.Provider == facts.SecretsXacctSlug:
+			// ValueProperty is "" on all four clouds: the whole remote value IS the secret (AWS
+			// SecretString / GCP payload / Key Vault secret value / Alibaba KMS secret data), so the
+			// remoteRef carries no `property` sub-selector.
+			out[s.Name] = manifests.SecretStoreRef{StoreName: xacctStore}
+		}
+	}
+	return out
+}
+
+// secretStoreSkipCause explains WHY a secret-kind binding had no readable store, honestly enough that
+// an operator can act on it. Before cross-account stores existed there was one cause, so the message
+// was a constant; a *-xacct secret can now be unresolvable for a completely different reason (its
+// store's render gate was closed — the cluster's own external-secrets identity is missing, or the
+// project selected a different dominant manager), and reporting "native/excluded provider" for that
+// would send the operator to change a provider that is already correct.
+// Names only — never a secret value, and never the cross-account target reference.
+func secretStoreSkipCause(vc *types.ProjectConfig, secretName string) string {
+	for _, s := range vc.Secrets {
+		if s.Name != secretName {
+			continue
+		}
+		if categories.IsKeylessSecretStore(s.Provider) {
+			return fmt.Sprintf("the cross-account secret manager (%s) did not render a store for this deploy — check the cluster's external-secrets identity and that this is the project's selected manager", s.Provider)
+		}
+		break
+	}
+	return "the project secret has no readable pluggable store (native/excluded provider)"
+}
+
 // writeBindingExternalSecrets renders an ExternalSecret per service credential-facet binding and
 // writes it into dir (alongside the app manifests) for ArgoCD to apply. It passes ServiceName:
 // s.Name so the materialized Secret's name equals the renderer's per-service secretKeyRef target.
 // Unsatisfiable facets (no store for the cloud, no provisioned secret, a facet the secret lacks)
 // are reported to stdout AND returned as `skips`, never dropped silently. Returns those skip reasons
 // + the count written. The skip reasons carry no secret values (facet/kind/provider names only).
-func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, keylessOn bool, stdout io.Writer) (skips []string, count int, err error) {
+func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, keylessOn bool, secretStores map[string]manifests.SecretStoreRef, stdout io.Writer) (skips []string, count int, err error) {
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
+			// A secret-kind binding materializes a PROJECT SECRET from its pluggable SaaS store
+			// (Vault/Doppler/generic), not a cloud master secret — route it to the SaaS renderer.
+			// Fail-closed + lock-step with resolveBindings: skip when the secret has no readable store
+			// (native/excluded provider is absent from secretStores) so no workload references a Secret
+			// this lane won't create.
+			if b.Target.Kind == types.ServiceBindingKindSecret {
+				if len(manifests.CredentialFacetNames(b)) == 0 {
+					continue // no `value` facet to materialize
+				}
+				ref := secretStores[b.Target.Name]
+				if ref.StoreName == "" {
+					reason := fmt.Sprintf("%s→secret/%s: %s — ExternalSecret not written", s.Name, b.Target.Name, secretStoreSkipCause(vc, b.Target.Name))
+					fmt.Fprintf(stdout, "ExternalSecret skipped %s\n", reason)
+					skips = append(skips, reason)
+					continue
+				}
+				yaml, renderErr := manifests.RenderSecretBindingExternalSecret(manifests.SecretBindingExternalSecretParams{
+					ServiceName: s.Name,
+					Namespace:   appNamespace,
+					Target:      b.Target,
+					StoreName:   ref.StoreName,
+					RemoteKey:   b.Target.Name, // the project secret's own name is its KV path / Doppler key
+					Property:    ref.ValueProperty,
+				})
+				if renderErr != nil {
+					return skips, count, fmt.Errorf("render secret ExternalSecret for %s→secret/%s: %w", s.Name, b.Target.Name, renderErr)
+				}
+				file := filepath.Join(dir, manifests.BindingSecretName(s.Name, b.Target)+"-externalsecret.yaml")
+				if writeErr := os.WriteFile(file, []byte(yaml), 0o644); writeErr != nil {
+					return skips, count, writeErr
+				}
+				count++
+				continue
+			}
 			facets := manifests.CredentialFacetNames(b)
 			if len(facets) == 0 {
 				continue // endpoint/port-only binding needs no Secret
@@ -325,7 +519,7 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 			// instead of a secretKeyRef, so there is no Secret to materialize here. Skip in lock-step
 			// with FromServices' keyless decision (same KeylessDBTarget predicate) so the two lanes
 			// never disagree about which bindings are keyless.
-			if keylessOn && manifests.KeylessDBTarget(string(vc.Provider), b.Target, vc.Databases) {
+			if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
 				continue
 			}
 			yaml, skipped, renderErr := manifests.RenderExternalSecret(manifests.ExternalSecretParams{

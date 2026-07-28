@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
 	CONFIG_SCHEMA,
 	getKindConfig,
+	NO_CAPABILITIES,
 	type FieldCtx,
 	type FieldOption,
 } from "@/components/design-project/canvas/inspector/config-schema";
@@ -99,6 +100,64 @@ describe("kind summaries", () => {
 	});
 });
 
+// #1510. The IAM-auth toggle used to be offered on every cloud × engine, including cells that
+// silently handed the database a password instead. It is now gated — DISABLED with the reason, not
+// hidden, because keyless is a thing people come looking for and an option that just isn't there
+// reads as a bug. The reason strings come from `keylessCells` in packages/core/manifests/keyless.go
+// via a generated mirror, so these match on substance rather than pinning whole sentences.
+describe("keyless IAM-auth gate (unavailableWhen)", () => {
+	const field = getKindConfig("database")
+		?.sections.flatMap((s) => s.fields)
+		.find((f) => f.key === "iam_auth");
+
+	/** Why `iam_auth` can't be honored on this cell, or null when it can. */
+	const unavailable = (
+		provider: CloudProviderSlug | null,
+		config: Record<string, unknown> = {},
+	) => {
+		expect(field).toBeDefined();
+		const ctx: FieldCtx = { provider, config, caps: NO_CAPABILITIES };
+		return field?.unavailableWhen?.(config, ctx) ?? null;
+	};
+
+	it("offers keyless on every cell the renderer can build", () => {
+		for (const provider of ["aws", "gcp", "azure"] as const) {
+			for (const engine_family of ["postgres", "mysql"] as const) {
+				expect(unavailable(provider, { engine_family })).toBeNull();
+			}
+		}
+	});
+
+	it("withholds it WITH a reason where the cloud has no identity plane", () => {
+		expect(unavailable("hetzner", { engine_family: "postgres" })).toMatch(
+			/CloudNativePG/,
+		);
+		expect(unavailable("alibaba", { engine_family: "postgres" })).toMatch(
+			/control plane/,
+		);
+		expect(unavailable("alibaba", { engine_family: "mysql" })).toMatch(
+			/control plane/,
+		);
+	});
+
+	it("reads the engine the same way the renderer does", () => {
+		// No engine set at all has always meant Postgres (the Go resolver agrees).
+		expect(unavailable("hetzner", {})).toMatch(/CloudNativePG/);
+		// …and the legacy concrete `engine` column still resolves to a family.
+		expect(unavailable("aws", { engine: "aurora-mysql" })).toBeNull();
+	});
+
+	it("leaves the no-cloud-yet case to requiresProvider, so one question has one owner", () => {
+		expect(unavailable(null, { engine_family: "postgres" })).toBeNull();
+		expect(field?.requiresProvider).toBe(true);
+	});
+
+	it("gates rather than hides — the Security section still renders everywhere", () => {
+		// A `visibleWhen` here would empty the section on Hetzner with nothing to explain why.
+		expect(field?.visibleWhen).toBeUndefined();
+	});
+});
+
 describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 	/** Effective visibility of `key` on `kind` for a provider (default: visible). */
 	const visible = (
@@ -111,7 +170,7 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 			?.sections.flatMap((s) => s.fields)
 			.find((f) => f.key === key);
 		expect(field).toBeDefined();
-		const ctx: FieldCtx = { provider, config };
+		const ctx: FieldCtx = { provider, config, caps: NO_CAPABILITIES };
 		return !field?.visibleWhen || field.visibleWhen(config, ctx);
 	};
 
@@ -147,7 +206,7 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		const resolveOptions = (provider: CloudProviderSlug): FieldOption[] => {
 			const options = field?.options;
 			return typeof options === "function"
-				? options({ provider, config: {} })
+				? options({ provider, config: {}, caps: NO_CAPABILITIES })
 				: (options ?? []);
 		};
 		expect(resolveOptions("hetzner").map((o) => o.value)).toEqual(["postgres"]);
@@ -164,7 +223,7 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		const resolveOptions = (provider: CloudProviderSlug): FieldOption[] => {
 			const options = field?.options;
 			return typeof options === "function"
-				? options({ provider, config: {} })
+				? options({ provider, config: {}, caps: NO_CAPABILITIES })
 				: (options ?? []);
 		};
 		expect(resolveOptions("hetzner").map((o) => o.value)).toEqual(["valkey"]);
@@ -264,7 +323,7 @@ describe("service config (W1)", () => {
 	};
 	const visible = (key: string, config: Record<string, unknown>) => {
 		const f = field(key);
-		const ctx: FieldCtx = { provider: null, config };
+		const ctx: FieldCtx = { provider: null, config, caps: NO_CAPABILITIES };
 		return !f?.visibleWhen || f.visibleWhen(config, ctx);
 	};
 
@@ -344,5 +403,55 @@ describe("service config (W1)", () => {
 			}),
 		).toEqual([{ target: { kind: "database", name: "orders-db" }, inject: [] }]);
 		expect(bindings?.set?.([], {})).toEqual({ bindings: [] });
+	});
+});
+
+// ── #1412: a pluggable registry replaces the cloud's, so native-only surfaces must step aside ──
+describe("registry connector selection", () => {
+	const fieldsOf = (config: Record<string, unknown>) =>
+		CONFIG_SCHEMA.registry!.sections
+			.flatMap((sec) => sec.fields)
+			.filter((f) => !f.visibleWhen || f.visibleWhen(config as never, { provider: "aws" } as never))
+			.map((f) => f.key);
+
+	it("shows the ECR/GAR/ACR knobs for the cloud's own registry", () => {
+		const keys = fieldsOf({ name: "apps" });
+		expect(keys).toContain("immutable_tags");
+		expect(keys).toContain("vulnerability_scanning");
+	});
+
+	// They are cloud-registry features. Leaving them visible for Docker Hub would imply we can set
+	// them on someone else's registry.
+	it("hides them once a connector is selected", () => {
+		const keys = fieldsOf({ name: "apps", provider: "dockerhub" });
+		expect(keys).not.toContain("immutable_tags");
+		expect(keys).not.toContain("vulnerability_scanning");
+		// The connector itself is chosen in the environment-settings sheet, not here — it is
+		// per-environment (dominantProvider collapses all rows), so it is deliberately NOT a field on
+		// the individual card's inspector. The card's facts are what surface it.
+		expect(keys).not.toContain("provider");
+	});
+});
+
+// ── #1412: the DNS provider is chosen on the dns node's own inspector ──────────────────────────
+describe("dns connector selection", () => {
+	const dnsFields = CONFIG_SCHEMA.dns!.sections.flatMap((sec) => sec.fields);
+
+	it("offers a dns connector field", () => {
+		const field = dnsFields.find((f) => f.key === "provider");
+		expect(field?.type).toBe("connector");
+		expect(field?.category).toBe("dns");
+	});
+
+	// project_dns.zone_id is a column with its own field; Cloudflare declares a zone_id knob too.
+	// Two inputs for one concept writing to two places is worse than either — the column wins.
+	it("suppresses the connector's duplicate zone_id knob", () => {
+		const field = dnsFields.find((f) => f.key === "provider");
+		expect(field?.hiddenKnobs?.({ key: "zone_id", label: "Zone ID", type: "text" })).toBe(true);
+		expect(field?.hiddenKnobs?.({ key: "proxied", label: "Proxied", type: "boolean" })).toBe(false);
+	});
+
+	it("keeps the column-backed zone field", () => {
+		expect(dnsFields.map((f) => f.key)).toContain("zone_id");
 	});
 });

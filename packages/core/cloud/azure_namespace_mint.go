@@ -166,6 +166,85 @@ func ResolveAKSClusterConn(
 	return AKSClusterConn{Endpoint: endpoint, CAData: ca}, nil
 }
 
+// aksListResponse is the slice of the ManagedClusters LIST (by subscription) response this resolver
+// reads — each entry's ARM `id` carries its resource group, and `name` is the cluster name.
+type aksListResponse struct {
+	Value []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"value"`
+	NextLink string `json:"nextLink"`
+}
+
+// aksResourceGroupFromID extracts the resource group from an AKS ARM resource id
+// (`/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ContainerService/managedClusters/<name>`).
+// ARM segment names are case-insensitive, so the `resourcegroups` marker is matched case-folded.
+func aksResourceGroupFromID(id string) string {
+	parts := strings.Split(strings.Trim(id, "/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], "resourceGroups") {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+// ResolveAKSResourceGroup finds the resource group of an EXISTING AKS cluster BY NAME within a
+// subscription, via ARM `ManagedClusters` LIST — the output-free way to reach a cluster whose RG is not
+// on the (placed-env) config snapshot (a namespace/vcluster env's project/env differ from the Fabric's,
+// so the `rg-<project>-<env>` convention can't be reconstructed). `armToken` is a keyless federated
+// ARM bearer (never logged). Follows `nextLink` pagination. Fail-closed: an unmatched name is an error,
+// never a guessed RG. A subscription with two clusters of the same name (across RGs) is rejected as
+// ambiguous rather than silently picking one.
+func ResolveAKSResourceGroup(
+	ctx context.Context,
+	client *http.Client,
+	armToken, subscriptionID, clusterName string,
+) (string, error) {
+	if strings.TrimSpace(armToken) == "" {
+		return "", errors.New("aks rg lookup: empty ARM token (a keyless federated-identity token is required)")
+	}
+	if subscriptionID == "" || clusterName == "" {
+		return "", fmt.Errorf("aks rg lookup: subscription and cluster must both be set (got %q / %q)", subscriptionID, clusterName)
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	nextURL := fmt.Sprintf(
+		"%s/subscriptions/%s/providers/Microsoft.ContainerService/managedClusters?api-version=%s",
+		azureARMBase, url.PathEscape(subscriptionID), aksAPIVersion,
+	)
+	found := ""
+	for pages := 0; nextURL != "" && pages < 50; pages++ {
+		body, err := armRequest(ctx, client, http.MethodGet, nextURL, armToken)
+		if err != nil {
+			return "", fmt.Errorf("aks managedClusters.list: %w", err)
+		}
+		var list aksListResponse
+		if err := json.Unmarshal(body, &list); err != nil {
+			return "", fmt.Errorf("aks managedClusters.list: decode: %w", err)
+		}
+		for _, c := range list.Value {
+			if !strings.EqualFold(c.Name, clusterName) {
+				continue
+			}
+			rg := aksResourceGroupFromID(c.ID)
+			if rg == "" {
+				return "", fmt.Errorf("aks rg lookup: cluster %q id %q has no resource group segment", clusterName, c.ID)
+			}
+			if found != "" && !strings.EqualFold(found, rg) {
+				return "", fmt.Errorf("aks rg lookup: cluster name %q is ambiguous across resource groups (%q and %q)", clusterName, found, rg)
+			}
+			found = rg
+		}
+		nextURL = list.NextLink
+	}
+	if found == "" {
+		return "", fmt.Errorf("aks rg lookup: no cluster named %q found in subscription %q", clusterName, subscriptionID)
+	}
+	return found, nil
+}
+
 // extractAKSCACert decodes the first kubeconfig from a listClusterUserCredentials response and returns
 // its cluster certificate-authority-data (base64 CA). A public cert — safe to surface.
 func extractAKSCACert(credBody []byte) (string, error) {

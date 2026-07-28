@@ -11,6 +11,11 @@ import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import {
+	NATIVE_LABELS,
+	connectorLabel,
+	environmentConnector,
+} from "@/lib/canvas/environment-connector";
+import {
 	NODE_STATUS_META,
 	resolveNodeStatusFor,
 } from "@/lib/canvas/node-status";
@@ -31,6 +36,8 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const env = useEnvironmentStatus();
 	const addNode = useCanvasStore((s) => s.addNode);
+	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
+	const setEnvSettingsOpen = useCanvasStore((s) => s.setEnvSettingsOpen);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const [filter, setFilter] = useState("");
@@ -40,6 +47,11 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const shown = needle
 		? members.filter((n) => (configName(n.data) ?? "").toLowerCase().includes(needle))
 		: members;
+
+	// Secrets read through ONE store per environment (#1412). Surface which one here, where the
+	// secrets are managed, even though the choice is made in the environment-settings sheet — someone
+	// looking at a list of secrets is exactly who needs to know where they come from.
+	const secretsStore = kind === "secret" ? environmentConnector(nodes, "secret") : null;
 
 	const title = def.collection?.title ?? def.label;
 	const singular = def.collection?.singular ?? def.label.toLowerCase();
@@ -75,6 +87,22 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 				</Button>
 			</div>
 
+			{secretsStore && members.length > 0 ? (
+				<button
+					type="button"
+					onClick={() => setEnvSettingsOpen(true)}
+					className="flex items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-accent"
+				>
+					<span className="text-xs text-muted-foreground">
+						Store{" "}
+						<span className="font-mono text-foreground">
+							{connectorLabel(secretsStore.provider, NATIVE_LABELS.secret)}
+						</span>
+					</span>
+					<span className="vx-eyebrow text-[10px] text-muted-foreground">Change</span>
+				</button>
+			) : null}
+
 			<div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
 				{/* A vault with forty entries needs a filter, or the list is as unusable as forty cards. */}
 				<Input
@@ -87,7 +115,20 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 					type="button"
 					size="sm"
 					className="h-8 shrink-0 text-xs"
-					onClick={() => addNode(kind)}
+					onClick={() => {
+						// Add through the normal path (which owns defaults, placement and positioning),
+						// then patch the store onto the new node — a new secret INHERITS the
+						// environment's. One that quietly defaulted to native would put the rows back
+						// into disagreement, and dominantProvider would fold it into the pluggable store
+						// anyway, so the row would describe something the deploy does not do.
+						const id = addNode(kind);
+						if (secretsStore?.provider) {
+							updateNodeConfig(id, {
+								provider: secretsStore.provider,
+								provider_config: secretsStore.providerConfig,
+							});
+						}
+					}}
 				>
 					<Plus className="mr-1 h-3.5 w-3.5" />
 					Add

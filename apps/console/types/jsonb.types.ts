@@ -11,6 +11,9 @@ import type {
 	ServiceBindingKind,
 	TopicSubscriptionProtocol,
 } from "@/lib/db/schema/enums";
+// The compat report contract lives in its own file (types/compat.types) to keep the
+// `wave:compat` scope disjoint; re-referenced here only for the ExecutionMetadata field.
+import type { CompatReport } from "@/types/compat.types";
 
 export type { ServiceBindingKind, ServiceBindingFacet };
 
@@ -429,10 +432,26 @@ export interface NosqlProviderConfig {
 }
 
 export interface RegistryProviderConfig {
+	// Cloud-native registry knobs (ECR / Artifact Registry / ACR). Meaningless once a pluggable
+	// registry connector is selected — the registry is then someone else's to configure.
 	vulnerability_scanning?: boolean;
 	immutable_tags?: boolean;
-	// Docker Hub (pluggable registry provider)
+	// Docker Hub
 	namespace?: string;
+	// The registry host for the providers that serve any host (generic-cr, ghcr-enterprise, harbor,
+	// scaleway-cr require it; gitlab-cr and quay accept it). LOAD-BEARING, not cosmetic:
+	// categories/registry_generic.go fails validation without it, and pullAuth uses it as the
+	// dockerconfig `auths` key — so a pull secret built without it authenticates against nothing.
+	registry_url?: string;
+	// Cross-account keyless registries (*-xacct) — identity/resource REFERENCES, never keys.
+	target_account_id?: string; // ecr-xacct
+	target_project_id?: string; // gar-xacct
+	target_subscription_id?: string; // acr-xacct
+	region?: string;
+	registry_host?: string;
+	target_role_arn?: string; // ecr-xacct
+	target_service_account?: string; // gar-xacct
+	target_identity_client_id?: string; // acr-xacct
 }
 
 // Helm chart-repo connector (helm_registry category) — non-secret knobs only; the
@@ -457,9 +476,19 @@ export interface HelmRegistryProviderConfig {
 // anchor (an identity/resource REFERENCE, never a key) live here and are read by
 // categories.KeylessSecretTarget on the runner. Exactly one provider's field set applies per store.
 export interface SecretsProviderConfig {
-	// Vault (credential-based)
+	// Vault / generic (credential-based)
 	mount_path?: string;
 	kv_version?: string;
+	// Doppler — which project + config (its name for an environment) the token reads.
+	project?: string;
+	config?: string;
+	// Infisical
+	host?: string;
+	workspace_id?: string;
+	env_slug?: string;
+	folder_path?: string;
+	// 1Password — the vault the service account may read.
+	vault?: string;
 	// Cross-account keyless cloud secret managers (*-xacct)
 	target_account_id?: string; // aws-sm-xacct / alibaba-kms-xacct (target RAM account)
 	target_project_id?: string; // gcp-sm-xacct
@@ -468,6 +497,11 @@ export interface SecretsProviderConfig {
 	target_role_arn?: string; // aws / alibaba — the role the ESO identity assumes
 	vault_url?: string; // azure — the target Key Vault URL
 	target_oidc_provider_arn?: string; // alibaba — the target-account RAM OIDC provider ARN
+	// aws ONLY, optional: the sts:ExternalId the target role's trust policy requires, when the customer's
+	// bootstrap set one. Omitted = the trust policy has no ExternalId condition (the default). The other
+	// lanes have no equivalent — they bind the grant to a concrete principal instead. See
+	// categories.KeylessSecretTarget for why this is an explicit per-cloud exclusion, not an oversight.
+	external_id?: string;
 }
 
 // Datadog / Grafana Cloud — non-secret knobs only.
@@ -583,6 +617,29 @@ export interface QueueProviderConfig {
 	delay_seconds?: number;
 }
 
+// The CloudWatch log types a managed database can export. Finite and known, so a union
+// rather than string[]: Aurora MySQL accepts audit/error/general/slowquery and Aurora
+// PostgreSQL accepts only postgresql — a set that does not match the engine is rejected
+// fail-closed at apply by RDS-ENGINE-003 (infra/templates/project/aws/checks_data.tf).
+export type DatabaseLogExport =
+	| "audit"
+	| "error"
+	| "general"
+	| "slowquery"
+	| "postgresql";
+
+export interface DatabaseProviderConfig {
+	// AWS only — `rds_logs_exports` is the sole DB log-export variable any template
+	// declares (gcp/azure/alibaba have none). Unset → {audit, error, slowquery} on MySQL,
+	// {postgresql} on Postgres.
+	//
+	// `general` is deliberately NOT a default: the MySQL general log records every
+	// statement with its literal parameter values, so switching it on ships whatever the
+	// application put in a WHERE clause to the customer's CloudWatch. `audit` covers the
+	// security-forensics case without the statement text.
+	log_exports?: DatabaseLogExport[];
+}
+
 // Provider-specific resource identifiers captured after a deploy (cloud-agnostic
 // keys). Replaces the AWS-shaped typed columns (cluster_arn, *_secret_arn, kms…)
 // — AWS fills arn/secret_ref/kms_key; GCP/Azure fill the keys their model uses.
@@ -666,6 +723,10 @@ export interface ExecutionMetadata {
 	// PLAN/DEPLOY jobs: the signed evidence receipt sealing the report to the plan
 	// hash + tool versions (packages/core/verify Receipt/SignedReceipt).
 	verify_receipt?: SignedReceipt;
+	// PLAN/DEPLOY jobs: the version-compatibility gate result for the config
+	// (packages/core/compat, #1215). On DEPLOY a blocking verdict stops apply
+	// under COMPAT-001. Rendered by CompatBlock in the artifact panel (#1219).
+	compat_result?: CompatReport;
 	// DETECT_DRIFT jobs: the per-environment drift posture (packages/core/drift).
 	drift_posture?: DriftPosture;
 	// PROBE_CLUSTER jobs: the cluster-alive probe result (BYOC B2). An unreachable cluster is a

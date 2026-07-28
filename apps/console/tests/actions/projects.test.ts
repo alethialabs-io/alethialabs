@@ -68,8 +68,41 @@ import {
 	projects,
 	resourceHierarchy,
 	runners,
+	serviceBindingInjections,
+	serviceBindings,
 } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
+import type { ServiceBinding } from "@/types/jsonb.types";
+
+/**
+ * Convert the ServiceBinding[] these tests author into the service_bindings + injection child rows the
+ * reader reconstructs from — bindings moved off the parent JSONB into those tables (#1426). Mirrors the
+ * writer (`insertServiceBindings`); `ordinal` = array index on both levels. The mock tx ignores WHERE
+ * clauses, so seeding these under [serviceBindings]/[serviceBindingInjections] drives the reconstruction.
+ */
+function bindingChildRows(serviceId: string, bindings: ServiceBinding[]) {
+	const sbRows: Record<string, unknown>[] = [];
+	const injRows: Record<string, unknown>[] = [];
+	bindings.forEach((b, i) => {
+		const id = `${serviceId}-b${i}`;
+		sbRows.push({
+			id,
+			service_id: serviceId,
+			chart_workload_id: null,
+			target_kind: b.target.kind,
+			target_name: b.target.name,
+			target_address: b.target.address ?? null,
+			output_endpoint: b.target.output_keys?.endpoint ?? null,
+			output_port: b.target.output_keys?.port ?? null,
+			output_credential_secret: b.target.output_keys?.credential_secret ?? null,
+			ordinal: i,
+		});
+		b.inject.forEach((inj, j) =>
+			injRows.push({ binding_id: id, env: inj.env, from_facet: inj.from, ordinal: j }),
+		);
+	});
+	return { sbRows, injRows };
+}
 
 /**
  * Stubs getServiceDb so the defense-in-depth assigned-runner lookup
@@ -691,7 +724,7 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 	it("round-trips a service's W3 bindings into the design/form view (bindings ARE design input)", async () => {
 		// Unlike resolved_image (a build OUTPUT, stripped), bindings are the user's declared
 		// service→infra edges — they must survive into the form so the canvas can re-render them.
-		const bindings = [
+		const bindings: ServiceBinding[] = [
 			{
 				target: { kind: "database", name: "orders-db" },
 				inject: [
@@ -700,29 +733,129 @@ describe("getProjectAsFormData — resolved_image strip", () => {
 				],
 			},
 		];
-		setupDb({
-			select: selectWithService({
-				name: "api",
-				type: "deployment",
-				source: {
-					kind: "repo",
-					repo_url: "https://github.com/acme/api",
-					path: ".",
-				},
-				env: [],
-				bindings,
-				ports: [],
-				replicas: 2,
-				resources: null,
-				probe: null,
-				resolved_image: null,
-			}),
+		const { sbRows, injRows } = bindingChildRows("svc-api", bindings);
+		const select = selectWithService({
+			id: "svc-api",
+			name: "api",
+			type: "deployment",
+			source: {
+				kind: "repo",
+				repo_url: "https://github.com/acme/api",
+				path: ".",
+			},
+			env: [],
+			ports: [],
+			replicas: 2,
+			resources: null,
+			probe: null,
+			resolved_image: null,
 		});
+		select.set(serviceBindings, sbRows);
+		select.set(serviceBindingInjections, injRows);
+		setupDb({ select });
 
 		const { formData } = await getProjectAsFormData("p1");
+		// Reconstructed from the child tables (JSONB dropped, #1426) — must round-trip byte-identically.
 		expect(formData.services[0].bindings).toEqual(bindings);
 	});
 });
+
+// ============================================================
+// getProjectAsFormData — the secret store round-trips (#1412)
+// ============================================================
+
+describe("getProjectAsFormData — secrets provider round-trip", () => {
+	// REGRESSION: this mapping used to emit only {name, generate, length, special_chars}, dropping
+	// `provider` and `provider_config`. updateProjectDesign reconciles components delete-then-insert,
+	// so the very next canvas deploy re-inserted every secret WITHOUT its store — the environment
+	// silently fell back to the cluster's native secret manager and every binding to a Vault-backed
+	// secret went unsatisfiable, with nothing reported. Same shape as the chart-repo wipe (#1301).
+	it("carries provider + provider_config into the design/form view so a deploy can't wipe them", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							cloud_identity_id: "ci-1",
+							region: "us-east-1",
+							iac_version: "1.9.5",
+							project_name: "My App",
+							slug: "my-app",
+						},
+					],
+				],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+				],
+				[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+				[
+					projectSecrets,
+					[
+						{
+							name: "stripe-key",
+							generate: false,
+							length: 32,
+							special_chars: true,
+							provider: "vault",
+							provider_config: { mount_path: "secret", kv_version: "2" },
+						},
+					],
+				],
+			]),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.secrets).toHaveLength(1);
+		expect(formData.secrets[0]).toEqual(
+			expect.objectContaining({
+				name: "stripe-key",
+				provider: "vault",
+				provider_config: { mount_path: "secret", kv_version: "2" },
+			}),
+		);
+	});
+
+	// A native secret has no provider at all; it must round-trip as absent rather than as a string,
+	// since "" and "native" are both the cluster's own store and only NULL is the column's sentinel.
+	it("leaves a native secret's provider undefined", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							cloud_identity_id: "ci-1",
+							region: "us-east-1",
+							iac_version: "1.9.5",
+							project_name: "My App",
+							slug: "my-app",
+						},
+					],
+				],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+				],
+				[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+				[
+					projectSecrets,
+					[{ name: "api-key", generate: true, length: 32, special_chars: true, provider: null }],
+				],
+			]),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.secrets[0].provider).toBeUndefined();
+	});
+});
+
 
 // ============================================================
 // planProject / provisionProject (exercise buildConfigSnapshot)
@@ -1118,12 +1251,13 @@ describe("planProject", () => {
 	});
 
 	it("carries a service's W3 bindings into the deploy snapshot when the target exists — #615", async () => {
-		const bindings = [
+		const bindings: ServiceBinding[] = [
 			{
 				target: { kind: "database", name: "orders-db" },
 				inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
 			},
 		];
+		const { sbRows, injRows } = bindingChildRows("svc-api", bindings);
 		const { valuesSpy } = setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1132,6 +1266,7 @@ describe("planProject", () => {
 						projectServices,
 						[
 							{
+								id: "svc-api",
 								name: "api",
 								type: "deployment",
 								source: {
@@ -1140,7 +1275,6 @@ describe("planProject", () => {
 									path: ".",
 								},
 								env: [],
-								bindings,
 								ports: [],
 								replicas: 2,
 								cloud_identity_id: null,
@@ -1148,6 +1282,8 @@ describe("planProject", () => {
 							},
 						],
 					],
+					[serviceBindings, sbRows],
+					[serviceBindingInjections, injRows],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
@@ -1167,6 +1303,13 @@ describe("planProject", () => {
 	it("fails closed when a service binds to a resource that does not exist in the env — #615", async () => {
 		// The fail-closed target gate: a dangling {kind,name} would reach the runner and fail to
 		// resolve at deploy (no endpoint/secret to inject). Catch it at snapshot build, loudly.
+		const bindings: ServiceBinding[] = [
+			{
+				target: { kind: "database", name: "ghost-db" },
+				inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
+			},
+		];
+		const { sbRows, injRows } = bindingChildRows("svc-api", bindings);
 		setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1175,6 +1318,7 @@ describe("planProject", () => {
 						projectServices,
 						[
 							{
+								id: "svc-api",
 								name: "api",
 								type: "deployment",
 								source: {
@@ -1183,12 +1327,6 @@ describe("planProject", () => {
 									path: ".",
 								},
 								env: [],
-								bindings: [
-									{
-										target: { kind: "database", name: "ghost-db" },
-										inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
-									},
-								],
 								ports: [],
 								replicas: 2,
 								cloud_identity_id: null,
@@ -1196,6 +1334,9 @@ describe("planProject", () => {
 							},
 						],
 					],
+					// The gate now reads bindings from the child table (JSONB dropped, #1426).
+					[serviceBindings, sbRows],
+					[serviceBindingInjections, injRows],
 				]),
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
@@ -1269,6 +1410,68 @@ describe("planProject", () => {
 			/MySQL databases can't be provisioned on Hetzner/,
 		);
 		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	// ── Fail-closed keyless gate (#1510) ────────────────────────────────────
+	// The canvas disables the IAM-auth toggle on these cells, but the canvas is not a boundary: the
+	// CLI writes `iam_auth` on any cloud, an AI-composed graph can carry it, and legacy rows predate
+	// the gate. Before this the database was simply handed a PASSWORD — no error, nothing in the UI,
+	// and the operator's explicit "no password" silently reversed.
+	it.each([
+		["hetzner", "postgres", /CloudNativePG/],
+		["alibaba", "postgres", /control plane/],
+		["alibaba", "mysql", /control plane/],
+	])(
+		"fails closed on iam_auth for %s × %s (never a silent password)",
+		async (provider, engine_family, reason) => {
+			setupDb({
+				select: snapshotSelect(
+					new Map<unknown, RowsResolver>([
+						[cloudIdentities, [{ id: "ci-1", provider }]],
+						[
+							projectDatabases,
+							[
+								{
+									name: "orders",
+									engine_family,
+									iam_auth: true,
+									cloud_identity_id: null,
+								},
+							],
+						],
+					]),
+				),
+			});
+			await expect(planProject("p1")).rejects.toThrow(reason);
+			await expect(planProject("p1")).rejects.toThrow(
+				/Turn IAM authentication off/,
+			);
+			expect(notifyScaler).not.toHaveBeenCalled();
+		},
+	);
+
+	it("lets iam_auth through on a cell the renderer can build", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectDatabases,
+						[
+							{
+								name: "orders",
+								engine_family: "mysql",
+								iam_auth: true,
+								cloud_identity_id: null,
+							},
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		// aws × mysql is live, so the gate must be silent — a gate that also blocks the cells it is
+		// meant to permit is just the old bug wearing an error message.
+		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-1" });
 	});
 
 	it("queues a hetzner job when databases are postgres (or legacy NULL family)", async () => {
@@ -1779,6 +1982,74 @@ describe("getProjectAsFormData", () => {
 		);
 	});
 });
+
+// ============================================================
+// getProjectAsFormData — the DNS connector round-trips (#1412)
+// ============================================================
+
+describe("getProjectAsFormData — dns provider round-trip", () => {
+	const dnsSelect = (dnsRow: Record<string, unknown>) =>
+		new Map<unknown, RowsResolver>([
+			[
+				projects,
+				[
+					{
+						id: "p1",
+						org_id: "org-1",
+						cloud_identity_id: "ci-1",
+						region: "us-east-1",
+						iac_version: "1.9.5",
+						project_name: "My App",
+						slug: "my-app",
+					},
+				],
+			],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+			],
+			[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+			[projectDns, [dnsRow]],
+		]);
+
+	// REGRESSION: this mapping carried provider_config but dropped `provider`. Because
+	// updateProjectDesign reconciles delete-then-insert, a canvas save re-inserted the Cloudflare
+	// knobs with NO slug — and that fails OPEN: DNSProvider() (argocd/infra_facts.go) sees an empty
+	// connector and silently reverts to the cloud's native DNS. The deploy looks healthy while
+	// ignoring the provider the user chose.
+	it("carries the DNS connector so a canvas save can't revert to cloud-native DNS", async () => {
+		setupDb({
+			select: dnsSelect({
+				enabled: true,
+				provider: "cloudflare",
+				domain_name: "acme.io",
+				zone_id: "zone-123",
+				provider_config: { proxied: true },
+			}),
+		});
+
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.dns).toEqual(
+			expect.objectContaining({
+				enabled: true,
+				provider: "cloudflare",
+				domain_name: "acme.io",
+				zone_id: "zone-123",
+				provider_config: { proxied: true },
+			}),
+		);
+	});
+
+	// Cloud-native DNS has no connector; it must round-trip as absent, not as a string, since only
+	// NULL / "native" mean "the cluster cloud's own DNS".
+	it("leaves cloud-native DNS without a provider", async () => {
+		setupDb({ select: dnsSelect({ enabled: true, domain_name: "acme.io", provider: null }) });
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.dns.provider).toBeUndefined();
+	});
+});
+
 
 // ============================================================
 // duplicateProjectForProvider (real convertProjectConfig)

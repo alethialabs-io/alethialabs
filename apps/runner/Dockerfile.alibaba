@@ -18,7 +18,9 @@ WORKDIR /home/runner
 
 # Pre-initialize only the Alibaba template (alicloud + random providers). TF_PLUGIN_CACHE_DIR is inherited
 # from the base; keeps the .terraform tree warm for the per-job copy.
-RUN cd /home/runner/project-templates/alibaba && tofu init -backend=false -input=false -upgrade
+# NO `-upgrade`: the committed .terraform.lock.hcl decides the provider versions; `-upgrade` disregards
+# it and re-resolves against the registry, so the image would drift from what the e2e nightly runs (#1259).
+RUN cd /home/runner/project-templates/alibaba && tofu init -backend=false -input=false
 
 ENV ALETHIA_RUNNER_PROVIDERS=alibaba
 ENTRYPOINT ["runner"]

@@ -7,8 +7,11 @@
 // export glob + the apps' Tailwind `@source` scan). jsdom + React for component tests; coverage
 // is uploaded to Codecov under the `ui` flag and merged with the other projects.
 
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+
+import { TEST_TIMEOUT_MS } from "./tests/timeouts";
 
 export default defineConfig({
 	plugins: [react()],
@@ -16,11 +19,22 @@ export default defineConfig({
 		environment: "jsdom",
 		setupFiles: ["./tests/setup.ts"],
 		include: ["./tests/**/*.test.{ts,tsx}"],
-		// The PhoneInput RTL tests drive many userEvent interactions (typing a full number +
-		// a country search); on a loaded CI runner the sequence blew past vitest's 5000ms
-		// default, flaking the required TypeScript job on ~every train. `delay: null` on the
-		// userEvent setups makes the events near-instant; this is the CI-load safety margin.
-		testTimeout: 15000,
+		alias: {
+			// `react-phone-number-input/flags` is ~250 full SVG flag components. #1452 cut the
+			// phone-input tests' cost by passing the library's `countries` prop, but CountrySelect
+			// takes no such prop — it renders COUNTRY_OPTIONS straight from countries.ts
+			// (country-select.tsx:88), so every popover-open still mounts the entire set in jsdom.
+			// That left country-select.test.tsx the slowest file in the package at ~50s, with its
+			// worst test ~1.5s under the old per-test budget. Swapping a shape-compatible stub in
+			// fixes it at the source, for both files. See tests/stubs/flags.tsx.
+			"react-phone-number-input/flags": fileURLToPath(
+				new URL("./tests/stubs/flags.tsx", import.meta.url),
+			),
+		},
+		// The per-TEST budget. DERIVED from the per-WAIT budget in tests/timeouts.ts — the two are
+		// different clocks and setting them independently is what flaked the required TypeScript job
+		// twice (#1236 → #1402). Change the constants there, never a literal here.
+		testTimeout: TEST_TIMEOUT_MS,
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov", "json-summary"],

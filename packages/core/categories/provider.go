@@ -60,6 +60,14 @@ type behavior struct {
 	// ClusterSecretStore), NOT a replacement of the native store, so it never flips the native secrets
 	// gate. nil → not a keyless secret store.
 	keylessSecretStore func(ComponentContext) KeylessSecretTarget
+	// saasSecretStore, when set (credential-based external secret stores: HashiCorp Vault / OpenBao,
+	// Doppler, or a generic Vault-KV-API-compatible endpoint), describes the in-cluster ESO
+	// ClusterSecretStore that reads that store with a STATIC API token seeded into an in-cluster
+	// Secret. Unlike keylessSecretStore (which ESO reads keylessly via the cluster's workload
+	// identity), a SaaS store has no cloud identity to federate — its token is seeded out-of-band and
+	// referenced by the store's auth.secretRef. Returns NON-SECRET connection config + the seed-Secret
+	// NAME only; the token itself never crosses this seam. nil → not a runtime-read SaaS secret store.
+	saasSecretStore func(ComponentContext) SecretsSaaSStore
 	// repoCred, when set (helm_registry category only), maps a private Helm/OCI chart-repo connection to
 	// the ArgoCD repository credential the runner seeds post-apply (argocd.EnsureHelmRepoCredential):
 	// the chart-repo URL (oci://host for an OCI registry, https://… for an HTTPS chart repo), the
@@ -68,6 +76,15 @@ type behavior struct {
 	// secret-type` repo credential ArgoCD matches to an Application by repoURL. nil → not a helm_registry
 	// provider (or a coming_soon one whose keyless resolution is a documented follow-up).
 	repoCred func(ComponentContext) RepoCred
+	// keylessRepoCred, when set (helm_registry ECR providers only), describes a cross-account OCI Helm
+	// chart registry (Amazon ECR / ECR Public) whose repo credential CANNOT be statically seeded — ECR
+	// issues a ~12h token, not a stable password. Instead an in-cluster refresher (the `helm-repo-token`
+	// Deployment running the runner image under the cluster Workload Identity) mints + refreshes the
+	// token and patches username=AWS / password=<token> into the pre-seeded `repo-helm-<hash>` ArgoCD
+	// repo-cred Secret. Mutually exclusive with repoCred: an ECR helm registry is keyless-refreshed,
+	// never statically seeded — repoCred stays nil so IsHelmRegistry is false and HelmRepoCredSpecs skips
+	// it, and this routes the keyless path instead. nil → not a keyless helm registry.
+	keylessRepoCred func(ComponentContext) KeylessHelmRepoTarget
 }
 
 var behaviors = map[string]behavior{}
@@ -180,6 +197,27 @@ func IsKeylessSecretStore(slug string) bool {
 	return ok && b.keylessSecretStore != nil
 }
 
+// SaaSSecretStore returns the credential-based external secret store (Vault / OpenBao / Doppler /
+// generic Vault-compatible) the ESO ClusterSecretStore reads with a static seeded token, or ok=false
+// when the provider is not a runtime-read SaaS secret store. It replaces the native store as the
+// project's secret source (unlike the keyless cross-account store, which is additive).
+func (p *CategoryProvider) SaaSSecretStore(ctx ComponentContext) (SecretsSaaSStore, bool) {
+	if p.b.saasSecretStore == nil {
+		return SecretsSaaSStore{}, false
+	}
+	return p.b.saasSecretStore(ctx), true
+}
+
+// IsSaaSSecretStore reports whether a secrets slug is a credential-based external secret store with a
+// first-class in-cluster ESO runtime-read path on the pinned chart (vault / generic / doppler). It is
+// true only when saasSecretStore is registered — so infisical / 1Password (whose runtime-read is an
+// explicit documented exclusion on ESO 0.9.12) return false and render no ClusterSecretStore. Cheap
+// lookup for routing in DominantSecretsSaaSStore without building a full ComponentContext.
+func IsSaaSSecretStore(slug string) bool {
+	b, ok := behaviors["secrets/"+slug]
+	return ok && b.saasSecretStore != nil
+}
+
 // RepoCred returns the ArgoCD repository credential a private Helm/OCI chart-repo connection maps to
 // (helm_registry providers only). ok is false when the provider registered no repoCred — a
 // non-helm_registry provider, or a coming_soon slug whose keyless resolution is a documented follow-up.
@@ -196,6 +234,24 @@ func (p *CategoryProvider) RepoCred(ctx ComponentContext) (RepoCred, bool) {
 func IsHelmRegistry(slug string) bool {
 	b, ok := behaviors["helm_registry/"+slug]
 	return ok && b.repoCred != nil
+}
+
+// KeylessRepoCred returns the cross-account keyless OCI Helm registry target (Amazon ECR / ECR Public),
+// or ok=false when the provider is not a keyless helm registry. A keyless helm registry has no repoCred;
+// its repo-cred Secret is minted + refreshed in-cluster by the `helm-repo-token` refresher.
+func (p *CategoryProvider) KeylessRepoCred(ctx ComponentContext) (KeylessHelmRepoTarget, bool) {
+	if p.b.keylessRepoCred == nil {
+		return KeylessHelmRepoTarget{}, false
+	}
+	return p.b.keylessRepoCred(ctx), true
+}
+
+// IsKeylessHelmRegistry reports whether a helm_registry slug is a cross-account keyless provider (its
+// repo-cred Secret is refreshed in-cluster, not seeded statically — the ECR case). Cheap lookup for
+// routing in KeylessHelmRepoTargets / Compose without building a full ComponentContext.
+func IsKeylessHelmRegistry(slug string) bool {
+	b, ok := behaviors["helm_registry/"+slug]
+	return ok && b.keylessRepoCred != nil
 }
 
 // Get resolves a provider by (category, slug). The slug must exist both in the

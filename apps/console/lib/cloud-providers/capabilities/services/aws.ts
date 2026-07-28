@@ -11,6 +11,10 @@
 //   - cache:      ElastiCache DescribeCacheEngineVersions gates the platform cache tiers (there is no
 //                 read-only per-node-type list API, so availability of the service ⇒ the catalog tiers
 //                 are launchable, memory carried from the catalog).
+//   - cache_version: the SAME DescribeCacheEngineVersions call, read for what it actually returns — one
+//                 row per (engine, offered version). It was already fetched and thrown away.
+//   - database_instance_class: RDS DescribeOrderableDBInstanceOptions → the concrete SKUs each platform
+//                 engine can be launched at in this region.
 //   - nosql:      DynamoDB DescribeLimits reachable ⇒ the account can launch DynamoDB.
 //
 // Availability is design-time GUIDANCE, never a hard gate (#918 fail-open): the pickers fall back to the
@@ -20,7 +24,9 @@
 // dispatcher (services-index.ts) swallows any throw and stamps freshness; this lane fills its AWS seam.
 //
 // Grants (read-only): eks:DescribeClusterVersions, rds:DescribeDBEngineVersions,
-// elasticache:DescribeCacheEngineVersions, dynamodb:DescribeLimits.
+// rds:DescribeOrderableDBInstanceOptions, elasticache:DescribeCacheEngineVersions,
+// dynamodb:DescribeLimits. The connector's bootstrap policy already carries `rds:Describe*`, so the
+// instance-class axis needs no re-bootstrap of an already-connected account.
 
 import {
 	DescribeLimitsCommand,
@@ -39,6 +45,8 @@ import {
 import {
 	type DBEngineVersion,
 	DescribeDBEngineVersionsCommand,
+	DescribeOrderableDBInstanceOptionsCommand,
+	type OrderableDBInstanceOption,
 	RDSClient,
 } from "@aws-sdk/client-rds";
 import { sql } from "drizzle-orm";
@@ -54,6 +62,7 @@ import {
 } from "@/lib/cloud-providers/generated/catalog";
 import { assumeAwsRole } from "../../session/aws";
 import { softRemoveUnseen } from "../../inventory/upsert";
+import { dedupeVersionsDesc } from "./version";
 import type { CapabilityIdentity } from "../types";
 
 const TIMEOUT_MS = 15_000;
@@ -93,19 +102,6 @@ function serviceRow(
 	};
 }
 
-/** Compare two dotted numeric version strings ("16" vs "8.0" vs "15.4"). Returns >0 if a is newer. */
-function compareVersion(a: string, b: string): number {
-	const pa = a.split(".").map((n) => Number.parseInt(n, 10));
-	const pb = b.split(".").map((n) => Number.parseInt(n, 10));
-	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-		const x = pa[i] ?? 0;
-		const y = pb[i] ?? 0;
-		if (Number.isNaN(x) || Number.isNaN(y)) return 0;
-		if (x !== y) return x - y;
-	}
-	return 0;
-}
-
 // ── Pure normalizers (unit-tested against recorded SDK fixtures) ──────────────────────
 
 /** EKS DescribeClusterVersions → one `kubernetes` row per offerable, still-supported control-plane
@@ -137,38 +133,50 @@ export function normalizeK8sVersionRows(
 	return rows;
 }
 
-/** RDS DescribeDBEngineVersions → one `database` row per PLATFORM engine (the Catalog #2 AWS engine set:
- * Aurora PG/MySQL) at its latest offered major version. Engines the platform doesn't provision are
- * ignored; the engine label comes from the catalog so the picker copy is stable. */
+/** RDS DescribeDBEngineVersions → one `database` row per PLATFORM engine AND offered major version
+ * (the Catalog #2 AWS engine set: Aurora PG/MySQL). Engines the platform doesn't provision are
+ * ignored; the engine label comes from the catalog so the picker copy is stable.
+ *
+ * One row per (engine, major) rather than per engine: the version is an axis the picker offers, so
+ * collapsing to the latest here makes an engine-version selector impossible (#1351). `native_id` is
+ * the composite `<engine>-<version>` — the convention the Azure and Alibaba lanes already use —
+ * because the unique key is (identity, provider, region, kind, native_id) and `version` is NOT in it,
+ * so per-version rows under a bare-engine id would silently overwrite one another.
+ *
+ * The API returns one row per MINOR, so we key on `MajorEngineVersion`: "16.4" and "16.6" collapse to
+ * a single offered "16", which is the grain the platform provisions at. */
 export function normalizeDatabaseRows(
 	engineVersions: DBEngineVersion[],
 	ctx: ServiceNormalizeCtx,
 ): CloudCapabilityServiceInsert[] {
 	// The engines the platform actually provisions on AWS (Catalog #2), keyed by RDS engine value.
 	const catalog = new Map(DB_ENGINES.aws.map((e) => [e.value, e]));
-	const latestByEngine = new Map<string, string>();
+	const versionsByEngine = new Map<string, string[]>();
 	for (const ev of engineVersions) {
 		const engine = ev.Engine;
 		if (!engine || !catalog.has(engine)) continue;
 		const ver = ev.MajorEngineVersion ?? ev.EngineVersion;
 		if (!ver) continue;
-		const prev = latestByEngine.get(engine);
-		if (prev === undefined || compareVersion(ver, prev) > 0) latestByEngine.set(engine, ver);
+		const seen = versionsByEngine.get(engine);
+		if (seen) seen.push(ver);
+		else versionsByEngine.set(engine, [ver]);
 	}
 	const rows: CloudCapabilityServiceInsert[] = [];
-	for (const [engine, version] of latestByEngine) {
+	for (const [engine, versions] of versionsByEngine) {
 		const meta = catalog.get(engine);
-		rows.push(
-			serviceRow(ctx, {
-				service_kind: "database",
-				native_id: engine,
-				name: meta?.label ?? engine,
-				engine,
-				version,
-				tier: null,
-				mem_gb: null,
-			}),
-		);
+		for (const version of dedupeVersionsDesc(versions)) {
+			rows.push(
+				serviceRow(ctx, {
+					service_kind: "database",
+					native_id: `${engine}-${version}`,
+					name: meta?.label ?? engine,
+					engine,
+					version,
+					tier: null,
+					mem_gb: null,
+				}),
+			);
+		}
 	}
 	return rows;
 }
@@ -193,6 +201,83 @@ export function normalizeCacheTierRows(
 			mem_gb: t.memoryGb,
 		}),
 	);
+}
+
+/** The SAME ElastiCache DescribeCacheEngineVersions response, read for the versions it carries: one
+ * `cache_version` row per (engine, offered version). The tier normalizer above only asks whether the
+ * response was non-empty; the versions were in hand and discarded, which is why `engine_version` on a
+ * cache node was a free-text box a user had to already know the answer for.
+ *
+ * `native_id` is the composite `<engine>-<version>` — the unique key carries `native_id` but not
+ * `version`, so per-version rows under a bare-engine id would silently overwrite one another (the same
+ * reason the database kind uses it). Versions are newest-first per engine. */
+export function normalizeCacheVersionRows(
+	engineVersions: CacheEngineVersion[],
+	ctx: ServiceNormalizeCtx,
+): CloudCapabilityServiceInsert[] {
+	const versionsByEngine = new Map<string, string[]>();
+	for (const ev of engineVersions) {
+		const engine = ev.Engine?.trim();
+		const version = ev.EngineVersion?.trim();
+		if (!engine || !version) continue;
+		const seen = versionsByEngine.get(engine);
+		if (seen) seen.push(version);
+		else versionsByEngine.set(engine, [version]);
+	}
+	const rows: CloudCapabilityServiceInsert[] = [];
+	for (const [engine, versions] of versionsByEngine) {
+		for (const version of dedupeVersionsDesc(versions)) {
+			rows.push(
+				serviceRow(ctx, {
+					service_kind: "cache_version",
+					native_id: `${engine}-${version}`,
+					name: `${engine} ${version}`,
+					engine,
+					version,
+					tier: null,
+					mem_gb: null,
+				}),
+			);
+		}
+	}
+	return rows;
+}
+
+/** RDS DescribeOrderableDBInstanceOptions → one `database_instance_class` row per (platform engine,
+ * SKU). The API returns one entry per (engine, engine version, class, AZ set), so the same class
+ * recurs heavily — rows are deduped on (engine, class) and the version dimension is dropped: the
+ * picker offers a SKU for an engine, and a class that is orderable for one of the engine's versions
+ * is the honest set to show. Engines the platform doesn't provision are ignored.
+ *
+ * `native_id` is the composite `<engine>-<class>` because the same SKU is orderable for more than one
+ * engine and each is its own offering; the bare SKU lives in `tier`, which is what the picker reads. */
+export function normalizeDbInstanceClassRows(
+	options: OrderableDBInstanceOption[],
+	ctx: ServiceNormalizeCtx,
+): CloudCapabilityServiceInsert[] {
+	const catalog = new Map(DB_ENGINES.aws.map((e) => [e.value, e]));
+	const rows: CloudCapabilityServiceInsert[] = [];
+	const seen = new Set<string>();
+	for (const opt of options) {
+		const engine = opt.Engine;
+		const cls = opt.DBInstanceClass?.trim();
+		if (!engine || !cls || !catalog.has(engine)) continue;
+		const nativeId = `${engine}-${cls}`;
+		if (seen.has(nativeId)) continue;
+		seen.add(nativeId);
+		rows.push(
+			serviceRow(ctx, {
+				service_kind: "database_instance_class",
+				native_id: nativeId,
+				name: cls,
+				engine,
+				version: null,
+				tier: cls,
+				mem_gb: null,
+			}),
+		);
+	}
+	return rows;
 }
 
 /** DynamoDB availability → one `nosql` row when the service is reachable/authorized (DescribeLimits
@@ -252,6 +337,37 @@ async function fetchDbEngineVersions(
 				new DescribeDBEngineVersionsCommand({ Engine: engine, MaxRecords: 100, Marker: marker }),
 			);
 			out.push(...(resp.DBEngineVersions ?? []));
+			marker = resp.Marker;
+			if (!marker) break;
+		}
+	}
+	return out;
+}
+
+/** The orderable DB instance options for the platform engine set (per-engine, paginated).
+ *
+ * `EngineVersion` is deliberately NOT passed: the picker offers a SKU for an ENGINE, and pinning one
+ * version would hide classes only orderable on another. That costs pages — the API returns an entry per
+ * (version, class, AZ set) — so the shared MAX_PAGES bound applies here as everywhere else. Truncation
+ * would drop the tail of the SKU list rather than corrupt it, and the normalizer dedupes to a few dozen
+ * rows; a truncated sweep is re-run by the refresh sweep. */
+async function fetchOrderableDbInstanceOptions(
+	region: string,
+	credentials: AwsCreds,
+): Promise<OrderableDBInstanceOption[]> {
+	const client = new RDSClient({ region, credentials, ...AWS_CREDS_OPTS });
+	const out: OrderableDBInstanceOption[] = [];
+	for (const { value: engine } of DB_ENGINES.aws) {
+		let marker: string | undefined;
+		for (let i = 0; i < MAX_PAGES; i++) {
+			const resp = await client.send(
+				new DescribeOrderableDBInstanceOptionsCommand({
+					Engine: engine,
+					MaxRecords: 100,
+					Marker: marker,
+				}),
+			);
+			out.push(...(resp.OrderableDBInstanceOptions ?? []));
 			marker = resp.Marker;
 			if (!marker) break;
 		}
@@ -319,8 +435,19 @@ export async function syncAwsServiceCapabilities(
 		normalizeDatabaseRows(await fetchDbEngineVersions(root.region, creds), ctx),
 	);
 	await collect(async () =>
-		normalizeCacheTierRows(await fetchCacheEngineVersions(root.region, creds), ctx),
+		normalizeDbInstanceClassRows(
+			await fetchOrderableDbInstanceOptions(root.region, creds),
+			ctx,
+		),
 	);
+	// One fetch, two axes: the tiers the service gates and the engine versions it reports.
+	await collect(async () => {
+		const cacheVersions = await fetchCacheEngineVersions(root.region, creds);
+		return [
+			...normalizeCacheTierRows(cacheVersions, ctx),
+			...normalizeCacheVersionRows(cacheVersions, ctx),
+		];
+	});
 	await collect(async () =>
 		normalizeNosqlRows(await fetchNosqlAvailable(root.region, creds), ctx),
 	);
@@ -353,7 +480,9 @@ export async function syncAwsServiceCapabilities(
 	}
 
 	// Only reconcile removals on a fully-consistent sweep — a partial failure must not retire a healthy
-	// axis's offerings (native_ids don't collide across the four kinds, so one call covers the table).
+	// axis's offerings. One call covers the table because native_ids don't collide across the kinds: the
+	// composites are engine-prefixed (`<engine>-<version>` / `<engine>-<sku>`), and a SKU can never read
+	// as a version, so a `database` row and a `database_instance_class` row are never the same string.
 	if (allAxesOk) {
 		await softRemoveUnseen("cloud_capability_services", identityId, seenNativeIds);
 	}

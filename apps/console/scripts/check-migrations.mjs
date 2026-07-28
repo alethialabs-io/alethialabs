@@ -16,6 +16,7 @@
 // current-schema snapshot onto an earlier parent), so we do NOT require one
 // snapshot per journal entry — only that the present ones chain cleanly.
 
+import { execSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,13 +86,57 @@ for (const [prevId, file] of prevIds) {
 	}
 }
 
+// ── 4. cross-branch collision: an idx `dev` already uses under a DIFFERENT tag ──────
+// Invariants 1-3 only see THIS tree, so a branch stays internally consistent right up to the
+// moment it merges — which is exactly how #1355 happened: it added 0128_nifty_boom_boom while
+// dev had already landed 0128_striped_agent_zero. git can only surface that as a conflict in
+// meta/_journal.json AFTER the work is done, and the remedy (delete + rebase + RE-GENERATE,
+// not "resolve the conflict") is non-obvious. Catch it at PR time instead.
+//
+// Deliberately tolerant in two directions: a branch merely BEHIND dev shares idx→tag exactly
+// and passes — that is the overwhelmingly common case and must never be flagged. And if dev's
+// journal cannot be read (shallow clone, no remote, a fresh checkout before fetch) we SKIP
+// rather than fail: a guard that wedges CI on a checkout quirk is worse than the bug it stops.
+try {
+	const devJournalRaw = execSync(
+		"git show origin/dev:apps/console/lib/db/migrations/meta/_journal.json",
+		{ cwd: here, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+	);
+	const devByIdx = new Map(
+		(JSON.parse(devJournalRaw).entries ?? []).map((e) => [e.idx, e.tag]),
+	);
+	for (const e of entries) {
+		const devTag = devByIdx.get(e.idx);
+		if (devTag && devTag !== e.tag) {
+			errors.push(
+				`migration index ${e.idx} collides with origin/dev — this branch has "${e.tag}", dev has "${devTag}"`,
+			);
+		}
+	}
+} catch {
+	// origin/dev unreadable here — skip this invariant rather than fail the build.
+}
+
 if (errors.length > 0) {
+	const collided = errors.some((e) => e.includes("collides with origin/dev"));
 	console.error("✗ migration history check failed:\n");
 	for (const e of errors) console.error(`  • ${e}`);
-	console.error(
-		"\n  drizzle snapshots are a linear chain — never run `db:generate` in two\n" +
-			"  worktrees/branches off the same base. Rebase first, then re-generate.\n",
-	);
+	if (collided) {
+		// The fix is NOT to resolve the conflict by hand — the snapshot chain cannot be merged.
+		console.error(
+			"\n  Another migration already claims that index on dev, so this chain cannot merge.\n" +
+				"  Do NOT hand-resolve meta/_journal.json or the snapshot. Instead:\n" +
+				"    1. delete your migration's .sql AND its meta/<idx>_snapshot.json\n" +
+				"    2. take dev's meta/_journal.json + snapshot, then rebase onto origin/dev\n" +
+				"    3. re-run `pnpm -F console db:generate` — it re-emits your change at the next\n" +
+				"       free index, chained off dev's latest snapshot\n",
+		);
+	} else {
+		console.error(
+			"\n  drizzle snapshots are a linear chain — never run `db:generate` in two\n" +
+				"  worktrees/branches off the same base. Rebase first, then re-generate.\n",
+		);
+	}
 	process.exit(1);
 }
 

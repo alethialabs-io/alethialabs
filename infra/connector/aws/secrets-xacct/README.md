@@ -33,7 +33,7 @@ module "alethia_secrets_read" {
   # SCOPE this to the secrets you intend to share (least-privilege):
   secret_arns = ["arn:aws:secretsmanager:eu-west-1:222222222222:secret:acme/prod/*"]
   # kms_key_arns = ["arn:aws:kms:eu-west-1:222222222222:key/<id>"]  # only for CMK-encrypted secrets
-  # external_id  = "..."                                            # optional; also enter it in the connector
+  # external_id  = "..."                                            # optional; enter the SAME value in the connector's External ID
 }
 
 output "target_role_arn" { value = module.alethia_secrets_read.target_role_arn }

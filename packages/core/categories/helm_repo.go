@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -98,4 +99,57 @@ func HelmRepoCredSpecs(vc *types.ProjectConfig) ([]HelmRepoCredSpec, error) {
 		specs = append(specs, HelmRepoCredSpec{Name: name, RepoCred: cred})
 	}
 	return specs, errors.Join(errs...)
+}
+
+// RepoCredForChartRepo picks the connected chart-repo credential that serves a given chart URL,
+// using the SAME rule ArgoCD applies when it matches an Application to a repository credential:
+// longest URL prefix wins. That is deliberate — the CHART_SCAN path must authenticate against
+// exactly the repo the deploy path will, or a chart could scan clean under one credential and then
+// deploy under another.
+//
+// The returned error mirrors HelmRepoCredSpecs: it reports entries that were skipped because they
+// are misconfigured, so a caller can log them, and is non-fatal. A false `ok` simply means no
+// connected chart repo covers this host — the caller should then pull anonymously, which is the
+// correct behaviour for a public chart.
+func RepoCredForChartRepo(vc *types.ProjectConfig, chartRepoURL string) (RepoCred, bool, error) {
+	specs, err := HelmRepoCredSpecs(vc)
+	chart := normalizeRepoURL(chartRepoURL)
+	if chart == "" {
+		return RepoCred{}, false, err
+	}
+
+	var best RepoCred
+	for _, s := range specs {
+		// An HTTPS chart-repo credential cannot authenticate an OCI pull (different protocol, and
+		// ArgoCD matches those exactly rather than by prefix), so never cross the two.
+		if !s.EnableOCI {
+			continue
+		}
+		candidate := normalizeRepoURL(s.URL)
+		if candidate == "" || !repoURLCovers(candidate, chart) {
+			continue
+		}
+		if len(candidate) > len(normalizeRepoURL(best.URL)) {
+			best = s.RepoCred
+		}
+	}
+	if best.URL == "" {
+		return RepoCred{}, false, err
+	}
+	return best, true, err
+}
+
+// normalizeRepoURL lower-cases a chart-repo URL and trims a trailing slash so prefix comparison is
+// stable. Registry hosts are case-insensitive; OCI repository paths are lowercase by spec, so
+// lower-casing the whole string is safe and makes the comparison total.
+func normalizeRepoURL(u string) string {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(u)), "/")
+}
+
+// repoURLCovers reports whether a credential URL covers a chart URL. The prefix must end on a path
+// boundary: a bare string prefix would let a credential for `oci://ghcr.io` authenticate against
+// `oci://ghcr.io.attacker.example/x`, sending the customer's registry password to a host they never
+// connected.
+func repoURLCovers(credURL, chartURL string) bool {
+	return chartURL == credURL || strings.HasPrefix(chartURL, credURL+"/")
 }

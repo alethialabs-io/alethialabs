@@ -26,6 +26,16 @@ export default defineConfig({
 		],
 		// The integration suite needs a live Postgres — it runs via its own config.
 		exclude: ["**/node_modules/**", "**/tests/integration/**"],
+		// Vitest's default is 5000ms, and this suite ran on it until #1475: the runner-token tests
+		// mint real RSA-2048 assertions and measured ~4.3-4.4s in isolation — a ~600ms margin that a
+		// contended CI worker eats, timing out 7 tests on an unrelated PR. The keygen is now cached
+		// (tests/fixtures/rsa-keys.ts) and that is the actual fix; this is the margin for the cost a
+		// cache cannot remove — cold transform of a Next route under a saturated worker pool.
+		//
+		// Deliberately NOT huge. An over-generous per-test budget is how @repo/ui lost the ability to
+		// report WHICH assertion hung (#1402): tight enough that a real hang still fails fast, wide
+		// enough that honest work is never guillotined.
+		testTimeout: 20_000,
 		css: false,
 		coverage: {
 			provider: "v8",

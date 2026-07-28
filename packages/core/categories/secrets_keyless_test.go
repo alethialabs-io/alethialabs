@@ -96,6 +96,11 @@ func TestKeylessSecretStoreValidateAndTarget(t *testing.T) {
 					tgt.Region != "us-east-1" || tgt.TargetRef != "arn:aws:iam::123456789012:role/alethia-secrets-read" {
 					t.Fatalf("aws target = %+v", tgt)
 				}
+				// external_id is OPTIONAL — a trust policy without an sts:ExternalId condition is the
+				// default and must stay valid, carrying an empty id (the store then omits the field).
+				if tgt.TargetExternalID != "" {
+					t.Fatalf("aws target external id = %q, want empty when provider_config omits it", tgt.TargetExternalID)
+				}
 			},
 		},
 		{
@@ -193,5 +198,112 @@ func TestDominantKeylessSecretTargetRouting(t *testing.T) {
 	// A selected-but-misconfigured keyless secret store fails closed.
 	if _, err := DominantKeylessSecretTarget(keylessSecretProject("aws-sm-xacct", nil)); err == nil {
 		t.Fatal("expected fail-closed error for aws-sm-xacct with no provider_config")
+	}
+}
+
+// An sts:ExternalId condition on the target role's trust policy is OPTIONAL defense-in-depth, but when
+// the customer's bootstrap sets one the same value must reach the store or STS rejects every assume —
+// which is exactly the dangling-control bug this covers (the module offered external_id while nothing
+// carried it through). AWS-only: the other lanes bind the grant to a concrete principal instead.
+func TestKeylessSecretTargetCarriesAWSExternalID(t *testing.T) {
+	p, err := Get("secrets", "aws-sm-xacct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := map[string]any{
+		"target_account_id": "123456789012", "region": "us-east-1",
+		"target_role_arn": "arn:aws:iam::123456789012:role/alethia-secrets-read",
+		"external_id":     "acme-7f3c",
+	}
+	ctx := ComponentContext{ProviderConfig: pc}
+	if err := p.Validate(ctx); err != nil {
+		t.Fatalf("external_id must not affect validation: %v", err)
+	}
+	tgt, ok := p.KeylessSecretStore(ctx)
+	if !ok {
+		t.Fatal("aws-sm-xacct: KeylessSecretStore not ok")
+	}
+	if tgt.TargetExternalID != "acme-7f3c" {
+		t.Fatalf("TargetExternalID = %q, want acme-7f3c", tgt.TargetExternalID)
+	}
+}
+
+// The store NAME is keyed on the CLOUD, not the connector slug. The slug is "aws-sm-xacct" but the
+// store is "secretstore-aws-xacct", so the tempting "secretstore-"+slug is wrong on every lane — and
+// a wrong name means an ExternalSecret pointing at a store that does not exist.
+func TestXacctStoreName(t *testing.T) {
+	for cloud, want := range map[string]string{
+		"aws":     "secretstore-aws-xacct",
+		"gcp":     "secretstore-gcp-xacct",
+		"azure":   "secretstore-azure-xacct",
+		"alibaba": "secretstore-alibaba-xacct",
+		// no cross-account store on these — "" so callers fail closed
+		"hetzner": "",
+		"":        "",
+		"nonsuch": "",
+	} {
+		if got := XacctStoreName(cloud); got != want {
+			t.Errorf("XacctStoreName(%q) = %q, want %q", cloud, got, want)
+		}
+	}
+	if got := len(AllXacctStoreNames()); got != 4 {
+		t.Errorf("AllXacctStoreNames returned %d names, want 4 — the stale-store reaper enumerates this", got)
+	}
+	for _, n := range AllXacctStoreNames() {
+		if n == "" {
+			t.Error("AllXacctStoreNames must not contain an empty name — the reaper would kubectl-delete a nameless object")
+		}
+	}
+}
+
+// Every *-xacct slug's built target must resolve to its cloud's store, proving the slug→cloud→name
+// hop is wired (this is where "secretstore-"+slug would silently produce "secretstore-aws-sm-xacct").
+func TestKeylessSecretTargetStoreName(t *testing.T) {
+	for slug, want := range map[string]string{
+		"aws-sm-xacct":      "secretstore-aws-xacct",
+		"gcp-sm-xacct":      "secretstore-gcp-xacct",
+		"azure-kv-xacct":    "secretstore-azure-xacct",
+		"alibaba-kms-xacct": "secretstore-alibaba-xacct",
+	} {
+		p, err := Get("secrets", slug)
+		if err != nil {
+			t.Fatalf("Get(secrets, %s): %v", slug, err)
+		}
+		tgt, ok := p.KeylessSecretStore(ComponentContext{ProviderConfig: keylessSecretFixture(slug)})
+		if !ok {
+			t.Fatalf("%s: KeylessSecretStore not ok", slug)
+		}
+		if got := tgt.StoreName(); got != want {
+			t.Errorf("%s: StoreName() = %q, want %q", slug, got, want)
+		}
+	}
+}
+
+// keylessSecretFixture is a minimal valid provider_config per *-xacct slug.
+func keylessSecretFixture(slug string) map[string]any {
+	switch slug {
+	case "aws-sm-xacct":
+		return map[string]any{"target_account_id": "123456789012", "region": "us-east-1",
+			"target_role_arn": "arn:aws:iam::123456789012:role/read"}
+	case "gcp-sm-xacct":
+		return map[string]any{"target_project_id": "secrets-project-b"}
+	case "azure-kv-xacct":
+		return map[string]any{"target_subscription_id": "sub-b", "vault_url": "https://target.vault.azure.net/"}
+	case "alibaba-kms-xacct":
+		return map[string]any{"target_account_id": "1234567890", "region": "cn-hangzhou",
+			"target_role_arn": "acs:ram::1234567890:role/read", "target_oidc_provider_arn": "acs:ram::1234567890:oidc-provider/ack"}
+	}
+	return nil
+}
+
+// The manifest lane branches on IsSaaSSecretStore first and the cross-account gate second. If any
+// slug were BOTH, the two branches would fight over one map key and which store a workload reads
+// would depend on branch order — so they must be provably disjoint.
+func TestSaaSAndKeylessSecretStoresAreDisjoint(t *testing.T) {
+	for _, slug := range []string{"aws-sm-xacct", "gcp-sm-xacct", "azure-kv-xacct", "alibaba-kms-xacct",
+		"vault", "doppler", "generic", "infisical", "1password", "native"} {
+		if IsSaaSSecretStore(slug) && IsKeylessSecretStore(slug) {
+			t.Errorf("%q is BOTH a SaaS store and a cross-account keyless store — the two secretStoreRefs branches would collide", slug)
+		}
 	}
 }

@@ -72,7 +72,6 @@ export const chartWorkloadValuePathsSchema = z.record(z.string(), z.string());
 export const chartWorkloadInsert = createInsertSchema(projectChartWorkloads, {
 	workload_kind: chartWorkloadKindSchema,
 	rendered: chartWorkloadRenderedSchema,
-	bindings: z.array(serviceBindingSchema).default([]),
 	config: chartWorkloadConfigSchema.default({}),
 	value_paths: z.record(z.string(), z.string()).default({}),
 });

@@ -59,16 +59,21 @@ output "node_security_group" {
   value = module.eks[0].node_security_group_id
 }
 
+# AZ outputs are the greenfield subnet AZs (local.azs = region+a/b/c). On brownfield (provision_vpc
+# = false) the cluster attaches to the user's existing subnets, which may live in OTHER AZs — so
+# emitting the hardcoded region+a/b/c would LIE (#1352). We gate on provision_vpc and emit null
+# there rather than a wrong AZ; the real per-subnet AZ is surfaced from cloud inventory in the UI,
+# not computed here (data.aws_availability_zones is unknown at plan under assume-role — #551).
 output "az1" {
-  value = local.azs[0]
+  value = var.provision_vpc ? local.azs[0] : null
 }
 
 output "az2" {
-  value = local.azs[1]
+  value = var.provision_vpc ? local.azs[1] : null
 }
 
 output "az3" {
-  value = local.azs[2]
+  value = var.provision_vpc ? local.azs[2] : null
 }
 
 output "subnet1" {
@@ -126,6 +131,13 @@ output "rds_cluster_arn" {
   value       = var.create_rds ? module.rds_maindb[0].rds_cluster_arn : null
 }
 
+# Keyless RDS IAM auth (#1504): the cluster resource id (cluster-XXXX) that scopes the app's
+# rds-db:connect ARN to THIS cluster instead of the current dbuser:*/alethia_app wildcard (#1509).
+output "rds_cluster_resource_id" {
+  description = "The RDS Cluster resource id (cluster-XXXX) — scopes the keyless rds-db:connect ARN"
+  value       = var.create_rds ? module.rds_maindb[0].rds_cluster_resource_id : null
+}
+
 output "rds_credentials_kms_key_arn" {
   description = "RDS Credentials kms key arn"
   value       = var.create_rds ? module.rds_maindb[0].rds_credentials_kms_key_arn : null
@@ -161,16 +173,31 @@ output "ecr_build_service_account" {
   value       = var.provision_ecr ? "${local.ecr_build_namespace}:${local.ecr_build_service_account}" : null
 }
 
-# Elasticache Redis
+# ElastiCache — Redis (replication group) or Valkey (serverless)
+#
+# ONE pair of output names for both engines, because the consumer is engine-blind: `endpointOutputKey`
+# (packages/core/manifests/generate.go) maps cloud+kind to a single output name, so a service bound to
+# "the cache" reads `redis_primary_endpoint_address` whichever engine backs it. Naming the Valkey
+# endpoint separately would force every consumer to learn the engine, and one that forgot would
+# silently resolve to null — the exact failure this lane exists to remove.
+#
+# The two toggles are mutually exclusive (the provider derives both from the one chosen engine), so
+# at most one side is non-null.
 
 output "redis_reader_endpoint_address" {
-  description = "The address of the endpoint for the reader node in the replication group, if the cluster mode is disabled."
-  value       = var.create_elasticache_redis ? module.elasticache[0].redis_reader_endpoint_address : null
+  description = "Read-only cache endpoint, when the provisioned engine exposes one"
+  value = try(coalesce(
+    var.create_elasticache_redis ? module.elasticache[0].redis_reader_endpoint_address : null,
+    var.create_elasticache_valkey ? module.valey[0].valkey_reader_endpoint_address : null,
+  ), null)
 }
 
 output "redis_primary_endpoint_address" {
-  description = "Redis primary or configuration endpoint, whichever is appropriate for the given cluster mode"
-  value       = var.create_elasticache_redis ? module.elasticache[0].redis_primary_endpoint_address : null
+  description = "Primary cache endpoint — Redis replication group or serverless Valkey, whichever was provisioned"
+  value = try(coalesce(
+    var.create_elasticache_redis ? module.elasticache[0].redis_primary_endpoint_address : null,
+    var.create_elasticache_valkey ? module.valey[0].valkey_primary_endpoint_address : null,
+  ), null)
 }
 output "irsa_rds_role_arn" {
   description = "ARN of the IAM Role for access to rds database"

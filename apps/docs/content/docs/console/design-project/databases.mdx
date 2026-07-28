@@ -17,7 +17,7 @@ The databases section configures managed relational database instances. Multiple
 | **Min Capacity** | Number | Minimum capacity (ACUs for Aurora, vCPUs for Cloud SQL) |
 | **Max Capacity** | Number | Maximum capacity for auto-scaling |
 | **Port** | Number | Database port (default: 5432 for PostgreSQL, 3306 for MySQL) |
-| **IAM Auth** | Toggle | Authenticate with short-lived cloud IAM tokens instead of a password. See [Keyless database auth](/console/design-project/keyless-database-auth) |
+| **IAM Auth** | Toggle | Authenticate with short-lived cloud IAM tokens instead of a password. PostgreSQL and MySQL, on AWS, GCP and Azure. See [Keyless database auth](/console/design-project/keyless-database-auth) |
 
 ## Engines by Provider
 
@@ -72,6 +72,10 @@ Once deployed, the database card in the [project detail](/console/dashboard/proj
 <Callout type="info">
 **IAM authentication** lets a workload connect using its own cloud identity and a short-lived token
 instead of a stored password — nothing to rotate, no secret in the cluster. A service bound to an
-IAM-auth database picks this up automatically. See [Keyless database auth](/console/design-project/keyless-database-auth)
-for how it works per cloud and its current rollout status.
+IAM-auth database picks this up automatically.
+
+It covers **PostgreSQL and MySQL on AWS, GCP and Azure**. Alibaba Cloud and Hetzner have no
+token-based database login, so a database on either stays on the password path even with the toggle
+on. See [Keyless database auth](/console/design-project/keyless-database-auth) for how it works per
+cloud and its current rollout status.
 </Callout>

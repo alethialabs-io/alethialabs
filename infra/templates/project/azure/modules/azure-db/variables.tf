@@ -113,3 +113,15 @@ variable "allowed_cidrs" {
   description = "Source CIDRs allow-listed on the DB public endpoint (one firewall rule each). Empty = no rules, server stays private (unchanged)."
   default     = []
 }
+
+variable "storage_auto_grow" {
+  type        = bool
+  description = "Grow storage automatically when it fills (MySQL only; forced on when high_availability is set, which the service requires)"
+  default     = true
+}
+
+variable "aad_identity_id" {
+  type        = string
+  description = "Resource id of the user-assigned identity the MySQL server uses for Entra auth. Empty leaves Entra auth off. (PostgreSQL takes an inline authentication block instead and ignores this.)"
+  default     = ""
+}

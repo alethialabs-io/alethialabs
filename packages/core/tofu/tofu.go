@@ -198,6 +198,25 @@ func (t *TofuCLI) PlanRefreshOnly(ctx context.Context, varFile, planOutFile stri
 	return t.tf.Plan(ctx, opts...)
 }
 
+// PlanDestroy runs `tofu plan -destroy` — it proposes the teardown WITHOUT performing
+// it, so the caller can inspect what a destroy would do (via ShowPlanJSON) before, or
+// instead of, running one. Destroy is the only lifecycle op with no read-only form:
+// Plan proposes an apply and Destroy performs a teardown, leaving "what would a
+// teardown change" unanswerable. The day-2 offer gate (test/e2e/t2_day2_offer.go) asks
+// exactly that — does a teardown go cleanly to zero — and asking it by running a real
+// destroy would defeat the purpose.
+func (t *TofuCLI) PlanDestroy(ctx context.Context, varFile, planOutFile string) (bool, error) {
+	fmt.Println("Running OpenTofu plan (destroy)...")
+	opts := []tfexec.PlanOption{
+		tfexec.Out(planOutFile),
+		tfexec.Destroy(true),
+	}
+	if varFile != "" {
+		opts = append(opts, tfexec.VarFile(varFile))
+	}
+	return t.tf.Plan(ctx, opts...)
+}
+
 func (t *TofuCLI) Apply(ctx context.Context, planFile string) error {
 	fmt.Println("Applying OpenTofu plan...")
 	return t.tf.Apply(ctx, tfexec.DirOrPlan(planFile))

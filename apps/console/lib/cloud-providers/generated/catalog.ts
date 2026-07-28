@@ -59,6 +59,9 @@ export interface DBEngine {
 	value: string;
 	label: string;
 	default_version: string;
+	/** Offline version baseline, newest-first; always contains `default_version`. Guidance, not a
+	 * gate — an account offering something newer must still be able to pick it (#918). */
+	versions: string[];
 }
 
 export interface Capacity {
@@ -82,8 +85,14 @@ export interface CacheTier {
 	cost: string;
 }
 
+export interface CacheEngine {
+	value: string;
+	label: string;
+}
+
 export interface CacheProvider {
 	default_tier: string;
+	engines: CacheEngine[];
 	tiers: CacheTier[];
 }
 
@@ -692,13 +701,24 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "aurora-postgresql",
 						"label": "Aurora PostgreSQL",
-						"default_version": "16.6"
+						"default_version": "16",
+						"versions": [
+							"18",
+							"17",
+							"16",
+							"15",
+							"14"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "aurora-mysql",
 						"label": "Aurora MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0",
+						"versions": [
+							"8.4",
+							"8.0"
+						]
 					}
 				]
 			},
@@ -716,13 +736,25 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "cloudsql-postgresql",
 						"label": "Cloud SQL PostgreSQL",
-						"default_version": "15"
+						"default_version": "15",
+						"versions": [
+							"18",
+							"17",
+							"16",
+							"15",
+							"14"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "cloudsql-mysql",
 						"label": "Cloud SQL MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0",
+						"versions": [
+							"8.4",
+							"8.0",
+							"5.7"
+						]
 					}
 				]
 			},
@@ -740,13 +772,25 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "azure-postgresql",
 						"label": "Azure Database for PostgreSQL",
-						"default_version": "16"
+						"default_version": "16",
+						"versions": [
+							"18",
+							"17",
+							"16",
+							"15",
+							"14"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "azure-mysql",
 						"label": "Azure Database for MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0.21",
+						"versions": [
+							"8.4",
+							"8.0.21",
+							"5.7"
+						]
 					}
 				]
 			},
@@ -764,7 +808,10 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "postgres",
 						"label": "PostgreSQL (CloudNativePG)",
-						"default_version": "16"
+						"default_version": "16",
+						"versions": [
+							"16"
+						]
 					}
 				]
 			},
@@ -782,13 +829,23 @@ export const CATALOG: Catalog = {
 						"family": "postgres",
 						"value": "PostgreSQL",
 						"label": "ApsaraDB RDS PostgreSQL",
-						"default_version": "16.0"
+						"default_version": "16.0",
+						"versions": [
+							"17.0",
+							"16.0",
+							"15.0",
+							"14.0"
+						]
 					},
 					{
 						"family": "mysql",
 						"value": "MySQL",
 						"label": "ApsaraDB RDS MySQL",
-						"default_version": "8.0"
+						"default_version": "8.0",
+						"versions": [
+							"8.0",
+							"5.7"
+						]
 					}
 				]
 			}
@@ -796,6 +853,16 @@ export const CATALOG: Catalog = {
 		"cache": {
 			"aws": {
 				"default_tier": "cache.t3.medium",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "Redis (ElastiCache)"
+					},
+					{
+						"value": "valkey",
+						"label": "Valkey (ElastiCache Serverless)"
+					}
+				],
 				"tiers": [
 					{
 						"value": "cache.t3.micro",
@@ -831,6 +898,16 @@ export const CATALOG: Catalog = {
 			},
 			"gcp": {
 				"default_tier": "M1",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "Redis (Memorystore)"
+					},
+					{
+						"value": "valkey",
+						"label": "Valkey (Memorystore)"
+					}
+				],
 				"tiers": [
 					{
 						"value": "M1",
@@ -859,42 +936,60 @@ export const CATALOG: Catalog = {
 				]
 			},
 			"azure": {
-				"default_tier": "C1",
+				"default_tier": "Balanced_B1",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "Azure Managed Redis"
+					}
+				],
 				"tiers": [
 					{
-						"value": "C0",
-						"label": "Basic C0",
-						"memory_gb": 0.25,
-						"cost": "~$15/mo"
+						"value": "Balanced_B0",
+						"label": "Balanced B0",
+						"memory_gb": 0.5,
+						"cost": "~$12/mo"
 					},
 					{
-						"value": "C1",
-						"label": "Basic C1",
+						"value": "Balanced_B1",
+						"label": "Balanced B1",
 						"memory_gb": 1,
-						"cost": "~$35/mo"
+						"cost": "~$23/mo"
 					},
 					{
-						"value": "C2",
-						"label": "Standard C2",
-						"memory_gb": 2.5,
-						"cost": "~$80/mo"
+						"value": "Balanced_B3",
+						"label": "Balanced B3",
+						"memory_gb": 3,
+						"cost": "~$47/mo"
 					},
 					{
-						"value": "C3",
-						"label": "Standard C3",
+						"value": "Balanced_B5",
+						"label": "Balanced B5",
 						"memory_gb": 6,
-						"cost": "~$155/mo"
+						"cost": "~$114/mo"
 					},
 					{
-						"value": "P1",
-						"label": "Premium P1",
-						"memory_gb": 6,
-						"cost": "~$210/mo"
+						"value": "Balanced_B10",
+						"label": "Balanced B10",
+						"memory_gb": 12,
+						"cost": "~$230/mo"
+					},
+					{
+						"value": "Balanced_B20",
+						"label": "Balanced B20",
+						"memory_gb": 24,
+						"cost": "~$459/mo"
 					}
 				]
 			},
 			"hetzner": {
 				"default_tier": "1",
+				"engines": [
+					{
+						"value": "valkey",
+						"label": "Valkey (in-cluster chart)"
+					}
+				],
 				"tiers": [
 					{
 						"value": "1",
@@ -918,6 +1013,12 @@ export const CATALOG: Catalog = {
 			},
 			"alibaba": {
 				"default_tier": "redis.master.small.default",
+				"engines": [
+					{
+						"value": "redis",
+						"label": "ApsaraDB for Redis"
+					}
+				],
 				"tiers": [
 					{
 						"value": "redis.master.small.default",
@@ -1003,6 +1104,11 @@ export function dbEngine(
 /** Cache SKU inventory for a provider. */
 export function cacheTiers(provider: string): CacheTier[] {
 	return CATALOG.cache[provider]?.tiers ?? [];
+}
+
+/** Cache ENGINES a provider can back — the cache-side twin of `dbEngines`. */
+export function cacheEngines(provider: string): CacheEngine[] {
+	return CATALOG.cache[provider]?.engines ?? [];
 }
 
 /** Pick the provider cache SKU whose memory is closest to the requested size. */
@@ -2333,6 +2439,8 @@ export interface DbEngineOption {
 	value: string;
 	label: string;
 	defaultVersion: string;
+	/** Offline version baseline, newest-first; always contains `defaultVersion`. */
+	versions: string[];
 }
 
 /** Database engine options per provider. */
@@ -2341,55 +2449,103 @@ export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = {
 			{
 				"value": "aurora-postgresql",
 				"label": "Aurora PostgreSQL",
-				"defaultVersion": "16.6"
+				"defaultVersion": "16",
+				"versions": [
+					"18",
+					"17",
+					"16",
+					"15",
+					"14"
+				]
 			},
 			{
 				"value": "aurora-mysql",
 				"label": "Aurora MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0",
+				"versions": [
+					"8.4",
+					"8.0"
+				]
 			}
 		],
 		"gcp": [
 			{
 				"value": "cloudsql-postgresql",
 				"label": "Cloud SQL PostgreSQL",
-				"defaultVersion": "15"
+				"defaultVersion": "15",
+				"versions": [
+					"18",
+					"17",
+					"16",
+					"15",
+					"14"
+				]
 			},
 			{
 				"value": "cloudsql-mysql",
 				"label": "Cloud SQL MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0",
+				"versions": [
+					"8.4",
+					"8.0",
+					"5.7"
+				]
 			}
 		],
 		"azure": [
 			{
 				"value": "azure-postgresql",
 				"label": "Azure Database for PostgreSQL",
-				"defaultVersion": "16"
+				"defaultVersion": "16",
+				"versions": [
+					"18",
+					"17",
+					"16",
+					"15",
+					"14"
+				]
 			},
 			{
 				"value": "azure-mysql",
 				"label": "Azure Database for MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0.21",
+				"versions": [
+					"8.4",
+					"8.0.21",
+					"5.7"
+				]
 			}
 		],
 		"hetzner": [
 			{
 				"value": "postgres",
 				"label": "PostgreSQL (CloudNativePG)",
-				"defaultVersion": "16"
+				"defaultVersion": "16",
+				"versions": [
+					"16"
+				]
 			}
 		],
 		"alibaba": [
 			{
 				"value": "postgres",
 				"label": "ApsaraDB RDS PostgreSQL",
-				"defaultVersion": "16.0"
+				"defaultVersion": "16.0",
+				"versions": [
+					"17.0",
+					"16.0",
+					"15.0",
+					"14.0"
+				]
 			},
 			{
 				"value": "mysql",
 				"label": "ApsaraDB RDS MySQL",
-				"defaultVersion": "8.0"
+				"defaultVersion": "8.0",
+				"versions": [
+					"8.0",
+					"5.7"
+				]
 			}
 		]
 	};
@@ -2607,34 +2763,40 @@ export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = {
 		],
 		"azure": [
 			{
-				"value": "C0",
-				"label": "Basic C0",
-				"memoryGb": 0.25,
-				"cost": "~$15/mo"
+				"value": "Balanced_B0",
+				"label": "Balanced B0",
+				"memoryGb": 0.5,
+				"cost": "~$12/mo"
 			},
 			{
-				"value": "C1",
-				"label": "Basic C1",
+				"value": "Balanced_B1",
+				"label": "Balanced B1",
 				"memoryGb": 1,
-				"cost": "~$35/mo"
+				"cost": "~$23/mo"
 			},
 			{
-				"value": "C2",
-				"label": "Standard C2",
-				"memoryGb": 2.5,
-				"cost": "~$80/mo"
+				"value": "Balanced_B3",
+				"label": "Balanced B3",
+				"memoryGb": 3,
+				"cost": "~$47/mo"
 			},
 			{
-				"value": "C3",
-				"label": "Standard C3",
+				"value": "Balanced_B5",
+				"label": "Balanced B5",
 				"memoryGb": 6,
-				"cost": "~$155/mo"
+				"cost": "~$114/mo"
 			},
 			{
-				"value": "P1",
-				"label": "Premium P1",
-				"memoryGb": 6,
-				"cost": "~$210/mo"
+				"value": "Balanced_B10",
+				"label": "Balanced B10",
+				"memoryGb": 12,
+				"cost": "~$230/mo"
+			},
+			{
+				"value": "Balanced_B20",
+				"label": "Balanced B20",
+				"memoryGb": 24,
+				"cost": "~$459/mo"
 			}
 		],
 		"hetzner": [
@@ -2679,11 +2841,65 @@ export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = {
 		]
 	};
 
+export interface CacheEngineOption {
+	value: string;
+	label: string;
+}
+
+/**
+ * Cache ENGINES per provider — what each cloud can actually back.
+ *
+ * The database side has had this since the beginning (`DB_ENGINES`). The cache side didn't, so the
+ * same knowledge lived hardcoded in the canvas floor and again in the cross-cloud converter, and the
+ * two could disagree with nothing to catch it. Deriving both from here is what makes "Azure has no
+ * Valkey" a fact the product enforces rather than a comment someone has to remember.
+ */
+export const CACHE_ENGINES: Record<CloudProviderSlug, CacheEngineOption[]> = {
+		"aws": [
+			{
+				"value": "redis",
+				"label": "Redis (ElastiCache)"
+			},
+			{
+				"value": "valkey",
+				"label": "Valkey (ElastiCache Serverless)"
+			}
+		],
+		"gcp": [
+			{
+				"value": "redis",
+				"label": "Redis (Memorystore)"
+			},
+			{
+				"value": "valkey",
+				"label": "Valkey (Memorystore)"
+			}
+		],
+		"azure": [
+			{
+				"value": "redis",
+				"label": "Azure Managed Redis"
+			}
+		],
+		"hetzner": [
+			{
+				"value": "valkey",
+				"label": "Valkey (in-cluster chart)"
+			}
+		],
+		"alibaba": [
+			{
+				"value": "redis",
+				"label": "ApsaraDB for Redis"
+			}
+		]
+	};
+
 /** Default cache node type per provider. */
 export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = {
 		"aws": "cache.t3.medium",
 		"gcp": "M1",
-		"azure": "C1",
+		"azure": "Balanced_B1",
 		"hetzner": "1",
 		"alibaba": "redis.master.small.default"
 	};
@@ -2700,11 +2916,11 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"cache.r6g.xlarge": "M4"
 			},
 			"azure": {
-				"cache.t3.micro": "C0",
-				"cache.t3.small": "C1",
-				"cache.t3.medium": "C2",
-				"cache.r6g.large": "C3",
-				"cache.r6g.xlarge": "P1"
+				"cache.t3.micro": "Balanced_B0",
+				"cache.t3.small": "Balanced_B3",
+				"cache.t3.medium": "Balanced_B5",
+				"cache.r6g.large": "Balanced_B20",
+				"cache.r6g.xlarge": "Balanced_B20"
 			},
 			"hetzner": {
 				"cache.t3.micro": "1",
@@ -2730,10 +2946,10 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"M4": "cache.r6g.xlarge"
 			},
 			"azure": {
-				"M1": "C1",
-				"M2": "C2",
-				"M3": "C3",
-				"M4": "P1"
+				"M1": "Balanced_B1",
+				"M2": "Balanced_B5",
+				"M3": "Balanced_B10",
+				"M4": "Balanced_B20"
 			},
 			"hetzner": {
 				"M1": "1",
@@ -2751,32 +2967,36 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 		"azure": {
 			"azure": {},
 			"aws": {
-				"C0": "cache.t3.micro",
-				"C1": "cache.t3.small",
-				"C2": "cache.t3.medium",
-				"C3": "cache.r6g.large",
-				"P1": "cache.r6g.xlarge"
+				"Balanced_B0": "cache.t3.micro",
+				"Balanced_B1": "cache.t3.small",
+				"Balanced_B3": "cache.t3.medium",
+				"Balanced_B5": "cache.r6g.large",
+				"Balanced_B10": "cache.r6g.large",
+				"Balanced_B20": "cache.r6g.xlarge"
 			},
 			"gcp": {
-				"C0": "M1",
-				"C1": "M1",
-				"C2": "M2",
-				"C3": "M3",
-				"P1": "M4"
+				"Balanced_B0": "M1",
+				"Balanced_B1": "M1",
+				"Balanced_B3": "M2",
+				"Balanced_B5": "M3",
+				"Balanced_B10": "M4",
+				"Balanced_B20": "M4"
 			},
 			"hetzner": {
-				"C0": "1",
-				"C1": "1",
-				"C2": "2",
-				"C3": "4",
-				"P1": "4"
+				"Balanced_B0": "1",
+				"Balanced_B1": "1",
+				"Balanced_B3": "4",
+				"Balanced_B5": "4",
+				"Balanced_B10": "4",
+				"Balanced_B20": "4"
 			},
 			"alibaba": {
-				"C0": "redis.master.small.default",
-				"C1": "redis.master.small.default",
-				"C2": "redis.master.mid.default",
-				"C3": "redis.master.large.default",
-				"P1": "redis.master.large.default"
+				"Balanced_B0": "redis.master.small.default",
+				"Balanced_B1": "redis.master.small.default",
+				"Balanced_B3": "redis.master.large.default",
+				"Balanced_B5": "redis.master.large.default",
+				"Balanced_B10": "redis.master.large.default",
+				"Balanced_B20": "redis.master.large.default"
 			}
 		},
 		"hetzner": {
@@ -2792,9 +3012,9 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"4": "M3"
 			},
 			"azure": {
-				"1": "C1",
-				"2": "C2",
-				"4": "C3"
+				"1": "Balanced_B1",
+				"2": "Balanced_B3",
+				"4": "Balanced_B5"
 			},
 			"alibaba": {
 				"1": "redis.master.small.default",
@@ -2815,9 +3035,9 @@ export const CACHE_NODE_MAP: Record<CloudProviderSlug, Record<CloudProviderSlug,
 				"redis.master.large.default": "M2"
 			},
 			"azure": {
-				"redis.master.small.default": "C1",
-				"redis.master.mid.default": "C2",
-				"redis.master.large.default": "C3"
+				"redis.master.small.default": "Balanced_B1",
+				"redis.master.mid.default": "Balanced_B3",
+				"redis.master.large.default": "Balanced_B5"
 			},
 			"hetzner": {
 				"redis.master.small.default": "1",

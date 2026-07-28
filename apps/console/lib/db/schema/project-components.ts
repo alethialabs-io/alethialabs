@@ -30,8 +30,8 @@ import type {
 	ChartValuePathMap,
 	ChartWorkloadConfig,
 	ChartWorkloadRendered,
-	ClusterAdmin,
 	ClusterProviderConfig,
+	DatabaseProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
 	IacScanReport,
@@ -45,7 +45,6 @@ import type {
 	RegistryProviderConfig,
 	ScanStatus,
 	SecretsProviderConfig,
-	ServiceBinding,
 	ServiceBuild,
 	ServiceEnvVar,
 	ServicePort,
@@ -54,7 +53,6 @@ import type {
 	ServiceSource,
 	StagedChangePayload,
 	StorageProviderConfig,
-	TopicSubscription,
 	VerifyReport,
 } from "@/types/jsonb.types";
 import {
@@ -111,6 +109,11 @@ export const projectNetwork = pgTable(
 		region: text(),
 		provision_network: boolean().default(true).notNull(),
 		network_id: text(),
+		// Brownfield (existing-VPC) subnet selection: the native subnet ids the user
+		// picked from cloud inventory (#1352). Empty = auto-discover (today's behaviour),
+		// so it stays backward compatible. Consumed per-cloud via ProviderTfvars /
+		// deploy.go rather than guessing every subnet in the VPC.
+		subnet_ids: text().array().default([]),
 		cidr_block: text().default("10.0.0.0/16"),
 		single_nat_gateway: boolean().default(true),
 		allowed_cidr_blocks: text().array().default([]),
@@ -151,7 +154,6 @@ export const projectCluster = pgTable(
 		// node instance types per cloud at provision time (the form supplies explicit
 		// values for a chosen provider).
 		cluster_version: text(),
-		cluster_admins: jsonb().$type<ClusterAdmin[]>().default([]),
 		// Cloud-indifferent node capability ({vcpu, memory_gb}); the Go resolver maps it to
 		// the nearest per-provider instance type at provision time.
 		node_size: jsonb().$type<NodeSize>(),
@@ -193,10 +195,12 @@ export const projectCluster = pgTable(
 	],
 );
 
-// A cluster's day-2 admins, normalized out of project_cluster.cluster_admins JSONB. `groups` is a
-// real text[] column; `ordinal` preserves author order so buildConfigSnapshot re-embeds a
-// byte-identical array. Tenancy flows through the parent cluster → project (join-through RLS in
-// programmables.sql). ON DELETE CASCADE: clearing the cluster drops its admins.
+// A cluster's day-2 admins — the sole source since the contract phase dropped the
+// project_cluster.cluster_admins JSONB. `groups` is a real text[] column; `ordinal` preserves author
+// order so buildConfigSnapshot and the CLI config read (both via lib/db/normalized-reads.ts) re-embed
+// a byte-identical array. Tenancy flows through the parent
+// cluster → project (join-through RLS in programmables.sql). ON DELETE CASCADE: clearing the cluster
+// drops its admins.
 export const clusterAdmins = pgTable(
 	"cluster_admins",
 	{
@@ -488,6 +492,11 @@ export const projectDatabases = pgTable(
 		iam_auth: boolean().default(false),
 		endpoint: text(),
 		reader_endpoint: text(),
+		// Provider-specific database knobs the typed columns above do not model, passed
+		// through to the template variables by name (mergeProviderConfig). Databases were
+		// the last multi-instance component table without this, which is why a knob like
+		// the CloudWatch log-export set had to be hardcoded in Go.
+		provider_config: jsonb().$type<DatabaseProviderConfig>().default({}),
 		// Provider-specific resource identifiers (cluster ARN/identifier, credential
 		// secret refs, KMS key on AWS) — cloud-agnostic JSONB.
 		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
@@ -604,7 +613,6 @@ export const projectTopics = pgTable(
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
-		subscriptions: jsonb().$type<TopicSubscription[]>().default([]),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),
@@ -620,9 +628,10 @@ export const projectTopics = pgTable(
 	],
 );
 
-// A topic's delivery subscriptions, normalized out of project_topics.subscriptions JSONB (the
-// finite `protocol` is a real enum column + `topic_id` gives FK integrity). `ordinal` preserves the
-// author-order the JSONB array had, so buildConfigSnapshot re-embeds a byte-identical array.
+// A topic's delivery subscriptions — the sole source since the contract phase dropped the
+// project_topics.subscriptions JSONB (the finite `protocol` is a real enum column + `topic_id` gives
+// FK integrity). `ordinal` preserves author order, so buildConfigSnapshot (which reads these back via
+// lib/db/normalized-reads.ts) re-embeds a byte-identical array.
 // Tenancy flows through the parent topic → project (join-through RLS in programmables.sql, like the
 // support-case child tables). ON DELETE CASCADE: clearing a topic drops its subscriptions.
 export const topicSubscriptions = pgTable(
@@ -825,10 +834,8 @@ export const projectServices = pgTable(
 		build: jsonb().$type<ServiceBuild>(),
 		// Plain environment variables (secret env-from is W4).
 		env: jsonb().$type<ServiceEnvVar[]>().default([]).notNull(),
-		// W3 — declared edges to backing resources (service→database/cache/queue/secret) plus the
-		// env each injects. The runner resolves each binding to the provisioned resource's endpoint
-		// (tofu output) / credentials (ExternalSecret → k8s Secret) at deploy time.
-		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
+		// W3 bindings (service→database/cache/queue/secret edges + injected env) live in the
+		// service_bindings child table — the JSONB column was dropped in the contract phase (#1426).
 		// Container ports the workload exposes.
 		ports: jsonb().$type<ServicePort[]>().default([]).notNull(),
 		replicas: integer().default(2).notNull(),
@@ -881,10 +888,9 @@ export const projectChartWorkloads = pgTable(
 		// The pure description extracted from `helm template` output — OVERWRITTEN wholesale on every
 		// re-scan (it mirrors the chart, not the user).
 		rendered: jsonb().$type<ChartWorkloadRendered>().notNull(),
-		// W3 — the user's declared bindings to backing resources. PRESERVED across re-scans. On deploy
-		// (Lane 2) each binding writes into the chart's values at the declared value-path (a keyless
-		// secret-ref for credential facets), never re-rendering the workload.
-		bindings: jsonb().$type<ServiceBinding[]>().default([]).notNull(),
+		// W3 bindings (declared edges to backing resources) live in the service_bindings child table —
+		// the JSONB column was dropped in the contract phase (#1426); service_bindings is preserved
+		// across re-scans and each binding writes into the chart's values at deploy (Lane 2).
 		// The user's editable overlay (v1: replicas + env), written back into the chart's values on
 		// deploy. PRESERVED across re-scans.
 		config: jsonb().$type<ChartWorkloadConfig>().default({}).notNull(),
@@ -909,6 +915,10 @@ export const projectChartWorkloads = pgTable(
 // exactly-one CHECK (both ON DELETE CASCADE). `target_kind` is a real enum; `ordinal` preserves
 // author order so buildConfigSnapshot re-embeds a byte-identical array. Tenancy flows through the
 // owner → project (2-path join-through RLS in programmables.sql).
+// BYO-IaC target fields (#824): `target_address` = the customer module's Terraform address, and the
+// three `output_*` columns are the ServiceBinding.target.output_keys facet→output-name map. All
+// nullable — a first-class component target leaves them NULL. (These complete the child table so a
+// later contract PR can drop the JSONB `bindings` columns without losing BYO-IaC data.)
 export const serviceBindings = pgTable(
 	"service_bindings",
 	{
@@ -921,6 +931,10 @@ export const serviceBindings = pgTable(
 		}),
 		target_kind: serviceBindingKind().notNull(),
 		target_name: text().notNull(),
+		target_address: text(),
+		output_endpoint: text(),
+		output_port: text(),
+		output_credential_secret: text(),
 		ordinal: integer().notNull(),
 		created_at: ts(),
 	},

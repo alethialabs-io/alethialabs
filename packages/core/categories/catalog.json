@@ -1054,9 +1054,9 @@
 			"category": "helm_registry",
 			"slug": "oci-ecr",
 			"name": "Amazon ECR (OCI Helm)",
-			"description": "Pull Helm charts from Amazon ECR. Coming soon: ECR uses a 12-hour ephemeral token, so its keyless in-cluster token refresh (from the connected AWS account) is a documented follow-up.",
+			"description": "Pull Helm charts from a cross-account Amazon ECR registry keylessly — an in-cluster refresher mints + rotates the ~12h ECR token from the connected AWS account (no stored key). Rolling out behind a feature gate.",
 			"organization": "Amazon Web Services",
-			"auth_method": "api_key",
+			"auth_method": "iam_role",
 			"icon_url": "/icons/aws/aws-32x32.png",
 			"docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/userguide/push-oci-artifact.html",
 			"status": "coming_soon",
@@ -1068,18 +1068,32 @@
 			"provider_config": {
 				"fields": [
 					{
-						"key": "registry_host",
-						"label": "Registry Host",
+						"key": "target_account_id",
+						"label": "Registry AWS Account ID",
 						"type": "text",
-						"required": false,
-						"help": "The ECR registry host, e.g. 1234.dkr.ecr.us-east-1.amazonaws.com."
+						"required": true,
+						"help": "The AWS account that owns the ECR registry (the cross-account target)."
 					},
 					{
 						"key": "region",
 						"label": "Region",
 						"type": "text",
-						"required": false,
+						"required": true,
 						"help": "The ECR region."
+					},
+					{
+						"key": "registry_host",
+						"label": "Registry Host",
+						"type": "text",
+						"required": true,
+						"help": "The ECR registry host, e.g. 1234.dkr.ecr.us-east-1.amazonaws.com."
+					},
+					{
+						"key": "target_role_arn",
+						"label": "Target Role ARN",
+						"type": "text",
+						"required": true,
+						"help": "The IAM role in the registry account that trusts this cluster's OIDC and grants ECR pull; the in-cluster refresher assumes it to mint the token."
 					}
 				]
 			}
@@ -1088,9 +1102,9 @@
 			"category": "helm_registry",
 			"slug": "oci-public-ecr",
 			"name": "Amazon ECR Public (OCI Helm)",
-			"description": "Pull Helm charts from Amazon ECR Public (public.ecr.aws). Coming soon: keyless in-cluster token refresh is a documented follow-up.",
+			"description": "Pull Helm charts from Amazon ECR Public (public.ecr.aws) keylessly — an in-cluster refresher mints + rotates the public-registry token under the cluster's own identity (no stored key). Rolling out behind a feature gate.",
 			"organization": "Amazon Web Services",
-			"auth_method": "api_key",
+			"auth_method": "iam_role",
 			"icon_url": "/icons/aws/aws-32x32.png",
 			"docs_url": "https://docs.aws.amazon.com/AmazonECR/latest/public/public-registries.html",
 			"status": "coming_soon",
@@ -1106,7 +1120,7 @@
 						"label": "Registry Host",
 						"type": "text",
 						"required": false,
-						"help": "The ECR Public registry host (public.ecr.aws)."
+						"help": "The ECR Public registry host (defaults to public.ecr.aws)."
 					}
 				]
 			}
@@ -1260,6 +1274,59 @@
 		},
 		{
 			"category": "secrets",
+			"slug": "generic",
+			"name": "Generic (Vault-compatible)",
+			"description": "Manage application secrets in a Vault-KV-API-compatible endpoint (HashiCorp Vault, OpenBao, or any server exposing the Vault KV v2 HTTP API). Workloads resolve values in-cluster via the External Secrets Operator.",
+			"organization": "Alethia",
+			"auth_method": "api_key",
+			"icon_url": "/icons/vault/vault-32x32.png",
+			"docs_url": "https://external-secrets.io/latest/provider/hashicorp-vault/",
+			"status": "active",
+			"sort_order": 48,
+			"module_path": "categories/secrets/vault",
+			"credential": {
+				"fields": [
+					{
+						"key": "address",
+						"label": "Endpoint Address",
+						"type": "text",
+						"secret": false,
+						"required": true,
+						"help": "Base URL of the Vault-KV-API-compatible server, e.g. https://secrets.example.com:8200"
+					},
+					{
+						"key": "token",
+						"label": "API Token",
+						"type": "password",
+						"secret": true,
+						"required": true
+					}
+				]
+			},
+			"provider_config": {
+				"fields": [
+					{
+						"key": "mount_path",
+						"label": "KV Mount Path",
+						"type": "text",
+						"default": "secret",
+						"required": true
+					},
+					{
+						"key": "kv_version",
+						"label": "KV Version",
+						"type": "select",
+						"options": [
+							"1",
+							"2"
+						],
+						"default": "2"
+					}
+				]
+			}
+		},
+		{
+			"category": "secrets",
 			"slug": "aws-sm-xacct",
 			"name": "AWS Secrets Manager (cross-account)",
 			"description": "Read secrets from a Secrets Manager in a different AWS account — keyless, no stored key. The External Secrets Operator assumes a role the target account trusts and reads across the account boundary.",
@@ -1295,6 +1362,13 @@
 						"type": "text",
 						"required": true,
 						"help": "An IAM role in the secrets account that trusts this cluster's external-secrets IRSA role and grants secretsmanager:GetSecretValue. You create this in the secrets account."
+					},
+					{
+						"key": "external_id",
+						"label": "External ID",
+						"type": "text",
+						"required": false,
+						"help": "Only if the target role's trust policy carries an sts:ExternalId condition — enter the same value you set on the bootstrap module's external_id. Leave blank when it does not; STS rejects the assume when the two disagree."
 					}
 				]
 			}

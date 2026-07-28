@@ -1,0 +1,1 @@
+ALTER TABLE "project_network" ADD COLUMN "subnet_ids" text[] DEFAULT '{}';

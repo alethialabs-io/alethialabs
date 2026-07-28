@@ -100,7 +100,7 @@ func TestCredentialFacetNames(t *testing.T) {
 }
 
 func TestIsCredentialFacet(t *testing.T) {
-	for _, f := range []string{"username", "password", "connection_string"} {
+	for _, f := range []string{"username", "password", "connection_string", "value"} {
 		if !IsCredentialFacet(f) {
 			t.Errorf("%q should be a credential facet", f)
 		}
@@ -109,6 +109,55 @@ func TestIsCredentialFacet(t *testing.T) {
 		if IsCredentialFacet(f) {
 			t.Errorf("%q should NOT be a credential facet", f)
 		}
+	}
+}
+
+func TestRenderSecretBindingExternalSecret(t *testing.T) {
+	target := types.ServiceBindingTarget{Kind: "secret", Name: "stripe-key"}
+
+	// Vault-kind store: the value lives under the `value` property of the KV entry.
+	vault, err := RenderSecretBindingExternalSecret(SecretBindingExternalSecretParams{
+		ServiceName: "API",
+		Namespace:   "default",
+		Target:      target,
+		StoreName:   "secretstore-vault",
+		RemoteKey:   "stripe-key",
+		Property:    "value",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"kind: ExternalSecret",
+		"name: api-secret-stripe-key", // BindingSecretName(service, target)
+		"name: secretstore-vault",
+		"kind: ClusterSecretStore",
+		"secretKey: value", // the single materialized k8s Secret key (lock-step with resolveBindings)
+		"key: stripe-key",  // remoteRef.key = the project secret's own name
+		"property: value",
+	} {
+		if !strings.Contains(vault, want) {
+			t.Errorf("vault secret ExternalSecret missing %q:\n%s", want, vault)
+		}
+	}
+
+	// Doppler is flat (key→value) — NO property must render (the template omits it when empty).
+	doppler, err := RenderSecretBindingExternalSecret(SecretBindingExternalSecretParams{
+		ServiceName: "API",
+		Namespace:   "default",
+		Target:      target,
+		StoreName:   "secretstore-doppler",
+		RemoteKey:   "stripe-key",
+		Property:    "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(doppler, "name: secretstore-doppler") || !strings.Contains(doppler, "secretKey: value") {
+		t.Errorf("doppler secret ExternalSecret wrong:\n%s", doppler)
+	}
+	if strings.Contains(doppler, "property:") {
+		t.Errorf("doppler is flat — no remoteRef.property must render:\n%s", doppler)
 	}
 }
 

@@ -4,6 +4,10 @@
 # Plan-time invariant checks for the GCP project template (per infra IaC rule #2). These assert the
 # naming, hardening, and conditional-completeness invariants the design depends on, so a careless
 # edit or bad tfvars fails loudly at plan time rather than provisioning something broken/insecure.
+#
+# CONVENTION: this file holds only the CORE, rarely-touched invariants. A new feature's checks go in
+# their own checks_<feature>.tf — OpenTofu loads every *.tf in the directory, and a single shared
+# append-point is what made concurrent feature branches conflict here repeatedly.
 
 locals {
   # GCP resource ids (GKE cluster, Cloud SQL instance) are commonly capped around 40 characters.
@@ -36,33 +40,6 @@ check "gcp_name_stem_within_limit" {
   }
 }
 
-# When a network is provisioned in-template, the primary/pod/service CIDRs must be valid.
-check "network_cidrs_valid_when_provisioned" {
-  assert {
-    condition     = !var.provision_network || (can(cidrhost(var.network_cidr, 0)) && can(cidrhost(var.pods_cidr_range, 0)) && can(cidrhost(var.services_cidr_range, 0)))
-    error_message = "provision_network is true but one of network_cidr / pods_cidr_range / services_cidr_range is not a valid IPv4 CIDR."
-  }
-}
-
-# Keyless Cloud SQL auth (#722): when IAM auth is on, the app must have a Workload-Identity path to
-# the DB — the app GSA + its CLOUD_IAM_SERVICE_ACCOUNT database user + the GKE cluster it federates
-# through. Assert they're all wired so a keyless binding can't render pointed at a login that never
-# got created (which would fail closed at deploy, but louder to catch here at plan time).
-check "keyless_cloud_sql_app_identity_wired" {
-  assert {
-    condition     = !local.enable_app_db_iam || (var.provision_gke && length(google_service_account.app_db) == 1 && module.cloud_sql[0].app_iam_user != null)
-    error_message = "cloud_sql_iam_auth is on but the keyless app identity is incomplete: it needs provision_gke=true, the app GSA, and the CLOUD_IAM_SERVICE_ACCOUNT database user."
-  }
-}
-
-# When an existing network is used (provision_network = false) its self-links must be supplied.
-check "existing_network_ids_present" {
-  assert {
-    condition     = var.provision_network || (length(trimspace(var.network_id)) > 0 && length(trimspace(var.subnetwork_id)) > 0)
-    error_message = "provision_network is false (existing network) but network_id or subnetwork_id is empty; supply both self-links."
-  }
-}
-
 # A GKE Kubernetes master version must be set when GKE is provisioned.
 check "gke_cluster_version_present" {
   assert {
@@ -71,84 +48,17 @@ check "gke_cluster_version_present" {
   }
 }
 
-# Standard GKE clusters (non-Autopilot) keep nodes private by design; do not disable private nodes.
-check "gke_private_nodes_when_standard" {
+# The Artifact Registry module and the output that reads it must agree about whether it exists.
+#
+# They didn't: the module's count required `registry_provider == "native"` while the output only
+# checked `provision_artifact_registry`, and the console derives that flag from the PRESENCE of a
+# registry row, not its provider. Selecting any registry connector therefore indexed [0] of an empty
+# module and failed the whole apply with "Invalid index". The output now guards on
+# `length(module.artifact_registry)`; this asserts the pairing so a future edit can't reintroduce the
+# skew silently.
+check "artifact_registry_output_matches_module" {
   assert {
-    condition     = !var.provision_gke || var.gke_enable_autopilot || var.gke_enable_private_nodes
-    error_message = "Standard GKE clusters must keep gke_enable_private_nodes = true (private nodes)."
-  }
-}
-
-# When Cloud DNS is enabled, both the zone name and domain must be supplied.
-check "cloud_dns_fields_present_when_enabled" {
-  assert {
-    condition     = !var.cloud_dns_enabled || (length(trimspace(var.cloud_dns_zone_name)) > 0 && length(trimspace(var.cloud_dns_domain)) > 0)
-    error_message = "cloud_dns_enabled is true but cloud_dns_zone_name or cloud_dns_domain is empty."
-  }
-}
-
-# The external-secrets GSA must exist whenever GKE is provisioned — without it the gcpsm
-# ClusterSecretStore is (correctly) not rendered and ExternalSecrets can never sync.
-check "external_secrets_gsa_present" {
-  assert {
-    condition     = !var.provision_gke || length(trimspace(try(google_service_account.external_secrets[0].email, ""))) > 0
-    error_message = "provision_gke is true but the external-secrets Google service account reported no email — the ESO ClusterSecretStore cannot authenticate."
-  }
-}
-
-# Platform base labels must WIN over classification_tags: for every base key, the merged
-# gcp_default_labels must carry the base value (never a classification override). Guards the merge
-# direction so a renamed classification dimension can never shadow platform bookkeeping.
-check "classification_base_labels_win" {
-  assert {
-    condition = alltrue([
-      for k, v in local.gcp_base_labels : local.gcp_default_labels[k] == v
-    ])
-    error_message = "A classification_tags entry overrode a platform base label in gcp_default_labels; base labels must sit on the merge RHS and win."
-  }
-}
-
-# No classification label may be silently dropped: every key in var.classification_tags must survive
-# into the merged map verbatim, unless a platform base key legitimately overrode it. This lands the
-# mandatory alethia_project-id / alethia_environment-id sweep handles on the labelled resources.
-check "classification_labels_present" {
-  assert {
-    condition = alltrue([
-      for k, v in var.classification_tags :
-      local.gcp_default_labels[k] == v || contains(keys(local.gcp_base_labels), k)
-    ])
-    error_message = "A classification_tags entry was dropped from gcp_default_labels; classification/sweep-handle labels must reach labelled resources."
-  }
-}
-
-# Cross-project GAR pull (PR B): when gar-xacct is selected the cluster-side pull GSA must exist (the
-# refresher's Workload-Identity impersonation target). A missing GSA means the refresher can't mint.
-check "gar_pull_xacct_identity_present" {
-  assert {
-    condition     = !local.enable_gar_pull || length(google_service_account.gar_pull) == 1
-    error_message = "registry_pull_provider = gar-xacct but the cross-project GAR pull service account was not created."
-  }
-}
-
-# COMPAT-001 (epic #1186, block-at-apply): the GKE Kubernetes minor must sit inside the GCP support
-# window (matrix.json k8s_cloud.gcp = 1.33-1.35). A `check` block only WARNS, so the hard gate is the
-# terraform_data precondition below; this check surfaces the same violation loudly at plan time.
-check "compat_k8s_supported" {
-  assert {
-    condition     = !var.provision_gke || (local.gke_k8s_major == 1 && local.gke_k8s_minor >= 33 && local.gke_k8s_minor <= 35)
-    error_message = "COMPAT: GKE Kubernetes '${var.gke_cluster_version}' is outside the GCP-supported window 1.33-1.35 (packages/core/compat/matrix.json k8s_cloud.gcp); terraform_data.compat_k8s_guard blocks apply."
-  }
-}
-
-# Fail-closed apply gate (COMPAT-001): an out-of-window Kubernetes minor hard-fails the plan here, so an
-# incompatible cluster (the #1165 ArgoCD-on-1.35 class of break) can never be provisioned. `check` blocks
-# only warn — a `terraform_data` lifecycle precondition is the actual gate. No bypass variable: waivers
-# are a runner-layer concern (compat.Override / COMPAT-001), deliberately not exposed in the template.
-resource "terraform_data" "compat_k8s_guard" {
-  lifecycle {
-    precondition {
-      condition     = !var.provision_gke || (local.gke_k8s_major == 1 && local.gke_k8s_minor >= 33 && local.gke_k8s_minor <= 35)
-      error_message = "COMPAT-001: GKE Kubernetes '${var.gke_cluster_version}' is outside the GCP-supported window 1.33-1.35 (SSOT: packages/core/compat/matrix.json k8s_cloud.gcp). Apply blocked fail-closed — align gke_cluster_version and the matrix in lockstep."
-    }
+    condition     = (length(module.artifact_registry) > 0) == (var.provision_artifact_registry && var.registry_provider == "native")
+    error_message = "The Artifact Registry module count and its provisioning predicate have diverged — a pluggable registry_provider means Artifact Registry is not created, and any output reading module.artifact_registry[0] would fail the apply."
   }
 }

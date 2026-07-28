@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Go mutation testing — the "non-biased check" for Go, mirroring Stryker for TS. Runs gremlins
-# (https://github.com/go-gremlins/gremlins) per module (go.work has three: apps/cli, apps/runner,
-# packages/core). A vacuous Go test scores ~0; a real test kills its mutants.
+# (https://github.com/go-gremlins/gremlins) per product module: apps/cli, apps/runner, packages/core.
+# (go.work also lists test/e2e — the build-tagged e2e harness, not a mutation target.)
+# A vacuous Go test scores ~0; a real test kills its mutants.
 #
 # Usage:
 #   GREMLINS_THRESHOLD=70 scripts/go-mutation.sh        # gate at 70% efficacy

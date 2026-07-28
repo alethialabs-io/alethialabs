@@ -1,0 +1,121 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Offer exclusions — the machine-readable half of the cloud-parity rule.
+#
+# CLAUDE.md: "a per-cloud change covers ALL clouds in the same pass; a cloud that can't is an EXPLICIT
+# documented exclusion, never silent." This file is where "explicit" lives. `check-offer-parity`
+# (apps/console/scripts) fails on any offer a cloud can't build unless it is listed here, and the
+# generated matrix prints every entry as a documented exclusion rather than hiding it.
+#
+# An entry is a DECISION, not a mute button. Each one states why the cloud cannot honor the offer —
+# a product limit, a platform architecture choice — never "we haven't got to it yet". Work not yet
+# done belongs on the board as an issue, where it stays visible; an exclusion says we are not going
+# to do it, and the matrix shows it to anyone reading.
+#
+# Fields:
+#   offer   — "<kind>:<variant>", matching the canvas's own vocabulary (e.g. database:mysql)
+#   cloud   — the template directory name, or "*" for every cloud
+#   reason  — one line, in the product's voice; it is printed verbatim in the matrix
+#   issue   — optional, when the exclusion is tracked or was decided in a thread
+
+exclusions:
+  # ── Hetzner — compute-only by architecture ──────────────────────────────────────────
+  # Hetzner exposes no managed data services. What a Hetzner project gets is in-cluster Helm charts
+  # installed by ArgoCD (CloudNativePG for Postgres, Valkey for cache), so the engine is fixed by the
+  # chart and nothing about it travels through OpenTofu. This is the documented ceiling in
+  # hetzner-connector-parity, not a gap: the canvas floor already narrows the engine list here.
+  - offer: database:postgres
+    cloud: hetzner
+    reason: Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine.
+  - offer: cache:valkey
+    cloud: hetzner
+    reason: Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine.
+
+  # ── Valkey on the clouds that have no Valkey product ────────────────────────────────
+  # Checked against the pinned providers, not assumed: azurerm exposes `azurerm_managed_redis`
+  # (Redis only), and `alicloud_kvstore_instance.instance_type` accepts Redis or Memcache. Neither
+  # cloud sells Valkey, so the canvas no longer offers it there (#1420 made the floor catalog-derived).
+  # These entries keep the decision visible in the matrix rather than leaving a blank.
+  - offer: cache:valkey
+    cloud: azure
+    reason: Azure Cache/Managed Redis has no Valkey engine — the product does not exist.
+  - offer: cache:valkey
+    cloud: alibaba
+    reason: ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine.
+
+  # ── local — the kind-cluster development template ───────────────────────────────────
+  # `infra/templates/project/local` stands up a kind cluster for development. It has no cloud behind
+  # it, so there are no managed services to provision at all; data services come from the same
+  # in-cluster charts as Hetzner.
+  - offer: database:postgres
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+  - offer: database:mysql
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+  - offer: cache:redis
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+  - offer: cache:valkey
+    cloud: local
+    reason: A local kind cluster has no managed services — data services run in-cluster.
+
+  # ── Keyless DB auth where there is no managed database to authenticate TO ────────────
+  # `iam_auth` trades a password for a short-lived cloud IAM token. That needs two things the
+  # in-cluster path has neither of: a managed instance the cloud controls, and a cloud identity plane
+  # to mint tokens against. Hetzner and local run Postgres as a CloudNativePG chart inside the
+  # cluster, so there is no cloud-side login to bind an identity to. Same architectural ceiling as
+  # the database:postgres entries above — not unfinished work.
+  #
+  # Since #1510 the canvas GATES the toggle on these cells, and `reason` here is checked against the
+  # string the canvas shows (packages/core/manifests/keyless.go, `keylessCells`). Reword one and the
+  # guard reds until the other agrees — a matrix that documents different reasoning from the product
+  # is worse than one that documents none, because it is believed.
+  - offer: database:postgres:iam_auth
+    cloud: hetzner
+    reason: Unavailable on Hetzner. Postgres runs in-cluster via CloudNativePG — there is no managed instance and no cloud identity plane to mint database tokens against. This database keeps a generated password.
+  - offer: database:postgres:iam_auth
+    cloud: local
+    reason: A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against.
+  - offer: database:mysql:iam_auth
+    cloud: local
+    reason: A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against.
+
+  # ── Alibaba keyless DB auth — settled by #1510 ───────────────────────────────────────
+  # This was BASELINE while the evidence was thin ("whether ApsaraDB offers a RAM data-plane login is
+  # undetermined"). It is now established, from Alibaba's own docs, that it does not:
+  #
+  #   · `ModifyPGHbaConfig` ENUMERATES every auth method RDS PostgreSQL accepts — trust, reject,
+  #     scram-sha-256, md5, password, gss, sspi, ldap, radius, cert, pam. Upstream Postgres's list,
+  #     with no cloud-identity method in it.
+  #   · `CreateAccount` makes `AccountPassword` REQUIRED for MySQL, and takes no auth-mode parameter.
+  #   · RAM/STS covers the console and OpenAPI. RDS appears on "services that work with STS" for
+  #     control-plane access; that is not a database login, and it is the thing most likely to be
+  #     misread as one.
+  #   · The `alicloud` provider has no equivalent argument — `alicloud_db_account` is name+password,
+  #     and `db_instance`'s `role_arn` is for KMS/TDE, not login.
+  #
+  # The closest reachable posture is KMS-Secrets-rotated passwords, or LDAP/AD on PostgreSQL only —
+  # neither is token-as-password. So this is a capability ceiling, not debt, and it is an exclusion.
+  - offer: database:postgres:iam_auth
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password.
+  - offer: database:mysql:iam_auth
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password.
+
+# ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
+#
+# NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
+# each carries the issue tracking it. They do not fail the build, so the guard could land on a
+# codebase that already had the debt — but a NEW gap does fail, and the list RATCHETS: when a gap
+# stops reproducing, the guard fails until its entry is deleted. It can only shrink.
+#
+# Delete the entry in the same PR that fixes the gap.
+
+baseline:
+  # Empty, and that is the ratchet working. The two Alibaba `iam_auth` entries that lived here were
+  # settled by #1510 and moved up into `exclusions:` with the evidence — the guard failed until they
+  # were deleted, which is exactly what it is for.
+

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // This file renders the LEAST-PRIVILEGE bootstrap Job for a keyless service→database binding (#722 R5).
-// The keyless app logs in with its own cloud identity, but that identity must map to a Postgres ROLE
-// with working privileges — SQL the cloud API can't perform. So alongside the app manifests we emit a
-// one-shot ArgoCD PreSync Job that, connected as the database ADMIN, runs `alethia db-bootstrap` to
-// create/scope the app's role, then exits (hook-delete-policy: HookSucceeded). Because it is a PreSync
-// hook it completes before the app syncs, so the app's very first connection already has its grants.
+// The keyless app logs in with its own cloud identity, but that identity must map to a database
+// role/user with working privileges — a Postgres ROLE, or on Azure MySQL an Entra AADUSER — which is
+// SQL the cloud API can't perform. So alongside the app manifests we emit a one-shot ArgoCD PreSync Job
+// that, connected as the database ADMIN, runs `alethia db-bootstrap` to create/scope the app's login,
+// then exits (hook-delete-policy: HookSucceeded). Because it is a PreSync hook it completes before the
+// app syncs, so the app's very first connection already has its grants.
 //
 // The Job is why the app never needs admin: it is the alternative to registering the app identity as a
 // superuser / Entra administrator. Its OWN admin credential is sourced per cloud, keyless where the
@@ -47,10 +48,24 @@ const (
 	// reads the admin token from a file into PGPASSWORD) and a pinned client version.
 	postgresClientImage = "postgres:16-alpine"
 
+	// mysqlClientImage runs the mysql client to apply the generated SQL on Azure MySQL. Debian-based,
+	// so it has /bin/sh (the admin token is read from the shared file into MYSQL_PWD) and supports
+	// --enable-cleartext-plugin, which Azure Database for MySQL Entra login requires — the access token
+	// is sent as the password via the cleartext-password client plugin over TLS. Pinned to an 8.x
+	// client, which connects to the 8.0.x / 8.4 servers Azure Flexible Server offers.
+	mysqlClientImage = "mysql:8.4"
+
 	bootstrapSQLDir    = "/sql"
 	bootstrapSQLFile   = "/sql/init.sql"
 	bootstrapTokenDir  = "/db-admin-token"
 	bootstrapTokenFile = "/db-admin-token/token"
+)
+
+// Database engine families the bootstrap Job branches on (matches types.ProjectDatabaseConfig.
+// EngineFamily). An unset/unknown engine defaults to postgres — the pre-MySQL behaviour.
+const (
+	enginePostgres = "postgres"
+	engineMySQL    = "mysql"
 )
 
 // bootstrapEnv is one Job container env var — a plain value, or a secretKeyRef when SecretName is set.
@@ -108,10 +123,15 @@ func bootstrapJobName(t types.ServiceBindingTarget) string {
 // one keyless database target. It reads the per-cloud admin-connection outputs from opts.Outputs and
 // fails CLOSED — returning an error the caller reports — when a required output is missing, so we
 // never emit a Job that can't connect (which would wedge ArgoCD on a failing PreSync hook). Only
-// called for a target KeylessDBTarget already accepted; provider is one of aws|gcp|azure.
+// called for a target KeylessDBTarget already accepted — which since #1510 means only that the
+// OPERATOR asked for keyless, not that this cell can honor it. So the cell gate is applied here too,
+// and both lanes refuse an excluded cell with the same sentence.
 func RenderBootstrapJob(opts Options, t types.ServiceBindingTarget) (BootstrapJobResult, error) {
 	if opts.RunnerImage == "" {
 		return BootstrapJobResult{}, fmt.Errorf("no runner image for the keyless bootstrap Job (db-bootstrap/db-token)")
+	}
+	if err := keylessCellSupported(opts.Provider, dbEngineForTarget(opts, t)); err != nil {
+		return BootstrapJobResult{}, err
 	}
 	ns := opts.Namespace
 	if ns == "" {
@@ -187,14 +207,22 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	if err != nil {
 		return bootstrapJobSpec{}, "", err
 	}
+	// Engine-specific: MySQL renders the AWSAuthenticationPlugin dialect and applies it with the mysql
+	// client. The ADMIN credential is identical either way — the RDS master from the ExternalSecret.
+	// Deliberately not an Entra-style minted admin token: an IAM-token admin would itself have to be a
+	// pre-existing plugin user, and the master user is precisely who creates those (#1507).
+	sqlInit := renderSQLInit(opts, nil, dbName) // AWS grants the fixed alethia_app role — no extra args
+	applySQL := psqlContainer(host, dbName, "", adminSecretName, false)
+	if dbEngineForTarget(opts, t) == engineMySQL {
+		sqlInit = renderSQLInit(opts, []string{"--engine", engineMySQL}, dbName)
+		applySQL = mysqlContainer(host, dbName, "", adminSecretName, false)
+	}
 	spec := bootstrapJobSpec{
-		Name:      name,
-		Namespace: ns,
-		InitContainers: []bootstrapContainer{
-			renderSQLInit(opts, nil, dbName), // AWS grants the fixed alethia_app role — no extra args
-		},
-		Main:    psqlContainer(host, dbName, "", adminSecretName, false),
-		Volumes: []Volume{sqlVolume()},
+		Name:           name,
+		Namespace:      ns,
+		InitContainers: []bootstrapContainer{sqlInit},
+		Main:           applySQL,
+		Volumes:        []Volume{sqlVolume()},
 	}
 	return spec, esYAML, nil
 }
@@ -223,20 +251,56 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	if err != nil {
 		return bootstrapJobSpec{}, "", err
 	}
+	// Engine-specific: on MySQL the app user already exists (tofu created the CLOUD_IAM_SERVICE_ACCOUNT
+	// user, as on Postgres) so the SQL is grants-only, and appUser is the MySQL login form — the
+	// lowercase SA local part, because Cloud SQL MySQL truncates the @ and domain (#1505). The admin
+	// credential is the same built-in user from the ExternalSecret either way.
+	sqlInit := renderSQLInit(opts, []string{"--app-user", appUser}, dbName)
+	applySQL := psqlContainer(host, dbName, "", adminSecretName, false)
+	if dbEngineForTarget(opts, t) == engineMySQL {
+		sqlInit = renderSQLInit(opts, []string{"--engine", engineMySQL, "--app-user", appUser}, dbName)
+		applySQL = mysqlContainer(host, dbName, "", adminSecretName, false)
+	}
 	spec := bootstrapJobSpec{
-		Name:      name,
-		Namespace: ns,
-		InitContainers: []bootstrapContainer{
-			renderSQLInit(opts, []string{"--app-user", appUser}, dbName),
-		},
-		Main:    psqlContainer(host, dbName, "", adminSecretName, false),
-		Volumes: []Volume{sqlVolume()},
+		Name:           name,
+		Namespace:      ns,
+		InitContainers: []bootstrapContainer{sqlInit},
+		Main:           applySQL,
+		Volumes:        []Volume{sqlVolume()},
 	}
 	return spec, esYAML, nil
 }
 
+// dbEngineForTarget resolves the engine family ("postgres" | "mysql") for a keyless database target
+// from the project DB configs, matched by name (the same match KeylessDBTarget uses). Defaults to
+// postgres when the db is absent or its family is unset/unknown — the pre-MySQL behaviour, so existing
+// Postgres bindings render unchanged.
+func dbEngineForTarget(opts Options, t types.ServiceBindingTarget) string {
+	return dbEngineForName(opts.Databases, t.Name)
+}
+
+// dbEngineForName is the same resolution against a bare database list, for the callers that have no
+// Options (the BYO-chart binding lane). One implementation so the two lanes cannot disagree about a
+// database's engine — which is how a MySQL binding ends up rendered with Postgres's port.
+func dbEngineForName(dbs []types.ProjectDatabaseConfig, name string) string {
+	for _, db := range dbs {
+		if db.Name == name {
+			if db.EngineFamily == engineMySQL {
+				return engineMySQL
+			}
+			return enginePostgres
+		}
+	}
+	return enginePostgres
+}
+
 // azureBootstrapSpec: run as the DEDICATED db-admin Workload Identity, mint its Entra admin token, and
-// psql with the token as the password. No admin password/secret exists.
+// apply the SQL with the token as the password (no admin password/secret exists). The admin-token +
+// Workload-Identity wiring is engine-agnostic; only the app-bind args and the apply client differ:
+//
+//   - Postgres: bind the app role to the app UAMI's OBJECT id (--app-oid → azure_db_app_oid); psql.
+//   - MySQL:    CREATE AADUSER on the app UAMI's CLIENT id (--engine mysql --app-client-id →
+//     azure_db_client_id); the mysql client with the cleartext-password plugin.
 func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string) (bootstrapJobSpec, error) {
 	host := opts.Outputs[endpointOutputKey(string(types.CloudProviderAzure), "database")]
 	if host == "" {
@@ -254,11 +318,28 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 	if adminClientID == "" {
 		return bootstrapJobSpec{}, fmt.Errorf("no azure_db_admin_client_id output for the bootstrap Job Workload Identity")
 	}
-	appOID := opts.Outputs["azure_db_app_oid"]
-	if appOID == "" {
-		return bootstrapJobSpec{}, fmt.Errorf("no azure_db_app_oid output — cannot bind the app's Entra login")
+
+	// Engine-specific: the app-bind args for db-bootstrap and the apply-sql client container.
+	var sqlInit, applySQL bootstrapContainer
+	switch dbEngineForTarget(opts, t) {
+	case engineMySQL:
+		appClientID := opts.Outputs["azure_db_client_id"]
+		if appClientID == "" {
+			return bootstrapJobSpec{}, fmt.Errorf("no azure_db_client_id output — cannot bind the app's Entra login for keyless MySQL")
+		}
+		sqlInit = renderSQLInit(opts, []string{"--engine", engineMySQL, "--app-client-id", appClientID}, dbName)
+		applySQL = mysqlContainer(host, dbName, adminUser, "", true)
+	default: // postgres
+		appOID := opts.Outputs["azure_db_app_oid"]
+		if appOID == "" {
+			return bootstrapJobSpec{}, fmt.Errorf("no azure_db_app_oid output — cannot bind the app's Entra login")
+		}
+		sqlInit = renderSQLInit(opts, []string{"--app-oid", appOID}, dbName)
+		applySQL = psqlContainer(host, dbName, adminUser, "", true)
 	}
-	// Init 1: mint the admin Entra token (once) via the Job's federated Workload Identity.
+
+	// Init 1: mint the admin Entra token (once) via the Job's federated Workload Identity. The
+	// ossrdbms-aad token is identical for Postgres and MySQL, so this is engine-agnostic.
 	mintToken := bootstrapContainer{
 		Name:   "mint-admin-token",
 		Image:  opts.RunnerImage,
@@ -285,9 +366,9 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 		PodLabels: map[string]string{"azure.workload.identity/use": "true"},
 		InitContainers: []bootstrapContainer{
 			mintToken,
-			renderSQLInit(opts, []string{"--app-oid", appOID}, dbName),
+			sqlInit,
 		},
-		Main:    psqlContainer(host, dbName, adminUser, "", true),
+		Main:    applySQL,
 		Volumes: []Volume{sqlVolume(), tokenVolume()},
 	}
 	return spec, nil
@@ -322,6 +403,51 @@ func psqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bo
 			bootstrapEnv{Name: "PGPASSWORD", SecretName: adminSecretName, SecretKey: "password"},
 		)
 		c.Command = []string{"psql", "-v", "ON_ERROR_STOP=1", "-f", bootstrapSQLFile}
+	}
+	c.Env = env
+	return c
+}
+
+// mysqlContainer builds the apply-sql container, mirroring psqlContainer's two-mode shape. host/port/db
+// are passed as env VALUES (YAML-quoted, so no manifest-string injection) and TLS is always required.
+// The admin credential differs by cloud:
+//
+//   - Azure (fromToken=true): no admin password exists, so the dedicated Entra identity's MINTED TOKEN is
+//     read from the shared file into MYSQL_PWD. Azure MySQL's Entra login sends that token as the
+//     password via the cleartext-password plugin, hence --enable-cleartext-plugin.
+//   - AWS/GCP (fromToken=false): both username and password come from the admin ExternalSecret — the
+//     shipped, engine-agnostic password-admin path (RDS master / Cloud SQL built-in user). The
+//     cleartext plugin is DELIBERATELY absent: it is an Azure-token quirk, and enabling it here would
+//     tell the client to hand a native password to the server in the clear on any server that asked.
+//
+// The username always arrives via env rather than the args, so a shell wrapper is needed in both modes
+// (the mysql client reads MYSQL_PWD/MYSQL_HOST/MYSQL_TCP_PORT natively, but not the user).
+func mysqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bool) bootstrapContainer {
+	env := []bootstrapEnv{
+		{Name: "MYSQL_HOST", Value: host},       // read natively by the mysql client
+		{Name: "MYSQL_TCP_PORT", Value: "3306"}, // read natively by the mysql client
+		{Name: "BOOTSTRAP_DB_NAME", Value: dbName},
+	}
+	c := bootstrapContainer{
+		Name:   "apply-sql",
+		Image:  mysqlClientImage,
+		Mounts: []VolumeMount{sqlMountRO()},
+	}
+	if fromToken {
+		env = append(env, bootstrapEnv{Name: "BOOTSTRAP_DB_USER", Value: plainUser})
+		c.Command = []string{"/bin/sh", "-c",
+			`MYSQL_PWD="$(cat ` + bootstrapTokenFile + `)" mysql --user="$BOOTSTRAP_DB_USER" ` +
+				`--ssl-mode=REQUIRED --enable-cleartext-plugin "$BOOTSTRAP_DB_NAME" < ` + bootstrapSQLFile}
+		c.Mounts = append(c.Mounts, tokenMountRO())
+	} else {
+		// MYSQL_PWD is read natively by the client, so the password never appears in argv (where it
+		// would be visible in `ps` inside the pod).
+		env = append(env,
+			bootstrapEnv{Name: "BOOTSTRAP_DB_USER", SecretName: adminSecretName, SecretKey: "username"},
+			bootstrapEnv{Name: "MYSQL_PWD", SecretName: adminSecretName, SecretKey: "password"},
+		)
+		c.Command = []string{"/bin/sh", "-c",
+			`mysql --user="$BOOTSTRAP_DB_USER" --ssl-mode=REQUIRED "$BOOTSTRAP_DB_NAME" < ` + bootstrapSQLFile}
 	}
 	c.Env = env
 	return c
@@ -459,6 +585,13 @@ spec:
               {{- end }}
             {{- end }}
           {{- end }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -505,6 +638,13 @@ spec:
               {{- end }}
             {{- end }}
           {{- end }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

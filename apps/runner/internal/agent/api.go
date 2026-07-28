@@ -39,7 +39,11 @@ type Job struct {
 	ConfigurationHash *string        `json:"configuration_hash"`
 	// VerifyOverride, when present, is an authorized waiver of failing verification
 	// controls (elench): { controls, reason, by, expiry }. nil = no waiver.
-	VerifyOverride    map[string]any `json:"verify_override"`
+	VerifyOverride map[string]any `json:"verify_override"`
+	// CompatOverride, when present, is an authorized waiver of failing
+	// version-compatibility controls (COMPAT-001 gate): { controls, reason, by,
+	// expiry }. nil = no waiver.
+	CompatOverride    map[string]any `json:"compat_override"`
 	Status            string         `json:"status"`
 	RunnerID          *string        `json:"runner_id"`
 	ClaimedAt         *time.Time     `json:"claimed_at"`
@@ -451,6 +455,63 @@ func (c *RunnerAPIClient) FetchAddonSecrets(jobID string) (map[string]map[string
 		return nil, fmt.Errorf("failed to decode addon secrets response: %w", err)
 	}
 	return result.Secrets, nil
+}
+
+// FetchFabricTalosconfig fetches the placement Fabric's admin talosconfig (decrypted server-side) over
+// the authenticated job channel, so a hetzner namespace/vcluster placement can mint a fresh kubeconfig
+// from it via the Talos machine API (Talos has no cloud API to re-mint by name). Returns "" (not an error)
+// when the Fabric has none yet — the placement then fails closed in the mint path. #1389.
+func (c *RunnerAPIClient) FetchFabricTalosconfig(jobID string) (string, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/jobs/%s/talosconfig", c.baseURL, jobID), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch talosconfig request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch talosconfig returned status %d", resp.StatusCode)
+	}
+	var result struct {
+		Talosconfig *string `json:"talosconfig"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode talosconfig response: %w", err)
+	}
+	if result.Talosconfig == nil {
+		return "", nil
+	}
+	return *result.Talosconfig, nil
+}
+
+// PutFabricTalosconfig writes the Fabric's admin talosconfig back to the console (which encrypts it at
+// rest) after the Fabric's dedicated apply — the one moment the Talos-emitted talosconfig output exists.
+// The console gates this to the Fabric-owning dedicated hetzner job. #1389.
+func (c *RunnerAPIClient) PutFabricTalosconfig(jobID, talosconfig string) error {
+	body, err := json.Marshal(map[string]string{"talosconfig": talosconfig})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/jobs/%s/talosconfig", c.baseURL, jobID), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	c.setRunnerHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("put talosconfig request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("put talosconfig returned status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // FetchStateToken mints a per-job tofu-state token from the console. The runner presents it

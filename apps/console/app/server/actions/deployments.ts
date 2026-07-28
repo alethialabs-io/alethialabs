@@ -26,6 +26,7 @@ import {
 	recordSecurityPosture,
 } from "@/lib/addons/inspection-persistence";
 import { structuralHash } from "@/lib/promotions/diff";
+import { topicSubscriptionsByTopic } from "@/lib/db/normalized-reads";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { ProviderOutputs } from "@/types/jsonb.types";
 
@@ -442,6 +443,10 @@ async function deployedStructuralHash(
 	const caches = await db.select().from(projectCaches).where(scope(projectCaches));
 	const queues = await db.select().from(projectQueues).where(scope(projectQueues));
 	const topics = await db.select().from(projectTopics).where(scope(projectTopics));
+	const topicSubs = await topicSubscriptionsByTopic(
+		db,
+		topics.map((t) => t.id),
+	);
 	const nosql = await db.select().from(projectNosqlTables).where(scope(projectNosqlTables));
 	const secrets = await db.select().from(projectSecrets).where(scope(projectSecrets));
 	const sourceRepos = await db.select().from(projectSourceRepos).where(scope(projectSourceRepos));
@@ -489,7 +494,7 @@ async function deployedStructuralHash(
 			engine_version: c.engine_version ?? undefined,
 		})),
 		queues: queues.map((q) => ({ name: q.name, ordered: q.ordered ?? undefined })),
-		topics: topics.map((t) => ({ name: t.name, subscriptions: t.subscriptions ?? undefined })),
+		topics: topics.map((t) => ({ name: t.name, subscriptions: topicSubs.get(t.id) ?? [] })),
 		nosql_tables: nosql.map((n) => ({
 			name: n.name,
 			partition_key: n.partition_key,

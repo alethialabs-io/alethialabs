@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Managed-database version drift scout (#1373, epic #928). Sibling of compat-drift.yml. Monthly, it
+# re-derives what each cloud actually offers for the managed-DB engines and files ONE deduped GitHub
+# issue when the shipped packages/core/catalog/catalog.json baseline drifts — a version the cloud
+# EOL'd but the canvas still offers, or worse, a `default_version` that is no longer creatable (which
+# every unversioned project provisions on). Remediation is `pnpm -F console derive:catalog -- --write`.
+#
+# UNLIKE compat-drift, this scout has NO creds-free source: every managed-DB version API is
+# credential-gated, so with no cloud creds wired every cloud SKIPS and the run is green and silent.
+# That is deliberate — a skip is reported as a skip, never as "clean". Wire read-only creds (e.g. the
+# same AWS OIDC role the e2e workflows assume) to make it actually validate. Monthly rather than
+# weekly: major-version lifecycles move on a scale of months, and a scout that cries nothing weekly
+# just trains people to ignore it.
+
+name: Catalog DB-version drift → issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the drift report; don't create/update the issue"
+        type: boolean
+        default: true
+  schedule:
+    - cron: "41 6 3 * *" # 3rd of the month, 06:41 UTC (off-minute; version lifecycles move slowly)
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: catalog-drift
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # The scout is dependency-free Node; install only so `pnpm -F console` resolves the script.
+      - name: Install console deps
+        run: pnpm install --frozen-lockfile --filter console
+      - name: Derive catalog versions + file drift issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: pnpm -F console derive:catalog ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '-- --dry-run' || '' }}

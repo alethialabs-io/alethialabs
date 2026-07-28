@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/drift"
 	"github.com/alethialabs-io/alethialabs/packages/core/iacsafety"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
@@ -45,6 +46,7 @@ type stageDeployPayload struct {
 	CategoriesDir        string                      `json:"categories_dir"`
 	InfracostToken       string                      `json:"infracost_token,omitempty"`
 	VerifyOverride       *verify.Override            `json:"verify_override,omitempty"`
+	CompatOverride       *compat.Override            `json:"compat_override,omitempty"`
 	// CostCeilingMonthlyUSD fail-closes a real apply whose Infracost estimate exceeds it
 	// (0 ⇒ disabled). Read from ALETHIA_COST_CEILING_MONTHLY_USD in the parent and carried
 	// in the payload so it survives the sandbox boundary (the container child sees no env).
@@ -113,6 +115,11 @@ type stageSecrets struct {
 	// boundary as a JSON-encoded ALETHIA_STAGE_ADDON_SECRETS env var — never the payload,
 	// which is persisted to stage.json in the workdir.
 	AddonSecrets map[string]map[string]string
+	// TalosConfig is a hetzner-talos Fabric's admin talosconfig (#1389), fetched by the parent over the
+	// authenticated job channel (FetchFabricTalosconfig) for a namespace/vcluster placement, so the stage
+	// can mint a fresh kubeconfig from it (newTalosKubeconfigMinter → DeployParams.TalosKubeconfig).
+	// Crosses the container boundary as ALETHIA_STAGE_TALOS_CONFIG — never the persisted payload.
+	TalosConfig string
 }
 
 func stageSecretsFromEnv() stageSecrets {
@@ -129,6 +136,7 @@ func stageSecretsFromEnv() stageSecrets {
 		StateToken:   os.Getenv("TF_HTTP_PASSWORD"),
 		GitTokens:    gitTokens,
 		AddonSecrets: addonSecrets,
+		TalosConfig:  os.Getenv("ALETHIA_STAGE_TALOS_CONFIG"),
 	}
 }
 
@@ -159,7 +167,7 @@ func newStage(kind sandbox.StageKind, payload any) (*sandbox.Stage, error) {
 // the git token (it crosses via env) and carrying the json:"-" fields explicitly.
 func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, planFile,
 	templatesDir, categoriesDir, infracostToken string, override *verify.Override,
-	stateConsoleURL, jobID string) stageDeployPayload {
+	compatOverride *compat.Override, stateConsoleURL, jobID string) stageDeployPayload {
 	cfg := *vc // shallow copy — don't mutate the caller's config
 	cfg.GitAccessToken = ""
 	return stageDeployPayload{
@@ -173,6 +181,7 @@ func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, p
 		CategoriesDir:         categoriesDir,
 		InfracostToken:        infracostToken,
 		VerifyOverride:        override,
+		CompatOverride:        compatOverride,
 		CostCeilingMonthlyUSD: costCeilingFromEnv(),
 		StateConsoleURL:       stateConsoleURL,
 		JobID:                 jobID,
@@ -230,6 +239,19 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		GitAccessToken:        sec.GitToken,
 		GitRepoTokens:         sec.GitTokens,
 		StateBackend:          &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		// Output-free kube-conn resolver for a namespace/vcluster placement on a cloud whose
+		// ConfigureKubeconfig reads endpoint/CA from outputs (gcp/azure). Invoked only by the placement
+		// mint path (mintClusterOutputs); never called on a dedicated deploy or for aws. Keeps the
+		// gcp/azure auth SDKs in the runner, out of packages/core.
+		KubeConn: newKubeConnResolver(),
+		// Per-namespace tenant identity provisioner (live keyless IAM-write) for a namespace placement
+		// on a cloud whose identity provisioning the runner performs (gcp Workload Identity today).
+		// Invoked only by provisionAndBindNamespaceIdentity; never for aws/dedicated.
+		NamespaceIdentity: newNamespaceIdentityProvisioner(),
+		// hetzner-talos placement kubeconfig minter (#1389): mints a fresh kubeconfig from the Fabric's
+		// persisted talosconfig via the Talos machine API. nil unless this is a hetzner placement carrying
+		// a fetched talosconfig; invoked only by the hetzner branch of mintClusterOutputs.
+		TalosKubeconfig: newTalosKubeconfigMinter(sec.TalosConfig),
 		// Record the provisioning phase under the workdir so the runner can tell an
 		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
 		// Passthrough (same process) and container child (RW-mounted workdir) paths.
@@ -237,6 +259,7 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		Stdout:         stdout,
 		Stderr:         stderr,
 		VerifyOverride: p.VerifyOverride,
+		CompatOverride: p.CompatOverride,
 		// Add-on secret-knob values (W4.5 #640) — sourced from stageSecrets (parent scope
 		// or the allowlisted child env), never from the persisted payload.
 		AddOnSecretValues: sec.AddonSecrets,
@@ -262,6 +285,9 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 		StateBackend:  &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
 		Stdout:        stdout,
 		Stderr:        stderr,
+		// Output-free host-conn resolver for a vcluster teardown (mirrors the deploy path); only the
+		// vcluster destroy path invokes it, and never for aws/dedicated.
+		KubeConn: newKubeConnResolver(),
 	})
 	return writeStageResult(workDir, stageResult{}, err)
 }

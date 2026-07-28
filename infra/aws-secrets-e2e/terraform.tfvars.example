@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Apply ONCE, by hand, with an admin identity
+# in the TARGET account (account B):
+#
+#   tofu init -backend-config=backend.hcl
+#   TF_VAR_canary_value="$(openssl rand -hex 24)" tofu apply
+#
+# Then feed the outputs into the repo variables listed in
+# docs/testing/e2e-nightly-enablement.md. Do NOT put canary_value in this file.
+
+aws_region         = "us-east-1"
+cluster_account_id = "000000000000" # account A — where the e2e provisions its cluster
+
+# Leave at the default unless the EKS template's IRSA role naming changes.
+# cluster_eso_role_pattern = "eks-*-secrets-operator"
+
+# secret_name = "alethia-e2e/xacct-canary"
+# role_name   = "AlethiaE2ESecretsReadRole"
+# external_id = "" # set to also require an sts:ExternalId on the assume

@@ -120,10 +120,24 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if db.IamAuth != nil {
 			tfvars["azure_db_iam_auth"] = *db.IamAuth
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). azure_db_iam_auth is
+		// reserved UNCONDITIONALLY: db.IamAuth == nil leaves it unset, and without this a
+		// provider_config key could switch keyless on for a cell the canvas never offered, walking
+		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no Azure template
+		// variable declares a log-export set — so it is reserved rather than emitted undeclared.
+		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "azure_db_iam_auth")
 	}
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
+		// Size. `azure_cache_sku_name` is the EXACT Managed Redis sku and it wins over the legacy
+		// Basic/Standard/Premium map below (infra/templates/project/azure/azure-cache-redis.tf), so
+		// emitting it is what makes MemoryGB — the cloud-indifferent size the canvas offers — mean
+		// something on Azure. Without this, azure read no size axis at all: the only size-ish signal
+		// was NumCacheNodes>1 flipping the tier to "Standard".
+		if sku := resolveCacheNodeType("azure", cache); sku != "" {
+			tfvars["azure_cache_sku_name"] = sku
+		}
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
 		}
@@ -165,6 +179,13 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 
 	if !provisionVnet && config.Network.NetworkID != "" {
 		tfvars["vnet_id"] = config.Network.NetworkID
+	}
+	// Brownfield subnet selection (#1352): the user-picked subnet name(s). Written only on
+	// an existing VNet and only when non-empty; the template uses subnet_ids[0] instead of
+	// the unordered subnets[0] guess. Empty selection leaves the key absent (today's
+	// behaviour).
+	if !provisionVnet && len(config.Network.SubnetIDs) > 0 {
+		tfvars["subnet_ids"] = config.Network.SubnetIDs
 	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys

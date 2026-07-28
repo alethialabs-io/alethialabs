@@ -21,9 +21,11 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { OTHER_GROUP } from "@/lib/canvas/iac-inventory";
+import { connectorLabel, isPluggable } from "@/lib/canvas/environment-connector";
 import {
 	AUTOSCALER,
 	DB_CAPACITY,
+	dbEngineFamily,
 	DEFAULT_CACHE_NODE,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
@@ -31,10 +33,12 @@ import {
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import {
-	HETZNER_CACHE_ENGINES,
-	HETZNER_DB_ENGINES,
-} from "@/lib/cloud-providers/hetzner-services";
+	cacheEngines,
+	dbEngines,
+} from "@/lib/cloud-providers/generated/catalog";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
@@ -52,6 +56,7 @@ export type SchemaKey =
 	| "secrets"
 	| "storage_buckets"
 	| "container_registries"
+	| "helm_registries"
 	| "services"
 	// Chart / add-on / external nodes are OUT-OF-BAND (project_addons, project_iac_sources) and are
 	// never written into ProjectFormData — this key exists only to satisfy the exhaustive registry;
@@ -179,16 +184,19 @@ export type NodeRegistry = { [K in NodeKind]: NodeKindDef<K> };
 // a managed service exists.
 const isInCluster = (provider: CloudProviderSlug | null) => provider === "hetzner";
 
-/** Human engine family for a database config (mirrors the inspector's `engineLabel`). */
+/** A connector slug as its catalog display name, falling back to the raw slug. */
+const providerName = (slug: string | null | undefined): string =>
+	(slug ? getConnectorProviderBySlug(slug)?.name : undefined) ?? slug ?? "";
+
+/** Human engine family (+ version) for a database config. The family normalization itself lives in
+ * `dbEngineFamily` — this used to re-implement it, and so did the inspector's `engineLabel`, which is
+ * three copies of a rule the keyless gate now also depends on. */
 function dbEngineLabel(config: {
 	engine_family?: string | null;
 	engine?: string | null;
 	engine_version?: string | null;
 }): string {
-	const family =
-		config.engine_family ??
-		(config.engine?.includes("mysql") ? "mysql" : "postgres");
-	const name = family === "mysql" ? "MySQL" : "PostgreSQL";
+	const name = dbEngineFamily(config) === "mysql" ? "MySQL" : "PostgreSQL";
 	return config.engine_version ? `${name} ${config.engine_version}` : name;
 }
 
@@ -599,21 +607,68 @@ export const NODE_REGISTRY: NodeRegistry = {
 		label: "Container registry",
 		icon: Package,
 		card: {
-			facts: ({ config, provider }) => [
-				{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
-				{
-					label: "Tags",
-					value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
-				},
-				{
-					label: "Scanning",
-					value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
-				},
-			],
+			// Two different registries, so two different fact sets. A pluggable connector REPLACES the
+			// cloud's registry (categories/compose.go sets registry_provider, which switches the native
+			// ECR/AR/ACR off), so a card that kept printing "Service: ECR" for a Docker Hub registry
+			// would name a service this project does not use — and Tags/Scanning are ECR/GAR/ACR
+			// features that the connector's registry does not honour either.
+			facts: ({ config, provider }) =>
+				isPluggable(config.provider)
+					? [
+							{ label: "Registry", value: connectorLabel(config.provider, "") },
+							{
+								label: "Host",
+								value:
+									config.provider_config?.registry_url ??
+									config.provider_config?.namespace ??
+									"",
+							},
+						]
+					: [
+							{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
+							{
+								label: "Tags",
+								value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
+							},
+							{
+								label: "Scanning",
+								value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
+							},
+						],
 		},
 		palette: { group: "DevOps", subtitle: "Private container images" },
 		defaultData: () => ({
 			name: "apps",
+			provider_config: {},
+		}),
+	},
+	// A private chart repo (helm_registry connector) the environment pulls Helm charts from. Unlike
+	// `registry` this provisions NOTHING — it names a connector whose credential the runner turns into
+	// an ArgoCD repository-credential Secret before the add-on/BYO Applications sync.
+	// `cloudScoped: false`: the columns exist but nothing places into a cloud, and the design
+	// round-trip (`getProjectAsFormData`) keeps only name/provider/provider_config — offering a
+	// placement picker here would silently drop the value. A COLLECTION: an environment usually pulls
+	// from one or two repos, and they are plumbing rather than architecture, so they ride behind one
+	// card instead of scattering across the board.
+	helm_registry: {
+		kind: "helm_registry",
+		schemaKey: "helm_registries",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Chart repo",
+		label: "Chart repository",
+		icon: Package,
+		card: {
+			facts: ({ config }) => [
+				{ label: "Provider", value: providerName(config.provider) },
+				{ label: "URL", value: helmRegistryUrl(config) },
+			],
+		},
+		collection: { title: "Chart repos", singular: "chart repo" },
+		palette: { group: "DevOps", subtitle: "Private Helm chart repositories" },
+		defaultData: () => ({
+			name: "charts",
 			provider_config: {},
 		}),
 	},
@@ -855,6 +910,7 @@ export const ADDABLE_KINDS: NodeKind[] = [
 	"secret",
 	"bucket",
 	"registry",
+	"helm_registry",
 	"repositories",
 ];
 
@@ -877,29 +933,46 @@ export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] 
 }
 
 /**
- * Variant values a compute-only Hetzner project can actually back — the in-cluster charts
- * are engine-fixed (databases → CloudNativePG = PostgreSQL-only, caches → Valkey). Kinds
- * absent here keep their full variant list.
+ * The engine values each cloud can actually back, DERIVED from the catalog.
+ *
+ * This used to be a hardcoded Hetzner carve-out, which was fine while Hetzner was the only cloud
+ * with an engine ceiling. It isn't: Azure Managed Redis and ApsaraDB KVStore have no Valkey, so the
+ * canvas was offering an engine those clouds cannot build — the #1382 shape on a second axis.
+ *
+ * Both axes now come from the catalog, which is where "what does this cloud offer" already lived for
+ * databases. `DB_ENGINES` is keyed by engine VALUE and carries the abstract `family` the canvas
+ * variants use; `CACHE_ENGINES` is keyed by the engine name directly.
  */
-const HETZNER_VARIANT_VALUES: Partial<Record<NodeKind, ReadonlySet<string>>> = {
-	database: new Set<string>(HETZNER_DB_ENGINES),
-	cache: new Set<string>(HETZNER_CACHE_ENGINES),
+const VARIANT_FLOOR: Record<
+	string,
+	(provider: CloudProviderSlug) => ReadonlySet<string>
+> = {
+	// `dbEngines`/`cacheEngines` read the CATALOG surface, which carries the abstract `family` the
+	// canvas variants are keyed on. (`DB_ENGINES` is the flattened `live` mirror and drops it.)
+	database: (p) => new Set(dbEngines(p).map((e) => e.family)),
+	cache: (p) => new Set(cacheEngines(p).map((e) => e.value)),
 };
 
 /**
- * A kind's variant options filtered to what the effective provider can back. The single
- * engine gate shared by the Add palette's variant step and the inspector's engine radios,
- * so a Hetzner project can never pick an engine its in-cluster charts won't deploy
- * (e.g. Database → MySQL, which the chart mapper would otherwise silently skip).
+ * A kind's variant options filtered to what the effective provider can back. The single engine gate
+ * shared by the Add palette's variant step and the inspector's engine radios, so a project can never
+ * pick an engine its cloud won't deploy — Hetzner → MySQL (the chart mapper would skip it), or
+ * Azure/Alibaba → Valkey (no such product).
+ *
+ * A kind with no floor entry keeps its full variant list.
  */
 export function variantOptionsFor(
 	kind: NodeKind,
 	provider: CloudProviderSlug | null,
 ): { value: string; label: string; description: string }[] {
 	const options = NODE_REGISTRY[kind].variants?.options ?? [];
-	if (provider !== "hetzner") return options;
-	const allowed = HETZNER_VARIANT_VALUES[kind];
-	return allowed ? options.filter((o) => allowed.has(o.value)) : options;
+	const floor = provider ? VARIANT_FLOOR[kind] : undefined;
+	if (!floor || !provider) return options;
+	const allowed = floor(provider);
+	// An empty floor means the catalog has nothing for this cloud/kind — show everything rather than
+	// an empty picker (#918); a missing catalog slice is not evidence that nothing is offered.
+	if (allowed.size === 0) return options;
+	return options.filter((o) => allowed.has(o.value));
 }
 
 /** Singleton kinds may exist at most once on the canvas. */

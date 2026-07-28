@@ -53,6 +53,12 @@ type App struct {
 	// emitted (ServiceAccount, if set, is assumed to already exist — e.g. a chart-created KSA).
 	ServiceAccountAnnotations map[string]string
 	ServiceAccountLabels      map[string]string
+	// PodLabels are extra labels stamped on the POD TEMPLATE (never on the selector, which must stay
+	// stable). Some identity webhooks key on the pod rather than its ServiceAccount — the
+	// azure-workload-identity webhook injects AZURE_FEDERATED_TOKEN_FILE only into pods carrying
+	// `azure.workload.identity/use`, so a keyless Azure pod whose label sat only on the SA could never
+	// mint a token. Empty → not rendered (output byte-identical to a plain app).
+	PodLabels map[string]string
 	// Plain environment variables (values rendered quoted). Includes W3 binding-derived
 	// non-secret facets (a backing resource's endpoint/port, resolved from tofu outputs).
 	Env []types.ServiceEnvVar
@@ -98,6 +104,26 @@ type Sidecar struct {
 	Env    []types.ServiceEnvVar
 	Ports  []int // containerPorts to expose (e.g. the local proxy listener)
 	Mounts []VolumeMount
+	// Compute requests/limits; nil → defaultSidecarResources. An auth proxy is infrastructure the
+	// workload does not know it has, so this is a package default rather than a canvas field — but
+	// it stays overridable for a caller that knows better.
+	Resources *types.ServiceResources
+}
+
+// defaultSidecarResources is the compute envelope every auxiliary container gets unless its caller
+// overrides it. Sidecars here are auth proxies and token refreshers: near-idle at steady state, with
+// work proportional to CONNECTION SETUP rather than request volume, so the requests are small.
+//
+// RESOURCES-001 requires BOTH a cpu and a memory limit, and the cpu limit is deliberately loose. The
+// keyless proxy sits on the hot path of every database connection, and a tight cpu limit does not
+// shed load — it becomes CFS throttling, which surfaces as connection latency under exactly the
+// burst a pod is least able to explain. Generous-but-present satisfies the control without inventing
+// a throughput ceiling nothing has measured. #1511's real-apply is the first thing that could.
+func defaultSidecarResources() *types.ServiceResources {
+	return &types.ServiceResources{
+		Requests: types.ServiceResourceQuantities{CPU: "10m", Memory: "32Mi"},
+		Limits:   types.ServiceResourceQuantities{CPU: "200m", Memory: "128Mi"},
+	}
 }
 
 // VolumeMount mounts a pod Volume into a container at MountPath.
@@ -141,6 +167,18 @@ func (a App) normalize() App {
 		p.Port = a.Port
 		a.Probe = &p
 	}
+	// Copy before defaulting: App is taken by value but a slice header is not, so writing through
+	// a.Sidecars[i] would mutate the caller's slice (same reason Probe is copied above).
+	if len(a.Sidecars) > 0 {
+		sidecars := make([]Sidecar, len(a.Sidecars))
+		copy(sidecars, a.Sidecars)
+		for i := range sidecars {
+			if sidecars[i].Resources == nil {
+				sidecars[i].Resources = defaultSidecarResources()
+			}
+		}
+		a.Sidecars = sidecars
+	}
 	return a
 }
 
@@ -182,6 +220,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ .Name }}
+        {{- range $k, $v := .PodLabels }}
+        {{ $k }}: {{ printf "%q" $v }}
+        {{- end }}
     spec:
       {{- if .ServiceAccount }}
       serviceAccountName: {{ .ServiceAccount }}
@@ -277,6 +318,13 @@ spec:
               {{- end }}
             {{- end }}
           {{- end }}
+          resources:
+            requests:
+              cpu: {{ .Resources.Requests.CPU }}
+              memory: {{ .Resources.Requests.Memory }}
+            limits:
+              cpu: {{ .Resources.Limits.CPU }}
+              memory: {{ .Resources.Limits.Memory }}
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -406,6 +454,24 @@ type Options struct {
 	// (public image or own-account ECR/GAR/AR via node auth). The provisioner derives this from the
 	// project's selected pluggable registry (categories.DominantRegistryPullSecret).
 	ImagePullSecrets []string
+	// SecretStores maps a project secret's NAME → the pluggable SaaS ClusterSecretStore that can read
+	// it (the runtime-read lane's secretstore-<slug> + the value property). It is the single source of
+	// truth shared by BOTH binding lanes: resolveBindings emits a workload secretKeyRef for a
+	// secret-kind binding ONLY when its target secret has a readable store here, and
+	// writeBindingExternalSecrets renders the matching ExternalSecret from the SAME entry — so the two
+	// never disagree about which secret bindings are satisfiable. A secret whose provider is
+	// native/excluded (no read path) is ABSENT here, so its binding is reported unresolved (fail-closed).
+	// The provisioner builds it from vc.Secrets + categories.IsSaaSSecretStore. Nil/empty is fine.
+	SecretStores map[string]SecretStoreRef
+}
+
+// SecretStoreRef is the pluggable secret store that materializes one project secret: the ESO
+// ClusterSecretStore name (secretstore-<slug>) and the remoteRef property the value lives under
+// ("value" for a Vault-KV-compatible store; "" for Doppler, which is flat). StoreName == "" means no
+// readable store (a native/excluded provider) — a secret-kind binding to it stays fail-closed.
+type SecretStoreRef struct {
+	StoreName     string
+	ValueProperty string
 }
 
 // endpointOutputKey maps a (provider, backing-kind) to the tofu output holding that resource's
@@ -445,10 +511,16 @@ func endpointOutputKey(provider, kind string) string {
 }
 
 // defaultPort is the conventional port for a backing kind (no port output is emitted today).
-func defaultPort(kind string) string {
+//
+// A database's port depends on its ENGINE, not just its kind: MySQL is 3306, Postgres 5432. Passing
+// the wrong one hands the workload a DATABASE_PORT it cannot connect on — and on the keyless path it
+// would also have to match the port the local auth proxy listens on. `engine` is ignored for the
+// other kinds; empty means postgres, which is what every pre-MySQL caller assumed.
+func defaultPort(kind, engine string) string {
 	switch kind {
 	case "database":
-		return "5432"
+		port, _ := enginePort(engine)
+		return port
 	case "cache":
 		return "6379"
 	case "queue":
@@ -530,6 +602,7 @@ type bindingResolution struct {
 	saName        string            // keyless Workload-Identity KSA the pod must run as (overrides opts.ServiceAccount)
 	saAnnotations map[string]string // rendered onto the emitted KSA (GCP GSA / Azure client-id)
 	saLabels      map[string]string
+	podLabels     map[string]string // stamped on the pod template (Azure WI webhook keys on the POD)
 	unresolved    []string
 }
 
@@ -537,10 +610,11 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 	var r bindingResolution
 	proxied := map[string]bool{} // one auth proxy per keyless target (dedup across bindings)
 	for _, b := range bindings {
-		// A binding uses keyless auth when the flag is on AND the bound database has IAM/AAD auth on
-		// a provider that supports it (gcp/azure). Otherwise the existing password/ExternalSecret
-		// path is used, unchanged.
-		keyless := opts.KeylessDBAuth && KeylessDBTarget(opts.Provider, b.Target, opts.Databases)
+		// A binding uses keyless auth when the flag is on AND the operator marked the bound database
+		// `iam_auth`. Whether this cloud × engine cell CAN honor that is a separate question, asked by
+		// keylessDBSidecar below — it fails the binding closed with the cell's reason rather than
+		// falling back to a password the operator never asked for.
+		keyless := opts.KeylessDBAuth && KeylessDBTarget(b.Target, opts.Databases)
 		if keyless {
 			// The workload connects to a LOCAL auth proxy sidecar. Build it first: if it can't be
 			// wired (a missing tofu output — connection name / runner image), the whole binding
@@ -564,6 +638,7 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					r.saName = w.saName
 					r.saAnnotations = w.saAnnotations
 					r.saLabels = w.saLabels
+					r.podLabels = w.podLabels
 				}
 			}
 		}
@@ -583,6 +658,33 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 						}
 						r.env = append(r.env, types.ServiceEnvVar{Name: inj.Env, Value: user})
 					}
+					continue
+				}
+				// A secret-kind binding resolves a PROJECT SECRET from a pluggable SaaS store
+				// (Vault/Doppler/generic), not a cloud master secret. Fail-closed + lock-step with
+				// writeBindingExternalSecrets: emit the secretKeyRef ONLY when the target secret has a
+				// readable store (opts.SecretStores) — a native/excluded provider is absent there, so the
+				// workload never references a Secret no ExternalSecret will materialize. The single
+				// supported facet is `value`; the materialized Secret key is "value" (RenderSecretBinding-
+				// ExternalSecret writes the same), so the two lanes agree on the key.
+				if b.Target.Kind == types.ServiceBindingKindSecret {
+					if string(inj.From) != "value" {
+						r.unresolved = append(r.unresolved, fmt.Sprintf(
+							"secret binding facet %q (env %s) for %s→secret/%s: only the `value` facet is supported — env omitted",
+							inj.From, inj.Env, serviceName, b.Target.Name))
+						continue
+					}
+					if opts.SecretStores[b.Target.Name].StoreName == "" {
+						r.unresolved = append(r.unresolved, fmt.Sprintf(
+							"secret binding (env %s) for %s→secret/%s: the project secret has no readable pluggable store (native/excluded provider) — env omitted (fail-closed)",
+							inj.Env, serviceName, b.Target.Name))
+						continue
+					}
+					r.secretEnv = append(r.secretEnv, AppSecretEnv{
+						Env:        inj.Env,
+						SecretName: BindingSecretName(serviceName, b.Target),
+						SecretKey:  "value",
+					})
 					continue
 				}
 				// BYO-IaC credential facets are fail-closed: emit the secretKeyRef ONLY when the
@@ -618,11 +720,12 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 				}
 			case "port":
 				// BYO-IaC may export a port output; otherwise (and for first-class) use the
-				// conventional default for the kind.
+				// conventional default for the kind — engine-aware for databases, so a MySQL
+				// binding gets 3306 rather than silently inheriting Postgres's 5432.
 				if k := byoPortKey(b.Target); k != "" {
 					value = opts.Outputs[k]
 				} else {
-					value = defaultPort(string(b.Target.Kind))
+					value = defaultPort(string(b.Target.Kind), dbEngineForTarget(opts, b.Target))
 				}
 			}
 			if value == "" {
@@ -695,6 +798,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 			ServiceAccount:            sa,
 			ServiceAccountAnnotations: binds.saAnnotations,
 			ServiceAccountLabels:      binds.saLabels,
+			PodLabels:                 binds.podLabels,
 			Env:                       env,
 			SecretEnv:                 binds.secretEnv,
 			Sidecars:                  binds.sidecars,

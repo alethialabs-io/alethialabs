@@ -13,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
@@ -97,6 +98,41 @@ func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Wr
 	return ApplyManifest(externalDNSSecretManifest(secretName, key, token), stdout, stderr)
 }
 
+// secretsSaaSCredentialManifest builds the namespace + token Secret manifest a pluggable SaaS
+// ClusterSecretStore's auth.secretRef reads (Vault tokenSecretRef / Doppler dopplerToken). The
+// namespace (the operator's own) is included so the Secret exists even before the operator's
+// Application first creates it — the store references it by (name, key, namespace).
+func secretsSaaSCredentialManifest(namespace, secretName, key, token string) string {
+	b64 := base64.StdEncoding.EncodeToString
+	return fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+data:
+  %s: %s
+`, namespace, secretName, namespace, key, b64([]byte(token)))
+}
+
+// EnsureSecretsStoreCredential seeds the auth-token Secret a pluggable SaaS ClusterSecretStore
+// (Vault / OpenBao / Doppler / generic Vault-compatible) reads via auth.secretRef. Idempotent —
+// re-applying refreshes a rotated token every deploy. Refuses an empty token: the store's render gate
+// (a credential-present Validate in DominantSecretsSaaSStore) skips the store when the token is absent,
+// so a caller reaching here always has one. The token crosses only into the in-cluster Secret — never
+// a rendered manifest committed to git or execution_metadata (the #640/#427 no-plaintext-secrets rule).
+func EnsureSecretsStoreCredential(namespace, secretName, key, token string, stdout, stderr io.Writer) error {
+	if token == "" {
+		return fmt.Errorf("refusing to write an empty %s secret store credential", secretName)
+	}
+	fmt.Fprintf(stdout, "Seeding external-secrets store credential %s...\n", secretName)
+	return ApplyManifest(secretsSaaSCredentialManifest(namespace, secretName, key, token), stdout, stderr)
+}
+
 // externalSecretsStoreMaxWait bounds how long EnsureExternalSecretsStore retries while ArgoCD
 // installs the external-secrets operator (asynchronously) and its validating webhook becomes ready.
 // Generous on purpose: on a fresh managed cluster the FULL chain — ArgoCD reconcile → Helm install →
@@ -106,9 +142,25 @@ func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Wr
 var externalSecretsStoreMaxWait = 15 * time.Minute
 
 // externalSecretsStoreTemplate renders the per-cloud ClusterSecretStore. It carries the SAME
-// per-cloud, workload-identity-gated conditions the operator's Application template used to embed —
+// per-cloud, workload-identity-gated render guards the operator's Application template used to embed —
 // now separated so the store is applied on its OWN, AFTER the operator is up (see #1208). Exactly
 // one branch renders (the `eq .Provider` guards are mutually exclusive); hetzner renders none.
+//
+// spec.conditions (#1306) scopes every store (native + cross-account -xacct) away from placed tenant
+// namespaces: an ESO ClusterSecretStore with no conditions is referenceable from ANY namespace, so on
+// a shared Fabric a `placement=namespace` tenant could read the Fabric owner's (foreign-account, for
+// -xacct) secrets. `namespaceSelector NotIn alethia.io/placement=namespace` denies placed tenant
+// namespaces (namespace_tenant.go always stamps that label, and the tenant AppProject's empty
+// clusterResourceWhitelist makes it un-forgeable) while a NotIn requirement matches label-ABSENT
+// namespaces — so the live dedicated path (whose customer namespaces carry no such label) is
+// unchanged. This is the documented prerequisite gate for activating namespace placement.
+//
+// SCOPE ASSUMPTION: this denies bare `placement=namespace` tenants. vcluster tenants are isolated by
+// their own API server — the vcluster's host namespace (vcluster-<env>) is Alethia-managed, carries no
+// placement label (so this selector allows it), and is NOT a customer-reachable path to an
+// ExternalSecret against these stores (vcluster syncs no ExternalSecret CRD to the host by default). If
+// vcluster ever syncs ExternalSecret CRDs host-ward, extend this selector to also exclude vcluster host
+// namespaces (deploy_vcluster.go).
 const externalSecretsStoreTemplate = `
 {{- if and (eq .Provider "aws") .IRSAExternalSecretsArn }}
 apiVersion: external-secrets.io/v1beta1
@@ -116,6 +168,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     aws:
       service: SecretsManager
@@ -132,6 +190,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     gcpsm:
       projectID: {{ .GCPProjectID }}
@@ -142,6 +206,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -153,6 +223,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     alibaba:
       regionID: {{ .Region }}
@@ -176,11 +252,20 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     aws:
       service: SecretsManager
       region: {{ .SecretsXacctRegion }}
       role: {{ .SecretsXacctRef }}
+{{- if .SecretsXacctExternalID }}
+      externalID: {{ .SecretsXacctExternalID }}
+{{- end }}
       auth:
         jwt:
           serviceAccountRef:
@@ -194,6 +279,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     gcpsm:
       projectID: {{ .SecretsXacctProjectID }}
@@ -205,6 +296,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -221,6 +318,12 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba-xacct
 spec:
+  conditions:
+    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
   provider:
     alibaba:
       regionID: {{ .SecretsXacctRegion }}
@@ -230,6 +333,56 @@ spec:
           oidcTokenFilePath: /var/run/secrets/tokens/oidc-token
           roleArn: {{ .SecretsXacctRef }}
           sessionName: external-secrets-xacct
+{{- end }}
+{{- /* ── Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic Vault-compatible) ────────────
+       The credential-based external store the project selected via the secrets connector, read
+       IN-CLUSTER by ESO with a STATIC token seeded into an in-cluster Secret (auth.secretRef → the
+       CredSecret the runner seeds; the token never rides these facts). Rendered as a SEPARATE document
+       (leading '---') and CLOUD-AGNOSTIC — it renders on ANY provider, incl. Hetzner (no native store).
+       Kind is the ESO provider kind: "vault" (vault/generic) or "doppler". Infisical (first-class only
+       from ESO 0.9.20) and 1Password (Connect-only in 0.9.12) are documented runtime-read exclusions —
+       no branch renders for them (their write/provision path is unaffected). */}}
+{{- if .SecretsSaaS }}
+{{- if eq .SecretsSaaS.Kind "vault" }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: {{ .SecretsSaaS.StoreName }}
+spec:
+  provider:
+    vault:
+      server: {{ printf "%q" .SecretsSaaS.Server }}
+      path: {{ printf "%q" .SecretsSaaS.Path }}
+      version: {{ .SecretsSaaS.Version }}
+      auth:
+        tokenSecretRef:
+          name: {{ .SecretsSaaS.CredSecret }}
+          key: {{ .SecretsSaaS.CredKey }}
+          namespace: {{ .SecretsSaaS.Namespace }}
+{{- end }}
+{{- if eq .SecretsSaaS.Kind "doppler" }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: {{ .SecretsSaaS.StoreName }}
+spec:
+  provider:
+    doppler:
+{{- if .SecretsSaaS.Project }}
+      project: {{ printf "%q" .SecretsSaaS.Project }}
+{{- end }}
+{{- if .SecretsSaaS.Config }}
+      config: {{ printf "%q" .SecretsSaaS.Config }}
+{{- end }}
+      auth:
+        secretRef:
+          dopplerToken:
+            name: {{ .SecretsSaaS.CredSecret }}
+            key: {{ .SecretsSaaS.CredKey }}
+            namespace: {{ .SecretsSaaS.Namespace }}
+{{- end }}
 {{- end }}
 `
 
@@ -310,13 +463,21 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
 		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
 		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
-		// Cross-account (*-xacct) stores — same gates as the render template above; a store whose
-		// cross-account target was deselected (or whose identity fact disappeared) stops rendering and
-		// would otherwise be orphaned.
-		"secretstore-aws-xacct":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "" && facts.SecretsXacctRef != "",
-		"secretstore-gcp-xacct":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "" && facts.SecretsXacctProjectID != "",
-		"secretstore-azure-xacct":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.SecretsXacctRef != "",
-		"secretstore-alibaba-xacct": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "" && facts.SecretsXacctRef != "" && facts.SecretsXacctOIDCProviderRef != "",
+		// Pluggable SaaS stores (cloud-agnostic): each renders only when it is the currently-selected
+		// SaaS store, so switching the connector (e.g. vault → doppler) or de-selecting it reaps the
+		// stale store instead of orphaning it. The name gates match externalSecretsStoreTemplate.
+		"secretstore-vault":   facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-vault",
+		"secretstore-doppler": facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-doppler",
+		"secretstore-generic": facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-generic",
+	}
+	// Cross-account (*-xacct) stores: exactly one can render per deploy (the store is dominant), so
+	// enumerate every name the template knows and mark all but the current one for reaping. Reading
+	// the render gate itself — rather than re-listing the per-cloud conditions here, as this map did
+	// until they drifted — means a new *-xacct lane cannot be added to the template and silently
+	// forgotten by the cleanup.
+	currentXacct, _ := facts.XacctSecretStore()
+	for _, name := range categories.AllXacctStoreNames() {
+		esoStores[name] = name == currentXacct
 	}
 	for name, renders := range esoStores {
 		if renders {

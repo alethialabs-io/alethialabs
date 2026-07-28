@@ -9,7 +9,7 @@
 // (list + subresource) and the tiering that keeps the long tail of per-cloud knobs from swamping the
 // portable fields.
 
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ConfigFields } from "@/components/design-project/canvas/inspector/config-fields";
@@ -201,6 +201,84 @@ describe("tiering keeps the portable fields in front", () => {
 		// instance_class is an escape hatch for managed clouds; the in-cluster path has no SKUs.
 		renderKind("database", { name: "ledger" }, "hetzner");
 		expect(screen.queryByText("Instance class")).not.toBeInTheDocument();
+	});
+});
+
+// #1510. A capability the cell can't honor is DISABLED with the reason, not hidden — the distinction
+// these tests exist to hold, because "hidden" is what the issue title originally proposed and it is
+// the option that reads as a bug.
+describe("keyless IAM auth is gated to cells that can honor it", () => {
+	const iamSwitch = () =>
+		screen.getByRole("switch", { name: /IAM authentication/i });
+
+	/** What a screen reader would read out under the toggle — which is also the visible note.
+	 * Read through `aria-describedby` rather than by text, both to pin the a11y wiring and because
+	 * "CloudNativePG" legitimately appears elsewhere in the panel. */
+	const iamNote = () => {
+		const id = iamSwitch().getAttribute("aria-describedby");
+		expect(id).toBeTruthy();
+		return document.getElementById(id as string)?.textContent ?? "";
+	};
+
+	/** Render a database and open the (collapsed-by-default) Security section. */
+	const openSecurity = async (
+		config: Record<string, unknown>,
+		provider: CloudProviderSlug | null,
+	) => {
+		const user = userEvent.setup();
+		const rendered = renderKind("database", config, provider);
+		await user.click(screen.getByRole("button", { name: /^Security/ }));
+		return { ...rendered, user };
+	};
+
+	it("is on and operable where the renderer can build it", async () => {
+		const { onChange, user } = await openSecurity(
+			{ name: "orders", engine_family: "mysql", iam_auth: false },
+			"aws",
+		);
+		expect(iamSwitch()).not.toHaveAttribute("aria-disabled", "true");
+		await user.click(iamSwitch());
+		expect(onChange).toHaveBeenCalledWith({ iam_auth: true });
+	});
+
+	it("is disabled, off, and says why on a cloud with no identity plane", async () => {
+		// `iam_auth: true` on purpose: this is the config that used to be saved and deployed, with
+		// the database quietly acquiring a password. The control must read OFF, because off is what
+		// the cell can actually deliver.
+		await openSecurity(
+			{ name: "ledger", engine_family: "postgres", iam_auth: true },
+			"hetzner",
+		);
+		expect(iamSwitch()).toHaveAttribute("aria-disabled", "true");
+		expect(iamSwitch()).not.toBeChecked();
+		expect(iamNote()).toMatch(/CloudNativePG/);
+	});
+
+	it("says why on Alibaba too, on both engines", async () => {
+		for (const engine_family of ["postgres", "mysql"]) {
+			await openSecurity(
+				{ name: "ledger", engine_family, iam_auth: true },
+				"alibaba",
+			);
+			expect(iamSwitch()).toHaveAttribute("aria-disabled", "true");
+			expect(iamNote()).toMatch(/control plane/);
+			cleanup();
+		}
+	});
+
+	it("keeps the rest of the Security section — this is a gate, not a hide", async () => {
+		await openSecurity(
+			{ name: "ledger", engine_family: "postgres" },
+			"hetzner",
+		);
+		expect(iamSwitch()).toBeInTheDocument();
+		expect(screen.getByText(/Backup retention/)).toBeInTheDocument();
+	});
+
+	it("asks for a cloud before it answers, when none is placed yet", async () => {
+		await openSecurity({ name: "ledger", iam_auth: true }, null);
+		expect(iamSwitch()).toHaveAttribute("aria-disabled", "true");
+		expect(iamNote()).toMatch(/Select a cloud account to configure this/i);
 	});
 });
 

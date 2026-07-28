@@ -12,14 +12,33 @@ import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
+	dbEngineFamily,
 	getProvider,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
+	keylessUnavailableReason,
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import { coerceEnum } from "@/lib/coerce";
 import { toStrArray } from "@/lib/coerce";
+import {
+	cacheTierOptions,
+	cacheVersionOptions,
+	dbEngineOptions,
+	dbInstanceClassOptions,
+	dbVersionOptions,
+	existingNetworkOptions,
+	instanceTypeOptions,
+	k8sVersionOptions,
+	nosqlKeyTypeOptions,
+} from "./capability-options";
+import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
+import type {
+	ConnectorField,
+	PluggableCategory,
+} from "@/lib/connectors/registry.generated";
+import { isPluggable } from "@/lib/canvas/environment-connector";
 import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
@@ -33,25 +52,186 @@ import type { NodeConfigMap, NodeKind } from "../graph/types";
  */
 type AnyConfig = Record<string, unknown>;
 
+/**
+ * Account-scoped option data, ALREADY RESOLVED to plain arrays and pushed in by the mount point.
+ *
+ * Never a promise, never a hook, never a fetch: `resolve()` runs on every render — and a second time
+ * from `sectionSummary`, to label a collapsed section — so this has to be a cheap immutable
+ * snapshot. Making the resolver async instead would infect ConfigFields → every mount point, and
+ * would refetch once per mounted select, which is the mistake `repository-context.tsx` exists to
+ * avoid.
+ *
+ * Populated by `use-node-capabilities`; until that lands it is `NO_CAPABILITIES` and every picker
+ * resolves to the static catalog exactly as before.
+ */
+export interface CapabilityBag {
+	/** The identity this bag describes. null ⇒ nothing resolved (create flow / no core identity). */
+	identityId: string | null;
+	/** The provider this bag describes. Compared against `ctx.provider`: a node's effective provider
+	 * can diverge from the bag's, and showing another cloud's SKUs is worse than showing none. */
+	provider: CloudProviderSlug | null;
+	/** The region the region-SCOPED axes were read at (instance types, cache tiers). */
+	region: string | null;
+	/** Why the bag looks the way it does. Drives a field footnote — NEVER a gate. */
+	state: "idle" | "loading" | "syncing" | "ready" | "error";
+	/** Per-axis provenance. Some readers collapse their own fail-open, so the client cannot infer
+	 * this from the payload — the server reports it. */
+	axisSource: Readonly<Record<CapabilityAxis, "account" | "catalog">>;
+
+	regions: string[];
+	instanceTypes: CapabilityOption[];
+	k8sVersions: CapabilityOption[];
+	dbEngines: DbEngineCapabilityOption[];
+	/** Concrete managed-DB SKUs, by engine. Unlike every other axis there is NO static catalog behind
+	 * it, so an unsynced account leaves this empty and the resolver offers only the resolver default. */
+	dbInstanceClasses: DbInstanceClassCapabilityOption[];
+	cacheTiers: CapabilityOption[];
+	/** Offered cache engine versions. Empty on the clouds that document an exclusion (GCP/Azure/Hetzner). */
+	cacheVersions: CapabilityOption[];
+	nosqlKeyTypes: CapabilityOption[];
+	/** Already-HAS placement inventory (#980) — not a capability axis, no federation involved. */
+	networks: PlacementOption[];
+	subnets: PlacementSubnetOption[];
+}
+
+/**
+ * One account-reported option, normalized across axes. `launchable === undefined` is the sentinel
+ * for "static fallback row — no per-account signal at all", which must read differently from
+ * "synced, and we could not evaluate the quota".
+ */
+export interface CapabilityOption {
+	value: string;
+	label: string;
+	launchable?: "launchable" | "not_launchable" | "not_evaluable";
+	launchableReason?: string | null;
+}
+
+/**
+ * A managed-database engine option carrying EVERY version the account can launch it at (#1351).
+ *
+ * The version is its own axis rather than part of the engine's label: the engine is chosen by the
+ * `engine_family` radio-card and the version by a separate select, so a single composite
+ * "PostgreSQL 16" option cannot serve both. `versions` is newest-first and never empty — the static
+ * fallback contributes the catalog's default version as a one-element list.
+ */
+export interface DbEngineCapabilityOption extends CapabilityOption {
+	versions: string[];
+}
+
+/**
+ * A concrete managed-DB SKU, carrying the engine it was reported for.
+ *
+ * `engine` is NULL when the cloud offers SKUs per PROJECT rather than per engine (Cloud SQL tiers), and
+ * such a row matches whichever engine the node has selected — attaching a per-engine claim the API never
+ * made would be a fabricated verdict.
+ */
+export interface DbInstanceClassCapabilityOption extends CapabilityOption {
+	engine: string | null;
+}
+
+export interface PlacementOption {
+	/** The NATIVE id (`vpc-…`) — project_network.network_id stores this, not the row uuid. */
+	nativeId: string;
+	name: string | null;
+	region: string | null;
+	cidrBlock: string | null;
+	isDefault: boolean;
+}
+
+export interface PlacementSubnetOption extends PlacementOption {
+	availabilityZone: string | null;
+	isPublic: boolean;
+	/** The owning network's row id, for filtering subnets by the selected network. */
+	networkRowId: string | null;
+}
+
+export type CapabilityAxis =
+	| "region"
+	| "instance_type"
+	| "k8s_version"
+	| "database"
+	| "db_instance_class"
+	| "cache_tier"
+	| "cache_version"
+	| "nosql"
+	| "placement";
+
+const ALL_CATALOG: Readonly<Record<CapabilityAxis, "account" | "catalog">> = Object.freeze({
+	region: "catalog",
+	instance_type: "catalog",
+	k8s_version: "catalog",
+	database: "catalog",
+	db_instance_class: "catalog",
+	cache_tier: "catalog",
+	cache_version: "catalog",
+	nosql: "catalog",
+	placement: "catalog",
+});
+
+/**
+ * The frozen "no signal" bag. `FieldCtx.caps` is REQUIRED on the type but DEFAULTED to this at
+ * construction, so no resolver ever writes `ctx.caps?.x ?? STATIC` — the fail-open rule lives in
+ * exactly one place (`capability-options.ts`) instead of being re-implemented per field.
+ */
+export const NO_CAPABILITIES: CapabilityBag = Object.freeze({
+	identityId: null,
+	provider: null,
+	region: null,
+	state: "idle",
+	axisSource: ALL_CATALOG,
+	regions: [],
+	instanceTypes: [],
+	k8sVersions: [],
+	dbEngines: [],
+	dbInstanceClasses: [],
+	cacheTiers: [],
+	cacheVersions: [],
+	nosqlKeyTypes: [],
+	networks: [],
+	subnets: [],
+});
+
 /** Context handed to every resolvable field attribute. */
 export interface FieldCtx<C = AnyConfig> {
 	provider: CloudProviderSlug | null;
 	config: C;
+	/** Always present — `NO_CAPABILITIES` when nothing is loaded. */
+	caps: CapabilityBag;
 }
 
-/** A value that's either static or derived from the field context (provider/config). */
+/** A value that's either static or derived from the field context (provider/config/capabilities). */
 export type Resolvable<T, C = AnyConfig> = T | ((ctx: FieldCtx<C>) => T);
+
+/**
+ * Advisory on an option. GUIDANCE, never a gate (#918) — the renderer must never map this to
+ * `disabled`.
+ *
+ * There is deliberately NO positive level: "available" is the ABSENCE of ink. That makes
+ * "`not_evaluable` must never render as available" a structural property rather than a review rule
+ * — no code path exists that can paint an affirmative marker, so a quota we merely could not check
+ * can never be mistaken for one we verified.
+ */
+export interface OptionAdvisory {
+	level: "unavailable" | "unverified";
+	note: string;
+}
 
 export interface FieldOption {
 	value: string;
 	label: string;
 	description?: string;
+	advisory?: OptionAdvisory;
 }
 
 export type FieldType =
 	| "text"
 	| "number"
 	| "select"
+	// A text input that SUGGESTS `options` rather than restricting to them. For the escape-hatch
+	// fields whose value the cloud may never list back (a DB SKU, a cache engine version): the
+	// account's offerings are the suggestions, but an unlisted value stays typeable, which a
+	// `select` structurally cannot allow.
+	| "combobox"
 	| "radio-card"
 	| "switch"
 	| "region"
@@ -63,7 +243,13 @@ export type FieldType =
 	| "subresource"
 	// A service's edges to its backing infrastructure (`service.bindings`). Unlike `subresource`,
 	// each row nests a variable-length `inject[]`, so it has its own editor (bindings-field.tsx).
-	| "bindings";
+	| "bindings"
+	// Which CONNECTED pluggable connector this component uses, plus that provider's non-secret knobs
+	// (`providerConfigFields`) — the per-project half of a connector, whose secret half lives once on
+	// the org's `connector_credentials` row. Writes `provider` (a connectors.slug) and
+	// `provider_config` together, since the knobs are meaningless without the slug that defines them.
+	// `helm_registry` is the first consumer; `registry`, `secrets` and `dns` have the same shape.
+	| "connector";
 
 /** A row editor over a JSONB array of objects. */
 export interface SubresourceSpec {
@@ -103,6 +289,21 @@ export interface FieldDef<C = AnyConfig> {
 	/** Hide the field unless the predicate holds (e.g. only when a toggle is on, or only
 	 * for a given provider via the context). One-arg closures keep working unchanged. */
 	visibleWhen?: (config: C, ctx: FieldCtx<C>) => boolean;
+	/**
+	 * Why this field cannot be honored on the CURRENT cell (cloud × config), or null when it can.
+	 *
+	 * Orthogonal to `visibleWhen`, and both may be present. `visibleWhen` says the field is not part
+	 * of this shape at all — Hetzner has no ACU capacity, so a capacity knob there is meaningless.
+	 * This says the field IS part of the shape and this particular cell cannot honor it, so the
+	 * control renders DISABLED with the reason in place of its description. An option that silently
+	 * isn't there reads as a bug, while one that says why is an answer (connector-select.tsx).
+	 *
+	 * NOT `OptionAdvisory`. That is ink-only and must never map to `disabled` (#918); this is the
+	 * separate, deliberately-named channel for a real gate, so the two can never be confused.
+	 *
+	 * A hidden field is never asked — `visibleWhen` filters first, and this never filters.
+	 */
+	unavailableWhen?: (config: C, ctx: FieldCtx<C>) => string | null;
 	/** Normalize raw text input (e.g. lowercasing a name). */
 	transform?: (raw: string) => string;
 	/** Nested read escape hatch (e.g. `instance_types[0]`). */
@@ -113,6 +314,15 @@ export interface FieldDef<C = AnyConfig> {
 	item?: { placeholder?: string; mono?: boolean };
 	/** `subresource` only: the row editor's definition. */
 	sub?: SubresourceSpec;
+	/** Which capability axis backs this field's options. Declared rather than inferred from the
+	 * resolver's identity, and used ONLY to render the per-field provenance footnote ("12 of 340
+	 * available to this account" / "showing the full catalog"). Never affects what is selectable. */
+	capabilityAxis?: CapabilityAxis;
+	/** `connector` only: which pluggable category's connected connectors to offer. */
+	category?: PluggableCategory;
+	/** `connector` only: knobs this schema owns as their own field, so the connector must not
+	 * render a second input for them (dns's `zone_id` is a column with its own field). */
+	hiddenKnobs?: (field: ConnectorField) => boolean;
 }
 
 /**
@@ -166,17 +376,14 @@ const CAPACITY_MODE_DESC: Record<string, string> = {
 	provisioned: "Fixed throughput; cheaper at steady, predictable load.",
 };
 
-/** Human label for the current DB engine family. */
+/** Human label for the current DB engine family. Normalization (including the legacy concrete
+ * `engine` column and the implicit postgres default) lives in `dbEngineFamily` — one place, since
+ * the keyless gate and the store normalizer key on the same answer. */
 function engineLabel(config: {
 	engine_family?: string | null;
 	engine?: string | null;
 }): string {
-	const fam =
-		config.engine_family ??
-		(typeof config.engine === "string" && config.engine.includes("mysql")
-			? "mysql"
-			: "postgres");
-	return fam === "mysql" ? "MySQL" : "PostgreSQL";
+	return dbEngineFamily(config) === "mysql" ? "MySQL" : "PostgreSQL";
 }
 
 // ── per-kind config ─────────────────────────────────────────────────────────
@@ -644,10 +851,17 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 					},
 					{
 						key: "network_id",
-						type: "text",
-						label: "Existing network ID",
+						type: "select",
+						label: "Existing network",
 						mono: true,
-						placeholder: "vpc-…",
+						placeholder: "Select a network",
+						// The already-synced inventory, not a free-text box. `networkSchema`'s refine has
+						// said "Select a VPC when using an existing network" since before a picker existed.
+						// The option VALUE is the provider-native id (`vpc-…`) because that is what this
+						// column stores and what the tofu templates read — never the cloud_networks row
+						// uuid. `withSelected` keeps an id typed before this change from vanishing.
+						capabilityAxis: "placement",
+						options: existingNetworkOptions,
 						visibleWhen: (c) => c.provision_network === false,
 					},
 					{
@@ -685,25 +899,18 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "select",
 						label: "Kubernetes version",
 						requiresProvider: true,
-						options: ({ provider }) =>
-							provider
-								? K8S_VERSIONS[provider].map((v) => ({ value: v, label: v }))
-								: [],
+						capabilityAxis: "k8s_version",
+						options: k8sVersionOptions,
 					},
 					{
 						key: "instance_types",
 						type: "select",
 						label: "Instance type",
 						requiresProvider: true,
+						capabilityAxis: "instance_type",
 						get: (c) => c.instance_types?.[0] ?? "",
 						set: (v) => ({ instance_types: [String(v)] }),
-						options: ({ provider }) =>
-							provider
-								? INSTANCE_TYPES[provider].map((it) => ({
-										value: it.value,
-										label: `${it.label} · ${it.vcpu} vCPU / ${it.memoryGb} GB`,
-									}))
-								: [],
+						options: instanceTypeOptions,
 					},
 				],
 			},
@@ -823,8 +1030,11 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "radio-card",
 						label: "Engine",
 						// Provider-filtered via the registry's shared variant gate (Hetzner runs
-						// databases in-cluster via CloudNativePG → postgres only).
-						options: ({ provider }) => variantOptionsFor("database", provider),
+						// databases in-cluster via CloudNativePG → postgres only), then narrowed to what
+						// this account reports. The gate stays the FLOOR: it encodes what the chart
+						// mapper can actually deploy, which account capability must not override.
+						capabilityAxis: "database",
+						options: dbEngineOptions,
 					},
 					{
 						key: "port",
@@ -908,6 +1118,17 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "switch",
 						label: "IAM authentication",
 						description: "Authenticate with short-lived cloud IAM tokens instead of a password.",
+						// A cloud must be chosen before this question has an answer — and picking it
+						// up front is also what stops "toggle it on first, land on Hetzner second".
+						requiresProvider: true,
+						// Gated to the cells the RENDERER can actually build, read from the generated
+						// mirror of packages/core/manifests/keyless.go. Disabled-with-a-reason rather
+						// than hidden: keyless is a thing people come looking for, and on Hetzner the
+						// Security section would otherwise simply be missing it, with nothing to say
+						// why. The reason string IS the Go table's, so this copy cannot fork from the
+						// deploy-time refusal or the offer-parity matrix (#1510).
+						unavailableWhen: (config, { provider }) =>
+							keylessUnavailableReason(provider, dbEngineFamily(config)),
 					},
 					{
 						key: "backup_retention_days",
@@ -930,18 +1151,37 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{
 						key: "engine_version",
-						type: "text",
+						type: "select",
 						label: "Engine version",
 						mono: true,
-						placeholder: "cloud default",
+						// Capability-backed since #1351: the lanes enumerate every version the account
+						// can launch this engine at, instead of the user having to know them. Still
+						// fail-open — with nothing synced the catalog's default is the only option, and
+						// `withSelected` keeps a previously pinned free-text version representable.
+						requiresProvider: true,
+						capabilityAxis: "database",
+						options: dbVersionOptions,
 						description: "Pin an exact engine version. Empty tracks the template's default.",
 					},
 					{
 						key: "instance_class",
-						type: "text",
+						type: "combobox",
 						label: "Instance class",
 						mono: true,
 						placeholder: "resolver default",
+						// Capability-backed: the lanes enumerate the SKUs this account can actually order
+						// for the selected engine, which is knowledge no user reliably has — and a typo
+						// here is not a validation error, it is a failed apply.
+						//
+						// A combobox rather than a select, for two reasons that both point the same way:
+						// there is NO static catalog to fall open to (the catalog models capacity
+						// portably; a SKU is precisely the non-portable escape hatch), and the lanes
+						// cannot enumerate exhaustively — GCP custom machine types are constructible,
+						// and the Alibaba anchor asks about one version in one zone. An unlisted SKU
+						// must stay pinnable.
+						requiresProvider: true,
+						capabilityAxis: "db_instance_class",
+						options: dbInstanceClassOptions,
 						description:
 							"A concrete provider SKU (db.r6g.large · db-custom-2-7680 · GP_Gen5_2). Overrides the portable capacity above — and gives up portability.",
 						// Serverless capacity is the portable path; this is the escape hatch. Meaningless
@@ -983,13 +1223,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// No managed cache SKUs on Hetzner — the in-cluster Valkey chart sizes
 						// via storage_gb below.
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",
-						options: ({ provider }) =>
-							provider
-								? CACHE_NODE_TYPES[provider].map((n) => ({
-										value: n.value,
-										label: `${n.label} · ${n.memoryGb} GB (${n.cost})`,
-									}))
-								: [],
+						capabilityAxis: "cache_tier",
+						options: cacheTierOptions,
 					},
 				],
 			},
@@ -1056,10 +1291,18 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{
 						key: "engine_version",
-						type: "text",
+						type: "combobox",
 						label: "Engine version",
 						mono: true,
 						placeholder: "cloud default",
+						// Capability-backed where the cloud will say: AWS and Alibaba report the offered
+						// cache engine versions; GCP/Azure/Hetzner document an exclusion (no account-scoped
+						// API states which versions a subscription may launch, and on Hetzner the value is
+						// a container image tag). A combobox, not a select, so the three excluded clouds —
+						// and any unsynced account — keep a field that still works.
+						requiresProvider: true,
+						capabilityAxis: "cache_version",
+						options: cacheVersionOptions,
 						description: "Pin an exact engine version. Empty tracks the template's default.",
 					},
 				],
@@ -1220,10 +1463,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "partition_key_type",
 						type: "select",
 						label: "Key type",
-						options: ({ provider }) =>
-							(provider ? NOSQL[provider].keyTypes : [{ value: "S", label: "String" }]).map(
-								(k) => ({ value: k.value, label: k.label }),
-							),
+						capabilityAxis: "nosql",
+						options: nosqlKeyTypeOptions,
 					},
 					{
 						key: "sort_key",
@@ -1240,10 +1481,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "sort_key_type",
 						type: "select",
 						label: "Sort key type",
-						options: ({ provider }) =>
-							(provider ? NOSQL[provider].keyTypes : [{ value: "S", label: "String" }]).map(
-								(k) => ({ value: k.value, label: k.label }),
-							),
+						capabilityAxis: "nosql",
+						options: nosqlKeyTypeOptions,
 						visibleWhen: (c, { provider }) =>
 							!!c.sort_key &&
 							(!provider || NOSQL[provider].supportsRangeKey !== false),
@@ -1414,6 +1653,10 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "immutable_tags",
 						type: "switch",
 						label: "Immutable tags",
+						// ECR / Artifact Registry / ACR features. A pluggable connector REPLACES the
+						// cloud's registry, so these describe a registry this project no longer uses —
+						// hide them rather than imply we can set them on someone else's.
+						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Prevent pushed image tags from being overwritten.",
 						get: (c) => c.provider_config?.immutable_tags ?? false,
 						set: (v, c) => ({
@@ -1424,6 +1667,10 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "vulnerability_scanning",
 						type: "switch",
 						label: "Vulnerability scanning",
+						// ECR / Artifact Registry / ACR features. A pluggable connector REPLACES the
+						// cloud's registry, so these describe a registry this project no longer uses —
+						// hide them rather than imply we can set them on someone else's.
+						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Scan pushed images for known CVEs.",
 						get: (c) => c.provider_config?.vulnerability_scanning ?? false,
 						set: (v, c) => ({
@@ -1441,6 +1688,34 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			provider ? getProvider(provider).registryService : c.name || "registry",
 	},
 
+	// A private Helm chart repository. Only two things are per-project — WHICH connector authenticates
+	// the pull, and (for the providers that serve any host) WHERE. Everything else about the repo is
+	// the org-level credential, so this schema is deliberately one field plus a name.
+	helm_registry: {
+		sections: [
+			{
+				id: "general",
+				title: "General",
+				defaultOpen: true,
+				fields: [
+					nameField((v) => v.toLowerCase().replace(/[^a-z0-9-]/g, "")),
+					{
+						key: "provider",
+						type: "connector",
+						category: "helm_registry",
+						label: "Chart repository",
+						description:
+							"The connected chart-repo connector ArgoCD authenticates with. Its credential is seeded as a repository credential at deploy — it never enters the project's config snapshot.",
+						full: true,
+					},
+				],
+			},
+		],
+		// The URL the runner will actually seed, so the header answers "which repo is this?" rather
+		// than restating the row's name.
+		summary: (c) => helmRegistryUrl(c) || c.name || "chart repo",
+	},
+
 	dns: {
 		sections: [
 			{
@@ -1449,6 +1724,21 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				defaultOpen: true,
 				fields: [
 					{ key: "enabled", type: "switch", label: "Enabled" },
+					{
+						key: "provider",
+						type: "connector",
+						category: "dns",
+						label: "DNS provider",
+						description:
+							"Which DNS backend external-dns manages records through. The cluster cloud's own (Route 53 / Cloud DNS / Azure DNS) unless you connect one.",
+						full: true,
+						// The zone lives on `project_dns.zone_id` — its own field below — and Cloudflare's
+						// connector declares a `zone_id` knob too. Two inputs for one concept, writing to
+						// two places, is worse than either; the column wins. Safe because
+						// categories/dns_cloudflare.go prefers provider_config.zone_id but FALLS BACK to
+						// the column, and the dns schema guard accepts either.
+						hiddenKnobs: (f) => f.key === "zone_id",
+					},
 					{
 						key: "domain_name",
 						type: "text",

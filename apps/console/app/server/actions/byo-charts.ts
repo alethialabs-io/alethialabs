@@ -23,6 +23,7 @@ import {
 	jobs,
 	projectAddons,
 	projectChartWorkloads,
+	projectHelmRegistries,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
@@ -31,12 +32,18 @@ import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
 import { replaceServiceBindings } from "@/lib/db/service-bindings-sync";
+import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
 import {
 	chartWorkloadBindingsSchema,
 	chartWorkloadConfigSchema,
 	chartWorkloadValuePathsSchema,
 	chartWorkloadWireArraySchema,
 } from "@/lib/validations/chart-workloads";
+import {
+	byoChartAttachSchema,
+	chartSlug,
+	type ByoChartAttachInput,
+} from "@/lib/validations/byo-charts";
 import type {
 	AddOnValues,
 	ChartValuePathMap,
@@ -75,89 +82,51 @@ export interface ByoChartState {
 	scannedAt: string | null;
 }
 
-/** RFC1123-ish slug for the addon_id of a BYO chart (unique per env), derived from a display name. */
-function chartSlug(raw: string): string {
-	const s = raw
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9-]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	return s || "chart";
-}
-
-/** Basic sanity on a chart-repo URL — a git remote (https:// or git@), or an `oci://` reference to
- * a private OCI Helm registry (the whole `oci://<host>/<ns>/<chart>` path). Deep validation happens
- * when the runner clones/pulls it; this just rejects obvious garbage at save time. */
-function isPlausibleRepoUrl(url: string): boolean {
-	return (
-		/^https:\/\/\S+$/.test(url) ||
-		/^git@\S+:\S+$/.test(url) ||
-		/^oci:\/\/\S+$/.test(url)
-	);
-}
-
 /**
  * Attaches (or reconfigures) a BYO Helm chart on an environment. Upserts a source='byo'
  * project_addons row as PENDING so the next DEPLOY renders it. `id` is a stable per-env slug
  * (the chart node's id); re-attaching the same id updates it in place.
+ *
+ * `repoUrl` is a git remote (https://…/git@…) OR an `oci://<host>/<ns>/<chart>` reference to a
+ * private OCI Helm registry. For git the chart lives at `chartPath` and `ref` is a git ref; for OCI
+ * the chart name is the URL's last segment (no `chartPath`) and `ref` is the chart version.
  */
-export async function attachByoChart(input: {
-	projectId: string;
-	environmentId?: string | null;
-	/** Display name / node id → slugified into the addon_id (unique per env). */
-	id: string;
-	/** A git remote (https://…/git@…) OR an `oci://<host>/<ns>/<chart>` reference to a private
-	 * OCI Helm registry. For git the chart lives at `chartPath`; for OCI the chart name is the
-	 * last URL path segment (no `chartPath`) and `ref` is the chart version. */
-	repoUrl: string;
-	/** Chart directory within a git repo — required for git, unused (omit) for an `oci://` repo. */
-	chartPath?: string;
-	/** Git ref for a git repo (default HEAD); the chart VERSION for an `oci://` repo (default `*`). */
-	ref?: string;
-	namespace?: string;
-	values?: AddOnValues;
-	valuesYaml?: string | null;
-	gitCredentialId?: string | null;
-}): Promise<{ ok: true; id: string }> {
+export async function attachByoChart(
+	input: ByoChartAttachInput,
+): Promise<{ ok: true; id: string }> {
 	assertByoHelmEnabled();
-	const actor = await authorize("edit", { type: "project", id: input.projectId });
+	const parsed = byoChartAttachSchema.parse(input);
+	const actor = await authorize("edit", { type: "project", id: parsed.projectId });
 
-	const id = chartSlug(input.id);
-	const repoUrl = input.repoUrl.trim();
+	const id = chartSlug(parsed.id);
+	const repoUrl = parsed.repoUrl;
 	const isOci = repoUrl.startsWith("oci://");
 	// git charts live at a path within the repo; OCI charts are named by the URL's last segment.
-	const chartPath = isOci ? null : (input.chartPath ?? "").trim().replace(/^\/+/, "");
-	if (!isPlausibleRepoUrl(repoUrl)) {
-		throw new Error(
-			"Enter a valid chart repository URL (https://, git@…, or oci://…).",
-		);
-	}
-	if (!isOci && !chartPath)
-		throw new Error("Enter the chart path within the repository.");
+	const chartPath = isOci ? null : (parsed.chartPath ?? "").replace(/^\/+/, "");
 
-	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
+	const valuesYaml = parsed.valuesYaml?.trim() ? parsed.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
 		throw new Error("Advanced values must be valid YAML describing a mapping (key: value).");
 	}
 
-	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+	const envId = await resolveActiveEnvironmentId(parsed.projectId, parsed.environmentId);
 	// `version` holds the git ref for a git chart, or the chart version for an OCI chart
 	// (`*` = latest, an ArgoCD-supported Helm targetRevision).
-	const ref = input.ref?.trim() || (isOci ? "*" : "HEAD");
-	const namespace = input.namespace?.trim() || "default";
-	const values = input.values ?? {};
+	const ref = parsed.ref || (isOci ? "*" : "HEAD");
+	const namespace = parsed.namespace || "default";
+	const values: AddOnValues = parsed.values ?? {};
 
 	await withActorScope(actor, async (tx) => {
 		await tx
 			.insert(projectAddons)
 			.values({
-				project_id: input.projectId,
+				project_id: parsed.projectId,
 				environment_id: envId,
 				addon_id: id,
 				source: "byo",
 				chart_repo: repoUrl,
 				chart_path: chartPath,
-				git_credential_id: input.gitCredentialId ?? null,
+				git_credential_id: parsed.gitCredentialId ?? null,
 				enabled: true,
 				mode: "managed",
 				version: ref,
@@ -172,7 +141,7 @@ export async function attachByoChart(input: {
 					source: "byo",
 					chart_repo: repoUrl,
 					chart_path: chartPath,
-					git_credential_id: input.gitCredentialId ?? null,
+					git_credential_id: parsed.gitCredentialId ?? null,
 					enabled: true,
 					mode: "managed",
 					version: ref,
@@ -186,9 +155,10 @@ export async function attachByoChart(input: {
 	});
 
 	// Auto-queue a safety scan so the user sees any issues right after attaching (best-effort — a
-	// scan-queue failure must never fail the attach itself).
+	// scan-queue failure must never fail the attach itself). Both chart sources scan: the runner
+	// resolves a git chart by cloning and an OCI chart by pulling it from the registry (#1300).
 	try {
-		await scanByoChart({ projectId: input.projectId, environmentId: envId, id });
+		await scanByoChart({ projectId: parsed.projectId, environmentId: envId, id });
 	} catch {
 		/* ignore — the chart is attached; the user can re-run the scan from the node */
 	}
@@ -284,15 +254,14 @@ export async function getProjectChartWorkloads(
 ): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const rows = await withActorScope(actor, async (tx) =>
-		tx
+	const { rows, bindingsByWorkload } = await withActorScope(actor, async (tx) => {
+		const rows = await tx
 			.select({
 				id: projectChartWorkloads.id,
 				chartId: projectAddons.addon_id,
 				name: projectChartWorkloads.name,
 				kind: projectChartWorkloads.workload_kind,
 				rendered: projectChartWorkloads.rendered,
-				bindings: projectChartWorkloads.bindings,
 				config: projectChartWorkloads.config,
 				valuePaths: projectChartWorkloads.value_paths,
 			})
@@ -306,8 +275,14 @@ export async function getProjectChartWorkloads(
 					eq(projectChartWorkloads.project_id, projectId),
 					eq(projectChartWorkloads.environment_id, envId),
 				),
-			),
-	);
+			);
+		// Bindings live in the service_bindings child table (JSONB dropped, #1426).
+		const bindingsByWorkload = await serviceBindingsByOwner(tx, {
+			serviceIds: [],
+			chartWorkloadIds: rows.map((r) => r.id),
+		});
+		return { rows, bindingsByWorkload };
+	});
 	return {
 		environmentId: envId,
 		workloads: rows.map((r) => ({
@@ -316,7 +291,7 @@ export async function getProjectChartWorkloads(
 			name: r.name,
 			kind: r.kind,
 			rendered: r.rendered,
-			bindings: r.bindings,
+			bindings: bindingsByWorkload.get(r.id) ?? [],
 			config: r.config,
 			valuePaths: r.valuePaths,
 		})),
@@ -420,15 +395,15 @@ export async function setChartWorkloadBindings(input: {
 		const value_paths: ChartValuePathMap = { ...inferred, ...row.value_paths };
 		await tx
 			.update(projectChartWorkloads)
-			.set({ bindings, value_paths, updated_at: new Date() })
+			.set({ value_paths, updated_at: new Date() })
 			.where(
 				and(
 					eq(projectChartWorkloads.id, input.workloadId),
 					eq(projectChartWorkloads.project_id, input.projectId),
 				),
 			);
-		// Dual-write: keep the normalized service_bindings in step with the JSONB overlay. This is a
-		// granular UPDATE (not delete-all-reinsert), so replace this workload's binding rows.
+		// The bindings JSONB was dropped in the contract phase (#1426); service_bindings is the store.
+		// This is a granular UPDATE (not delete-all-reinsert), so replace this workload's binding rows.
 		await replaceServiceBindings(
 			tx,
 			{ chart_workload_id: input.workloadId },
@@ -438,12 +413,24 @@ export async function setChartWorkloadBindings(input: {
 	return { ok: true };
 }
 
+/** Reports whether a chart_repo value addresses an OCI registry rather than a git repository. */
+function isOciChartRepo(chartRepo: string): boolean {
+	return chartRepo.trim().toLowerCase().startsWith("oci://");
+}
+
 /**
- * Queues a CHART_SCAN job for an attached BYO chart: the runner clones the repo, `helm template`s
- * it, and runs verify.EvaluateManifests over the rendered manifests, posting a verify.Report that
+ * Queues a CHART_SCAN job for an attached BYO chart: the runner resolves the chart to a local
+ * directory (git clone, or an OCI registry pull), `helm template`s it, and runs
+ * verify.EvaluateManifests over the rendered manifests, posting a verify.Report that
  * finalizeChartScan writes back onto the row. Marks the row `scanning` immediately so the UI can
  * show progress. The job's config_snapshot carries the chart coords (repo_url so the runner's
  * git-token route resolves a token) + the row identity so the result maps back.
+ *
+ * For an OCI chart there is no chart_path (the repository path IS the chart), and the pull may need
+ * the project's private chart-repo credential. The snapshot therefore carries the environment's
+ * `helm_registries` selections — their non-secret provider config only. The claim route reads that
+ * same key to attach the DECRYPTED credential out-of-band, so the secret half never touches the
+ * snapshot (and so never reaches the job row, the logs, or the sandbox).
  */
 export async function scanByoChart(input: {
 	projectId: string;
@@ -469,9 +456,40 @@ export async function scanByoChart(input: {
 				),
 			)
 			.limit(1);
-		if (!row || !row.chart_repo || !row.chart_path) {
+		if (!row || !row.chart_repo) {
 			throw new Error("Chart not found (attach it before scanning).");
 		}
+		const isOci = isOciChartRepo(row.chart_repo);
+		// A git chart needs a directory inside the repo; an OCI chart's repository path IS the chart.
+		if (!isOci && !row.chart_path) {
+			throw new Error("Chart not found (attach it before scanning).");
+		}
+
+		// The environment's connected chart repos — non-secret provider config only. The runner
+		// matches the chart's host against these the same way ArgoCD matches an Application to a
+		// repository credential, so the scan authenticates against exactly the repo the deploy will.
+		const helmRegistries = isOci
+			? (
+					await tx
+						.select({
+							name: projectHelmRegistries.name,
+							provider: projectHelmRegistries.provider,
+							provider_config: projectHelmRegistries.provider_config,
+						})
+						.from(projectHelmRegistries)
+						.where(
+							and(
+								eq(projectHelmRegistries.project_id, input.projectId),
+								eq(projectHelmRegistries.environment_id, envId),
+							),
+						)
+				).map((r) => ({
+					name: r.name,
+					provider: r.provider,
+					provider_config: r.provider_config ?? {},
+				}))
+			: [];
+
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({
@@ -484,8 +502,12 @@ export async function scanByoChart(input: {
 					// repo_url (not chart_repo) so the runner's FetchGitToken route resolves a token.
 					repo_url: row.chart_repo,
 					chart_path: row.chart_path,
-					ref: row.version ?? "HEAD",
+					// Carries a git ref for a git chart and a chart version for an OCI one. "*" is
+					// Helm's "latest release", which is also what the deploy path sends ArgoCD.
+					ref: row.version ?? (isOci ? "*" : "HEAD"),
 					values: row.values ?? {},
+					// Read by the claim route to attach the decrypted chart-repo credential.
+					...(isOci ? { helm_registries: helmRegistries } : {}),
 					// Row identity for finalizeChartScan → the result maps back to this chart.
 					project_id: input.projectId,
 					environment_id: envId,
