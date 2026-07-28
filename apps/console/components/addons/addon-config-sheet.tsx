@@ -15,6 +15,8 @@ import { ChevronsUpDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Badge } from "@repo/ui/badge";
+import { addonCompat } from "@/lib/compat";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { Button } from "@repo/ui/button";
 import {
   Collapsible,
@@ -130,8 +132,19 @@ export function AddonConfigSheet({
     values: item ? initialValues(item) : emptyForm,
   });
   const mode = form.watch("_mode");
+  // The env's Kubernetes minor, straight from the canvas store — above the early return, since hooks
+  // must run in the same order every render. No cluster / unset version → undefined → the engine
+  // answers `not_evaluable` rather than a false pass.
+  const k8sVersion = useCanvasStore((s) => {
+    const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
+    const v = c && "cluster_version" in c ? c.cluster_version : null;
+    return typeof v === "string" && v ? v : undefined;
+  });
 
   if (!item) return null;
+  // Silent when the add-on's recorded window fits — same calm rule as the canvas chip (#1222).
+  const addonVerdict = addonCompat(item.id, k8sVersion);
+  const compat = addonVerdict.status === "pass" ? null : addonVerdict;
   const isInstalled = item.install !== null;
 
   const onSubmit = form.handleSubmit(async (values) => {
@@ -336,6 +349,21 @@ export function AddonConfigSheet({
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Kubernetes compatibility (#1221) — the same register as Requirements: a badge and one
+              line of prose. Silent when the recorded window fits this cluster; `not_evaluable` is
+              stated as unknown rather than dressed up as fine. */}
+          {compat && (
+            <div className="flex items-start gap-2 pt-2">
+              <Badge
+                variant={compat.status === "fail" ? "destructive" : "outline"}
+                className="shrink-0 text-[10px] uppercase"
+              >
+                {compat.status === "fail" ? "Incompatible" : "Unverified"}
+              </Badge>
+              <span className="text-xs text-muted-foreground">{compat.note}</span>
             </div>
           )}
         </SheetHeader>
