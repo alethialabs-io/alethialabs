@@ -54,6 +54,28 @@ const ITEMS: AddonMarketItem[] = [
 	},
 ];
 
+/** A cluster node carrying `version`, the only thing the compat badge reads from the graph. */
+function clusterNode(version: string) {
+	return {
+		id: "cluster",
+		type: "cluster",
+		position: { x: 0, y: 0 },
+		data: {
+			kind: "cluster" as const,
+			config: { cluster_version: version },
+			cloud_identity_id: null,
+			provider: "aws" as const,
+		},
+	};
+}
+
+const kyverno: AddonMarketItem = {
+	...ITEMS[0],
+	id: "kyverno",
+	name: "Kyverno",
+	summary: "Policy engine",
+};
+
 beforeEach(() => {
 	// A clean graph so the service groups' "on canvas" checks are deterministic.
 	useCanvasStore.setState({ nodes: [] });
@@ -78,6 +100,69 @@ describe("NodePalette — Add-ons group", () => {
 
 		await userEvent.click(screen.getByText("Grafana Loki"));
 		expect(onConfigureAddon).toHaveBeenCalledWith(ITEMS[0]);
+	});
+
+	// #1222 — the compat badge. `pass` shows NOTHING (calm canvas), so what's asserted is the two
+	// states that want attention, and that a compatible add-on stays silent.
+	it("badges an add-on the cluster's Kubernetes minor is too old for", () => {
+		// kyverno is 1.25+ in the matrix; put the cluster below it.
+		useCanvasStore.setState({
+			nodes: [clusterNode("1.24")],
+		});
+		render(
+			<NodePalette
+				open
+				onOpenChange={vi.fn()}
+				identities={[]}
+				addonItems={[kyverno]}
+				onConfigureAddon={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("K8s 1.25+")).toBeInTheDocument();
+	});
+
+	it("stays silent for a compatible add-on", () => {
+		useCanvasStore.setState({ nodes: [clusterNode("1.35")] });
+		render(
+			<NodePalette
+				open
+				onOpenChange={vi.fn()}
+				identities={[]}
+				addonItems={[kyverno]}
+				onConfigureAddon={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByText(/^K8s /)).not.toBeInTheDocument();
+		expect(screen.queryByText("Unverified")).not.toBeInTheDocument();
+	});
+
+	it("marks an add-on with no recorded window UNVERIFIED, never compatible", () => {
+		// loki has both bounds empty — the majority case in the catalogue.
+		useCanvasStore.setState({ nodes: [clusterNode("1.35")] });
+		render(
+			<NodePalette
+				open
+				onOpenChange={vi.fn()}
+				identities={[]}
+				addonItems={ITEMS}
+				onConfigureAddon={vi.fn()}
+			/>,
+		);
+		expect(screen.getAllByText("Unverified").length).toBeGreaterThan(0);
+	});
+
+	it("marks everything unverified when there is no cluster to judge against", () => {
+		useCanvasStore.setState({ nodes: [] });
+		render(
+			<NodePalette
+				open
+				onOpenChange={vi.fn()}
+				identities={[]}
+				addonItems={[kyverno]}
+				onConfigureAddon={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("Unverified")).toBeInTheDocument();
 	});
 
 	it("omits the Add-ons group in the create flow (no items / no handler)", () => {

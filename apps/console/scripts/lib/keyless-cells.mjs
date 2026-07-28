@@ -103,12 +103,16 @@ export function parseKeylessCells(goSrc) {
 	return { cells };
 }
 
-/** `state: cellExcluded, reason: alibabaKeylessExclusion` → `{state, reason}`.
+/** `state: KeylessCellExcluded, reason: alibabaKeylessExclusion` → `{state, reason}`.
  *
  * A cell with no `state:` is a parse failure, not a default: silently reading an unrecognised cell as
- * live is how a fail-closed table stops failing closed. */
+ * live is how a fail-closed table stops failing closed.
+ *
+ * The `Keyless` prefix is optional in the pattern because the constants were unexported (`cellLive`)
+ * until #1511 exported them for the e2e lane table. Matching both spellings keeps this reader working
+ * across that rename instead of throwing on a table it can see perfectly well. */
 function cellFields(body, consts) {
-	const state = body.match(/state:\s*cell(\w+)/)?.[1]?.toLowerCase();
+	const state = body.match(/state:\s*(?:Keyless)?[Cc]ell(\w+)/)?.[1]?.toLowerCase();
 	if (!state || !["live", "pending", "excluded"].includes(state)) {
 		throw new Error(`a keylessCells entry has no recognisable state: ${body.trim()}`);
 	}

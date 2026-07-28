@@ -358,7 +358,7 @@ jobs:
       # provider bump changes the key and repopulates.
       - name: Cache OpenTofu provider plugins
         if: steps.gate.outputs.run == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.terraform.d/plugin-cache
           key: tofu-plugins-1.9.0-${{ runner.os }}-${{ hashFiles('infra/templates/project/*/.terraform.lock.hcl') }}
@@ -628,6 +628,37 @@ jobs:
           ALETHIA_E2E_SECRETS_XACCT_PROBE_NAMESPACE: ${{ vars.E2E_SECRETS_XACCT_PROBE_NAMESPACE }}
           ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256: ${{ vars.E2E_SECRETS_XACCT_EXPECT_SHA256 }}
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
+          # ── KEYLESS DATABASE AUTH (#1511) — the ship gate for epic #1500.
+          #
+          #    The first e2e for keyless (#722) on any cloud or engine. Until it runs, keyless is
+          #    proven only by renderers that emit the right YAML — and the original AWS/Azure wiring
+          #    rendered perfectly while being incapable of authenticating, for months, because no test
+          #    ever opened a connection.
+          #
+          #    ENGINE_VERSION + INSTANCE_CLASS have NO defaults and are REQUIRED when enabled: the
+          #    values valid on RDS are rejected by Cloud SQL and by Flexible Server, and again by the
+          #    same cloud's other engine. Use the per-cloud siblings (…_ENGINE_VERSION_GCP) on a leg
+          #    that differs. A missing one fails the run in seconds, before any provisioning spend.
+          #
+          #    REQUIRES the A0.6 apps repo above: the workload and its bootstrap Job reach the cluster
+          #    only through GitOps, so without it there would be nothing to assert against.
+          #
+          #    Budget: the run holds a database session open past the cloud token's lifetime (16m by
+          #    default) to prove the proxy mints per connection rather than caching one token. A
+          #    shorter dwell would pass just as happily against a proxy that never rotates anything.
+          #
+          #    All plain VARIABLES. Unset ⇒ a clean skip; alibaba/hetzner resolve to the product's own
+          #    documented exclusion and skip carrying it. ──
+          ALETHIA_E2E_KEYLESS_DB: ${{ vars.E2E_KEYLESS_DB }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE: ${{ vars.E2E_KEYLESS_DB_ENGINE }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION }}
+          ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS }}
+          ALETHIA_E2E_KEYLESS_DB_NAME: ${{ vars.E2E_KEYLESS_DB_NAME }}
+          ALETHIA_E2E_KEYLESS_DB_SERVICE: ${{ vars.E2E_KEYLESS_DB_SERVICE }}
+          ALETHIA_E2E_KEYLESS_DB_IMAGE: ${{ vars.E2E_KEYLESS_DB_IMAGE }}
+          ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
+          ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
+          ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -664,6 +695,10 @@ jobs:
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
+          # Keyless DB auth summary (#1511), written by the T2 layer at the SAME path the t2 step
+          # set; folded into the bundle + step-summary verdict, with the rotation dwell beside it so
+          # a shortened-dwell PASS cannot read like a full one. Absent ⇒ the capture is unchanged.
+          ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
           # Day-2 access summary (P2-E), written by the T2 test at the SAME path the t2 step set;
           # pass it through so the capture folds the access verdict into the bundle + step summary
           # (#1525 — it was written but never read). Absent ⇒ the capture is unchanged.
