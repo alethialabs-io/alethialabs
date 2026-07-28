@@ -22,7 +22,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.31
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.60.0
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.41.0
-	github.com/aws/smithy-go v1.27.4
+	github.com/aws/smithy-go v1.27.5
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/siderolabs/talos/pkg/machinery v1.13.7
 	go.opentelemetry.io/otel v1.44.0
