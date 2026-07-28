@@ -20,6 +20,7 @@ vi.mock("@/lib/query/use-addons-query", () => ({
 }));
 
 import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** A minimal marketplace item; `requires` varies per test. */
 function makeItem(requires: AddonMarketItem["requires"]): AddonMarketItem {
@@ -77,5 +78,82 @@ describe("AddonConfigSheet requirements", () => {
 			/>,
 		);
 		expect(screen.queryByText("Requirements")).not.toBeInTheDocument();
+	});
+});
+
+// #1221 — the Kubernetes compatibility hint, in the same register as Requirements.
+describe("AddonConfigSheet compat hint", () => {
+	/** The sheet reads the cluster's version straight from the canvas store. */
+	function setCluster(version: string | null) {
+		useCanvasStore.setState({
+			nodes: version
+				? [
+						{
+							id: "cluster",
+							type: "cluster",
+							position: { x: 0, y: 0 },
+							data: {
+								kind: "cluster" as const,
+								config: { cluster_version: version },
+								cloud_identity_id: null,
+								provider: "aws" as const,
+							},
+						},
+					]
+				: [],
+		});
+	}
+
+	const kyverno = { ...makeItem([]), id: "kyverno", name: "Kyverno" };
+
+	it("flags an add-on the cluster's Kubernetes minor is too old for", () => {
+		setCluster("1.24"); // kyverno is 1.25+
+		render(
+			<AddonConfigSheet
+				item={kyverno}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo={false}
+				provider="aws"
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("Incompatible")).toBeInTheDocument();
+		expect(screen.getByText(/requires Kubernetes 1\.25\+/i)).toBeInTheDocument();
+	});
+
+	it("says nothing when the recorded window fits", () => {
+		setCluster("1.35");
+		render(
+			<AddonConfigSheet
+				item={kyverno}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo={false}
+				provider="aws"
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByText("Incompatible")).not.toBeInTheDocument();
+		expect(screen.queryByText("Unverified")).not.toBeInTheDocument();
+	});
+
+	it("states an unknown as unknown rather than dressing it up as fine", () => {
+		// harbor has no recorded window — the majority case.
+		setCluster("1.35");
+		render(
+			<AddonConfigSheet
+				item={makeItem([])}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo={false}
+				provider="aws"
+				open
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("Unverified")).toBeInTheDocument();
 	});
 });
