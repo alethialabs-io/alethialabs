@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -272,4 +273,39 @@ func containsStr(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestMaxConfigClusterVersionTracksMatrix is the drift guard for the one value the harness must
+// never invent: the cluster's Kubernetes minor.
+//
+// It exists because a hardcoded "1.32" survived in maxconfig.go long after every cloud's window
+// moved to 1.33-1.35. It was bumped for gcp and azure as each cloud rejected it, but left stale for
+// aws, alibaba and hetzner — and nothing caught that, because the only run that injects the harness
+// version is the max-config nightly, which is main-gated and had been dying earlier in the pipeline
+// for six weeks. The apply then failed fail-closed on COMPAT-001 (#1259) after 31 minutes and a
+// 178-resource plan.
+//
+// So the assertion lives HERE, in the untagged every-PR tier, not in the nightly: the moment
+// matrix.json moves ahead of the harness, any PR goes red — for free, before any provisioning
+// spend. It iterates the matrix's own cloud set rather than a hand-written list, so a sixth cloud
+// is covered the day it is added.
+func TestMaxConfigClusterVersionTracksMatrix(t *testing.T) {
+	m := compat.MustLoad()
+	if len(m.K8sCloud) == 0 {
+		t.Fatal("compat matrix has no k8s_cloud entries — the guard would pass vacuously")
+	}
+	for provider, cloudK8s := range m.K8sCloud {
+		t.Run(provider, func(t *testing.T) {
+			got := maxConfigPCExcept(provider, "").Cluster.ClusterVersion
+			if got == "" {
+				t.Fatalf("%s: max-config emitted an empty ClusterVersion", provider)
+			}
+			if !containsStr(cloudK8s.Supported, got) {
+				t.Errorf("%s: max-config emits Kubernetes %q, which is NOT in the matrix window %v.\n"+
+					"A real apply is guarded fail-closed against this same matrix (COMPAT-001), so this "+
+					"would burn a full provisioning run before failing. Align maxconfig.go with "+
+					"packages/core/compat/matrix.json.", provider, got, cloudK8s.Supported)
+			}
+		})
+	}
 }
