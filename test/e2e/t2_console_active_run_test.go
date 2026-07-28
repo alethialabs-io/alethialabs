@@ -77,7 +77,7 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 // (with per-run dynamic overrides) under ALETHIA_E2E_A05_REAL_SNAPSHOT. `full` clones `base` and
 // layers the A0.6 apps/BYO repo wiring + the per-cloud cluster-json override — the exact snapshot
 // the runner consumes. Cloning keeps `base` pristine so fidelity is judged on the un-mutated shape.
-func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, s *a05Session) (base, full map[string]any, err error) {
+func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, s *a05Session) (base, full map[string]any, err error) {
 	t.Helper()
 	if s.enabled && a05RealSnapshotEnabled() {
 		envID := ""
@@ -120,6 +120,16 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	if xacctEnabled {
 		xacct.applyToSnapshot(full)
 		t.Logf("#1268: seeding the DEPLOY job with a %s secret + a secret-kind binding on service %q", xacct.connectorSlug(), xacct.serviceName)
+	}
+	// #1511: mark the database keyless and add the service that binds it. AFTER MaxConfigSnapshot for
+	// the same reason as #1268, and it OVERLAYS databases[0] rather than appending — the AWS template
+	// reads only the first entry, so a second database would provision nothing while the binding
+	// resolved against the first one's endpoint, and the run would report green having proven the
+	// wrong database. On `full` ONLY (never `base`, the A0.5 fidelity target).
+	if keylessEnabled {
+		keyless.applyToSnapshot(full)
+		t.Logf("#1511: seeding the DEPLOY job with an iam_auth %s database + a database binding on service %q",
+			keyless.engine, keyless.serviceName)
 	}
 	// Merge the per-cloud cluster shape override into the `cluster` block. Malformed JSON is a loud
 	// failure — a workflow typo must not silently provision the wrong shape.

@@ -109,28 +109,33 @@ type keylessWiring struct {
 	podLabels     map[string]string
 }
 
-// cellState is what we CLAIM about one cloud × engine keyless cell. The three states are not
+// KeylessCellState is what we CLAIM about one cloud × engine keyless cell. The three states are not
 // interchangeable: "we have not built it yet" and "this cloud can never do it" are different facts
 // with different consequences — the first is debt that a lane retires, the second is a permanent
 // product boundary the canvas must render and the offer-parity matrix must record as an exclusion.
 // Collapsing them into one boolean is how alibaba/hetzner came to be "excluded" by simply being
 // ABSENT from this table, which is the cloud-parity rule obeyed by omission.
-type cellState string
+//
+// EXPORTED (#1511) because the state now travels outside this package in two directions: the deploy's
+// keyless decision record (KeylessBindingDecision, generate.go) and the T2 e2e lane table, which asks
+// this package which cells it can prove rather than mirroring the list. A mirror is a second literal,
+// and a second literal drifts — which is the whole lesson of the cells table itself.
+type KeylessCellState string
 
 const (
-	// cellLive — every leg is built; the binding renders.
-	cellLive cellState = "live"
-	// cellPending — a leg is missing; reason names the lane that will deliver it.
-	cellPending cellState = "pending"
-	// cellExcluded — the cloud can never honor it; reason is the product-voice why.
-	cellExcluded cellState = "excluded"
+	// KeylessCellLive — every leg is built; the binding renders.
+	KeylessCellLive KeylessCellState = "live"
+	// KeylessCellPending — a leg is missing; reason names the lane that will deliver it.
+	KeylessCellPending KeylessCellState = "pending"
+	// KeylessCellExcluded — the cloud can never honor it; reason is the product-voice why.
+	KeylessCellExcluded KeylessCellState = "excluded"
 )
 
 // keylessCell records whether one cloud × engine keyless cell is implemented END TO END — the tofu
 // flag that turns IAM auth on, the bootstrap Job that creates the app's login, AND the runtime proxy.
 type keylessCell struct {
-	state cellState
-	// reason is empty ONLY when state is cellLive. It is surfaced three ways — the fail-closed error
+	state KeylessCellState
+	// reason is empty ONLY when state is KeylessCellLive. It is surfaced three ways — the fail-closed error
 	// an operator reads, the canvas's disabled-toggle prose (via lib/cloud-providers/generated/
 	// keyless-cells.ts, generated from this table), and the offer-parity matrix — so it is written in
 	// the product's voice, not as an internal note. TestKeylessCellsTotal enforces non-emptiness.
@@ -164,28 +169,28 @@ type keylessCell struct {
 // three lanes.
 var keylessCells = map[string]map[string]keylessCell{
 	providerAWS: {
-		enginePostgres: {state: cellLive},
-		engineMySQL:    {state: cellLive},
+		enginePostgres: {state: KeylessCellLive},
+		engineMySQL:    {state: KeylessCellLive},
 	},
 	providerGCP: {
-		enginePostgres: {state: cellLive},
-		engineMySQL:    {state: cellLive},
+		enginePostgres: {state: KeylessCellLive},
+		engineMySQL:    {state: KeylessCellLive},
 	},
 	providerAzure: {
-		enginePostgres: {state: cellLive},
-		engineMySQL:    {state: cellLive},
+		enginePostgres: {state: KeylessCellLive},
+		engineMySQL:    {state: KeylessCellLive},
 	},
 	providerAlibaba: {
-		enginePostgres: {state: cellExcluded, reason: alibabaKeylessExclusion},
-		engineMySQL:    {state: cellExcluded, reason: alibabaKeylessExclusion},
+		enginePostgres: {state: KeylessCellExcluded, reason: alibabaKeylessExclusion},
+		engineMySQL:    {state: KeylessCellExcluded, reason: alibabaKeylessExclusion},
 	},
 	providerHetzner: {
-		enginePostgres: {state: cellExcluded, reason: hetznerKeylessExclusion},
+		enginePostgres: {state: KeylessCellExcluded, reason: hetznerKeylessExclusion},
 		// Unreachable in the canvas — the catalog floor gives Hetzner only Postgres, so the engine
 		// picker never offers MySQL. Present because the table is total: a cell that cannot be
 		// reached today must still say what it would mean, or the next cloud added here inherits
 		// "absent means excluded" all over again.
-		engineMySQL: {state: cellExcluded, reason: hetznerMySQLExclusion},
+		engineMySQL: {state: KeylessCellExcluded, reason: hetznerMySQLExclusion},
 	},
 }
 
@@ -200,6 +205,27 @@ const (
 	hetznerMySQLExclusion   = "MySQL is not offered on Hetzner — the in-cluster CloudNativePG operator is PostgreSQL only."
 )
 
+// KeylessCell reports one cloud × engine cell's state and, for a non-live cell, the product-voice
+// reason. Fail-closed on an unknown provider or engine: an error, never a zero state a caller could
+// read as "live".
+//
+// This is the ONLY way to ask the table a question from outside the package, and it exists so the
+// callers that need the STATE rather than a yes/no — the deploy's keyless decision record, and the T2
+// e2e lane table (#1511) — delegate instead of keeping their own copy of which clouds honor keyless.
+// keylessCellSupported stays the internal render gate: it answers the narrower "may this render?" and
+// is what actually fails a binding closed.
+func KeylessCell(provider, engine string) (KeylessCellState, string, error) {
+	engines, ok := keylessCells[provider]
+	if !ok {
+		return "", "", fmt.Errorf("keyless DB auth is not supported for provider %q", provider)
+	}
+	cell, ok := engines[engine]
+	if !ok {
+		return "", "", fmt.Errorf("keyless DB auth is not supported for engine %q on %s", engine, provider)
+	}
+	return cell.state, cell.reason, nil
+}
+
 // keylessCellSupported reports whether a cloud × engine keyless cell may render, or an error carrying
 // the cell's reason. Fail-closed: an unknown provider or engine is refused, never defaulted into a
 // neighbouring cell's wiring.
@@ -213,11 +239,11 @@ func keylessCellSupported(provider, engine string) error {
 		return fmt.Errorf("keyless DB auth is not supported for engine %q on %s", engine, provider)
 	}
 	switch cell.state {
-	case cellLive:
+	case KeylessCellLive:
 		return nil
-	case cellPending:
+	case KeylessCellPending:
 		return fmt.Errorf("keyless %s on %s is not implemented yet (%s)", engine, provider, cell.reason)
-	case cellExcluded:
+	case KeylessCellExcluded:
 		// The reason is the whole message: it is written for the person reading it, and prefixing it
 		// with our own framing would bury the sentence that actually answers "why not".
 		return errors.New(cell.reason)
@@ -227,6 +253,25 @@ func keylessCellSupported(provider, engine string) error {
 	// without it in mind. Reaching here means a state exists that nobody taught this gate about, and
 	// a fail-closed table must not fail OPEN on one.
 	return fmt.Errorf("keyless %s on %s has an unrecognised cell state %q", engine, provider, cell.state)
+}
+
+// keylessMechanism names HOW a live cell authenticates, for the wired decision record. A record that
+// only said "wired" would answer the weaker question: the two mechanisms fail differently (a native
+// proxy mints its own token; the in-process one mints from the pod's Workload Identity), so which one
+// ran is the first thing anyone debugging a real cluster wants to know.
+//
+// Only live cells reach here — a refusal carries the cell's own reason instead — so an unrecognised
+// provider is stated as unknown rather than guessed into a neighbouring mechanism.
+func keylessMechanism(provider, engine string) string {
+	switch provider {
+	case providerGCP:
+		return fmt.Sprintf("gcp · %s over the Cloud SQL Auth Proxy (--auto-iam-authn)", engine)
+	case providerAWS:
+		return fmt.Sprintf("aws · %s over RDS IAM, token minted per connection by the db-authproxy sidecar", engine)
+	case providerAzure:
+		return fmt.Sprintf("azure · %s over Entra, token minted per connection by the db-authproxy sidecar", engine)
+	}
+	return fmt.Sprintf("%s · %s — keyless wired by an unrecognised mechanism", provider, engine)
 }
 
 // enginePort returns the conventional wire port for an engine family, as a string and an int — the
