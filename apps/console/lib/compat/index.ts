@@ -3,7 +3,9 @@
 
 // The compat seam's TS surface: the pure engine + the generated matrix. Downstream
 // units (config-time warn resolver #1218, apply gate render #1219) import from here.
-export { evaluate, isBlocking, unwaived } from "./engine";
+export { evalAddOn, evaluate, isBlocking, rangeLabel, unwaived } from "./engine";
+export { addonCompat } from "./addon";
+export type { AddOnCompat } from "./addon";
 export { MATRIX } from "./generated/matrix";
 export type {
 	CloudK8s,

@@ -11,6 +11,7 @@ import type { NodeConfig } from "../graph/types";
 import { NODE_STATUS_META, gitopsBadge, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { addonCompat } from "@/lib/compat";
 
 /** Small squared connection nub — grayscale, no radius (design system). */
 const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-background";
@@ -56,6 +57,14 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
 	const resolved = useNodeStatus(id);
 	const lod = useCanvasLod();
+	// The env's Kubernetes minor, for the add-on compat overlay. Above the early return — hooks must
+	// run in the same order on every render. Defensive: no cluster / unset version → undefined → the
+	// engine answers `not_evaluable` rather than a false pass.
+	const clusterK8s = useCanvasStore((s) => {
+		const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
+		const v = c && "cluster_version" in c ? c.cluster_version : null;
+		return typeof v === "string" && v ? v : undefined;
+	});
 	if (!node) return null;
 
 	const def = NODE_REGISTRY[node.data.kind];
@@ -82,6 +91,21 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	// ArgoCD health overlay (#574) — a chip only when NOT plainly healthy, same calm-canvas
 	// rule as drift. Card/dense tiers only (the glyph tier stays an icon and a pulse).
 	const gitops = gitopsBadge(resolved.gitops);
+
+	// Add-on ↔ Kubernetes compatibility (#1222) — an OVERLAY on the base state, exactly like drift
+	// and the ArgoCD chip, never a new NodeStatusState and never stored on the node (a stored status
+	// would corrupt graphToForm / structuralHash / the staged-change diff). Derived on every render
+	// so it re-judges the moment the cluster's version is edited, before any job exists.
+	// Only add-on cards carry it, and only when it wants attention — `pass` shows nothing.
+	const addonId =
+		node.data.kind === "addon" && typeof node.data.config.id === "string"
+			? node.data.config.id
+			: null;
+	const compat = addonId ? addonCompat(addonId, clusterK8s) : null;
+	const compatChip =
+		compat && compat.status !== "pass"
+			? { label: compat.status === "fail" ? `K8s ${compat.window}` : "Unverified", note: compat.note }
+			: null;
 
 	// A node's `kind` discriminant and its registry entry are correlated at runtime, but TypeScript
 	// can't prove it through the keyed lookup (the same discriminated-union limitation the canvas
@@ -201,6 +225,18 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 									{gitops.label}
 								</span>
 							)}
+							{compatChip && (
+								<span
+									className={cn(
+										"shrink-0 border px-1 text-[8px] uppercase tracking-wide text-foreground",
+										compat?.status === "fail" ? "border-border-strong" : "border-dashed border-border",
+										!gitops && "ml-auto",
+									)}
+									title={compatChip.note}
+								>
+									{compatChip.label}
+								</span>
+							)}
 							{drifted > 0 && (
 								<span
 									className={cn(
@@ -246,6 +282,19 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				</span>
 				<span className="vx-eyebrow truncate">{eyebrow}</span>
 				<span className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
+						{compatChip && (
+							<span
+								className={cn(
+									"shrink-0 border px-1 py-px font-mono text-[8px] uppercase tracking-wide",
+									compat?.status === "fail"
+										? "border-border-strong text-foreground"
+										: "border-dashed border-border text-muted-foreground",
+								)}
+								title={compatChip.note}
+							>
+								{compatChip.label}
+							</span>
+						)}
 					{gitops && (
 						<span
 							className={cn("vx-status shrink-0", `vx-status--${gitops.vx}`)}

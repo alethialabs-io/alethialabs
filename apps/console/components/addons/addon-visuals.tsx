@@ -20,11 +20,13 @@ import {
 	Network,
 	ScrollText,
 	ShieldCheck,
+	TriangleAlert,
 	type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@repo/ui/badge";
 import type { AddOnIcon } from "@/lib/addons/types";
 import type { ComponentStatus } from "@/lib/db/schema";
+import { addonCompat } from "@/lib/compat";
 
 const ICONS: Record<AddOnIcon, LucideIcon> = {
 	LineChart,
@@ -110,5 +112,47 @@ export function AddonStatusBadge({
 			<Loader className="h-3.5 w-3.5" />
 			{status}
 		</Badge>
+	);
+}
+
+/**
+ * An add-on's Kubernetes-compatibility badge, for the marketplace palette (#1222).
+ *
+ * Renders NOTHING when the add-on is compatible — the same calm-canvas rule `gitopsBadge` follows
+ * for Healthy+Synced. Ink is for the two states that want attention:
+ *
+ *   fail          — the recorded window excludes this cluster's Kubernetes minor.
+ *   not_evaluable — no window is recorded (the majority of the catalogue today), or the cluster's
+ *                   version is unset. Deliberately NOT styled like a pass: a compatibility we
+ *                   could not check must never read as one we verified. The dashed hairline is the
+ *                   design system's existing "admitted unknown" idiom (see CostChip's "Not priced").
+ *
+ * Advisory only — nothing here disables an add-on. The blocking gate is COMPAT-001 at apply time.
+ */
+export function AddonCompatBadge({
+	addonId,
+	k8sVersion,
+}: {
+	addonId: string;
+	k8sVersion: string | undefined;
+}) {
+	const compat = addonCompat(addonId, k8sVersion);
+	if (compat.status === "pass") return null;
+
+	if (compat.status === "fail") {
+		return (
+			<Badge variant="destructive" className="shrink-0 gap-1" title={compat.note}>
+				<TriangleAlert className="h-3 w-3" />
+				K8s {compat.window}
+			</Badge>
+		);
+	}
+	return (
+		<span
+			className="shrink-0 border border-dashed border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+			title={compat.note}
+		>
+			Unverified
+		</span>
 	);
 }
