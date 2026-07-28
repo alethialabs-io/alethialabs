@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Settings2 } from "lucide-react";
+import { useMemo } from "react";
 import { Button } from "@repo/ui/button";
 import { Label } from "@repo/ui/label";
 import {
@@ -25,6 +26,7 @@ import { ConfigFields } from "./inspector/config-fields";
 import { getKindConfig } from "./inspector/config-schema";
 import { ConnectorSelect } from "./inspector/connector-select";
 import { useNodeCapabilities } from "./inspector/use-node-capabilities";
+import { CompatAlert } from "./inspector/compat-alert";
 
 /**
  * W2 — the cluster + network are no longer cards on the board (one environment IS one cluster inside
@@ -63,6 +65,23 @@ export function EnvSettingsSheet() {
 	// Cluster and network are env-level singletons, but each resolves through its OWN node so a
 	// per-resource placement override is honoured rather than silently reading the project's account.
 	const clusterCaps = useNodeCapabilities(cluster?.id ?? null);
+
+	// The compat subject, assembled from the store — no new query. `addon` nodes are the environment's
+	// enabled marketplace installs; the config-time resolver also sees Hetzner data services and BYO
+	// charts, which is why CompatAlert never claims a clean bill of health.
+	const clusterK8s =
+		cluster && "cluster_version" in cluster.data.config &&
+		typeof cluster.data.config.cluster_version === "string"
+			? cluster.data.config.cluster_version || undefined
+			: undefined;
+	const addonIds = useMemo(
+		() =>
+			nodes
+				.filter((n) => n.data.kind === "addon")
+				.map((n) => ("id" in n.data.config && typeof n.data.config.id === "string" ? n.data.config.id : ""))
+				.filter(Boolean),
+		[nodes],
+	);
 	const networkCaps = useNodeCapabilities(network?.id ?? null);
 
 	return (
@@ -91,6 +110,13 @@ export function EnvSettingsSheet() {
 						{cluster && clusterSchema && (
 							<section className="space-y-2">
 								<h3 className="vx-eyebrow text-[10px]">Cluster</h3>
+						{/* Compat sits next to the Kubernetes version that causes it (#1221). Silent unless
+						    something actually fails — see CompatAlert's two honesty rules. */}
+						<CompatAlert
+							provider={provider}
+							k8sVersion={clusterK8s}
+							addonIds={addonIds}
+						/>
 								<ConfigFields
 									schema={clusterSchema}
 									config={cluster.data.config}
