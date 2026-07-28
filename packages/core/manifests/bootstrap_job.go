@@ -113,9 +113,15 @@ type BootstrapJobResult struct {
 	AdminSecretYAML string
 }
 
-// bootstrapJobName is the Job (and its admin Secret's stem) name for a keyless database target — one
+// BootstrapJobName is the Job (and its admin Secret's stem) name for a keyless database target — one
 // per (kind, name) so multiple keyless DBs don't collide. dns1123 to be a valid object name.
-func bootstrapJobName(t types.ServiceBindingTarget) string {
+//
+// EXPORTED for the T2 keyless scenario (#1511), which polls this Job in a real cluster. It calls the
+// product's namer for the same reason the cross-account scenario calls BindingSecretName: dns1123
+// normalization means a hand-rolled "bootstrap-database-<name>" would silently disagree the first
+// time a name needed normalizing, and the test would then poll forever for an object that was never
+// going to appear — and report it as a keyless failure.
+func BootstrapJobName(t types.ServiceBindingTarget) string {
 	return dns1123("bootstrap-" + string(t.Kind) + "-" + t.Name)
 }
 
@@ -137,7 +143,7 @@ func RenderBootstrapJob(opts Options, t types.ServiceBindingTarget) (BootstrapJo
 	if ns == "" {
 		ns = keylessKSANamespace
 	}
-	name := bootstrapJobName(t)
+	name := BootstrapJobName(t)
 
 	var spec bootstrapJobSpec
 	var adminSecret string

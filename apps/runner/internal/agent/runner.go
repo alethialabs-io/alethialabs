@@ -934,6 +934,13 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 		// Non-sensitive, safe to persist to the console alongside addon_status.
 		metadata["infra_services"] = result.InfraServices
 	}
+	if len(result.KeylessBindings) > 0 {
+		// Per-binding keyless DB-auth decisions (#1511): wired, or failed CLOSED with the cell's
+		// reason. This is the ONLY positive trace keyless leaves — before it, a working keyless
+		// binding recorded nothing at all, so "no warning" and "never attempted" were the same
+		// observation. Names, a state and product copy; nothing for the metadata scrub to strip.
+		metadata["keyless_bindings"] = result.KeylessBindings
+	}
 	if result.SecurityPosture != nil {
 		metadata["security_report"] = result.SecurityPosture
 	}
