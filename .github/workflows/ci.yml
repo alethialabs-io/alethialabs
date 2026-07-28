@@ -509,6 +509,12 @@ jobs:
         run: bash scripts/claim-work.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
+      # The nightly rollup is the only thing that reads a real-cloud run's verdict, and it reported a
+      # leg that provisioned and FAILED as "gate off — no secret/var wired" (#1613). It is main-gated
+      # and runs once a night, so a regression there is invisible for a day and then misattributed to
+      # whatever diff is nearby. These fixtures are hermetic — no network, no gh, no token.
+      - name: Nightly rollup derivation (a red leg is never "not enabled")
+        run: bash scripts/e2e/nightly-rollup.sh --self-test
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
