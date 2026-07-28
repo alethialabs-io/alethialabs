@@ -522,6 +522,7 @@ jobs:
           bash .claude/hooks/guard-runtime.sh --self-test
           bash .claude/hooks/guard-compose.sh --self-test
           bash .claude/hooks/guard-merge.sh --self-test
+          bash .claude/hooks/guard-iac.sh --self-test
       - name: Hook scripts parse
         run: |
           for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
