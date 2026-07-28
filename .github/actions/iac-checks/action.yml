@@ -35,6 +35,15 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
+        # `tflint --init` fetches each ruleset declared in infra/.tflint.hcl (aws, google, azurerm)
+        # from the GitHub releases API. Unauthenticated, that spends the RUNNER'S SHARED EGRESS IP
+        # quota — 60/hr for every job on that IP, not per-repo — so three plugins × the six-cloud
+        # matrix is 18+ anonymous calls per PR, and an exhausted IP 403s here and reds
+        # `check (<cloud>)` for reasons unrelated to the diff. tflint reads GITHUB_TOKEN and moves
+        # the spend onto the job's own token (5000/hr). Every workflow calling this action grants
+        # `contents: read` — a composite action cannot widen its caller's token, so if one ever
+        # stops, this silently falls back to anonymous.
+        GITHUB_TOKEN: ${{ github.token }}
       # Gate on ERRORS only — the templates carry many style warnings (unused declarations, missing
       # version constraints); tflint exits 2 on ANY finding by default, so limit the non-zero exit to
       # real errors (matches the staging/main version; dev's copy was missing this).
