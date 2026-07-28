@@ -358,7 +358,7 @@ jobs:
       # provider bump changes the key and repopulates.
       - name: Cache OpenTofu provider plugins
         if: steps.gate.outputs.run == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.terraform.d/plugin-cache
           key: tofu-plugins-1.9.0-${{ runner.os }}-${{ hashFiles('infra/templates/project/*/.terraform.lock.hcl') }}
