@@ -26,6 +26,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-merge.sh\"",
             "statusMessage": "Checking merge target"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-iac.sh\"",
+            "statusMessage": "Checking IaC guard"
           }
         ]
       },
@@ -70,6 +75,10 @@
       "Bash(tofu destroy:*)",
       "Bash(terraform apply:*)",
       "Bash(terraform destroy:*)",
+      "Bash(tofu -chdir=* apply:*)",
+      "Bash(tofu -chdir=* destroy:*)",
+      "Bash(terraform -chdir=* apply:*)",
+      "Bash(terraform -chdir=* destroy:*)",
       "Bash(git push origin main:*)",
       "Bash(git push origin staging:*)",
       "Bash(git push --force origin main:*)",
