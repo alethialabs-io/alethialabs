@@ -63,10 +63,22 @@ scripts/complete-work.sh <n>               # usually unnecessary — see below; 
 scripts/claim-work.sh --class backend      # loop
 ```
 
-- **Closing is automatic.** `.github/workflows/close-on-dev-merge.yml` parses every merged dev PR
-  for closing refs and closes each referenced issue. GitHub's own auto-close does not fire here
-  because `dev` is not the default branch, which is why the Action exists. `complete-work.sh <n>`
-  and `coordinate.sh --close-shipped` are manual backstops for when it misses.
+- **Closing is automatic — but only on a CLOSING KEYWORD.**
+  `.github/workflows/close-on-dev-merge.yml` parses every merged dev PR's title and body for
+  `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved #<n>` and closes those issues.
+  GitHub's own auto-close does not fire here because `dev` is not the default branch, which is
+  why the Action exists.
+
+  **A bare `(#n)` does NOT close.** The squash-merge convention appends `(#n)` to the PR title,
+  and that is a *mention*, not a delivery — as is `Part of #n`. Both are deliberately excluded
+  (a mention closing an issue is how you close unfinished work), and `claim-work.sh --self-test`
+  pins it. So: **a multi-tier unit's final PR must carry `Closes #<n>` in the body.** Putting the
+  number in the title is not enough, and nothing will tell you at merge time.
+
+  When it is missed anyway, the backstops are `complete-work.sh <n>`, `coordinate.sh
+  --close-shipped` (keyword-strict, mutating), and the **possibly-shipped advisory** in the board
+  report — which *does* match a bare title ref, flags it `LIKELY`, and mutates nothing. Verify
+  against `origin/dev` before closing on it: a reference is not a delivery in either direction.
 
 - **Atomic claim** (`claim-work.sh`): acquires `/tmp/alethia-claim.lock` (atomic `mkdir`, stale-reclaim by
   pid — same primitive as `compose-up.sh`), picks the next issue that is `open`, not `claimed`, not `blocked`,
