@@ -11,6 +11,7 @@ import type { CapabilityIdentity } from "@/lib/cloud-providers/capabilities/type
 import {
 	normalizeAksVersions,
 	normalizeCosmos,
+	normalizeFlexibleServerSkus,
 	normalizeFlexibleServerVersions,
 	normalizeRedisTiers,
 	syncAzureServiceCapabilities,
@@ -60,15 +61,69 @@ describe("normalizeFlexibleServerVersions", () => {
 		},
 	];
 
-	it("dedups versions and namespaces native_id by engine (postgres)", () => {
+	// #1351 changed the VALUE SPACE here, not the grain — this lane already emitted one row per
+	// version. The engine is now the catalog value (`azure-postgresql`), so synced rows and the static
+	// DB_ENGINES fallback are substitutable; otherwise the fail-open path (#918) hands the picker a
+	// different engine identity than the synced rows use.
+	it("dedups versions and namespaces native_id by the CATALOG engine value (postgres)", () => {
 		const rows = normalizeFlexibleServerVersions("eastus", "postgres", pgFixture);
-		expect(rows.map((r) => r.native_id)).toEqual(["postgres-16", "postgres-15"]);
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"azure-postgresql-16",
+			"azure-postgresql-15",
+		]);
 		for (const r of rows) {
 			expect(r.service_kind).toBe("database");
-			expect(r.engine).toBe("postgres");
+			expect(r.engine).toBe("azure-postgresql");
 			expect(r.launchable).toBe("launchable");
 		}
-		expect(rows[0].name).toBe("PostgreSQL 16");
+		// The version has its own column; `name` is the engine's stable label, not a composite.
+		expect(rows[0].name).toBe("Azure Database for PostgreSQL");
+		expect(rows[0].version).toBe("16");
+	});
+
+	it("reads the SKUs out of the SAME payload, under all three nesting shapes", () => {
+		// The PG and MySQL capability specs disagree on where the SKU list hangs, and some api-versions
+		// hang it off the EDITION instead of the version. Reading only one path would silently yield
+		// zero SKUs on the others, so all three are traversed — this fixture exercises each.
+		const skuFixture = [
+			{
+				supportedFlexibleServerEditions: [
+					{
+						supportedServerVersions: [
+							{
+								name: "16",
+								supportedVcores: [
+									{ name: "Standard_D2s_v3", vCores: 2, supportedMemoryPerVcoreMB: 4096 },
+								],
+							},
+							{
+								name: "15",
+								// Standard_D2s_v3 repeats across versions → one offering, not two.
+								supportedSkus: [{ name: "Standard_D2s_v3" }, { name: "Standard_D4s_v3" }],
+							},
+						],
+					},
+					{ supportedServerSkus: [{ name: "Standard_B1ms" }] },
+				],
+			},
+		];
+		const rows = normalizeFlexibleServerSkus("eastus", "postgres", skuFixture);
+		expect(rows.map((r) => r.native_id).sort()).toEqual([
+			"azure-postgresql-Standard_B1ms",
+			"azure-postgresql-Standard_D2s_v3",
+			"azure-postgresql-Standard_D4s_v3",
+		]);
+		const d2s = rows.find((r) => r.tier === "Standard_D2s_v3");
+		expect(d2s?.service_kind).toBe("database_instance_class");
+		expect(d2s?.engine).toBe("azure-postgresql");
+		expect(d2s?.version).toBeNull();
+		expect(d2s?.mem_gb).toBe(8); // 2 vCores × 4096 MB
+		// No size claimed when the payload omits the vCore fields — null, never 0.
+		expect(rows.find((r) => r.tier === "Standard_D4s_v3")?.mem_gb).toBeNull();
+	});
+
+	it("emits no SKU rows when the capabilities payload carries none", () => {
+		expect(normalizeFlexibleServerSkus("eastus", "postgres", pgFixture)).toEqual([]);
 	});
 
 	it("handles the mysql shape identically (versions path is shared)", () => {
@@ -80,9 +135,13 @@ describe("normalizeFlexibleServerVersions", () => {
 			},
 		];
 		const rows = normalizeFlexibleServerVersions("westus", "mysql", myFixture);
-		expect(rows.map((r) => r.native_id)).toEqual(["mysql-8.0.21", "mysql-5.7"]);
-		expect(rows[0].engine).toBe("mysql");
-		expect(rows[0].name).toBe("MySQL 8.0.21");
+		expect(rows.map((r) => r.native_id)).toEqual([
+			"azure-mysql-8.0.21",
+			"azure-mysql-5.7",
+		]);
+		expect(rows[0].engine).toBe("azure-mysql");
+		expect(rows[0].name).toBe("Azure Database for MySQL");
+		expect(rows[0].version).toBe("8.0.21");
 	});
 
 	it("returns [] when there are no editions/versions", () => {
@@ -98,19 +157,21 @@ describe("normalizeFlexibleServerVersions", () => {
 describe("normalizeRedisTiers", () => {
 	it("emits the full static SKU catalog as launchable when the RP is registered", () => {
 		const rows = normalizeRedisTiers("eastus", true);
-		expect(rows).toHaveLength(19); // Basic C0–C6 (7) + Standard C0–C6 (7) + Premium P1–P5 (5)
+		expect(rows).toHaveLength(6); // Managed Redis Balanced_B0/B1/B3/B5/B10/B20
 		expect(rows.every((r) => r.service_kind === "cache")).toBe(true);
 		expect(rows.every((r) => r.engine === "redis")).toBe(true);
 		expect(rows.every((r) => r.launchable === "launchable")).toBe(true);
-		// Basic C1 and Standard C1 are distinct offerings (distinct native_id).
-		expect(rows.find((r) => r.native_id === "Basic_C1")?.mem_gb).toBe(1);
-		expect(rows.find((r) => r.native_id === "Standard_C1")?.mem_gb).toBe(1);
-		expect(rows.find((r) => r.native_id === "Premium_P5")?.mem_gb).toBe(120);
+		// native_id is the ARM sku_name, mirroring catalog.json's azure cache tiers.
+		expect(rows.find((r) => r.native_id === "Balanced_B0")?.mem_gb).toBe(0.5);
+		expect(rows.find((r) => r.native_id === "Balanced_B1")?.mem_gb).toBe(1);
+		expect(rows.find((r) => r.native_id === "Balanced_B20")?.mem_gb).toBe(24);
+		// no retired Azure Cache for Redis SKU is offered anymore.
+		expect(rows.some((r) => /_C[0-6]$|_P[1-5]$/.test(r.native_id))).toBe(false);
 	});
 
 	it("surfaces the tiers as not_launchable when the RP is not registered (account-accurate, not silent)", () => {
 		const rows = normalizeRedisTiers("eastus", false);
-		expect(rows).toHaveLength(19);
+		expect(rows).toHaveLength(6);
 		expect(rows.every((r) => r.launchable === "not_launchable")).toBe(true);
 		expect(
 			rows.every((r) => r.launchable_reason === "not_available_for_subscription"),

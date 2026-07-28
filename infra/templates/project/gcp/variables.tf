@@ -60,10 +60,10 @@ variable "network_id" {
   description = "Self-link of an existing VPC network (used when provision_network = false)"
 }
 
-variable "subnetwork_id" {
-  type        = string
-  default     = ""
-  description = "Self-link of an existing subnetwork (used when provision_network = false)"
+variable "subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Self-links of user-selected existing subnetworks for a brownfield network (provision_network = false, #1352). Empty = auto-discover the subnetwork in var.region. Only the first entry is used (GKE attaches to one subnetwork). Replaces the former write-only subnetwork_id variable."
 }
 
 variable "single_cloud_nat" {
@@ -539,4 +539,59 @@ variable "cloud_sql_edition" {
   type        = string
   default     = "ENTERPRISE"
   description = "Cloud SQL edition. ENTERPRISE supports the standard tiers (db-f1-micro etc.); ENTERPRISE_PLUS requires db-perf-optimized-N-* tiers. Left unset, the API now defaults to ENTERPRISE_PLUS and rejects the default tier."
+}
+
+# ── external-secrets identity adoption ─────────────────────────────────────────
+variable "external_secrets_service_account_email" {
+  description = <<-EOT
+    OPTIONAL. Email of a PRE-EXISTING Google service account for the external-secrets operator to
+    run as, instead of the per-deploy one this template creates.
+
+    Why this exists: a cross-project Secret Manager grant in the TARGET project names this GSA by
+    email, and GCP does not treat a same-named recreation as the same identity — destroying the SA
+    rewrites the binding to `deleted:serviceAccount:...?uid=<old-uid>`, which the new SA does not
+    inherit. GCP IAM also offers no principal-pattern condition, so a grant cannot be written
+    against a per-run identity. Adopting a stable GSA lets the target-project grant be applied ONCE.
+
+    Empty (the default) preserves the existing behavior exactly: the template creates and owns the
+    GSA. When set, the account must already exist in var.project_id and the caller owns its
+    lifecycle — this template will not create, modify or destroy it.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.external_secrets_service_account_email == "" || can(regex("^[^@]+@[^@]+\\.iam\\.gserviceaccount\\.com$", var.external_secrets_service_account_email))
+    error_message = "external_secrets_service_account_email must be a full service-account email (name@project.iam.gserviceaccount.com), not a bare account id."
+  }
+}
+
+variable "create_memorystore_valkey" {
+  type        = bool
+  description = "Provision Memorystore for Valkey instead of Redis. Mutually exclusive with create_memorystore — the chosen cache engine sets exactly one."
+  default     = false
+}
+
+variable "memorystore_valkey_engine_version" {
+  type        = string
+  description = "Valkey engine enum (VALKEY_7_2, …)"
+  default     = "VALKEY_7_2"
+}
+
+variable "memorystore_valkey_node_type" {
+  type        = string
+  description = "Per-shard machine size for the Valkey instance"
+  default     = "SHARED_CORE_NANO"
+}
+
+variable "memorystore_valkey_shard_count" {
+  type        = number
+  description = "Number of Valkey shards (derived from the requested memory)"
+  default     = 1
+}
+
+variable "memorystore_valkey_replica_count" {
+  type        = number
+  description = "Replica nodes per Valkey shard"
+  default     = 0
 }

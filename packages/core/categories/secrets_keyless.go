@@ -47,7 +47,50 @@ type KeylessSecretTarget struct {
 	// exchanges the projected token for the target role via that provider. The customer bootstrap
 	// creates the provider + role in the target account and supplies this ARN. Empty for other clouds.
 	TargetOIDCProviderRef string
+
+	// TargetExternalID is set for AWS only, and is OPTIONAL there. When the customer's bootstrap sets
+	// an `sts:ExternalId` condition on the target role's trust policy, the same value must be sent on
+	// the assume or STS rejects it — ESO carries it as spec.provider.aws.externalID. Empty means the
+	// trust policy has no ExternalId condition (the default), and the field is omitted from the store.
+	//
+	// AWS-ONLY BY DESIGN — an explicit, documented per-cloud exclusion, not an oversight: ExternalId is
+	// an STS-specific confused-deputy control with no equivalent on the other three lanes, each of which
+	// already binds the grant to a concrete principal. GCP binds `roles/secretmanager.secretAccessor` to
+	// the cluster's Workload-Identity service account per secret; Azure assigns "Key Vault Secrets User"
+	// to the workload identity's service principal on one vault; Alibaba pins the RRSA trust to the
+	// cluster's OIDC issuer AND the external-secrets ServiceAccount `oidc:sub`.
+	TargetExternalID string
 }
+
+// XacctStoreName is the NAME of the cross-account ClusterSecretStore rendered for a cloud —
+// "secretstore-<cloud>-xacct", matching externalSecretsStoreTemplate's *-xacct branches. Returns ""
+// for a cloud with no cross-account store (hetzner, unknown), so callers fail closed.
+//
+// Keyed on the CLOUD, never the connector slug: the slug is "aws-sm-xacct" but the store is
+// "secretstore-aws-xacct", so the tempting "secretstore-"+slug is wrong on every lane.
+func XacctStoreName(cloud string) string {
+	switch cloud {
+	case "aws", "gcp", "azure", "alibaba":
+		return "secretstore-" + cloud + "-xacct"
+	default:
+		return ""
+	}
+}
+
+// AllXacctStoreNames returns every cross-account ClusterSecretStore name the template can render.
+// Callers that reap stale stores enumerate this instead of re-listing the clouds, so a new lane
+// cannot be added to the template and silently forgotten by the cleanup.
+func AllXacctStoreNames() []string {
+	return []string{
+		XacctStoreName("aws"),
+		XacctStoreName("gcp"),
+		XacctStoreName("azure"),
+		XacctStoreName("alibaba"),
+	}
+}
+
+// StoreName is the cross-account ClusterSecretStore this target is read through.
+func (t KeylessSecretTarget) StoreName() string { return XacctStoreName(t.Provider) }
 
 // DominantKeylessSecretTarget returns the cross-account keyless secret-manager target for the project's
 // dominant secrets selection, or nil when the dominant secrets provider is native / none or a

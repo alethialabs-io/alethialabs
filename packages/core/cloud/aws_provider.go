@@ -94,8 +94,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"sqs_queues":    buildSQSQueues(config.Queues, config.Topics),
 		"sns_topics":    buildSNSTopics(config.Topics),
 
-		// Redis defaults
+		// Cache defaults. The chosen ENGINE decides which module runs — the Caches block below
+		// overrides both toggles. Defaulting Redis on keeps an engine-less config unchanged.
 		"create_elasticache_redis":         len(config.Caches) > 0,
+		"create_elasticache_valkey":        false,
 		"redis_cluster_size":               1,
 		"redis_cluster_mode_enabled":       false,
 		"redis_instance_type":              "cache.t3.micro",
@@ -140,12 +142,29 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 		tfvars["rds_scaling_config"] = scalingConfig
 		engine, version := resolveDBEngine("aws", db)
-		tfvars["rds_config"] = map[string]interface{}{
-			"engine":         orDefault(engine, "aurora-postgresql"),
-			"engine_version": orDefault(version, "16.6"),
-			"db_port":        derefIntOr(db.Port, 5432),
+		engine = orDefault(engine, "aurora-postgresql")
+		version = orDefault(version, "16.6")
+		// Engine-aware composition (#1504). Everything below must follow the RESOLVED engine — the
+		// template's defaults are all Aurora-PostgreSQL-shaped, so an aurora-mysql engine that only
+		// set engine/version would get a Postgres parameter-group family, port 5432 and the
+		// "postgresql" log export: a MySQL cluster that never comes up.
+		defaultPort := 5432
+		if awsIsMySQLEngine(engine) {
+			defaultPort = 3306
+		}
+		rdsConfig := map[string]interface{}{
+			"engine":         engine,
+			"engine_version": version,
+			"db_port":        derefIntOr(db.Port, defaultPort),
 			"db_name":        db.Name,
 		}
+		// Omitted (not blanked) when underivable, so the template default stands and the
+		// family-matches-engine check decides — never emit a family we can't justify.
+		if family := awsAuroraFamily(engine, version); family != "" {
+			rdsConfig["cluster_family"] = family
+		}
+		tfvars["rds_config"] = rdsConfig
+		tfvars["rds_logs_exports"] = awsRDSLogExports(engine, db.ProviderConfig)
 		if db.InstanceClass != "" {
 			tfvars["rds_instance_type"] = db.InstanceClass
 		}
@@ -159,22 +178,59 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			// auth would produce a DB that accepts tokens but no identity able to mint one.
 			tfvars["rds_iam_irsa"] = *db.IamAuth
 		}
+		// Generic passthrough for knobs with no typed field. `log_exports` is reserved because it is
+		// consumed above under a different tfvar name; the two IAM-auth flags are reserved
+		// UNCONDITIONALLY (not merely merge-if-absent) so keyless can never be switched on from
+		// provider_config for a cell the canvas did not offer — db.IamAuth == nil leaves them unset,
+		// and without this a passthrough key would sail past both #1508 and #1510.
+		mergeProviderConfig(tfvars, db.ProviderConfig,
+			"log_exports", "rds_iam_auth_enabled", "rds_iam_irsa")
 	}
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		tfvars["redis_instance_type"] = orDefault(
-			resolveCacheNodeType("aws", cache),
-			"cache.t3.medium",
-		)
-		if cache.EngineVersion != "" {
-			tfvars["redis_engine_version"] = cache.EngineVersion
-		}
-		if cache.NumCacheNodes != nil {
-			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
-		}
-		if cache.MultiAz != nil {
-			tfvars["redis_multi_az_enabled"] = *cache.MultiAz
+
+		// The engine the user picked decides WHICH ElastiCache module runs. #1415 stopped a Valkey
+		// version corrupting the Redis config and left the toggle wiring as an explicit follow-up;
+		// this is that follow-up. Anything not explicitly Valkey stays Redis, so an engine-less
+		// config (an older project, the CLI's minimal shape) builds exactly what it built before.
+		valkey := cache.Engine == types.CacheEngineValkey
+		tfvars["create_elasticache_valkey"] = valkey
+		tfvars["create_elasticache_redis"] = !valkey
+
+		if valkey {
+			// Serverless: sized by usage limits, not a node type. MemoryGB is the cloud-indifferent
+			// size the canvas collects and maps to the storage ceiling directly (both GB).
+			//
+			// NumCacheNodes / MultiAz have no serverless analogue — capacity and AZ spread are the
+			// service's job — so they are deliberately NOT translated, rather than mapped onto
+			// something that merely looks equivalent.
+			if cache.MemoryGB > 0 {
+				tfvars["valkey_data_storage_max"] = cache.MemoryGB
+			}
+			if cache.EngineVersion != "" {
+				tfvars["valkey_engine_version"] = cache.EngineVersion
+			}
+		} else {
+			tfvars["redis_instance_type"] = orDefault(
+				resolveCacheNodeType("aws", cache),
+				"cache.t3.medium",
+			)
+			if cache.EngineVersion != "" {
+				tfvars["redis_engine_version"] = cache.EngineVersion
+				// Keep the parameter-group FAMILY in lock-step with the version — ElastiCache rejects
+				// a version whose major doesn't match `family` ("6.2" under "redis7"). Now that the
+				// version is a real picker (#977) this is easy to trip. (#1415)
+				if fam := awsRedisFamily(cache.EngineVersion); fam != "" {
+					tfvars["redis_family"] = fam
+				}
+			}
+			if cache.NumCacheNodes != nil {
+				tfvars["redis_cluster_size"] = *cache.NumCacheNodes
+			}
+			if cache.MultiAz != nil {
+				tfvars["redis_multi_az_enabled"] = *cache.MultiAz
+			}
 		}
 	}
 
@@ -270,6 +326,102 @@ func providerInt(cfg map[string]any, key string) (int, bool) {
 		return v, true
 	}
 	return 0, false
+}
+
+// awsRedisFamily derives the ElastiCache parameter-group family ("redis7", "redis6", …) from a Redis
+// engine version, so a picked version and the `redis_family` var never disagree. Returns "" for an
+// unparseable version, leaving the base default untouched. (#977)
+func awsRedisFamily(version string) string {
+	major, _, _ := strings.Cut(version, ".")
+	if major == "" {
+		return ""
+	}
+	return "redis" + major
+}
+
+// awsIsMySQLEngine reports whether a resolved AWS database engine is MySQL-family. Matches the
+// catalog value ("aurora-mysql") as well as a legacy hand-set Engine ("mysql"), since resolveDBEngine
+// passes the latter through untouched.
+func awsIsMySQLEngine(engine string) bool {
+	return strings.Contains(strings.ToLower(engine), "mysql")
+}
+
+// awsAuroraFamily derives the Aurora DB cluster parameter-group family from the resolved engine +
+// version, so a picked engine and the `cluster_family` var can never disagree — the #1382-class trap
+// where the canvas offers Aurora MySQL but the tfvars compose it onto the `aurora-postgresql16`
+// default, mis-provisioning the cluster.
+//
+// The two engines name their families DIFFERENTLY, which is the whole reason this can't be one
+// sprintf: AWS uses MAJOR.MINOR for Aurora MySQL ("aurora-mysql8.0", "aurora-mysql8.4") but MAJOR
+// only for Aurora PostgreSQL ("aurora-postgresql16"). Verified against the AWS Aurora User Guide
+// (custom-parameter-group tutorial: "For Parameter group family, choose aurora-mysql8.0").
+//
+// Returns "" when the version can't yield a valid family (e.g. a MySQL version with no minor), which
+// leaves the template default in place. That is safe because the template's
+// terraform_data.rds_engine_shape_guard precondition then BLOCKS the apply — a `check` block alone
+// would only warn. Never guess a family: a wrong one provisions a cluster that cannot serve.
+func awsAuroraFamily(engine, version string) string {
+	major, rest, hasMinor := strings.Cut(version, ".")
+	if major == "" {
+		return ""
+	}
+	switch {
+	case awsIsMySQLEngine(engine):
+		minor, _, _ := strings.Cut(rest, ".")
+		if !hasMinor || minor == "" {
+			return ""
+		}
+		return "aurora-mysql" + major + "." + minor
+	case strings.Contains(strings.ToLower(engine), "postgres"):
+		return "aurora-postgresql" + major
+	}
+	return ""
+}
+
+// awsRDSLogExports returns the CloudWatch log-export set for the engine, honouring an explicit
+// provider_config `log_exports` when the tenant set one. Aurora MySQL rejects "postgresql" (and vice
+// versa), so the DEFAULT must follow the engine or `tofu apply` fails at the cluster.
+//
+// An explicit set is passed through verbatim, NOT sanitized against the engine: RDS-ENGINE-003
+// (checks_data.tf) already blocks an engine-invalid set fail-closed at apply, naming the valid types,
+// and silently dropping an entry would hide what the tenant actually asked for.
+//
+// `general` is absent from the MySQL default on purpose. The MySQL general log records every
+// statement with its literal parameter values, so defaulting it on ships whatever the application put
+// in a WHERE clause to the customer's CloudWatch, plus the ingest bill. `audit` covers the
+// security-forensics case without the statement text; anyone who wants full query logging opts in.
+func awsRDSLogExports(engine string, pc map[string]any) []string {
+	if v, ok := providerStringSlice(pc, "log_exports"); ok {
+		return v
+	}
+	if awsIsMySQLEngine(engine) {
+		return []string{"audit", "error", "slowquery"}
+	}
+	return []string{"postgresql"}
+}
+
+// providerStringSlice reads a []string from a provider_config key. JSON round-trips arrays as
+// []any of string, so both that and a native []string are accepted. An explicitly EMPTY list is a
+// real choice ("export nothing") and is returned as such, distinct from an absent key.
+func providerStringSlice(cfg map[string]any, key string) ([]string, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	switch v := cfg[key].(type) {
+	case []string:
+		return v, true
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				return nil, false // a non-string entry makes the whole list untrustworthy
+			}
+			out = append(out, s)
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 // s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the
@@ -423,6 +575,9 @@ func ecrRepoBaseName(name string) string {
 func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
+		if !secretProvisionedNatively(s.Provider) {
+			continue // read via ESO from its pluggable/cross-account store, not created here
+		}
 		entry := map[string]interface{}{
 			"secret_name": s.Name,
 		}

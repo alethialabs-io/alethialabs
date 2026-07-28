@@ -95,8 +95,25 @@ as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, 
 - **external-dns on Alibaba** — the alibabacloud external-dns provider has **no RRSA support upstream**
   ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); external-dns is
   skipped on Alibaba until that lands. Manage AliDNS records outside the cluster meanwhile.
-- **External secrets store on Hetzner** — Hetzner has no cloud secret manager; there is no
-  ClusterSecretStore to install. Source secrets via the **Vault connector** instead.
+- **External secrets store on Hetzner** — Hetzner has no *cloud* secret manager, so there is no
+  cloud-identity ClusterSecretStore. Source secrets via a **pluggable secrets connector** instead:
+  the External Secrets Operator installs on every cloud (incl. Hetzner), and a selected
+  **Vault / OpenBao / Doppler / generic** connector renders a token-authenticated ClusterSecretStore
+  (`secretstore-<slug>`) so workloads resolve values in-cluster.
+- **Pluggable secrets runtime-read (ESO 0.9.12 provider support)** — the in-cluster read path exists
+  for the stores ESO 0.9.12 supports first-class with a static token:
+  - **Vault / OpenBao** and **generic** (a Vault-KV-API-compatible endpoint — the `generic` connector
+    is `vault` under a provider-neutral label, reusing the same module + `provider.vault` store) →
+    `spec.provider.vault` with `auth.tokenSecretRef`.
+  - **Doppler** → `spec.provider.doppler` with `auth.secretRef.dopplerToken`.
+  - **Infisical** — **runtime-read excluded**: ESO's `infisical` provider first ships in **v0.9.20**
+    (absent from the pinned 0.9.12 chart). The provision/write path is unaffected; enable runtime-read
+    by bumping ESO (a version coupling tracked by the compat matrix).
+  - **1Password** — **runtime-read excluded**: ESO's `onepassword` provider in 0.9.12 is **Connect-only**
+    (needs a 1Password Connect server + connect token), which a bare Service-Account token cannot
+    satisfy. The provision/write path is unaffected.
+  Both exclusions are explicit and documented (not silent) — a store with no first-class read path on
+  the pinned chart registers no `saasSecretStore` and renders no ClusterSecretStore.
 
 ### One real backlog item (a genuine analogue worth adding)
 

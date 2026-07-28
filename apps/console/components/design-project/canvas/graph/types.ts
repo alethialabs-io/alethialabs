@@ -32,6 +32,7 @@ export type NodeKind =
 	| "secret"
 	| "bucket"
 	| "registry"
+	| "helm_registry"
 	| "service"
 	| "repositories"
 	| "chart"
@@ -145,6 +146,10 @@ export type NodeConfigMap = {
 	secret: ProjectFormData["secrets"][number];
 	bucket: ProjectFormData["storage_buckets"][number];
 	registry: ProjectFormData["container_registries"][number];
+	// A private chart repo (helm_registry connector) this environment pulls charts from. A form
+	// fragment like the infra kinds, but it provisions nothing: its `provider` names a connector
+	// whose credential the runner seeds as an ArgoCD repository credential.
+	helm_registry: ProjectFormData["helm_registries"][number];
 	// W1 — a first-class application workload (the customer's own code), form-fragment like the
 	// infra kinds so it round-trips the form graph. Infra-binding edges are W3.
 	service: ProjectFormData["services"][number];

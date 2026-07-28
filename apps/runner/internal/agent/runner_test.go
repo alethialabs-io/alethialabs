@@ -107,6 +107,10 @@ func (m *mockAPI) FetchAddonSecrets(jobID string) (map[string]map[string]string,
 	return nil, nil
 }
 
+func (m *mockAPI) FetchFabricTalosconfig(jobID string) (string, error) { return "", nil }
+
+func (m *mockAPI) PutFabricTalosconfig(jobID, talosconfig string) error { return nil }
+
 func (m *mockAPI) FetchStateToken(jobID string) (string, error) {
 	return "test-state-token", nil
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "project_databases" ADD COLUMN "provider_config" jsonb DEFAULT '{}'::jsonb;

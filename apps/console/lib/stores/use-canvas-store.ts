@@ -12,7 +12,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo-charts";
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
-import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import {
+	normalizeKeylessAuth,
+	type CloudProviderSlug,
+} from "@/lib/cloud-providers";
 import {
 	NODE_REGISTRY,
 	SINGLETON_KINDS,
@@ -132,6 +135,7 @@ function layoutByKind(nodes: CanvasNode[]): CanvasNode[] {
 		"secret",
 		"bucket",
 		"registry",
+		"helm_registry",
 	];
 	const counts = new Map<NodeKind, number>();
 	return nodes.map((n) => {
@@ -238,6 +242,31 @@ function withPlacement(
 	return { ...data, cloud_identity_id: cloudIdentityId, provider };
 }
 
+/**
+ * Clear `iam_auth` on every database node whose cell can no longer honor it.
+ *
+ * The canvas gate is a RENDER filter — it decides what the inspector draws and nothing else. Without
+ * this, enabling keyless on AWS and then re-placing the node (or the whole project) on Hetzner left
+ * `iam_auth: true` in the config, in the persisted draft, and all the way into the deployed snapshot,
+ * with a disabled toggle showing "off" above it. That gap is the whole reason the toggle was
+ * dishonest in the first place, so the display and the value are moved together (#1510).
+ *
+ * Runs over ALL nodes rather than the one that changed, because repointing the PROJECT node changes
+ * the effective provider of every database that inherits from it.
+ */
+function normalizeKeylessAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
+	const projectProvider =
+		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ?? null;
+	return nodes.map((n) => {
+		if (n.data.kind !== "database") return n;
+		const config = normalizeKeylessAuth(
+			n.data.config,
+			n.data.provider ?? projectProvider,
+		);
+		return config === n.data.config ? n : { ...n, data: { ...n.data, config } };
+	});
+}
+
 /** For array kinds, suffix the config's `name` so it's unique among same-kind nodes. */
 function applyUniqueName<K extends NodeKind>(
 	kind: K,
@@ -306,6 +335,10 @@ interface CanvasStore {
 	edges: CanvasEdge[];
 	selectedIds: string[];
 	inspectorNodeId: string | null;
+	/** Whether the environment-settings sheet is open. Lifted out of the sheet so other surfaces can
+	 * send you there — the Secrets panel shows which store the environment reads through, and the
+	 * choice itself is made in the sheet. */
+	envSettingsOpen: boolean;
 	dirty: boolean;
 	/** Undo/redo snapshot stacks (node sets; edges re-derived on restore). */
 	past: CanvasNode[][];
@@ -368,6 +401,7 @@ interface CanvasStore {
 	removeNodes: (ids: string[]) => void;
 	duplicateNodes: (ids: string[]) => void;
 	openInspector: (id: string | null) => void;
+	setEnvSettingsOpen: (open: boolean) => void;
 	commit: () => void;
 	undo: () => void;
 	redo: () => void;
@@ -433,6 +467,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			iacOutputs: [],
 			selectedIds: [],
 			inspectorNodeId: null,
+			envSettingsOpen: false,
 			dirty: false,
 			past: [],
 			future: [],
@@ -735,20 +770,22 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			updateNodeConfig: (id, patch) => {
-				const next = get().nodes.map((n) =>
-					n.id === id
-						? { ...n, data: withConfig(n.data, patch) }
-						: n,
+				const next = normalizeKeylessAcrossNodes(
+					get().nodes.map((n) =>
+						n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
+					),
 				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
 			},
 
 			setNodeIdentity: (id, cloudIdentityId, provider) => {
 				get().commit();
-				const next = get().nodes.map((n) =>
-					n.id === id
-						? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
-						: n,
+				const next = normalizeKeylessAcrossNodes(
+					get().nodes.map((n) =>
+						n.id === id
+							? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
+							: n,
+					),
 				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
 			},
@@ -801,6 +838,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			openInspector: (id) => set({ inspectorNodeId: id }),
+			setEnvSettingsOpen: (open) => set({ envSettingsOpen: open }),
 
 			undo: () => {
 				const { past, nodes, future } = get();

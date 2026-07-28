@@ -77,12 +77,13 @@ func RunKubeToken(ctx context.Context, args []string) error {
 	case "azure":
 		token, exp, err = mintAzureToken(ctx)
 	case "alibaba":
-		// Seam for #1129 (namespace re-mint parity): the Alibaba ACK exec-plugin token mint (an RRSA
-		// keyless credential exchanged for a cluster bearer token) is not yet wired. Recognized here —
-		// not the opaque default — so the failure names the follow-up rather than looking like an
-		// unknown provider. ACK's ConfigureKubeconfig also still writes a raw kubeconfig output today;
-		// the lane switches it to this exec-plugin.
-		return fmt.Errorf("kube-token: provider %q is not yet wired (namespace keyless re-mint follow-up #1129)", *provider)
+		// ACK does NOT use an exec-plugin bearer model (unlike EKS/GKE/AKS). Its
+		// DescribeClusterUserKubeconfig returns a COMPLETE kubeconfig with an embedded, short-lived x509
+		// client cert, which alibabaProvider.ConfigureKubeconfig resolves output-free (keyless RRSA
+		// signing) and writes verbatim — so kubectl authenticates directly with no `kube-token` callout.
+		// Recognized here (not the opaque default) so a stray invocation fails with the reason rather than
+		// looking like an unknown provider: for ACK this is by design, not a gap.
+		return fmt.Errorf("kube-token: provider %q has no exec-plugin token — ACK writes a client-cert kubeconfig directly (see alibabaProvider.ConfigureKubeconfig); kube-token is not used for alibaba", *provider)
 	default:
 		return fmt.Errorf("kube-token: unsupported provider %q (want aws|gcp|azure)", *provider)
 	}

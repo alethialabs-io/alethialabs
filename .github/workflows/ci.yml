@@ -43,7 +43,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       runner: ${{ steps.filter.outputs.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
@@ -101,11 +101,11 @@ jobs:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -114,7 +114,7 @@ jobs:
       # so a PR restores the previous run's cache and Turbo only re-executes the packages that actually
       # changed (it replays cached logs for the rest). This is the single biggest CI-time win.
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .turbo/cache
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -178,11 +178,11 @@ jobs:
       OPENFGA_TEST_API_URL: http://localhost:8082
       ALETHIA_PDP_PARITY_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -256,16 +256,16 @@ jobs:
       # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .turbo/cache
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -290,7 +290,7 @@ jobs:
         run: pnpm -F console exec playwright test --project=hero
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: apps/console/playwright-report/
@@ -343,16 +343,16 @@ jobs:
       # off by default and only the literal "1" engages it).
       ALETHIA_AI_MOCK: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .turbo/cache
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -375,7 +375,7 @@ jobs:
         run: pnpm -F console exec playwright test --project=elench-ai
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-elench-ai
           path: apps/console/playwright-report/
@@ -390,11 +390,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -421,11 +421,11 @@ jobs:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -440,6 +440,25 @@ jobs:
         run: pnpm -F console check:marketing-routes
       - name: Drizzle migration history is unforked (linear snapshot chain)
         run: pnpm -F console check:migrations
+      - name: Every canvas offer is buildable on every cloud, or documented (offer parity)
+        run: pnpm -F console check:offer-parity
+      - name: Offer-parity matrix is in sync with the code
+        run: |
+          pnpm -F console gen:offer-parity
+          git diff --exit-code -- docs/testing/offer-parity.md \
+            || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -F console gen:offer-parity' and commit."; exit 1; }
+      - name: Keyless cells agree with the code that implements them
+        run: pnpm -F console check:keyless-cells
+      # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only
+      # DETECT drift; generating it makes drift impossible — and the table churns (aws/gcp MySQL
+      # opened four lanes after it was first written).
+      - name: Keyless cell mirror is in sync with the renderer (keyless.go → keyless-cells.ts)
+        run: |
+          pnpm -F console gen:keyless-cells
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
+            || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+      - name: Project templates pin their providers (tofu lock files, no -upgrade)
+        run: pnpm -F console check:tofu-lockfiles
       - name: Shipped version defaults are mutually compatible (compat matrix)
         run: pnpm -F console check:compat
       - name: CLI contract fixtures are in sync with the Zod contract
@@ -457,6 +476,17 @@ jobs:
           pnpm -F console gen:matrix
           git diff --exit-code -- apps/console/lib/compat/generated/matrix.ts \
             || { echo "::error::Compat matrix.ts is stale — run 'pnpm -F console gen:matrix' and commit (source of truth: packages/core/compat/matrix.json)."; exit 1; }
+      # gen-catalog.mjs has claimed "CI re-runs it and fails on drift" since it was written; until
+      # #1373 nothing did. It also re-runs the generator's fail-fast shape guards (every engine has a
+      # non-empty versions[] containing its default, and the snake + camel surfaces agree), so a
+      # malformed catalog.json reds here rather than at someone's next apply.
+      - name: Cloud catalog mirror is in sync with the SSOT (catalog.json → catalog.ts)
+        run: |
+          pnpm -F console gen:catalog
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/catalog.ts \
+            || { echo "::error::Generated catalog.ts is stale — run 'pnpm -F console gen:catalog' and commit (source of truth: packages/core/catalog/catalog.json)."; exit 1; }
+      - name: Catalog drift scout's pure parsers/differ hold (derive:catalog --self-test)
+        run: pnpm -F console derive:catalog -- --self-test
       - name: Tests exercise real source (anti-vacuous-test tripwire)
         run: node scripts/check-test-imports.mjs
       - name: Go tests exercise real source (anti-vacuous-test tripwire, verify + runner)
@@ -465,6 +495,32 @@ jobs:
         run: node scripts/check-connector-assets.mjs
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
         run: node scripts/check-license-headers.mjs
+      - name: Docs describe a repo that exists (paths · scripts · blocked commands)
+        run: node scripts/check-docs-contract.mjs
+      # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
+      # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
+      # uncommitted work) against a real throwaway leased worktree; it is the only proof
+      # the lease actually holds, and it was never executed by CI.
+      - name: Worktree lease protocol (13 properties, incl. pid-reuse + nested worktrees)
+        run: bash scripts/lib/wt-lease.sh --self-test
+      - name: Worktree lease guard — replays incident #1247
+        run: bash scripts/lib/wt-lease-hook-test.sh
+      - name: Board claim arbitration (earliest-lease-wins) + PR predicates
+        run: bash scripts/claim-work.sh --self-test
+      - name: Board decomposition validator (disjoint scopes, acyclic DAG)
+        run: node scripts/decompose-validate.mjs --self-test
+      # Each guard proves it still BLOCKS what it must and, more importantly, still
+      # ALLOWS what it must — the false positives are what get a guard disabled.
+      - name: Guards self-test (runtime · compose · merge)
+        run: |
+          bash .claude/hooks/guard-runtime.sh --self-test
+          bash .claude/hooks/guard-compose.sh --self-test
+          bash .claude/hooks/guard-merge.sh --self-test
+      - name: Hook scripts parse
+        run: |
+          for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
+            bash -n "$f"
+          done
       - name: Cloud privilege (OIDC / creds) never reachable from a PR (BYOC invariant 1)
         run: node scripts/check-workflow-oidc-isolation.mjs
 
@@ -476,15 +532,15 @@ jobs:
       matrix:
         module: [apps/cli, apps/runner, packages/core]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
           cache-dependency-path: ${{ matrix.module }}/go.sum
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
       # would make the keystone's per-PR signal hollow. Install it so the test actually runs.
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@v2
         if: matrix.module == 'packages/core'
         with:
           tofu_version: "1.9.0"
@@ -531,7 +587,7 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: ./scripts/coverage.sh 90
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
@@ -550,10 +606,10 @@ jobs:
     if: needs.detect-changes.outputs.runner == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build runner-base for linux/amd64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/runner/Dockerfile.base
@@ -610,24 +666,24 @@ jobs:
       # In the merge queue a missing prerequisite is a HARD FAIL, never a green skip.
       ALETHIA_E2E_T1_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
-      - uses: opentofu/setup-opentofu@v1
+          go-version: "1.26"
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: "1.9.0"
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.4
-      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-kubectl@v5
       - name: Install kind CLI (independent kubeconfig + cluster-leak cleanup)
         run: |
           go install sigs.k8s.io/kind@v0.30.0
@@ -664,11 +720,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
-      - uses: actions/setup-node@v4
+          go-version: "1.26"
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Cover each Go module
@@ -699,17 +755,17 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
       - run: pnpm install --frozen-lockfile
       - name: TS mutation (Stryker — lib + actions)
         run: pnpm -F console mutate || true
@@ -722,7 +778,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # gitleaks-action@v2 requires a paid license for ORG-owned repos, so we run the
@@ -756,9 +812,9 @@ jobs:
     # is gated per-step on the `docs` filter; the final step is the explicit no-op pass.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: needs.detect-changes.outputs.docs == 'true'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: needs.detect-changes.outputs.docs == 'true'
         with:
           node-version: 22

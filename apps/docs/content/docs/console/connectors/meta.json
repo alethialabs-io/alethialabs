@@ -11,6 +11,7 @@
     "managing-connections",
     "git-providers",
     "pluggable",
+    "chart-repositories",
     "cross-account-secret-managers"
   ]
 }

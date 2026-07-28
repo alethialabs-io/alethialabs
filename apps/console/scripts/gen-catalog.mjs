@@ -42,8 +42,8 @@ if (!live) throw new Error("catalog.json is missing the `live` block (#1126)");
 const REQUIRED_LIVE_KEYS = [
 	"providers", "regionLabels", "defaultRegion", "regionMap", "instanceTypes",
 	"k8sVersions", "autoscaler", "defaultInstanceType", "defaultK8sVersion", "instanceTypeMap",
-	"dbEngines", "dbCapacity", "engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap",
-	"wafOptions", "certOptions", "nosql", "network", "messaging",
+	"dbEngines", "dbCapacity", "engineMap", "cacheNodeTypes", "cacheEngines", "defaultCacheNode",
+	"cacheNodeMap", "wafOptions", "certOptions", "nosql", "network", "messaging",
 ];
 for (const k of REQUIRED_LIVE_KEYS) {
 	if (!(k in live)) throw new Error(`catalog.json live block is missing '${k}' (#1126)`);
@@ -51,13 +51,123 @@ for (const k of REQUIRED_LIVE_KEYS) {
 const provisioningSlugs = Object.keys(live.instanceTypes).sort();
 for (const k of ["regionLabels", "defaultRegion", "regionMap", "k8sVersions", "autoscaler",
 	"defaultInstanceType", "defaultK8sVersion", "instanceTypeMap", "dbEngines", "dbCapacity",
-	"engineMap", "cacheNodeTypes", "defaultCacheNode", "cacheNodeMap", "wafOptions", "certOptions",
-	"nosql", "network", "messaging"]) {
+	"engineMap", "cacheNodeTypes", "cacheEngines", "defaultCacheNode", "cacheNodeMap", "wafOptions",
+	"certOptions", "nosql", "network", "messaging"]) {
 	const got = Object.keys(live[k]).sort();
 	if (got.join(",") !== provisioningSlugs.join(",")) {
 		throw new Error(
 			`catalog.json live.${k} slug set [${got}] != provisioning set [${provisioningSlugs}] (#1126)`,
 		);
+	}
+}
+
+// The offline engine-version baseline (#1373). These strings are what the picker falls back to when
+// an account's capabilities haven't synced, AND what flows into the provider's tofu `engine_version`
+// variable — so a malformed list is a bad apply, not a cosmetic UI bug. The same invariants are
+// checked in Go (`TestDBEngineVersions`): the two consumers read this JSON by different paths, and
+// each must fail on its own rather than relying on the other having run.
+const assertVersions = (where, engine, versions, defaultVersion) => {
+	if (!Array.isArray(versions) || versions.length === 0) {
+		throw new Error(`catalog.json ${where} '${engine}' has no versions[] (#1373)`);
+	}
+	if (!versions.includes(defaultVersion)) {
+		throw new Error(
+			`catalog.json ${where} '${engine}' default version '${defaultVersion}' is not in versions ${JSON.stringify(versions)} (#1373)`,
+		);
+	}
+	if (new Set(versions).size !== versions.length) {
+		throw new Error(`catalog.json ${where} '${engine}' repeats a version (#1373)`);
+	}
+};
+for (const [provider, dp] of Object.entries(catalogCore.database)) {
+	const liveEngines = live.dbEngines[provider];
+	if (!liveEngines || liveEngines.length !== dp.engines.length) {
+		throw new Error(
+			`catalog.json live.dbEngines.${provider} does not mirror database.${provider}.engines (#1373)`,
+		);
+	}
+	dp.engines.forEach((e, i) => {
+		assertVersions(`database.${provider}`, e.value, e.versions, e.default_version);
+		assertVersions(
+			`live.dbEngines.${provider}`,
+			liveEngines[i].value,
+			liveEngines[i].versions,
+			liveEngines[i].defaultVersion,
+		);
+		// The two surfaces are separate JSON (snake `database`, camel `live.dbEngines`) describing the
+		// SAME engine — the canvas picker reads one, the Go resolver the other. They already disagree
+		// on Alibaba's engine `value`; the version axis must not be allowed to fork the same way.
+		if (JSON.stringify(e.versions) !== JSON.stringify(liveEngines[i].versions)) {
+			throw new Error(
+				`catalog.json versions drift for ${provider}/${e.value}: database ${JSON.stringify(e.versions)} vs live ${JSON.stringify(liveEngines[i].versions)} (#1373)`,
+			);
+		}
+	});
+}
+
+// Cache engines get the same dual-surface mirror check as DB engines. They are a NEW axis (#1420):
+// "which cache engines does this cloud offer" used to live hardcoded in the canvas floor and again in
+// the cross-cloud converter, so the two could disagree and nothing noticed. Now it is catalog data,
+// which means it can fork between the snake and camel surfaces the same way — so it is checked.
+for (const [provider, cp] of Object.entries(catalogCore.cache)) {
+	const liveEngines = live.cacheEngines[provider];
+	const snake = (cp.engines ?? []).map((e) => e.value);
+	const camel = (liveEngines ?? []).map((e) => e.value);
+	if (snake.length === 0) {
+		throw new Error(`catalog.json cache.${provider}.engines is empty — every cloud offers at least one (#1420)`);
+	}
+	if (JSON.stringify(snake) !== JSON.stringify(camel)) {
+		throw new Error(
+			`catalog.json cache engines drift for ${provider}: cache ${JSON.stringify(snake)} vs live ${JSON.stringify(camel)} (#1420)`,
+		);
+	}
+}
+
+// Cache TIERS, the axis one field over from the engines above — and the one that actually forked
+// (#1577). `cache.<p>.tiers` is what the Go resolver picks a sku from (NearestCacheTier), while
+// `live.cacheNodeTypes` / `defaultCacheNode` / `cacheNodeMap` are what the canvas stamps, offers and
+// converts with. When azure moved to Managed Redis, only the first was updated: the canvas kept
+// defaulting every cache to the retired `C1`, which the tofu template's sku validation rejects — so
+// an azure cache left at its defaults did not plan at all. Nothing noticed, because nothing checked.
+//
+// Deliberately a SUBSET check, not the engines' exact-mirror: `live.cacheNodeTypes` is a curated
+// ladder carrying a `cost` hint (aws lists 5 of its tiers, alibaba 3 of 4), and that is fine. What
+// may never happen is a DIFFERENT value space — a name the resolver and the template have never
+// heard of.
+const cacheTierValues = Object.fromEntries(
+	Object.entries(catalogCore.cache).map(([p, cp]) => [p, new Set((cp.tiers ?? []).map((t) => t.value))]),
+);
+for (const [provider, tiers] of Object.entries(cacheTierValues)) {
+	if (tiers.size === 0) {
+		throw new Error(`catalog.json cache.${provider}.tiers is empty — every cloud offers at least one (#1577)`);
+	}
+	const offered = (live.cacheNodeTypes[provider] ?? []).map((n) => n.value);
+	const stray = offered.filter((v) => !tiers.has(v));
+	if (stray.length > 0) {
+		throw new Error(
+			`catalog.json live.cacheNodeTypes.${provider} offers ${JSON.stringify(stray)}, which cache.${provider}.tiers does not — the picker names a sku the resolver and the template never see (#1577)`,
+		);
+	}
+	const fallback = live.defaultCacheNode[provider];
+	if (!tiers.has(fallback)) {
+		throw new Error(
+			`catalog.json live.defaultCacheNode.${provider} = ${JSON.stringify(fallback)} is not a cache.${provider}.tiers value — every cache node the canvas creates would carry an unbuildable sku (#1577)`,
+		);
+	}
+}
+
+// The cross-cloud conversion map is the third surface holding these same sku names, and it fell out
+// of date with the other two for exactly as long. Both sides are checked: a key must be a sku of the
+// SOURCE cloud, a value a sku of the TARGET cloud.
+for (const [source, targets] of Object.entries(live.cacheNodeMap)) {
+	for (const [target, mapping] of Object.entries(targets)) {
+		const badKeys = Object.keys(mapping).filter((k) => !cacheTierValues[source]?.has(k));
+		const badValues = Object.values(mapping).filter((v) => !cacheTierValues[target]?.has(v));
+		if (badKeys.length > 0 || badValues.length > 0) {
+			throw new Error(
+				`catalog.json live.cacheNodeMap.${source}.${target} is stale: unknown ${source} skus ${JSON.stringify(badKeys)}, unknown ${target} skus ${JSON.stringify(badValues)} (#1577)`,
+			);
+		}
 	}
 }
 
@@ -138,6 +248,9 @@ export interface DBEngine {
 	value: string;
 	label: string;
 	default_version: string;
+	/** Offline version baseline, newest-first; always contains \`default_version\`. Guidance, not a
+	 * gate — an account offering something newer must still be able to pick it (#918). */
+	versions: string[];
 }
 
 export interface Capacity {
@@ -161,8 +274,14 @@ export interface CacheTier {
 	cost: string;
 }
 
+export interface CacheEngine {
+	value: string;
+	label: string;
+}
+
 export interface CacheProvider {
 	default_tier: string;
+	engines: CacheEngine[];
 	tiers: CacheTier[];
 }
 
@@ -232,6 +351,11 @@ export function dbEngine(
 /** Cache SKU inventory for a provider. */
 export function cacheTiers(provider: string): CacheTier[] {
 	return CATALOG.cache[provider]?.tiers ?? [];
+}
+
+/** Cache ENGINES a provider can back — the cache-side twin of \`dbEngines\`. */
+export function cacheEngines(provider: string): CacheEngine[] {
+	return CATALOG.cache[provider]?.engines ?? [];
 }
 
 /** Pick the provider cache SKU whose memory is closest to the requested size. */
@@ -337,6 +461,8 @@ export interface DbEngineOption {
 	value: string;
 	label: string;
 	defaultVersion: string;
+	/** Offline version baseline, newest-first; always contains \`defaultVersion\`. */
+	versions: string[];
 }
 
 /** Database engine options per provider. */
@@ -366,6 +492,21 @@ export interface CacheNodeOption {
 
 /** Cache node type options per provider. */
 export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = ${emit(live.cacheNodeTypes)};
+
+export interface CacheEngineOption {
+	value: string;
+	label: string;
+}
+
+/**
+ * Cache ENGINES per provider — what each cloud can actually back.
+ *
+ * The database side has had this since the beginning (\`DB_ENGINES\`). The cache side didn't, so the
+ * same knowledge lived hardcoded in the canvas floor and again in the cross-cloud converter, and the
+ * two could disagree with nothing to catch it. Deriving both from here is what makes "Azure has no
+ * Valkey" a fact the product enforces rather than a comment someone has to remember.
+ */
+export const CACHE_ENGINES: Record<CloudProviderSlug, CacheEngineOption[]> = ${emit(live.cacheEngines)};
 
 /** Default cache node type per provider. */
 export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = ${emit(live.defaultCacheNode)};

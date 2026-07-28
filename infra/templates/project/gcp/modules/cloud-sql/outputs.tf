@@ -23,7 +23,10 @@ output "instance_name" {
   value       = google_sql_database_instance.this.name
 }
 
+# This must be WHAT THE APP ACTUALLY LOGS IN AS — the bootstrap GRANT target and the proxy login both
+# key off it — and the form is engine-specific (#1505): "sa@project.iam" on PostgreSQL, the
+# lowercased SA local part on MySQL (Cloud SQL truncates the @ and the domain).
 output "app_iam_user" {
-  description = "Keyless app database username — the CLOUD_IAM_SERVICE_ACCOUNT user (#722); null when no app GSA was passed"
+  description = "Keyless app database username — the CLOUD_IAM_SERVICE_ACCOUNT login as the engine stores it (#722, #1505); null when no app GSA was passed"
   value       = var.app_iam_sa_email != null ? google_sql_user.app_iam[0].name : null
 }

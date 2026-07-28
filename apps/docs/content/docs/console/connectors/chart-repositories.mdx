@@ -1,0 +1,92 @@
+---
+title: Chart Repositories
+description: Connect a private Helm or OCI chart source so Alethia can scan and deploy charts it holds.
+---
+
+# Chart Repositories
+
+A **chart repository** connector stores the credential Alethia uses to read Helm charts from a private
+source — an OCI registry such as GitHub Container Registry, or a classic HTTPS chart repository.
+
+It is the sibling of a [container registry](/console/design-project/container-registry) connector, and
+the difference matters: a container registry credential becomes a Kubernetes `imagePullSecret` so your
+*workloads* can pull *images*. A chart repository credential becomes an ArgoCD **repository
+credential**, so *Alethia* can read *charts*. Connecting one does not let your pods pull images, and
+connecting the other does not let Alethia read a chart.
+
+You only need a chart repository if your charts are private. Public charts work without any connector.
+
+## Providers
+
+Connect these from **Connectors → Chart repositories**. Every provider authenticates with a username
+and a token.
+
+| Provider | Registry host | Credential |
+|----------|---------------|------------|
+| **HTTPS Helm Repository** | You supply the full repository URL | Username · Password / token |
+| **GitHub Container Registry** | `ghcr.io` | Username · Password / token |
+| **Docker Hub** | `registry-1.docker.io` | Username · Access token |
+| **GitLab Container Registry** | `registry.gitlab.com`, or your own | Username · Password / token |
+| **Scaleway Container Registry** | Your Scaleway host, e.g. `rg.fr-par.scw.cloud` | Secret key |
+| **Generic OCI Registry** | You supply the host — Harbor, JFrog, or any OCI-compliant registry | Username · Password / token |
+
+<Callout type="info">
+**Amazon ECR and ECR Public are not available yet.** ECR authenticates with a token that expires after
+twelve hours, so there is no stable password to store. Supporting it needs a credential that refreshes
+itself inside the cluster, which is tracked separately. Charts in every other provider above work today.
+</Callout>
+
+Only the token is secret. The repository URL and registry host are stored as ordinary configuration and
+appear in the project's configuration snapshot; the token never does.
+
+## Selecting one on a project
+
+A connector holds a credential. To use it, add a **chart repository** to the environment on the canvas
+and pick the connected provider. Adding it per environment means staging and production can read charts
+from different registries.
+
+## How Alethia matches a chart to a credential
+
+Alethia does not ask which credential a chart should use. It matches the chart's **host** against the
+chart repositories you connected, taking the most specific match:
+
+- An OCI chart matches by URL prefix, so a credential for `oci://ghcr.io` covers
+  `oci://ghcr.io/acme/charts/payments`.
+- An HTTPS chart repository matches exactly.
+
+This is the same rule ArgoCD applies, which is what keeps one credential in play from end to end: the
+same match authenticates the [safety scan](/console/design-project/bring-your-own-charts#the-safety-scan)
+when you attach a chart and ArgoCD's pull when it deploys. A chart whose host matches nothing you
+connected is read anonymously — correct for a public chart, and a clear authentication failure for a
+private one.
+
+The credential is delivered to the Runner out of band, when it claims the job. It is never written into
+the project's configuration, the job record, or the job logs.
+
+## Where the charts are used
+
+The same connector serves both kinds of chart:
+
+- [Bring-your-own charts](/console/design-project/bring-your-own-charts) — your own packaged application.
+- Marketplace add-ons, when you point one at a private mirror instead of its public chart.
+
+## Registries on a private network
+
+By default the Runner refuses to pull a chart from a private or link-local address. The Runner holds
+platform credentials, so an operator-supplied chart URL that resolves inside the network — or to the
+cloud metadata service — would be a way to reach things it should not.
+
+If your registry genuinely sits on an internal network (a self-hosted Harbor or JFrog on RFC1918
+space), set `ALETHIA_HELM_REGISTRY_ALLOW_PRIVATE=1` on the Runner. See
+[Self-hosted runner](/runner/self-hosted#environment-variables). Loopback and link-local addresses stay
+blocked either way.
+
+## Adding a provider
+
+The provider set is defined in the connector catalog. To add one, follow the recipe in
+[Pluggable connectors](/console/connectors/pluggable#adding-a-new-provider) — a chart repository
+provider supplies a repository credential rather than an OpenTofu module, so it needs no module path.
+
+See also: [Bring Your Own Helm Charts](/console/design-project/bring-your-own-charts) ·
+[Pluggable Connectors](/console/connectors/pluggable) ·
+[Managing Connections](/console/connectors/managing-connections)

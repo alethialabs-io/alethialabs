@@ -24,6 +24,7 @@ const SENSITIVE_KEY_SUBSTRINGS = [
 	"kubeconfig",
 	"kube_config",
 	"talosconfig",
+	"talos_admin_config", // the persisted-at-rest admin credential column (#1389); "talosconfig" substring does NOT match it
 	"client_key",
 	"client_certificate",
 	"private_key",

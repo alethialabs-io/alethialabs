@@ -14,6 +14,16 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PhoneInput } from "../src/phone-input";
+import { pasteQuery } from "./interactions";
+
+// The country picker renders one CommandItem — with an SVG flag — PER COUNTRY, and re-renders the
+// whole list on every keystroke in the search box. Against the library's full ~240-country default
+// that is thousands of jsdom nodes rebuilt per character, which is where this file's seconds went
+// (#1402). The list itself is react-phone-number-input's data, not our code; what we assert is our
+// WIRING (dial-code re-prefix, the search, the empty state), and three countries exercise every one
+// of those paths. `countries` is the library's own public prop, passed straight through by
+// PhoneInput — no product code changes to make the tests cheap.
+const TEST_COUNTRIES = ["US", "DE", "FR"] as const;
 
 /**
  * Renders the real PhoneInput controlled by local state (mirrors a RHF
@@ -25,6 +35,7 @@ function renderPhone(defaultCountry: "US" | "DE" = "US") {
 		const [value, setValue] = React.useState<string>("");
 		return (
 			<PhoneInput
+				countries={[...TEST_COUNTRIES]}
 				defaultCountry={defaultCountry}
 				value={value}
 				onChange={(v) => {
@@ -87,7 +98,7 @@ describe("PhoneInput", () => {
 		// popover content is portaled + mounts async, so wait for the search box (findBy, not getBy).
 		await user.click(trigger);
 		const search = await screen.findByPlaceholderText(/search country/i);
-		await user.type(search, "Germany");
+		await pasteQuery(user, search, "Germany");
 		// cmdk filters asynchronously; the global asyncUtilTimeout (tests/setup.ts) gives the match
 		// generous headroom on a loaded CI box.
 		const option = await screen.findByRole("option", { name: /germany/i });
@@ -106,10 +117,8 @@ describe("PhoneInput", () => {
 		const { trigger } = renderPhone("US");
 
 		await user.click(trigger);
-		await user.type(
-			await screen.findByPlaceholderText(/search country/i),
-			"zzzznotacountry",
-		);
+		const search = await screen.findByPlaceholderText(/search country/i);
+		await pasteQuery(user, search, "zzzznotacountry");
 
 		// The CommandEmpty fallback shows when nothing matches.
 		expect(await screen.findByText(/no country found/i)).toBeInTheDocument();

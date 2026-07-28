@@ -70,4 +70,21 @@ locals {
   cloud_dns_name        = "dns-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
   cloud_armor_name      = "armor-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
   secret_manager_prefix = "${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+
+  # The external-secrets GSA this deploy uses: the caller's adopted one, or the one we created.
+  # Everything that grants to, binds, or exports the ESO identity reads these — never the resource
+  # directly — so adoption cannot be honoured in one place and missed in another. A half-adopted
+  # deploy would grant the created SA while the target project trusts the adopted one, and ESO would
+  # authenticate as an identity with no read grant anywhere.
+  external_secrets_adopted = var.provision_gke && var.external_secrets_service_account_email != ""
+  external_secrets_sa_email = var.provision_gke ? (
+    local.external_secrets_adopted
+    ? data.google_service_account.external_secrets_adopted[0].email
+    : google_service_account.external_secrets[0].email
+  ) : ""
+  external_secrets_sa_name = var.provision_gke ? (
+    local.external_secrets_adopted
+    ? data.google_service_account.external_secrets_adopted[0].name
+    : google_service_account.external_secrets[0].name
+  ) : ""
 }

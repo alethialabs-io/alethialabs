@@ -23,16 +23,21 @@ func TestSelectPlacementPath(t *testing.T) {
 		{"dedicated aws", types.PlacementModeDedicated, "aws", placementDedicated},
 		{"dedicated gcp", types.PlacementModeDedicated, "gcp", placementDedicated},
 		{"namespace aws → activated", types.PlacementModeNamespace, "aws", placementNamespaceAWS},
+		{"namespace gcp → activated", types.PlacementModeNamespace, "gcp", placementNamespaceAWS},
 		// Only clouds in namespaceRemintProviders activate; the rest fail closed with a documented,
-		// cloud-named reason. Each flips to placementNamespaceAWS as its lane lands (#1127/#1128/#1129).
-		{"namespace gcp → fail closed", types.PlacementModeNamespace, "gcp", placementUnactivated},
+		// cloud-named reason. Each flips as its mint + identity lane lands (#1128/#1129).
 		{"namespace azure → fail closed", types.PlacementModeNamespace, "azure", placementUnactivated},
-		{"namespace alibaba → fail closed", types.PlacementModeNamespace, "alibaba", placementUnactivated},
-		{"namespace hetzner → fail closed (permanent exclusion)", types.PlacementModeNamespace, "hetzner", placementUnactivated},
-		// vcluster is activated aws-first (#1231); other clouds fail closed until their host re-mint lands.
+		// alibaba (in-core keyless RRSA: ACK resolve + per-namespace RAM role) and hetzner (persisted-
+		// talosconfig Talos mint; no cloud IAM — k8s-native isolation) are both activated.
+		{"namespace alibaba → activated", types.PlacementModeNamespace, "alibaba", placementNamespaceAWS},
+		{"namespace hetzner → activated", types.PlacementModeNamespace, "hetzner", placementNamespaceAWS},
+		// vcluster is activated per-cloud as its host re-mint lands: aws (in-core) + gcp/azure
+		// (runner-injected KubeConnResolver) + alibaba (in-core keyless RRSA) + hetzner (Talos-API mint).
 		{"vcluster aws → activated", types.PlacementModeVcluster, "aws", placementVcluster},
-		{"vcluster gcp → fail closed", types.PlacementModeVcluster, "gcp", placementUnactivated},
-		{"vcluster hetzner → fail closed (permanent exclusion)", types.PlacementModeVcluster, "hetzner", placementUnactivated},
+		{"vcluster gcp → activated", types.PlacementModeVcluster, "gcp", placementVcluster},
+		{"vcluster azure → activated", types.PlacementModeVcluster, "azure", placementVcluster},
+		{"vcluster alibaba → activated", types.PlacementModeVcluster, "alibaba", placementVcluster},
+		{"vcluster hetzner → activated", types.PlacementModeVcluster, "hetzner", placementVcluster},
 		{"unknown mode → fail closed", types.PlacementMode("bogus"), "aws", placementUnactivated},
 	}
 	for _, tc := range cases {
@@ -44,27 +49,153 @@ func TestSelectPlacementPath(t *testing.T) {
 	}
 }
 
+// TestMintClusterOutputs locks the runner-injected kube-conn seam: aws needs no resolver (name-only,
+// resolved in-core), a cloud that reads endpoint/CA from outputs (gcp) gets them injected from the
+// resolver under its output keys, and every fail-closed branch surfaces an error rather than an
+// unusable kubeconfig.
+func TestMintClusterOutputs(t *testing.T) {
+	ctx := context.Background()
+	cfg := &types.ProjectConfig{CloudAccountID: "proj-1", Region: "us-central1"}
+
+	// aws: no conn keys → name-only map, resolver MUST NOT be consulted (in-core EKS DescribeCluster).
+	t.Run("aws name-only, resolver untouched", func(t *testing.T) {
+		called := false
+		resolver := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			called = true
+			return "", "", nil
+		}
+		out, err := mintClusterOutputs(ctx, resolver, nil, "aws", cfg, "my-eks", "eks_cluster_name")
+		if err != nil {
+			t.Fatalf("aws: unexpected error: %v", err)
+		}
+		if called {
+			t.Error("aws must not invoke the kube-conn resolver (endpoint/CA come from EKS DescribeCluster)")
+		}
+		if out["eks_cluster_name"] != "my-eks" || len(out) != 1 {
+			t.Errorf("aws outputs = %v, want just the cluster name", out)
+		}
+	})
+
+	// gcp: resolver supplies endpoint+CA, stored under the GKE output keys ConfigureKubeconfig reads.
+	t.Run("gcp injects endpoint+CA", func(t *testing.T) {
+		resolver := func(_ context.Context, slug string, c *types.ProjectConfig, cluster string) (string, string, error) {
+			if slug != "gcp" || c != cfg || cluster != "my-gke" {
+				t.Errorf("resolver got (%q, %v, %q), want (gcp, cfg, my-gke)", slug, c, cluster)
+			}
+			return "https://1.2.3.4", "CA==", nil
+		}
+		out, err := mintClusterOutputs(ctx, resolver, nil, "gcp", cfg, "my-gke", "gke_cluster_name")
+		if err != nil {
+			t.Fatalf("gcp: unexpected error: %v", err)
+		}
+		if out["gke_cluster_name"] != "my-gke" ||
+			out["gke_cluster_endpoint"] != "https://1.2.3.4" ||
+			out["gke_cluster_ca_certificate"] != "CA==" {
+			t.Errorf("gcp outputs = %v, want name+endpoint+CA under the GKE keys", out)
+		}
+	})
+
+	// A cloud that needs a conn but was handed no resolver is a runner wiring bug — fail closed.
+	t.Run("gcp nil resolver fails closed", func(t *testing.T) {
+		if _, err := mintClusterOutputs(ctx, nil, nil, "gcp", cfg, "my-gke", "gke_cluster_name"); err == nil {
+			t.Error("gcp with a nil resolver = nil error, want a wiring-bug error")
+		}
+	})
+
+	// A resolver error propagates; an empty endpoint/CA is rejected (never a half-built kubeconfig).
+	t.Run("gcp resolver error propagates", func(t *testing.T) {
+		boom := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "", "", io.ErrUnexpectedEOF
+		}
+		if _, err := mintClusterOutputs(ctx, boom, nil, "gcp", cfg, "my-gke", "gke_cluster_name"); err == nil {
+			t.Error("gcp resolver error = nil, want it propagated")
+		}
+		empty := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "", "CA==", nil
+		}
+		if _, err := mintClusterOutputs(ctx, empty, nil, "gcp", cfg, "my-gke", "gke_cluster_name"); err == nil {
+			t.Error("gcp resolver empty endpoint = nil, want a fail-closed error")
+		}
+	})
+
+	// hetzner: no cloud API — the injected Talos minter supplies a full kubeconfig, stored under the
+	// `kubeconfig` key ConfigureKubeconfig reads. The KubeConnResolver is never consulted.
+	t.Run("hetzner talos minter supplies kubeconfig", func(t *testing.T) {
+		resolverCalled := false
+		resolver := func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			resolverCalled = true
+			return "", "", nil
+		}
+		minter := func(_ context.Context, c *types.ProjectConfig, cluster string) (string, error) {
+			if c != cfg || cluster != "talos-1" {
+				t.Errorf("minter got (%v, %q), want (cfg, talos-1)", c, cluster)
+			}
+			return "apiVersion: v1\nkind: Config\n", nil
+		}
+		out, err := mintClusterOutputs(ctx, resolver, minter, "hetzner", cfg, "talos-1", "talos_cluster_name")
+		if err != nil {
+			t.Fatalf("hetzner: unexpected error: %v", err)
+		}
+		if resolverCalled {
+			t.Error("hetzner must not invoke the cloud KubeConnResolver (Talos has no cloud API)")
+		}
+		if out["talos_cluster_name"] != "talos-1" || out["kubeconfig"] != "apiVersion: v1\nkind: Config\n" {
+			t.Errorf("hetzner outputs = %v, want name + minted kubeconfig", out)
+		}
+	})
+
+	// hetzner with no injected minter is a runner wiring bug — fail closed.
+	t.Run("hetzner nil minter fails closed", func(t *testing.T) {
+		if _, err := mintClusterOutputs(ctx, nil, nil, "hetzner", cfg, "talos-1", "talos_cluster_name"); err == nil {
+			t.Error("hetzner with a nil Talos minter = nil error, want a wiring-bug error")
+		}
+	})
+
+	// A minter error propagates; an empty kubeconfig is rejected (never an unusable config).
+	t.Run("hetzner minter error / empty fails closed", func(t *testing.T) {
+		boom := func(context.Context, *types.ProjectConfig, string) (string, error) { return "", io.ErrUnexpectedEOF }
+		if _, err := mintClusterOutputs(ctx, nil, boom, "hetzner", cfg, "talos-1", "talos_cluster_name"); err == nil {
+			t.Error("hetzner minter error = nil, want it propagated")
+		}
+		blank := func(context.Context, *types.ProjectConfig, string) (string, error) { return "  ", nil }
+		if _, err := mintClusterOutputs(ctx, nil, blank, "hetzner", cfg, "talos-1", "talos_cluster_name"); err == nil {
+			t.Error("hetzner empty kubeconfig = nil, want a fail-closed error")
+		}
+	})
+}
+
+// TestHetznerNamespaceIdentityIsDocumentedNoOp locks the explicit per-cloud exclusion: hetzner-talos has no
+// cloud IAM, so provisionAndBindNamespaceIdentity returns nil (k8s-native isolation only) rather than
+// fail-closing like an unwired cloud — a documented no-op, not a silent one.
+func TestHetznerNamespaceIdentityIsDocumentedNoOp(t *testing.T) {
+	// nil identity provisioner + nil config are safe: the hetzner case touches neither (no cloud call).
+	if err := provisionAndBindNamespaceIdentity(context.Background(), nil, "hetzner", "fsn1", nil, "talos-1", "team-web", io.Discard, io.Discard); err != nil {
+		t.Errorf("provisionAndBindNamespaceIdentity(hetzner) = %v, want nil (k8s-native isolation, no cloud IAM)", err)
+	}
+}
+
 func TestUnactivatedPlacementError(t *testing.T) {
 	// namespace on a non-aws cloud names the cloud and the per-cloud reason (parity is documented, not
 	// silent) and points at aws as the working cloud.
-	nsErr := unactivatedPlacementError(types.PlacementModeNamespace, "gcp")
+	nsErr := unactivatedPlacementError(types.PlacementModeNamespace, "azure")
 	if nsErr == nil {
 		t.Fatal("expected error")
 	}
 	msg := nsErr.Error()
-	for _, want := range []string{"namespace", "gcp", "aws"} {
+	for _, want := range []string{"namespace", "azure", "aws"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("namespace error %q missing %q", msg, want)
 		}
 	}
 
-	// vcluster on a non-aws cloud names the cloud and the per-cloud reason (parity is documented, not
-	// silent) and points at aws as the working cloud — vcluster is activated aws-first (#1231).
-	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "gcp")
+	// vcluster on an un-activated cloud names the cloud and the per-cloud reason (parity is documented,
+	// not silent) and points at a working cloud. hetzner-talos is the permanent exclusion (aws/gcp/azure
+	// and now alibaba are activated).
+	vcErr := unactivatedPlacementError(types.PlacementModeVcluster, "hetzner")
 	if vcErr == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"vcluster", "gcp", "aws"} {
+	for _, want := range []string{"vcluster", "hetzner", "aws"} {
 		if !strings.Contains(vcErr.Error(), want) {
 			t.Errorf("vcluster error %q missing %q", vcErr.Error(), want)
 		}
@@ -72,24 +203,27 @@ func TestUnactivatedPlacementError(t *testing.T) {
 }
 
 func TestNamespaceRemintSeam(t *testing.T) {
-	// The allowlist is the single activation control: aws is wired today; the parity clouds and the
-	// permanent hetzner exclusion are not (they flip on as #1127/#1128/#1129 land).
-	if !namespaceRemintWired("aws") {
-		t.Error("namespaceRemintWired(aws) = false, want true (aws-first activation)")
+	// The allowlist is the single activation control: aws + gcp (managed output-free mint + identity),
+	// alibaba (ACK resolve + RRSA per-namespace RAM role) and hetzner (persisted-talosconfig Talos mint,
+	// k8s-native isolation) are wired today; azure flips on as #1128 lands.
+	for _, p := range []string{"aws", "gcp", "alibaba", "hetzner"} {
+		if !namespaceRemintWired(p) {
+			t.Errorf("namespaceRemintWired(%q) = false, want true (activated)", p)
+		}
 	}
-	for _, p := range []string{"gcp", "azure", "alibaba", "hetzner", "digitalocean", ""} {
+	for _, p := range []string{"azure", "digitalocean", ""} {
 		if namespaceRemintWired(p) {
 			t.Errorf("namespaceRemintWired(%q) = true, want false (not yet wired)", p)
 		}
 	}
 
 	// The fail-closed error is cloud-named and points at the follow-ups (parity is documented, never
-	// silent).
-	err := namespaceRemintNotWired("gcp")
+	// silent). azure is still unwired (aws + gcp + alibaba are activated).
+	err := namespaceRemintNotWired("azure")
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"gcp", "aws", "#1127", "hetzner"} {
+	for _, want := range []string{"azure", "aws", "alibaba", "#1128"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("namespaceRemintNotWired error %q missing %q", err.Error(), want)
 		}
@@ -97,13 +231,19 @@ func TestNamespaceRemintSeam(t *testing.T) {
 
 	// The mint seam fails closed for an unwired cloud BEFORE touching the CloudProvider — a nil provider
 	// is safe precisely because the guard returns first (defence-in-depth behind selectPlacementPath).
-	if err := mintNamespaceKubeAccess(context.Background(), nil, nil, "gcp", "some-cluster", io.Discard); err == nil {
-		t.Error("mintNamespaceKubeAccess(gcp) = nil, want fail-closed error (re-mint not wired)")
+	if err := mintNamespaceKubeAccess(context.Background(), nil, nil, nil, nil, "azure", "some-cluster", io.Discard); err == nil {
+		t.Error("mintNamespaceKubeAccess(azure) = nil, want fail-closed error (re-mint not wired)")
 	}
 
-	// The identity seam fails closed for an unwired cloud (default case) — no AWS calls, no silent no-op.
-	if err := provisionAndBindNamespaceIdentity(context.Background(), "azure", "eu-west-1", "some-cluster", "ns", io.Discard, io.Discard); err == nil {
+	// The identity seam fails closed for an unwired cloud (default case) — no cloud calls, no silent no-op.
+	if err := provisionAndBindNamespaceIdentity(context.Background(), nil, "azure", "eu-west-1", nil, "some-cluster", "ns", io.Discard, io.Discard); err == nil {
 		t.Error("provisionAndBindNamespaceIdentity(azure) = nil, want fail-closed error (identity not wired)")
+	}
+
+	// gcp namespace identity needs an injected provisioner — a nil one is a runner wiring bug, fail closed
+	// (never a silent skip that would leave the tenant SA with the cluster node role).
+	if err := provisionAndBindNamespaceIdentity(context.Background(), nil, "gcp", "us-central1", nil, "some-cluster", "ns", io.Discard, io.Discard); err == nil {
+		t.Error("provisionAndBindNamespaceIdentity(gcp, nil provisioner) = nil, want a wiring-bug error")
 	}
 }
 

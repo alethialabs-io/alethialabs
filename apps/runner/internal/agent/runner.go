@@ -464,7 +464,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 	case types.JobTypeAudit:
 		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeChartScan:
-		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
+		execErr = w.executeChartScan(ctx, job, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
 	case types.JobTypeIacScan:
 		execErr = w.executeIacScan(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeStateSurgery:
@@ -740,12 +740,27 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 	payload := buildDeployPayload(vc, provider, false, planFile,
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
+		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), buildCompatOverride(job.CompatOverride),
+		w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StageDeploy, payload)
 	if err != nil {
 		return err
 	}
-	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets}
+	// hetzner-talos placement (#1389): fetch the Fabric's PERSISTED admin talosconfig (decrypted
+	// server-side, delivered over the authenticated job channel like the addon secrets) so the stage can
+	// mint a fresh short-lived kubeconfig from it via the Talos machine API. Only for a namespace/vcluster
+	// placement on hetzner — a dedicated apply produces its own `kubeconfig` output and needs no mint.
+	talosConfig := ""
+	if provider == "hetzner" && isTalosPlacementMode(vc.PlacementMode) {
+		if fetched, fetchErr := w.api.FetchFabricTalosconfig(job.ID); fetchErr != nil {
+			// Fail-safe: proceed; the placement's mint path fails closed if the config is truly absent.
+			fmt.Fprintf(stderr, "Warning: failed to fetch Fabric talosconfig: %v\n", fetchErr)
+		} else {
+			talosConfig = fetched
+		}
+	}
+
+	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets, TalosConfig: talosConfig}
 
 	// Run the untrusted provisioning work through the isolation seam. Passthrough runs
 	// runDeployStage in-process; the container backend re-execs it in a per-job container.
@@ -777,7 +792,58 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 
 	w.postDeployMetadata(job.ID, workDir, stderr)
+	// hetzner-talos (#1389): after a successful DEDICATED apply, persist the Fabric's admin talosconfig
+	// (from the Talos-emitted output) so future namespace/vcluster placements onto this Fabric can mint
+	// kube access. Only on a dedicated apply — placements run no tofu and emit no talosconfig. The
+	// plaintext crosses the authenticated channel to the console, which encrypts it at rest; it is NOT
+	// placed in execution_metadata (both the runner and console scrub any `talosconfig`-named key there).
+	if provider == "hetzner" && !isTalosPlacementMode(vc.PlacementMode) {
+		w.writeBackTalosconfig(job.ID, workDir, stderr)
+	}
 	return nil
+}
+
+// isTalosPlacementMode reports whether a placement mode runs NO tofu on an existing shared Fabric
+// (namespace/vcluster) — the modes that must mint kube access from the persisted talosconfig, vs a
+// dedicated apply (empty or "dedicated") that provisions the Fabric and emits its own kubeconfig.
+func isTalosPlacementMode(pm types.PlacementMode) bool {
+	return pm == types.PlacementModeNamespace || pm == types.PlacementModeVcluster
+}
+
+// writeBackTalosconfig reads the completed dedicated apply's talosconfig output and persists it to the
+// console (encrypted at rest there). Best-effort: a missing output or a post failure just logs — the
+// Fabric provisioned fine; only future placements onto it would then lack kube access (and fail closed).
+func (w *Runner) writeBackTalosconfig(jobID, workDir string, stderr *JobLogger) {
+	result, err := readPlanResult(workDir)
+	if err != nil || result == nil {
+		return
+	}
+	talos := talosOutputString(result.Outputs, "talosconfig")
+	if talos == "" {
+		return
+	}
+	if err := w.api.PutFabricTalosconfig(jobID, talos); err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to persist Fabric talosconfig for placement re-mint: %v\n", err)
+	}
+}
+
+// talosOutputString reads a string tofu output, tolerating both the `{"value": ...}` wrapper and a bare
+// string (mirrors packages/core/cloud.outputString, kept runner-local to avoid exporting it).
+func talosOutputString(outputs map[string]interface{}, key string) string {
+	val, ok := outputs[key]
+	if !ok {
+		return ""
+	}
+	if m, ok := val.(map[string]interface{}); ok {
+		if s, ok := m["value"].(string); ok {
+			return s
+		}
+		return ""
+	}
+	if s, ok := val.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // postDeployMetadata reads the sandbox's result.json (which exists on success AND on a
@@ -850,6 +916,9 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 	}
 	if result.VerifyReceipt != nil {
 		metadata["verify_receipt"] = result.VerifyReceipt
+	}
+	if result.CompatReport != nil {
+		metadata["compat_result"] = result.CompatReport
 	}
 	if len(result.AddOnStatus) > 0 {
 		metadata["addon_status"] = result.AddOnStatus
@@ -926,7 +995,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	payload := buildDeployPayload(vc, provider, true, "",
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		infracostKey, nil, w.config.AlethiaURL, job.ID)
+		infracostKey, nil, nil, w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StagePlan, payload)
 	if err != nil {
 		return err
@@ -976,6 +1045,9 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		}
 		if result.VerifyReceipt != nil {
 			metadata["verify_receipt"] = result.VerifyReceipt
+		}
+		if result.CompatReport != nil {
+			metadata["compat_result"] = result.CompatReport
 		}
 	}
 

@@ -7,9 +7,14 @@
 //   - kubernetes — AKS offered control-plane versions (ContainerService ListKubernetesVersions).
 //   - database   — Azure Database for PostgreSQL/MySQL Flexible Server offered engine VERSIONS
 //                  (the DBforPostgreSQL/DBforMySQL location-based capabilities).
+//   - database_instance_class — the compute SKUs those same capabilities payloads offer per engine
+//                  (Standard_D2s_v3 …), the escape-hatch `instance_class` field used to ask users to type.
 //   - cache      — Azure Cache for Redis SKU tiers. Redis has NO dynamic per-region SKU/capability ARM
 //                  op, so the tiers are the fixed product enum; account-availability is the Microsoft.Cache
 //                  resource-provider registration state (registered ⇒ launchable; not ⇒ not_launchable).
+//   - cache_version — DOCUMENTED EXCLUSION, following from the same limit: with no capability op for
+//                  Microsoft.Cache there is no account-scoped statement of which Redis versions the
+//                  subscription may launch. The picker falls open to the cloud default.
 //   - nosql      — Cosmos DB availability, taken from the Microsoft.DocumentDB provider registration state
 //                  (+ the databaseAccounts region list) — the read-only "this subscription can use Cosmos"
 //                  signal.
@@ -50,7 +55,7 @@ export interface NormalizedService {
 	region: string;
 	service_kind: CapabilityServiceKind;
 	// Provider-native id, made distinct ACROSS kinds (softRemoveUnseen keys on native_id per identity):
-	// k8s version ("1.29"), `${engine}-${version}` ("postgres-16"), Redis SKU ("Standard_C1"), or "Cosmos DB".
+	// k8s version ("1.29"), `${engine}-${version}` ("postgres-16"), Managed Redis SKU ("Balanced_B1"), or "Cosmos DB".
 	native_id: string;
 	name: string;
 	engine: string | null;
@@ -74,11 +79,24 @@ interface AksVersionEntry {
 interface AksVersionsResponse {
 	values?: AksVersionEntry[];
 }
+/** One orderable compute SKU under a flexible-server edition. The PostgreSQL and MySQL capability
+ * specs disagree on the property name for the same thing — PG nests `supportedServerVersions[].
+ * supportedVcores[]`, MySQL nests `supportedServerVersions[].supportedSkus[]` — so both are declared
+ * optional and whichever is present is read. Guessing one would silently yield zero SKUs on the other. */
+interface FlexibleServerSku {
+	name?: string;
+	vCores?: number;
+	supportedMemoryPerVcoreMB?: number;
+}
 interface FlexibleServerVersion {
 	name?: string;
+	supportedVcores?: FlexibleServerSku[];
+	supportedSkus?: FlexibleServerSku[];
 }
 interface FlexibleServerEdition {
 	supportedServerVersions?: FlexibleServerVersion[];
+	/** Some api-versions hang the SKU list off the EDITION rather than the version. */
+	supportedServerSkus?: FlexibleServerSku[];
 }
 interface FlexibleCapabilityEntry {
 	supportedFlexibleServerEditions?: FlexibleServerEdition[];
@@ -88,34 +106,26 @@ interface ArmProvider {
 	resourceTypes?: { resourceType?: string; locations?: string[] }[];
 }
 
-// ── Static Redis SKU catalog (no dynamic ARM list op for Microsoft.Cache/redis) ─────
-// Basic/Standard family C (C0–C6) + Premium family P (P1–P5), with the cache size in GB. name = the
-// create-time `${sku.name}_C${capacity}` shape so Basic C1 and Standard C1 stay distinct offerings.
+// ── Static Managed Redis SKU catalog (no dynamic ARM list op for Microsoft.Cache) ────
+// Azure Cache for Redis (Basic/Standard/Premium family C) is RETIRING — Azure no longer creates it
+// and directs callers to Azure Managed Redis instead. The Azure template provisions
+// `azurerm_managed_redis` (infra/templates/project/azure/azure-cache-redis.tf), whose `sku_name`
+// accepts only Balanced_*/MemoryOptimized_*/ComputeOptimized_*/FlashOptimized_*. We mirror
+// catalog.json's Balanced_* inventory (packages/core/catalog/catalog.json → cache.azure.tiers) so the
+// picker names the same size the plan resolves — the two copies must not drift. Balanced-only on
+// purpose: the tofu legacy-tier map emits only Balanced_* skus, so a memory:vCPU ratio axis the
+// template cannot express would be a new parity gap (#1570). name = the ARM `sku_name` directly.
 interface RedisTier {
-	sku: string; // Basic | Standard | Premium
-	code: string; // C0..C6 | P1..P5
+	sku: string; // Managed Redis sku_name, e.g. Balanced_B0
 	memGb: number;
 }
 const REDIS_TIERS: RedisTier[] = [
-	{ sku: "Basic", code: "C0", memGb: 0.25 },
-	{ sku: "Basic", code: "C1", memGb: 1 },
-	{ sku: "Basic", code: "C2", memGb: 2.5 },
-	{ sku: "Basic", code: "C3", memGb: 6 },
-	{ sku: "Basic", code: "C4", memGb: 13 },
-	{ sku: "Basic", code: "C5", memGb: 26 },
-	{ sku: "Basic", code: "C6", memGb: 53 },
-	{ sku: "Standard", code: "C0", memGb: 0.25 },
-	{ sku: "Standard", code: "C1", memGb: 1 },
-	{ sku: "Standard", code: "C2", memGb: 2.5 },
-	{ sku: "Standard", code: "C3", memGb: 6 },
-	{ sku: "Standard", code: "C4", memGb: 13 },
-	{ sku: "Standard", code: "C5", memGb: 26 },
-	{ sku: "Standard", code: "C6", memGb: 53 },
-	{ sku: "Premium", code: "P1", memGb: 6 },
-	{ sku: "Premium", code: "P2", memGb: 13 },
-	{ sku: "Premium", code: "P3", memGb: 26 },
-	{ sku: "Premium", code: "P4", memGb: 53 },
-	{ sku: "Premium", code: "P5", memGb: 120 },
+	{ sku: "Balanced_B0", memGb: 0.5 },
+	{ sku: "Balanced_B1", memGb: 1 },
+	{ sku: "Balanced_B3", memGb: 3 },
+	{ sku: "Balanced_B5", memGb: 6 },
+	{ sku: "Balanced_B10", memGb: 12 },
+	{ sku: "Balanced_B20", memGb: 24 },
 ];
 
 // ── Pure normalizers (exported for the fixture test) ─────────────────────────────────
@@ -147,15 +157,32 @@ export function normalizeAksVersions(
 	return out;
 }
 
+/** The catalog engine value + label per Azure family (matches DB_ENGINES[azure]), so federated rows
+ * and the static fallback share ONE value space. Without this the fail-open path (#918) hands the
+ * picker a different engine identity than the synced rows use. */
+const AZURE_DB_ENGINES: Record<
+	"postgres" | "mysql",
+	{ value: string; label: string }
+> = {
+	postgres: { value: "azure-postgresql", label: "Azure Database for PostgreSQL" },
+	mysql: { value: "azure-mysql", label: "Azure Database for MySQL" },
+};
+
 /** DBforPostgreSQL/DBforMySQL location capabilities → one `database` offering per distinct engine
  * VERSION. Both services nest versions at
  * `value[].supportedFlexibleServerEditions[].supportedServerVersions[].name`, so one normalizer serves
- * both (the differing SKU sub-shape, supportedVcores vs supportedSkus, is not read here). */
+ * both (the differing SKU sub-shape, supportedVcores vs supportedSkus, is not read here).
+ *
+ * This lane ALREADY emitted the per-version grain #1351 wants; what changed is the value space. It
+ * used to write `engine: "postgres"` while the catalog calls the same engine `azure-postgresql`, so a
+ * reader grouping by engine could not match synced rows to the static fallback. The version also left
+ * `name`: it is the engine's label now, and the version is its own column. */
 export function normalizeFlexibleServerVersions(
 	region: string,
 	engine: "postgres" | "mysql",
 	value: FlexibleCapabilityEntry[],
 ): NormalizedService[] {
+	const meta = AZURE_DB_ENGINES[engine];
 	const seen = new Set<string>();
 	const out: NormalizedService[] = [];
 	for (const entry of value ?? []) {
@@ -167,9 +194,9 @@ export function normalizeFlexibleServerVersions(
 				out.push({
 					region,
 					service_kind: "database",
-					native_id: `${engine}-${version}`,
-					name: `${engine === "postgres" ? "PostgreSQL" : "MySQL"} ${version}`,
-					engine,
+					native_id: `${meta.value}-${version}`,
+					name: meta.label,
+					engine: meta.value,
 					version,
 					tier: null,
 					mem_gb: null,
@@ -182,9 +209,61 @@ export function normalizeFlexibleServerVersions(
 	return out;
 }
 
-/** Azure Cache for Redis tiers (static enum) → one `cache` offering per SKU tier. `registered` is the
+/** The SAME DBfor{PostgreSQL,MySQL} location-capabilities payload, read for the compute SKUs it carries
+ * → one `database_instance_class` offering per (engine, SKU). This is the payload the version normalizer
+ * above deliberately did not read; the SKUs were already on the wire.
+ *
+ * The SKU list is nested under three different property names across the two services' api-versions
+ * (edition→version→supportedVcores, edition→version→supportedSkus, edition→supportedServerSkus), so all
+ * three are traversed. Memory is `supportedMemoryPerVcoreMB × vCores` where both are reported, else null.
+ *
+ * `native_id` is `<engine>-<sku>`: the same `Standard_D2s_v3` is orderable for both PostgreSQL and MySQL
+ * and each is its own offering. The bare SKU lives in `tier`, which is what the picker reads. */
+export function normalizeFlexibleServerSkus(
+	region: string,
+	engine: "postgres" | "mysql",
+	value: FlexibleCapabilityEntry[],
+): NormalizedService[] {
+	const meta = AZURE_DB_ENGINES[engine];
+	const seen = new Set<string>();
+	const out: NormalizedService[] = [];
+	const push = (sku: FlexibleServerSku): void => {
+		const name = sku.name?.trim();
+		if (!name || seen.has(name)) return;
+		seen.add(name);
+		const memGb =
+			sku.vCores && sku.supportedMemoryPerVcoreMB
+				? Math.round(((sku.vCores * sku.supportedMemoryPerVcoreMB) / 1024) * 100) / 100
+				: null;
+		out.push({
+			region,
+			service_kind: "database_instance_class",
+			native_id: `${meta.value}-${name}`,
+			name,
+			engine: meta.value,
+			version: null,
+			tier: name,
+			mem_gb: memGb,
+			launchable: "launchable",
+			launchable_reason: "available",
+		});
+	};
+	for (const entry of value ?? []) {
+		for (const edition of entry.supportedFlexibleServerEditions ?? []) {
+			for (const sku of edition.supportedServerSkus ?? []) push(sku);
+			for (const sv of edition.supportedServerVersions ?? []) {
+				for (const sku of sv.supportedVcores ?? []) push(sku);
+				for (const sku of sv.supportedSkus ?? []) push(sku);
+			}
+		}
+	}
+	return out;
+}
+
+/** Azure Managed Redis SKUs (static enum) → one `cache` offering per SKU. `registered` is the
  * Microsoft.Cache RP registration state: registered ⇒ launchable; otherwise the account can't launch
- * Redis, so the tiers are surfaced as not_launchable (account-accurate, not silent). */
+ * Redis, so the SKUs are surfaced as not_launchable (account-accurate, not silent). native_id is the
+ * ARM `sku_name` so the picker names the exact size the plan resolves. */
 export function normalizeRedisTiers(
 	region: string,
 	registered: boolean,
@@ -192,11 +271,11 @@ export function normalizeRedisTiers(
 	return REDIS_TIERS.map((t) => ({
 		region,
 		service_kind: "cache" as const,
-		native_id: `${t.sku}_${t.code}`,
-		name: `${t.sku} ${t.code} (${t.memGb} GB)`,
+		native_id: t.sku,
+		name: `${t.sku.replace("_", " ")} (${t.memGb} GB)`,
 		engine: "redis",
 		version: null,
-		tier: t.code,
+		tier: t.sku,
 		mem_gb: t.memGb,
 		launchable: registered ? ("launchable" as const) : ("not_launchable" as const),
 		launchable_reason: registered
@@ -365,13 +444,15 @@ export async function syncAzureServiceCapabilities(
 			// AKS not offered / RP not registered in this region — best-effort skip.
 		}
 
-		// database — PostgreSQL + MySQL flexible-server offered engine versions.
+		// database + database_instance_class — PostgreSQL + MySQL flexible-server offered engine versions
+		// AND the compute SKUs they can run on; both axes come out of the one capabilities payload.
 		try {
 			const pg = await armListValue<FlexibleCapabilityEntry>(
 				`${ARM}/subscriptions/${subscriptionId}/providers/Microsoft.DBforPostgreSQL/locations/${region}/capabilities?api-version=${API_PG}`,
 				token,
 			);
 			rows.push(...normalizeFlexibleServerVersions(region, "postgres", pg));
+			rows.push(...normalizeFlexibleServerSkus(region, "postgres", pg));
 		} catch {
 			// PostgreSQL flexible-server not offered here — skip.
 		}
@@ -381,6 +462,7 @@ export async function syncAzureServiceCapabilities(
 				token,
 			);
 			rows.push(...normalizeFlexibleServerVersions(region, "mysql", my));
+			rows.push(...normalizeFlexibleServerSkus(region, "mysql", my));
 		} catch {
 			// MySQL flexible-server not offered here — skip.
 		}

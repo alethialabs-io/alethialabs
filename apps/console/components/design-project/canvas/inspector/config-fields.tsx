@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { toNum, toStr, toStrArray } from "@/lib/coerce";
+import { toNum, toRecord, toStr, toStrArray } from "@/lib/coerce";
 import { ChevronDown } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import type { NodeKind } from "../graph/types";
@@ -30,20 +30,20 @@ import { RepositorySelector } from "@/components/repository-selector";
 import { ListField } from "./list-field";
 import { SubresourceField } from "./subresource-field";
 import { BindingsField, type ServiceBinding } from "./bindings-field";
+import { groupRegions, type CloudProviderSlug } from "@/lib/cloud-providers";
 import {
-	REGION_LABELS,
-	groupRegions,
-	type CloudProviderSlug,
-} from "@/lib/cloud-providers";
-import type {
-	FieldCtx,
-	FieldDef,
-	FieldOption,
-	KindConfig,
-	Resolvable,
-	SectionDef,
+	NO_CAPABILITIES,
+	type CapabilityBag,
+	type FieldCtx,
+	type FieldDef,
+	type FieldOption,
+	type KindConfig,
+	type Resolvable,
+	type SectionDef,
 } from "./config-schema";
+import { provenanceNote, regionCodes, withSelected } from "./capability-options";
 import { RadioCardGroup } from "./radio-card-group";
+import { ConnectorSelect } from "./connector-select";
 
 type Config = Record<string, unknown>;
 
@@ -57,20 +57,23 @@ function resolve<T>(
 	return r(ctx);
 }
 
-/** The grouped region dropdown, keyed by the effective provider. */
+/**
+ * The grouped region dropdown. Takes the whole ctx rather than just `provider` so the account-aware
+ * source lives in `capability-options.regionCodes` alongside every other picker, instead of this
+ * file growing a second, divergent notion of "which regions exist".
+ */
 function RegionSelect({
+	ctx,
 	provider,
 	value,
 	onChange,
 }: {
+	ctx: FieldCtx;
 	provider: CloudProviderSlug;
 	value: string;
 	onChange: (v: string) => void;
 }) {
-	const groups = groupRegions(
-		Object.keys(REGION_LABELS[provider] ?? {}),
-		provider,
-	);
+	const groups = groupRegions(regionCodes(ctx), provider);
 	return (
 		<Select value={value || ""} onValueChange={onChange}>
 			<SelectTrigger className="h-9 text-sm">
@@ -89,6 +92,168 @@ function RegionSelect({
 				))}
 			</SelectContent>
 		</Select>
+	);
+}
+
+/**
+ * The one select that renders `FieldOption[]` — shared by the inspector's `select` fields and by
+ * subresource rows, which previously carried their own copy and drifted from it.
+ *
+ * Advisory is INK ONLY. A `not_launchable` option stays selectable, because availability is
+ * design-time guidance and the deploy is the authority (#918) — never pass `disabled`.
+ */
+export function OptionSelect({
+	id,
+	options,
+	value,
+	onChange,
+	placeholder,
+	className,
+}: {
+	id?: string;
+	options: FieldOption[];
+	value: string;
+	onChange: (v: string) => void;
+	placeholder?: string;
+	className?: string;
+}) {
+	// Pin the stored value in, so a value the account can't launch (or one left over from a provider
+	// change) can't vanish and leave a blank trigger silently disagreeing with the saved config.
+	const opts = withSelected(options, value);
+	return (
+		<Select value={value || opts[0]?.value || ""} onValueChange={onChange}>
+			<SelectTrigger id={id} className={className ?? "h-9 text-sm"}>
+				<SelectValue placeholder={placeholder} />
+			</SelectTrigger>
+			<SelectContent>
+				{opts.map((o) => (
+					<SelectItem key={o.value} value={o.value}>
+						<span className="flex items-center gap-2">
+							<span
+								className={cn(o.advisory?.level === "unavailable" && "text-muted-foreground")}
+							>
+								{o.label}
+							</span>
+							{o.advisory ? (
+								<span
+									className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground"
+									title={o.advisory.note}
+								>
+									{o.advisory.level === "unavailable" ? "unavailable" : "unverified"}
+								</span>
+							) : null}
+						</span>
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
+/**
+ * A free-text field that SUGGESTS the account's offerings — the control for a value the cloud may
+ * never list back.
+ *
+ * `instance_class` and a cache `engine_version` are the escape hatches: they override the portable
+ * model with a provider-specific string, and a user must be able to pin one the enumeration lanes
+ * have not reported (an account that hasn't synced, a SKU only orderable on an older version, a
+ * region the anchor didn't cover). A `<Select>` structurally cannot hold such a value, so these keep
+ * a real input — the suggestions are additive, never a gate.
+ *
+ * The input IS the value: typing patches the config exactly as the plain text control does, so the
+ * list never has to open for the field to work. Suggestions filter on what has been typed.
+ *
+ * Deliberately NOT a base-ui Popover, for the reason `@repo/ui/multi-combobox` documents: an
+ * input-is-the-trigger typeahead fights that trigger/dismiss model (opening on focus vs its
+ * outside-press dismiss). This mirrors that component instead — controlled `open`, closed on blur,
+ * rows `preventDefault` their mousedown so a click doesn't blur the input out from under itself.
+ *
+ * Advisory is INK ONLY here as well (#918): a `not_launchable` suggestion stays pickable.
+ */
+export function OptionCombobox({
+	id,
+	options,
+	value,
+	onChange,
+	placeholder,
+	mono,
+}: {
+	id?: string;
+	options: FieldOption[];
+	value: string;
+	onChange: (v: string) => void;
+	placeholder?: string;
+	mono?: boolean;
+}) {
+	const [open, setOpen] = useState(false);
+	const q = value.trim().toLowerCase();
+	// Filter on the typed text, but never hide everything just because the value matches one option
+	// exactly — after picking a suggestion the list would otherwise collapse to that single row.
+	const filtered = q
+		? options.filter((o) => `${o.value} ${o.label}`.toLowerCase().includes(q))
+		: options;
+
+	return (
+		<div className="relative">
+			<Input
+				id={id}
+				value={value}
+				placeholder={placeholder}
+				autoComplete="off"
+				role="combobox"
+				aria-expanded={open}
+				className={cn("h-9 text-sm", mono && "font-mono")}
+				onChange={(e) => {
+					onChange(e.target.value);
+					setOpen(true);
+				}}
+				onFocus={() => setOpen(true)}
+				onBlur={() => setOpen(false)}
+			/>
+			{open && options.length > 0 ? (
+				<div className="absolute top-full left-0 z-50 mt-1 w-full rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+					<div className="max-h-56 overflow-y-auto">
+						{filtered.length === 0 ? (
+							// Not an error: an unlisted value is a legitimate pin, so the input keeps it.
+							<div className="px-2 py-3 text-center text-xs text-muted-foreground">
+								No matches — your value is kept as typed.
+							</div>
+						) : (
+							filtered.map((o) => (
+								<button
+									key={o.value}
+									type="button"
+									// Keep focus in the input so the click lands before the blur closes us.
+									onMouseDown={(e) => e.preventDefault()}
+									onClick={() => {
+										onChange(o.value);
+										setOpen(false);
+									}}
+									className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+								>
+									<span
+										className={cn(
+											"min-w-0 flex-1 truncate",
+											o.advisory?.level === "unavailable" && "text-muted-foreground",
+										)}
+									>
+										{o.label}
+									</span>
+									{o.advisory ? (
+										<span
+											className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground"
+											title={o.advisory.note}
+										>
+											{o.advisory.level === "unavailable" ? "unavailable" : "unverified"}
+										</span>
+									) : null}
+								</button>
+							))
+						)}
+					</div>
+				</div>
+			) : null}
+		</div>
 	);
 }
 
@@ -117,6 +282,15 @@ function FieldControl({
 				Select a cloud account to configure this.
 			</p>
 		);
+	}
+
+	// Same slot-replacement as above, for a field this cell cannot honor. Prose instead of a disabled
+	// control, so one gate covers all eleven field types rather than each inventing its own `disabled`
+	// plumbing. (Switches render in FieldRow and handle it themselves — a toggle you can SEE is off is
+	// a better answer than a sentence where the toggle used to be.)
+	const unavailable = field.unavailableWhen?.(config, ctx) ?? null;
+	if (unavailable) {
+		return <p className="text-xs text-muted-foreground">{unavailable}</p>;
 	}
 
 	switch (field.type) {
@@ -163,26 +337,30 @@ function FieldControl({
 			);
 		}
 
-		case "select": {
-			const options = resolve(field.options, ctx) ?? [];
+		case "select":
 			return (
-				<Select
-					value={toStr(raw) || options[0]?.value || ""}
-					onValueChange={patch}
-				>
-					<SelectTrigger id={id} className="h-9 text-sm">
-						<SelectValue placeholder={resolve(field.placeholder, ctx)} />
-					</SelectTrigger>
-					<SelectContent>
-						{options.map((o) => (
-							<SelectItem key={o.value} value={o.value}>
-								{o.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<OptionSelect
+					id={id}
+					options={resolve(field.options, ctx) ?? []}
+					value={toStr(raw)}
+					onChange={patch}
+					placeholder={resolve(field.placeholder, ctx)}
+				/>
 			);
-		}
+
+		// A value the cloud may never list back (a SKU, an engine version) has to stay TYPEABLE — a
+		// select can only hold what is in its list. The suggestions are the account's real offerings.
+		case "combobox":
+			return (
+				<OptionCombobox
+					id={id}
+					options={resolve(field.options, ctx) ?? []}
+					value={toStr(raw)}
+					onChange={patch}
+					placeholder={resolve(field.placeholder, ctx)}
+					mono={field.mono}
+				/>
+			);
 
 		case "radio-card": {
 			const options = resolve(field.options, ctx) ?? [];
@@ -204,6 +382,7 @@ function FieldControl({
 		case "region":
 			return provider ? (
 				<RegionSelect
+					ctx={ctx}
 					provider={provider}
 					value={toStr(raw)}
 					onChange={patch}
@@ -237,7 +416,7 @@ function FieldControl({
 			return field.sub ? (
 				<SubresourceField
 					spec={field.sub}
-					provider={ctx.provider}
+					ctx={ctx}
 					value={Array.isArray(raw) ? raw : []}
 					onChange={patch}
 				/>
@@ -253,6 +432,20 @@ function FieldControl({
 					enableIacTargets
 				/>
 			);
+
+		case "connector":
+			// Writes two keys at once, so it bypasses the single-key `patch` helper above — the
+			// provider's knobs are only meaningful alongside the slug that declares them.
+			return field.category ? (
+				<ConnectorSelect
+					id={id}
+					category={field.category}
+					value={toStr(raw) || null}
+					providerConfig={toRecord(config.provider_config)}
+					hiddenKnobs={field.hiddenKnobs}
+					onChange={onChange}
+				/>
+			) : null;
 	}
 }
 
@@ -273,20 +466,64 @@ function FieldRow({
 	const raw = field.get ? field.get(ctx.config) : ctx.config[field.key];
 	const unit = resolve(field.unit, ctx);
 	const label = unit ? `${field.label} (${unit})` : field.label;
+	// Resolved here (not inside FieldControl) so the count reflects exactly what the control renders.
+	const provenance = provenanceNote(
+		ctx,
+		field.capabilityAxis,
+		(resolve(field.options, ctx) ?? []).length,
+	);
 
 	if (field.type === "switch") {
+		// A switch renders here rather than in FieldControl, so it owns both gates itself.
+		// `requiresProvider` first: with no cloud picked there is nothing to be unavailable ON, and
+		// letting `unavailableWhen` answer that too would give one question two owners.
+		const needsProvider = Boolean(field.requiresProvider) && !ctx.provider;
+		const unavailable = needsProvider
+			? null
+			: (field.unavailableWhen?.(ctx.config, ctx) ?? null);
+		const note = needsProvider
+			? "Select a cloud account to configure this."
+			: unavailable;
+		const off = Boolean(needsProvider || unavailable);
 		return (
-			<div className="col-span-full flex items-center justify-between gap-4 rounded-none border border-border/60 px-3 py-2.5">
+			<div
+				className={cn(
+					"col-span-full flex items-center justify-between gap-4 rounded-none border px-3 py-2.5",
+					// Hairline weight is the de-emphasis, the same move `advanced` makes with a sunken
+					// surface. No colour: an unavailable cell is a fact, not a warning.
+					off ? "border-border/40" : "border-border/60",
+				)}
+			>
 				<div className="min-w-0">
-					<p className="text-sm font-medium">{field.label}</p>
-					{field.description && (
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							{field.description}
+					<p
+						className={cn(
+							"flex items-center gap-2 text-sm font-medium",
+							off && "text-muted-foreground",
+						)}
+					>
+						{field.label}
+						{/* Same typography as the option advisory above, a DIFFERENT mechanism: that one
+						    is ink-only and must never disable (#918), this one marks a real gate. */}
+						{unavailable && (
+							<span className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground">
+								unavailable
+							</span>
+						)}
+					</p>
+					{(note ?? field.description) && (
+						<p id={`${fieldId}-note`} className="mt-0.5 text-xs text-muted-foreground">
+							{note ?? field.description}
 						</p>
 					)}
 				</div>
+				{/* A switch's label is a sibling <p>, not a <Label htmlFor>, so without these the
+				    control has NO accessible name — a screen reader reads "switch, off" and the reason
+				    for a disabled one is never announced at all. */}
 				<Switch
-					checked={raw !== false}
+					aria-label={field.label}
+					aria-describedby={note ?? field.description ? `${fieldId}-note` : undefined}
+					checked={off ? false : raw !== false}
+					disabled={off}
 					onCheckedChange={(v) => onChange({ [field.key]: v })}
 				/>
 				{error && (
@@ -333,6 +570,12 @@ function FieldRow({
 				field.type !== "radio-card" && (
 					<p className="text-xs text-muted-foreground">{field.description}</p>
 				)
+			)}
+			{/* Provenance, once per field rather than per option: is this list THIS account's, or the
+			    whole catalog? The fail-open is invisible in the options by design, so without this the
+			    two read identically. Informational only — it gates nothing. */}
+			{provenance && (
+				<p className="vx-eyebrow text-[10px] text-muted-foreground">{provenance}</p>
 			)}
 		</div>
 	);
@@ -464,6 +707,7 @@ export function ConfigFields({
 	provider,
 	onChange,
 	kind,
+	capabilities,
 }: {
 	schema: KindConfig;
 	config: Config;
@@ -472,8 +716,11 @@ export function ConfigFields({
 	/** When set, each field is validated inline against this kind's zod item schema (W4). Omit for
 	 * surfaces that don't want inline errors. */
 	kind?: NodeKind;
+	/** Account-scoped options for this node's effective identity. OPTIONAL and defaulted, so every
+	 * existing mount point and test keeps working and simply resolves the static catalog. */
+	capabilities?: CapabilityBag;
 }) {
-	const ctx: FieldCtx = { provider, config };
+	const ctx: FieldCtx = { provider, config, caps: capabilities ?? NO_CAPABILITIES };
 	// W4 — validate against the DB-derived per-node schema so what the form accepts conforms to what
 	// the DB stores. Draft→Save is unchanged; this only surfaces per-field errors as you edit.
 	const errors = useMemo(

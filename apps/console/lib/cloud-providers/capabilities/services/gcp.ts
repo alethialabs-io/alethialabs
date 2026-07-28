@@ -7,13 +7,19 @@
 //
 //   - kubernetes  GKE `getServerConfig` → the offered control-plane versions (minor grain, e.g. "1.35").
 //   - database    Cloud SQL `projects.tiers.list` (account-scoped: proves the project can launch Cloud SQL)
-//                 + `flags.list` (the offered DB engine versions) → one engine row at its latest version.
+//                 + `flags.list` (the offered DB engine versions) → one row per (engine, offered version).
+//   - database_instance_class
+//                 the same `tiers.list` response, read for the machine types it lists (`db-custom-2-7680`).
+//                 Engine-agnostic: Cloud SQL offers tiers per project, not per engine.
 //   - nosql       Firestore `databases.list` probe → Firestore availability for this project.
 //   - cache       DOCUMENTED EXCLUSION: GCP exposes NO keyless per-account "list Memorystore tiers" API
 //                 (the Redis API lists instances, not offered tiers; capacity tiers are a fixed pricing
 //                 dimension), so the cache axis is intentionally left to fail open to the static Catalog #2
 //                 (lib/queries/capabilities.ts getCacheTierCapabilities). This is an explicit per-axis gap,
 //                 not a silent omission — the cloud-parity rule allows a documented exclusion.
+//   - cache_version
+//                 DOCUMENTED EXCLUSION, same reason: the offered Memorystore engine versions are a fixed
+//                 product enum, not an account-scoped fact any read-only API reports.
 //
 // Account-global axes (k8s versions, DB engines, Firestore) are region-uniform on GCP and the consumer
 // reads them region-agnostically (getK8sVersionCapabilities / getDatabaseCapabilities / getNosqlCapability
@@ -35,6 +41,7 @@ import {
 } from "@/lib/db/schema";
 import { softRemoveUnseen } from "../../inventory/upsert";
 import { externalAccountClientFromWif } from "../../session/gcp";
+import { dedupeVersionsDesc, sortVersionsDesc } from "./version";
 import type { CapabilityIdentity, SyncServiceCapabilities } from "../types";
 
 const TIMEOUT_MS = 15_000;
@@ -52,7 +59,8 @@ interface GkeServerConfig {
 	defaultClusterVersion?: string;
 }
 interface GcpSqlTiersList {
-	items?: { tier?: string; region?: string[] }[];
+	// `RAM` is bytes of memory for the tier; `kind` is the API's type discriminator (unread).
+	items?: { tier?: string; region?: string[]; RAM?: string | number }[];
 }
 interface GcpSqlFlagsList {
 	items?: { name?: string; appliesTo?: string[] }[];
@@ -99,20 +107,7 @@ export function offeredK8sMinors(cfg: GkeServerConfig | null): string[] {
 		const minor = k8sMinor(v);
 		if (minor) minors.add(minor);
 	}
-	return [...minors].sort(compareVersionsDesc);
-}
-
-/** Order two dotted-numeric versions descending ("1.35" before "1.34"; "8.0" before "5.7"). Non-numeric
- * segments compare as 0, so it degrades gracefully rather than throwing. */
-function compareVersionsDesc(a: string, b: string): number {
-	const pa = a.split(".");
-	const pb = b.split(".");
-	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-		const na = Number.parseInt(pa[i] ?? "0", 10) || 0;
-		const nb = Number.parseInt(pb[i] ?? "0", 10) || 0;
-		if (na !== nb) return nb - na;
-	}
-	return 0;
+	return sortVersionsDesc([...minors]);
 }
 
 /** Parse a Cloud SQL databaseVersion token ("POSTGRES_16", "MYSQL_8_0") into { family, version }, or null
@@ -129,23 +124,37 @@ export function parseSqlVersion(
 	return { family, version };
 }
 
-/** The latest offered version per Cloud SQL engine family, from the union of every flag's `appliesTo`.
- * Returns a map keyed by the family token ("POSTGRES"/"MYSQL"). Empty when flags is null/absent. */
-export function latestSqlVersionByFamily(
+/** EVERY offered version per Cloud SQL engine family, newest-first, from the union of every flag's
+ * `appliesTo`. Keyed by the family token ("POSTGRES"/"MYSQL"); empty when flags is null/absent.
+ *
+ * This replaced a latest-only reduce (#1351). The version is an axis the picker offers, so collapsing
+ * to the newest here made an engine-version selector impossible — and the full list was always in
+ * hand, since `flags.list` returns per-FLAG rows whose `appliesTo` carries the whole version set. */
+export function sqlVersionsByFamily(
 	flags: GcpSqlFlagsList | null,
-): Map<string, string> {
-	const latest = new Map<string, string>();
+): Map<string, string[]> {
+	const byFamily = new Map<string, string[]>();
 	for (const flag of flags?.items ?? []) {
 		for (const token of flag.appliesTo ?? []) {
 			const parsed = parseSqlVersion(token);
 			if (!parsed) continue;
-			const prev = latest.get(parsed.family);
-			if (prev === undefined || compareVersionsDesc(parsed.version, prev) < 0) {
-				latest.set(parsed.family, parsed.version);
-			}
+			const seen = byFamily.get(parsed.family);
+			if (seen) seen.push(parsed.version);
+			else byFamily.set(parsed.family, [parsed.version]);
 		}
 	}
-	return latest;
+	for (const [family, versions] of byFamily) {
+		byFamily.set(family, dedupeVersionsDesc(versions));
+	}
+	return byFamily;
+}
+
+/** Cloud SQL reports a tier's memory as BYTES (`RAM`), as a string on the JSON wire. Converts to GB for
+ * `mem_gb`, or null when the field is absent/unparseable — an honest "not reported" rather than a 0. */
+export function gbFromBytes(raw: string | number | undefined): number | null {
+	const bytes = typeof raw === "string" ? Number.parseInt(raw, 10) : raw;
+	if (bytes === undefined || Number.isNaN(bytes) || bytes <= 0) return null;
+	return Math.round((bytes / 1024 ** 3) * 100) / 100;
 }
 
 /** Pure: the recorded GCP API responses → the `cloud_capability_services` rows for this identity. No I/O,
@@ -179,8 +188,12 @@ export function normalizeGcpServices(
 		});
 	}
 
-	// database — one row per Cloud SQL engine family at its latest offered version. `tiers.list` returning
-	// tiers proves the project can launch Cloud SQL (launchable); absent tiers ⇒ availability unknown.
+	// database — one row per (Cloud SQL engine family, offered version). `tiers.list` returning tiers
+	// proves the project can launch Cloud SQL (launchable); absent tiers ⇒ availability unknown.
+	// `native_id` is the composite `<engine>-<version>` because the unique key carries native_id but
+	// NOT version, so per-version rows under a bare-engine id would overwrite each other. `engine` is
+	// the CATALOG value (not the lowercased family) so synced rows and the static DB_ENGINES fallback
+	// share one value space — otherwise the fail-open path (#918) swaps the engine identity.
 	const hasTiers = (src.sqlTiers?.items ?? []).length > 0;
 	const dbVerdict: {
 		launchable: CapabilityLaunchable;
@@ -188,20 +201,56 @@ export function normalizeGcpServices(
 	} = hasTiers
 		? { launchable: "launchable", reason: "available" }
 		: { launchable: "not_evaluable", reason: "quota_unknown" };
-	for (const [family, version] of latestSqlVersionByFamily(src.sqlFlags)) {
+	for (const [family, versions] of sqlVersionsByFamily(src.sqlFlags)) {
 		const engine = GCP_DB_ENGINES[family];
 		if (!engine) continue;
+		for (const version of versions) {
+			rows.push({
+				...base,
+				service_kind: "database",
+				native_id: `${engine.value}-${version}`,
+				name: engine.label,
+				engine: engine.value,
+				version,
+				launchable: dbVerdict.launchable,
+				launchable_reason: dbVerdict.reason,
+			});
+		}
+	}
+
+	// database_instance_class — the SAME `tiers.list` response, read for what it lists rather than only
+	// whether it was non-empty. Its items ARE the Cloud SQL machine types (`db-custom-2-7680`,
+	// `db-n1-standard-1`), which is what the canvas's `instance_class` box asked the user to type.
+	//
+	// `engine` is NULL: a Cloud SQL tier is offered per PROJECT, not per engine — the API says nothing
+	// about which engine a tier belongs to, and inventing a per-engine split would be a wrong verdict.
+	// The reader treats a NULL engine as "offerable for every engine".
+	//
+	// CUSTOM machine types (`db-custom-<vCPU>-<MB>`) are constructible beyond what `tiers.list` returns;
+	// the picker keeps a pinned value representable (`withSelected`), so a custom tier already in the
+	// config survives even though it is not in this list.
+	for (const item of src.sqlTiers?.items ?? []) {
+		const tier = item.tier?.trim();
+		if (!tier) continue;
 		rows.push({
 			...base,
-			service_kind: "database",
-			native_id: engine.value,
-			name: engine.label,
-			engine: family.toLowerCase(),
-			version,
-			launchable: dbVerdict.launchable,
-			launchable_reason: dbVerdict.reason,
+			service_kind: "database_instance_class",
+			native_id: tier,
+			name: tier,
+			// Explicitly null, not merely absent: "offerable for every engine" is a claim this lane
+			// makes on purpose, and the reader keys on it.
+			engine: null,
+			tier,
+			mem_gb: gbFromBytes(item.RAM),
+			launchable: "launchable",
+			launchable_reason: "available",
 		});
 	}
+
+	// cache_version — DOCUMENTED EXCLUSION, for the same reason as the cache tier axis: there is no
+	// keyless per-account API that lists the Memorystore engine versions a project may launch (the Redis
+	// API lists INSTANCES, and the supported versions are a fixed product enum, not an account fact).
+	// The picker falls open to the cloud default rather than inventing a per-account answer.
 
 	// nosql — Firestore is a GCP-wide offering; the probe distinguishes "confirmed reachable" (launchable)
 	// from "couldn't verify" (not_evaluable). Both keep the picker's `available` true (only not_launchable

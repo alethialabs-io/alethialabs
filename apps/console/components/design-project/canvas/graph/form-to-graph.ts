@@ -103,6 +103,7 @@ export function formToGraph(
 			| "secret"
 			| "bucket"
 			| "registry"
+			| "helm_registry"
 			| "service",
 	>(
 		kind: K,
@@ -124,6 +125,7 @@ export function formToGraph(
 	pushItems("bucket", form.storage_buckets ?? [], 6);
 	pushItems("registry", form.container_registries ?? [], 7);
 	pushItems("service", form.services ?? [], 8);
+	pushItems("helm_registry", form.helm_registries ?? [], 9);
 
 	return { nodes };
 }

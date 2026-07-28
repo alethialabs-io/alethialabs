@@ -181,3 +181,15 @@ variable "hetzner_s3_secret_key" {
   default     = ""
   sensitive   = true
 }
+
+variable "admin_kubeconfig_cert_lifetime" {
+  description = "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 24h) so placement-minted kubeconfigs are short-lived; the Talos default is 1 year. Go time.Duration format."
+  type        = string
+  default     = "24h0m0s"
+  validation {
+    # A parseable, non-trivial duration — reject an empty/garbage value that would silently fall back
+    # to Talos's 1-year default and defeat the short-lived posture.
+    condition     = can(regex("^[0-9]+(h|m|s|ms)([0-9]+(m|s|ms))*$", var.admin_kubeconfig_cert_lifetime))
+    error_message = "admin_kubeconfig_cert_lifetime must be a Go duration like 24h0m0s or 1h."
+  }
+}

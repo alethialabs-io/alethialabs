@@ -119,6 +119,11 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if db.BackupRetentionDays != nil {
 			tfvars["rds_backup_retention_days"] = *db.BackupRetentionDays
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). No IAM-auth flag to reserve:
+		// Alibaba has no keyless DB cell (ApsaraDB exposes no data-plane token login we could find), so
+		// db.IamAuth is never emitted here and the offer-parity baseline records the gap. `log_exports`
+		// is AWS-only — no Alibaba template variable declares a log-export set.
+		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports")
 	}
 
 	if len(config.Caches) > 0 {
@@ -153,6 +158,13 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	if !provisionNetwork && config.Network.NetworkID != "" {
 		tfvars["network_id"] = config.Network.NetworkID
 	}
+	// Brownfield subnet selection (#1352): the user-picked vSwitch ids. Written only on an
+	// existing VPC and only when non-empty; the template prefers these (ordered) over the
+	// unordered data.alicloud_vswitches.existing[0] discovery. Empty selection leaves the
+	// key absent (today's behaviour).
+	if !provisionNetwork && len(config.Network.SubnetIDs) > 0 {
+		tfvars["subnet_ids"] = config.Network.SubnetIDs
+	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved DNS keys are
 	// consumed above under a different tfvar name.
@@ -167,15 +179,49 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	return tfvars
 }
 
-// ConfigureKubeconfig writes the kubeconfig the ACK OpenTofu run emitted (a sensitive output) to a
-// per-worker HOME path and points KUBECONFIG at it — no cloud API call needed.
+// ConfigureKubeconfig writes a working kubeconfig for the ACK cluster and points KUBECONFIG at it.
+// Two paths, mirroring aws_provider.go:
+//   - DEDICATED / BYO: the ACK tofu run emitted a full `kubeconfig` sensitive output — write it verbatim.
+//   - OUTPUT-FREE placement (namespace/vcluster, #1129): no tofu ran, so only the synthesized
+//     `ack_cluster_name` key is present. Resolve the cluster BY NAME via the keyless RRSA-signing client
+//     (name → ClusterId → DescribeClusterUserKubeconfig), which returns a complete, SHORT-LIVED user
+//     kubeconfig (embedded x509 client cert — ACK has no exec-plugin bearer model), and write that.
 func (p *alibabaProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
-	kubeconfig := alibabaOutputString(outputs, "kubeconfig")
-	if kubeconfig == "" {
-		return fmt.Errorf("no kubeconfig in ACK outputs")
+	// Dedicated / BYO: a ready-made kubeconfig output is written directly.
+	if kubeconfig := alibabaOutputString(outputs, "kubeconfig"); kubeconfig != "" {
+		fmt.Fprintf(stdout, "Writing ACK kubeconfig for cluster %s...\n", ExtractClusterName(outputs))
+		return p.writeKubeconfig(kubeconfig, stdout)
 	}
-	fmt.Fprintf(stdout, "Writing ACK kubeconfig for cluster %s...\n", ExtractClusterName(outputs))
 
+	// Output-free placement: resolve the existing cluster by name via the signing client.
+	clusterName := ExtractClusterName(outputs)
+	if clusterName == "" {
+		return fmt.Errorf("no kubeconfig and no ACK cluster name in outputs")
+	}
+	region := resolveRegion("alibaba", config.Region)
+	if region == "" {
+		return fmt.Errorf("ack placement: no region on the config snapshot — cannot resolve cluster %q output-free", clusterName)
+	}
+	fmt.Fprintf(stdout, "Resolving ACK cluster %q (region %s) output-free via keyless RRSA...\n", clusterName, region)
+
+	client, err := newAlibabaSigningClient(ctx, region)
+	if err != nil {
+		return fmt.Errorf("ack placement: build keyless signing client: %w", err)
+	}
+	clusterID, err := ResolveACKClusterID(ctx, client, region, clusterName)
+	if err != nil {
+		return fmt.Errorf("ack placement: resolve cluster id for %q: %w", clusterName, err)
+	}
+	kubeconfig, err := ResolveACKUserKubeconfig(ctx, client, region, clusterID)
+	if err != nil {
+		return fmt.Errorf("ack placement: fetch user kubeconfig for %q (%s): %w", clusterName, clusterID, err)
+	}
+	fmt.Fprintf(stdout, "Writing short-lived ACK kubeconfig for cluster %s (%s)...\n", clusterName, clusterID)
+	return p.writeKubeconfig(kubeconfig, stdout)
+}
+
+// writeKubeconfig persists a kubeconfig to the per-worker HOME path (0600) and points KUBECONFIG at it.
+func (p *alibabaProvider) writeKubeconfig(kubeconfig string, stdout io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		home = os.TempDir()
@@ -288,6 +334,9 @@ func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 func buildAlibabaSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
+		if !secretProvisionedNatively(s.Provider) {
+			continue // read via ESO from its pluggable/cross-account store, not created here
+		}
 		result = append(result, map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,

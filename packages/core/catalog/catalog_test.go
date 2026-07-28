@@ -3,7 +3,12 @@
 
 package catalog
 
-import "testing"
+import (
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+)
 
 // TestLoad asserts the embedded catalog parses and has the expected providers.
 func TestLoad(t *testing.T) {
@@ -82,6 +87,61 @@ func TestDBEngine(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestDBEngineVersions pins the invariants of the offline version baseline. They are checked here
+// (Go, over the embedded JSON) as well as in gen-catalog.mjs, because the two consumers read the
+// same file by different paths and a malformed list must red the build that touches it, not the
+// build that happens to regenerate the TS mirror.
+//
+// The ordering assertion is deliberately weak — "newest-first" is asserted as a total order the
+// list agrees with, not a semver parse. Alibaba's "16.0" and Azure MySQL's "8.0.21" are the same
+// axis at different grains, and a strict parser would have to encode every provider's scheme to
+// say anything at all.
+func TestDBEngineVersions(t *testing.T) {
+	c := MustLoad()
+	for provider, dp := range c.Database {
+		for _, e := range dp.Engines {
+			if len(e.Versions) == 0 {
+				t.Errorf("%s/%s has no versions — the offline picker would fall back to an empty list", provider, e.Value)
+				continue
+			}
+			if !slices.Contains(e.Versions, e.DefaultVersion) {
+				t.Errorf("%s/%s default_version %q is not in versions %v — the seeded default is not offerable",
+					provider, e.Value, e.DefaultVersion, e.Versions)
+			}
+			seen := map[string]bool{}
+			for _, v := range e.Versions {
+				if seen[v] {
+					t.Errorf("%s/%s repeats version %q", provider, e.Value, v)
+				}
+				seen[v] = true
+			}
+			if !slices.IsSortedFunc(e.Versions, func(a, b string) int { return compareVersionsDesc(a, b) }) {
+				t.Errorf("%s/%s versions %v are not newest-first", provider, e.Value, e.Versions)
+			}
+		}
+	}
+}
+
+// compareVersionsDesc orders two version strings newest-first by numeric segment, so "9" sorts
+// BELOW "10" (a lexical compare gets that backwards) and "8.0.21" below "8.4". Non-numeric or
+// missing segments compare as 0, which is what makes it total over every provider's grain.
+func compareVersionsDesc(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < max(len(as), len(bs)); i++ {
+		an, bn := 0, 0
+		if i < len(as) {
+			an, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			bn, _ = strconv.Atoi(bs[i])
+		}
+		if an != bn {
+			return bn - an
+		}
+	}
+	return 0
 }
 
 // TestNearestCacheTier checks memory-based matching.

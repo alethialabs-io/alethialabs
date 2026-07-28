@@ -60,6 +60,12 @@ variable "vnet_id" {
   description = "Resource ID of an existing Virtual Network (used when provision_vnet = false)"
 }
 
+variable "subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "User-selected subnets within the existing VNet — bare names or full ARM subnet ids (brownfield, provision_vnet = false, #1352). Empty = use the VNet's first (arbitrary) subnet. Only the first entry is used (AKS attaches to one subnet)."
+}
+
 variable "single_nat_gateway" {
   type        = bool
   default     = false
@@ -447,9 +453,39 @@ variable "custom_iac_vars" {
 variable "azure_cache_sku_name" {
   type    = string
   default = null
-  # Exact Azure Managed Redis sku (Enterprise_E1 / E5 / E10 / EnterpriseFlash_F300). When null, the
-  # legacy azure_cache_sku (Basic/Standard/Premium) is MAPPED onto E1/E5/E10. Managed Redis has no
-  # Basic-equivalent low tier — its floor (Enterprise_E1) is ~5x the retired Azure Cache for Redis
-  # Basic C0. Set this to choose the tier (and therefore the cost) explicitly.
-  description = "Exact Azure Managed Redis sku. Null = map from azure_cache_sku. NOTE: Managed Redis has no low tier; the floor is Enterprise_E1 (~5x the retired Basic C0)."
+  # Exact Azure Managed Redis sku — Balanced_B* / MemoryOptimized_M* / ComputeOptimized_X* /
+  # FlashOptimized_A*. (The Enterprise_*/EnterpriseFlash_* families named here previously belong to
+  # the older redisEnterprise shape and are NOT what azurerm_managed_redis takes.) When null, the
+  # legacy azure_cache_sku (Basic/Standard/Premium) is MAPPED onto Balanced_B0/B1/B3 by
+  # azure-cache-redis.tf. Normally the control plane emits this from the project's cloud-indifferent
+  # MemoryGB, resolved through packages/core/catalog/catalog.json; set it by hand to pin a tier.
+  #
+  # The floor is NOT the cost cliff this comment once claimed: Balanced_B0 (0.5 GB) is ~$12/mo
+  # against the retired Basic C0's ~$15/mo — cheaper, not ~5x. (Azure Retail Prices API, eastus,
+  # 2026-07-27, $0.016/hr × 730.)
+  description = "Exact Azure Managed Redis sku (Balanced_B*/MemoryOptimized_M*/ComputeOptimized_X*/FlashOptimized_A*). Null = map from azure_cache_sku. Normally emitted from the project's MemoryGB."
+}
+
+# ── external-secrets identity adoption ─────────────────────────────────────────
+# Set BOTH to run the external-secrets operator as a PRE-EXISTING user-assigned managed identity
+# instead of the per-deploy one this template creates.
+#
+# Why this exists: a cross-subscription Key Vault role assignment in the TARGET subscription binds
+# the identity's OBJECT ID, which Azure regenerates on every create — so a pre-applied grant dies
+# the moment the identity is recreated, and a stable name does not help. Adopting a standing
+# identity lets the target-subscription grant be applied ONCE.
+#
+# Both empty (the default) preserves the existing behavior exactly. When adopting, the identity must
+# already exist and the caller owns its lifecycle: this template federates a credential onto it and
+# grants it Key Vault read, but never creates, modifies or destroys the identity itself.
+variable "external_secrets_identity_name" {
+  description = "OPTIONAL. Name of a pre-existing user-assigned managed identity for the external-secrets operator. Requires external_secrets_identity_resource_group."
+  type        = string
+  default     = ""
+}
+
+variable "external_secrets_identity_resource_group" {
+  description = "OPTIONAL. Resource group holding external_secrets_identity_name. Requires external_secrets_identity_name."
+  type        = string
+  default     = ""
 }

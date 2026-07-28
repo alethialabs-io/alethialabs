@@ -37,34 +37,36 @@ output "azure_db_fqdn" {
   value       = var.create_azure_db ? module.azure_db[0].server_fqdn : null
 }
 
-# Keyless DB auth (#722): the app's Entra login identity + the UAMI client id the generated KSA is
-# annotated with. Null unless Entra auth is enabled. A binding's `username` facet resolves from
-# azure_db_aad_user; the manifest lane annotates the app KSA with azure_db_client_id.
+# Keyless DB auth (#722, #1464): the app's Entra login identity + the UAMI client id the generated KSA
+# is annotated with. Non-null for BOTH engines when keyless is enabled with AKS (gated on
+# enable_app_db_identity). A binding's `username` facet resolves from azure_db_aad_user; the manifest
+# lane annotates the app KSA with azure_db_client_id.
 output "azure_db_aad_user" {
   description = "Keyless app database username — the Entra (UAMI) principal name (#722)"
-  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.app_db[0].name : null
+  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.app_db[0].name : null
 }
 
 output "azure_db_client_id" {
-  description = "Client id of the app Entra Workload-Identity UAMI — annotated onto the generated app KSA (#722)"
-  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.app_db[0].client_id : null
+  description = "Client id of the app Entra Workload-Identity UAMI — annotated onto the generated app KSA; also the MySQL keyless bind value (`db-bootstrap --app-client-id`) (#722)"
+  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.app_db[0].client_id : null
 }
 
 # Keyless least-privilege (#722 R5): the dedicated DB-admin identity the bootstrap Job runs as, and
-# the app UAMI's object id the Job binds the app's scoped Entra login to (pgaadauth SECURITY LABEL).
+# the app UAMI id the Job binds the app's scoped Entra login to (Postgres: OID via pgaadauth SECURITY
+# LABEL; MySQL: client id via CREATE AADUSER).
 output "azure_db_admin_client_id" {
   description = "Client id of the dedicated DB-admin Entra Workload-Identity UAMI — annotated onto the bootstrap Job KSA (#722)"
-  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.db_admin[0].client_id : null
+  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.db_admin[0].client_id : null
 }
 
 output "azure_db_app_oid" {
-  description = "Object (principal) id of the app UAMI — the bootstrap Job binds the app's scoped Postgres role to it via `db-bootstrap --app-oid` (#722)"
-  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.app_db[0].principal_id : null
+  description = "Object (principal) id of the app UAMI — the POSTGRES bootstrap Job binds the app's scoped role to it via `db-bootstrap --app-oid` (MySQL binds on azure_db_client_id instead) (#722)"
+  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.app_db[0].principal_id : null
 }
 
 output "azure_db_admin_user" {
   description = "Entra login name (UAMI principal name) the keyless bootstrap Job connects as — the dedicated DB admin (#722)"
-  value       = local.enable_app_db_aad ? azurerm_user_assigned_identity.db_admin[0].name : null
+  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.db_admin[0].name : null
 }
 
 output "azure_db_name" {
@@ -78,7 +80,14 @@ output "azure_db_name" {
 
 output "acr_login_server" {
   description = "Login server URL of the Azure Container Registry"
-  value       = var.provision_acr ? module.acr[0].login_server : null
+  # Guarded on the MODULE, not on a copy of its count predicate. `provision_acr` alone is NOT that
+  # predicate: the module also requires `registry_provider == "native"` (acr.tf), because a pluggable
+  # registry connector means the ACR is not ours to create. The console sets `provision_acr` from the
+  # mere PRESENCE of a registry row, so selecting any connector left this indexing [0] of an empty
+  # module and failed the WHOLE apply with "Invalid index" — a crash a mile from its cause.
+  #
+  # length(module...) can't drift from the count the way a duplicated predicate did.
+  value = length(module.acr) > 0 ? module.acr[0].login_server : null
 }
 
 #########################################################################
@@ -132,8 +141,8 @@ output "external_dns_client_id" {
 }
 
 output "external_secrets_client_id" {
-  description = "external-secrets operator managed identity client id (Workload Identity; gates the azurekv ClusterSecretStore render)"
-  value       = var.provision_aks ? azurerm_user_assigned_identity.external_secrets[0].client_id : null
+  description = "external-secrets operator managed identity client id (Workload Identity; gates the azurekv ClusterSecretStore render). The adopted identity when external_secrets_identity_name/_resource_group are set, otherwise the one this template created."
+  value       = var.provision_aks ? local.external_secrets_client_id : null
 }
 
 output "key_vault_uri" {

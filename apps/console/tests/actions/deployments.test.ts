@@ -38,6 +38,7 @@ function mockDb(jobRows: unknown[], opts?: { casUpdated?: boolean }) {
 		select: () => db,
 		from: () => db,
 		where: () => db,
+		orderBy: () => db,
 		limit: () => db,
 		update: (table: unknown) => {
 			current = { table, set: undefined };

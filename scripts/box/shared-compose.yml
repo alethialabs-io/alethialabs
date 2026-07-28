@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The SHARED tier on the sandbox box: one Postgres and one OpenFGA for every branch
+# environment. Envs isolate logically — a DATABASE per env, a STORE per env — which
+# is far cheaper than a container set per env (the whole tier measures ~150 MB RSS).
+#
+# WHY THIS FILE EXISTS AT ALL, rather than reusing the repo's docker-compose.yml:
+#
+#   The repo file pins `name: alethia`. Every env on this box is a DIFFERENT CHECKOUT
+#   of the repo, so if each env ran `docker compose up` from its own tree, a branch
+#   that touched docker-compose.yml would RE-CONVERGE the shared containers to its own
+#   definition — silently restarting Postgres under every other env, with no message
+#   and no log line pointing at the cause. That is the single nastiest failure mode of
+#   a shared box, so envs never invoke compose at all: `scripts/box/env-shared.sh`
+#   brings this pinned copy up, under its own project name, and nothing else may.
+#
+# It is a PINNED COPY on purpose. It does drift from the repo's docker-compose.yml, and
+# that is the trade: a shared tier that changes when you check out a branch is worse
+# than one that lags. Keep the image tags and the openfga wiring in step by hand.
+#
+# NOT here: SeaweedFS. Bucket names are hardcoded constants in the app
+# (apps/console/lib/storage/{plan-artifact,tofu-state}.ts), with no env-driven prefix,
+# so a shared SeaweedFS would collide OpenTofu state between branch envs — the worst
+# possible thing to share. Each env gets its own container instead; see env-mode.sh.
+name: alethia-shared
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: alethia
+      POSTGRES_PASSWORD: alethia-dev-secret
+      # The `alethia` database here is only the template/bootstrap one; each env
+      # creates and owns `alethia_<slug>` alongside it.
+      POSTGRES_DB: alethia
+    ports:
+      # Bound to loopback: the box's only inbound rule is SSH, but binding a database
+      # to 0.0.0.0 on a machine running unreviewed branch code is gratuitous.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alethia -d alethia"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    # Neither repo compose file declares any resource limit, which is fine on a laptop
+    # with an OrbStack cap and wrong on a box where a runaway env is the only thing
+    # between you and the OOM killer taking the shared tier down with it.
+    mem_limit: 2g
+    restart: unless-stopped
+
+  openfga-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: openfga-dev-secret
+      POSTGRES_DB: openfga
+    volumes:
+      - openfga-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    mem_limit: 512m
+    restart: unless-stopped
+
+  openfga-migrate:
+    image: openfga/openfga:latest
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:openfga-dev-secret@openfga-db:5432/openfga?sslmode=disable"
+    depends_on:
+      openfga-db:
+        condition: service_healthy
+    restart: "no"
+
+  openfga:
+    image: openfga/openfga:latest
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:openfga-dev-secret@openfga-db:5432/openfga?sslmode=disable"
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    mem_limit: 1g
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  openfga-data:

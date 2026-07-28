@@ -7,20 +7,18 @@
 // These tests pin that contract: the outgoing request is a bare AssumeRoleWithOIDC carrying a minted
 // OIDCToken + the provider/role ARNs, and it fails closed when the issuer/ARNs aren't present.
 
-import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetIssuerCache } from "@/lib/oidc/issuer";
 import {
 	assumeAlibabaRole,
 	deriveOidcProviderArn,
 } from "@/lib/cloud-providers/session/alibaba";
+import { testRsaKey } from "../../fixtures/rsa-keys";
 
 const saved: Record<string, string | undefined> = {};
 
 function installKey() {
-	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-	const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-	process.env.ALETHIA_OIDC_SIGNING_KEY = Buffer.from(pem, "utf8").toString("base64");
+	process.env.ALETHIA_OIDC_SIGNING_KEY = testRsaKey().b64;
 	process.env.NEXT_PUBLIC_APP_URL = "https://alethialabs.io";
 	__resetIssuerCache();
 }

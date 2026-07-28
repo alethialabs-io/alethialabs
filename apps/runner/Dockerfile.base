@@ -14,7 +14,7 @@
 # QEMU — an emulated `tofu init` crashes lfstack.push). ENDS AS ROOT on purpose: each variant installs its
 # cloud CLI (apk/pip need root) and only then switches to `USER runner` before `tofu init`.
 
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -23,8 +23,11 @@ WORKDIR /app
 # Copy the workspace root files for multi-module builds
 COPY go.work go.work
 COPY packages/core/ packages/core/
-# Copy alethia module stubs so go.work can resolve all entries
+# Copy alethia module stubs so go.work can resolve all entries. Every module listed in go.work must
+# be stubbed here or `go mod download` fails with "cannot load module … listed in go.work file" —
+# the build reads go.work, so adding an entry there is a change to this Dockerfile's contract too.
 COPY apps/cli/go.mod apps/cli/go.sum apps/cli/
+COPY test/e2e/go.mod test/e2e/go.sum test/e2e/
 # Copy runner module
 COPY apps/runner/go.mod apps/runner/go.sum apps/runner/
 RUN cd apps/runner && go mod download

@@ -30,9 +30,13 @@ variable "role_name" {
 }
 
 variable "secret_arns" {
-  description = "Secrets Manager secret ARNs the cluster may read. Default '*' allows any secret in this account — SCOPE THIS to the specific secrets you intend to share (least-privilege)."
+  description = "Secrets Manager secret ARNs the cluster may read. Name exactly the secrets you intend to share (least-privilege) — deliberately no default, because a '*' fallback silently grants read on EVERY secret in this account."
   type        = list(string)
-  default     = ["*"]
+
+  validation {
+    condition     = length(var.secret_arns) > 0
+    error_message = "Name at least one secret ARN — grant read per-secret rather than account-wide."
+  }
 }
 
 variable "kms_key_arns" {
@@ -42,7 +46,7 @@ variable "kms_key_arns" {
 }
 
 variable "external_id" {
-  description = "Optional external id required on the assume (defense in depth). Leave empty to omit; if set, also enter it in the connector."
+  description = "Optional external id required on the assume (defense in depth). Leave empty to omit. If you set it, enter the SAME value in the connector's External ID field (provider_config.external_id) — the operator sends it as spec.provider.aws.externalID, and STS rejects the assume when the two disagree."
   type        = string
   default     = ""
 }

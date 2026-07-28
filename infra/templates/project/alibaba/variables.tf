@@ -70,6 +70,12 @@ variable "network_id" {
   description = "Id of an existing VPC to attach to (used when provision_network = false)"
 }
 
+variable "subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "User-selected vSwitch ids within the existing VPC (brownfield, provision_network = false, #1352). Empty = auto-discover the VPC's vSwitches (unordered). ACK spans all entries; RDS/KVStore use the first, so ordering is honored."
+}
+
 #########################################################################
 ##                   ACK (Kubernetes) Variables                        ##
 #########################################################################

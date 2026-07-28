@@ -94,6 +94,9 @@ func TestExternalSecretsStoreManifest(t *testing.T) {
 					t.Errorf("store must contain %q:\n%s", want, m)
 				}
 			}
+			// #1306: every rendered store is scoped away from placed tenant namespaces via
+			// spec.conditions, so a `placement=namespace` tenant on a shared Fabric can't reach it.
+			assertScopedAwayFromTenants(t, m)
 			// Exactly one cloud's block renders — never a leaked doc separator from a sibling.
 			if strings.Contains(m, "---") {
 				t.Errorf("a single store must not contain a doc separator:\n%s", m)
@@ -105,6 +108,11 @@ func TestExternalSecretsStoreManifest(t *testing.T) {
 // TestExternalSecretsStoreManifest_Xacct covers the ADDITIONAL cross-account (*-xacct) ClusterSecretStore:
 // it renders as a SECOND document (with a `---` separator) alongside the native store, and only when BOTH
 // the cluster's own external-secrets identity fact AND the cross-account target are present (fail-closed).
+//
+// It doubles as the drift guard for InfraFacts.XacctSecretStore: every case asserts the GATE agrees with
+// what the TEMPLATE actually rendered. The gate is what the decision record, the stale-store reaper and the
+// manifest lane all read, so a template branch changed without the gate (or vice versa) would let a
+// workload reference a store that was never applied. Asserting both off ONE table is why they can't drift.
 func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -116,6 +124,13 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 			&InfraFacts{Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
 				SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1"},
 			"secretstore-aws-xacct", []string{"role: arn:aws:iam::999:role/read", "region: eu-west-1", "service: SecretsManager"}},
+		// An sts:ExternalId condition on the target trust policy must reach the store or STS rejects every
+		// assume — the dangling-control bug (the bootstrap module offered external_id while nothing carried
+		// it through to ESO). Absent id ⇒ field omitted, asserted separately below.
+		{"aws xacct forwards the external id when the trust policy requires one",
+			&InfraFacts{Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
+				SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1", SecretsXacctExternalID: "acme-7f3c"},
+			"secretstore-aws-xacct", []string{"role: arn:aws:iam::999:role/read", "externalID: acme-7f3c"}},
 		{"gcp xacct reads target project",
 			&InfraFacts{Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com", GCPProjectID: "proj-1",
 				SecretsXacctProjectID: "secrets-project-b"},
@@ -143,6 +158,14 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 			if err != nil {
 				t.Fatalf("render: %v", err)
 			}
+			// The gate must report exactly what the template rendered — in BOTH directions.
+			gotName, gotSelected := c.facts.XacctSecretStore()
+			if !gotSelected {
+				t.Fatalf("XacctSecretStore reported not-selected, but these facts carry a cross-account target")
+			}
+			if gotName != c.wantStore {
+				t.Errorf("XacctSecretStore name = %q, but the template rendered %q — the gate and the template have drifted", gotName, c.wantStore)
+			}
 			if c.wantStore == "" {
 				if strings.Contains(m, "-xacct") {
 					t.Fatalf("expected NO -xacct store, got:\n%s", m)
@@ -161,6 +184,44 @@ func TestExternalSecretsStoreManifest_Xacct(t *testing.T) {
 					t.Errorf("%s must contain %q:\n%s", c.wantStore, want, m)
 				}
 			}
+			// #1306: the -xacct store (and the native store beside it) are both scoped away from
+			// placed tenant namespaces — a shared-Fabric tenant must not reach a FOREIGN-account store.
+			assertScopedAwayFromTenants(t, m)
 		})
+	}
+}
+
+// assertScopedAwayFromTenants verifies the rendered manifest carries the #1306 spec.conditions guard
+// that keeps every ClusterSecretStore out of reach of placed tenant namespaces (labeled
+// alethia.io/placement=namespace). It also guards the ESO footgun that an EMPTY namespaceSelector ({})
+// means match-ALL — the matchExpressions form must actually render.
+func assertScopedAwayFromTenants(t *testing.T, m string) {
+	t.Helper()
+	for _, want := range []string{"conditions:", "key: alethia.io/placement", "operator: NotIn", `values: ["namespace"]`} {
+		if !strings.Contains(m, want) {
+			t.Errorf("store must be scoped away from tenant namespaces (missing %q):\n%s", want, m)
+		}
+	}
+	if strings.Contains(m, "namespaceSelector: {}") {
+		t.Errorf("an empty namespaceSelector means match-ALL — the scope guard is missing:\n%s", m)
+	}
+}
+
+// The external id is OPTIONAL: a target role whose trust policy has NO sts:ExternalId condition is the
+// common case, and sending one anyway would make STS reject the assume. So the field must be absent from
+// the rendered store — not empty-valued — when the connector doesn't set it.
+func TestExternalSecretsStoreManifest_XacctOmitsAbsentExternalID(t *testing.T) {
+	m, err := externalSecretsStoreManifest(&InfraFacts{
+		Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
+		SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(m, "secretstore-aws-xacct") {
+		t.Fatalf("expected the xacct store to render:\n%s", m)
+	}
+	if strings.Contains(m, "externalID") {
+		t.Fatalf("externalID must be omitted when unset, got:\n%s", m)
 	}
 }

@@ -41,7 +41,7 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 		}
 		for _, w := range a.Workloads {
 			res := manifests.ResolveChartWorkloadBindings(
-				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace,
+				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace, vc.Databases,
 			)
 			for path, val := range res.Patches {
 				manifests.SetByPath(a.Values, path, val)

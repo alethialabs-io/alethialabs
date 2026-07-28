@@ -1,0 +1,65 @@
+name: Infra - Sandbox
+
+# The developer sandbox box (infra/sandbox) — validate + lint only.
+#
+# NO apply job, deliberately, unlike every other infra-*.yml here. This stack is a
+# personal dev box created and reaped from a laptop by `pnpm env:box` / `pnpm env:reap`;
+# there is no shared state backend for CI to converge (state is local and gitignored),
+# and an automated apply would fight the reap cycle. `tofu apply` for this stack is a
+# human action, per the repo's IaC rules.
+
+on:
+  pull_request:
+    paths:
+      - 'infra/sandbox/**'
+      - '.github/workflows/infra-sandbox.yml'
+      - '.github/actions/iac-checks/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/sandbox/**'
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/sandbox
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Validate (no backend, no secrets)
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
+
+  # The registry does the port arithmetic that keeps two environments off the same
+  # port; it is the piece most likely to be subtly wrong and the most painful to debug
+  # over SSH, so its self-test runs here rather than only on the box.
+  box-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Shell syntax
+        run: |
+          for f in scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh \
+                   .claude/hooks/guard-runtime.sh .claude/hooks/session-runtime.sh; do
+            bash -n "$f"
+          done
+      - name: env-registry self-test (allocation, cap, reuse, fail-safe idle)
+        run: bash scripts/box/env-registry.sh --self-test
+      - name: guard-runtime self-test (blocks and, more importantly, allows)
+        run: bash .claude/hooks/guard-runtime.sh --self-test

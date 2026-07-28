@@ -32,6 +32,11 @@ var credentialFacet = map[string]bool{
 	"username":          true,
 	"password":          true,
 	"connection_string": true,
+	// value — the single opaque value of a `secret`-kind binding (a project secret resolved from a
+	// pluggable SaaS store). Credential (materialized via ExternalSecret/secretKeyRef), not a
+	// templated output. Its store + remote key come from the project secret, not a cloud master
+	// secret, so it renders via RenderSecretBindingExternalSecret rather than the cloud facetProperty path.
+	"value": true,
 }
 
 // IsCredentialFacet reports whether a binding injection's `From` is a credential (secret) facet —
@@ -162,7 +167,9 @@ spec:
     - secretKey: {{ .SecretKey }}
       remoteRef:
         key: {{ .RemoteKey }}
+{{- if .Property }}
         property: {{ .Property }}
+{{- end }}
 {{- end }}
 `))
 
@@ -220,4 +227,56 @@ func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
 		return "", skipped, fmt.Errorf("render external secret %s: %w", secretName, err)
 	}
 	return strings.TrimSpace(buf.String()) + "\n", skipped, nil
+}
+
+// SecretBindingExternalSecretParams is the resolved input for materializing a project SECRET (a
+// value held in a pluggable SaaS store — Vault/OpenBao/Doppler/generic) into a workload's k8s Secret
+// via ESO. Distinct from the cloud master-credential binding path (ExternalSecretParams): the store
+// is the SaaS ClusterSecretStore (secretstore-<slug>, rendered by the runtime-read lane), the remote
+// key is the project secret's OWN name (its KV path / Doppler key), and the value lives under a
+// single property (Vault KV: "value"; Doppler: flat — no property). The materialized k8s Secret is
+// named BindingSecretName (the same contract resolveBindings' secretKeyRef.name reads) with a single
+// key "value".
+type SecretBindingExternalSecretParams struct {
+	ServiceName string
+	Namespace   string
+	Target      types.ServiceBindingTarget // Kind "secret", Name = the project secret's name
+	StoreName   string                     // secretstore-<slug> (from the secret's connector provider)
+	RemoteKey   string                     // the project secret's name (KV path / Doppler key)
+	Property    string                     // "value" for a Vault-kind store; "" for Doppler (flat)
+	Labels      map[string]string
+}
+
+// secretBindingValueKey is the single k8s Secret data key a materialized project secret lands under
+// — it MUST equal the `value` facet name so resolveBindings' secretKeyRef.key (string(inj.From)) and
+// this ExternalSecret's target key stay in lock-step.
+const secretBindingValueKey = "value"
+
+// RenderSecretBindingExternalSecret renders the ExternalSecret that materializes a project secret's
+// value into a k8s Secret via the SaaS ClusterSecretStore. The caller (writeBindingExternalSecrets)
+// resolves StoreName/RemoteKey/Property from the project secret's connector; a missing store is a
+// caller-side fail-closed skip, so this assumes StoreName != "".
+func RenderSecretBindingExternalSecret(p SecretBindingExternalSecretParams) (string, error) {
+	secretName := BindingSecretName(p.ServiceName, p.Target)
+	ns := p.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	var extraLabels []esLabel
+	for k, v := range p.Labels {
+		extraLabels = append(extraLabels, esLabel{Key: k, Value: v})
+	}
+	sort.Slice(extraLabels, func(i, j int) bool { return extraLabels[i].Key < extraLabels[j].Key })
+
+	var buf bytes.Buffer
+	if err := externalSecretTmpl.Execute(&buf, esTemplateData{
+		Name:        secretName,
+		Namespace:   ns,
+		StoreName:   p.StoreName,
+		Data:        []esDatum{{SecretKey: secretBindingValueKey, RemoteKey: p.RemoteKey, Property: p.Property}},
+		ExtraLabels: extraLabels,
+	}); err != nil {
+		return "", fmt.Errorf("render secret-binding external secret %s: %w", secretName, err)
+	}
+	return strings.TrimSpace(buf.String()) + "\n", nil
 }

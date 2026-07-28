@@ -5,6 +5,7 @@ package cloud
 
 import (
 	"reflect"
+	"regexp"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -64,7 +65,7 @@ func TestGCPProvider_ProviderTfvars_Defaults(t *testing.T) {
 	}
 
 	// Optional node-pool / db / cache keys must be absent for an empty config.
-	for _, k := range []string{"gke_instance_types", "gke_node_min_size", "cloud_sql_engine", "memorystore_tier", "network_id"} {
+	for _, k := range []string{"gke_instance_types", "gke_node_min_size", "cloud_sql_engine", "memorystore_tier", "network_id", "subnet_ids"} {
 		if _, ok := tfvars[k]; ok {
 			t.Errorf("tfvars[%q] should be absent, got %v", k, tfvars[k])
 		}
@@ -75,11 +76,13 @@ func TestGCPProvider_ProviderTfvars_Defaults(t *testing.T) {
 // network_id decision matrix.
 func TestGCPProvider_ProviderTfvars_Network(t *testing.T) {
 	tests := []struct {
-		name            string
-		net             types.ProjectNetworkConfig
-		wantProvision   bool
-		wantNetworkID   string
-		wantNetIDExists bool
+		name             string
+		net              types.ProjectNetworkConfig
+		wantProvision    bool
+		wantNetworkID    string
+		wantNetIDExists  bool
+		wantSubnetIDs    []string
+		wantSubnetExists bool
 	}{
 		{
 			name:          "explicit provision",
@@ -92,11 +95,32 @@ func TestGCPProvider_ProviderTfvars_Network(t *testing.T) {
 			wantProvision: true,
 		},
 		{
-			name:            "byo network",
+			name:            "byo network without subnet selection",
 			net:             types.ProjectNetworkConfig{ProvisionNetwork: false, NetworkID: "projects/x/global/networks/vpc"},
 			wantProvision:   false,
 			wantNetworkID:   "projects/x/global/networks/vpc",
 			wantNetIDExists: true,
+		},
+		{
+			name: "byo network with subnet selection",
+			net: types.ProjectNetworkConfig{
+				ProvisionNetwork: false,
+				NetworkID:        "projects/x/global/networks/vpc",
+				SubnetIDs:        []string{"projects/x/regions/eu/subnetworks/s1"},
+			},
+			wantProvision:    false,
+			wantNetworkID:    "projects/x/global/networks/vpc",
+			wantNetIDExists:  true,
+			wantSubnetIDs:    []string{"projects/x/regions/eu/subnetworks/s1"},
+			wantSubnetExists: true,
+		},
+		{
+			name: "subnet selection ignored when auto-provisioning",
+			net: types.ProjectNetworkConfig{
+				ProvisionNetwork: true,
+				SubnetIDs:        []string{"projects/x/regions/eu/subnetworks/s1"},
+			},
+			wantProvision: true,
 		},
 		{
 			name:          "provision true ignores network id",
@@ -123,6 +147,15 @@ func TestGCPProvider_ProviderTfvars_Network(t *testing.T) {
 			}
 			if tt.wantNetIDExists && gotID != tt.wantNetworkID {
 				t.Errorf("network_id = %v, want %v", gotID, tt.wantNetworkID)
+			}
+			gotSubnets, subOK := tfvars["subnet_ids"]
+			if subOK != tt.wantSubnetExists {
+				t.Errorf("subnet_ids present = %v, want %v", subOK, tt.wantSubnetExists)
+			}
+			if tt.wantSubnetExists {
+				if !reflect.DeepEqual(gotSubnets, tt.wantSubnetIDs) {
+					t.Errorf("subnet_ids = %v, want %v", gotSubnets, tt.wantSubnetIDs)
+				}
 			}
 		})
 	}
@@ -161,6 +194,37 @@ func TestGCPProvider_ProviderTfvars_CloudSQLEngine(t *testing.T) {
 			}
 			if got := tfvars["cloud_sql_engine"]; got != tt.wantEngine {
 				t.Errorf("cloud_sql_engine = %v, want %v", got, tt.wantEngine)
+			}
+		})
+	}
+}
+
+// TestGCPProvider_ProviderTfvars_CloudSQLEngineVersionIsBare pins the CONTRACT the cloud-sql module
+// composes `database_version` from: this tfvar carries the BARE version, never one that already
+// carries its engine prefix.
+//
+// The module composes "${POSTGRES|MYSQL}_${version}" and normalizes the separator, so it tolerates
+// "8.0" and "8_0" alike — but it cannot recover from "POSTGRES_16", which composes
+// "POSTGRES_POSTGRES_16". That exact shape reached production once and left Cloud SQL unprovisionable
+// (see the comment in modules/cloud-sql/main.tf); the dotted-MySQL half of the same grain confusion
+// is #1381. The catalog is what feeds this, so a bad edit there is what this catches.
+func TestGCPProvider_ProviderTfvars_CloudSQLEngineVersionIsBare(t *testing.T) {
+	bare := regexp.MustCompile(`^[0-9]+([._][0-9]+)*$`)
+	p := &gcpProvider{}
+
+	for _, family := range []string{"postgres", "mysql"} {
+		t.Run(family, func(t *testing.T) {
+			cfg := &types.ProjectConfig{
+				Cluster:   types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+				DNS:       types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+				Databases: []types.ProjectDatabaseConfig{{Name: "main", EngineFamily: family}},
+			}
+			got, _ := p.ProviderTfvars(cfg)["cloud_sql_engine_version"].(string)
+			if got == "" {
+				t.Fatalf("cloud_sql_engine_version is empty for %q — the catalog default did not resolve", family)
+			}
+			if !bare.MatchString(got) {
+				t.Errorf("cloud_sql_engine_version = %q for %q; want a bare version like 16 or 8.0 (never engine-prefixed)", got, family)
 			}
 		})
 	}
@@ -568,5 +632,92 @@ func assertOptional(t *testing.T, tfvars map[string]interface{}, key string, wan
 	}
 	if got != want {
 		t.Errorf("tfvars[%q] = %v, want %v", key, got, want)
+	}
+}
+
+// TestGCPProvider_CacheEngineSelectsTheProduct pins the GCP half of #1420. The canvas has offered
+// redis|valkey on GCP the whole time and the provider read neither, so picking Valkey silently
+// provisioned Redis and the apply succeeded.
+//
+// On GCP this is a real fork, not a flag: Valkey is `google_memorystore_instance` (cluster-shaped,
+// sized by shards) and Redis is `google_redis_instance` (sized by a memory figure). Both toggles on
+// would create two caches for one node; both off would create none while reporting converged.
+func TestGCPProvider_CacheEngineSelectsTheProduct(t *testing.T) {
+	tests := []struct {
+		name       string
+		engine     types.CacheEngine
+		wantRedis  bool
+		wantValkey bool
+	}{
+		{"valkey selects the Memorystore instance", types.CacheEngineValkey, false, true},
+		{"redis selects the Redis instance", types.CacheEngineRedis, true, false},
+		{"an engine-less config stays on redis", "", true, false},
+	}
+
+	p := &gcpProvider{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &types.ProjectConfig{
+				Cluster: types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+				DNS:     types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+				Caches:  []types.ProjectCacheConfig{{Name: "main", Engine: tt.engine, MemoryGB: 4}},
+			}
+			tfvars := p.ProviderTfvars(cfg)
+
+			if got := tfvars["create_memorystore"]; got != tt.wantRedis {
+				t.Errorf("create_memorystore = %v, want %v", got, tt.wantRedis)
+			}
+			if got := tfvars["create_memorystore_valkey"]; got != tt.wantValkey {
+				t.Errorf("create_memorystore_valkey = %v, want %v", got, tt.wantValkey)
+			}
+		})
+	}
+}
+
+// The two products are sized by different models, so the cloud-indifferent MemoryGB has to land on
+// the right tfvar. Sending a memory figure to the shard-shaped product (or vice versa) is silently
+// wrong: the plan succeeds against the template default and the user's sizing is dropped.
+func TestGCPProvider_CacheSizingFollowsTheProduct(t *testing.T) {
+	p := &gcpProvider{}
+	cfg := func(engine types.CacheEngine, gb float64) *types.ProjectConfig {
+		return &types.ProjectConfig{
+			Cluster: types.ProjectClusterConfig{ProviderConfig: map[string]any{}},
+			DNS:     types.ProjectDNSConfig{ProviderConfig: map[string]any{}},
+			Caches:  []types.ProjectCacheConfig{{Name: "main", Engine: engine, MemoryGB: gb}},
+		}
+	}
+
+	valkey := p.ProviderTfvars(cfg(types.CacheEngineValkey, 4))
+	if _, ok := valkey["memorystore_memory_size_gb"]; ok {
+		t.Error("a valkey cache emitted the redis memory-size tfvar")
+	}
+	// 4 GB over ~1.4 GB per shard rounds UP to 3 — never below what was asked for.
+	if got := valkey["memorystore_valkey_shard_count"]; got != 3 {
+		t.Errorf("memorystore_valkey_shard_count = %v, want 3 for a 4 GB request", got)
+	}
+
+	redis := p.ProviderTfvars(cfg(types.CacheEngineRedis, 4))
+	if got := redis["memorystore_memory_size_gb"]; got != 4 {
+		t.Errorf("memorystore_memory_size_gb = %v, want 4", got)
+	}
+	if _, ok := redis["memorystore_valkey_shard_count"]; ok {
+		t.Error("a redis cache emitted a valkey shard count")
+	}
+}
+
+// The resource takes an ENUM; a raw semver fails the apply, which is the same trap the Redis side
+// already documents.
+func TestGCPValkeyVersionEnum(t *testing.T) {
+	cases := map[string]string{
+		"7.2":        "VALKEY_7_2",
+		"8.0":        "VALKEY_8_0",
+		"VALKEY_7_2": "VALKEY_7_2",
+		"":           "",
+		"7":          "", // no minor — the template default stands rather than a guess
+	}
+	for in, want := range cases {
+		if got := gcpMemorystoreValkeyVersion(in); got != want {
+			t.Errorf("gcpMemorystoreValkeyVersion(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

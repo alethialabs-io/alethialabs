@@ -93,8 +93,16 @@ func TestClassifyReachability(t *testing.T) {
 		want reachClass
 	}{
 		{"nil err = api not ready", nil, "", reachNotReady},
-		{"unauthorized = auth", errString("error: You must be logged in to the server (Unauthorized)"), "", reachAuth},
-		{"forbidden = auth", errString("Error from server (Forbidden): clusterroles.rbac.authorization.k8s.io is forbidden"), "", reachAuth},
+
+		// 401 and 403 must NOT collapse into one verdict — see the reachAuthN comment. The first case
+		// is verbatim what the malformed EKS presigned token produced every night in #1259.
+		{"401 unauthorized = authN", errString("error: You must be logged in to the server (Unauthorized)"), "", reachAuthN},
+		{"401 credentials prompt = authN", errString("the server has asked for the client to provide credentials"), "", reachAuthN},
+		{"401 invalid bearer token = authN", errString("Unauthorized: invalid bearer token"), "", reachAuthN},
+		{"403 forbidden = authZ", errString("Error from server (Forbidden): clusterroles.rbac.authorization.k8s.io is forbidden"), "", reachAuthZ},
+		{"403 user cannot = authZ", errString(`error from server (forbidden): nodes is forbidden: User "x" cannot list resource "nodes"`), "", reachAuthZ},
+		// Both markers present ⇒ authorization: the request got far enough to be policy-evaluated.
+		{"forbidden wins over credentials wording", errString("Error from server (Forbidden): credentials rejected"), "", reachAuthZ},
 		{"dial timeout = network", errString("Unable to connect to the server: dial tcp 1.2.3.4:443: i/o timeout"), "", reachNetwork},
 		{"no route = network", errString("dial tcp: lookup x: no such host"), "", reachNetwork},
 		{"tls handshake = network", errString("net/http: TLS handshake timeout"), "", reachNetwork},
@@ -153,5 +161,44 @@ func TestPodProbeVerdict(t *testing.T) {
 	// No pod observed at all.
 	if v := podProbeVerdict("", ""); !strings.Contains(v, "no pod observed") {
 		t.Fatalf("empty should say no pod observed: %q", v)
+	}
+}
+
+// TestAuthVerdictsRouteToDifferentPlaces is the regression that matters for #1259. Classification
+// alone is not the point — the WORDING is what a human acts on at 3am. A 401 that mentions RBAC
+// sends the reader to the access entry and the OpenTofu template, both of which were correct for
+// nine consecutive nights while the real bug sat in the token minter.
+func TestAuthVerdictsRouteToDifferentPlaces(t *testing.T) {
+	authN := strings.ToLower(string(reachAuthN))
+	authZ := strings.ToLower(string(reachAuthZ))
+
+	for _, term := range []string{"access entry", "rbac"} {
+		if strings.Contains(authN, term) {
+			t.Errorf("the 401 verdict mentions %q — that is the 403 story; it misroutes a token bug", term)
+		}
+		if !strings.Contains(authZ, term) {
+			t.Errorf("the 403 verdict should mention %q so a permissions problem is actionable", term)
+		}
+	}
+	if !strings.Contains(authN, "token") {
+		t.Error("the 401 verdict should point at the token — that is what was rejected")
+	}
+	if authN == authZ {
+		t.Fatal("401 and 403 must not share a message")
+	}
+}
+
+// TestIsAuthRejection pins that BOTH auth verdicts fast-fail: neither a rejected token nor a missing
+// permission resolves by waiting, so both must stop the poll early rather than burn the full budget.
+func TestIsAuthRejection(t *testing.T) {
+	for _, c := range []reachClass{reachAuthN, reachAuthZ} {
+		if !isAuthRejection(c) {
+			t.Errorf("isAuthRejection(%q) = false, want true — it would burn the full timeout", c)
+		}
+	}
+	for _, c := range []reachClass{reachNetwork, reachNotReady, reachUnknown} {
+		if isAuthRejection(c) {
+			t.Errorf("isAuthRejection(%q) = true — a transient class must keep retrying", c)
+		}
 	}
 }

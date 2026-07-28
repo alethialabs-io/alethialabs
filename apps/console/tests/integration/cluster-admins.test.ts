@@ -1,17 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Integration: the normalized cluster_admins child table (Phase C.2). Proves against real Postgres:
-// (1) the migration BACKFILL unnests project_cluster.cluster_admins JSONB into rows, turning the
-// nested `groups` JSON array into a text[] and preserving author `ordinal`; (2) the join-through RLS
-// policy scopes an admin to its cluster's project's org; (3) ON DELETE CASCADE removes a cluster's
-// admins when the cluster is cleared. Seeded via the service connection; read back through the
-// RLS-enforced app connection.
+// Integration: the normalized cluster_admins child table + its contract-phase readers, now that the
+// project_cluster.cluster_admins JSONB column is dropped. Proves against real Postgres: (1)
+// clusterAdminsByCluster reconstructs a cluster's admins in author `ordinal` order with groups as
+// text[] — the byte-stability guarantee buildConfigSnapshot / getProjectAsFormData rely on; (2) the
+// join-through RLS policy scopes an admin to its cluster's project's org; (3) ON DELETE CASCADE
+// removes a cluster's admins when the cluster is cleared. Seeded via the service connection; read
+// back through the RLS-enforced app connection.
 
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, withScope } from "@/lib/db";
+import { clusterAdminsByCluster } from "@/lib/db/normalized-reads";
 import {
 	clusterAdmins,
 	projectCluster,
@@ -26,13 +28,14 @@ const ORG_OTHER = randomUUID();
 const USER_OTHER = randomUUID();
 const PROJ = randomUUID();
 const ENV = randomUUID();
+const ENV2 = randomUUID(); // second env — project_cluster is UNIQUE per (project_id, environment_id)
 const CLUSTER = randomUUID();
 
 const APP_ROLE_DISTINCT =
 	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
 	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
-describeIfDb("cluster_admins — backfill, RLS, cascade", () => {
+describeIfDb("cluster_admins — reader parity, view, RLS, cascade", () => {
 	beforeAll(async () => {
 		const db = getServiceDb();
 		await db.insert(projects).values({
@@ -43,24 +46,20 @@ describeIfDb("cluster_admins — backfill, RLS, cascade", () => {
 			region: "westeurope",
 			iac_version: "1.0",
 		});
-		await db.insert(projectEnvironments).values({
-			id: ENV,
-			project_id: PROJ,
-			user_id: USER,
-			name: "production",
-			is_default: true,
-		});
-		// A cluster carrying the legacy JSONB — the backfill's input. Two admins; the second has
-		// multiple groups, the ordering must survive.
+		await db.insert(projectEnvironments).values([
+			{ id: ENV, project_id: PROJ, user_id: USER, name: "production", is_default: true },
+			{ id: ENV2, project_id: PROJ, user_id: USER, name: "staging", is_default: false },
+		]);
 		await db.insert(projectCluster).values({
 			id: CLUSTER,
 			project_id: PROJ,
 			environment_id: ENV,
-			cluster_admins: [
-				{ username: "alice", groups: ["platform"] },
-				{ username: "bob", groups: ["sre", "oncall"] },
-			],
 		});
+		// Two admins; the second has multiple groups, and the author order must survive round-trips.
+		await db.insert(clusterAdmins).values([
+			{ cluster_id: CLUSTER, username: "alice", groups: ["platform"], ordinal: 0 },
+			{ cluster_id: CLUSTER, username: "bob", groups: ["sre", "oncall"], ordinal: 1 },
+		]);
 	});
 
 	afterAll(async () => {
@@ -68,28 +67,19 @@ describeIfDb("cluster_admins — backfill, RLS, cascade", () => {
 		await db.delete(projects).where(eq(projects.id, PROJ)); // cascades to env/cluster/admins
 	});
 
-	it("backfill unnests the JSONB into ordered rows with groups as text[]", async () => {
+	it("the reader reconstructs the admins in ordinal order, byte-identically", async () => {
 		const db = getServiceDb();
-		await db.execute(sql`
-			INSERT INTO cluster_admins (cluster_id, username, groups, ordinal)
-			SELECT c.id,
-			       e.elem->>'username',
-			       COALESCE(ARRAY(SELECT jsonb_array_elements_text(COALESCE(e.elem->'groups', '[]'::jsonb))), '{}'::text[]),
-			       (e.ord - 1)::int
-			FROM project_cluster c
-			CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.cluster_admins, '[]'::jsonb)) WITH ORDINALITY AS e(elem, ord)
-			WHERE c.id = ${CLUSTER}
-			  AND COALESCE(e.elem->>'username', '') <> ''
-		`);
-		const rows = await db
-			.select()
-			.from(clusterAdmins)
-			.where(eq(clusterAdmins.cluster_id, CLUSTER))
-			.orderBy(clusterAdmins.ordinal);
-		expect(rows.map((r) => [r.ordinal, r.username, r.groups])).toEqual([
-			[0, "alice", ["platform"]],
-			[1, "bob", ["sre", "oncall"]],
+		const admins = await clusterAdminsByCluster(db, CLUSTER);
+		expect(admins).toEqual([
+			{ username: "alice", groups: ["platform"] },
+			{ username: "bob", groups: ["sre", "oncall"] },
 		]);
+	});
+
+	it("a cluster with no admins reads back as []", async () => {
+		const db = getServiceDb();
+		// A cluster with zero admin rows (here, a nonexistent id) reconstructs as an empty array.
+		expect(await clusterAdminsByCluster(db, randomUUID())).toEqual([]);
 	});
 
 	it("RLS scopes admins to the owning org (join-through the cluster)", async () => {
@@ -106,17 +96,25 @@ describeIfDb("cluster_admins — backfill, RLS, cascade", () => {
 
 	it("ON DELETE CASCADE removes admins when the cluster is cleared", async () => {
 		const db = getServiceDb();
+		// project_cluster is UNIQUE on (project_id, environment_id), so the throwaway cluster lives in
+		// its own environment (ENV2).
+		const throwaway = randomUUID();
+		await db.insert(projectCluster).values({
+			id: throwaway,
+			project_id: PROJ,
+			environment_id: ENV2,
+		});
 		await db.insert(clusterAdmins).values({
-			cluster_id: CLUSTER,
+			cluster_id: throwaway,
 			username: "temp",
 			groups: [],
-			ordinal: 99,
+			ordinal: 0,
 		});
-		await db.delete(projectCluster).where(eq(projectCluster.id, CLUSTER));
+		await db.delete(projectCluster).where(eq(projectCluster.id, throwaway));
 		const orphans = await db
 			.select()
 			.from(clusterAdmins)
-			.where(eq(clusterAdmins.cluster_id, CLUSTER));
+			.where(eq(clusterAdmins.cluster_id, throwaway));
 		expect(orphans).toHaveLength(0);
 	});
 });

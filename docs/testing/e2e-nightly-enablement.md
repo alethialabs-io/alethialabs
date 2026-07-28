@@ -1,0 +1,206 @@
+<!-- SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io> -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+# Enabling a cloud in the T2 real-cloud nightly
+
+`.github/workflows/e2e-nightly.yml` matrixes **all five clouds** — `hetzner`, `aws`, `gcp`, `azure`,
+`alibaba` — but each leg **green-skips** until a maintainer wires that cloud's gate. A skipped leg is a
+deliberate no-op that reports success, so a nightly can show five green checks while proving one cloud.
+The rollup states the ratio explicitly (`Coverage: N/5 clouds enabled`) and keeps one standing issue
+listing what each inert cloud needs.
+
+This is the procedure to take a cloud from inert to proven. It is maintainer work: it applies real
+cloud infrastructure and spends money.
+
+> **Agents must not run `tofu apply`, and must not dispatch this workflow.** Both are maintainer
+> actions — see the IaC rules in `CLAUDE.md`.
+
+## The gate, in one paragraph
+
+The `Gate on the provider secret` step reads **one** value per cloud. Non-empty ⇒ `run=true` and the
+leg provisions for real. Empty ⇒ `run=false`, a warning, and a green skip. **Setting that value is
+what enables the cron** — so do it last, after the cloud has passed a manual dispatch and a
+kill-drill. Everything else the leg needs must already be in place, because the gate does not check it.
+
+## Order of operations
+
+1. **Apply the cloud's e2e stack** (`tofu init && tofu apply` in the directory below). Agents don't do
+   this step.
+2. **Set every non-gate variable first** — the gate only checks one value, so a cloud enabled with its
+   companions missing turns green-skip into a confusing failure.
+3. **Dispatch that cloud alone.** `workflow_dispatch` derives the matrix from the `provider` input, so
+   dispatching `gcp` runs *only* gcp — it cannot spin up the others. Use the cheap green-floor
+   dimension (leave `full_bar` unchecked).
+4. **Kill-drill.** Confirm teardown actually reclaimed everything: the run's teardown is `always()` and
+   label-scoped (every resource carries `alethia:environment-id=<run_id>-<attempt>`, and each cloud's
+   sweeper filters on it). Verify in the console that nothing survived, and that the budget alert
+   plumbing (SNS / Pub-Sub / action group / — see each stack's budget output) is reachable.
+5. **Set the gate variable.** The cloud now runs nightly at 06:00 UTC.
+
+## Per-cloud configuration
+
+Every name below is **verified against `e2e-nightly.yml`**, not against the stacks' output
+descriptions. Check the workflow, not the prose — an output that named a variable nothing read
+(`E2E_GCP_SERVICE_ACCOUNT`) is exactly how a leg came to fail obscurely.
+
+| cloud | stack | gate (set LAST) | also required |
+| --- | --- | --- | --- |
+| **aws** | `infra/aws-oidc` | `E2E_AWS_ROLE_ARN` var | — *(already enabled; the worked example)* |
+| **gcp** | `infra/gcp-e2e` | `E2E_GCP_WIF_PROVIDER` var | `E2E_GCP_SA_EMAIL` var |
+| **azure** | `infra/azure-e2e` | `E2E_AZURE_CLIENT_ID` var | `E2E_AZURE_TENANT_ID`, `E2E_AZURE_SUBSCRIPTION_ID`, `ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID` vars |
+| **alibaba** | `infra/alibaba-e2e` | `E2E_ALIBABA_ROLE_ARN` var | `E2E_ALIBABA_OIDC_PROVIDER_ARN` var |
+| **hetzner** | *(none — token auth)* | `HCLOUD_TOKEN` **secret** | — |
+
+All the managed-cloud handles are repo **variables**, not secrets: an OIDC/WIF provider name, a client
+id, a role ARN. None is sensitive, and none is a long-lived credential — that is the point. Hetzner is
+the exception and uses a **secret**, because token auth is its ceiling (no OIDC).
+
+### aws — the reference
+
+`infra/aws-oidc` outputs `e2e_nightly_role_arn` → `E2E_AWS_ROLE_ARN`. The role is capped by a
+permissions boundary (`e2e_boundary_policy_arn`) and **region-locked to `us-east-1`** — the nightly
+must run there; `eu-central-1` is a prod region the role forbids.
+
+### gcp
+
+`infra/gcp-e2e` outputs:
+- `e2e_gcp_wif_provider` → **`E2E_GCP_WIF_PROVIDER`** (the gate; `auth`'s `workload_identity_provider`)
+- `e2e_gcp_sa_email` → **`E2E_GCP_SA_EMAIL`** (`auth`'s `service_account`)
+
+**Set both.** The gate checks only the provider var, so setting it alone enables the leg and then fails
+it with an empty `service_account`.
+
+### azure
+
+`infra/azure-e2e` outputs:
+- `e2e_azure_client_id` → **`E2E_AZURE_CLIENT_ID`** (the gate; `ARM_CLIENT_ID`)
+- `e2e_azure_tenant_id` → **`E2E_AZURE_TENANT_ID`**
+- `e2e_azure_subscription_id` → **`E2E_AZURE_SUBSCRIPTION_ID`**
+- `aks_admin_group_object_id` → **`ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID`**
+
+The last one is **not optional**, and its failure mode is nasty. `t2_providers.go` maps that env var
+into the cluster snapshot's `aks_admin_group_object_ids` tfvar, which authorizes the runner's AAD token
+as AKS cluster-admin **at create time**. AKS AAD-integrated RBAC has no post-hoc escalation path, so
+omitting it does not degrade gracefully: the cluster comes up and the runner simply is not authorized
+on it. The leg then fails as *"cluster provisioned but not reachable — AUTH REJECTED"* — the same
+shape as the EKS #1040 outage, and easy to misread as a credential problem.
+
+### alibaba
+
+`infra/alibaba-e2e` outputs:
+- `E2E_ALIBABA_ROLE_ARN` → **`E2E_ALIBABA_ROLE_ARN`** (the gate)
+- `E2E_ALIBABA_OIDC_PROVIDER_ARN` → **`E2E_ALIBABA_OIDC_PROVIDER_ARN`**
+
+Both are needed: the RAM-OIDC trio they produce is read by **both** the `aliyun` CLI sweeper and the
+`alicloud` OpenTofu provider, so a missing provider ARN breaks teardown as well as provisioning.
+
+### hetzner
+
+No stack — set the **`HCLOUD_TOKEN` repo secret**.
+
+> **The Hetzner account is shared with production.** Teardown is guaranteed and label-scoped, but this
+> is the one cloud where a sweeper bug can touch prod resources. Treat the kill-drill as mandatory, not
+> a formality.
+
+## Cross-cutting configuration
+
+These are not per-cloud gates, but legs depend on them:
+
+| name | kind | purpose |
+| --- | --- | --- |
+| `E2E_GIT_TOKEN` | secret | the git token the provisioned ArgoCD uses to read the apps repo |
+| `INFRACOST_API_KEY` | secret | cost estimation during the run |
+| `E2E_AWS_COST_CEILING_USD` / `_FULL_USD` | vars | abort thresholds — floor vs full-bar dimension |
+| `E2E_ARGO_APPS_REPO`, `E2E_ARGO_BYO_CHART_*` | vars | the A0.6 BYO-IaC + services proof |
+| `E2E_ARGO_APPS_REPO_GCP` / `_AZURE`, `E2E_ARGO_BYO_CHART_*_GCP` / `_AZURE` | vars | per-cloud repo overrides so that proof runs on gcp + azure too (#1136) |
+| `E2E_NAMESPACE_TENANT`, `E2E_SOAK` | vars | opt-in namespace-placement and soak scenarios |
+| `E2E_VCLUSTER`, `E2E_DAY2_ACCESS` | vars | opt-in vcluster-placement and day-2-access scenarios (their harnesses existed but were never referenced by the workflow, so they could not run at all until #1268 wired them) |
+| `E2E_SECRETS_XACCT*` | vars | opt-in cross-account keyless secret-manager read — see below |
+
+## Dimensions and cost
+
+- **Green floor** (default): the cheap smoke — one small cluster, teardown immediately.
+- **Full bar** (`full_bar: true` on dispatch, and automatic on the Sunday cron): max-config — 11 kinds
+  and all 19 add-ons. Heavy and expensive; it uses the raised cost ceiling.
+
+Region defaults per cloud when the `region` input is blank: hetzner `nbg1`, aws `us-east-1`,
+gcp `europe-west3`, azure `germanywestcentral`, alibaba `eu-central-1`.
+
+The matrix runs at most **3 real provisions concurrently** (`max-parallel: 3`), and a per-provider
+concurrency group serializes same-cloud runs.
+
+## Adding a sixth cloud
+
+Per the workflow's own note, extend all five places or the leg will half-work: the dispatch
+`options:`, the matrix `provider:` array, the gate `case`, the credential step, and the sweeper `case`
+in teardown. Then add a row to the coverage-issue table in the rollup step and to this document.
+
+## Cross-account keyless secret managers (#1268)
+
+Proves a workload in the e2e cluster (account A) reads a secret from a **different** account (B) with
+no credential anywhere. **AWS only** — the other three clouds record BLOCKED with a reason
+([parity board](./xacct-secrets-parity.md)).
+
+### 1. Apply the account-B stack, once
+
+With an admin identity in the **target** account:
+
+```bash
+cd infra/aws-secrets-e2e
+cp backend.hcl.example backend.hcl && cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars              # cluster_account_id = the account the e2e provisions in
+tofu init -backend-config=backend.hcl
+TF_VAR_canary_value="$(openssl rand -hex 24)" tofu apply
+```
+
+`canary_value` is generated inline and never written to a file. Only its SHA-256 becomes a variable —
+which is why the canary never reaches CI config, job logs or the proof bundle.
+
+### 2. Set the repo variables
+
+All **variables**, not secrets (a role ARN, an account id, a region, a secret name and a digest):
+
+| Variable | From |
+|---|---|
+| `E2E_SECRETS_XACCT` | `1` to enable |
+| `E2E_SECRETS_XACCT_ACCOUNT` | `tofu output target_account_id` |
+| `E2E_SECRETS_XACCT_REGION` | `tofu output region` |
+| `E2E_SECRETS_XACCT_ROLE_ARN` | `tofu output target_role_arn` |
+| `E2E_SECRETS_XACCT_REMOTE_KEY` | `tofu output secret_name` |
+| `E2E_SECRETS_XACCT_EXPECT_SHA256` | `tofu output canary_sha256` |
+
+Optional: `E2E_SECRETS_XACCT_EXTERNAL_ID` (only if you set `external_id` on the stack),
+`E2E_SECRETS_XACCT_SERVICE` / `_SECRET_NAME` / `_PROBE_NAMESPACE` (defaults are fine).
+
+The region is **account B's**, where the canary lives — it need not match the cluster's, and is
+required explicitly rather than defaulted so a mismatch cannot surface as a puzzling
+`ResourceNotFound` at sync time.
+
+### 3. Dispatch from `main`
+
+Real applies are main-gated (the AWS OIDC subject is pinned to `refs/heads/main` with
+`StringEquals`), so a dispatch from `dev` provisions nothing. Run the workflow with
+`provider: aws` from `main`, then record the run:
+
+```bash
+scripts/e2e/secrets-e2e.sh aws cluster
+```
+
+### 4. Close the trust-shape divergence
+
+The nightly's account-B trust is pattern-bound because the cluster is ephemeral, while the shipped
+customer module is exact-ARN. Once, by hand, apply `infra/connector/aws/secrets-xacct` against a live
+run's real IRSA ARN and record it:
+
+```bash
+scripts/e2e/secrets-e2e.sh aws strict
+```
+
+Adding the timing to your budget: this layer adds roughly 5–8 minutes of polling on top of
+soak + namespace + vcluster. The step timeout is 75 min, `go test` 80 min, job cap 90 min — do not
+raise them pre-emptively; watch the first three runs.
+
+## Related
+
+- `docs/testing/runner-xcloud-parity.md` — per-cloud runner → cluster parity
+- `demos/proofs/` — committed proof bundles and the parity ledger

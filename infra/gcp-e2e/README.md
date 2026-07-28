@@ -56,11 +56,16 @@ cp terraform.tfvars.example terraform.tfvars   # set project_id + billing_accoun
 tofu init
 tofu apply    # creates the WIF pool/provider + SA + estate roles + budget in the dedicated project
 
-# Publish the two repo Actions VARIABLES the nightly gates on:
-gh variable set E2E_GCP_WIF_PROVIDER    -b "$(tofu output -raw e2e_gcp_wif_provider)"
-gh variable set E2E_GCP_SERVICE_ACCOUNT -b "$(tofu output -raw e2e_gcp_sa_email)"
-# (the workflow reads the SA from vars.E2E_GCP_SERVICE_ACCOUNT; E2E_GCP_WIF_PROVIDER is the gate.)
+# Publish the two repo Actions VARIABLES the nightly needs. Set the SA one FIRST: only the
+# provider var is the gate, so setting it first enables the leg and then fails it with an
+# empty `service_account`.
+gh variable set E2E_GCP_SA_EMAIL     -b "$(tofu output -raw e2e_gcp_sa_email)"
+gh variable set E2E_GCP_WIF_PROVIDER -b "$(tofu output -raw e2e_gcp_wif_provider)"   # the gate — set LAST
 ```
+
+The workflow reads exactly `vars.E2E_GCP_SA_EMAIL` and `vars.E2E_GCP_WIF_PROVIDER` (job `env:` and the
+`google-github-actions/auth` step). Full procedure — dispatch, kill-drill, then the gate — is in
+[`docs/testing/e2e-nightly-enablement.md`](../../docs/testing/e2e-nightly-enablement.md).
 
 Until `E2E_GCP_WIF_PROVIDER` is set, the GCP path of `e2e-nightly.yml` **green-skips** (mirrors the
 Hetzner `HCLOUD_TOKEN` / AWS `E2E_AWS_ROLE_ARN` gates). `id-token: write` (used to mint the GitHub

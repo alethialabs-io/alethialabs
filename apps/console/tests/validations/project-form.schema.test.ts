@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "vitest";
-import { projectFormSchema } from "@/lib/validations/project-form.schema";
+import {
+	projectFormSchema,
+	helmRegistryProviderConfigSchema,
+} from "@/lib/validations/project-form.schema";
+import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 
 const validProject = {
 	project: {
@@ -345,6 +349,16 @@ describe("projectFormSchema", () => {
 			expect(projectFormSchema.safeParse(data).success).toBe(true);
 		});
 
+		it("accepts a secret-kind binding with the value facet (#1207)", () => {
+			const data = serviceWith([
+				{
+					target: { kind: "secret", name: "stripe-key" },
+					inject: [{ env: "STRIPE_KEY", from: "value" }],
+				},
+			]);
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
 		it("rejects an unknown injection facet", () => {
 			const data = serviceWith([
 				{ target: { kind: "database", name: "db" }, inject: [{ env: "X", from: "bogus" }] },
@@ -365,5 +379,213 @@ describe("projectFormSchema", () => {
 			]);
 			expect(projectFormSchema.safeParse(data).success).toBe(false);
 		});
+	});
+});
+
+// The chart-repo provider_config validator is parsed AGAIN server-side in writeComponents (the write
+// action is a public entry point, and provider_config is spread whole into the persisted
+// config_snapshot). These lock the two guarantees that fix relies on.
+describe("helmRegistryProviderConfigSchema", () => {
+	it("strips any key it never declared — a secret knob a crafted request tacks on can't be persisted", () => {
+		const parsed = helmRegistryProviderConfigSchema.parse({
+			registry_host: "registry.acme.io",
+			// not part of the schema — a hostile/extra knob that must never reach the snapshot
+			sneaky_token: "s3cr3t",
+		});
+		expect(parsed).toEqual({ registry_host: "registry.acme.io" });
+		expect("sneaky_token" in parsed).toBe(false);
+	});
+
+	it("keeps the declared non-secret knobs", () => {
+		expect(
+			helmRegistryProviderConfigSchema.parse({ repo_url: "https://charts.acme.io" }),
+		).toEqual({ repo_url: "https://charts.acme.io" });
+	});
+
+	it("fails closed on a malformed host that would break the seeded repo-cred match", () => {
+		// a scheme+path where a bare host is required — waved through today, it yields a credential
+		// URL no ArgoCD Application repoURL prefix-matches, surfacing only at deploy.
+		expect(
+			helmRegistryProviderConfigSchema.safeParse({ registry_host: "https://acme.io/charts" })
+				.success,
+		).toBe(false);
+	});
+});
+
+// ── provider_config: shaped, stripped, and pinned to the catalog (#1412) ──────────────────────
+//
+// These bags are spread WHOLE into the Postgres-persisted config_snapshot, so they are shaped and
+// STRIPPED rather than waved through as opaque JSONB. Stripping brings its own hazard — a knob the
+// schema doesn't know is dropped SILENTLY — so each category is pinned against catalog.json from
+// the other direction too.
+//
+// That parity check is not hypothetical: RegistryProviderConfig was missing `registry_url`, which
+// four active registry connectors REQUIRE and which pullAuth uses as the dockerconfig `auths` key.
+// A pull secret built without it authenticates against nothing.
+describe("provider_config is pinned to the connector catalog", () => {
+	const declaredKnobs = (category: "registry" | "dns") => {
+		const keys = new Set<string>();
+		for (const provider of getProvidersForCategory(category)) {
+			for (const field of provider.providerConfigFields) {
+				if (!field.secret) keys.add(field.key);
+			}
+		}
+		return keys;
+	};
+
+	it("keeps every knob the registry connectors declare", () => {
+		const declared = declaredKnobs("registry");
+		expect(declared.size).toBeGreaterThan(0);
+
+		const parsed = projectFormSchema.safeParse({
+			...validProject,
+			container_registries: [
+				{
+					name: "apps",
+					provider_config: Object.fromEntries([...declared].map((k) => [k, `v-${k}`])),
+				},
+			],
+		});
+		if (!parsed.success) throw parsed.error;
+
+		const kept = new Set(Object.keys(parsed.data.container_registries[0].provider_config ?? {}));
+		expect([...declared].filter((k) => !kept.has(k))).toEqual([]);
+	});
+
+	it("keeps every knob the dns connectors declare", () => {
+		const declared = declaredKnobs("dns");
+		expect(declared.size).toBeGreaterThan(0);
+
+		const parsed = projectFormSchema.safeParse({
+			...validProject,
+			dns: {
+				enabled: true,
+				provider: "cloudflare",
+				domain_name: "acme.io",
+				zone_id: "zone-1",
+				// Cloudflare's `proxied` is a boolean; the rest of the bag is booleans too.
+				provider_config: Object.fromEntries([...declared].map((k) => [k, k === "zone_id" ? "z" : true])),
+			},
+		});
+		if (!parsed.success) throw parsed.error;
+
+		const kept = new Set(Object.keys(parsed.data.dns.provider_config ?? {}));
+		expect([...declared].filter((k) => !kept.has(k))).toEqual([]);
+	});
+
+	it("strips a key no registry connector declares, so it can't reach the config snapshot", () => {
+		const parsed = projectFormSchema.safeParse({
+			...validProject,
+			container_registries: [
+				{
+					name: "apps",
+					// A token pasted into the wrong field would otherwise be stored verbatim.
+					provider_config: { immutable_tags: true, password: "s3cr3t-should-not-persist" },
+				},
+			],
+		});
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.container_registries[0].provider_config).toEqual({ immutable_tags: true });
+	});
+});
+
+// ── the registry connector selection is fail-closed (#1412) ──────────────────────────────────
+describe("registry connector selection", () => {
+	const parseRegistry = (row: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...validProject, container_registries: [row] });
+
+	it("accepts the cloud's own registry with no connector", () => {
+		expect(parseRegistry({ name: "apps" }).success).toBe(true);
+		expect(parseRegistry({ name: "apps", provider: "native" }).success).toBe(true);
+	});
+
+	it("accepts a connector whose required knobs are filled", () => {
+		expect(
+			parseRegistry({
+				name: "apps",
+				provider: "harbor",
+				provider_config: { registry_url: "harbor.acme.io" },
+			}).success,
+		).toBe(true);
+	});
+
+	// registry_url is the registry's ADDRESS: registry_generic.go fails Validate without it and
+	// pullAuth has no dockerconfig `auths` key, so the pull secret authenticates against nothing.
+	it("rejects an any-host connector with no registry_url", () => {
+		expect(parseRegistry({ name: "apps", provider: "harbor", provider_config: {} }).success).toBe(
+			false,
+		);
+	});
+
+	it("accepts a connector that declares no required knobs", () => {
+		expect(parseRegistry({ name: "apps", provider: "ghcr" }).success).toBe(true);
+	});
+
+	it("rejects a slug the catalog doesn't have", () => {
+		expect(parseRegistry({ name: "apps", provider: "not-a-registry" }).success).toBe(false);
+	});
+
+	// The *-xacct registries are coming_soon AND dark-flagged: selecting one provisions the pull
+	// identity in tofu while no refresher renders and no pull secret ever exists.
+	it("rejects a registry that isn't available yet", () => {
+		expect(
+			parseRegistry({
+				name: "apps",
+				provider: "ecr-xacct",
+				provider_config: {
+					target_account_id: "222222222222",
+					region: "us-east-1",
+					registry_host: "222222222222.dkr.ecr.us-east-1.amazonaws.com",
+					target_role_arn: "arn:aws:iam::222222222222:role/pull",
+				},
+			}).success,
+		).toBe(false);
+	});
+});
+
+// ── the DNS connector selection is fail-closed (#1412) ────────────────────────────────────────
+describe("dns connector selection", () => {
+	const parseDns = (dns: Record<string, unknown>) =>
+		projectFormSchema.safeParse({ ...validProject, dns });
+
+	it("accepts cloud-native DNS with no connector", () => {
+		expect(parseDns({ enabled: true, domain_name: "acme.io" }).success).toBe(true);
+		expect(parseDns({ enabled: true, domain_name: "acme.io", provider: "native" }).success).toBe(
+			true,
+		);
+	});
+
+	it("accepts Cloudflare with a zone on the column", () => {
+		// The column is the single source: dns_cloudflare.go prefers provider_config.zone_id but
+		// falls back to project_dns.zone_id, so either satisfies the runtime.
+		expect(
+			parseDns({
+				enabled: true,
+				provider: "cloudflare",
+				domain_name: "acme.io",
+				zone_id: "zone-123",
+			}).success,
+		).toBe(true);
+	});
+
+	// Fail-closed: without a zone, Cloudflare's own Validate rejects the job at compose time — far
+	// from the design surface that could have said so.
+	it("rejects Cloudflare with no zone anywhere", () => {
+		expect(
+			parseDns({ enabled: true, provider: "cloudflare", domain_name: "acme.io" }).success,
+		).toBe(false);
+	});
+
+	// DNSProvider() hard-codes "cloudflare" and returns "" for any other non-native slug, which
+	// DISABLES external-dns rather than falling back to the cloud. An unknown slug must not persist.
+	it("rejects a slug the catalog doesn't have", () => {
+		expect(
+			parseDns({
+				enabled: true,
+				provider: "route53",
+				domain_name: "acme.io",
+				zone_id: "z",
+			}).success,
+		).toBe(false);
 	});
 });

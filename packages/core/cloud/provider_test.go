@@ -360,3 +360,49 @@ func TestExtractClusterEndpoint(t *testing.T) {
 
 func floatPtr(f float64) *float64 { return &f }
 func intPtr(i int) *int           { return &i }
+
+// TestBuildSecrets_ExcludesPluggableProviders (#1411): only NATIVE secrets ("" / "native") reach a
+// cloud's custom_secrets tfvar. A pluggable-provider secret — a SaaS store (vault/doppler/generic) or
+// a cross-account *-xacct manager — is read from that external store via ESO; provisioning a native
+// secret for it leaks a stray empty secret into the cluster's own account (the additive *-xacct case
+// slips past custom_secrets.tf's dominant-level secrets_provider gate). Covers all four clouds — the
+// three builder functions (azure reuses buildGCPSecrets).
+func TestBuildSecrets_ExcludesPluggableProviders(t *testing.T) {
+	secrets := []types.ProjectSecretConfig{
+		{Name: "native-implicit"},                     // Provider "" → kept
+		{Name: "native-explicit", Provider: "native"}, // → kept
+		{Name: "saas-vault", Provider: "vault"},       // pluggable SaaS → dropped
+		{Name: "saas-doppler", Provider: "doppler"},   // pluggable SaaS → dropped
+		{Name: "xacct", Provider: "aws-sm-xacct"},     // cross-account manager → dropped
+	}
+	wantKept := []string{"native-implicit", "native-explicit"}
+
+	names := func(entries []map[string]interface{}, key string) []string {
+		out := make([]string, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, e[key].(string))
+		}
+		return out
+	}
+
+	cases := []struct {
+		name string
+		got  []string
+	}{
+		{"buildSecrets(aws)", names(buildSecrets(secrets), "secret_name")},
+		{"buildGCPSecrets(gcp/azure)", names(buildGCPSecrets(secrets), "name")},
+		{"buildAlibabaSecrets", names(buildAlibabaSecrets(secrets), "name")},
+	}
+	for _, c := range cases {
+		if len(c.got) != len(wantKept) {
+			t.Errorf("%s kept %v, want only native %v", c.name, c.got, wantKept)
+			continue
+		}
+		for i, want := range wantKept {
+			if c.got[i] != want {
+				t.Errorf("%s kept %v, want only native %v", c.name, c.got, wantKept)
+				break
+			}
+		}
+	}
+}

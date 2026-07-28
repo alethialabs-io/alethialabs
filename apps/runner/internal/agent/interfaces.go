@@ -21,6 +21,11 @@ type JobAPI interface {
 	// runner owns (W4.5 #640) — addon id → field key → plaintext, seeded as in-cluster
 	// Secrets pre-sync. Values are never logged and never persisted runner-side.
 	FetchAddonSecrets(jobID string) (map[string]map[string]string, error)
+	// FetchFabricTalosconfig pulls the placement Fabric's decrypted admin talosconfig for a hetzner
+	// namespace/vcluster DEPLOY the runner owns (#1389); PutFabricTalosconfig persists it (encrypted
+	// server-side) from the Fabric's dedicated apply. "" (not an error) when the Fabric has none yet.
+	FetchFabricTalosconfig(jobID string) (string, error)
+	PutFabricTalosconfig(jobID, talosconfig string) error
 	// FetchStateToken mints the per-job tofu-state token for the http state backend;
 	// PurgeProjectState removes the state object after a successful destroy.
 	FetchStateToken(jobID string) (string, error)

@@ -1,0 +1,12 @@
+# AWS-native S3 backend for OpenTofu state. Copy to backend.hcl (gitignored).
+#
+#   tofu init -backend-config=backend.hcl
+#
+# Applied ONCE with an admin identity in the TARGET account (account B) — it creates IAM
+# and a Secrets Manager secret. The admin's AWS creds (env or SSO) authenticate the
+# backend; no static state keys.
+
+bucket       = "alethia-tofu-state-<target-account-id>"
+key          = "aws-secrets-e2e/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

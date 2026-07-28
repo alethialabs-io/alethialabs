@@ -21,6 +21,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
@@ -80,12 +81,66 @@ type DeployParams struct {
 	// a fail-closed apply can proceed deliberately. Nil means no waiver (the
 	// default — any hard control failure blocks apply).
 	VerifyOverride *verify.Override
+	// CompatOverride, when set, waives specific failing version-compatibility
+	// controls (COMPAT-COMPONENT-*/COMPAT-ADDON-*/COMPAT-K8S-CLOUD-*) so a
+	// fail-closed apply can proceed deliberately. Nil means no waiver (the default
+	// — any hard compat failure blocks apply, under the COMPAT-001 gate).
+	CompatOverride *compat.Override
 	// CostCeilingMonthlyUSD, when > 0, fail-closes a real apply whose Infracost
 	// estimated monthly cost exceeds it (or that could not be priced at all). 0 (the
 	// default) disables the guard, so existing callers are unaffected. Opt-in cost
 	// safety for the real-cloud e2e nightly; see costCeilingBlock.
 	CostCeilingMonthlyUSD float64
+	// KubeConn resolves an EXISTING shared-Fabric cluster's control-plane endpoint + CA
+	// OUTPUT-FREE (by name, from the cloud API) for a `namespace`/`vcluster` placement that
+	// runs no tofu. It is INJECTED by the runner — which holds the per-cloud keyless token
+	// minters and the stdlib resolvers (cloud.Resolve{GKE,AKS,ACK}ClusterConn) — so
+	// packages/core stays free of the gcp/azure/alibaba auth SDKs. Nil for aws (whose
+	// ConfigureKubeconfig resolves endpoint/CA via the in-core EKS SDK from the name alone)
+	// and for every dedicated deploy. See mintClusterOutputs.
+	KubeConn KubeConnResolver
+	// NamespaceIdentity provisions a per-namespace tenant cloud identity LIVE at deploy time
+	// (#957) for a `namespace` placement, returning a shell-safe identity handle the deploy path
+	// binds to the namespace default ServiceAccount. INJECTED by the runner for clouds whose
+	// identity provisioning is an IAM-WRITE the runner performs keyless (gcp Workload Identity /
+	// azure federated / alibaba RRSA), keeping those auth SDKs out of packages/core. Nil for aws
+	// (its identity is provisioned in-core via the AWS IAM SDK — coreaws.ProvisionNamespaceIdentity)
+	// and for every dedicated deploy. See provisionAndBindNamespaceIdentity.
+	NamespaceIdentity NamespaceIdentityProvisioner
+	// TalosKubeconfig mints a fresh short-lived kubeconfig for an EXISTING hetzner-talos Fabric cluster
+	// from its PERSISTED talosconfig (there is no cloud API to re-mint — the talos admin credential is
+	// captured at Fabric creation and delivered, encrypted, on the placement job's claim). INJECTED by the
+	// runner (which holds the decrypted talosconfig + the Talos machine-API client), so packages/core takes
+	// on no Talos gRPC dependency. Nil for every non-hetzner cloud and every dedicated deploy. The minted
+	// kubeconfig is handed to hetznerProvider.ConfigureKubeconfig under the `kubeconfig` output key (its
+	// existing path). See mintClusterOutputs.
+	TalosKubeconfig TalosKubeconfigMinter
 }
+
+// NamespaceIdentityProvisioner provisions a per-namespace tenant cloud identity (a zero-perm identity
+// the namespace's default ServiceAccount may assume, never the cluster node/controller role) and returns
+// a shell-safe handle (gcp GSA email / azure UAMI client-id / alibaba RAM role arn). It is a live
+// IAM-WRITE, so the runner injects it (it holds the keyless token + does the stdlib REST call), keeping
+// the gcp/azure/alibaba auth SDKs out of packages/core. Returns a non-nil error (never a partial handle)
+// on failure. The deploy path then binds the handle to the KSA with the per-cloud annotation.
+type NamespaceIdentityProvisioner func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) (handle string, err error)
+
+// KubeConnResolver resolves an EXISTING shared-Fabric cluster's control-plane connection (endpoint +
+// base64 CA) OUTPUT-FREE — by name, from the cloud API, using a keyless token the RUNNER mints. The
+// runner injects it into DeployParams so a placement (namespace/vcluster) can complete a no-tofu
+// kubeconfig mint on a cloud whose ConfigureKubeconfig reads endpoint/CA from outputs, without
+// packages/core taking on that cloud's auth SDK. Returns a non-nil error (never partial values) when
+// the cluster can't be resolved.
+type KubeConnResolver func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName string) (endpoint, caData string, err error)
+
+// TalosKubeconfigMinter mints a fresh, short-lived Kubernetes kubeconfig for an EXISTING hetzner-talos
+// Fabric cluster from its persisted admin talosconfig, via the Talos machine API (talosctl kubeconfig
+// equivalent). Talos exposes no cloud API to re-mint kube access, so — unlike the managed clouds'
+// output-free-by-name resolve — the talos admin credential is persisted at Fabric creation and this mints
+// from it. The runner injects it (it holds the decrypted talosconfig from the job claim and the Talos gRPC
+// client), so packages/core stays free of the Talos dependency. Returns a non-nil error (never a partial
+// kubeconfig) on failure.
+type TalosKubeconfigMinter func(ctx context.Context, config *types.ProjectConfig, clusterName string) (kubeconfig string, err error)
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
 type PlanResult struct {
@@ -112,6 +167,12 @@ type PlanResult struct {
 	// plan hash + tool versions. Signed when a signing key is configured
 	// (Algorithm "ed25519"); otherwise attached unsigned (Algorithm "none").
 	VerifyReceipt *verify.SignedReceipt
+	// CompatReport is the version-compatibility gate's result for this config
+	// (the cluster K8s minor × enabled add-ons/components against the matrix).
+	// Always attached (the engine is pure — an unrecorded version yields honest
+	// not_evaluable, never a silent pass). On a real apply a `fail` verdict stops
+	// the apply before any infrastructure changes (the COMPAT-001 gate).
+	CompatReport *compat.Report
 	// AddOnStatus is the post-apply ArgoCD health/sync per managed marketplace add-on
 	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
 	// health read failed; the runner forwards it so the console can show real status.
@@ -199,6 +260,19 @@ func enabledAddonIDs(addons []types.AddOnInstall) []string {
 		ids = append(ids, addons[i].ID)
 	}
 	return ids
+}
+
+// compatAddOnRefs maps the resolved add-on install set to the compat engine's
+// AddOnRef inputs (id + pinned chart/release version) for the apply-time gate.
+func compatAddOnRefs(addons []types.AddOnInstall) []compat.AddOnRef {
+	if len(addons) == 0 {
+		return nil
+	}
+	refs := make([]compat.AddOnRef, 0, len(addons))
+	for i := range addons {
+		refs = append(refs, compat.AddOnRef{ID: addons[i].ID, Version: addons[i].Version})
+	}
+	return refs
 }
 
 // writePhase records the current provisioning phase to the job's phase file (best-effort;
@@ -465,28 +539,30 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				if ec2Err != nil {
 					fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 				} else {
-					subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
-					if subErr != nil {
+					// Discover the VPC's subnets and their public/private nature. On failure we
+					// keep nil metadata but still honor an explicit selection below (#1352).
+					var metas []cloud.SubnetMeta
+					if subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID); subErr != nil {
 						fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
 					} else {
-						privateIDs := make([]string, 0)
-						publicIDs := make([]string, 0)
+						metas = make([]cloud.SubnetMeta, 0, len(subnets))
 						for _, s := range subnets {
-							if s.MapPublicIpOnLaunch {
-								publicIDs = append(publicIDs, s.ID)
-							} else {
-								privateIDs = append(privateIDs, s.ID)
-							}
+							metas = append(metas, cloud.SubnetMeta{ID: s.ID, Public: s.MapPublicIpOnLaunch})
 						}
-						if len(publicIDs) == 0 {
-							publicIDs = privateIDs
-						}
-						if len(privateIDs) == 0 {
-							privateIDs = publicIDs
-						}
+					}
+					// Honor the user's explicit subnet selection when present; otherwise fall back
+					// to every discovered subnet (auto-discover, today's behaviour). Only set the
+					// tfvars when there is something to say, so an empty result leaves the
+					// template's fail-closed brownfield precondition to catch it at plan.
+					if len(metas) > 0 || len(vc.Network.SubnetIDs) > 0 {
+						privateIDs, publicIDs := cloud.SelectBrownfieldSubnets(metas, vc.Network.SubnetIDs)
 						tfvars["vpc_private_subnet_ids"] = privateIDs
 						tfvars["vpc_public_subnet_ids"] = publicIDs
-						fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
+						if len(vc.Network.SubnetIDs) > 0 {
+							fmt.Fprintf(stdout, "Resolved %d private and %d public subnets from your %d-subnet selection\n", len(privateIDs), len(publicIDs), len(vc.Network.SubnetIDs))
+						} else {
+							fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
+						}
 					}
 				}
 			case "gcp":
@@ -616,6 +692,35 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		fmt.Fprintln(stdout, "Verification gate: SKIPPED (no plan JSON) — coverage gap, not a pass")
 	}
 
+	// Version-compatibility gate (compat matrix, #1215). The second gate alongside
+	// elench verify: evaluate the RESOLVED config (cluster K8s minor × enabled add-ons
+	// against the compat matrix) rather than the plan JSON. The engine is pure and
+	// deterministic — an unrecorded version yields honest not_evaluable, never a silent
+	// pass — so the report is ALWAYS attached (for both plan and apply jobs; the console
+	// renders it, #1219). The fail-closed ENFORCEMENT happens just before apply, below.
+	compatSubject := compat.Subject{
+		Providers:  []string{params.Provider},
+		K8sVersion: vc.Cluster.ClusterVersion,
+		AddOns:     compatAddOnRefs(vc.AddOns),
+		// Components deliberately unset: the config-time subject omits them too, and
+		// component/K8s couplings are covered by the matrix's own drift test. Add-on and
+		// K8s-cloud couplings are the apply-gate's fail domain here.
+	}
+	crep := compat.Evaluate(compatSubject)
+	result.CompatReport = crep
+	fmt.Fprintf(stdout, "Compatibility gate: verdict=%s (pass=%d fail=%d warn=%d not_evaluable=%d, catalog %s)\n",
+		crep.Verdict, crep.Summary.Pass, crep.Summary.Fail, crep.Summary.Warn, crep.Summary.NotEvaluable, crep.CatalogVersion)
+	for _, c := range crep.Controls {
+		if c.Status == compat.StatusFail || c.Status == compat.StatusWarn {
+			for _, f := range c.Findings {
+				fmt.Fprintf(stdout, "  [%s/%s] %s: %s\n", c.ID, c.Status, f.Address, f.Message)
+			}
+		}
+		if c.Coverage != "" {
+			fmt.Fprintf(stdout, "  [%s] coverage: %s\n", c.ID, c.Coverage)
+		}
+	}
+
 	if params.InfracostToken != "" {
 		infracostEnv := []string{"INFRACOST_API_KEY=" + params.InfracostToken}
 		infracostCLI := infracost.NewInfracostCLI(infracost.ResolvedInfracostVersion(), params.InfracostToken)
@@ -685,6 +790,25 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if params.VerifyOverride != nil && len(params.VerifyOverride.Controls) > 0 {
 			fmt.Fprintf(stdout, "Verification override applied by %q for controls %v (reason: %s)\n",
 				params.VerifyOverride.By, params.VerifyOverride.Controls, params.VerifyOverride.Reason)
+		}
+	}
+
+	// Fail-closed compatibility enforcement (COMPAT-001): a real apply must not proceed
+	// while any hard compat control is failing and unwaived. Mirrors the verify gate above
+	// 1:1 through the shared Unwaived/Override machinery — an authorized operator may waive
+	// specific failing controls (COMPAT-COMPONENT-*/COMPAT-ADDON-*/…); disabling the gate
+	// wholesale is deliberately not an option. A nil/not_evaluable report is NON-blocking by
+	// contract (the honesty surface), so — unlike verify's missing-plan-JSON — there is no
+	// gateRequiresReport backstop: the engine always produces a conclusive verdict.
+	if result.CompatReport != nil {
+		if unresolved := result.CompatReport.Unwaived(params.CompatOverride); len(unresolved) > 0 {
+			telemetry.GateBlocked(ctx, provider.Name())
+			return nil, fmt.Errorf("compatibility gate (%s) BLOCKED apply: failing controls %v (catalog %s) — fix the config (K8s minor / add-on versions) or supply an authorized override to proceed",
+				compat.ControlGateID, unresolved, result.CompatReport.CatalogVersion)
+		}
+		if params.CompatOverride != nil && len(params.CompatOverride.Controls) > 0 {
+			fmt.Fprintf(stdout, "Compatibility override applied by %q for controls %v (reason: %s)\n",
+				params.CompatOverride.By, params.CompatOverride.Controls, params.CompatOverride.Reason)
 		}
 	}
 
@@ -864,6 +988,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// is NOT required for a healthy cluster (cluster_ready + the ArgoCD apps already converged),
 		// so a slow ArgoCD-installed operator webhook must not fail an otherwise-healthy deploy — the
 		// apply is idempotent and reconciles on the next deploy once the operator is ready.
+		//
+		// A pluggable SaaS secret store (Vault / OpenBao / Doppler / generic) reads its API token
+		// from an in-cluster Secret the ClusterSecretStore's auth.secretRef names — seed it BEFORE
+		// applying the store. The credential comes from the job's ConnectorCredentials (never the
+		// snapshot); the token lands only in the in-cluster Secret. facts.SecretsSaaS is nil
+		// (fail-closed) when the store's credential/config is absent, so this is skipped exactly
+		// when no store will render.
+		if facts.SecretsSaaS != nil {
+			token := vc.ConnectorCredentialFor("secrets", facts.SecretsSaaS.Slug)["token"]
+			if err := argocd.EnsureSecretsStoreCredential(facts.SecretsSaaS.Namespace, facts.SecretsSaaS.CredSecret, facts.SecretsSaaS.CredKey, token, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the %s external-secrets store credential: %w", facts.SecretsSaaS.Slug, err)
+			}
+		}
 		if esErr := argocd.EnsureExternalSecretsStore(facts, stdout, stderr); esErr != nil {
 			fmt.Fprintf(stderr, "Warning: external-secrets ClusterSecretStore not applied yet "+
 				"(will reconcile once the operator webhook is ready): %v\n", esErr)
@@ -899,7 +1036,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		manifestWarnings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, stdout, stderr)
+		manifestWarnings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, facts, stdout, stderr)
 		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
@@ -922,6 +1059,36 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				continue
 			}
 			desiredHelmRepoCreds = append(desiredHelmRepoCreds, s.Name)
+		}
+		// KEYLESS OCI ECR chart repos (#1185): ECR issues a ~12h token, so there is no static
+		// password to seed above. Instead, for each connected ECR helm_registry, render + apply a
+		// standalone in-cluster refresher (the runner's `helm-repo-token` loop under the tofu
+		// helm-repo-pull IRSA) that mints + patches the repo-helm-<hash> Secret's credentials on a
+		// loop. Dark by default: only ALETHIA_XACCT_HELM_ECR_ENABLED=true renders anything.
+		// Fail-closed: a missing pull-identity output means the refresher is NOT applied (the private
+		// chart pull just can't authenticate — surfaced, not silent), never a half-wired refresher.
+		// Non-fatal like the static path. Each target's placeholder Secret is added to
+		// desiredHelmRepoCreds so the prune below keeps it; the refresher unit names feed
+		// PruneHelmRepoRefreshers.
+		var desiredHelmRepoRefreshers []string
+		if os.Getenv("ALETHIA_XACCT_HELM_ECR_ENABLED") == "true" {
+			irsa, _ := result.Outputs["helm_repo_pull_irsa_arn"].(string)
+			res := renderKeylessHelmRefreshers(vc, irsa, os.Getenv("ALETHIA_RUNNER_IMAGE"))
+			if res.SkippedTargets != nil {
+				fmt.Fprintf(stderr, "Warning: some keyless Helm ECR targets were skipped: %v\n", res.SkippedTargets)
+			}
+			switch {
+			case res.Skip != "":
+				fmt.Fprintln(stderr, "Warning: "+res.Skip)
+			case res.Manifest != "":
+				if applyErr := argocd.ApplyManifest(res.Manifest, stdout, stderr); applyErr != nil {
+					fmt.Fprintf(stderr, "Warning: could not apply keyless Helm ECR refreshers: %v\n", applyErr)
+				} else {
+					desiredHelmRepoCreds = append(desiredHelmRepoCreds, res.DesiredSecrets...)
+					desiredHelmRepoRefreshers = append(desiredHelmRepoRefreshers, res.DesiredRefreshers...)
+					fmt.Fprintf(stdout, "Applied %d keyless Helm ECR chart-repo refresher(s)\n", len(res.DesiredRefreshers))
+				}
+			}
 		}
 		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
 		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
@@ -1002,6 +1169,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// likewise owned by no Application. Desired = the repos seeded above (empty when none connected),
 		// so switching or removing a helm_registry connector cleans up the stale credential.
 		argocd.PruneHelmRepoCredentials(desiredHelmRepoCreds, stdout, stderr)
+		// And the keyless OCI ECR refresher (#1185) unit — Deployment/Role/RoleBinding — of any
+		// deselected ECR helm_registry (owned by no Application; its placeholder Secret is swept by the
+		// prune above). Desired = the refreshers applied above (empty when none / flag off), so removing
+		// an ECR chart-repo connector tears its refresher down. The shared KSA is left in place.
+		argocd.PruneHelmRepoRefreshers(desiredHelmRepoRefreshers, stdout, stderr)
 		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
 		// shows real status (best-effort — a read failure just leaves status Unknown).
 		//

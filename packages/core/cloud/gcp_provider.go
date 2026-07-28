@@ -134,30 +134,63 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		if db.IamAuth != nil {
 			tfvars["cloud_sql_iam_auth"] = *db.IamAuth
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). cloud_sql_iam_auth is
+		// reserved UNCONDITIONALLY: db.IamAuth == nil leaves it unset, and without this a
+		// provider_config key could switch keyless on for a cell the canvas never offered, walking
+		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no GCP template variable
+		// declares a Cloud SQL log-export set — so it is reserved rather than emitted undeclared.
+		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "cloud_sql_iam_auth")
 	}
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		// Map ProjectCacheConfig onto the ONLY Memorystore tfvars the GCP template declares:
-		// memorystore_tier (BASIC|STANDARD_HA), memorystore_memory_size_gb (whole GB), and
-		// memorystore_redis_version (the REDIS_x_y enum). The provider previously emitted
-		// memorystore_engine / memorystore_instance_type / memorystore_multi_az — none declared
-		// in variables.tf, so a customer's cache shape was silently dropped (this wiring gap).
-		//
-		// Tier: STANDARD_HA (replicated, high-availability) when the config asks for more than one
-		// node OR explicit multi-AZ; otherwise the template default (BASIC) stands.
-		if (cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1) || (cache.MultiAz != nil && *cache.MultiAz) {
-			tfvars["memorystore_tier"] = "STANDARD_HA"
-		}
-		// Size: the cloud-indifferent MemoryGB is the memorystore_memory_size_gb number directly.
-		// GCP requires whole GB, so round. The M1..M4 NearestCacheTier labels are the console tier
-		// NAMES, not this template's size/tier model, so they are deliberately NOT used here.
-		if cache.MemoryGB > 0 {
-			tfvars["memorystore_memory_size_gb"] = int(math.Round(cache.MemoryGB))
-		}
-		// Version: the var accepts only the REDIS_x_y enum — passing a raw "7.1" fails the apply.
-		if v := gcpMemorystoreRedisVersion(cache.EngineVersion); v != "" {
-			tfvars["memorystore_redis_version"] = v
+
+		// The engine the user picked decides WHICH Memorystore product runs. Until now nothing read
+		// `cache.Engine` on any cloud, so picking Valkey silently provisioned Redis (#1420). On GCP
+		// this is a genuine fork rather than a flag: Valkey is `google_memorystore_instance`, a
+		// cluster-shaped product sized by SHARDS, while Redis is `google_redis_instance`, sized by a
+		// memory figure. Anything not explicitly Valkey stays Redis, so an engine-less config is
+		// unchanged.
+		valkey := cache.Engine == types.CacheEngineValkey
+		tfvars["create_memorystore_valkey"] = valkey
+		tfvars["create_memorystore"] = !valkey
+
+		if valkey {
+			// Shards from the cloud-indifferent memory size. SHARED_CORE_NANO carries ~1.4 GB per
+			// shard; round UP so the instance is never smaller than what was asked for, and never go
+			// below one shard.
+			if cache.MemoryGB > 0 {
+				tfvars["memorystore_valkey_shard_count"] = gcpValkeyShards(cache.MemoryGB)
+			}
+			if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
+				// Replicas per shard, not a node count — the service manages the primaries.
+				tfvars["memorystore_valkey_replica_count"] = *cache.NumCacheNodes - 1
+			}
+			if v := gcpMemorystoreValkeyVersion(cache.EngineVersion); v != "" {
+				tfvars["memorystore_valkey_engine_version"] = v
+			}
+		} else {
+			// Map ProjectCacheConfig onto the ONLY Memorystore tfvars the GCP template declares:
+			// memorystore_tier (BASIC|STANDARD_HA), memorystore_memory_size_gb (whole GB), and
+			// memorystore_redis_version (the REDIS_x_y enum). The provider previously emitted
+			// memorystore_engine / memorystore_instance_type / memorystore_multi_az — none declared
+			// in variables.tf, so a customer's cache shape was silently dropped (this wiring gap).
+			//
+			// Tier: STANDARD_HA (replicated, high-availability) when the config asks for more than one
+			// node OR explicit multi-AZ; otherwise the template default (BASIC) stands.
+			if (cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1) || (cache.MultiAz != nil && *cache.MultiAz) {
+				tfvars["memorystore_tier"] = "STANDARD_HA"
+			}
+			// Size: the cloud-indifferent MemoryGB is the memorystore_memory_size_gb number directly.
+			// GCP requires whole GB, so round. The M1..M4 NearestCacheTier labels are the console tier
+			// NAMES, not this template's size/tier model, so they are deliberately NOT used here.
+			if cache.MemoryGB > 0 {
+				tfvars["memorystore_memory_size_gb"] = int(math.Round(cache.MemoryGB))
+			}
+			// Version: the var accepts only the REDIS_x_y enum — passing a raw "7.1" fails the apply.
+			if v := gcpMemorystoreRedisVersion(cache.EngineVersion); v != "" {
+				tfvars["memorystore_redis_version"] = v
+			}
 		}
 	}
 
@@ -179,6 +212,13 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	if !provisionNetwork && config.Network.NetworkID != "" {
 		tfvars["network_id"] = config.Network.NetworkID
+	}
+	// Brownfield subnet selection (#1352): the user-picked subnet self-links. Written only
+	// on an existing network and only when non-empty, so an empty selection leaves the key
+	// absent (auto-discover, today's behaviour) and gcp_provider_test's absence assertions
+	// stay green. The template prefers this over its region-regex subnet scan.
+	if !provisionNetwork && len(config.Network.SubnetIDs) > 0 {
+		tfvars["subnet_ids"] = config.Network.SubnetIDs
 	}
 
 	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
@@ -323,6 +363,9 @@ func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]int
 func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
+		if !secretProvisionedNatively(s.Provider) {
+			continue // read via ESO from its pluggable/cross-account store, not created here
+		}
 		result = append(result, map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,
@@ -349,3 +392,37 @@ func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 }
 
 var _ CloudProvider = (*gcpProvider)(nil)
+
+// gcpValkeyShards converts the canvas's cloud-indifferent memory size into a Memorystore-for-Valkey
+// shard count. The default node type carries roughly 1.4 GB per shard, so the size is divided and
+// rounded UP — an instance smaller than what the user asked for is the one outcome that must not
+// happen silently — with a floor of one shard.
+func gcpValkeyShards(memoryGB float64) int {
+	const gbPerShard = 1.4
+	shards := int(math.Ceil(memoryGB / gbPerShard))
+	if shards < 1 {
+		return 1
+	}
+	return shards
+}
+
+// gcpMemorystoreValkeyVersion maps a plain Valkey version ("7.2", "8.0") to the VALKEY_x_y enum the
+// resource requires — a raw semver fails the apply, exactly as it does on the Redis side. An empty or
+// unparseable version returns "" so the template default stands rather than a guess being applied.
+func gcpMemorystoreValkeyVersion(version string) string {
+	if version == "" {
+		return ""
+	}
+	if strings.HasPrefix(version, "VALKEY_") {
+		return version
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	major, minor := parts[0], parts[1]
+	if major == "" || minor == "" {
+		return ""
+	}
+	return "VALKEY_" + major + "_" + minor
+}

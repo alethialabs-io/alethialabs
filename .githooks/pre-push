@@ -1,10 +1,28 @@
 #!/usr/bin/env bash
 # Committed pre-push hook — reject direct pushes to protected branches, reinforcing the
-# `feature → dev` flow locally (ahead of the branch-flow-guard CI check). Escape:
-# `git push --no-verify`.
+# `feature → dev` flow locally (ahead of the branch-flow-guard CI check), and reject a push from a
+# worktree another live Claude instance holds. Escape: `git push --no-verify`.
 #
 # git feeds one line per pushed ref on stdin: <local ref> <local sha> <remote ref> <remote sha>
 set -euo pipefail
+
+# Pushing from someone else's worktree publishes their branch state — a force-push there is what
+# made #1247 irreversible. Same helper lookup + fail-open contract as pre-commit R5.
+wt_lib="$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/lib/wt-lease.sh"
+[ -f "$wt_lib" ] || wt_lib="$(git rev-parse --show-toplevel)/scripts/lib/wt-lease.sh"
+if [ -f "$wt_lib" ] && [ "${ALETHIA_ALLOW_FOREIGN_WT:-}" != "1" ]; then
+	# shellcheck source=/dev/null
+	. "$wt_lib"
+	wt_rc=0
+	wt_lease_acquire "$(git rev-parse --show-toplevel)" || wt_rc=$?
+	if [ "$wt_rc" = 1 ]; then
+		echo "✗ pre-push: this worktree is leased to another LIVE Claude instance." >&2
+		echo "    holder  pid ${WT_L_PID:-?} (started ${WT_L_PS:-?}) on ${WT_L_HOST:-?} · session ${WT_L_SESSION:-?}" >&2
+		echo "  Pushing from their tree publishes their branch (issue #1247). See: pnpm wt:who" >&2
+		echo "  (override: ALETHIA_ALLOW_FOREIGN_WT=1 git push … · or --no-verify)" >&2
+		exit 1
+	fi
+fi
 
 while read -r _localref _localsha remoteref _remotesha; do
 	case "$remoteref" in

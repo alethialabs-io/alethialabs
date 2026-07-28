@@ -21,7 +21,7 @@ jobs:
     name: Build runner images (no push)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The full runner is 16GB+; reclaim the ~25-30GB of pre-installed toolchains we don't need so the
       # build has headroom on the standard runner.

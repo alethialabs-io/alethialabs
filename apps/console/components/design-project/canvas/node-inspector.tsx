@@ -39,6 +39,7 @@ import { configName } from "./graph/node-config";
 import { getKindConfig, type KindConfig } from "./inspector/config-schema";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
+import { useNodeCapabilities } from "./inspector/use-node-capabilities";
 
 interface InspectorPanelProps {
 	/** Edit mode only: tear down the active environment (queues a DESTROY job). Surfaced as a
@@ -70,6 +71,8 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 	const env = useEnvironmentStatus();
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const provider = node ? getEffectiveProvider(node.id) : null;
+	// Account-scoped picker options for THIS node's effective identity.
+	const capabilities = useNodeCapabilities(node?.id ?? null);
 	const def = node ? NODE_REGISTRY[node.data.kind] : null;
 	const schema = node ? getKindConfig(node.data.kind) : undefined;
 
@@ -265,6 +268,7 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 							config={node.data.config}
 							provider={provider}
 							kind={node.data.kind}
+							capabilities={capabilities}
 							onChange={(patch) => updateNodeConfig(node.id, patch)}
 						/>
 					)}

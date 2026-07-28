@@ -45,6 +45,76 @@ func TestAKSClusterResourceID(t *testing.T) {
 	}
 }
 
+func TestAKSResourceGroupFromID(t *testing.T) {
+	cases := map[string]string{
+		"/subscriptions/s/resourceGroups/rg-1/providers/Microsoft.ContainerService/managedClusters/c": "rg-1",
+		"/subscriptions/s/resourcegroups/RG-Lower/providers/x/managedClusters/c":                      "RG-Lower", // case-insensitive marker
+		"/subscriptions/s/providers/x/managedClusters/c":                                              "",         // no RG segment
+		"not-an-arm-id": "",
+	}
+	for id, want := range cases {
+		if got := aksResourceGroupFromID(id); got != want {
+			t.Errorf("aksResourceGroupFromID(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+const aksListPath = "/subscriptions/sub-1/providers/Microsoft.ContainerService/managedClusters"
+
+// TestResolveAKSResourceGroup covers the output-free RG-by-name lookup: found, not-found, and the
+// ambiguous same-name-across-RGs case (rejected, never silently picked).
+func TestResolveAKSResourceGroup(t *testing.T) {
+	listWith := func(body string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer arm-token" {
+				t.Errorf("missing/wrong bearer: %q", r.Header.Get("Authorization"))
+			}
+			if r.Method != http.MethodGet || r.URL.Path != aksListPath {
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+	}
+
+	t.Run("found", func(t *testing.T) {
+		srv := listWith(`{"value":[
+			{"id":"/subscriptions/sub-1/resourceGroups/rg-other/providers/x/managedClusters/other","name":"other"},
+			{"id":"/subscriptions/sub-1/resourceGroups/rg-1/providers/x/managedClusters/aks-1","name":"aks-1"}]}`)
+		defer srv.Close()
+		rg, err := ResolveAKSResourceGroup(context.Background(), armClientTo(srv), "arm-token", "sub-1", "aks-1")
+		if err != nil || rg != "rg-1" {
+			t.Fatalf("ResolveAKSResourceGroup = (%q, %v), want (rg-1, nil)", rg, err)
+		}
+	})
+
+	t.Run("not found fails closed", func(t *testing.T) {
+		srv := listWith(`{"value":[{"id":"/subscriptions/sub-1/resourceGroups/rg-1/providers/x/managedClusters/other","name":"other"}]}`)
+		defer srv.Close()
+		if _, err := ResolveAKSResourceGroup(context.Background(), armClientTo(srv), "arm-token", "sub-1", "aks-1"); err == nil {
+			t.Error("no matching cluster = nil error, want a fail-closed not-found error")
+		}
+	})
+
+	t.Run("ambiguous name rejected", func(t *testing.T) {
+		srv := listWith(`{"value":[
+			{"id":"/subscriptions/sub-1/resourceGroups/rg-a/providers/x/managedClusters/aks-1","name":"aks-1"},
+			{"id":"/subscriptions/sub-1/resourceGroups/rg-b/providers/x/managedClusters/aks-1","name":"aks-1"}]}`)
+		defer srv.Close()
+		if _, err := ResolveAKSResourceGroup(context.Background(), armClientTo(srv), "arm-token", "sub-1", "aks-1"); err == nil {
+			t.Error("same-name clusters across RGs = nil error, want an ambiguity error")
+		}
+	})
+
+	t.Run("empty token fails closed", func(t *testing.T) {
+		if _, err := ResolveAKSResourceGroup(context.Background(), nil, "", "sub-1", "aks-1"); err == nil {
+			t.Error("empty ARM token = nil error, want an error")
+		}
+	})
+}
+
 // aksHandler routes the two ARM calls: GET the managed cluster, POST listClusterUserCredentials.
 func aksHandler(t *testing.T, mcJSON, credJSON string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -22,18 +22,50 @@ locals {
   instance_name = "${local.name_prefix}-sql"
   database_name = "${var.project_name}-${var.environment}"
 
+  # The IAM-auth flag is named DIFFERENTLY per engine, and the two are not interchangeable:
+  # PostgreSQL takes the dotted `cloudsql.iam_authentication`, MySQL takes the UNDERSCORED
+  # `cloudsql_iam_authentication` (Cloud SQL for MySQL, "IAM authentication"). Copying the Postgres
+  # form onto a MySQL instance does not error — Cloud SQL simply never turns IAM auth on, so the
+  # instance comes up healthy and every keyless login fails. That silence is why checks.tf gates it.
   database_flags_postgres = var.iam_auth ? [
     { name = "cloudsql.iam_authentication", value = "on" },
   ] : []
 
-  database_flags_mysql = []
+  database_flags_mysql = var.iam_auth ? [
+    { name = "cloudsql_iam_authentication", value = "on" },
+  ] : []
 
   database_flags = var.engine == "POSTGRES" ? local.database_flags_postgres : local.database_flags_mysql
+
+  # The IAM login name differs by engine, and the OUTPUT must be what the app actually authenticates
+  # as — the bootstrap GRANT target and the proxy login both key off it.
+  #   PostgreSQL: the SA email minus the ".gserviceaccount.com" suffix  → "sa@project.iam"
+  #   MySQL:      Cloud SQL "truncates the @ and the domain name from the ... service account's
+  #               email address", so the login is the SA LOCAL PART only → "sa"
+  # MySQL additionally requires the login be all lowercase, and caps usernames at 32 characters on
+  # 8.0+ (16 on earlier). There is NO remediation for an over-long SA local part — the name must be
+  # chosen ≤32 up front, which is why checks.tf asserts it rather than silently truncating here.
+  # Truncating would produce a user that exists but is not the identity the app presents.
+  app_iam_user_postgres = var.app_iam_sa_email != null ? trimsuffix(var.app_iam_sa_email, ".gserviceaccount.com") : null
+  app_iam_user_mysql    = var.app_iam_sa_email != null ? lower(split("@", var.app_iam_sa_email)[0]) : null
+  app_iam_user          = var.engine == "POSTGRES" ? local.app_iam_user_postgres : local.app_iam_user_mysql
 
   engine_map = {
     POSTGRES = "POSTGRES"
     MYSQL    = "MYSQL"
   }
+
+  # `database_version` is a Cloud SQL ENUM token (POSTGRES_16, MYSQL_8_0, MYSQL_5_7), so the version
+  # segment separates its parts with UNDERSCORES. Every producer we have emits the human/API form with
+  # a DOT — the offline catalog ships "8.0", and the federated picker's parseSqlVersion explicitly
+  # converts "8_0" → "8.0" so the console can display it — which composed the invalid "MYSQL_8.0" and
+  # made Cloud SQL MySQL unprovisionable by any path (#1381).
+  #
+  # Normalizing HERE rather than in the tfvars builder makes the module correct for EVERY caller (the
+  # console, the e2e harness, a hand-written tfvars), instead of only the path that happens to funnel
+  # through Go. The rewrite is safe for both engines: PostgreSQL versions are bare integers today, so
+  # it is a no-op, and were a dotted one to appear ("9.6") POSTGRES_9_6 is its correct token too.
+  engine_version_token = replace(var.engine_version, ".", "_")
 
   default_port = {
     POSTGRES = 5432
@@ -59,7 +91,9 @@ resource "google_sql_database_instance" "this" {
   # engine_map[engine] already yields "POSTGRES"/"MYSQL", so engine_version must be the BARE
   # version ("16"), not "POSTGRES_16" — otherwise this composes "POSTGRES_POSTGRES_16" and the
   # API rejects it: Invalid value at 'body.database_version'. (Cloud SQL had never provisioned.)
-  database_version    = "${local.engine_map[var.engine]}_${var.engine_version}"
+  # The version's own separator is normalized to the enum's underscore grain — see
+  # local.engine_version_token.
+  database_version    = "${local.engine_map[var.engine]}_${local.engine_version_token}"
   deletion_protection = var.environment == "production" ? true : false
 
   settings {
@@ -154,13 +188,15 @@ resource "google_sql_user" "default" {
 # When the root passes the app-workload GSA email, create a CLOUD_IAM_SERVICE_ACCOUNT
 # database user for it. The workload (via the Cloud SQL Auth Proxy with --auto-iam-authn)
 # then logs in with a short-lived IAM token minted from its Workload Identity — no password.
-# Cloud SQL expects the IAM SA username to be the SA email WITHOUT the ".gserviceaccount.com"
-# suffix.
+#
+# The username form is ENGINE-SPECIFIC (local.app_iam_user, #1505): PostgreSQL takes the SA email
+# without the ".gserviceaccount.com" suffix; MySQL truncates the @ and domain outright, so it takes
+# the SA local part only, lowercased.
 ################################################################################
 
 resource "google_sql_user" "app_iam" {
   count    = var.app_iam_sa_email != null ? 1 : 0
-  name     = trimsuffix(var.app_iam_sa_email, ".gserviceaccount.com")
+  name     = local.app_iam_user
   project  = var.project_id
   instance = google_sql_database_instance.this.name
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"

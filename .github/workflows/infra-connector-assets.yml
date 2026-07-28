@@ -23,8 +23,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
@@ -49,8 +49,8 @@ jobs:
       contents: read
       id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
@@ -58,7 +58,7 @@ jobs:
       # a non-secret Actions variable). Sets AWS_* env for the OpenTofu provider. The
       # bucket lives in eu-west-1; state lives in eu-central-1 (configured below).
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.CONNECTOR_ASSETS_DEPLOYER_ROLE_ARN }}
           aws-region: eu-west-1

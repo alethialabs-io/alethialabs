@@ -8,6 +8,11 @@
 // therefore no read-only Describe/List API to enumerate (and Hetzner auth is a project token, not the
 // keyless federation the managed clouds use — see the hetzner-connector-parity ceiling).
 //
+// The two SKU/version axes added for #977's residue are exclusions here for the same reason: a Hetzner
+// database has no instance-class axis at all (it is sized in-cluster), and the cache engine version is a
+// container image TAG with no enumeration API behind it. Both are spelled out at the end of the
+// normalizer and pinned by tests, so they stay decisions rather than looking like gaps.
+//
 // This is the DOCUMENTED-EXCLUSION lane: rather than skip the axis, it records the STATIC in-cluster
 // offerings THIS platform always provisions on a Hetzner cluster — the CloudNativePG Postgres engine, the
 // Valkey cache tiers, and the pinned k8s version (all launchable on every Hetzner project, identical
@@ -73,11 +78,17 @@ export function normalizeHetznerServiceRows(
 	const rows: CloudCapabilityServiceInsert[] = [];
 
 	// database: CloudNativePG (in-cluster Postgres) at its chart's default version.
+	//
+	// DOCUMENTED SINGLE-VERSION EXCLUSION (cloud-parity rule, #1351): every other cloud emits one row
+	// per offered engine version, enumerated from a read-only API. Hetzner has no such API — the
+	// engine is a Helm chart, so the only version we can honestly claim is the chart's default. The
+	// `native_id` still uses the composite `<engine>-<version>` shape so the read path treats all five
+	// clouds identically; Hetzner simply contributes a one-element version list.
 	for (const e of DB_ENGINES.hetzner) {
 		rows.push(
 			serviceRow(ctx, {
 				service_kind: "database",
-				native_id: e.value,
+				native_id: `${e.value}-${e.defaultVersion}`,
 				name: e.label,
 				engine: e.value,
 				version: e.defaultVersion,
@@ -119,6 +130,16 @@ export function normalizeHetznerServiceRows(
 
 	// nosql: intentionally none — Hetzner offers no managed NoSQL (documented exclusion, not an absent
 	// signal). The picker fails open to the static catalog, which reports `available: false`.
+
+	// database_instance_class: intentionally none. There is no SKU axis to enumerate — a Hetzner database
+	// is a CloudNativePG Cluster sized by the in-cluster sizing fields (storage_gb / replicas), and the
+	// canvas already hides `instance_class` for this provider. Recording a row would invent an offering.
+
+	// cache_version: intentionally none. The value IS meaningful here — the mapper passes it through as
+	// the Valkey container image TAG (hetznerCacheValues → `image.tag`) — but nothing enumerates it: the
+	// tag space is a container registry's, not a cloud API's, and `HETZNER_CHARTS.valkey.version` is the
+	// CHART version, a different number entirely. Emitting the chart version as an engine version would be
+	// a wrong answer dressed as an account-accurate one, so the picker keeps its cloud-default option.
 	return rows;
 }
 

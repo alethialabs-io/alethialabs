@@ -102,6 +102,9 @@ export const serviceBindingFacet = pgEnum("service_binding_facet", [
 	"username",
 	"password",
 	"connection_string",
+	// value — the single opaque value of a `secret`-kind binding (a project secret resolved from a
+	// pluggable SaaS store — Vault/Doppler/generic — via ESO). Credential (secretKeyRef), not templated.
+	"value",
 ]);
 
 // Delivery protocol of a topic subscription (topic.subscriptions JSONB / topic_subscriptions table).
@@ -490,6 +493,8 @@ export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type AddonMode = (typeof addonMode.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PlacementMode = (typeof placementMode.enumValues)[number];
+export type EnvironmentLifecycle =
+	(typeof environmentLifecycle.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];

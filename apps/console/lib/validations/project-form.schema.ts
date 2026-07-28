@@ -3,8 +3,13 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { toRecord } from "@/lib/coerce";
+import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { slugify } from "@/lib/slug";
 import {
+	environmentLifecycle,
+	environmentStage,
 	placementMode,
 	projectCaches,
 	projectCluster,
@@ -32,6 +37,7 @@ import type {
 	NodeSize,
 	NosqlProviderConfig,
 	RegistryProviderConfig,
+	SecretsProviderConfig,
 	StorageProviderConfig,
 	TopicSubscription,
 } from "@/types/jsonb.types";
@@ -42,13 +48,35 @@ import type {
 // otherwise) so ProjectFormData keeps the same field types the form components rely on.
 const projectsInsert = createInsertSchema(projects);
 const networkInsert = createInsertSchema(projectNetwork);
+// cluster_admins is no longer a project_cluster column (contract phase — it persists to the
+// cluster_admins child table), so it's a form-only field extended onto the insert shape.
 const clusterInsert = createInsertSchema(projectCluster, {
-	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 	provider_config: z.custom<ClusterProviderConfig>().optional(),
 	node_size: z.custom<NodeSize>().optional(),
+}).extend({
+	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 });
+// Cloud-native DNS/WAF/cert knobs plus the Cloudflare connector's own. SHAPED AND STRIPPED rather
+// than `z.custom` (a type assertion with no runtime effect) because this object is spread WHOLE into
+// the Postgres-persisted config_snapshot — an unrecognised key would be stored verbatim. Same
+// reasoning as the helm and secrets lanes.
+const dnsProviderConfigSchema: z.ZodType<DnsProviderConfig> = z
+	.object({
+		// cloud-native
+		acm_certificate: z.boolean().optional(),
+		managed_certificate: z.boolean().optional(),
+		cloudfront_waf: z.boolean().optional(),
+		application_waf: z.boolean().optional(),
+		cloud_armor: z.boolean().optional(),
+		azure_waf: z.boolean().optional(),
+		// cloudflare
+		zone_id: z.string().optional(),
+		proxied: z.boolean().optional(),
+	})
+	.strip();
+
 const dnsInsert = createInsertSchema(projectDns, {
-	provider_config: z.custom<DnsProviderConfig>().optional(),
+	provider_config: dnsProviderConfigSchema.optional(),
 });
 const repositoriesInsert = createInsertSchema(projectRepositories);
 const sourceReposInsert = createInsertSchema(projectSourceRepos, {
@@ -66,21 +94,118 @@ const cachesInsert = createInsertSchema(projectCaches, {
 const queuesInsert = createInsertSchema(projectQueues, {
 	storage_gb: z.number().int().min(1).max(256).nullable().optional(),
 });
-const topicsInsert = createInsertSchema(projectTopics, {
+// `subscriptions` is no longer a project_topics column (contract phase — it persists to the
+// topic_subscriptions child table), so it's a form-only field extended onto the insert shape.
+const topicsInsert = createInsertSchema(projectTopics).extend({
 	subscriptions: z.custom<TopicSubscription[]>().optional(),
 });
 const nosqlInsert = createInsertSchema(projectNosqlTables, {
 	provider_config: z.custom<NosqlProviderConfig>().optional(),
 });
-const secretsInsert = createInsertSchema(projectSecrets);
+// Every non-secret knob any `secrets` connector declares, and nothing else.
+//
+// SHAPED AND STRIPPED, not `z.custom` (which is a type assertion with no runtime effect), because
+// this object is spread WHOLE into the Postgres-persisted `config_snapshot`. An unrecognised key —
+// a token someone pasted into the wrong place, a knob from a connector that has since changed —
+// would otherwise be stored verbatim and ride into the snapshot. That is the shape of the W4 add-on
+// leak (plaintext secrets in `project_addons.values`) and of A0.0; a secret belongs in
+// `connector_credentials`, encrypted and attached out-of-band at job claim.
+//
+// Annotated with the column's own JSONB interface so the two can't drift: add a knob to
+// SecretsProviderConfig and this stops compiling until the validator learns about it. A test pins
+// the key set against catalog.json from the other direction, so a NEW connector knob can't be
+// silently stripped either — the failure that would cause (a Doppler project quietly dropped, the
+// store then reading the wrong scope) is invisible until deploy.
+const secretsProviderConfigSchema: z.ZodType<SecretsProviderConfig> = z
+	.object({
+		// vault / generic
+		mount_path: z.string().optional(),
+		kv_version: z.string().optional(),
+		// doppler
+		project: z.string().optional(),
+		config: z.string().optional(),
+		// infisical
+		host: z.string().optional(),
+		workspace_id: z.string().optional(),
+		env_slug: z.string().optional(),
+		folder_path: z.string().optional(),
+		// onepassword
+		vault: z.string().optional(),
+		// cross-account keyless cloud secret managers (*-xacct) — references, never keys
+		target_account_id: z.string().optional(),
+		target_project_id: z.string().optional(),
+		target_subscription_id: z.string().optional(),
+		region: z.string().optional(),
+		target_role_arn: z.string().optional(),
+		vault_url: z.string().optional(),
+		target_oidc_provider_arn: z.string().optional(),
+		external_id: z.string().optional(),
+	})
+	.strip();
+
+const secretsInsert = createInsertSchema(projectSecrets, {
+	provider_config: secretsProviderConfigSchema.optional(),
+});
 const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 	provider_config: z.custom<StorageProviderConfig>().optional(),
 });
+// The cloud-native registry knobs plus every pluggable provider's. SHAPED AND STRIPPED for the same
+// reason as dns above (this rides whole into the persisted config_snapshot), and annotated with the
+// column's own JSONB interface so the two can't drift.
+//
+// `registry_url` is the one that matters most: four active providers require it, and a pull secret
+// built without it authenticates against nothing. It was missing from RegistryProviderConfig
+// entirely — which is exactly what the catalog-parity test below now catches from the other side.
+const registryProviderConfigSchema: z.ZodType<RegistryProviderConfig> = z
+	.object({
+		// cloud-native (ECR / Artifact Registry / ACR)
+		vulnerability_scanning: z.boolean().optional(),
+		immutable_tags: z.boolean().optional(),
+		// pluggable
+		namespace: z.string().optional(),
+		registry_url: z.string().optional(),
+		// cross-account keyless (*-xacct) — references, never keys
+		target_account_id: z.string().optional(),
+		target_project_id: z.string().optional(),
+		target_subscription_id: z.string().optional(),
+		region: z.string().optional(),
+		registry_host: z.string().optional(),
+		target_role_arn: z.string().optional(),
+		target_service_account: z.string().optional(),
+		target_identity_client_id: z.string().optional(),
+	})
+	.strip();
+
 const registriesInsert = createInsertSchema(projectContainerRegistries, {
-	provider_config: z.custom<RegistryProviderConfig>().optional(),
+	provider_config: registryProviderConfigSchema.optional(),
 });
+// Both knobs flow into the ArgoCD repository-credential `url`, so they are shape-checked rather than
+// waved through as opaque JSONB: a stray scheme or a trailing path in `registry_host` yields a
+// credential URL that no Application repoURL prefix-matches, which surfaces at deploy as an
+// unauthenticated chart pull rather than as a bad value here.
+// Annotated with the column's own JSONB interface so the two can't drift: add a knob to
+// HelmRegistryProviderConfig and this stops compiling until the validator learns about it.
+const helmRegistryProviderConfigSchema: z.ZodType<HelmRegistryProviderConfig> = z
+	.object({
+		repo_url: z
+			.string()
+			.trim()
+			.url("Enter a full repository URL (https://…)")
+			.startsWith("https://", "The repository URL must use https://")
+			.optional(),
+		registry_host: z
+			.string()
+			.trim()
+			.regex(
+				/^[a-z0-9.-]+(:\d+)?$/i,
+				"Enter a bare registry host (no scheme, no path) — e.g. registry.acme.io",
+			)
+			.optional(),
+	})
+	.strip();
+
 const helmRegistriesInsert = createInsertSchema(projectHelmRegistries, {
-	provider_config: z.custom<HelmRegistryProviderConfig>().optional(),
+	provider_config: helmRegistryProviderConfigSchema.optional(),
 });
 
 // W1 — service/workload sub-shapes (validated, not passthrough): a service is the customer's own
@@ -146,6 +271,8 @@ export const serviceBindingSchema = z.object({
 				"username",
 				"password",
 				"connection_string",
+				// value — a `secret`-kind binding's opaque value (project secret via a SaaS store).
+				"value",
 			]),
 		}),
 	),
@@ -155,9 +282,6 @@ const servicesInsert = createInsertSchema(projectServices, {
 	build: serviceBuildSchema.nullable().optional(),
 	env: z.array(serviceEnvSchema),
 	ports: z.array(servicePortSchema),
-	// A service with no backing-infra needs carries no bindings — optional, defaults to [] like the
-	// DB column, so services authored before W3 (and every existing fixture) still parse.
-	bindings: z.array(serviceBindingSchema).default([]),
 	resources: serviceResourcesSchema.nullable().optional(),
 	probe: serviceProbeSchema.nullable().optional(),
 });
@@ -194,6 +318,37 @@ const projectSchema = projectsInsert
 		// The default (Production) env's placement onto its first Fabric. Optional — createProject
 		// defaults it to `dedicated` (the new Fabric's owner). The placement selector (#844) sets it.
 		placement_mode: z.enum(placementMode.enumValues).optional(),
+		// The full environment matrix from the placement selector (#844). When present, createProject
+		// fans it out (a Fabric per `dedicated` env + one shared Fabric for the shared placements);
+		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept. Exactly one is_default.
+		environments: z
+			.array(
+				z.object({
+					// Slug-safe (DNS-1123 label): the env name feeds the tofu state-path segment and the
+					// Fabric name, so it must never carry path separators or other unsafe characters.
+					name: z
+						.string()
+						.min(1)
+						.max(40)
+						.regex(
+							/^[a-z][a-z0-9-]*$/,
+							"Environment name must be lower-case alphanumeric or hyphen.",
+						),
+					stage: z.enum(environmentStage.enumValues),
+					placement_mode: z.enum(placementMode.enumValues),
+					lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
+					// The k8s destination namespace — DNS-1123 label when present.
+					namespace: z
+						.string()
+						.max(63)
+						.regex(/^[a-z][a-z0-9-]*$/)
+						.nullish(),
+					is_default: z.boolean().optional(),
+				}),
+			)
+			// At most the four-env matrix; exactly one default is enforced in the core fan-out.
+			.max(8)
+			.optional(),
 	});
 
 const networkSchema = networkInsert
@@ -214,7 +369,46 @@ const clusterSchema = clusterInsert.omit({
 	cluster_endpoint: true,
 });
 
-const dnsSchema = dnsInsert.omit(componentAutoFields);
+// Fail-closed on the connector selection, mirroring the secrets and helm lanes.
+//
+// `provider` and `provider_config` are nullable columns, so the generated schema alone would persist
+// knobs with no slug — which is precisely the state the dropped-`provider` mapping used to produce,
+// and it fails OPEN: DNSProvider() reverts to the cloud's native backend and the deploy looks fine
+// while ignoring the connector the user chose.
+//
+// DNS is also not an open connector list. DNSProvider() (argocd/infra_facts.go) hard-codes
+// "cloudflare" and returns "" for any other non-native slug — which DISABLES external-dns rather
+// than falling back. So a slug added to the catalog must not become silently selectable here.
+const dnsSchema = dnsInsert.omit(componentAutoFields).superRefine((value, ctx) => {
+	if (!value.provider || value.provider === "native") return;
+
+	const provider = getConnectorProviderBySlug(value.provider);
+	if (!provider || provider.category !== "dns") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["provider"],
+			message: "Select a connected DNS provider",
+		});
+		return;
+	}
+	if (provider.status === "coming_soon") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["provider"],
+			message: "This DNS provider isn't available yet",
+		});
+		return;
+	}
+	// Cloudflare needs a zone. The column is the single source (categories/dns_cloudflare.go prefers
+	// provider_config.zone_id but falls back to it), so accept either rather than forcing a duplicate.
+	if (!value.zone_id?.trim() && !toRecord(value.provider_config).zone_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["zone_id"],
+			message: `${provider.name} needs the hosted zone ID`,
+		});
+	}
+});
 
 const repositoriesSchema = repositoriesInsert.omit({
 	...autoFields,
@@ -255,12 +449,64 @@ const nosqlItemSchema = nosqlInsert
 		partition_key: z.string().min(1, "Hash key is required"),
 	});
 
-const secretItemSchema = secretsInsert.omit({
-	...autoFields,
-	project_id: true,
-	status: true,
-	status_message: true,
-}).extend({ name: z.string().min(1, "Secret name is required") });
+// Where this secret is read from. `provider` NULL / "native" is the cluster cloud's own secret store
+// (the default); anything else names a connected `secrets` connector.
+//
+// The refinement makes a pluggable selection FAIL-CLOSED. `provider` and `provider_config` are
+// nullable columns, so the generated schema alone would persist a slug that doesn't exist, one that
+// isn't available yet, or one missing the knobs it can't work without — and the failure would only
+// surface at deploy, as a skipped ExternalSecret or a store that never reads. Mirrors the
+// helm_registry guard below and the `Validate` implementations in packages/core/categories/secrets_*.go.
+//
+// Deliberately NOT rejected here: `infisical` and `onepassword`. They are `active` and the runtime
+// accepts them, so failing them closed would break projects already configured through the CLI. They
+// have no in-cluster read path on the pinned chart, which is a UI concern — the picker renders them
+// disabled with that reason rather than letting a new one be chosen.
+const secretItemSchema = secretsInsert
+	.omit({
+		...autoFields,
+		project_id: true,
+		status: true,
+		status_message: true,
+	})
+	.extend({ name: z.string().min(1, "Secret name is required") })
+	.superRefine((value, ctx) => {
+		// Native is the default and needs no connector.
+		if (!value.provider || value.provider === "native") return;
+
+		const provider = getConnectorProviderBySlug(value.provider);
+		if (!provider || provider.category !== "secrets") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected secret store",
+			});
+			return;
+		}
+		if (provider.status === "coming_soon") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This secret store isn't available yet",
+			});
+			return;
+		}
+		// A required knob is what the store is addressed BY (Vault's mount path, Doppler's project +
+		// config, a cross-account target). Without it the store renders but reads nothing.
+		const knobs = toRecord(value.provider_config);
+		for (const field of provider.providerConfigFields) {
+			if (!field.required || field.secret) continue;
+			const raw = knobs[field.key];
+			if (typeof raw !== "string" || raw.trim() === "") {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["provider_config"],
+					message: `${provider.name} needs ${field.label}`,
+				});
+				return;
+			}
+		}
+	});
 
 // S3-safe bucket naming (the strictest cloud rules, so one name works everywhere):
 // 3–63 chars, lowercase letters / digits / hyphens, no leading or trailing hyphen.
@@ -287,10 +533,56 @@ const registryItemSchema = registriesInsert
 		// Output column (set after the first deploy), never designed by the user.
 		repository_url: true,
 	})
-	.extend({ name: z.string().min(1, "Registry name is required") });
+	.extend({ name: z.string().min(1, "Registry name is required") })
+	.superRefine((value, ctx) => {
+		// Native is the default and needs no connector.
+		if (!value.provider || value.provider === "native") return;
+
+		const provider = getConnectorProviderBySlug(value.provider);
+		if (!provider || provider.category !== "registry") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected container registry",
+			});
+			return;
+		}
+		// The *-xacct registries are coming_soon AND dark-flagged behind
+		// ALETHIA_XACCT_REGISTRY_ENABLED: selecting one still provisions the pull identity in tofu
+		// while no refresher renders and no pull secret ever exists.
+		if (provider.status === "coming_soon") {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This registry isn't available yet",
+			});
+			return;
+		}
+		// A required knob is the registry's ADDRESS (registry_url for the any-host providers). Without
+		// it, categories/registry_generic.go fails Validate at compose time and pullAuth has no
+		// dockerconfig `auths` key — the pull secret authenticates against nothing.
+		for (const field of provider.providerConfigFields) {
+			if (!field.required || field.secret) continue;
+			const raw = toRecord(value.provider_config)[field.key];
+			if (typeof raw !== "string" || raw.trim() === "") {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["provider_config"],
+					message: `${provider.name} needs ${field.label}`,
+				});
+				return;
+			}
+		}
+	});
 
 // Private chart-repo selection (helm_registry connector). No output column — the seeded
 // ArgoCD repo-cred is runner-side state, not a design field.
+//
+// The refinement is what makes the selection FAIL-CLOSED. `provider` and `provider_config` are
+// nullable columns, so the generated schema alone would happily persist a row with no provider or
+// no host — the runner would then skip it (`HelmRepoCredSpecs` joins the error and moves on) and
+// the chart would fail to pull at deploy with no design-time signal. These mirror the `Validate`
+// implementations in packages/core/categories/helm_registry_*.go.
 const helmRegistryItemSchema = helmRegistriesInsert
 	.omit({
 		...autoFields,
@@ -298,7 +590,38 @@ const helmRegistryItemSchema = helmRegistriesInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Chart repo name is required") });
+	.extend({ name: z.string().min(1, "Chart repo name is required") })
+	.superRefine((value, ctx) => {
+		const rule = value.provider ? HELM_REGISTRY_HOST_RULES[value.provider] : undefined;
+		if (!value.provider || !rule) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "Select a connected chart repository provider",
+			});
+			return;
+		}
+		if (rule.comingSoon) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider"],
+				message: "This chart repository provider isn't available yet",
+			});
+			return;
+		}
+		// A classic Helm repo is addressed by its full URL; an "any host" OCI provider needs the host.
+		const key = !rule.oci ? "repo_url" : rule.wildcard ? "registry_host" : null;
+		if (key && !value.provider_config?.[key]?.trim()) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["provider_config"],
+				message:
+					key === "repo_url"
+						? "Repository URL is required"
+						: "Registry host is required",
+			});
+		}
+	});
 
 // W1 — a first-class service/workload the customer designs on the canvas.
 const serviceItemSchema = servicesInsert
@@ -312,6 +635,10 @@ const serviceItemSchema = servicesInsert
 		type: z
 			.enum(["deployment", "job", "cronjob", "statefulset"])
 			.default("deployment"),
+		// bindings live in the service_bindings child table (JSONB column dropped, #1426), so this is a
+		// form-only field: the user designs the edges on the canvas and the save path normalizes them
+		// into service_bindings. Optional, defaults to [] so pre-W3 services (and fixtures) still parse.
+		bindings: z.array(serviceBindingSchema).default([]),
 	});
 
 export const projectFormSchema = z.object({
@@ -347,6 +674,9 @@ export {
 	bucketItemSchema,
 	registryItemSchema,
 	helmRegistryItemSchema,
+	// The chart-repo provider_config validator — parsed again server-side at the write seam so a
+	// crafted request can't persist an unknown/secret knob the inspector never offered.
+	helmRegistryProviderConfigSchema,
 	sourceRepoItemSchema,
 	// Singleton sub-schemas — consumed by the canvas for per-node validation.
 	projectSchema,
