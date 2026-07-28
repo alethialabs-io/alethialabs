@@ -44,7 +44,7 @@ func envValue(env []types.ServiceEnvVar, name string) (string, bool) {
 // on GCP holds NO password — the endpoint points at the local Cloud SQL Auth Proxy sidecar, the
 // username resolves to the IAM identity output, and no ExternalSecret secretKeyRef is emitted.
 func TestKeyless_GCP_CloudSQLProxy(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "gcp",
 		KeylessDBAuth: true,
 		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
@@ -109,7 +109,7 @@ func TestKeyless_GCP_CloudSQLProxy(t *testing.T) {
 // `db-authproxy` sidecar, NO shared volume (the token never touches disk), app connects to 127.0.0.1
 // with no password. Replaces the db-token + pgbouncer pair, which could never authenticate.
 func TestKeyless_Azure_AuthProxy(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "azure",
 		KeylessDBAuth: true,
 		RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
@@ -183,7 +183,7 @@ func TestKeyless_Azure_AuthProxy(t *testing.T) {
 // TestKeyless_FlagOff_KeepsPasswordPath: with the dark flag off, an iam_auth database still uses the
 // unchanged ExternalSecret/password path — no regression, no sidecars.
 func TestKeyless_FlagOff_KeepsPasswordPath(t *testing.T) {
-	apps, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, _, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "gcp",
 		KeylessDBAuth: false, // flag OFF
 		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
@@ -203,7 +203,7 @@ func TestKeyless_FlagOff_KeepsPasswordPath(t *testing.T) {
 
 // TestKeyless_IamAuthFalse_KeepsPasswordPath: flag on but the bound db is password-auth → unchanged.
 func TestKeyless_IamAuthFalse_KeepsPasswordPath(t *testing.T) {
-	apps, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, _, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "gcp",
 		KeylessDBAuth: true,
 		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(false)}},
@@ -219,7 +219,7 @@ func TestKeyless_IamAuthFalse_KeepsPasswordPath(t *testing.T) {
 // the same single `db-authproxy` sidecar as Azure, with an IRSA-annotated KSA and a --region (the RDS
 // token is region-signed, unlike Entra's).
 func TestKeyless_AWS_RDSIAMAuthProxy(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "aws",
 		KeylessDBAuth: true,
 		RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
@@ -284,7 +284,7 @@ func TestKeyless_AWS_RDSIAMAuthProxy(t *testing.T) {
 func TestKeyless_ExcludedCloudNeverSilentlyDowngrades(t *testing.T) {
 	for _, provider := range []string{"alibaba", "hetzner"} {
 		t.Run(provider, func(t *testing.T) {
-			apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+			apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 				Provider:      provider,
 				KeylessDBAuth: true,
 				Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
@@ -341,11 +341,11 @@ func TestKeylessCellsTotal(t *testing.T) {
 				continue
 			}
 			switch cell.state {
-			case cellLive:
+			case KeylessCellLive:
 				if cell.reason != "" {
 					t.Errorf("%s × %s is live but carries a reason %q — a reason is what a REFUSAL says", cloud, engine, cell.reason)
 				}
-			case cellPending, cellExcluded:
+			case KeylessCellPending, KeylessCellExcluded:
 				if cell.reason == "" {
 					t.Errorf("%s × %s is %q with no reason — the canvas and the deploy error would have nothing to show", cloud, engine, cell.state)
 				}
@@ -364,7 +364,7 @@ func TestKeylessCellsTotal(t *testing.T) {
 // TestKeyless_MissingConnectionName_FailsClosed: a keyless GCP binding with no connection-name output
 // omits the WHOLE binding (no 127.0.0.1 pointed at an absent proxy) and reports it — fail-closed.
 func TestKeyless_MissingConnectionName_FailsClosed(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "gcp",
 		KeylessDBAuth: true,
 		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
@@ -495,7 +495,7 @@ func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.provider+"/"+tc.engine, func(t *testing.T) {
-			apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+			apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 				Provider:      tc.provider,
 				KeylessDBAuth: true,
 				RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
@@ -580,5 +580,126 @@ func TestUpstreamAddr(t *testing.T) {
 		if got := upstreamAddr(tc.host, tc.port); got != tc.want {
 			t.Errorf("upstreamAddr(%q, %q) = %q, want %q", tc.host, tc.port, got, tc.want)
 		}
+	}
+}
+
+// ── the keyless decision record (#1511) ───────────────────────────────────────────────────────
+
+// findKeylessDecision returns the decision for one target, or the zero value.
+func findKeylessDecision(ds []KeylessBindingDecision, target string) (KeylessBindingDecision, bool) {
+	for _, d := range ds {
+		if d.TargetName == target {
+			return d, true
+		}
+	}
+	return KeylessBindingDecision{}, false
+}
+
+// TestKeylessDecision_WiredIsRecorded is the assertion the whole record exists for: a keyless binding
+// that WORKS must leave a positive trace. Before #1511 it left none — a successful binding wrote
+// nothing at all, so "no fail-closed warning" and "keyless was never attempted" were the same
+// observation, which is how a keyless path that had never authenticated to a real database went
+// unnoticed (#1500).
+func TestKeylessDecision_WiredIsRecorded(t *testing.T) {
+	_, skipped, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+		Provider:      "gcp",
+		KeylessDBAuth: true,
+		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Outputs: map[string]string{
+			"cloud_sql_connection_name": "proj:us-central1:orders",
+			"cloud_sql_iam_user":        "orders-app@proj.iam",
+			"cloud_sql_app_gsa_email":   "orders-app@proj.iam.gserviceaccount.com",
+		},
+	})
+	if len(skipped) != 0 {
+		t.Fatalf("nothing should skip, got %v", skipped)
+	}
+	d, ok := findKeylessDecision(decisions, "orders-db")
+	if !ok {
+		t.Fatalf("a WIRED keyless binding recorded no decision — %v", decisions)
+	}
+	if d.Status != KeylessBindingWired {
+		t.Errorf("status = %q, want %q", d.Status, KeylessBindingWired)
+	}
+	if d.Service != "api" || d.TargetKind != "database" {
+		t.Errorf("decision does not identify the binding: %+v", d)
+	}
+	if d.Engine != enginePostgres {
+		t.Errorf("engine = %q, want %q — the engine is half the cell key", d.Engine, enginePostgres)
+	}
+	// The mechanism, not just the verdict: the two keyless mechanisms fail differently, so a record
+	// that only said "wired" would send an operator to the wrong component.
+	if !strings.Contains(d.Reason, "Cloud SQL Auth Proxy") {
+		t.Errorf("wired reason %q does not name the mechanism", d.Reason)
+	}
+}
+
+// TestKeylessDecision_FailedClosedCarriesTheCellReason: an excluded cell records the refusal AND the
+// product-voice sentence the operator reads — the same string the canvas shows on the disabled
+// toggle, because both read the cell table.
+func TestKeylessDecision_FailedClosedCarriesTheCellReason(t *testing.T) {
+	_, skipped, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+		Provider:      "hetzner",
+		KeylessDBAuth: true,
+		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+	})
+	if len(skipped) == 0 {
+		t.Fatal("an excluded cell must still report the binding as unresolved")
+	}
+	d, ok := findKeylessDecision(decisions, "orders-db")
+	if !ok {
+		t.Fatalf("a fail-closed keyless binding recorded no decision — %v", decisions)
+	}
+	if d.Status != KeylessBindingFailedClosed {
+		t.Errorf("status = %q, want %q", d.Status, KeylessBindingFailedClosed)
+	}
+	if d.Reason != hetznerKeylessExclusion {
+		t.Errorf("reason = %q, want the cell's own exclusion prose %q", d.Reason, hetznerKeylessExclusion)
+	}
+}
+
+// TestKeylessDecision_PasswordBindingRecordsNothing: the record is about keyless, not about bindings.
+// A database the operator never marked `iam_auth` is not a keyless decision, and recording one would
+// make the list unreadable as "every database that asked for keyless".
+func TestKeylessDecision_PasswordBindingRecordsNothing(t *testing.T) {
+	_, _, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+		Provider:      "aws",
+		KeylessDBAuth: true,
+		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db"}}, // no IamAuth
+		Outputs:       map[string]string{"rds_endpoint": "db.example.com"},
+	})
+	if len(decisions) != 0 {
+		t.Errorf("a password-auth database produced keyless decisions: %+v", decisions)
+	}
+}
+
+// TestKeylessCell_ExportedAccessorAgreesWithTheGate pins the two readers of the cell table to each
+// other. KeylessCell is what callers OUTSIDE this package see (the decision record, the T2 e2e lane
+// table); keylessCellSupported is the internal render gate. If they could disagree, the e2e would
+// happily try to prove a cell the renderer refuses — or worse, skip one it honors.
+func TestKeylessCell_ExportedAccessorAgreesWithTheGate(t *testing.T) {
+	for _, cloud := range []string{providerAWS, providerGCP, providerAzure, providerAlibaba, providerHetzner} {
+		for _, engine := range []string{enginePostgres, engineMySQL} {
+			state, reason, err := KeylessCell(cloud, engine)
+			if err != nil {
+				t.Errorf("KeylessCell(%s, %s) errored on a cell that exists: %v", cloud, engine, err)
+				continue
+			}
+			gateOK := keylessCellSupported(cloud, engine) == nil
+			if (state == KeylessCellLive) != gateOK {
+				t.Errorf("%s × %s: KeylessCell says %q but the render gate says renderable=%v", cloud, engine, state, gateOK)
+			}
+			if state != KeylessCellLive && reason == "" {
+				t.Errorf("%s × %s is %q with no reason — a refusal with nothing to show", cloud, engine, state)
+			}
+		}
+	}
+	// Fail-closed on the unknown: a typo'd provider must be an error, never a zero state that a
+	// caller comparing against KeylessCellLive would read as "not live, carry on".
+	if _, _, err := KeylessCell("nimbus", enginePostgres); err == nil {
+		t.Error("KeylessCell accepted an unknown provider")
+	}
+	if _, _, err := KeylessCell(providerAWS, "cockroach"); err == nil {
+		t.Error("KeylessCell accepted an unknown engine")
 	}
 }

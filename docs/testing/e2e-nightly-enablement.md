@@ -200,6 +200,83 @@ Adding the timing to your budget: this layer adds roughly 5–8 minutes of polli
 soak + namespace + vcluster. The step timeout is 75 min, `go test` 80 min, job cap 90 min — do not
 raise them pre-emptively; watch the first three runs.
 
+## Keyless database auth (#1511)
+
+The ship gate for epic #1500. Until this runs, keyless database auth is proven only by renderers
+that emit the right YAML — and that is not a small gap. The original AWS/Azure wiring put a stock
+`bitnami/pgbouncer` behind a token-file refresher and configured it through `PGB_*` variables that
+image has never read. It rendered perfectly. It could not possibly have authenticated. Nothing
+caught it for months, because no test ever opened a connection.
+
+So this scenario asserts something physical: a workload the product rendered, holding no password
+anywhere in its pod spec, runs a query against a managed cloud database — and keeps working after
+the credential it never had would have expired.
+
+### What it needs first
+
+It requires the **A0.6 apps repo** (`E2E_ARGO_APPS_REPO` plus the `E2E_GIT_TOKEN` secret). Both the
+workload and its bootstrap Job reach the cluster only through GitOps, so without a repo there is
+nothing to assert against. The scenario refuses at configuration time rather than polling for objects
+nobody pushed.
+
+### Set the repo variables
+
+All **variables**, not secrets — an engine name, a version and an instance class.
+
+| Variable | Value |
+|---|---|
+| `E2E_KEYLESS_DB` | `1` to enable |
+| `E2E_KEYLESS_DB_ENGINE` | `postgres` (default) or `mysql` |
+| `E2E_KEYLESS_DB_ENGINE_VERSION` | **required** — per cloud × engine |
+| `E2E_KEYLESS_DB_INSTANCE_CLASS` | **required** — per cloud × engine |
+
+Optional: `E2E_KEYLESS_DB_NAME` / `_SERVICE` / `_IMAGE` / `_CLIENT_IMAGE` / `_NAMESPACE`. The
+defaults are fine.
+
+The version and class have **no defaults on purpose**. A value valid on RDS is rejected by Cloud SQL
+and by Flexible Server, and again by the same cloud's other engine, so a default would be a per-cloud
+table that fails at `tofu apply` — minutes and money into a run — instead of in the first seconds.
+Use the per-cloud siblings (`E2E_KEYLESS_DB_ENGINE_VERSION_GCP`, and so on) for a leg that differs.
+
+Starting points, matching what max-config already provisions for Postgres:
+
+| cloud | postgres |
+|---|---|
+| **aws** | `16.6` · `db.r6g.large` |
+| **gcp** | `16` · `db-f1-micro` |
+| **azure** | `16` · `B_Standard_B1ms` |
+
+For MySQL, read the current values off the offer-parity matrix rather than copying a Postgres row —
+that matrix is the authority on what a given account can actually build, and these move.
+
+`alibaba` and `hetzner` skip carrying the product's own exclusion prose: RAM governs ApsaraDB's
+control plane only, and Hetzner Postgres is in-cluster CloudNativePG with no identity plane to mint
+tokens against. Documented boundaries, not gaps.
+
+### The dwell is the proof
+
+The run holds one database session open for **16 minutes** — past the 15-minute RDS-IAM token
+lifetime — queries it again on that same session, then opens a fresh connection. Both halves matter:
+the first shows a spliced connection does not expire with the token that opened it, the second shows
+the proxy mints per connection rather than caching the one it got at startup. A proxy that cached
+forever would pass the first check and fail only the second.
+
+There is deliberately **no repo variable for the dwell**. Below the token lifetime both checks pass
+against a proxy that rotates nothing, and the run would claim a proof it did not perform. The
+override exists for local debugging, and whatever dwell actually ran is recorded in the proof bundle
+beside the verdict.
+
+Budget accordingly: roughly **20–25 minutes** on top of soak + namespace + vcluster + xacct, per
+enabled cell. The step timeout is 75 min, `go test` 80 min, job cap 90 min — watch the first run
+before enabling a second cell on the same leg.
+
+### Dispatch from `main`
+
+Real applies are main-gated, so a dispatch from `dev` provisions nothing. Run the workflow with the
+target `provider` from `main`, then record the bundle. The parity table in
+`docs/testing/provisioning-e2e-parity.md` flips **only** on a real-apply artifact in
+`demos/proofs/provisioning-e2e-log.md` — never on a green harness.
+
 ## Related
 
 - `docs/testing/runner-xcloud-parity.md` — per-cloud runner → cluster parity

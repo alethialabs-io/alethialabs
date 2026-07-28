@@ -16,7 +16,7 @@ import (
 )
 
 func TestRenderedServiceManifestsPassVerify(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{
 		{
 			Name:          "web",
 			Type:          "deployment",
@@ -67,7 +67,7 @@ func TestRenderedServiceManifestsPassVerify(t *testing.T) {
 // deployable through a fail-closed apply. With #1503 the only added container is the digest-or-tag
 // pinned runner image, so the whole keyless pod is now gate-clean.
 func TestRenderedKeylessManifestsPassVerify(t *testing.T) {
-	apps, skipped := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
+	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
 		Provider:      "azure",
 		KeylessDBAuth: true,
 		RunnerImage:   "ghcr.io/alethialabs-io/runner@sha256:9c1e0b2a3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
