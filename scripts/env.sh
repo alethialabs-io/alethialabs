@@ -41,9 +41,20 @@ need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installe
 # ── Identity ──────────────────────────────────────────────────────────────────────
 # The slug is the branch name with the feat/ prefix stripped and anything that is not
 # a DNS label flattened — it becomes a hostname, a database name and a tmux session.
+#
+# ALETHIA_ENV_SLUG overrides the branch, for ONE reason: Cloudflare Universal SSL covers
+# `alethialabs.io` and `*.alethialabs.io` — one label deep. A branch env is
+# `<slug>.dev.alethialabs.io`, which is TWO labels and therefore has no publicly valid
+# certificate. Anything that needs a cloud to fetch this console over VERIFIED TLS only
+# works on the primary `dev.alethialabs.io`: the workload-identity issuer above all (AWS
+# builds its IAM OIDC provider from the discovery doc, GCP STS and Entra re-fetch the
+# JWKS on every exchange), plus OAuth redirects and the Stripe webhook, none of which can
+# be wildcarded. Slug "dev" claims that hostname — and without this override only a
+# checkout literally on branch `dev` could take it, i.e. the main checkout, the one
+# CLAUDE.md §1 forbids working in. Set ALETHIA_ENV_SLUG=dev to claim it from a worktree.
 slug() {
   local b
-  b="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo dev)"
+  b="${ALETHIA_ENV_SLUG:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo dev)}"
   b="${b#feat/}"
   b="${b#fix/}"
   b="$(printf '%s' "$b" | tr '[:upper:]/_' '[:lower:]--' | tr -cd 'a-z0-9-' | cut -c1-40)"
@@ -52,6 +63,19 @@ slug() {
 }
 
 owner() { printf '%s@%s' "$(id -un)" "$(hostname -s)"; }
+
+# base64 of a RAW 64-byte ed25519 private key (seed||public). Go's ed25519.PrivateKey —
+# and therefore verify.SigningKeyFromEnv — wants those 64 bytes, not a PEM, and openssl
+# cannot emit them directly. For ed25519 both DER encodings are fixed-length, so the seed
+# is the last 32 bytes of the PKCS8 DER and the public key the last 32 of the SPKI DER.
+ed25519_raw_b64() {
+  local der
+  der="$(mktemp)"
+  openssl genpkey -algorithm ED25519 -outform DER -out "$der" 2>/dev/null
+  { tail -c 32 "$der"; openssl pkey -inform DER -in "$der" -pubout -outform DER 2>/dev/null | tail -c 32; } \
+    | openssl base64 -A
+  rm -f "$der"
+}
 
 # ── The box ───────────────────────────────────────────────────────────────────────
 box_ip() {
@@ -269,8 +293,31 @@ cmd_up() {
 # it (packages/email/src/{config,send}.ts) — so the sign-in code appears in
 # `pnpm env:logs`. That is how a branch env signs in with zero copied credentials.
 #
+# Note what is DELIBERATELY PRESENT, and why each is GENERATED here rather than copied:
+#
+#   ALETHIA_OIDC_SIGNING_KEY  — the workload-identity issuer key. oidcIssuerConfigured()
+#     (lib/oidc/issuer.ts) is a bare presence check on this one variable, and it gates
+#     the ENTIRE managed-cloud connector surface: without it computePlatformConfigured()
+#     reports aws/gcp/azure/alibaba as "not enabled on this instance", /api/oidc/jwks and
+#     the discovery doc 404, and every /api/runners/<cloud>-token route returns 501. A
+#     sandbox that cannot connect a cloud cannot exercise the product. Generated, never
+#     copied: the hosted issuer's key must not exist on a box that gets snapshotted, and
+#     each env being its own issuer is correct — a cloud trust is pinned to an issuer URL.
+#   ALETHIA_RECEIPT_SIGNING_KEY — without it packages/core/verify emits receipts with
+#     algorithm:"none" (verify/signing.go), so a deploy "succeeds" while producing
+#     evidence that proves nothing. Unsigned evidence is the failure mode this key exists
+#     to prevent, so a dev env should not be quietly exempt from it.
+#   ALETHIA_SNAPSHOT_HMAC_KEY — config_snapshot integrity (lib/runners/snapshot-sig.ts).
+#   ALETHIA_RUNNER_BOOTSTRAP_TOKEN — minting it here removes a two-pass dance: without
+#     it the first `pnpm env:runner` generates one, appends it to this file, tells you to
+#     restart the console and exits WITHOUT starting a runner (scripts/dev-runner.sh).
+#
 # Written once per env: re-minting BETTER_AUTH_SECRET would invalidate every live
-# session on that env, including one you are in the middle of using.
+# session on that env, including one you are in the middle of using. The same
+# write-once rule is what makes the OIDC key safe across `env:up` — re-minting it would
+# break every cloud trust already pinned to this issuer, and Entra caches the JWKS for
+# ~24h so the breakage would outlive the fix. A reap-and-recreate DOES re-mint: reconnect
+# the connectors, or stash this file before `pnpm env:reap`.
 mint_env() {
   local slug_="$1" cport="$2" sport="$3" db="$4" fqdn url
   local domain
@@ -278,11 +325,21 @@ mint_env() {
   if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
   url="https://$fqdn"
 
-  local secret1 secret2 secret3 secret4
+  local secret1 secret2 secret3 secret4 oidc_key receipt_key snapshot_key bootstrap_token
   secret1="$(openssl rand -hex 32)"
   secret2="$(openssl rand -hex 32)"
   secret3="$(openssl rand -hex 32)"
   secret4="$(openssl rand -hex 16)"
+  # base64(PKCS8 RSA-2048 PEM) on ONE line — mirrors rsa_b64() in scripts/bootstrap-secrets.sh.
+  oidc_key="$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null | openssl base64 -A)"
+  # base64 of the RAW 64-byte ed25519 private key (seed||public) — the shape Go's
+  # ed25519.PrivateKey and verify.SigningKeyFromEnv expect, NOT a PEM. openssl has no
+  # raw-ed25519 export, but the trailing 32 bytes of the PKCS8 DER are the seed and the
+  # trailing 32 of the SPKI DER are the public key, both fixed-length for ed25519.
+  # Mirrors ed25519_raw_b64() in scripts/bootstrap-secrets.sh.
+  receipt_key="$(ed25519_raw_b64)"
+  snapshot_key="$(openssl rand -base64 32)"
+  bootstrap_token="$(openssl rand -hex 32)"
 
   # shellcheck disable=SC2029
   ssh_box "test -f $REMOTE/envs/$slug_/.env || cat > $REMOTE/envs/$slug_/.env" <<ENV
@@ -306,6 +363,11 @@ ALETHIA_WEB_ORIGIN=$url
 BETTER_AUTH_SECRET=$secret1
 CLI_JWT_SECRET=$secret2
 ALETHIA_CRED_ENCRYPTION_KEY=$secret3
+
+ALETHIA_OIDC_SIGNING_KEY=$oidc_key
+ALETHIA_RECEIPT_SIGNING_KEY=$receipt_key
+ALETHIA_SNAPSHOT_HMAC_KEY=$snapshot_key
+ALETHIA_RUNNER_BOOTSTRAP_TOKEN=$bootstrap_token
 
 OPENFGA_API_URL=http://localhost:8082
 ALETHIA_DEPLOYMENT_MODE=hosted
@@ -384,10 +446,20 @@ cmd_runner() {
   slug_="$(slug)"
   cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
   [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
-  # MODE=native, never docker. The box builds for its own architecture, and a runner
-  # IMAGE built here must never be mistaken for a fleet image — an arch mismatch is
-  # what churned ~100 VMs in 8 hours once already.
-  ssh_box "cd $REMOTE/envs/$slug_ && MODE=native ALETHIA_WEB_ORIGIN=http://localhost:$cport bash scripts/dev-runner.sh"
+  # MODE defaults to native. The box builds for its own architecture, and a runner IMAGE
+  # BUILT here must never be mistaken for a fleet image — an arch mismatch is what churned
+  # ~100 VMs in 8 hours once already. That argument is about building, not about running,
+  # so MODE/CRED/RUNNERS/SLOTS/PROVIDERS are forwarded rather than pinned: MODE=docker with
+  # a PULLED, already-published image is a legitimate way to run the shipped artifact
+  # against this console. Never `REBUILD=1` here.
+  #
+  # CRED is load-bearing beyond credentials: dev-runner.sh derives the runner's OPERATOR
+  # from it (bootstrap → managed, self → self), and the keyless AWS and GCP federation
+  # branches only run when operator=managed. Leave it at bootstrap to exercise keyless.
+  ssh_box "cd $REMOTE/envs/$slug_ && \
+    MODE='${MODE:-native}' CRED='${CRED:-bootstrap}' RUNNERS='${RUNNERS:-1}' \
+    ${SLOTS:+SLOTS='$SLOTS'} ${PROVIDERS:+PROVIDERS='$PROVIDERS'} ${RUNNER_IMAGE:+RUNNER_IMAGE='$RUNNER_IMAGE'} \
+    ALETHIA_WEB_ORIGIN=http://localhost:$cport bash scripts/dev-runner.sh"
 }
 
 cmd_reap() {
