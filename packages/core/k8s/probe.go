@@ -198,6 +198,48 @@ func podProbeVerdict(phase, waitingReason string) string {
 		") — this is NOT a pod-network verdict; check scheduling / image pull / node capacity / taints"
 }
 
+// probePodSelector is the label selector that finds the probe Job's pod.
+//
+// It keys on `app.kubernetes.io/name`, which podToAPIServerJob puts on the pod template itself —
+// NOT on any label the Job controller adds. Kubernetes has been migrating those: `job-name` is the
+// legacy unprefixed key, `batch.kubernetes.io/job-name` the 1.27+ replacement, and the batch API's
+// own comment promises only that the unprefixed form is still *recognized*. Selecting on a
+// controller-owned label makes this diagnostic silently version-dependent — and when it matches
+// nothing, the probe reports "no pod observed" and blames scheduling for a pod that may have been
+// running perfectly (#1641). Pure/unit-tested.
+func probePodSelector(jobName string) string {
+	return "app.kubernetes.io/name=" + jobName
+}
+
+// probeEvidence formats the post-mortem dumped when the probe times out.
+//
+// Empty sections are labelled rather than dropped: "kubectl returned nothing" is itself a finding
+// (no Job, no events = the apply never landed), and a silently missing section reads as if the
+// command was never run. Pure/unit-tested.
+func probeEvidence(describeJob, events string) string {
+	section := func(title, body string) string {
+		body = strings.TrimSpace(body)
+		if body == "" {
+			body = "(nothing returned)"
+		}
+		return "\n── " + title + " ──\n" + body + "\n"
+	}
+	return "\nProbe timed out — collecting evidence before teardown destroys it:\n" +
+		section("kubectl describe job", describeJob) +
+		section("kubectl get events -n default", events)
+}
+
+// collectOut runs a best-effort diagnostic command, returning its output or the error text. A
+// diagnostic that fails must still say something: returning "" here would render as
+// "(nothing returned)" and read as an empty cluster rather than a broken kubectl.
+func collectOut(cmd string) string {
+	out, err := executeCommandWithOutput(cmd, ".", nil)
+	if err != nil && strings.TrimSpace(out) == "" {
+		return "command failed: " + err.Error()
+	}
+	return out
+}
+
 // containsAny reports whether s contains any of the substrings.
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
@@ -265,15 +307,22 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 			return true
 		}
 		lastState, _ = executeCommandWithOutput(
-			"kubectl get pods -n default -l job-name="+jobName+" -o jsonpath={.items[*].status.phase}", ".", nil)
+			"kubectl get pods -n default -l "+probePodSelector(jobName)+" -o jsonpath={.items[*].status.phase}", ".", nil)
 		// Why a not-Running pod is stuck (ImagePullBackOff, unschedulable, …) — so a scheduling/
 		// image failure isn't misreported as a pod-network verdict below.
 		lastWaiting, _ = executeCommandWithOutput(
-			"kubectl get pods -n default -l job-name="+jobName+
+			"kubectl get pods -n default -l "+probePodSelector(jobName)+
 				" -o jsonpath={.items[*].status.containerStatuses[*].state.waiting.reason}", ".", nil)
 		return false
 	})
 	if err != nil {
+		// A timeout that produces no pod used to produce no evidence either — the run was torn down
+		// and the cause went with it. Dump the Job and the namespace events before returning, so the
+		// NEXT failure names itself instead of needing a retained cluster to re-observe (#1641).
+		fmt.Fprint(stdout, probeEvidence(
+			collectOut("kubectl describe job "+jobName+" -n default"),
+			collectOut("kubectl get events -n default --sort-by=.lastTimestamp"),
+		))
 		return fmt.Errorf("in-cluster API-server probe failed within %s (ClusterIP %s:443) — %s. "+
 			"This is fatal: a cluster whose pods cannot run + reach the API server runs no real workload: %w",
 			timeout, clusterIP, podProbeVerdict(lastState, lastWaiting), err)
@@ -286,12 +335,18 @@ func WaitPodToAPIServer(ctx context.Context, timeout time.Duration, stdout io.Wr
 // connect to clusterIP:443 for ~2 min (self-contained against transient warm-up), is
 // restricted-PSA compliant (runs as nobody, no caps, seccomp RuntimeDefault), tolerates all
 // taints, and prefers a non-control-plane node so multi-node clusters test the cross-node path.
+//
+// The pod template carries `app.kubernetes.io/name: <job>` because the diagnostic below has to find
+// the pod, and it must NOT depend on how Kubernetes labels Job pods. That labelling is a moving
+// target: `job-name` is the legacy unprefixed key, superseded by `batch.kubernetes.io/job-name` in
+// 1.27, and the API's own comment says only that Kubernetes still "recognizes" the unprefixed form —
+// recognizing is not applying. A selector keyed on a label WE set cannot rot with that policy (#1641).
 func podToAPIServerJob(name, clusterIP, image string) string {
 	cmd := fmt.Sprintf("for i in $(seq 1 40); do nc -w 3 %s 443 </dev/null && echo REACHABLE && exit 0; sleep 3; done; echo UNREACHABLE; exit 1", clusterIP)
 	return fmt.Sprintf(`apiVersion: batch/v1
 kind: Job
 metadata:
-  name: %s
+  name: %[1]s
   namespace: default
   labels:
     app.kubernetes.io/managed-by: alethia
@@ -302,6 +357,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/managed-by: alethia
+        app.kubernetes.io/name: %[1]s
     spec:
       restartPolicy: Never
       tolerations:
@@ -321,8 +377,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: probe
-          image: %s
-          command: ["sh", "-c", %q]
+          image: %[2]s
+          command: ["sh", "-c", %[3]q]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

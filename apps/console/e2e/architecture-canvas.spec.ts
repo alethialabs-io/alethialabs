@@ -31,13 +31,15 @@ test.describe("Architecture canvas", () => {
 		const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");
 		expect(orgSlug, "resolved an org slug from the stored session").toBeTruthy();
 
-		// "Create empty project" needs only a NAME — no cloud identity — which is what keeps this
-		// hermetic. A unique name per test gives each its own project, so they stay independent.
+		// The two-step create flow: on `~/new` the "Blank project" card routes to Configure, which needs
+		// only a NAME (no cloud identity) — keeping this hermetic. A unique name per test gives each its
+		// own project, so they stay independent.
 		await page.goto(`/${orgSlug}/~/new`);
+		await page.getByRole("button", { name: /blank project/i }).click();
 		await page
 			.locator("#project_name")
 			.fill(`canvas-e2e-${testInfo.workerIndex}-${Date.now()}`);
-		await page.getByRole("button", { name: /create empty project/i }).click();
+		await page.getByRole("button", { name: /create project/i }).click();
 
 		// The canvas is ready once its toolbar is painted. (The Add button is always present on an
 		// editable, non-IaC-governed board; the old "Project settings" cog this used to key on was
