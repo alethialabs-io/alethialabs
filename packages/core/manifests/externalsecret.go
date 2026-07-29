@@ -135,8 +135,9 @@ type esTemplateData struct {
 	Annotations map[string]string
 }
 
-// v1beta1 to match the deployed ESO chart (0.9.12) + the ClusterSecretStore definitions in
-// infra/templates/argocd/external-secrets-operator.yaml (the v1 API only exists in ESO ≥ 0.10).
+// v1beta1 to match the deployed ESO chart (0.9.20) + the ClusterSecretStore definitions in
+// infra/templates/argocd/external-secrets-operator.yaml (the v1 API only exists in ESO ≥ 0.10, so the
+// whole 0.9.x line — including the 0.9.20 pin that unlocked the infisical provider — stays v1beta1).
 var externalSecretTmpl = template.Must(template.New("externalsecret").Parse(`apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:

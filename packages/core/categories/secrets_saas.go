@@ -16,32 +16,35 @@ import (
 const secretsSaaSNamespace = "external-secrets-operator"
 
 // SecretsSaaSStore describes a credential-based external secret store — HashiCorp Vault / OpenBao,
-// Doppler, or a generic Vault-KV-API-compatible endpoint — the project selected via the `secrets`
-// connector, that workloads read from IN-CLUSTER through the External Secrets Operator (ESO) with a
-// STATIC API token. Unlike the cross-account cloud managers (KeylessSecretTarget, which ESO reads
-// keylessly via the cluster's workload identity), a SaaS store has no cloud identity to federate: its
-// auth token is seeded into an in-cluster Secret (CredSecret) out-of-band and referenced by the
-// rendered store's auth.secretRef. This struct therefore carries only NON-SECRET connection config +
-// the seed-Secret NAME — the token itself NEVER lives here (facts are rendered into ESO manifests
-// committed to the cluster; a token on the facts would leak into a manifest). Built from the
-// connector's provider_config + a credential-presence check.
+// Doppler, Infisical, or a generic Vault-KV-API-compatible endpoint — the project selected via the
+// `secrets` connector, that workloads read from IN-CLUSTER through the External Secrets Operator (ESO)
+// with STATIC credentials. Unlike the cross-account cloud managers (KeylessSecretTarget, which ESO
+// reads keylessly via the cluster's workload identity), a SaaS store has no cloud identity to
+// federate: its credentials are seeded into an in-cluster Secret (CredSecret) out-of-band and
+// referenced by the rendered store's auth.secretRef. This struct therefore carries only NON-SECRET
+// connection config + the seed-Secret NAME — the credentials themselves NEVER live here (facts are
+// rendered into ESO manifests committed to the cluster; a token on the facts would leak into a
+// manifest). Built from the connector's provider_config + a credential-presence check.
 //
-// ESO 0.9.12 support (the pinned chart, infra/templates/argocd/external-secrets-operator.yaml):
-// vault + generic (via spec.provider.vault) and doppler (spec.provider.doppler) get a first-class
-// static-token store. Infisical (first-class only from ESO 0.9.20) and 1Password (Connect-only in
-// 0.9.12) are DOCUMENTED runtime-read exclusions — their write/provision path still ships (#1204);
-// they simply register no saasSecretStore and render no ClusterSecretStore. See
-// infra/templates/project/CUSTOMIZABILITY-PARITY.md.
+// ESO 0.9.20 support (the pinned chart, infra/templates/argocd/external-secrets-operator.yaml):
+// vault + generic (via spec.provider.vault), doppler (spec.provider.doppler) and infisical
+// (spec.provider.infisical — first-class only from 0.9.20, which is why the chart is pinned there)
+// get a first-class static-credential store. 1Password remains a DOCUMENTED runtime-read exclusion —
+// ESO's onepassword provider is Connect-server-only, which a bare Service-Account token cannot
+// satisfy — so it registers no saasSecretStore and renders no ClusterSecretStore; its write/provision
+// path still ships (#1204). See infra/templates/project/CUSTOMIZABILITY-PARITY.md.
 type SecretsSaaSStore struct {
-	Slug      string // the selected secrets connector slug: vault | generic | doppler
-	Kind      string // ESO provider kind: "vault" (vault/generic) | "doppler"
+	Slug      string // the selected secrets connector slug: vault | generic | doppler | infisical
+	Kind      string // ESO provider kind: "vault" (vault/generic) | "doppler" | "infisical"
 	StoreName string // ClusterSecretStore name: secretstore-<slug>
 
-	// CredSecret is the in-cluster Secret (in Namespace) the seeder writes the auth token into, and
-	// CredKey is the data key within it. The rendered store's auth.secretRef points at (CredSecret,
-	// CredKey, Namespace).
+	// CredSecret is the in-cluster Secret (in Namespace) the seeder writes the store's auth material
+	// into; the rendered store's auth.secretRef points at (CredSecret, <key>, Namespace). Creds lists
+	// every key that Secret carries. It is a LIST, not one key, because auth arity is per-provider:
+	// vault / generic / doppler authenticate with a single API token, while infisical's Universal Auth
+	// needs TWO independent SecretKeySelectors (clientId + clientSecret).
 	CredSecret string
-	CredKey    string
+	Creds      []SecretsSaaSCredRef
 	Namespace  string
 
 	// ── vault / generic (spec.provider.vault) ──
@@ -52,6 +55,52 @@ type SecretsSaaSStore struct {
 	// ── doppler (spec.provider.doppler) — optional scoping ──
 	Project string
 	Config  string
+
+	// ── infisical (spec.provider.infisical) ──
+	// HostAPI is the Infisical API endpoint (self-hosted override). ProjectSlug is the project SLUG —
+	// NOT the workspace id the tofu write path uses (infisical_workspace_id): ESO's secretsScope wants
+	// the slug you copy from Infisical's project settings, and feeding it an id renders a store that
+	// never resolves. They are separate provider_config fields for exactly that reason.
+	HostAPI         string
+	ProjectSlug     string
+	EnvironmentSlug string
+	SecretsPath     string
+}
+
+// SecretsSaaSCredRole names what one key inside the seeded credential Secret carries. Finite and
+// known — the ESO provider's auth shape decides the set — so it is a typed union, not a bare string.
+type SecretsSaaSCredRole string
+
+const (
+	// SaaSCredToken is the single API token vault / generic / doppler authenticate with.
+	SaaSCredToken SecretsSaaSCredRole = "token"
+	// SaaSCredClientID is the infisical Universal Auth machine-identity client id.
+	SaaSCredClientID SecretsSaaSCredRole = "clientId"
+	// SaaSCredClientSecret is the infisical Universal Auth machine-identity client secret.
+	SaaSCredClientSecret SecretsSaaSCredRole = "clientSecret"
+)
+
+// SecretsSaaSCredRef is one key inside the seeded credential Secret: what it carries (Role), the data
+// key the rendered store's auth.secretRef names (Key), and the connector credential field the seeder
+// reads the value from (CredentialField). The VALUE never lives here — these facts are rendered into
+// manifests, and a token on the facts would leak into one.
+type SecretsSaaSCredRef struct {
+	Role            SecretsSaaSCredRole
+	Key             string
+	CredentialField string
+}
+
+// CredKey returns the credential-Secret data key carrying the given role, or "" when this store has
+// no such element. Takes a plain string so the ClusterSecretStore template can call it directly
+// ({{ .SecretsSaaS.CredKey "clientId" }}) without a typed-constant conversion; looking the key up by
+// role keeps the template independent of the order Creds happens to be built in.
+func (s SecretsSaaSStore) CredKey(role string) string {
+	for _, c := range s.Creds {
+		if c.Role == SecretsSaaSCredRole(role) {
+			return c.Key
+		}
+	}
+	return ""
 }
 
 // vaultSaaSStore builds the SecretsSaaSStore descriptor for a Vault / OpenBao / generic
@@ -66,17 +115,19 @@ func vaultSaaSStore(ctx ComponentContext, slug string) SecretsSaaSStore {
 		Kind:       "vault",
 		StoreName:  "secretstore-" + slug,
 		CredSecret: "secretstore-" + slug + "-creds",
-		CredKey:    "token",
-		Namespace:  secretsSaaSNamespace,
-		Server:     cred(ctx.Credentials, "address", ""),
-		Path:       pcString(ctx.ProviderConfig, "mount_path", "secret"),
-		Version:    version,
+		Creds: []SecretsSaaSCredRef{
+			{Role: SaaSCredToken, Key: "token", CredentialField: "token"},
+		},
+		Namespace: secretsSaaSNamespace,
+		Server:    cred(ctx.Credentials, "address", ""),
+		Path:      pcString(ctx.ProviderConfig, "mount_path", "secret"),
+		Version:   version,
 	}
 }
 
 // DominantSecretsSaaSStore returns the runtime-read SaaS secret store for the project's dominant
 // secrets selection, or nil when that selection is native / none, a cross-account keyless manager, or
-// a store with no first-class ESO read path on the pinned chart (infisical / 1Password). Parallels
+// a store with no first-class ESO read path on the pinned chart (1Password). Parallels
 // DominantKeylessSecretTarget, but a SaaS store REPLACES the native store as the secret source rather
 // than layering on top. Fail-closed: a selected store whose credential/config is missing fails
 // Validate and returns an error (Compose already rejects it pre-plan; this is defense-in-depth), so a

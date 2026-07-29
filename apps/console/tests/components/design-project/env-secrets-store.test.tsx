@@ -35,8 +35,10 @@ const VAULT: ConnectorProviderMeta = {
 		{ key: "mount_path", label: "Mount path", type: "text", required: true },
 	],
 };
-// Connectable, but no in-cluster read path on the pinned ESO chart.
-const INFISICAL: ConnectorProviderMeta = { ...VAULT, slug: "infisical", name: "Infisical" };
+// Connectable, but no in-cluster read path on the pinned ESO chart — ESO's onepassword provider is
+// Connect-server-only, which a bare Service-Account token cannot satisfy, so no chart bump unblocks
+// it. (Infisical used to stand here; the ESO 0.9.20 pin ships its provider and made it selectable.)
+const ONEPASSWORD: ConnectorProviderMeta = { ...VAULT, slug: "onepassword", name: "1Password" };
 
 const HARBOR: ConnectorProviderMeta = {
 	...VAULT,
@@ -52,7 +54,7 @@ const HARBOR: ConnectorProviderMeta = {
 // providers for both would let a registry test pass while showing secrets connectors.
 vi.mock("@/components/design-project/connectors-context", () => ({
 	useConnectedProviders: (category: string) =>
-		category === "registry" ? [HARBOR] : [VAULT, INFISICAL],
+		category === "registry" ? [HARBOR] : [VAULT, ONEPASSWORD],
 }));
 
 vi.mock("@/lib/connectors/registry.generated", async (importOriginal) => {
@@ -61,7 +63,7 @@ vi.mock("@/lib/connectors/registry.generated", async (importOriginal) => {
 	return {
 		...actual,
 		getConnectorProviderBySlug: (slug: string) =>
-			[VAULT, INFISICAL].find((p) => p.slug === slug),
+			[VAULT, ONEPASSWORD].find((p) => p.slug === slug),
 	};
 });
 
@@ -187,11 +189,11 @@ describe("environment secret store", () => {
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		const options = await screen.findAllByRole("option");
-		const infisical = options.find((o) => o.textContent?.includes("Infisical"));
+		const onepassword = options.find((o) => o.textContent?.includes("1Password"));
 		// Shown with the reason rather than hidden: selecting it would switch the native store off
 		// project-wide and leave nothing to read from.
-		expect(infisical).toHaveAttribute("aria-disabled", "true");
-		expect(infisical?.textContent).toMatch(/no in-cluster read yet/i);
+		expect(onepassword).toHaveAttribute("aria-disabled", "true");
+		expect(onepassword?.textContent).toMatch(/no in-cluster read yet/i);
 	});
 });
 

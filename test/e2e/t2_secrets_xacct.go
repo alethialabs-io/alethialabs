@@ -294,7 +294,7 @@ type esCondition struct {
 	Message string `json:"message"`
 }
 
-// parseReadyCondition extracts the ESO `Ready` condition. On external-secrets v1beta1 (chart 0.9.12)
+// parseReadyCondition extracts the ESO `Ready` condition. On external-secrets v1beta1 (chart 0.9.20)
 // the condition TYPE is `Ready`; `SecretSynced` is a REASON on it, not a type of its own — polling
 // for a `SecretSynced` type would never match and the scenario would time out on a healthy cluster.
 //

@@ -209,9 +209,10 @@ func (p *CategoryProvider) SaaSSecretStore(ctx ComponentContext) (SecretsSaaSSto
 }
 
 // IsSaaSSecretStore reports whether a secrets slug is a credential-based external secret store with a
-// first-class in-cluster ESO runtime-read path on the pinned chart (vault / generic / doppler). It is
-// true only when saasSecretStore is registered — so infisical / 1Password (whose runtime-read is an
-// explicit documented exclusion on ESO 0.9.12) return false and render no ClusterSecretStore. Cheap
+// first-class in-cluster ESO runtime-read path on the pinned chart (vault / generic / doppler /
+// infisical). It is true only when saasSecretStore is registered — so 1Password (whose runtime-read
+// is an explicit documented exclusion: ESO's provider is Connect-server-only, which no chart bump
+// changes) returns false and renders no ClusterSecretStore. Cheap
 // lookup for routing in DominantSecretsSaaSStore without building a full ComponentContext.
 func IsSaaSSecretStore(slug string) bool {
 	b, ok := behaviors["secrets/"+slug]

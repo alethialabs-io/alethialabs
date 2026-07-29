@@ -278,18 +278,21 @@ describe("secret store selection validation", () => {
 		expect(res.success).toBe(false);
 	});
 
-	// NOT rejected: these are `active` and the runtime accepts them, so failing them closed would
-	// break projects already configured through the CLI. The picker disables them instead.
-	it.each(["infisical", "onepassword"])(
-		"accepts %s at the schema level — the UI is what steers away from it",
-		(provider) => {
-			const knobs =
-				provider === "infisical" ? { workspace_id: "ws-1" } : { vault: "Private" };
-			expect(parseSecret({ name: "api-key", provider, provider_config: knobs }).success).toBe(
-				true,
-			);
-		},
-	);
+	// NOT rejected: `onepassword` is `active` and the runtime accepts it, so failing it closed would
+	// break projects already configured through the CLI. The picker disables it instead. `infisical`
+	// is here for a different reason — since the ESO 0.9.20 pin it is fully selectable — and it carries
+	// BOTH project identifiers (workspace_id for the tofu write, project_slug for the in-cluster read),
+	// so this also pins that neither is dropped by the provider_config schema's `.strip()`.
+	it.each([
+		["infisical", { workspace_id: "ws-1", project_slug: "ws-slug" }],
+		["onepassword", { vault: "Private" }],
+	] as const)("accepts %s at the schema level, keeping every knob", (provider, knobs) => {
+		const res = parseSecret({ name: "api-key", provider, provider_config: knobs });
+		expect(res.success).toBe(true);
+		if (res.success) {
+			expect(res.data.secrets[0].provider_config).toEqual(knobs);
+		}
+	});
 });
 
 describe("helm registry selection validation", () => {

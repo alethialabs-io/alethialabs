@@ -198,9 +198,17 @@ func TestObservabilityAndSecretsAdapters(t *testing.T) {
 		if err := p.Validate(ComponentContext{Credentials: map[string]string{"client_id": "i", "client_secret": "s"}}); err == nil {
 			t.Fatal("missing workspace_id should fail")
 		}
-		ok := ComponentContext{
+		// The write path addresses the project by id and the in-cluster read by slug — both are
+		// required, and neither substitutes for the other.
+		if err := p.Validate(ComponentContext{
 			Credentials:    map[string]string{"client_id": "i", "client_secret": "s"},
 			ProviderConfig: map[string]any{"workspace_id": "ws"},
+		}); err == nil {
+			t.Fatal("missing project_slug should fail")
+		}
+		ok := ComponentContext{
+			Credentials:    map[string]string{"client_id": "i", "client_secret": "s"},
+			ProviderConfig: map[string]any{"workspace_id": "ws", "project_slug": "ws-slug"},
 		}
 		if err := p.Validate(ok); err != nil {
 			t.Fatalf("validate: %v", err)
