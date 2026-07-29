@@ -87,10 +87,34 @@ MSG
   printf '%s' "$ip"
 }
 
+# Hetzner RECYCLES IP addresses. The first real apply landed on 178.104.237.182 — the
+# address a previously-deleted box had held — so known_hosts still carried the old key and
+# every ssh/rsync failed with "Host key verification failed". `accept-new` does NOT cover
+# this: it accepts keys for UNKNOWN hosts, never a CHANGED one.
+#
+# That is fatal for a box designed to be reaped and recreated: each restore can land on a
+# recycled address, and the whole env:* surface is SSH. So drop the stale entry when the
+# box's key changes. This is not weakening host verification in any meaningful sense — the
+# box is ours, we just created it, and its identity is the Hetzner API's answer, not a key
+# we have ever pinned.
+forget_stale_host_key() { # <ip>
+  local ip="$1"
+  ssh-keygen -R "$ip" >/dev/null 2>&1 || true
+}
+
 ssh_box() {
-  local ip
+  local ip rc
   ip="$(require_box)"
   # shellcheck disable=SC2029  # remote expansion is intended
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@" && return 0
+  rc=$?
+  # NOT `if ! ssh …; then rc=$?`: inside that branch $? is the status of the NEGATION,
+  # which is always 0, so the retry below would never fire. Verified in a shell before
+  # relying on it.
+  #
+  # 255 is ssh's own transport failure — what a changed host key produces.
+  [ "$rc" = 255 ] || return "$rc"
+  forget_stale_host_key "$ip"
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@"
 }
 
@@ -162,6 +186,10 @@ cmd_box() {
 provision_box() {
   local ip
   ip="$(require_box)"
+
+  # A freshly created or restored box may hold a RECYCLED address whose old key is still
+  # in known_hosts; clear it before the first connection rather than failing 60 times.
+  forget_stale_host_key "$ip"
 
   # Wait for cloud-init on a freshly created box.
   for _ in $(seq 1 60); do
