@@ -28,16 +28,37 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "sandbox" {
   config_src = "local"
 }
 
-# The wildcard: *.dev.<domain> -> the tunnel. Proxied is mandatory for
-# cfargotunnel.com targets, and ttl must be 1 (auto) when proxied.
-resource "cloudflare_record" "env_wildcard" {
+# ── One record per env SLOT, and they are ONE LABEL DEEP for a reason ────────────
+#
+# The original design used a `*.dev` wildcard, giving branch envs
+# <slug>.dev.<domain>. DNS resolved and the tunnel routed — and every one of them
+# failed TLS:
+#
+#     dev.alethialabs.io          matched cert's "*.alethialabs.io"   OK
+#     fix-trap.dev.alethialabs.io sslv3 alert handshake failure       FAILS
+#
+# Cloudflare's Universal SSL covers the apex and ONE level of subdomain. A name two
+# levels deep is outside the certificate, so the handshake is refused before any
+# request is made. Only an Advanced Certificate (paid) covers `*.dev.<domain>`, and
+# paying roughly the price of the box to keep a prettier hostname is the wrong trade.
+#
+# So: one label. A record per registry SLOT rather than per branch, created once here,
+# which means no Cloudflare API call during `env:up` and no wildcard catching every
+# unregistered subdomain of the production zone.
+#
+# The registry already hands out a fixed console port per slot, so slot -> port ->
+# hostname is one mapping the whole system agrees on:
+#     slot 1  :3100  env1-dev.<domain>
+#     slot 2  :3200  env2-dev.<domain>
+resource "cloudflare_record" "env_slot" {
+  count   = var.env_cap
   zone_id = var.cloudflare_zone_id
-  name    = "*.${var.env_subdomain}"
+  name    = "env${count.index + 1}-${var.env_subdomain}"
   type    = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.sandbox.id}.cfargotunnel.com"
   proxied = true
   ttl     = 1
-  comment = "alethia-sandbox: every branch env, no per-branch record needed"
+  comment = "alethia-sandbox: env slot ${count.index + 1}"
 }
 
 # The primary environment. This hostname is special: OAuth redirect URIs cannot be

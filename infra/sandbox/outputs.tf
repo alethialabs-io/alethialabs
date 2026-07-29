@@ -16,6 +16,11 @@ output "server_type" {
   value       = hcloud_server.sandbox.server_type
 }
 
+output "env_slot_hostnames" {
+  description = "One hostname per env slot; the registry's slot N maps to entry N."
+  value       = [for r in cloudflare_record.env_slot : "${r.name}.${var.domain}"]
+}
+
 output "env_domain" {
   description = "Domain under which branch environments are served."
   value       = local.env_domain
