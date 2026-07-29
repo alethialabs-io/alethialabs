@@ -74,10 +74,32 @@ func newNamespaceIdentityProvisioner() provisioner.NamespaceIdentityProvisioner 
 		switch providerSlug {
 		case "gcp":
 			return provisionGKENamespaceIdentity(ctx, config, clusterName, namespace)
+		case "azure":
+			return provisionAKSNamespaceIdentity(ctx, config, clusterName, namespace)
 		default:
 			return "", fmt.Errorf("namespace identity: no provisioner is wired for provider %q — namespace placement on it is not activated", providerSlug)
 		}
 	}
+}
+
+// provisionAKSNamespaceIdentity mints a keyless ARM token, resolves the Fabric's resource group + AKS
+// OIDC issuer output-free (by cluster name), then get-or-creates the per-namespace UAMI + its federated
+// credential (cloud.ProvisionAKSNamespaceIdentity), returning the UAMI clientId. subscription =
+// config.CloudAccountID; the UAMI region = config.Region (the shared cluster's region).
+func provisionAKSNamespaceIdentity(ctx context.Context, config *types.ProjectConfig, clusterName, namespace string) (string, error) {
+	token, err := workloadIdentityAADToken(ctx, azureARMScope)
+	if err != nil {
+		return "", fmt.Errorf("mint Azure ARM token for namespace identity: %w", err)
+	}
+	rg, err := cloud.ResolveAKSResourceGroup(ctx, nil, token, config.CloudAccountID, clusterName)
+	if err != nil {
+		return "", err
+	}
+	issuer, err := cloud.ResolveAKSOIDCIssuer(ctx, nil, token, config.CloudAccountID, rg, clusterName)
+	if err != nil {
+		return "", err
+	}
+	return cloud.ProvisionAKSNamespaceIdentity(ctx, nil, token, config.CloudAccountID, rg, config.Region, issuer, clusterName, namespace)
 }
 
 // provisionGKENamespaceIdentity mints a keyless WIF token and get-or-creates the per-namespace GSA + its
