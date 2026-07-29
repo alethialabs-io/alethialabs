@@ -210,7 +210,7 @@ func TestSecretStoreRefs_Classification(t *testing.T) {
 		{Name: "a", Provider: "vault"},
 		{Name: "b", Provider: "doppler"},
 		{Name: "c", Provider: "generic"},
-		{Name: "d", Provider: "onepassword"}, // runtime-read excluded on ESO 0.9.12
+		{Name: "d", Provider: "onepassword"}, // runtime-read excluded: ESO onepassword is Connect-only
 		{Name: "e", Provider: ""},            // native
 	}}
 	// One dominant store per deploy, so each SaaS row resolves only in the deploy that rendered ITS
