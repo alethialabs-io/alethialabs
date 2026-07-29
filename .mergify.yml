@@ -9,8 +9,19 @@
 # wedged EVERY queued PR. Mergify validates each PR on its own branch (no `merge_group`), so that wedge is gone.
 #
 # Behaviour: every NON-DRAFT PR into `dev` is AUTO-queued (merge_protections_settings.auto_merge_conditions —
-# the current replacement for the deprecated `autoqueue`) and SQUASH-merged once the 8 protect-dev required
+# the current replacement for the deprecated `autoqueue`) and SQUASH-merged once the 9 protect-dev required
 # checks pass. No `@mergifyio queue`, no `gh pr merge` — just open a non-draft PR; keep WIP as a draft.
+#
+# ── Why `capabilities-security` is listed here before branch protection requires it ──
+# It is a fail-closed security gate, but for a while NOTHING enforced it: absent from all three rulesets
+# AND from this file, so a PR that failed it merged anyway. The enforcement lived only in unapplied
+# `infra/github` HCL (#1625).
+#
+# The two halves must be fixed in THIS order. If branch protection required it while this file did not,
+# a PR that genuinely FAILS the gate would still satisfy the conditions below, get queued, and then be
+# rejected by GitHub at merge time — a stuck queue entry with no visible cause. The reverse (this file
+# stricter than branch protection) is harmless: the job is unfiltered, so it always reports.
+# So this lands and rides dev→staging→main FIRST; the ruleset apply follows.
 
 queue_rules:
   - name: dev
@@ -20,7 +31,7 @@ queue_rules:
       - base = dev
       - "-draft"
     merge_conditions:
-      # The 8 protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
+      # The 9 protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
       - "check-success=TypeScript (lint · types · test · docs)"
       - "check-success=Go (build · vet · test · lint) (packages/core)"
       - "check-success=Go (build · vet · test · lint) (apps/cli)"
@@ -29,12 +40,18 @@ queue_rules:
       - "check-success=Secret scan (gitleaks)"
       - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
       - "check-success=Authz / open-core guards"
+      # The fail-closed capabilities/connector/keyless gate that replaced the dropped #982 CODEOWNERS
+      # review. Safe to require: the job is UNFILTERED (runs on every PR) and no-op-passes when no
+      # relevant path changed, so it always reports and cannot deadlock an unrelated PR.
+      # Listed here BEFORE it is required in branch protection, deliberately — see the note at the
+      # bottom of this file.
+      - "check-success=capabilities-security"
     # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
     merge_method: squash
 
 # Merge protections: `auto_merge_conditions` below only fires once a merge_protections rule's
 # `success_conditions` all pass. Without this block there were no success_conditions to satisfy, so
-# auto-merge never triggered (the bug). This rule requires the 8 protect-dev checks on every PR into `dev`.
+# auto-merge never triggered (the bug). This rule requires the 9 protect-dev checks on every PR into `dev`.
 merge_protections:
   - name: dev required CI
     if:
@@ -48,6 +65,7 @@ merge_protections:
       - "check-success=Secret scan (gitleaks)"
       - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
       - "check-success=Authz / open-core guards"
+      - "check-success=capabilities-security"
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
 # success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).
