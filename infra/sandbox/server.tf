@@ -49,6 +49,16 @@ resource "hcloud_server" "sandbox" {
     ignore_changes = [
       ssh_keys, # don't rebuild the box when the key rotates
       image,    # env:up passes a snapshot id when restoring; that is not drift
+
+      # user_data FORCES REPLACEMENT in the hcloud provider. Without this, bumping
+      # env_cap from 3 to 4 planned "1 to add, 1 to destroy" — it would have deleted the
+      # live box, its databases and every running environment, to change one number.
+      #
+      # cloud-init is a ONE-TIME BOOTSTRAP here. Everything that changes afterwards —
+      # the box-side control scripts and /opt/alethia/box.env — is delivered by
+      # provision_box on every `env:up`. So drift in user_data is expected and must
+      # never be reconciled by rebuilding.
+      user_data,
     ]
   }
 }

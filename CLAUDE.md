@@ -51,7 +51,14 @@ pnpm env:up      # this branch gets a database, storage, an OpenFGA store, a URL
 pnpm env:push    # after editing — rsync the working tree  (--watch to automate)
 pnpm env:logs    # tail the console  ← sign-in codes are printed here
 pnpm env:status  # every env, who holds it, capacity
+pnpm env:down    # RELEASE the slot when you're finished with the branch
 ```
+
+The box is **shared** with every other instance and the maintainer: 4 environments, and
+`dev` permanently holds one as the integration env, leaving **3 branch slots**. Take one
+only when you need a *running* app — build, type-check, lint and unit tests do not need
+one — and release it when you are done. Nothing is reclaimed automatically. If the box is
+down, **ask the maintainer**; restoring it runs `tofu apply`, which agents are refused.
 
 The local dev servers and the destructive resets are **blocked** by
 `.claude/hooks/guard-runtime.sh`. Measured reason: the laptop sat at 92% disk and 86% swap with

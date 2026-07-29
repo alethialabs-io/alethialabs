@@ -98,9 +98,12 @@ variable "env_cap" {
   # A memory budget, not a policy: at ~2 GB per `next dev` on a 16 GB box, the fourth
   # environment is the one that starts swapping and turns every timing assertion into
   # a coin flip. Surfaced here so resizing the box and the cap stay one decision.
+  # Delivered to the box by `env:up` (provision_box writes /opt/alethia/box.env), NOT
+  # by re-running cloud-init — user_data is ignored after creation because changing it
+  # would replace the server. So raising this takes effect on the next env:up.
   description = "Maximum concurrent branch environments the box will allocate."
   type        = number
-  default     = 3
+  default     = 4
   validation {
     condition     = var.env_cap >= 1 && var.env_cap <= 6
     error_message = "env_cap must be between 1 and 6 (the port pools are sized for 6)."

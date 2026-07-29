@@ -54,7 +54,16 @@ check "ssh_is_the_only_ingress" {
 # A firewall that exists but is attached to nothing is the classic silent misconfig.
 check "firewall_is_attached" {
   assert {
-    condition     = contains(hcloud_firewall_attachment.sandbox.server_ids, hcloud_server.sandbox.id)
+    # tonumber() is load-bearing: `server_ids` is a set of NUMBER while
+    # `hcloud_server.sandbox.id` is a STRING, so the un-cast comparison never matched and
+    # this check failed on EVERY apply even though the firewall was correctly attached
+    # (verified against the API on the first real apply — firewall 11386257 → server
+    # 156573892, port 22 from the narrowed CIDR).
+    #
+    # A check that always fails is worse than no check: it teaches you to skim past
+    # "Check block assertion failed", which is the one line that matters on the day the
+    # attachment really is missing.
+    condition     = contains(hcloud_firewall_attachment.sandbox.server_ids, tonumber(hcloud_server.sandbox.id))
     error_message = "The sandbox firewall must actually be attached to the sandbox server."
   }
 }
