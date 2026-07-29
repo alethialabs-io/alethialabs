@@ -1,0 +1,16 @@
+{
+  "name": "@alethia/enterprise-api",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "typescript": "5.9.3"
+  }
+}

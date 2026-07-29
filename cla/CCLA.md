@@ -1,63 +1,66 @@
-# Alethia Labs Corporate Contributor License Agreement (v1.0)
+# DRAFT — Alethia Labs Corporate Contributor License Agreement v1.1
 
-This Agreement covers Contributions to projects owned or managed by **Alethia Labs DPK**
-("Alethia") that are made by employees or agents of the corporation identified
-below ("Corporation"). It allows the Corporation to authorize its designated
-employees to contribute, and grants Alethia the rights needed to keep offering the
-project under both open-source and commercial licenses. Except for the licenses
-granted here, the Corporation retains all right, title, and interest in its
+> **NOT ACTIVE · NOT FOR SIGNATURE.** The recipient company is pending
+> registration and does not yet have an EIK. Complete the activation record and
+> obtain counsel approval before execution.
+
+This Corporate Contributor License Agreement ("Agreement") is between the
+corporation identified below ("Corporation") and **Alethia Labs DPK, EIK
+[PENDING REGISTRATION]**, with registered office at [TO BE CONFIRMED AFTER
+REGISTRATION] ("Alethia").
+
+## 1. Contributions and personnel
+
+"Contribution" and "Submit" have the meanings in the active Individual CLA. The
+Corporation authorizes only the employees or agents listed in the attached
+schedule or maintained in Alethia's countersigned contribution record.
+
+## 2. Ownership
+
+The Corporation retains all right, title, and interest in its Contributions.
+This Agreement is a license, not an assignment.
+
+## 3. Copyright license
+
+The Corporation grants Alethia and recipients a perpetual, worldwide,
+non-exclusive, no-charge, royalty-free, irrevocable license to reproduce,
+prepare derivative works of, publicly display, publicly perform, sublicense, and
+distribute its Contributions and derivative works, including the right to
+license and sublicense them under the project's open-source license, commercial
+license, and other present or future terms.
+
+## 4. Patent license
+
+The Corporation grants the patent license stated in the active Individual CLA,
+applied to patent claims it can license that are necessarily infringed by its
 Contributions.
 
-## 1. Definitions
+## 5. Representations
 
-**"Contribution"** and **"Submit"** have the same meaning as in the Alethia Labs
-Individual CLA.
-
-**"You" / "Corporation"** means the legal entity executing this Agreement and all
-other entities that control, are controlled by, or are under common control with
-that entity.
-
-## 2. Grant of copyright license
-
-Subject to this Agreement, the Corporation grants to Alethia and to recipients of
-software distributed by Alethia a perpetual, worldwide, non-exclusive, no-charge,
-royalty-free, irrevocable copyright license to reproduce, prepare derivative works
-of, publicly display, publicly perform, sublicense, and distribute the
-Corporation's Contributions and such derivative works, **including the right to
-license and sublicense those Contributions under any terms, including the
-project's open-source license (`AGPL-3.0-only`) and the project's commercial
-license.**
-
-## 3. Grant of patent license
-
-The Corporation grants Alethia a patent license on the same terms as Section 3 of
-the Individual CLA, applied to the Corporation's Contributions.
-
-## 4. Representations
-
-(a) The Corporation is legally entitled to grant the above licenses.
-(b) Each Contribution is an original creation of the Corporation's designated
-    employees, or the Corporation otherwise has the right to Submit it.
-(c) The Corporation will notify Alethia if any designated employee should no
-    longer be authorized to Submit Contributions on its behalf.
-
-## 5. Designated employees
-
-The Corporation maintains the list of employees authorized to Submit Contributions
-on its behalf — for example, via the GitHub organization or accounts it manages
-and the CLA Assistant signature records. Contributions from those accounts are
-covered by this Agreement.
+The Corporation represents that it is legally entitled to grant these rights,
+that Contributions are original or properly licensed, and that it will promptly
+update the authorized-contributor schedule.
 
 ## 6. No warranty
 
-Contributions are provided on an "AS IS" basis, without warranties of any kind.
+Contributions are provided "AS IS", without warranties or conditions to the
+maximum extent permitted by law.
+
+## 7. Records
+
+Alethia retains the countersigned agreement, authorized-contributor schedule,
+agreement version, and document hash as the controlling record.
 
 ---
 
-Authorized signatory:
+Corporation: ____________________________________
 
-    Corporation:    ____________________________________
-    Name / Title:   ____________________________________
-    Date:           ____________________________________
+Registration number: ____________________________
 
-Submit a signed copy to legal@alethialabs.io.
+Authorized signatory / title: ____________________
+
+Date: ___________________________________________
+
+For Alethia Labs DPK: ____________________________
+
+EIK: **PENDING — do not execute**

@@ -432,6 +432,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Open-core boundary (core must not import ee/)
         run: pnpm -F console check:ee-boundary
+      - name: Repository-wide open-core boundary and community image contract
+        run: pnpm check:open-core
+      - name: Community edition type-checks without enterprise activation
+        env:
+          ALETHIA_EDITION: community
+        run: pnpm -F console check-types
+      - name: Installed dependency licence inventory has no unknown metadata
+        run: pnpm compliance:licenses
+      - name: Generate workspace SBOM and community-source evidence
+        run: |
+          pnpm compliance:release
+          pnpm source:community
+      - name: Upload compliance evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: compliance-${{ github.sha }}
+          path: |
+            dist/compliance
+            dist/community-source
+          if-no-files-found: error
+          retention-days: 30
       - name: No Supabase
         run: pnpm -F console check:no-supabase
       - name: Authz scope (PDP, not ad-hoc user_id)
