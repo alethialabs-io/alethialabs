@@ -33,6 +33,14 @@ jobs:
           path-to-signatures: 'cla/signatures/v1.0.json'
           path-to-document: 'https://github.com/alethialabs-io/alethialabs/blob/main/cla/ICLA.md'
           branch: 'main'
-          allowlist: 'dependabot[bot],github-actions[bot],renovate[bot]'
+          # Machine accounts, which contribute no third-party IP and so have nothing to assign.
+          # `alethia-labs-ci[bot]` is our own release-please App (it authors the `chore(main): release
+          # *` PRs); without it every release PR reports a red `cla` forever — #890 and #1031 each
+          # carried one for 10 days. Names must match the committer login exactly, `[bot]` suffix and
+          # all.
+          #
+          # The action also accepts a `bot*` wildcard. Deliberately NOT used: it would allowlist any
+          # account whose name merely starts with "bot", which anyone can register.
+          allowlist: 'dependabot[bot],github-actions[bot],renovate[bot],alethia-labs-ci[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-allsigned-prcomment: 'All contributors have signed the CLA. Thank you!'
