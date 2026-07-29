@@ -16,13 +16,25 @@ check "tunnel_is_locally_managed" {
 
 # Unproxied, or pointed at a stale tunnel id, and every branch hostname resolves to
 # nothing — the failure mode looks like "my env is broken" rather than "DNS is wrong".
-check "wildcard_dns_onto_tunnel" {
+# Every slot record must be proxied and on THIS tunnel. A slot whose DNS drifts is an
+# env that resolves nowhere, and the symptom ("my env is broken") points at the app.
+check "slot_dns_onto_tunnel" {
   assert {
-    condition = (
-      cloudflare_record.env_wildcard.proxied &&
-      cloudflare_record.env_wildcard.content == "${cloudflare_zero_trust_tunnel_cloudflared.sandbox.id}.cfargotunnel.com"
-    )
-    error_message = "*.<env_subdomain> must be a proxied CNAME onto THIS sandbox tunnel (<tunnel-id>.cfargotunnel.com)."
+    condition = alltrue([
+      for r in cloudflare_record.env_slot :
+      r.proxied && r.content == "${cloudflare_zero_trust_tunnel_cloudflared.sandbox.id}.cfargotunnel.com"
+    ])
+    error_message = "Every envN-<env_subdomain> must be a proxied CNAME onto THIS sandbox tunnel."
+  }
+}
+
+# ONE label deep, always. Two levels is outside Cloudflare's Universal SSL and every
+# request fails the TLS handshake before it is made — which is how the original
+# *.dev.<domain> scheme shipped broken.
+check "slot_hostnames_are_one_label_deep" {
+  assert {
+    condition     = alltrue([for r in cloudflare_record.env_slot : length(split(".", r.name)) == 1])
+    error_message = "Env hostnames must be ONE label (envN-<sub>), not <slug>.<sub> — Universal SSL does not cover two levels."
   }
 }
 
