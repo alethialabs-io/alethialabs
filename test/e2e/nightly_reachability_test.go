@@ -41,6 +41,13 @@ var nightlyExemptEnv = map[string]string{
 	"ALETHIA_E2E_HCLOUD_REGION":       "legacy alias for ALETHIA_E2E_REGION, kept for back-compat only",
 	"ALETHIA_E2E_DAY2_ACCESS_TIMEOUT": "tuning knob for the day-2 layer; the layer's own enable var is wired",
 	"ALETHIA_E2E_DAY2_OFFER_TIMEOUT":  "tuning knob bounding each day-2 plan; the layer's own enable var (ALETHIA_E2E_DAY2_OFFER) is wired",
+	// Deliberately NOT wired, unlike every other keyless variable. The dwell must exceed the cloud
+	// token's lifetime or the rotation assertion passes against a proxy that never rotates anything —
+	// so its default (16m, past the 15m RDS-IAM TTL) IS the proof. Exposing it as a repo variable
+	// would make weakening the strongest claim in the scenario a one-field edit that nothing reviews.
+	// It stays a local-debugging override, and whatever dwell actually ran is recorded in the proof
+	// bundle beside the verdict.
+	"ALETHIA_E2E_KEYLESS_DB_DWELL": "the rotation dwell must exceed the cloud token TTL to prove anything, so its default is the proof — a local-debugging override, never a repo variable",
 }
 
 // TestScenarioEnablesReachTheNightly fails when the harness reads an ALETHIA_E2E_* variable that

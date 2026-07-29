@@ -6,17 +6,18 @@
 		"build": "next build",
 		"dev": "next dev --experimental-https",
 		"start": "next start",
-		"types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
-		"check-types": "fumadocs-mdx && next typegen && tsc --noEmit",
+		"types:check": "pnpm run check-types",
+		"check-types": "_FUMADOCS_MDX=1 next typegen && fumadocs-mdx && node scripts/check-source-emitted.mjs && tsc --noEmit",
+		"check:source-emitted": "node scripts/check-source-emitted.mjs",
 		"postinstall": "fumadocs-mdx",
 		"lint": "eslint",
 		"lint:prose": "vale content"
 	},
 	"dependencies": {
 		"fumadocs-core": "16.13.0",
-		"fumadocs-mdx": "14.2.5",
+		"fumadocs-mdx": "14.3.2",
 		"fumadocs-ui": "16.13.0",
-		"lucide-react": "^0.562.0",
+		"lucide-react": "^0.577.0",
 		"mermaid": "^11.16.0",
 		"next": "16.2.12",
 		"next-themes": "^0.4.6",
@@ -27,13 +28,13 @@
 	"devDependencies": {
 		"@tailwindcss/postcss": "^4.3.3",
 		"@types/mdx": "^2.0.14",
-		"@types/node": "^25.0.5",
+		"@types/node": "^20.19.43",
 		"@types/react": "^19.2.17",
 		"@types/react-dom": "^19.2.3",
 		"postcss": "^8.5.23",
 		"tailwindcss": "^4.3.3",
 		"typescript": "^5.9.3",
 		"eslint-config-next": "16.2.12",
-		"eslint": "^9.39.2"
+		"eslint": "^9.39.5"
 	}
 }

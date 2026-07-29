@@ -79,14 +79,17 @@ describe("environmentConnector", () => {
 });
 
 describe("secretsStoreUnavailable", () => {
-	// Both are `status: active` and connectable, but neither has an in-cluster read path on the
-	// pinned ESO chart. Selecting one is WORSE than doing nothing: it turns the native store off
-	// project-wide while providing nothing to read from. The picker must not let one be chosen.
-	it.each(["infisical", "onepassword"])("blocks %s, which has no in-cluster read", (slug) => {
+	// `status: active` and connectable, but no in-cluster read path on the pinned ESO chart. Selecting
+	// it is WORSE than doing nothing: it turns the native store off project-wide while providing
+	// nothing to read from. The picker must not let it be chosen. 1Password is the last one — ESO's
+	// onepassword provider is Connect-server-only, so no chart bump unblocks it.
+	it.each(["onepassword"])("blocks %s, which has no in-cluster read", (slug) => {
 		expect(secretsStoreUnavailable(slug)).toBeTruthy();
 	});
 
-	it.each(["vault", "doppler", "generic", "aws-sm-xacct"])("allows %s", (slug) => {
+	// infisical joined the selectable set with the ESO 0.9.20 pin, whose chart ships the `infisical`
+	// provider — its ClusterSecretStore now renders (packages/core/categories/secrets_infisical.go).
+	it.each(["vault", "doppler", "generic", "infisical", "aws-sm-xacct"])("allows %s", (slug) => {
 		expect(secretsStoreUnavailable(slug)).toBeNull();
 	});
 });

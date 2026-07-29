@@ -46,12 +46,8 @@
 
 import { readFileSync } from "node:fs";
 
-import {
-	funcBody,
-	neutralizeBracesInStrings,
-	readKeylessCells,
-	stripComments,
-} from "./lib/keyless-cells.mjs";
+import { funcBody, neutralizeBracesInStrings, stripComments } from "./lib/go-source.mjs";
+import { readKeylessCells } from "./lib/keyless-cells.mjs";
 
 const ROOT = "../..";
 const CELLS_SRC = `${ROOT}/packages/core/manifests/keyless.go`;

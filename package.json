@@ -39,6 +39,7 @@
 		"env:open": "bash scripts/env.sh open",
 		"env:ssh": "bash scripts/env.sh ssh",
 		"env:check": "bash scripts/env.sh check",
+		"env:test": "bash scripts/env.sh test",
 		"env:runner": "bash scripts/env.sh runner",
 		"env:reap": "bash scripts/env.sh reap",
 		"wt": "bash scripts/worktree.sh",
@@ -53,7 +54,7 @@
 	"devDependencies": {
 		"prettier": "^3.9.6",
 		"turbo": "^2.10.7",
-		"typescript": "5.9.2"
+		"typescript": "5.9.3"
 	},
 	"packageManager": "pnpm@9.15.0",
 	"engines": {

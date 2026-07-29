@@ -482,9 +482,12 @@ export interface SecretsProviderConfig {
 	// Doppler — which project + config (its name for an environment) the token reads.
 	project?: string;
 	config?: string;
-	// Infisical
+	// Infisical. It addresses one project by TWO identifiers and both are needed: workspace_id (the id)
+	// is what the tofu write path provisions against, project_slug (the slug, copied from the project
+	// settings) is what ESO's secretsScope reads in-cluster. They are not interchangeable.
 	host?: string;
 	workspace_id?: string;
+	project_slug?: string;
 	env_slug?: string;
 	folder_path?: string;
 	// 1Password — the vault the service account may read.

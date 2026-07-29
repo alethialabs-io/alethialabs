@@ -358,7 +358,7 @@ jobs:
       # provider bump changes the key and repopulates.
       - name: Cache OpenTofu provider plugins
         if: steps.gate.outputs.run == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.terraform.d/plugin-cache
           key: tofu-plugins-1.9.0-${{ runner.os }}-${{ hashFiles('infra/templates/project/*/.terraform.lock.hcl') }}
@@ -628,6 +628,37 @@ jobs:
           ALETHIA_E2E_SECRETS_XACCT_PROBE_NAMESPACE: ${{ vars.E2E_SECRETS_XACCT_PROBE_NAMESPACE }}
           ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256: ${{ vars.E2E_SECRETS_XACCT_EXPECT_SHA256 }}
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
+          # ── KEYLESS DATABASE AUTH (#1511) — the ship gate for epic #1500.
+          #
+          #    The first e2e for keyless (#722) on any cloud or engine. Until it runs, keyless is
+          #    proven only by renderers that emit the right YAML — and the original AWS/Azure wiring
+          #    rendered perfectly while being incapable of authenticating, for months, because no test
+          #    ever opened a connection.
+          #
+          #    ENGINE_VERSION + INSTANCE_CLASS have NO defaults and are REQUIRED when enabled: the
+          #    values valid on RDS are rejected by Cloud SQL and by Flexible Server, and again by the
+          #    same cloud's other engine. Use the per-cloud siblings (…_ENGINE_VERSION_GCP) on a leg
+          #    that differs. A missing one fails the run in seconds, before any provisioning spend.
+          #
+          #    REQUIRES the A0.6 apps repo above: the workload and its bootstrap Job reach the cluster
+          #    only through GitOps, so without it there would be nothing to assert against.
+          #
+          #    Budget: the run holds a database session open past the cloud token's lifetime (16m by
+          #    default) to prove the proxy mints per connection rather than caching one token. A
+          #    shorter dwell would pass just as happily against a proxy that never rotates anything.
+          #
+          #    All plain VARIABLES. Unset ⇒ a clean skip; alibaba/hetzner resolve to the product's own
+          #    documented exclusion and skip carrying it. ──
+          ALETHIA_E2E_KEYLESS_DB: ${{ vars.E2E_KEYLESS_DB }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE: ${{ vars.E2E_KEYLESS_DB_ENGINE }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION }}
+          ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS }}
+          ALETHIA_E2E_KEYLESS_DB_NAME: ${{ vars.E2E_KEYLESS_DB_NAME }}
+          ALETHIA_E2E_KEYLESS_DB_SERVICE: ${{ vars.E2E_KEYLESS_DB_SERVICE }}
+          ALETHIA_E2E_KEYLESS_DB_IMAGE: ${{ vars.E2E_KEYLESS_DB_IMAGE }}
+          ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
+          ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
+          ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -664,6 +695,10 @@ jobs:
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
+          # Keyless DB auth summary (#1511), written by the T2 layer at the SAME path the t2 step
+          # set; folded into the bundle + step-summary verdict, with the rotation dwell beside it so
+          # a shortened-dwell PASS cannot read like a full one. Absent ⇒ the capture is unchanged.
+          ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
           # Day-2 access summary (P2-E), written by the T2 test at the SAME path the t2 step set;
           # pass it through so the capture folds the access verdict into the bundle + step summary
           # (#1525 — it was written but never read). Absent ⇒ the capture is unchanged.
@@ -751,12 +786,19 @@ jobs:
   #    own verdict; this fan-in job (always()) reads each leg's uploaded proof bundle, prints ONE
   #    5-row (hetzner/aws/gcp/azure/alibaba) PASS/FAIL/SKIP table to the run's step summary, and on
   #    ANY red opens a title-deduped tracking issue. Per-leg outcome is NOT available from a matrix
-  #    `needs.*.result` (that's only the aggregate), so we derive it from each leg's
-  #    provision-summary.json (present ⇒ ran: outcome==success is PASS, else FAIL; absent ⇒ the leg
-  #    green-skipped at the gate ⇒ SKIP). A wholesale matrix failure that produced NO per-leg bundle
-  #    (infra died before capture) is still surfaced as red so it can't hide. The `gh issue create`
-  #    is guarded to schedule/dispatch runs only (never a fork/PR — invariant 1; the job holds no
-  #    cloud privilege regardless, only `issues: write`). ──
+  #    `needs.*.result` (that's only the aggregate), so it is derived from each leg's
+  #    provision-summary.json, cross-checked against that leg's JOB CONCLUSION.
+  #
+  #    The derivation lives in scripts/e2e/nightly-rollup.sh and is unit-tested there (#1613). It
+  #    used to be inline here, keyed on a hardcoded artifact DIRECTORY PATH, and run 30341785056
+  #    proved what that costs: aws provisioned for real, failed at `tofu plan`, and was reported as
+  #    "SKIP — gate off, no secret/var wired" under the cloudless title "e2e nightly: job RED",
+  #    while the parity ledger recorded nothing at all. Absence of a file is not evidence a cloud
+  #    was never enabled, and that is now the script's job to know.
+  #
+  #    The `gh issue create` calls stay here, guarded to schedule/dispatch runs only (never a
+  #    fork/PR — invariant 1; the job holds no cloud privilege regardless). They contain no logic:
+  #    every title and body is rendered by the script, offline and under test. ──
   rollup:
     name: Nightly verdict rollup (5-cloud table + dedup issue)
     needs: [provision]
@@ -765,6 +807,9 @@ jobs:
     permissions:
       contents: read
       issues: write
+      # The second source for "did this leg actually run?". Without it the rollup can only see
+      # proof bundles, and a leg that ran and left none is indistinguishable from one nobody wired.
+      actions: read
     steps:
       - uses: actions/checkout@v7
       - name: Download all per-provider proof artifacts
@@ -774,6 +819,19 @@ jobs:
           pattern: e2e-proof-*-${{ github.run_id }}
           path: proofs
           merge-multiple: false
+      # The run's own job conclusions — the independent second source for "did this leg run?".
+      # Fetched into a file so the derivation stays pure and offline-testable. A failure here is NOT
+      # fatal: the script degrades to proof-presence and says so loudly.
+      - name: Fetch this run's job conclusions (existence cross-check)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate \
+            > "${RUNNER_TEMP}/run-jobs.json" \
+            || echo "::warning::could not read this run's job list — the rollup will fall back to proof-presence only."
+
       - name: Roll up per-provider verdicts (+ dedup issue on red)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -781,65 +839,16 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROOFS_DIR: proofs
+          JOBS_JSON: ${{ runner.temp }}/run-jobs.json
+          OUT_DIR: ${{ runner.temp }}/rollup
         run: |
           set -euo pipefail
-          providers="hetzner aws gcp azure alibaba"
-          total=5
-          reds=""
-          skips=""
-          {
-            echo "## E2E nightly — 5-cloud verdict rollup"
-            echo
-            echo "matrix result: \`${MATRIX_RESULT}\` · [run](${RUN_URL})"
-            echo
-            echo "| cloud | status | detail |"
-            echo "|---|---|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
-          for p in $providers; do
-            summary="$(find "proofs/e2e-proof-${p}-${RUN_ID}" -type f -name provision-summary.json 2>/dev/null | head -1 || true)"
-            if [ -z "$summary" ]; then
-              # No proof bundle for this leg ⇒ it green-skipped at the gate (no secret/var wired).
-              status="SKIP"
-              detail="gate off — no secret/var wired"
-              skips="$skips $p"
-            else
-              outcome="$(jq -r '.outcome // "unknown"' "$summary" 2>/dev/null || echo unknown)"
-              verdict="$(jq -r '.verdict // ""' "$summary" 2>/dev/null || echo "")"
-              detail="${verdict:-$outcome}"
-              if [ "$outcome" = "success" ]; then
-                status="PASS"
-              else
-                status="FAIL"
-                reds="$reds $p"
-              fi
-            fi
-            # Escape the pipe so a verdict string can't break the markdown table.
-            detail="${detail//|/\\|}"
-            echo "| ${p} | ${status} | ${detail} |" >> "$GITHUB_STEP_SUMMARY"
-          done
-          # A wholesale matrix failure that produced no per-leg bundle (e.g. infra died before the
-          # always() capture) is still red — surface it so a leg that never emitted a bundle can't hide.
-          if [ "$MATRIX_RESULT" = "failure" ] && [ -z "${reds// /}" ]; then
-            echo "| (job) | FAIL | provision matrix failed with no per-leg proof bundle |" >> "$GITHUB_STEP_SUMMARY"
-            reds="$reds job"
-          fi
-          # ── COVERAGE. A leg that green-skips is not a proof, but the job list shows it as a green
-          #    check — five greens under a step named "5-cloud" reads like five clouds proven when it
-          #    can be one. State the ratio explicitly so the aggregate gap cannot hide behind the
-          #    per-leg SKIP rows above. ──
-          skip_n="$(printf '%s' "$skips" | wc -w | tr -d ' ')"
-          enabled_n=$(( total - skip_n ))
-          {
-            echo
-            if [ "$skip_n" -eq 0 ]; then
-              echo "**Coverage: ${enabled_n}/${total} clouds enabled** — every leg is wired."
-            else
-              echo "**Coverage: ${enabled_n}/${total} clouds enabled** · inert (gate off):${skips}"
-              echo
-              echo "> An inert leg proves nothing. See \`docs/testing/e2e-nightly-enablement.md\` to wire one."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "coverage:${enabled_n}/${total} reds:${reds:-<none>} skips:${skips:-<none>}"
+          # Derive. Everything below just POSTS what this wrote.
+          bash scripts/e2e/nightly-rollup.sh
+          cat "${OUT_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          # shellcheck disable=SC1091
+          . "${OUT_DIR}/state.env"
 
           # ── Standing coverage issue: ONE issue (not one per cloud) naming every inert leg and the
           #    exact var it needs, refreshed while the gap persists and closed automatically at full
@@ -847,73 +856,45 @@ jobs:
           #    an unwired cloud is a deliberate no-op, and a red "not configured yet" nightly is how a
           #    signal gets trained into noise. ──
           if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            cov_title="e2e nightly: ${skip_n} of ${total} clouds are not enabled"
             open_cov="$(gh issue list --state open --search "e2e nightly: in:title clouds are not enabled" --json number,title \
               --jq '[.[] | select(.title | test("^e2e nightly: [0-9]+ of [0-9]+ clouds are not enabled$"))] | .[0].number // ""' 2>/dev/null || echo "")"
-            if [ "$skip_n" -eq 0 ]; then
+            if [ "$SKIP_N" -eq 0 ]; then
               if [ -n "$open_cov" ]; then
-                gh issue close "$open_cov" --comment "All ${total} clouds are now enabled — every nightly leg provisions for real. Closing automatically." \
+                gh issue close "$open_cov" --comment "All ${TOTAL} clouds are now enabled — every nightly leg provisions for real. Closing automatically." \
                   && echo "::notice::closed coverage issue #${open_cov} (full coverage)." || true
               fi
+            elif [ -n "$open_cov" ]; then
+              gh issue edit "$open_cov" --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
+                && echo "::notice::refreshed coverage issue #${open_cov}." || true
             else
-              cov_body="${RUNNER_TEMP}/issue-body-coverage.md"
-              {
-                printf '%s\n\n' "Only **${enabled_n} of ${total}** nightly legs provision anything. The rest green-skip at the gate, so the run reports success while proving nothing for them."
-                printf '%s\n\n' "Run: ${RUN_URL}"
-                printf '%s\n' "| cloud | needs |"
-                printf '%s\n' "|---|---|"
-                for s in $skips; do
-                  case "$s" in
-                    hetzner) printf '%s\n' "| hetzner | \`HCLOUD_TOKEN\` (repo **secret**) |" ;;
-                    aws)     printf '%s\n' "| aws | \`E2E_AWS_ROLE_ARN\` (repo variable) — from \`infra/aws-oidc\` |" ;;
-                    gcp)     printf '%s\n' "| gcp | \`E2E_GCP_WIF_PROVIDER\` **and** \`E2E_GCP_SA_EMAIL\` — from \`infra/gcp-e2e\` |" ;;
-                    azure)   printf '%s\n' "| azure | \`E2E_AZURE_CLIENT_ID\`, \`E2E_AZURE_TENANT_ID\`, \`E2E_AZURE_SUBSCRIPTION_ID\`, \`ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID\` — from \`infra/azure-e2e\` |" ;;
-                    alibaba) printf '%s\n' "| alibaba | \`E2E_ALIBABA_ROLE_ARN\` **and** \`E2E_ALIBABA_OIDC_PROVIDER_ARN\` — from \`infra/alibaba-e2e\` |" ;;
-                  esac
-                done
-                printf '\n%s\n' "Procedure (apply the stack → dispatch that cloud alone → kill-drill → set the gate var): \`docs/testing/e2e-nightly-enablement.md\`."
-                printf '%s\n' "_Auto-maintained by the e2e-nightly rollup: refreshed while legs are inert, closed automatically at ${total}/${total}._"
-              } > "$cov_body"
-              if [ -n "$open_cov" ]; then
-                gh issue edit "$open_cov" --title "$cov_title" --body-file "$cov_body" \
-                  && echo "::notice::refreshed coverage issue #${open_cov}." || true
-              else
-                gh issue create --title "$cov_title" --body-file "$cov_body" \
-                  && echo "::notice::filed coverage issue: ${cov_title}" \
-                  || echo "::warning::could not create the coverage issue (continuing)."
-              fi
+              gh issue create --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
+                && echo "::notice::filed coverage issue: ${COV_TITLE}" \
+                || echo "::warning::could not create the coverage issue (continuing)."
             fi
           fi
 
           # Dedup tracking issue on ANY red — schedule/dispatch runs only.
-          if [ -z "${reds// /}" ]; then
+          if [ -z "${REDS// /}" ]; then
             echo "::notice::nightly rollup all-green (no FAIL legs) — no issue filed."
             exit 0
           fi
           if [ "$EVENT_NAME" != "schedule" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
-            echo "::warning::red legs (${reds}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only)."
+            echo "::warning::red legs (${REDS}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only)."
             exit 0
           fi
-          for cloud in $reds; do
-            title="e2e nightly: ${cloud} RED"
+          for cloud in $REDS; do
+            title="$(cat "${OUT_DIR}/issue-red-${cloud}.title")"
             existing="$(gh issue list --state open --search "${title} in:title" --json title \
               --jq "[.[] | select(.title == \"${title}\")] | length" 2>/dev/null || echo 0)"
             if [ "${existing:-0}" -gt 0 ]; then
               echo "::notice::an open issue titled '${title}' already exists — skipping create (deduped)."
               continue
             fi
-            body_file="${RUNNER_TEMP}/issue-body-${cloud}.md"
-            {
-              printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\`."
-              printf '%s\n\n' "Run: ${RUN_URL}"
-              printf '%s\n' "See the run's step-summary rollup + the \`e2e-proof-${cloud}-${RUN_ID}\` artifact for the failing stage (deploy stage / cost / leak / stale sweep)."
-              printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title — close it once \`${cloud}\` is green again._"
-            } > "$body_file"
             # LABEL what we file. An unlabelled issue is invisible to scripts/claim-work.sh (which
             # filters on class:), so a bot-filed red sat unclaimable and unworked — #1259 went nine
             # nights that way. These three exist in the repo's label set; the `||` below still keeps a
             # label problem from breaking the rollup.
-            gh issue create --title "$title" --body-file "$body_file" \
+            gh issue create --title "$title" --body-file "${OUT_DIR}/issue-red-${cloud}.md" \
               --label class:backend --label lane:tests --label wave:hygiene \
               && echo "::notice::filed tracking issue: ${title}" \
               || echo "::warning::could not create issue '${title}' (continuing)."
@@ -925,31 +906,35 @@ jobs:
       #    verdict derived from each leg's provision-summary.json (success⇒PASS, else FAIL), dimension
       #    from the same full-bar resolution as the provision job (full vs floor). Gate-off legs produced
       #    no bundle (nothing ran) so they contribute no row. The updated ledger is uploaded as an
-      #    artifact for a maintainer to commit — CI never pushes to the repo. ──
+      #    artifact for a maintainer to commit — CI never pushes to the repo.
+      #
+      #    Rows come from the rollup script's ledger.tsv, NOT from a second copy of the discovery
+      #    join. That duplicate join is why run 30341785056 appended nothing at all while the aws
+      #    leg had really failed at `tofu plan` — the parity ledger's last row was six days old and
+      #    nothing said otherwise (#1613). One discovery, one answer, both consumers. ──
       - name: Append provisioning-e2e ledger rows (RECORD_ONLY)
         env:
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
           SCHEDULE: ${{ github.event.schedule }}
-          RUN_ID: ${{ github.run_id }}
+          OUT_DIR: ${{ runner.temp }}/rollup
         run: |
           set -uo pipefail
           dim="floor"
           if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then dim="full"; fi
           if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then dim="full"; fi
           sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-          for p in hetzner aws gcp azure alibaba; do
-            summary="$(find "proofs/e2e-proof-${p}-${RUN_ID}" -type f -name provision-summary.json 2>/dev/null | head -1 || true)"
-            # No bundle ⇒ the leg green-skipped at the gate (nothing ran) ⇒ no ledger row.
-            [ -z "$summary" ] && continue
-            outcome="$(jq -r '.outcome // "unknown"' "$summary" 2>/dev/null || echo unknown)"
-            verdict_detail="$(jq -r '.verdict // ""' "$summary" 2>/dev/null || echo "")"
-            if [ "$outcome" = "success" ]; then v="PASS"; else v="FAIL"; fi
-            RECORD_ONLY=1 RECORD_VERDICT="$v" RECORD_BUNDLE="e2e-proof-${p}-${RUN_ID}" \
-              RECORD_DETAIL="${verdict_detail:-$outcome}" RECORD_SHA="$sha" \
+          if [ ! -s "${OUT_DIR}/ledger.tsv" ]; then
+            echo "::notice::no leg produced a ledger row (nothing ran) — ledger unchanged."
+            exit 0
+          fi
+          while IFS="$(printf '\t')" read -r p v detail bundle; do
+            [ -n "$p" ] || continue
+            RECORD_ONLY=1 RECORD_VERDICT="$v" RECORD_BUNDLE="$bundle" \
+              RECORD_DETAIL="$detail" RECORD_SHA="$sha" \
               ./scripts/e2e/provisioning-e2e.sh "$p" "$dim" \
               || echo "::warning::ledger RECORD_ONLY failed for ${p}/${dim} (continuing)."
-          done
+          done < "${OUT_DIR}/ledger.tsv"
           echo "::notice::appended provisioning-e2e ledger rows (dimension=${dim}) — upload for a maintainer to commit."
 
       - name: Upload updated provisioning-e2e ledger

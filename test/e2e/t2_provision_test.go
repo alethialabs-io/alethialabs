@@ -164,6 +164,24 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1268: cross-account keyless secrets SKIPPED — set %s (+ its target vars) to enable.", envSecretsXacct)
 	}
 
+	// #1511: keyless DB auth, resolved on the same terms and for the same reason — a misconfigured
+	// opt-in must fail in seconds, and an EXCLUDED cell (alibaba/hetzner) resolves to "off" carrying
+	// the product's own exclusion prose rather than a silent skip.
+	keyless := keylessDBFromEnv(provider)
+	keylessOn, keylessBlocked, keylessErr := keyless.decide()
+	if keylessErr != nil {
+		t.Fatalf("#1511 keyless DB auth: %v", keylessErr)
+	}
+	switch {
+	case keylessOn:
+		t.Logf("#1511: keyless DB auth ENABLED — %s × %s, holding a session open for %s to prove the token mints per connection",
+			provider, keyless.engine, keyless.dwell)
+	case keylessBlocked != "":
+		t.Logf("#1511: keyless DB auth BLOCKED on %s × %s — %s", provider, keyless.engine, keylessBlocked)
+	default:
+		t.Logf("#1511: keyless DB auth SKIPPED — set %s (+ its engine vars) to enable.", envKeylessDB)
+	}
+
 	root := t2RepoRoot(t)
 	waitTimeout := resolveT2WaitTimeout(p)
 	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
@@ -185,7 +203,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if xacctOn {
 		xacctBudget = 10 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+7*time.Minute)
+	// #1511 needs a term of its own, dominated by the ROTATION DWELL — a session deliberately held
+	// open past the cloud token's lifetime. A ctx that expired mid-dwell would be indistinguishable
+	// from the connection dying with the credential it never had, which is the exact outcome under
+	// test, so the budget is the dwell plus room for the workload to converge and the probes to run.
+	keylessBudget := time.Duration(0)
+	if keylessOn {
+		keylessBudget = keyless.dwell + 20*time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+7*time.Minute)
 	defer cancel()
 
 	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
@@ -258,7 +284,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
@@ -312,6 +338,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		"ALETHIA_CLUSTER_READY_TIMEOUT="+resolveT2ClusterReadyTimeout(p),
 		"ALETHIA_ARGOCD_TEMPLATES_DIR="+filepath.Join(root, "infra", "templates", "argocd"),
 	)
+	if keylessOn {
+		// #1511: keyless DB auth is still a DARK FLAG, so the runner must be told. Set HERE rather
+		// than in the workflow deliberately: it is not an ALETHIA_E2E_* variable, so
+		// TestScenarioEnablesReachTheNightly cannot protect it — a workflow-side setting could
+		// silently stop being passed and every leg would quietly prove the password path instead.
+		// Wiring it to the scenario's own switch makes that impossible, and #1513 deletes both
+		// together.
+		cmd.Env = append(cmd.Env, "ALETHIA_KEYLESS_DB_AUTH_ENABLED=true")
+	}
 	var runnerSink io.Writer = &runnerOut
 	if p := os.Getenv("ALETHIA_E2E_T2_RUNNER_LOG"); p != "" {
 		if f, ferr := os.Create(p); ferr == nil {
@@ -561,6 +596,21 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      BLOCKED with a reason. Runs BEFORE the guaranteed teardown.
 	if xacctOn {
 		runT2SecretsXacct(t, ctx, kc, secretsXacctParams{cfg: xacct, metaRaw: metaRaw})
+	}
+
+	// (12) KEYLESS DATABASE AUTH (#1511). Opt-in via ALETHIA_E2E_KEYLESS_DB — the base DEPLOY already
+	//      carried an iam_auth database and a service bound to it, so the runner rendered the auth
+	//      proxy sidecar, the workload-identity ServiceAccount and the bootstrap Job. This layer is
+	//      the first time keyless is proven against a REAL database on any cloud: a password-free
+	//      query, a session that outlives the cloud token, and an unscoped identity that is refused.
+	//      Runs BEFORE the guaranteed teardown — and last, because its rotation dwell is the longest
+	//      single wait in the suite.
+	if keylessOn {
+		runT2KeylessDB(t, ctx, kc, keylessDBParams{
+			cfg:     keyless,
+			dbName:  keyless.snapshotDBName(full),
+			metaRaw: metaRaw,
+		})
 	}
 }
 

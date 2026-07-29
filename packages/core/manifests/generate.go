@@ -604,6 +604,66 @@ type bindingResolution struct {
 	saLabels      map[string]string
 	podLabels     map[string]string // stamped on the pod template (Azure WI webhook keys on the POD)
 	unresolved    []string
+	keyless       []KeylessBindingDecision
+}
+
+// KeylessBindingStatus is what happened to one keyless database binding at render time. Two states,
+// both of them a decision: the operator asked for keyless (`iam_auth`) and either got it, or got a
+// reasoned refusal. There is deliberately no third "fell back to a password" state — that outcome is
+// the defect #1510 removed, and adding a name for it here would make it representable again.
+type KeylessBindingStatus string
+
+const (
+	// KeylessBindingWired — the auth proxy is in the pod and the workload holds no password.
+	KeylessBindingWired KeylessBindingStatus = "wired"
+	// KeylessBindingFailedClosed — the cell cannot honor it; the whole binding was omitted, and
+	// Reason is the sentence the operator reads.
+	KeylessBindingFailedClosed KeylessBindingStatus = "failed_closed"
+)
+
+// KeylessBindingDecision is the machine-readable record of one keyless binding's fate, persisted to
+// execution_metadata["keyless_bindings"] beside the infra-service decisions.
+//
+// It exists because keyless previously left NO positive trace: a fail-closed binding produced a
+// sentence in the manifest-warnings array and a successful one produced nothing at all. Absence of a
+// warning is not evidence of wiring — which is exactly the gap that let a keyless path that had never
+// authenticated to a real database look shipped for months (#1500). The T2 keyless scenario (#1511)
+// reads this as its earliest assertion, before it polls a cluster for anything.
+//
+// Every field is a name, a state or product copy. No credential, no token, no endpoint — nothing the
+// metadata scrub would need to strip.
+type KeylessBindingDecision struct {
+	// Service is the workload whose binding this is (dns1123-normalized, as rendered).
+	Service string `json:"service"`
+	// Target names the bound database — kind is always "database" today, carried so a future keyless
+	// target kind does not silently join this list unlabelled.
+	TargetKind string `json:"target_kind"`
+	TargetName string `json:"target_name"`
+	// Engine is the database's engine family ("postgres"/"mysql") — the other half of the cell key,
+	// and the field that makes a per-cloud claim checkable per engine.
+	Engine string `json:"engine"`
+	// Status is wired or failed_closed.
+	Status KeylessBindingStatus `json:"status"`
+	// Reason carries WHY on both outcomes: on a refusal it is the cell's own product-voice sentence
+	// (the same string the canvas shows on the disabled toggle), and on a success it is the mechanism
+	// from keylessMechanism — "aws · postgres over RDS IAM, token minted per connection by the
+	// db-authproxy sidecar". A wired record that said only "wired" would answer the weaker question:
+	// the two mechanisms fail differently, so which one ran is the first thing worth knowing.
+	Reason string `json:"reason"`
+}
+
+// keylessDecision builds the record for one binding. Both reasons are supplied by the caller from a
+// single source each — the refusal from keylessCellSupported's error, the success from
+// keylessMechanism — so this constructor never composes prose of its own to drift against them.
+func keylessDecision(serviceName, engine string, t types.ServiceBindingTarget, status KeylessBindingStatus, reason string) KeylessBindingDecision {
+	return KeylessBindingDecision{
+		Service:    serviceName,
+		TargetKind: string(t.Kind),
+		TargetName: t.Name,
+		Engine:     engine,
+		Status:     status,
+		Reason:     reason,
+	}
 }
 
 func resolveBindings(serviceName string, opts Options, bindings []types.ServiceBinding) bindingResolution {
@@ -622,14 +682,22 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 			// with no proxy behind it. Endpoint rewrite is coupled to a proxy actually being there.
 			key := string(b.Target.Kind) + "/" + b.Target.Name
 			if !proxied[key] {
+				engine := dbEngineForTarget(opts, b.Target)
 				w, err := keylessDBSidecar(opts, b.Target)
 				if err != nil {
 					r.unresolved = append(r.unresolved, fmt.Sprintf(
 						"keyless binding %s→%s/%s: %v — binding omitted (fail-closed)",
 						serviceName, b.Target.Kind, b.Target.Name, err))
+					// Recorded on BOTH branches, deliberately. A record written only on failure would
+					// make "no bad record" indistinguishable from "nothing was even attempted" — the
+					// ambiguity that hid a keyless path which had never authenticated (#1500/#1511).
+					r.keyless = append(r.keyless, keylessDecision(
+						serviceName, engine, b.Target, KeylessBindingFailedClosed, err.Error()))
 					continue
 				}
 				proxied[key] = true
+				r.keyless = append(r.keyless, keylessDecision(
+					serviceName, engine, b.Target, KeylessBindingWired, keylessMechanism(opts.Provider, engine)))
 				r.sidecars = append(r.sidecars, w.sidecars...)
 				r.volumes = append(r.volumes, w.volumes...)
 				// The keyless pod runs as the Workload-Identity KSA (all keyless bindings on a service
@@ -750,7 +818,13 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 // and only type=="deployment" has a template today (job/cronjob/statefulset rendering is a
 // follow-up lane). Those are returned in `skipped` (name: reason) so the caller REPORTS
 // them — a silent drop would read as "deployed" when it wasn't.
-func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []App, skipped []string) {
+//
+// `keyless` is the per-binding decision record (#1511) for every database the operator marked
+// `iam_auth`, wired or fail-closed. Note what it CANNOT contain: a service skipped above never
+// reaches resolveBindings, so its keyless bindings produce no decision — the service's own skip
+// reason is the honest record there, and inventing a decision for a workload that does not exist
+// would be worse than its absence.
+func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []App, skipped []string, keyless []KeylessBindingDecision) {
 	apps = make([]App, 0, len(services))
 	for _, s := range services {
 		name := dns1123(s.Name)
@@ -781,6 +855,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		// required env fails loudly at boot; an empty one would silently connect to nothing).
 		binds := resolveBindings(s.Name, opts, s.Bindings)
 		skipped = append(skipped, binds.unresolved...)
+		keyless = append(keyless, binds.keyless...)
 		env := append(append(make([]types.ServiceEnvVar, 0, len(s.Env)+len(binds.env)), s.Env...), binds.env...)
 		// A keyless binding overrides the ServiceAccount with the Workload-Identity KSA it emits;
 		// otherwise the app keeps opts.ServiceAccount (a chart-created KSA, assumed to exist).
@@ -808,7 +883,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 			Probe:                     s.Probe,
 		})
 	}
-	return apps, skipped
+	return apps, skipped, keyless
 }
 
 // WriteManifests renders the apps and writes each "<name>.yaml" into dir (created if

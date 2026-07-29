@@ -63,10 +63,16 @@ case "$cmd" in
     ;;
 
   coordinate)
-    # Full reclaim + unblock + report. Feature-detect the optional --close-shipped flag (some
-    # coordinate.sh versions can auto-close units a merged PR already shipped) and pass it if present.
+    # Two passes, in this order — NOT one call with a flag.
+    #
+    # `--close-shipped` is a SEPARATE MODE, not an additive flag: coordinate.sh exits at the end
+    # of that block, before reclaim / unblock / report. `exec`-ing it therefore ran the closer and
+    # silently skipped everything else — including the possibly-shipped advisory, which is the one
+    # signal that surfaces a stale-open unit the keyword-strict closer legitimately cannot see.
+    # The engine promised "full reclaim + unblock + report" and delivered only the closer.
+    # Feature-detect the mode (older coordinate.sh versions lack it), then always run the full pass.
     if grep -q close-shipped "$COORDINATE"; then
-      exec "$COORDINATE" --close-shipped
+      "$COORDINATE" --close-shipped || true
     fi
     exec "$COORDINATE"
     ;;

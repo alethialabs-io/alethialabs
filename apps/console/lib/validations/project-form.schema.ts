@@ -124,9 +124,11 @@ const secretsProviderConfigSchema: z.ZodType<SecretsProviderConfig> = z
 		// doppler
 		project: z.string().optional(),
 		config: z.string().optional(),
-		// infisical
+		// infisical — workspace_id addresses the project for the tofu write path, project_slug for
+		// ESO's in-cluster read. Omitting either here would strip it silently on save.
 		host: z.string().optional(),
 		workspace_id: z.string().optional(),
+		project_slug: z.string().optional(),
 		env_slug: z.string().optional(),
 		folder_path: z.string().optional(),
 		// onepassword
@@ -458,10 +460,11 @@ const nosqlItemSchema = nosqlInsert
 // surface at deploy, as a skipped ExternalSecret or a store that never reads. Mirrors the
 // helm_registry guard below and the `Validate` implementations in packages/core/categories/secrets_*.go.
 //
-// Deliberately NOT rejected here: `infisical` and `onepassword`. They are `active` and the runtime
-// accepts them, so failing them closed would break projects already configured through the CLI. They
-// have no in-cluster read path on the pinned chart, which is a UI concern — the picker renders them
-// disabled with that reason rather than letting a new one be chosen.
+// Deliberately NOT rejected here: `onepassword`. It is `active` and the runtime accepts it, so
+// failing it closed would break projects already configured through the CLI. It has no in-cluster read
+// path on the pinned chart, which is a UI concern — the picker renders it disabled with that reason
+// rather than letting a new one be chosen. (`infisical` left this set with the ESO 0.9.20 pin, which
+// ships its provider; it is now a normal selectable store.)
 const secretItemSchema = secretsInsert
 	.omit({
 		...autoFields,

@@ -80,6 +80,27 @@ have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($
 # shellcheck source=scripts/lib/board-pr.sh
 . scripts/lib/board-pr.sh
 
+# ── the merged-PR corpus, passed on DISK and never through argv ───────────────
+# Both consumers below (the close-shipped closer and the possibly-shipped advisory) need the
+# recent merged PRs. Both used to receive it as `jq --argjson merged "$merged"` — roughly 1 MB of
+# JSON as a single command-line ARGUMENT.
+#
+# That quietly crossed ARG_MAX as the merged history grew (measured 2026-07-28: 1,059,524 bytes
+# against a 1,048,576 limit — over by ~11 KB). The kernel then refuses the exec: jq never runs,
+# the shell reports "Argument list too long" (exit 126), and BOTH call sites discarded it with
+# `2>/dev/null || true`. An unset result then read as "found nothing" — so the closer reported
+# "Nothing to close" and the advisory printed no section, on every run, for as long as the corpus
+# has been over the line. Neither had a failure mode that said anything.
+#
+# A file has no size ceiling, and `--slurpfile` reads it directly. Keep it that way.
+MERGED_PRS=""
+fetch_merged_prs() {
+  MERGED_PRS="$(mktemp -t alethia-merged-prs)"
+  trap 'rm -f "$MERGED_PRS"' EXIT
+  gh pr list --state merged --limit 300 --json number,title,body >"$MERGED_PRS" 2>/dev/null \
+    || echo '[]' >"$MERGED_PRS"
+}
+
 # ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
 # Mutates NOTHING on leases/blocks. For each open, still-claimable board unit that a MERGED PR
 # CLOSES — a closing keyword (`close|fix|resolve` + tenses) directly before `#<n>`, in the PR
@@ -89,11 +110,16 @@ have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($
 # without a closing keyword is NOT a delivery and is never auto-closed. Idempotent (only OPEN
 # units are in `board`). See .claude/COORDINATION.md.
 if [ "$MODE" = "close-shipped" ]; then
-  merged="$(gh pr list --state merged --limit 300 --json number,title,body 2>/dev/null || echo '[]')"
+  fetch_merged_prs
   # Emit "<issue> <pr-list>" pairs for every claimable unit a merged PR CLOSES (keyword + #n in
   # title or body — the same signal GitHub honours and the Action parses).
-  strong="$(echo "$board" | jq -r --argjson merged "$merged" '
-    .[]
+  #
+  # NO `2>/dev/null || true` on this one: this path MUTATES the board. A tool failure must abort
+  # loudly, never degrade into "nothing to close" — that silent-empty is precisely what let the
+  # ARG_MAX break above run undetected.
+  if ! strong="$(jq -r --slurpfile _m "$MERGED_PRS" '
+    ($_m[0] // []) as $merged
+    | .[]
     | select(.labels|map(.name)|any(startswith("class:")))                                 # board units only
     | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "needs:human" or . == "needs:design")|not)
     | .number as $n
@@ -102,7 +128,10 @@ if [ "$MODE" = "close-shipped" ]; then
          | test("(?i)\\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\\s+#\($n)\\b"))))) as $refs
     | select($refs|length > 0)
     | "\($n) \($refs|map("#\(.number)")|join(","))"
-  ' 2>/dev/null || true)"
+  ' <<<"$board")"; then
+    echo "✗ close-shipped: could not evaluate the board (jq failed). Closing NOTHING." >&2
+    exit 1
+  fi
   if [ -z "$strong" ]; then
     echo "close-shipped: no open board unit is closed by a merged PR (keyword + #n in title/body). Nothing to close."
     exit 0
@@ -250,13 +279,21 @@ if [ -n "$uis" ]; then echo "  ── UI awaiting you ──"; echo "$uis" | sed
 # auto-closes — a future instance then re-claims finished work. Surface them to eyeball
 # (heuristic — a reference is not a delivery; verify vs origin/dev before closing). Advisory
 # only, never mutates, like the COLLISION flag above. See .claude/COORDINATION.md.
-merged="$(gh pr list --state merged --limit 300 --json number,title,body 2>/dev/null || echo '[]')"
-ship="$(echo "$board" | jq -r --argjson merged "$merged" '
-  [ .[]
-    | select(.labels|map(.name)|any(startswith("class:")))                         # board units only
-    # only the READY/claimable set — a claimed unit is being worked, blocked/gated units
-    # are not claimable; the orphaned-shipped hazard is a unit that still looks claimable.
-    | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "needs:human" or . == "needs:design")|not)
+fetch_merged_prs
+# Advisory, so a failure warns and continues rather than aborting the report — but it must SAY so.
+# The previous `2>/dev/null || true` turned a jq that could not even be exec'd into a silent
+# "no hits", which is why this section never printed once (see fetch_merged_prs).
+if ! ship="$(jq -r --slurpfile _m "$MERGED_PRS" '
+  ($_m[0] // []) as $merged
+  | [ .[]
+    # EXACTLY the READY predicate used by the counts below — not a stricter one. The hazard is a
+    # unit that still LOOKS claimable, so the set to police is by definition the set READY
+    # publishes. This additionally required a `class:` label and excluded needs:human/needs:design,
+    # neither of which READY does — so a unit with no class label (#1207, #1046, #1050, #1058) or a
+    # needs:human one (#1268, #1065) was counted claimable on the dashboard and invisible here.
+    # Worst case was #1207: two merged PRs named it in their TITLES — the strongest signal this
+    # heuristic has — suppressed because the issue happened to carry only `wave:connectors-v2`.
+    | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "epic")|not)
     | .number as $n
     | ($merged | map(select((.title|test("#\($n)\\b")) or (.body|test("#\($n)\\b"))))) as $refs
     | select($refs|length > 0)
@@ -265,7 +302,10 @@ ship="$(echo "$board" | jq -r --argjson merged "$merged" '
         prs: ($refs|map("#\(.number)")|join(",")) } ]
   | sort_by(.n)[]
   | "  #\(.n)  \(if .strong then "LIKELY" else "verify" end)  (merged \(.prs))  \(.title)"
-' 2>/dev/null || true)"
+' <<<"$board")"; then
+  echo "  ⚠ possibly-shipped: could not evaluate (jq failed) — advisory SKIPPED, the board may be stale." >&2
+  ship=""
+fi
 if [ -n "$ship" ]; then
   echo "  ── ⚠ possibly-shipped (open, but a MERGED PR references it — verify vs origin/dev, close if delivered) ──"
   echo "$ship"
@@ -280,4 +320,10 @@ if [ -n "$stalled_units" ]; then
   echo "     take one over with:  scripts/claim-work.sh --issue <n>   (then rebase or close its PR)"
 fi
 
-[ "$MODE" = "full" ] && echo "  (reclaimed $reclaimed stale lease(s))"
+# `if`, not `[ … ] && echo` — as the script's LAST command, a short-circuited `&&` becomes the exit
+# status, so every read-only `--report` (and therefore `engine.sh status`, which execs it) exited 1
+# on success. A reporter that reports failure when it worked is the same class of lie as the
+# swallowed jq error above.
+if [ "$MODE" = "full" ]; then
+  echo "  (reclaimed $reclaimed stale lease(s))"
+fi

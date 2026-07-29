@@ -423,7 +423,7 @@ describe("helmRegistryProviderConfigSchema", () => {
 // four active registry connectors REQUIRE and which pullAuth uses as the dockerconfig `auths` key.
 // A pull secret built without it authenticates against nothing.
 describe("provider_config is pinned to the connector catalog", () => {
-	const declaredKnobs = (category: "registry" | "dns") => {
+	const declaredKnobs = (category: "registry" | "dns" | "secrets") => {
 		const keys = new Set<string>();
 		for (const provider of getProvidersForCategory(category)) {
 			for (const field of provider.providerConfigFields) {
@@ -470,6 +470,30 @@ describe("provider_config is pinned to the connector catalog", () => {
 		if (!parsed.success) throw parsed.error;
 
 		const kept = new Set(Object.keys(parsed.data.dns.provider_config ?? {}));
+		expect([...declared].filter((k) => !kept.has(k))).toEqual([]);
+	});
+
+	// The secrets category had no parity guard, and the hazard is identical: `infisical` addresses one
+	// project by TWO identifiers — workspace_id for the tofu write path, project_slug for ESO's
+	// in-cluster secretsScope — so a schema that knew only the first would strip the second SILENTLY,
+	// and the store would render pointing at nothing. Caught exactly that while adding project_slug.
+	it("keeps every knob the secrets connectors declare", () => {
+		const declared = declaredKnobs("secrets");
+		expect(declared.size).toBeGreaterThan(0);
+
+		const parsed = projectFormSchema.safeParse({
+			...validProject,
+			secrets: [
+				{
+					name: "api-key",
+					provider: "infisical",
+					provider_config: Object.fromEntries([...declared].map((k) => [k, `v-${k}`])),
+				},
+			],
+		});
+		if (!parsed.success) throw parsed.error;
+
+		const kept = new Set(Object.keys(parsed.data.secrets[0].provider_config ?? {}));
 		expect([...declared].filter((k) => !kept.has(k))).toEqual([]);
 	});
 

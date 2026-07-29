@@ -24,6 +24,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -191,6 +192,12 @@ type PlanResult struct {
 	// class, ArgoCD URL). Each carries an honest reason — a skip records WHY plus the
 	// alternative (like verify's not_evaluable). Non-sensitive; the runner forwards it.
 	InfraServices []argocd.InfraServiceDecision
+	// KeylessBindings is the per-binding keyless DB-auth decision set (#1511): for every database
+	// the operator marked `iam_auth`, whether the auth proxy was WIRED or the binding failed CLOSED,
+	// and why. Empty when the project has no keyless binding — and, by construction, on any deploy
+	// where our manifest render never reaches a cluster (no apps repo, or a bring-your-own one).
+	// Non-sensitive — names, a state and product copy; the runner forwards it verbatim.
+	KeylessBindings []manifests.KeylessBindingDecision
 	// GitopsStatus is the GitOps wiring outcome + apps-Application health snapshot
 	// (issue #574): mode (gitops/direct), apps repo, synced revision, per-service
 	// health from the `apps` Application's resources — and, when the deploy died
@@ -989,15 +996,23 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// so a slow ArgoCD-installed operator webhook must not fail an otherwise-healthy deploy — the
 		// apply is idempotent and reconciles on the next deploy once the operator is ready.
 		//
-		// A pluggable SaaS secret store (Vault / OpenBao / Doppler / generic) reads its API token
-		// from an in-cluster Secret the ClusterSecretStore's auth.secretRef names — seed it BEFORE
-		// applying the store. The credential comes from the job's ConnectorCredentials (never the
-		// snapshot); the token lands only in the in-cluster Secret. facts.SecretsSaaS is nil
+		// A pluggable SaaS secret store (Vault / OpenBao / Doppler / generic / Infisical) reads its
+		// credentials from an in-cluster Secret the ClusterSecretStore's auth.secretRef names — seed
+		// it BEFORE applying the store. The credentials come from the job's ConnectorCredentials
+		// (never the snapshot) and land only in the in-cluster Secret. facts.SecretsSaaS is nil
 		// (fail-closed) when the store's credential/config is absent, so this is skipped exactly
 		// when no store will render.
+		//
+		// The store declares WHICH credential fields it needs (Creds) rather than this caller assuming
+		// a single "token": infisical's Universal Auth needs client_id + client_secret, and hardcoding
+		// one field here would seed a store that can never authenticate.
 		if facts.SecretsSaaS != nil {
-			token := vc.ConnectorCredentialFor("secrets", facts.SecretsSaaS.Slug)["token"]
-			if err := argocd.EnsureSecretsStoreCredential(facts.SecretsSaaS.Namespace, facts.SecretsSaaS.CredSecret, facts.SecretsSaaS.CredKey, token, stdout, stderr); err != nil {
+			creds := vc.ConnectorCredentialFor("secrets", facts.SecretsSaaS.Slug)
+			data := make([]argocd.SecretsStoreCredential, 0, len(facts.SecretsSaaS.Creds))
+			for _, c := range facts.SecretsSaaS.Creds {
+				data = append(data, argocd.SecretsStoreCredential{Key: c.Key, Value: creds[c.CredentialField]})
+			}
+			if err := argocd.EnsureSecretsStoreCredential(facts.SecretsSaaS.Namespace, facts.SecretsSaaS.CredSecret, data, stdout, stderr); err != nil {
 				return nil, fmt.Errorf("failed to seed the %s external-secrets store credential: %w", facts.SecretsSaaS.Slug, err)
 			}
 		}
@@ -1036,10 +1051,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
 		// otherwise-healthy cluster — the operator can add manifests later.
-		manifestWarnings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, facts, stdout, stderr)
+		manifestWarnings, keylessBindings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, facts, stdout, stderr)
 		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
+		// Attached to the RESULT, not to GitopsStatus: the keyless decisions are a security posture
+		// fact about the deploy, and GitopsStatus is nil on every path that skipped the wiring. They
+		// survive a genErr for the same reason the warnings do — a partial render's decisions are
+		// exactly what explains a half-wired app.
+		result.KeylessBindings = keylessBindings
 
 		setStage("addons")
 		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos

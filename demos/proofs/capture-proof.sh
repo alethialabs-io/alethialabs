@@ -209,6 +209,24 @@ if [ -n "$day2_offer_summary" ] && [ -f "$day2_offer_summary" ]; then
 	[ -n "$day2_offer_verdict" ] && echo "  · day2-offer: $day2_offer_verdict"
 fi
 
+# ── Keyless database auth summary (#1511). The T2 layer writes verdicts, the mechanism it wired
+#    and the rotation dwell it actually held — booleans, names and a duration, never the canary
+#    (compared as a digest inside the test) and never a token. Fold it in (scrubbed as a backstop)
+#    and surface a one-line verdict. Absent ⇒ the scenario was disabled or the cell is an excluded
+#    one, and the capture is unchanged. ──
+keyless_summary="${ALETHIA_E2E_KEYLESS_DB_SUMMARY:-}"
+keyless_verdict=""
+if [ -n "$keyless_summary" ] && [ -f "$keyless_summary" ]; then
+	scrub_stream <"$keyless_summary" >"$out/keyless-db-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/keyless-db-summary.json" ]; then
+		keyless_verdict="$(jq -r '.verdict // empty' "$out/keyless-db-summary.json" 2>/dev/null || true)"
+		# The dwell is surfaced beside the verdict on purpose: a PASS with a shortened dwell is a
+		# weaker claim than a PASS with the full one, and the bundle must not let the two read alike.
+		keyless_dwell="$(jq -r '.rotation_dwell_seconds // empty' "$out/keyless-db-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$keyless_verdict" ] && echo "  · keyless-db: $keyless_verdict (rotation dwell ${keyless_dwell:-?}s)"
+fi
+
 # ── Wall-clock. ──
 duration_s=""
 if [ -n "$start_epoch" ]; then

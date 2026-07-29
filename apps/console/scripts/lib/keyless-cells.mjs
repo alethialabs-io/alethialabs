@@ -12,46 +12,14 @@
 // It lives here because three consumers hand-rolling the same Go-text parse is three ways for the
 // same file to be misread. The parse is already CI-load-bearing, so sharing it adds no failure mode
 // that was not already present — it removes two.
+//
+// The Go-TEXT primitives themselves (brace matching, comment stripping, string neutralisation) live
+// in lib/go-source.mjs, where a second mirror generator now shares them (#1621): they are not about
+// keyless cells, and the same reasoning that put ONE reader here puts ONE brace matcher there.
 
 import { readFileSync } from "node:fs";
 
-/** Blank BRACES inside Go string literals, and nothing else.
- *
- * Load-bearing for the brace matcher: a stray brace inside a literal would end a body early and the
- * caller would read a truncated table. Blanking the whole literal is the obvious version and it is
- * wrong — the provider switch is matched ON string literals (`case "aws":`). */
-export function neutralizeBracesInStrings(src) {
-	const scrub = (m) => m.replace(/[{}]/g, " ");
-	return src.replace(/`[^`]*`/g, scrub).replace(/"(?:[^"\\\n]|\\.)*"/g, scrub);
-}
-
-/** Strip `//` line comments, so a leg only DESCRIBED in a doc comment never counts as implemented. */
-export function stripComments(src) {
-	return src
-		.split("\n")
-		.map((l) => l.replace(/(^|\s)\/\/.*$/, ""))
-		.join("\n");
-}
-
-/** The body of a top-level Go func, brace-matched. "" when the func is absent — an absent renderer is
- * a missing leg, which is the honest reading. */
-export function funcBody(src, name) {
-	const start = src.indexOf(`func ${name}(`);
-	if (start === -1) return "";
-	return bracedBodyAt(src, start);
-}
-
-/** The `{ … }` block starting at or after `from`, brace-matched, without its outer braces. */
-function bracedBodyAt(src, from) {
-	const open = src.indexOf("{", from);
-	if (open === -1) return "";
-	let depth = 0;
-	for (let i = open; i < src.length; i++) {
-		if (src[i] === "{") depth++;
-		else if (src[i] === "}" && --depth === 0) return src.slice(open + 1, i);
-	}
-	return "";
-}
+import { bracedBodyAt, neutralizeBracesInStrings, stripComments } from "./go-source.mjs";
 
 /** `providerAWS` → "aws", `engineMySQL` → "mysql". The table keys are Go constants aliasing the cloud
  * enum, so the lowercased suffix is the same token the switch labels use. */
@@ -103,12 +71,16 @@ export function parseKeylessCells(goSrc) {
 	return { cells };
 }
 
-/** `state: cellExcluded, reason: alibabaKeylessExclusion` → `{state, reason}`.
+/** `state: KeylessCellExcluded, reason: alibabaKeylessExclusion` → `{state, reason}`.
  *
  * A cell with no `state:` is a parse failure, not a default: silently reading an unrecognised cell as
- * live is how a fail-closed table stops failing closed. */
+ * live is how a fail-closed table stops failing closed.
+ *
+ * The `Keyless` prefix is optional in the pattern because the constants were unexported (`cellLive`)
+ * until #1511 exported them for the e2e lane table. Matching both spellings keeps this reader working
+ * across that rename instead of throwing on a table it can see perfectly well. */
 function cellFields(body, consts) {
-	const state = body.match(/state:\s*cell(\w+)/)?.[1]?.toLowerCase();
+	const state = body.match(/state:\s*(?:Keyless)?[Cc]ell(\w+)/)?.[1]?.toLowerCase();
 	if (!state || !["live", "pending", "excluded"].includes(state)) {
 		throw new Error(`a keylessCells entry has no recognisable state: ${body.trim()}`);
 	}

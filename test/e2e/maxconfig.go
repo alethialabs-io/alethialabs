@@ -30,6 +30,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -109,19 +110,32 @@ var MaxConfigKinds = []MaxConfigKind{
 		Foundational: true,
 		Apply: func(pc *types.ProjectConfig, provider string) {
 			disk := 50
-			version, instanceTypes := "1.32", []string{"m5.large"}
+			// The k8s minor comes from the compat matrix, NEVER a literal. Every managed cloud
+			// retires old minors on its own schedule — GKE delists them (1.32 is already gone), an
+			// aged version fails an AKS create with K8sVersionNotSupported, and EKS is guarded
+			// fail-closed by COMPAT-001 (infra/templates/project/<cloud>/checks_compat.tf) against
+			// this same matrix. A hardcoded version therefore rots silently: it was bumped for gcp
+			// and azure as each cloud rejected it, and left stale for aws/alibaba/hetzner until the
+			// aws apply gate caught it (#1259). Tracking matrix.json's own default keeps the harness
+			// and the gate in lockstep by construction; TestMaxConfigClusterVersionTracksMatrix
+			// fails on every PR if they ever diverge again.
+			k8sCloud, ok := compat.MustLoad().Cloud(provider)
+			if !ok {
+				// No silent fallback: a provider the matrix has no data for must be loud, not
+				// quietly provisioned on someone else's version.
+				panic(fmt.Sprintf("maxconfig: compat matrix has no k8s_cloud entry for provider %q", provider))
+			}
+			// instanceTypes stay per-cloud — these are genuinely cloud-specific SKUs (m5.large is an
+			// EC2 type both GKE and AKS reject), unlike the version.
+			instanceTypes := []string{"m5.large"}
 			switch provider {
 			case "gcp":
-				// m5.large is an EC2 type GKE rejects; 1.32 is delisted on GKE (1.33+ served).
-				version, instanceTypes = "1.33", []string{"e2-standard-2"}
+				instanceTypes = []string{"e2-standard-2"}
 			case "azure":
-				// m5.large is an EC2 type AKS rejects; keep the k8s version in Azure's STANDARD
-				// support window (resolveK8sVersion tolerates a bare minor, but an aged version fails
-				// an AKS create with K8sVersionNotSupported — 1.35 is the catalog default).
-				version, instanceTypes = "1.35", []string{"Standard_D2s_v3"}
+				instanceTypes = []string{"Standard_D2s_v3"}
 			}
 			pc.Cluster = types.ProjectClusterConfig{
-				ClusterVersion:  version,
+				ClusterVersion:  k8sCloud.Default,
 				InstanceTypes:   instanceTypes,
 				NodeMinSize:     2,
 				NodeMaxSize:     5,
