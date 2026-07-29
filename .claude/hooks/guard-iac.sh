@@ -51,12 +51,12 @@ if [ "${1:-}" = "--self-test" ]; then
 	t block 'cd infra/sandbox && tofu apply'
 	t block 'TF_LOG=debug tofu apply'
 
-	# The pnpm wrappers, which contain no "tofu" and so bypassed every text match. This
-	# is the hole require_box used to point agents straight at.
-	t block 'pnpm env:box'
-	t block 'pnpm env:reap'
-	t block 'bash scripts/env.sh box'
-	t block 'bash scripts/env.sh reap'
+	# The lifecycle wrappers are ALLOWED by decision (see the header). What must stay
+	# blocked is raw tofu — that is the difference between "reap the sandbox" and "apply
+	# arbitrary infrastructure". env.sh owns the who-holds-what check these skip.
+	t allow 'pnpm env:box'
+	t allow 'pnpm env:reap --now'
+	t allow 'bash scripts/env.sh box --fresh'
 	# Neighbouring env:* commands must stay usable — they are the whole point of the box.
 	t allow 'pnpm env:up'
 	t allow 'pnpm env:status'
@@ -110,6 +110,24 @@ fi
 # Searching for the string is not running it.
 printf '%s' "$cmd" | grep -Eq '^[[:space:]]*(grep|egrep|rg|ag|sed|awk|cat|echo|printf|head|tail|jq|find)\b' && exit 0
 
+# ── THE WRAPPERS ARE DELIBERATELY ALLOWED NOW — read this before "fixing" it ──────
+#
+# `pnpm env:box` and `pnpm env:reap` shell out to tofu from inside scripts/env.sh, so no
+# PreToolUse hook can see the real command. They were matched by name here after that
+# bypass was found. They are now allowed again, ON PURPOSE, by the maintainer's decision:
+# the box has to be reapable and restorable without a human in the loop for the cost model
+# to work at all.
+#
+# THIS IS NOT THE OLD OVERSIGHT REGROWN. What that hole meant was "an agent can apply
+# arbitrary infrastructure"; raw tofu/terraform apply and destroy — including the
+# flag-first forms — are still blocked below, so that remains impossible.
+#
+# The narrow risk this re-opens is one instance REAPING A BOX ANOTHER IS USING. A hook
+# cannot judge that; it has no idea who holds which environment. scripts/env.sh can, and
+# does: cmd_reap refuses when another owner's env was recently active, `--now` included.
+# That check is the compensating control, and it lives where the information is.
+#
+# ── the original finding, kept because it is the reason this file exists ──────────
 # THE WRAPPER IS THE BYPASS.
 #
 # Matching `tofu`/`terraform` in the command text is necessary but NOT sufficient: the
@@ -127,8 +145,7 @@ printf '%s' "$cmd" | grep -Eq '^[[:space:]]*(grep|egrep|rg|ag|sed|awk|cat|echo|p
 # by finding yet another wrapper, and this list cannot be kept exhaustive by inspection.
 if printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]](apply|destroy)\b' ||
 	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]]plan\b[^&;|]*[[:space:]]-destroy\b' ||
-	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_-])pnpm[[:space:]]+env:(box|reap)\b' ||
-	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(bash|sh)[[:space:]]+scripts/env\.sh[[:space:]]+(box|reap)\b'; then
+	false; then
 	{
 		echo "BLOCKED: applying or destroying infrastructure is a human action."
 		echo ""

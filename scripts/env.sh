@@ -17,7 +17,7 @@
 #   env:test    Playwright browser tests ON THE BOX; report + traces rsync'd back
 #   env:runner  a provisioning runner pointed at this env
 #   env:reap    snapshot + DELETE the box (stops the meter)   [--now]
-#   env:box     create/restore the box  (runs tofu apply — a human action)
+#   env:box     create or restore the box   [--fresh = ignore snapshots]
 set -euo pipefail
 
 # ── $ROOT was doing three jobs at once, and only the first was right ──────────────
@@ -268,25 +268,57 @@ preflight_capacity() {
 #
 # They also have to run where the state file is: a worktree writing the main checkout's
 # state through a TF_DIR pointer is state mutation across trees.
-require_human_and_main_checkout() { # <command> <what it does>
-  if agent_driving; then
-    cat >&2 <<MSG
-✗ \`$1\` $2 — that is a human action in this repo (infra/README.md).
-
-  An agent reviews a plan; it does not apply one. Ask the maintainer to run it.
-  Deliberate, instructed operation: export ALETHIA_ALLOW_IAC=1 before launching claude.
-MSG
-    exit 2
-  fi
+# The lifecycle wrappers are agent-runnable by decision: the cost model needs the box
+# reaped and restored without waiting for a human. Raw tofu apply/destroy is still refused
+# by .claude/hooks/guard-iac.sh, so "an agent can apply arbitrary infrastructure" stays
+# false — this only opens the two commands that manage THIS box.
+#
+# They still have to run where the state file is: a worktree writing the main checkout's
+# state through a TF_DIR pointer is state mutation across trees.
+require_main_checkout() { # <command>
   if [ "$ROOT" != "$MAIN_CHECKOUT" ]; then
     die "\`$1\` must run in the main checkout ($MAIN_CHECKOUT) — it writes OpenTofu state."
+  fi
+}
+
+# THE COMPENSATING CONTROL for letting agents reap.
+#
+# A hook cannot judge this — it does not know who holds which environment. This does: the
+# registry records `owner` and `lastSeen` per env. Reaping deletes the box for EVERYONE, so
+# an instance tidying up after itself must not end someone else's run, and `--now` must not
+# be a way around that.
+#
+# Fails CLOSED: if the registry cannot be read, assume someone is there.
+refuse_if_others_are_working() { # <force-flag>
+  local reg others
+  reg="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null || true)"
+  if [ -z "$reg" ]; then
+    die "cannot read the env registry — refusing to reap a box that might be in use."
+  fi
+
+  # Anyone else's env touched in the last hour counts as in use.
+  others="$(printf '%s' "$reg" | jq -r --arg me "$(owner)" --arg cut "$(date -u -v-60M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" '
+      to_entries[] | select(.value.owner != $me and .value.lastSeen > $cut)
+      | "  \(.key)\t\(.value.owner)\tlast seen \(.value.lastSeen)"' 2>/dev/null || true)"
+
+  if [ -n "$others" ]; then
+    {
+      echo "✗ Not reaping — someone else is working on this box."
+      echo ""
+      printf '%s\n' "$others"
+      echo ""
+      echo "  Reaping deletes the box for everyone, so this is refused even with --now."
+      echo "  Ask them to run  pnpm env:down,  or wait for their env to go idle."
+    } >&2
+    exit 3
   fi
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────────
 
 cmd_box() {
-  require_human_and_main_checkout "env:box" "creates or restores the box"
+  require_main_checkout "env:box"
   need tofu
   [ -f "$TF_DIR/terraform.tfvars" ] ||
     die "no $TF_DIR/terraform.tfvars — copy terraform.tfvars.example and fill it in."
@@ -295,16 +327,39 @@ cmd_box() {
 
   # Restore from the newest snapshot if one exists, so a reaped box comes back with
   # its seeded databases and warm node_modules rather than empty.
-  local snap=""
-  if command -v hcloud >/dev/null 2>&1; then
+  #
+  # --fresh builds from the base image instead. Without it there was NO WAY to ignore a
+  # snapshot, which made the documented cpx32 downsize impossible: Hetzner refuses to
+  # restore a 320 GB (cpx42) snapshot onto a 160 GB (cpx32) disk, and cmd_box always
+  # reached for the newest snapshot.
+  local snap="" fresh=""
+  [ "${1:-}" = "--fresh" ] && fresh=1
+  if [ -z "$fresh" ] && command -v hcloud >/dev/null 2>&1; then
     snap="$(hc image list -t snapshot -l "$SNAPSHOT_LABEL" -o json 2>/dev/null |
-      jq -r 'sort_by(.created) | last | .id // empty' || true)"
+      jq -r 'sort_by(.created) | last | (.id | tostring) + " " + (.disk_size | tostring)' || true)"
   fi
 
-  if [ -n "$snap" ]; then
-    echo "→ restoring from snapshot $snap"
-    tofu -chdir="$TF_DIR" apply -var "image=$snap"
+  local snap_id="${snap%% *}" snap_disk="${snap##* }"
+  if [ -n "$snap_id" ] && [ "$snap_id" != "null" ]; then
+    # Catch the disk mismatch HERE, with a message that names disks — Hetzner's own
+    # failure arrives mid-apply and does not mention them at all.
+    local want_disk
+    want_disk="$(hc server-type describe "$(grep -E '^\s*server_type' "$TF_DIR/terraform.tfvars" 2>/dev/null |
+      sed -E 's/.*"([^"]+)".*/\1/' || echo cpx32)" -o json 2>/dev/null | jq -r '.disk // empty' || true)"
+    if [ -n "$want_disk" ] && [ -n "$snap_disk" ] && [ "$snap_disk" != "null" ] &&
+      [ "${snap_disk%.*}" -gt "$want_disk" ] 2>/dev/null; then
+      die "snapshot $snap_id is ${snap_disk}GB but the target server type has only ${want_disk}GB.
+  Hetzner cannot restore onto a smaller disk. Either keep the larger type, or build fresh
+  and accept losing the box's state:   pnpm env:box --fresh"
+    fi
+    echo "→ RESTORING from snapshot $snap_id (databases and warm node_modules preserved)"
+    tofu -chdir="$TF_DIR" apply -var "image=$snap_id"
   else
+    if [ -n "$fresh" ]; then
+      echo "→ BUILDING FRESH (--fresh): no snapshot restored, so envs start empty"
+    else
+      echo "→ BUILDING FRESH: no snapshot found, so envs start empty"
+    fi
     tofu -chdir="$TF_DIR" apply
   fi
 
@@ -694,7 +749,7 @@ cmd_runner() {
 }
 
 cmd_reap() {
-  require_human_and_main_checkout "env:reap" "snapshots and DELETES the box"
+  require_main_checkout "env:reap"
   need jq
   local idle now=""
   [ "${1:-}" = "--now" ] && now=1
@@ -702,6 +757,7 @@ cmd_reap() {
     echo "box already down — nothing billing but the IP (EUR 0.50/mo) and the snapshot."
     return 0
   }
+  refuse_if_others_are_working
   idle="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")"
 
   # --now is "I am finished for the day". The idle threshold assumes several people whose
@@ -725,8 +781,24 @@ cmd_reap() {
     --label "$SNAPSHOT_LABEL" "$SERVER_NAME" ||
     die "snapshot failed — NOT deleting the box."
 
-  # Only the server is destroyed. The tunnel and DNS records stay, so env:box brings
-  # the same hostnames back. While it is down, they return Cloudflare error 1033.
+  # Prune AFTER the new snapshot succeeded, never before: old snapshots deleted ahead of
+  # a snapshot that then fails is how you lose the box's state entirely.
+  #
+  # Nothing pruned these before, and cmd_reap makes one every time. At ~20GB and
+  # EUR 0.0143/GB, 30 reaps is EUR 8.58/mo — more than the cpx32 box the reaping exists to
+  # save money on. The saving leaked straight back out.
+  local keep="${ALETHIA_SNAPSHOT_KEEP:-2}" stale
+  stale="$(hc image list -t snapshot -l "$SNAPSHOT_LABEL" -o json 2>/dev/null |
+    jq -r --argjson k "$keep" 'sort_by(.created) | reverse | .[$k:] | .[].id' || true)"
+  if [ -n "$stale" ]; then
+    echo "→ pruning $(printf '%s\n' "$stale" | grep -c .) old snapshot(s), keeping $keep"
+    printf '%s\n' "$stale" | while read -r id; do
+      [ -n "$id" ] && hc image delete "$id" >/dev/null 2>&1 || true
+    done
+  fi
+
+  # Only the server is destroyed. The tunnel, the DNS records and the Primary IP stay, so
+  # env:box brings the same hostnames back ON THE SAME ADDRESS.
   tofu -chdir="$TF_DIR" destroy -target=hcloud_server.sandbox
   echo "✓ reaped — the server meter has stopped. Still billing: the Primary IP"
   echo "  (EUR 0.50/mo, which is what keeps the address stable) and the snapshot."
@@ -734,7 +806,10 @@ cmd_reap() {
 }
 
 case "${1:-}" in
-box) cmd_box ;;
+box)
+  shift || true
+  cmd_box "$@"
+  ;;
 up)
   shift || true
   cmd_up "$@"
