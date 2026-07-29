@@ -57,7 +57,7 @@ receives merges from `staging`.
   `required_approving_review_count` in `infra/github` when a second reviewer exists.
 - **`dev` uses a merge queue — Mergify, not GitHub's native one.** Just open a **non-draft**
   PR into `dev`. Mergify (`.mergify.yml`) auto-queues every non-draft, conflict-free dev PR and
-  squash-merges it in order once the **8 required checks** pass, validating each PR on its own
+  squash-merges it in order once the **9 required checks** pass, validating each PR on its own
   branch (it rebases candidates itself). That is what makes concurrent PRs safe: you never merge
   against a `dev` that moved under you, so two green-against-stale PRs cannot race and break the
   branch. Keep work-in-progress as a **draft** — drafts are excluded. If Mergify reports a

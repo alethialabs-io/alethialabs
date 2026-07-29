@@ -29,7 +29,19 @@ else
 	}
 fi
 
+# $ROOT had to be two things at once and could only ever be one, so one of the lines
+# below was always wrong: the branch line needs the SESSION's directory, while the box
+# probe needs the MAIN CHECKOUT (state is gitignored and lives only there).
+#
+# The hook payload carries the session's cwd, so take the branch from that and leave
+# MAIN_CHECKOUT (computed below) to answer everything about the box.
 ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
+_payload="$(cat 2>/dev/null || true)"
+SESSION_CWD="$ROOT"
+if command -v jq >/dev/null 2>&1 && [ -n "$_payload" ]; then
+	_cwd="$(printf '%s' "$_payload" | jq -r '.cwd // empty' 2>/dev/null || true)"
+	[ -n "$_cwd" ] && [ -d "$_cwd" ] && SESSION_CWD="$_cwd"
+fi
 say ""
 say "── Runtime ─────────────────────────────────────────────────"
 
@@ -73,7 +85,7 @@ if [ "$behind" -gt 0 ]; then
 fi
 
 # Where does this worktree's app run?
-branch="$(TO 3 git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+branch="$(TO 3 git -C "$SESSION_CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 slug="${branch#feat/}"
 slug="${slug#fix/}"
 slug="$(printf '%s' "$slug" | tr '[:upper:]/_' '[:lower:]--' | tr -cd 'a-z0-9-' | cut -c1-40)"
@@ -87,11 +99,33 @@ if command -v tofu >/dev/null 2>&1; then
 	# prints "Warning: No outputs found" on STDOUT, so a bare -n test reports a box
 	# that does not exist. Same family as the repo's `""` vs unset trap — validate the
 	# shape, never just the emptiness.
-	ip="$(TO 5 tofu -chdir="$ROOT/infra/sandbox" output -raw server_ipv4 2>/dev/null |
+	# MAIN_CHECKOUT, not $ROOT: state is gitignored, so a worktree has none and this
+	# printed "box down or not created" to EVERY worktree session while the box was up —
+	# the first fact an instance learned about the runtime was false, and the remedy it
+	# offered (pnpm env:box) would have built a second box.
+	ip="$(TO 5 tofu -chdir="$MAIN_CHECKOUT/infra/sandbox" output -raw server_ipv4 2>/dev/null |
 		grep -Eo '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || true)"
 fi
 if [ -n "$ip" ]; then
-	say "  box       up at $ip          (pnpm env:status for envs + capacity)"
+	# Envs in use / cap, and this branch's URL if it already holds a slot. An instance
+	# needs both BEFORE it decides to take one: the box is shared, nothing is evicted
+	# automatically, and `dev` permanently holds a slot as the integration env.
+	slug="$(printf '%s' "${branch#feat/}" | sed 's|^fix/||' | tr '[:upper:]/_' '[:lower:]--' | tr -cd 'a-z0-9-' | cut -c1-40)"
+	cap="$(TO 3 grep -oE 'env_cap[^0-9]+([0-9]+)' "$MAIN_CHECKOUT/infra/sandbox/terraform.tfvars" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+	reg="$(TO 6 ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new \
+		"root@$ip" 'cat /opt/alethia/envs.json' 2>/dev/null || true)"
+	used=""
+	mine=""
+	if [ -n "$reg" ] && command -v jq >/dev/null 2>&1; then
+		used="$(printf '%s' "$reg" | jq -r 'length' 2>/dev/null || true)"
+		mine="$(printf '%s' "$reg" | jq -r --arg s "$slug" 'if has($s) then "yes" else "" end' 2>/dev/null || true)"
+	fi
+	say "  box       up at $ip${used:+   envs ${used}/${cap:-4}}"
+	if [ -n "$mine" ]; then
+		say "  your env  https://${slug}.dev.alethialabs.io   ·  pnpm env:down when finished"
+	else
+		say "  your env  none — pnpm env:up takes a slot (only if you need a RUNNING app)"
+	fi
 else
 	say "  box       down or not created  →  pnpm env:box"
 fi

@@ -178,7 +178,7 @@ func waitKubeReady(t *testing.T, ctx context.Context, kc, kind, ns, name string,
 // from a namespace labelled alethia.io/placement=namespace, must never sync and must materialize no
 // Secret. Without this, "the store works" and "the store is correctly scoped" are indistinguishable.
 //
-// The condition REASON is logged, never matched: ESO 0.9.12's wording for a store that refuses a
+// The condition REASON is logged, never matched: ESO's wording for a store that refuses a
 // namespace is version-specific, and asserting on it would make a chart bump look like a security
 // regression. What is asserted is behavioural — not Ready, and no Secret.
 func assertXacctScopeDenied(t *testing.T, ctx context.Context, kc string, c secretsXacctConfig) bool {

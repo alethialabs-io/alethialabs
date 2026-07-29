@@ -996,15 +996,23 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// so a slow ArgoCD-installed operator webhook must not fail an otherwise-healthy deploy — the
 		// apply is idempotent and reconciles on the next deploy once the operator is ready.
 		//
-		// A pluggable SaaS secret store (Vault / OpenBao / Doppler / generic) reads its API token
-		// from an in-cluster Secret the ClusterSecretStore's auth.secretRef names — seed it BEFORE
-		// applying the store. The credential comes from the job's ConnectorCredentials (never the
-		// snapshot); the token lands only in the in-cluster Secret. facts.SecretsSaaS is nil
+		// A pluggable SaaS secret store (Vault / OpenBao / Doppler / generic / Infisical) reads its
+		// credentials from an in-cluster Secret the ClusterSecretStore's auth.secretRef names — seed
+		// it BEFORE applying the store. The credentials come from the job's ConnectorCredentials
+		// (never the snapshot) and land only in the in-cluster Secret. facts.SecretsSaaS is nil
 		// (fail-closed) when the store's credential/config is absent, so this is skipped exactly
 		// when no store will render.
+		//
+		// The store declares WHICH credential fields it needs (Creds) rather than this caller assuming
+		// a single "token": infisical's Universal Auth needs client_id + client_secret, and hardcoding
+		// one field here would seed a store that can never authenticate.
 		if facts.SecretsSaaS != nil {
-			token := vc.ConnectorCredentialFor("secrets", facts.SecretsSaaS.Slug)["token"]
-			if err := argocd.EnsureSecretsStoreCredential(facts.SecretsSaaS.Namespace, facts.SecretsSaaS.CredSecret, facts.SecretsSaaS.CredKey, token, stdout, stderr); err != nil {
+			creds := vc.ConnectorCredentialFor("secrets", facts.SecretsSaaS.Slug)
+			data := make([]argocd.SecretsStoreCredential, 0, len(facts.SecretsSaaS.Creds))
+			for _, c := range facts.SecretsSaaS.Creds {
+				data = append(data, argocd.SecretsStoreCredential{Key: c.Key, Value: creds[c.CredentialField]})
+			}
+			if err := argocd.EnsureSecretsStoreCredential(facts.SecretsSaaS.Namespace, facts.SecretsSaaS.CredSecret, data, stdout, stderr); err != nil {
 				return nil, fmt.Errorf("failed to seed the %s external-secrets store credential: %w", facts.SecretsSaaS.Slug, err)
 			}
 		}

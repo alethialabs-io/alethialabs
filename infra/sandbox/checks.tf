@@ -54,8 +54,40 @@ check "ssh_is_the_only_ingress" {
 # A firewall that exists but is attached to nothing is the classic silent misconfig.
 check "firewall_is_attached" {
   assert {
-    condition     = contains(hcloud_firewall_attachment.sandbox.server_ids, hcloud_server.sandbox.id)
+    # tonumber() is load-bearing: `server_ids` is a set of NUMBER while
+    # `hcloud_server.sandbox.id` is a STRING, so the un-cast comparison never matched and
+    # this check failed on EVERY apply even though the firewall was correctly attached
+    # (verified against the API on the first real apply — firewall 11386257 → server
+    # 156573892, port 22 from the narrowed CIDR).
+    #
+    # A check that always fails is worse than no check: it teaches you to skim past
+    # "Check block assertion failed", which is the one line that matters on the day the
+    # attachment really is missing.
+    condition     = contains(hcloud_firewall_attachment.sandbox.server_ids, tonumber(hcloud_server.sandbox.id))
     error_message = "The sandbox firewall must actually be attached to the sandbox server."
+  }
+}
+
+# The whole point of the Primary IP is that the box comes back on the SAME address. If it
+# ever comes back on a different one, ssh, rsync and DNS all break at once and the failure
+# looks like "the box is broken" rather than "the IP moved".
+#
+# Both sides are strings here, so no cast is needed — but check the types before trusting
+# an assertion: `firewall_is_attached` compared a set of NUMBER against a STRING id and so
+# could never pass, failing on every apply while the firewall was correctly attached.
+check "server_holds_the_persistent_ip" {
+  assert {
+    condition     = hcloud_server.sandbox.ipv4_address == hcloud_primary_ip.sandbox.ip_address
+    error_message = "The sandbox server must hold the persistent Primary IP — a changed address breaks ssh, rsync and DNS together."
+  }
+}
+
+# auto_delete would destroy the address with the server, silently reinstating the
+# recycled-IP failure on the next restore. It is the one setting that makes reaping safe.
+check "primary_ip_survives_the_server" {
+  assert {
+    condition     = hcloud_primary_ip.sandbox.auto_delete == false
+    error_message = "The Primary IP must NOT auto-delete — it has to outlive the server for the address to be stable across reap/restore."
   }
 }
 

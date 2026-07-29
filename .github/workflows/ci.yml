@@ -457,6 +457,17 @@ jobs:
           pnpm -F console gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
             || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+      # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
+      # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
+      # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that
+      # matters, a stale list lets the user pick a store the cluster will never resolve, surfacing at
+      # deploy time as unresolved secrets rather than at config time. The paired Go test
+      # (categories/secrets_runtime_read_mirror_test.go) proves the generator READ the source right.
+      - name: Secrets runtime-read mirror is in sync with the hooks (secrets_*.go → secrets-runtime-read.ts)
+        run: |
+          pnpm -F console gen:secrets-runtime-read
+          git diff --exit-code -- apps/console/lib/connectors/generated/secrets-runtime-read.ts \
+            || { echo "::error::Generated secrets-runtime-read.ts is stale — run 'pnpm -F console gen:secrets-runtime-read' and commit (source of truth: the saasSecretStore / keylessSecretStore hooks in packages/core/categories/secrets_*.go)."; exit 1; }
       - name: Project templates pin their providers (tofu lock files, no -upgrade)
         run: pnpm -F console check:tofu-lockfiles
       - name: Shipped version defaults are mutually compatible (compat matrix)
@@ -509,6 +520,12 @@ jobs:
         run: bash scripts/claim-work.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
+      # The nightly rollup is the only thing that reads a real-cloud run's verdict, and it reported a
+      # leg that provisioned and FAILED as "gate off — no secret/var wired" (#1613). It is main-gated
+      # and runs once a night, so a regression there is invisible for a day and then misattributed to
+      # whatever diff is nearby. These fixtures are hermetic — no network, no gh, no token.
+      - name: Nightly rollup derivation (a red leg is never "not enabled")
+        run: bash scripts/e2e/nightly-rollup.sh --self-test
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
@@ -516,6 +533,7 @@ jobs:
           bash .claude/hooks/guard-runtime.sh --self-test
           bash .claude/hooks/guard-compose.sh --self-test
           bash .claude/hooks/guard-merge.sh --self-test
+          bash .claude/hooks/guard-iac.sh --self-test
       - name: Hook scripts parse
         run: |
           for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do

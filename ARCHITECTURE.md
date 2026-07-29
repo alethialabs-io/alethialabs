@@ -158,9 +158,10 @@ prohibition on agent-run applies) are in `infra/README.md`.
 across every workspace project that defines them, plus build smokes, the Go matrix, the
 authz/open-core guards, and gitleaks.
 
-Mergify (`.mergify.yml`) queues dev PRs on **8 required checks**: TypeScript, the three Go
-modules, Integration (real Postgres + RLS), Secret scan, Docs prose, and Authz / open-core
-guards.
+Mergify (`.mergify.yml`) queues dev PRs on **9 required checks**: TypeScript, the three Go
+modules, Integration (real Postgres + RLS), Secret scan, Docs prose, Authz / open-core
+guards, and capabilities-security — the fail-closed capabilities/connector/keyless gate that
+replaced the dropped CODEOWNERS review (`.github/workflows/capabilities-security.yml`).
 
 Deploys: `deploy-console.yml` builds the self-host images to GHCR and rolls the box;
 release-please drives the CLI (GoReleaser + Homebrew tap) and the runner image. Marketing

@@ -19,6 +19,7 @@
 // its provider lives on its one row and needs no dominance modelling.
 
 import { toRecord } from "@/lib/coerce";
+import { SECRETS_RUNTIME_READ } from "@/lib/connectors/generated/secrets-runtime-read";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
@@ -102,23 +103,26 @@ export function isPluggable(provider: unknown): provider is string {
 
 // ── per-category "connectable but it won't work" reasons ──────────────────────────────────────
 
-/**
- * Secret stores that are connectable but cannot serve secrets to a cluster.
- *
- * Both are `status: active` with a working credential flow, but neither has a first-class ESO
- * runtime-read path on the pinned external-secrets chart — see
- * packages/core/categories/provider.go IsSaaSSecretStore. Selecting one is WORSE than doing nothing:
- * it flips `secrets_provider` off "native", so every per-cloud custom_secrets.tf stops creating the
- * native secrets, while no ClusterSecretStore renders to read from instead.
- */
-const SECRETS_NO_RUNTIME_READ: Record<string, string> = {
-	infisical: "no in-cluster read yet",
-	onepassword: "no in-cluster read yet",
-};
+/** What the user reads on a secret store the cluster cannot resolve values from. */
+const NO_RUNTIME_READ = "no in-cluster read yet";
 
-/** Why this secret store can't be selected, or null when it can. */
+/**
+ * Why this secret store can't be selected, or null when it can.
+ *
+ * A store is selectable iff Go registers a runtime-read hook for it — `saasSecretStore` (a
+ * credential-based ESO ClusterSecretStore) or `keylessSecretStore` (cross-account, on the cluster's
+ * own workload identity). Selecting one with neither is WORSE than doing nothing: it flips
+ * `secrets_provider` off "native", so every per-cloud custom_secrets.tf stops creating the native
+ * secrets, while no ClusterSecretStore renders to read from instead.
+ *
+ * DERIVED, not listed (#1621). This was a hand-written list of two slugs, and the Go hooks that
+ * decide the answer were free to move without it — silently, and in the direction where the canvas
+ * offers a store the cluster will never resolve. `SECRETS_RUNTIME_READ` is generated from those
+ * hooks and CI diff-checks it, so the list cannot go stale; it is total over catalog.json's secrets
+ * slugs, so an unknown slug is a missing decision rather than a permissive default.
+ */
 export function secretsStoreUnavailable(slug: string): string | null {
-	return SECRETS_NO_RUNTIME_READ[slug] ?? null;
+	return SECRETS_RUNTIME_READ[slug] === false ? NO_RUNTIME_READ : null;
 }
 
 /**

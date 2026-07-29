@@ -54,6 +54,25 @@ runcmd:
   - [sh, -c, "command -v go >/dev/null || (curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz -o /tmp/go.tgz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz)"]
   - [sh, -c, "printf 'export PATH=$PATH:/usr/local/go/bin\\n' > /etc/profile.d/go.sh"]
 
+  # ── kubectl + helm ────────────────────────────────────────────────────────────
+  # NOT optional for provisioning. packages/core/provisioner/deploy.go preflights
+  # utils.CheckDependencies(provider.RequiredCLIs()...), which is a bare exec.LookPath
+  # with no fallback, and RequiredCLIs() is {kubectl, helm} for aws/gcp/azure/alibaba
+  # (only hetzner returns {}). Without these a runner on this box registers, claims a
+  # DEPLOY job and fails it at preflight — after the console has already moved the
+  # environment out of QUEUED.
+  #
+  # Deliberately NOT installing tofu: packages/core/tofu ensureBinary already downloads
+  # and SHA-verifies its own pinned build (DefaultIaCVersion, coupled to the runner
+  # image's TOFU_VERSION by packages/core/compat/matrix.json static_couplings). Pinning
+  # it a third time here would add a drift surface that nothing checks.
+  #
+  # kubectl is pinned rather than `stable.txt` so the box does not silently drift; 1.32
+  # sits mid-range of the k8s versions the compat matrix serves and kubectl supports
+  # +/-1 minor either side of it.
+  - [sh, -c, "command -v kubectl >/dev/null || (curl -fsSL https://dl.k8s.io/release/v1.32.3/bin/linux/amd64/kubectl -o /tmp/kubectl && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl && rm -f /tmp/kubectl)"]
+  - [sh, -c, "command -v helm >/dev/null || (curl -fsSL https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz -o /tmp/helm.tgz && tar -C /tmp -xzf /tmp/helm.tgz linux-amd64/helm && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm && rm -rf /tmp/helm.tgz /tmp/linux-amd64)"]
+
   # ── cloudflared ───────────────────────────────────────────────────────────────
   # Installed as a binary rather than run as a container: it must reach every env's
   # `next dev` on localhost:<port>, and --network host in a container plus a

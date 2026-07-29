@@ -75,9 +75,16 @@ variable "server_type" {
   # ~1 GB for a warm Go build => 16 GB holds the cap of 3 envs. To go cheaper at 2
   # envs use cpx32 (4c/8GB, EUR 35.49). To try ARM once stock returns, set cax31 —
   # `pnpm env:up` preflights capacity and names alternatives before tofu runs.
+  # cpx32 (4c/8GB/160GB). Sized for COST, because billing is hourly and the box is
+  # deleted when idle: EUR 0.0569/h is ~EUR 7.51/mo at 6h x 22d, against EUR 14.70 for
+  # cpx42. It still fits the shared tier (~1GB) + two envs (~2-3GB each) + a Chromium run.
+  #
+  # ⚠ CHANGING THIS DOWNWARD CANNOT USE A SNAPSHOT. Hetzner refuses to restore a snapshot
+  # onto a smaller disk, so a cpx42 (320GB) snapshot will not boot a cpx32 (160GB). Going
+  # down means letting the box go and building fresh; going up is fine.
   description = "Hetzner server type for the sandbox box."
   type        = string
-  default     = "cpx42"
+  default     = "cpx32"
 }
 
 variable "location" {
@@ -98,9 +105,12 @@ variable "env_cap" {
   # A memory budget, not a policy: at ~2 GB per `next dev` on a 16 GB box, the fourth
   # environment is the one that starts swapping and turns every timing assertion into
   # a coin flip. Surfaced here so resizing the box and the cap stay one decision.
+  # Delivered to the box by `env:up` (provision_box writes /opt/alethia/box.env), NOT
+  # by re-running cloud-init — user_data is ignored after creation because changing it
+  # would replace the server. So raising this takes effect on the next env:up.
   description = "Maximum concurrent branch environments the box will allocate."
   type        = number
-  default     = 3
+  default     = 4
   validation {
     condition     = var.env_cap >= 1 && var.env_cap <= 6
     error_message = "env_cap must be between 1 and 6 (the port pools are sized for 6)."

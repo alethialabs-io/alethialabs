@@ -39,18 +39,34 @@ setting `ALETHIA_SES_REGION`, which makes `getEmailConfig()` return `ses: null` 
 `sendEmail` **log** the message instead of sending it
 (`packages/email/src/{config,send}.ts`).
 
-So: request an email OTP, then read the six-digit code out of `pnpm env:logs`.
+So: request an email OTP, then read the six-digit code out of `pnpm env:logs`. This is
+**verified working** on the live box, not a design intention.
 
 **Social sign-in and Stripe webhooks only work on `dev.alethialabs.io`**, the primary
 env. OAuth redirect URIs cannot contain wildcards, so they are registered against that
 one hostname. Branch envs are email-OTP only. Don't debug "broken Google sign-in" on a
 branch env — it was never wired.
 
+## Browser tests
+
+`pnpm env:test` runs Playwright **on the box** and rsyncs `playwright-report/` and
+`test-results/` back into your worktree. It defaults to `--project=hero`, the project CI
+gates on; pass another, e.g. `pnpm env:test --project=canvas`.
+
+**They cannot run from your Mac against the public URL.** Sign-in scrapes the one-time code
+out of the console's stdout, and that log exists only on the box
+(`/var/log/alethia-<slug>.log`). The Playwright process has to read that file, so it has to
+be the same machine. Browsers and their OS libraries install on first run, then cache.
+
+`elench-live` and `elench-ai` **self-skip** on a branch env — the minted `.env` carries no
+`ANTHROPIC_API_KEY` and no `ALETHIA_AI_MOCK`, deliberately. A skip is not a pass.
+
 ## Other things you may want
 
 | Need | Command |
 |---|---|
 | `tsc` / `lint` / `vitest` for a worktree | `pnpm env:check` — worktrees are de-hydrated (no local `node_modules`) |
+| **Browser tests** | `pnpm env:test` — Playwright on the box; report and traces come back to your worktree |
 | A provisioning runner against your env | `pnpm env:runner` |
 | A shell on the box | `pnpm env:ssh`, then `tmux attach -t alethia-<slug>` |
 | Everything running, capacity, who holds what | `pnpm env:status` |
@@ -59,9 +75,15 @@ branch env — it was never wired.
 
 ## Rules that will bite you
 
-- **The box caps at 3 concurrent environments** (a memory budget: ~2 GB per `next dev`
-  on 16 GB). The fourth is refused with a list of who holds the others — nothing is
-  ever evicted automatically, because a silent swap kills someone else's run.
+- **The box is SHARED — one box, one Postgres, one OpenFGA, for every instance and the
+  maintainer.** It caps at 4 environments (a memory budget: ~2–3 GB per `next dev` on
+  16 GB, measured). **`dev` permanently holds one** as the integration env at
+  `dev.alethialabs.io`, so there are **3 branch slots** for everyone else. The next one
+  is refused with a list of who holds the others — nothing is ever evicted
+  automatically, because a silent swap kills someone else's run.
+- **Take a slot only when you need a RUNNING app** — reproducing a bug, checking UI,
+  testing auth. Building, type-checking, linting and unit tests do not need one.
+- **`pnpm env:down` before you finish with a branch.** Nothing reclaims it for you.
 - **Never `docker compose down -v` or `pnpm db:reset`.** `docker-compose.yml` pins
   `name: alethia`, so those delete the volumes *every* window is using. Blocked.
 - **Never run `docker compose` from an env's tree on the box.** Each env is a different
@@ -70,11 +92,25 @@ branch env — it was never wired.
 - **Never build fleet runner images on the box.** `pnpm env:runner` uses `MODE=native`
   deliberately — an image built for the wrong architecture is what churned ~100 fleet
   VMs in 8 hours.
-- **The box is reaped when idle** (`pnpm env:reap` snapshots and *deletes* it — a
-  stopped Hetzner server still bills). While it is down, the hostnames return
-  Cloudflare error 1033. `pnpm env:box` restores it in 1–2 minutes with state intact.
-- **Creating the box runs `tofu apply`, which is a human action** in this repo. `env:up`
-  will point you at `pnpm env:box` rather than provisioning cloud resources for you.
+- **The box is billed BY THE HOUR, and only while it exists.** A stopped Hetzner server
+  bills in full — *"you pay for a server for as long as it exists, regardless of whether
+  it is turned on or not"* — so removing it is the only thing that stops the meter.
+  Run `pnpm env:reap --now` when you finish for the day; that is the difference between about
+  **8 EUR/month and 35**.
+- **Reaping is MANUAL — nothing schedules it.** While the box is down the hostnames return
+  a Cloudflare origin error, and the only things still billing are the Primary IP
+  (0.50 EUR/mo) and the snapshot (~0.30).
+- **The address is stable across the cycle.** A Primary IP is held separately from the
+  server, so a restored box comes back on the same address — no DNS change, no
+  `known_hosts` surprise. That 0.50 EUR is what makes routine teardown safe.
+- **If the box is down, an agent cannot fix it — ask the maintainer.** `pnpm env:box`
+  runs `tofu apply`, which is a human action here; both `.claude/hooks/guard-iac.sh` and
+  `scripts/env.sh` itself refuse it for agents. Do not look for a way around that: from a
+  worktree it would apply against empty state and build a **second** box, breaking
+  `dev.alethialabs.io`.
+- **"box: down" from a worktree used to be a lie.** State is gitignored and lives only in
+  the main checkout; `env.sh` now resolves it there. If you ever see a state-read error,
+  that is a bug in the script, not something to work around.
 
 ## What still runs locally
 
