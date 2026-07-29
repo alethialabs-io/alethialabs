@@ -71,9 +71,54 @@ func TestPodToAPIServerJob(t *testing.T) {
 		"runAsNonRoot: true", // restricted-PSA compliant
 		"readOnlyRootFilesystem: true",
 		"restartPolicy: Never",
+		// The POD carries the selector label the diagnostic uses. Without it the probe can only be
+		// found through a Job-controller label, which is exactly the version-dependent lookup #1641
+		// is removing. Asserted on the manifest because that is where the coupling lives.
+		"app.kubernetes.io/name: alethia-apiserver-probe",
 	} {
 		if !strings.Contains(y, want) {
 			t.Errorf("probe Job manifest missing %q\n---\n%s", want, y)
+		}
+	}
+	// The template uses explicit %[n] argument indices. A mis-numbered verb still compiles and still
+	// renders a valid-looking manifest — it just puts the image where the name goes. Catch that by
+	// proving no argument leaked into the wrong slot.
+	if strings.Contains(y, "%!") {
+		t.Errorf("probe Job manifest has a formatting error (bad argument index)\n---\n%s", y)
+	}
+	if got := strings.Count(y, "alethia-apiserver-probe"); got != 2 {
+		t.Errorf("job name should render exactly 2x (Job metadata.name + the pod's app.kubernetes.io/name); got %d\n---\n%s", got, y)
+	}
+}
+
+func TestProbePodSelectorDoesNotUseJobControllerLabels(t *testing.T) {
+	sel := probePodSelector("alethia-apiserver-probe")
+	if sel != "app.kubernetes.io/name=alethia-apiserver-probe" {
+		t.Errorf("unexpected selector %q", sel)
+	}
+	// The regression this locks: `job-name=` is the legacy unprefixed Job label, superseded by
+	// `batch.kubernetes.io/job-name` in 1.27. Selecting on either makes the diagnostic depend on
+	// Kubernetes' Job-labelling policy — and when it matches nothing, the probe reports
+	// "no pod observed" and blames scheduling for a pod that may have run perfectly.
+	for _, bad := range []string{"job-name=", "batch.kubernetes.io/"} {
+		if strings.Contains(sel, bad) {
+			t.Errorf("selector %q keys on a Job-controller label (%q) — it must key on the label the pod template sets", sel, bad)
+		}
+	}
+}
+
+func TestProbeEvidence(t *testing.T) {
+	out := probeEvidence("Name: alethia-apiserver-probe\nPods Statuses: 0 Running", "")
+	for _, want := range []string{
+		"kubectl describe job",
+		"Pods Statuses: 0 Running",
+		"kubectl get events -n default",
+		// An empty section must SAY it is empty. Dropping it reads as "the command was never run",
+		// when "no events at all" is itself the finding.
+		"(nothing returned)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("probe evidence missing %q\n---\n%s", want, out)
 		}
 	}
 }
