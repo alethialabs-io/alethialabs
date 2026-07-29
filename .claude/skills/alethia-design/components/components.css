@@ -90,7 +90,7 @@
 .vx-status--failed  .vx-status__dot { background: var(--signal-critical); position: relative; }
 .vx-status--failed  .vx-status__dot::after { content: ""; position: absolute; inset: 2px; background: var(--signal-critical-surface); border-radius: 1px; }
 .vx-status--disabled .vx-status__dot { background: var(--signal-faint); }
-.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: vertex-blink 1.4s var(--ease-linear) infinite; }
+.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: alethia-blink 1.4s var(--ease-linear) infinite; }
 
 /* ---------- Input / Textarea ---------- */
 .vx-input, .vx-textarea {

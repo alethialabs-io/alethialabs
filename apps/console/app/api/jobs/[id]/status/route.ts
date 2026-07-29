@@ -258,12 +258,9 @@ export async function PUT(
 					job_type: job.job_type,
 					project_id: job.project_id ?? undefined,
 				};
-				// PostHog product event: the terminal DEPLOY outcome (the actual value moment) keyed by
-				// job_id so a red deploy is one query away, segmented by provider/plan. Best-effort;
-				// captureServer no-ops without the analytics key and never throws. Intentionally carries
-				// NO error_message — the raw runner error can echo provisioning values and stays in the
-				// tenant-scoped in-app alert (system.job.failed) + the job row, never in 3rd-party
-				// telemetry. distinct_id = the job's owner so it stitches to their client timeline.
+				// Legacy terminal DEPLOY event hook. The server analytics boundary deliberately no-ops
+				// it because this callback cannot prove the browser user's analytics consent. The
+				// tenant-scoped job record and alert remain the source of truth.
 				if (job.job_type === "DEPLOY") {
 					void captureServer(
 						job.user_id ?? job.org_id,

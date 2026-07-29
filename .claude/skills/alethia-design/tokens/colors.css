@@ -1,6 +1,7 @@
 /* ============================================================
    COLORS — Alethia Labs
-   Pure grayscale. Zero chroma. No hue, ever.
+   Grayscale foundation. Zero-chroma status and brand ink.
+   One conversion blue is reserved for a single primary CTA.
    A 16-step neutral ink ramp drives two themes (dark is the
    signature surface; light is for docs & dense data views).
    Semantic state is expressed through LUMINANCE + ICONOGRAPHY,
@@ -48,6 +49,11 @@
   --ink-hover:         var(--gray-900);
   --ink-foreground:    var(--gray-50);
 
+  /* ---- Sole Alethia hue: one conversion CTA per view ---- */
+  --cta:               #2563EB;
+  --cta-hover:         #1D4ED8;
+  --cta-foreground:    var(--gray-0);
+
   --ring:              var(--gray-950);
 
   /* ---- Status (grayscale; pair with an icon) ---- */
@@ -78,7 +84,7 @@
 }
 
 /* ============================================================
-   DARK theme — the signature Vertex surface.
+   DARK theme — the signature Alethia surface.
    Add class="dark" (or data-theme="dark") to <html>.
    ============================================================ */
 .dark,

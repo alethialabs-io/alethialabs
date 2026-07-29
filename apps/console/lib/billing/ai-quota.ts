@@ -261,9 +261,8 @@ export async function recordAiUsage(input: {
 	outputTokens?: number;
 	cachedInputTokens?: number;
 	/**
-	 * Optional LLM-observability enrichment — forwarded verbatim to the PostHog `$ai_generation`
-	 * mirror only (never touches the billing ledger). Lets call sites light up Traces / Sessions /
-	 * Tools / Errors / Sentiment without changing the metering contract.
+	 * Optional generation context accepted by the metering contract. The server analytics boundary
+	 * deliberately declines third-party prompt/output capture.
 	 */
 	cacheCreationInputTokens?: number;
 	latencyMs?: number;
@@ -324,10 +323,9 @@ export async function recordAiUsage(input: {
 			});
 	}
 
-	// Mirror the generation into PostHog LLM-analytics (cost/tokens by model + org). This is the single
-	// chokepoint every AI call site funnels through, so instrumenting here covers the agent, project
-	// assistant, support Ask-AI, verify-explain, and colony sub-agents at once. Fire-and-forget and
-	// env-gated (no-op with no PostHog key); only when a model was actually used.
+	// Preserve the generation hook at the metering chokepoint, but the server analytics boundary
+	// deliberately no-ops it because a worker cannot prove browser consent. It remains fire-and-forget
+	// so metering and the user response never depend on optional telemetry.
 	if (input.model) {
 		void captureAiGeneration({
 			userId: input.userId,

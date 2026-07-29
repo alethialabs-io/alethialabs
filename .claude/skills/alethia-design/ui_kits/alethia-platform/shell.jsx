@@ -1,6 +1,6 @@
 /* Alethia platform UI kit — interactive control-plane recreation.
-   Composes the Alethia Labs design-system primitives (window.VertexDesignSystem_8c015f). */
-const VX = window.VertexDesignSystem_8c015f;
+   Composes the Alethia Labs design-system primitives (window.AlethiaDesignSystem). */
+const VX = window.AlethiaDesignSystem;
 const { Button, Badge, StatusBadge, Card, CardHeader, CardTitle, CardDescription, CardBody, CardFooter, Input, Field, Label, Hint, Select, Switch, Checkbox, Radio, Tabs, Avatar, Separator, Alert, Spinner } = VX;
 const Ic = window.VxIcons;
 
