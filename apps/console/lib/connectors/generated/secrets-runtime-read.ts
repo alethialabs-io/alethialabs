@@ -19,7 +19,7 @@
 export const SECRETS_RUNTIME_READ: Record<string, boolean> = {
 	"vault": true, // saasSecretStore
 	"doppler": true, // saasSecretStore
-	"infisical": false, // no store hook — renders nothing to read from
+	"infisical": true, // saasSecretStore
 	"onepassword": false, // no store hook — renders nothing to read from
 	"generic": true, // saasSecretStore
 	"aws-sm-xacct": true, // keylessSecretStore
