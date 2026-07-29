@@ -184,6 +184,9 @@ importers:
       '@ai-sdk/react':
         specifier: ^3.0.238
         version: 3.0.238(react@19.2.3)(zod@4.4.3)
+      '@alethia/enterprise-api':
+        specifier: workspace:*
+        version: link:../../packages/enterprise-api
       '@alicloud/cs20151215':
         specifier: ^7.0.4
         version: 7.0.4
@@ -759,6 +762,9 @@ importers:
         specifier: ^2.0.0
         version: 2.13.1
     devDependencies:
+      '@alethia/enterprise-api':
+        specifier: workspace:*
+        version: link:../packages/enterprise-api
       '@types/node':
         specifier: ^20
         version: 20.19.43
@@ -837,6 +843,15 @@ importers:
       react:
         specifier: 19.2.3
         version: 19.2.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/enterprise-api:
+    devDependencies:
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
       typescript:
         specifier: 5.9.3
         version: 5.9.3

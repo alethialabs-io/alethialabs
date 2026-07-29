@@ -1,26 +1,18 @@
-Alethia Labs
-Copyright (c) 2026-present Alethia Labs DPK. All rights reserved.
+Alethia
 
-This product is developed and owned by Alethia Labs DPK (Bulgaria).
+Copyright (c) 2026-present Borislav Borisov and contributors.
 
-The core of this software is licensed under the GNU Affero General Public License
-v3.0 ("AGPL-3.0-only"). Certain features under the "ee/" directory are licensed
-commercially ("LicenseRef-Alethia-Commercial"). See LICENSE and LICENSING.md.
+Alethia Labs DPK is in formation in Bulgaria. Until the founder IP assignment is
+executed after registration, the pending company must not be represented as the
+owner of all pre-incorporation code, documentation, brand, or design assets.
 
-================================================================================
-Third-party components
-================================================================================
+The community core is licensed under GNU Affero General Public License v3.0 only.
+Files under `ee/` are governed by separate commercial terms. Other exceptions are
+listed in LICENSING.md and in file-level SPDX notices.
 
-This software incorporates third-party open-source components, each under its own
-license. Notable bundled or vendored components include:
+Third-party components retain their original copyright and licence terms. The
+release-specific attribution inventory is maintained in THIRD_PARTY_NOTICES.md
+and the generated software bill of materials. Dependency metadata is evidence
+for compliance review; it does not alter any upstream licence.
 
-  * HashiCorp Terraform, providers, and modules — licensed by HashiCorp under the
-    Business Source License / Mozilla Public License 2.0, as applicable.
-  * Vendored Terraform "valkey" module
-    (infra/templates/project/aws/modules/valkey/) — Apache License 2.0.
-  * Node.js, Go, and JavaScript/TypeScript dependencies — each under the license
-    declared in its own package metadata (package.json / go.mod / *.dist-info).
-
-Full texts of the licenses referenced by this repository are kept under the
-LICENSES/ directory. This NOTICE file is provided for attribution and does not
-modify any license.
+Nothing in this NOTICE grants rights beyond the applicable licence text.

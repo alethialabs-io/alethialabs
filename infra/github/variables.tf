@@ -59,6 +59,10 @@ variable "required_status_checks" {
     # .github/workflows/capabilities-security.yml. SAFE to require: it always reports (unfiltered job), so
     # it never wedges an unrelated PR the way a path-filtered required check would.
     "capabilities-security",
+    # Pre-registration: blocks outside contributions while the recipient entity and CLA are not
+    # active. After registration this same workflow is replaced by the versioned CLA signing gate.
+    # It always reports for pull requests, including founder/bot and promotion PRs.
+    "contribution-legal",
   ]
 }
 

@@ -1,0 +1,12 @@
+{
+  "khroma@2.1.0": {
+    "license": "MIT",
+    "evidence": "node_modules/.pnpm/khroma@2.1.0/node_modules/khroma/license",
+    "reason": "The package manifest omits a license field; the distributed license file contains the MIT text."
+  },
+  "webgl-constants@1.1.1": {
+    "license": "MIT",
+    "evidence": "node_modules/.pnpm/webgl-constants@1.1.1/node_modules/webgl-constants/LICENSE",
+    "reason": "The package manifest omits a license field; the distributed LICENSE file contains the MIT text."
+  }
+}
