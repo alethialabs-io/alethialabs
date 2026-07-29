@@ -8,8 +8,20 @@ name: CLA Assistant
 on:
   issue_comment:
     types: [created]
+  # `reopened` is here so a stale result can be cleared WITHOUT pushing to the PR's branch.
+  #
+  # `pull_request_target` loads this workflow from the PR's BASE branch, so a fix to this file only
+  # takes effect for runs created after it reaches `main`. The obvious lever — a `recheck` comment —
+  # cannot deliver that: the CLA action re-runs the ORIGINAL workflow run (it holds `actions: write`,
+  # below), and a re-run replays that run's own workflow file. So `recheck` re-evaluates the OLD
+  # cla.yml forever.
+  #
+  # That is not hypothetical. After #1650 allowlisted the release bot, #1031 went green because
+  # release-please happened to push its branch (a real `synchronize`), while #890 stayed red through
+  # repeated rechecks and had to be cleared with an empty commit pushed to a bot-managed release
+  # branch. `reopened` creates a NEW run, so close+reopen becomes a working lever instead.
   pull_request_target:
-    types: [opened, closed, synchronize]
+    types: [opened, closed, synchronize, reopened]
 
 permissions:
   actions: write
