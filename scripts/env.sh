@@ -317,9 +317,62 @@ refuse_if_others_are_working() { # <force-flag>
 
 # ── Commands ──────────────────────────────────────────────────────────────────────
 
+# A Primary IP can only be attached to a STOPPED server, and the provider does not report
+# `public_net` when it reads an existing one — so a server that did not get its IP at
+# creation shows a permanent `+ public_net {...}` diff that no apply can settle while it
+# runs. Applying it anyway is not a no-op: it DETACHES the address and then refuses to
+# reattach ("server_not_stopped"), leaving the box running with no public IPv4.
+#
+# That is not theory. On 2026-07-29 it took the live box down — ssh dead, site 502 —
+# because the plan said "update in-place, nothing destroyed" and that read as safe. It is
+# not: in-place on a server's NETWORK CONFIG is a different thing from in-place on a label.
+#
+# The repair is to recreate the server, which gets public_net at creation and clears the
+# drift for good. So the check names that, rather than leaving someone to discover it.
+refuse_public_net_change_on_running_box() {
+  local plan js pending status
+  plan="$(mktemp)"
+  trap 'rm -f "$plan"' RETURN
+  tofu -chdir="$TF_DIR" plan -input=false -out="$plan" >/dev/null 2>&1 || return 0
+
+  js="$(tofu -chdir="$TF_DIR" show -json "$plan" 2>/dev/null || true)"
+  [ -n "$js" ] || return 0
+  pending="$(printf '%s' "$js" | jq -r '
+    [ .resource_changes[]?
+      | select(.address == "hcloud_server.sandbox")
+      | select(.change.actions | index("update"))
+      | select((.change.before.public_net // []) != (.change.after.public_net // []))
+    ] | length' 2>/dev/null || echo 0)"
+  [ "${pending:-0}" -gt 0 ] || return 0
+
+  status="$(hc server describe "$SERVER_NAME" -o json 2>/dev/null | jq -r '.status // empty' || true)"
+  [ "$status" = "running" ] || return 0
+
+  cat >&2 <<'MSG'
+✗ Refusing to apply: this would change the server's public_net while it is RUNNING.
+
+  Hetzner can only attach a Primary IP to a STOPPED server. Applying anyway DETACHES the
+  address and then fails to reattach it, leaving the box up with no public IPv4 — ssh dead,
+  the site 502. That happened on 2026-07-29; the plan said "update in-place, nothing
+  destroyed", which is not the same as safe for a network change.
+
+  The drift is permanent for a server that did not receive its IP at creation, because the
+  provider does not report public_net when it reads one.
+
+  → Fix it by RECREATING the box, which attaches the address at creation:
+        pnpm env:reap --now     # the Primary IP is protected and survives
+        pnpm env:box            # comes back on the same address, drift gone
+
+  → Or, if you must do it in place, stop the server first and accept the downtime.
+MSG
+  exit 4
+}
+
 cmd_box() {
   require_main_checkout "env:box"
   need tofu
+  need jq
+  refuse_public_net_change_on_running_box
   [ -f "$TF_DIR/terraform.tfvars" ] ||
     die "no $TF_DIR/terraform.tfvars — copy terraform.tfvars.example and fill it in."
 
@@ -364,7 +417,40 @@ cmd_box() {
   fi
 
   provision_box
+  restore_live_envs
   echo "✓ box up at $(box_ip)"
+}
+
+# A power cycle or a restore kills every environment's `next dev`: the containers come back
+# on their own (restart: unless-stopped) but tmux does not survive a reboot. After the
+# 2026-07-29 power cycle the shared tier was healthy and every console was gone, which
+# reads as "the box is broken" rather than "the sessions need restarting".
+#
+# The registry already knows which environments exist, so bring back exactly those.
+restore_live_envs() {
+  local reg slugs
+  reg="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null || true)"
+  [ -n "$reg" ] || return 0
+  slugs="$(printf '%s' "$reg" | jq -r 'keys[]' 2>/dev/null || true)"
+  [ -n "$slugs" ] || return 0
+
+  echo "→ restarting environments the box was running: $(printf '%s' "$slugs" | tr '\n' ' ')"
+  printf '%s\n' "$slugs" | while read -r sl; do
+    [ -n "$sl" ] || continue
+    # Already up? tmux session present means the console survived; leave it alone.
+    if ssh_box "tmux has-session -t 'alethia-$sl' 2>/dev/null"; then
+      echo "    $sl — already running"
+      continue
+    fi
+    echo "    $sl — restarting (run 'pnpm env:up' from its worktree if it needs a fresh push)"
+    local row cport sport db
+    row="$(printf '%s' "$reg" | jq -c --arg s "$sl" '.[$s]')"
+    cport="$(printf '%s' "$row" | jq -r .consolePort)"
+    sport="$(printf '%s' "$row" | jq -r .storagePort)"
+    db="$(printf '%s' "$row" | jq -r .database)"
+    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db'" ||
+      echo "      ✗ $sl did not come back — pnpm env:up from its worktree"
+  done
 }
 
 # Push the box-side scripts, the pinned shared compose file and the tunnel
