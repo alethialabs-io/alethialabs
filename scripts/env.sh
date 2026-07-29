@@ -14,8 +14,9 @@
 #   env:open    open this env in a browser
 #   env:ssh     shell on the box
 #   env:check   tsc + lint + vitest ON THE BOX (worktrees are de-hydrated)
+#   env:test    Playwright browser tests ON THE BOX; report + traces rsync'd back
 #   env:runner  a provisioning runner pointed at this env
-#   env:reap    snapshot + DELETE the box if everything is idle
+#   env:reap    snapshot + DELETE the box (stops the meter)   [--now]
 #   env:box     create/restore the box  (runs tofu apply — a human action)
 set -euo pipefail
 
@@ -528,6 +529,87 @@ cmd_check() {
            pnpm -F console check-types && pnpm -F console lint && pnpm -F console test"
 }
 
+# Browser tests, on the box. This is what the box is FOR — the Mac cannot run them.
+#
+# WHY ON THE BOX AND NOT FROM HERE, pointed at the tunnel: sign-in scrapes the one-time
+# code out of the console's stdout (apps/console/e2e/helpers/otp.ts reads DEV_CONSOLE_LOG
+# as a LOCAL file). That log only exists on the box, at /var/log/alethia-<slug>.log. No
+# amount of pointing E2E_BASE_URL at the public URL fixes that — the Playwright process
+# has to be able to read the file, so it has to be the same machine.
+#
+# The recipe mirrors the one CI already proves (.github/workflows/ci.yml, e2e-browser):
+# install -> migrate -> browsers -> non-vacuity guard -> run -> collect artifacts. The box
+# already has the first two warm from env:up.
+cmd_test() {
+  need jq
+  local slug_ cport domain fqdn proj=""
+  slug_="$(slug)"
+  domain="$(env_domain)"
+  if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
+
+  cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
+  [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
+
+  # Default to the project CI gates on. Anything else is opt-in and named.
+  proj="${1:---project=hero}"
+
+  push_tree
+
+  # `playwright install --with-deps` needs root apt for ~16 shared libs (libnss3, libgbm1,
+  # libasound2t64 ...) that cloud-init does not carry. We ssh as root, so this just works;
+  # browsers cache in ~/.cache/ms-playwright, which the snapshot preserves, so it is a
+  # first-run cost only.
+  #
+  # CI is deliberately UNSET: playwright.config.ts sets `reuseExistingServer: !isCI`, so
+  # CI=1 would make Playwright boot its OWN server and fight the running env for the port.
+  #
+  # E2E_BASE_URL is the HTTPS tunnel URL, not localhost: the minted .env sets
+  # BETTER_AUTH_URL to that hostname and Better Auth trusts only that origin, so a plain
+  # http://localhost origin is rejected before any test can sign in.
+  #
+  # The --list guard is CI's: a testMatch drift that matches zero tests otherwise "passes".
+  echo "→ browser tests for '$slug_' on the box  ($proj → https://$fqdn)"
+  ssh_box "set -e
+    cd $REMOTE/envs/$slug_
+    pnpm install --frozen-lockfile >/dev/null
+    pnpm -F console exec playwright install --with-deps chromium >/dev/null
+    export DEV_CONSOLE_LOG=/var/log/alethia-$slug_.log
+    export E2E_BASE_URL=https://$fqdn
+    unset CI
+    list=\$(pnpm -F console exec playwright test $proj --list 2>&1) || { echo \"\$list\"; exit 1; }
+    echo \"\$list\" | grep -qE 'Total: [1-9][0-9]* test' || {
+      echo '✗ that project matched 0 tests — testMatch drift, not a pass.' >&2; exit 1; }
+    pnpm -F console exec playwright test $proj" || {
+    echo "" >&2
+    echo "✗ tests failed — pulling the report and traces back anyway." >&2
+    fetch_artifacts "$slug_"
+    exit 1
+  }
+
+  fetch_artifacts "$slug_"
+}
+
+# Bring the report, screenshots and traces back. env.sh had no reverse path at all, so the
+# only way to see a failure was to ssh in and read files by hand — which is exactly when
+# you least want to. push_tree excludes both directories, so --delete never wipes them.
+fetch_artifacts() { # <slug>
+  local ip slug_="$1"
+  ip="$(require_box)"
+  mkdir -p "$ROOT/apps/console"
+  rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+    "root@$ip:$REMOTE/envs/$slug_/apps/console/playwright-report/" \
+    "$ROOT/apps/console/playwright-report/" 2>/dev/null || true
+  rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+    "root@$ip:$REMOTE/envs/$slug_/apps/console/test-results/" \
+    "$ROOT/apps/console/test-results/" 2>/dev/null || true
+  echo "  report:  apps/console/playwright-report/index.html"
+  echo "  traces:  apps/console/test-results/"
+
+  # Snapshot storage is billed per GB and the box is snapshotted on every reap, so old
+  # traces and 4K stills would quietly inflate the bill. Nothing else prunes them.
+  ssh_box "find $REMOTE/envs/$slug_/apps/console/test-results -maxdepth 1 -mtime +3 -exec rm -rf {} + 2>/dev/null || true"
+}
+
 cmd_runner() {
   local slug_ cport
   slug_="$(slug)"
@@ -542,18 +624,30 @@ cmd_runner() {
 cmd_reap() {
   require_human_and_main_checkout "env:reap" "snapshots and DELETES the box"
   need jq
-  local idle
+  local idle now=""
+  [ "${1:-}" = "--now" ] && now=1
   box_exists || {
-    echo "box already down."
+    echo "box already down — nothing billing but the IP (EUR 0.50/mo) and the snapshot."
     return 0
   }
   idle="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")"
-  if [ "$idle" -lt "$REAP_AFTER_MIN" ]; then
+
+  # --now is "I am finished for the day". The idle threshold assumes several people whose
+  # runs must not be reaped out from under them; with one user it mostly means the box is
+  # NEVER reaped — and an unreaped box is the entire cost problem, because Hetzner bills a
+  # server for as long as it EXISTS, running or not.
+  if [ -z "$now" ] && [ "$idle" -lt "$REAP_AFTER_MIN" ]; then
     echo "not reaping: most recent activity was ${idle}m ago (threshold ${REAP_AFTER_MIN}m)."
+    echo "  Finished for the day?  pnpm env:reap --now"
     return 0
   fi
+  if [ -n "$now" ] && [ "$idle" -lt 30 ]; then
+    echo "⚠ --now, but something was active ${idle}m ago. Reaping anyway; a run in flight will die."
+  fi
 
-  echo "→ snapshotting before delete (everything idle ${idle}m)"
+  # Snapshot storage is billed per GB, so what is on disk when you reap is what you pay
+  # to keep. env:test prunes old traces for this reason.
+  echo "→ snapshotting before delete (last activity ${idle}m ago)"
   hc server create-image --type snapshot \
     --description "alethia-sandbox $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --label "$SNAPSHOT_LABEL" "$SERVER_NAME" ||
@@ -562,7 +656,9 @@ cmd_reap() {
   # Only the server is destroyed. The tunnel and DNS records stay, so env:box brings
   # the same hostnames back. While it is down, they return Cloudflare error 1033.
   tofu -chdir="$TF_DIR" destroy -target=hcloud_server.sandbox
-  echo "✓ reaped. Restore with: pnpm env:box   (~1-2 min; hostnames 1033 until then)"
+  echo "✓ reaped — the server meter has stopped. Still billing: the Primary IP"
+  echo "  (EUR 0.50/mo, which is what keeps the address stable) and the snapshot."
+  echo "  Restore with: pnpm env:box   (~1-2 min, SAME address; hostnames error until then)"
 }
 
 case "${1:-}" in
@@ -581,8 +677,15 @@ logs) cmd_logs ;;
 open) cmd_open ;;
 ssh) cmd_ssh ;;
 check) cmd_check ;;
+test)
+  shift || true
+  cmd_test "$@"
+  ;;
 runner) cmd_runner ;;
-reap) cmd_reap ;;
+reap)
+  shift || true
+  cmd_reap "$@"
+  ;;
 *)
   sed -n '5,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 1

@@ -68,6 +68,29 @@ check "firewall_is_attached" {
   }
 }
 
+# The whole point of the Primary IP is that the box comes back on the SAME address. If it
+# ever comes back on a different one, ssh, rsync and DNS all break at once and the failure
+# looks like "the box is broken" rather than "the IP moved".
+#
+# Both sides are strings here, so no cast is needed — but check the types before trusting
+# an assertion: `firewall_is_attached` compared a set of NUMBER against a STRING id and so
+# could never pass, failing on every apply while the firewall was correctly attached.
+check "server_holds_the_persistent_ip" {
+  assert {
+    condition     = hcloud_server.sandbox.ipv4_address == hcloud_primary_ip.sandbox.ip_address
+    error_message = "The sandbox server must hold the persistent Primary IP — a changed address breaks ssh, rsync and DNS together."
+  }
+}
+
+# auto_delete would destroy the address with the server, silently reinstating the
+# recycled-IP failure on the next restore. It is the one setting that makes reaping safe.
+check "primary_ip_survives_the_server" {
+  assert {
+    condition     = hcloud_primary_ip.sandbox.auto_delete == false
+    error_message = "The Primary IP must NOT auto-delete — it has to outlive the server for the address to be stable across reap/restore."
+  }
+}
+
 # The env cap and the port pools in scripts/box/env-registry.sh are sized together;
 # a cap the pools cannot satisfy fails at allocation time with a confusing
 # "registry is inconsistent" rather than here.
