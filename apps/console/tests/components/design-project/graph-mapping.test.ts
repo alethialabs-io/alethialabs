@@ -290,7 +290,7 @@ describe("secret store selection validation", () => {
 		const res = parseSecret({ name: "api-key", provider, provider_config: knobs });
 		expect(res.success).toBe(true);
 		if (res.success) {
-			expect(res.data.provider_config).toEqual(knobs);
+			expect(res.data.secrets[0].provider_config).toEqual(knobs);
 		}
 	});
 });
