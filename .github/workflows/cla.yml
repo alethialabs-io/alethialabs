@@ -39,8 +39,15 @@ jobs:
           # carried one for 10 days. Names must match the committer login exactly, `[bot]` suffix and
           # all.
           #
+          # `mergify[bot]` is REQUIRED, not a convenience. Mergify validates each queued PR on a
+          # speculative branch of its own, and the draft PR it opens for that branch carries a
+          # mergify[bot]-authored commit alongside the real ones. Since #1653 made Mergify wait on
+          # `check-success=cla`, an unlisted mergify[bot] fails the CLA on EVERY queued dev PR and
+          # ejects it — wedging the whole dev queue. It does not weaken enforcement: the real commits
+          # on that speculative branch are still checked, so an unsigned contributor still fails.
+          #
           # The action also accepts a `bot*` wildcard. Deliberately NOT used: it would allowlist any
           # account whose name merely starts with "bot", which anyone can register.
-          allowlist: 'dependabot[bot],github-actions[bot],renovate[bot],alethia-labs-ci[bot]'
+          allowlist: 'dependabot[bot],github-actions[bot],renovate[bot],alethia-labs-ci[bot],mergify[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-allsigned-prcomment: 'All contributors have signed the CLA. Thank you!'
