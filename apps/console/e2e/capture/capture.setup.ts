@@ -15,6 +15,9 @@ setup("sign in as the seeded demo owner", async ({ page }) => {
 	const cursor = await logCursor();
 	await page.goto("/login", { waitUntil: "domcontentloaded" });
 	await page.waitForTimeout(800);
+	await page
+		.getByRole("button", { name: /reject non-essential/i })
+		.click({ timeout: 5_000 });
 
 	// Step 1 is a provider grid with a "Continue with email" button that reveals the
 	// email step; step 2 has the #email input + a submit disabled until filled. Reveal

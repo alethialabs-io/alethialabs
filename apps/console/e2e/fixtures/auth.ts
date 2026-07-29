@@ -30,6 +30,13 @@ export async function signUpWithOtp(page: Page): Promise<{ email: string; orgSlu
 	const cursor = await logCursor();
 
 	await page.goto("/signup");
+	// A fresh browser must make an explicit privacy choice before the product journey.
+	// Keep E2E telemetry off and persist the same first-party decision a user would make.
+	const rejectTelemetry = page.getByRole("button", {
+		name: /reject non-essential/i,
+	});
+	await rejectTelemetry.waitFor({ state: "visible", timeout: 5_000 });
+	await rejectTelemetry.click();
 
 	// Step 1 (provider grid) → choose email. Step 2 → enter the email + request the code. Both
 	// steps surface exactly one "Continue with email" button, so the sequence is unambiguous.
