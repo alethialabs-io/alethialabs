@@ -110,10 +110,9 @@ export async function onRequestError(
 		digest: errorDigest(error) ?? "-",
 		stack: errorStack(error) ?? errorMessage(error),
 	});
-	// Also forward to PostHog Error Tracking so server-side throws (Route Handlers, Server Actions,
-	// Server Components) are visible in prod — not just stdout. Node-only (posthog-node); best-effort:
-	// captureServerException no-ops without the PostHog key and never throws. Fire-and-forget so it
-	// never blocks or masks the original error path.
+	// Preserve the former product-analytics hook as a fail-closed no-op. Background contexts cannot
+	// prove optional analytics consent, so server errors remain in structured logs and the separately
+	// configured operational error tracker below.
 	if (process.env.NEXT_RUNTIME === "nodejs") {
 		const { captureServerException } = await import("@/lib/analytics/server");
 		void captureServerException(error, {

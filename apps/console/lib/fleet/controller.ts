@@ -275,8 +275,8 @@ export async function reconcilePool(
 						pool_size: onlineNow,
 						err,
 					});
-					// Best-effort PostHog Error-tracking event; no-ops without the analytics key and
-					// never throws. Carries only low-sensitivity placement context (no token/secret).
+					// The legacy third-party product-analytics hook is deliberately fail-closed in
+					// server contexts. The structured fleet log above remains the operational record.
 					void captureServerException(err, {
 						props: {
 							area: "fleet",

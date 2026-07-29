@@ -4,40 +4,41 @@
 > **Alethia** — the product/platform: a multi-cloud Kubernetes control plane.
 > Configure infrastructure visually. Deploy from the terminal. Zero credentials stored.
 
-A sophisticated, **fully grayscale** design language. No color, ever — structure, type, and a disciplined neutral ink ramp carry the whole system. The mood is editorial-technical: instrument-panel density, mono eyebrow labels, and a dark-first surface. The brand mark is the **bracketed point** `[ · ]` — a focal point held inside brackets (*aletheia*, Greek for **truth / unconcealment** — the moment scattered things come into focus).
+A sophisticated, **grayscale-first** design language. Structure, type, and a disciplined neutral ink ramp carry the system; one conversion blue is reserved for a single acquisition CTA. The mood is editorial-technical: instrument-panel density, mono eyebrow labels, and a dark-signature surface. The interim brand mark is the **bracketed point** `[ · ]` — a focal point held inside brackets (*aletheia*, Greek for **truth / unconcealment** — the moment scattered things come into focus).
 
 ---
 
 ## 1 · Company & product context
 
-**Alethia Labs** is the company; it holds the IP and ships **Alethia**, an internal developer platform for provisioning and managing multi-cloud Kubernetes infrastructure through a web control plane and a CLI, backed by GitOps reconciliation. The platform currently lives at `beta.adp.itgix.com` (formerly branded ADP) and is being rebranded onto this language and onto the new company domain **alethialabs.io**.
+**Alethia Labs** is the company being registered as Alethia Labs DPK; until registration and written assignment, founder-created pre-incorporation IP remains founder-owned. It ships **Alethia**, an internal developer platform for provisioning and managing multi-cloud Kubernetes infrastructure through a web control plane and CLI, backed by GitOps reconciliation. The canonical company domain is **alethialabs.io**.
 
 Two surfaces, both recreated here as UI kits:
 
 | Surface | What it is |
 | --- | --- |
-| **Alethia Console** (control plane) | Dashboard — visual configuration, job orchestration, clusters, integrations, real-time logs, cost estimation. *(Source app: Trellis.)* |
-| **alethia CLI** | Interactive terminal wizard — `alethia login`, `whoami`, plan, deploy, destroy, worker management. *(Source app: Grape.)* |
+| **Alethia Console** (control plane) | Dashboard — visual configuration, job orchestration, clusters, integrations, real-time logs, cost estimation. *(Source: `apps/console`.)* |
+| **alethia CLI** | Terminal workflow — `alethia login`, `whoami`, plan, deploy, destroy, and runner management. *(Source: `cmd/alethia`.)* |
 
-**Product domain vocabulary** (kept verbatim — it appears throughout real screens):
-*Vineyard* = a workspace · *Vine* = one infrastructure configuration · *Tendril* = a provisioning worker that runs Terraform · *Plant a Vine* = create & provision. Clouds: **AWS, GCP, Azure** (Alibaba scaffolded).
+**Product domain vocabulary:** organization · project · environment · runner · job · connector · plan · apply · evidence. Clouds: **AWS, GCP, Azure, Hetzner, and Alibaba** where supported.
 
 ### Sources (for the reader)
-Reverse-engineered from a real codebase. If you have access, explore it for higher-fidelity work:
+The repository is the implementation source of truth:
 
 - **GitHub — `alethialabs-io/alethialabs`** → https://github.com/alethialabs-io/alethialabs
-  - Control plane: `apps/trellis` (Next.js, React 19, Tailwind v4, shadcn/ui "new-york", Lucide, default-dark, Geist + Geist Mono).
-  - CLI: `apps/grape` (Go, Cobra, Charmbracelet). Worker: `apps/tendril`. Docs: `apps/vintner`.
-  - Marketing landing: `apps/trellis/components/landing/*`. Primitives: `apps/trellis/components/ui/*`.
-- Aesthetic reference supplied by the user: **tovr.eu** (and `/apex`, `/fos`) — sophisticated monochrome.
+  - Control plane: `apps/console` (Next.js, React 19, Tailwind v4, Base UI/shadcn-derived primitives, Lucide).
+  - Marketing: `apps/marketing`. Shared tokens and logo: `packages/brand`.
+  - Public asset sources: `packages/assets/static/brand`.
+- Aesthetic reference supplied by the founder: **tovr.eu** (and `/apex`, `/fos`).
+  It is a reference only; no TOVR code, assets, copy, or distinctive compositions
+  may be copied. See `docs/legal/BRAND_DESIGN_PROVENANCE.md`.
 
-> The source product ships stock shadcn defaults. **Alethia Labs elevates that** into an owned, monochrome brand language with a distinct type voice and the `[·]` mark. Where this system and the source differ (color removed, fonts changed, product renamed Vertex/ADP→Alethia, peak mark→bracketed point), **this system is the intended direction.**
+> Generic framework scaffolding is not treated as proprietary visual authorship. The owned layer is the Alethia token, composition, content, and interaction system documented here. `packages/brand/src/tokens.css` is authoritative when this reference drifts.
 
 ---
 
 ## 2 · Content fundamentals
 
-How Alethia Labs writes. Channels the tovr.eu voice: terse, declarative, confident.
+How Alethia Labs writes: terse, declarative, and technically confident in its own voice.
 
 - **Voice:** Direct and technical. Short declarative sentences, often fragments. *"Deploy from the terminal. Zero credentials stored."* Confidence without hype.
 - **Person:** Second person for the reader (*"Your infrastructure at a glance"*), imperative for actions (*"Plant a Vine", "Continue", "Destroy"*). Never "we" in product UI; "we" only in transactional notices (*"We sent a magic link…"*).
@@ -56,19 +57,19 @@ How Alethia Labs writes. Channels the tovr.eu voice: terse, declarative, confide
 
 ## 3 · Visual foundations
 
-- **Color:** **None.** A 16-step neutral ink ramp (`--gray-0` → `--black`, OKLCH, zero chroma) drives everything. Two themes: **dark is the signature**, light is for docs and dense data. Tokens: `tokens/colors.css`.
+- **Color:** A 16-step neutral ink ramp (`--gray-0` → `--black`, OKLCH, zero chroma) drives everything. **Conversion blue `#2563EB` is the one Alethia hue**, reserved for at most one primary acquisition CTA per view. Two themes: dark is the signature; light serves the console, docs, and dense data. Tokens: `tokens/colors.css`.
 - **Status without color:** the defining rule. State reads through **dot fill + shape + a mono label**, never hue — solid (active), haloed (processing), ring (idle), hollow-center (failed), faint (disabled), blinking (live). See `StatusBadge`.
 - **Type:** three voices. **Space Grotesk** (display / headlines / wordmark, tracking −0.02 to −0.04em), **Geist** (UI + body, 14px base), **Geist Mono** (terminal, data readouts, the uppercase eyebrow label, the LABS tag). Tokens: `tokens/typography.css`.
-- **Logo:** the **bracketed point** `[ · ]` — a focal dot inside square brackets, drawn in `currentColor` so it inherits the ink. Lockup: mark + **Alethia** (Space Grotesk) + **LABS** (tracked mono). The platform lockup uses **Alethia · PLATFORM**.
+- **Logo:** the interim **bracketed point** `[ · ]` — a focal dot inside square brackets, drawn in `currentColor` so it inherits the ink. Lockup: mark + **Alethia** (Space Grotesk) + **LABS** (tracked mono). The symbol remains on clearance hold; owned-surface display is allowed, public downloads and partner authorization are not.
 - **Backgrounds:** flat ink surfaces. The one decorative motif is a faint **blueprint grid** (44px) radially masked behind the hero — no gradients, no photos, no illustration. Never bluish-purple gradients.
 - **Borders carry structure.** Hairline `1px` borders (`--border`) define every surface; `--border-strong` for inputs/emphasis; dashed borders mark "not yet connected" affordances.
 - **Shadows are a whisper.** Five low-opacity neutral steps; elevation reads from borders, not drop-shadow drama. Resting cards use `--shadow-sm`. Tokens: `tokens/effects.css`.
-- **Corner radii:** `xs 4 · sm 6 · md 8 · lg 10 · xl 14 · 2xl 18 · full`. Buttons/inputs `sm`, cards `lg`, hero containers `xl`. Base `0.625rem`.
+- **Corner radii:** `xs 0 · sm 2 · md 3 · lg 4 · xl 6 · full`. Controls are square or nearly square; rounded app tiles are the deliberate exception.
 - **Spacing:** 4px grid (`--space-*`). Dense, instrument-panel rhythm; generous only around hero/marketing.
 - **Cards:** surface fill, hairline border, `--shadow-sm`, `radius-lg`. `interactive` cards shift border + background on hover; no lift/scale.
 - **Motion:** restrained, mechanical. Durations 80–480ms, easing `cubic-bezier(0.2,0,0,1)`. Hover = background/border/color shift; press = `translateY(0.5px)`. The only loops are the terminal caret and the partner marquee. Respects `prefers-reduced-motion`.
 - **Focus:** 3px translucent ring (`--ring-color`). **Transparency & blur:** sticky headers use `color-mix` canvas + `blur(8–10px)`; scrims 55–70% black.
-- **Imagery:** none by default; provider/integration brand marks keep their original color (the single sanctioned exception to grayscale, because they're third-party logos).
+- **Imagery:** none by default; provider/integration marks keep their original color. Conversion blue is the only Alethia-owned hue and never colors the brand mark or status.
 
 ---
 
@@ -90,7 +91,7 @@ How Alethia Labs writes. Channels the tovr.eu voice: terse, declarative, confide
 - `assets/` — `alethia-mark.svg`, `alethia-labs-wordmark.svg`, `alethia-platform-wordmark.svg`, `favicon.svg`, `app-icon.svg`, `providers/`, `integrations/`.
 - `SKILL.md` — Agent-Skills-compatible entry point.
 
-**Components** (`window.VertexDesignSystem_8c015f.*` — internal namespace id; stable)
+**Components** (`window.AlethiaDesignSystem.*` — internal namespace id; stable)
 - `components/buttons/` — **Button**, **Badge**, **Kbd**
 - `components/forms/` — **Input**, **Textarea**, **Field**, **Label**, **Hint**, **Select**, **Checkbox**, **Radio**, **Switch**
 - `components/surfaces/` — **Card** (+ Header/Title/Description/Body/Footer), **Avatar**, **Separator**
@@ -111,7 +112,7 @@ How Alethia Labs writes. Channels the tovr.eu voice: terse, declarative, confide
 <link rel="stylesheet" href="styles.css" />
 <script src="_ds_bundle.js"></script>
 <script>
-  const { Button, Card, StatusBadge } = window.VertexDesignSystem_8c015f;
+  const { Button, Card, StatusBadge } = window.AlethiaDesignSystem;
 </script>
 ```
 

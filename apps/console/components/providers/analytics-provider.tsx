@@ -2,28 +2,34 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-// Mounts the enabled analytics providers, all gated on runtime env (see lib/analytics/config.ts):
-//  - PostHog (prod suite): product analytics + session replay + web-vitals/performance + errors,
+// Mounts the enabled analytics providers after the matching consent choice:
+//  - PostHog (prod suite): product analytics + optional session replay + web-vitals/performance + errors,
 //  - Umami (OSS self-host): product analytics + funnels, with the custom Web-Vitals reporter,
 //  - OpenReplay (OSS self-host): session replay.
-// With nothing configured this renders only its children, so the open-source build ships zero telemetry.
+// Consent defaults to denied. With nothing configured this renders only its children, so the open-source
+// build ships zero telemetry.
 
 import Script from "next/script";
 import { useEffect } from "react";
 import type React from "react";
+import { useConsent } from "@repo/privacy/consent-provider";
 import { analyticsConfig } from "@/lib/analytics/config";
 import { WebVitals } from "@/components/analytics/web-vitals";
 
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 	const cfg = analyticsConfig();
+	const { consent } = useConsent();
+	const analyticsAllowed = consent?.analytics === true;
+	const replayAllowed = consent?.replay === true;
 
 	// PostHog — the all-in-one suite. Dynamically imported so its bundle only ships when enabled.
-	// Captures pageviews + autocapture (product analytics), session replay (inputs masked; add
-	// data-ph-mask to obscure sensitive text), and Core Web Vitals (capture_performance) → PostHog's
-	// Web Vitals dashboard. Replay sampling + billing limit are set in the PostHog project settings.
+	// Captures pageviews + autocapture and Core Web Vitals only after analytics consent. Session replay
+	// additionally requires replay consent; all text and inputs are masked. Sampling + billing limits are
+	// set in the PostHog project settings.
 	useEffect(() => {
-		if (!cfg.posthog) return;
+		if (!cfg.posthog || !analyticsAllowed) return;
 		let cancelled = false;
+		let stopPosthog: (() => void) | null = null;
 		void (async () => {
 			try {
 				const posthog = (await import("posthog-js")).default;
@@ -35,6 +41,7 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 					api_host: cfg.posthog!.host,
 					ui_host: "https://eu.posthog.com",
 					person_profiles: "identified_only",
+					opt_out_capturing_by_default: true,
 					capture_pageview: true,
 					capture_pageleave: true,
 					autocapture: true,
@@ -64,12 +71,23 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 						}
 						return cr;
 					},
-					session_recording: { maskAllInputs: true, maskTextSelector: "[data-ph-mask]" },
+					disable_session_recording: !replayAllowed,
+					session_recording: {
+						maskAllInputs: true,
+						maskTextSelector: "*",
+					},
 				});
+				posthog.opt_in_capturing();
 				// Tag every event (incl. $exception) with the deploy release, so a captured stack
 				// symbolicates against the source maps uploaded for that same build (see next.config.ts).
 				if (cfg.posthog!.release) posthog.register({ release: cfg.posthog!.release });
+				if (replayAllowed) posthog.startSessionRecording();
 				window.__posthog = posthog;
+				stopPosthog = () => {
+					posthog.stopSessionRecording();
+					posthog.reset();
+					posthog.opt_out_capturing();
+				};
 			} catch {
 				/* analytics is best-effort — never break the app */
 			}
@@ -77,19 +95,25 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 		return () => {
 			cancelled = true;
 			try {
-				window.__posthog?.reset?.();
+				stopPosthog?.();
 			} catch {
 				/* noop */
 			}
 			window.__posthog = undefined;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [cfg.posthog?.key, cfg.posthog?.host]);
+	}, [
+		analyticsAllowed,
+		replayAllowed,
+		cfg.posthog?.key,
+		cfg.posthog?.host,
+		cfg.posthog?.release,
+	]);
 
 	// OpenReplay session replay — dynamically imported so its bundle only ships when enabled. Inputs
 	// are obscured by default; sensitive subtrees (billing, OTP) add data-openreplay-obscured.
 	useEffect(() => {
-		if (!cfg.openreplay) return;
+		if (!cfg.openreplay || !replayAllowed) return;
 		let cancelled = false;
 		let stop: (() => void) | null = null;
 		void (async () => {
@@ -121,11 +145,11 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 		};
 		// Depend on the primitive key/ingest, not the cfg object (recreated each render → would re-run).
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [cfg.openreplay?.projectKey, cfg.openreplay?.ingest]);
+	}, [replayAllowed, cfg.openreplay?.projectKey, cfg.openreplay?.ingest]);
 
 	return (
 		<>
-			{cfg.umami ? (
+			{cfg.umami && analyticsAllowed ? (
 				<Script
 					src={`${cfg.umami.host}/script.js`}
 					data-website-id={cfg.umami.websiteId}
@@ -134,7 +158,9 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 			) : null}
 			{/* PostHog captures Web Vitals natively (capture_performance); the custom reporter is only
 			    for the OSS Umami/OpenReplay path — skip it when PostHog is active to avoid double counts. */}
-			{(cfg.umami || cfg.openreplay) && !cfg.posthog ? <WebVitals /> : null}
+			{analyticsAllowed && (cfg.umami || cfg.openreplay) && !cfg.posthog ? (
+				<WebVitals />
+			) : null}
 			{children}
 		</>
 	);

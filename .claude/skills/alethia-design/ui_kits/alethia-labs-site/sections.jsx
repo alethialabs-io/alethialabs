@@ -1,5 +1,5 @@
 /* Alethia Labs company site (alethialabs.io) UI kit — marketing landing recreation. */
-const W = window.VertexDesignSystem_8c015f;
+const W = window.AlethiaDesignSystem;
 const { Button: WBtn, Badge: WBadge, Tabs: WTabs, Card: WCard, CardBody: WCB, Separator: WSep } = W;
 
 const WMark = ({ size = 26 }) => (
@@ -79,7 +79,7 @@ function Terminal() {
           const dim = l.startsWith("$") || l.startsWith("  ▸");
           return <div key={i} style={{ color: strong ? "var(--text-primary)" : dim ? "var(--text-tertiary)" : "var(--text-secondary)" }}>{l || " "}</div>;
         })}
-        <span style={{ display: "inline-block", width: 8, height: 15, background: "var(--text-primary)", verticalAlign: "middle", animation: "vertex-blink 1.4s linear infinite" }} />
+        <span style={{ display: "inline-block", width: 8, height: 15, background: "var(--text-primary)", verticalAlign: "middle", animation: "alethia-blink 1.4s linear infinite" }} />
       </pre>
     </div>
   );

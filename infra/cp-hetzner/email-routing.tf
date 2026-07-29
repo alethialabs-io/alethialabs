@@ -24,6 +24,7 @@ locals {
     "support",  # user support (shown in transactional email footers)
     "sales",    # marketing contact/demo form recipient
     "legal",    # CLA + legal/privacy/terms contact
+    "privacy",  # data-subject requests + DPA/subprocessor notices
     "security", # vulnerability disclosure
     "feedback", # hosted in-app feedback widget inbox
     "dmarc",    # automated DMARC aggregate reports (rua=mailto:dmarc@)

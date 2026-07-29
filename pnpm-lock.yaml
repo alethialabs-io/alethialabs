@@ -325,6 +325,9 @@ importers:
       '@repo/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@repo/privacy':
+        specifier: workspace:*
+        version: link:../../packages/privacy
       '@repo/support':
         specifier: workspace:*
         version: link:../../packages/support
@@ -670,6 +673,9 @@ importers:
       '@repo/plan-catalog':
         specifier: workspace:*
         version: link:../../packages/plan-catalog
+      '@repo/privacy':
+        specifier: workspace:*
+        version: link:../../packages/privacy
       '@repo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -928,6 +934,37 @@ importers:
       eslint:
         specifier: ^9.39.5
         version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/privacy:
+    dependencies:
+      '@hookform/resolvers':
+        specifier: ^5.5.7
+        version: 5.5.7(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.83.0(react@19.2.3))(zod@4.4.3)
+      react-hook-form:
+        specifier: ^7.83.0
+        version: 7.83.0(react@19.2.3)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@repo/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/react':
+        specifier: 19.2.8
+        version: 19.2.8
+      eslint:
+        specifier: ^9.39.5
+        version: 9.39.5(jiti@2.7.0)
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
       typescript:
         specifier: 5.9.3
         version: 5.9.3
