@@ -140,11 +140,13 @@ function isMissingEnterprisePackage(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code =
     "code" in error && typeof error.code === "string" ? error.code : undefined;
+  const normalizedMessage = error.message.replaceAll("\\", "/");
   return (
     code === "MODULE_NOT_FOUND" &&
-    (error.message.includes("'@alethia/ee'") ||
-      error.message.includes('"@alethia/ee"') ||
-      error.message.includes("Cannot find module @alethia/ee"))
+    (normalizedMessage.includes("'@alethia/ee'") ||
+      normalizedMessage.includes('"@alethia/ee"') ||
+      normalizedMessage.includes("Cannot find module @alethia/ee") ||
+      normalizedMessage.includes("/@alethia/ee/dist/index.js"))
   );
 }
 
