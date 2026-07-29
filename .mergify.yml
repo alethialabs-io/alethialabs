@@ -46,17 +46,19 @@ queue_rules:
       # Listed here BEFORE it is required in branch protection, deliberately — see the note at the
       # bottom of this file.
       - "check-success=capabilities-security"
-      # The Contributor License Agreement gate. The repo ships cla/ICLA.md + cla/CCLA.md and stores
-      # signatures, and `cla` ran on every PR — but it was required NOWHERE (not in any branch
-      # ruleset, not here), so an unsigned contributor's PR could merge into dev with a red X and
-      # nothing stopping it. Requiring it here is step 1 of 2, the same order capabilities-security
-      # used: Mergify waits for the check first, branch protection follows.
-      # Safe to require: the job's step condition short-circuits true for pull_request_target, and
-      # the workflow triggers on `opened` + `synchronize`, so it reports on every PR and cannot
-      # deadlock one the way a path-filtered check would.
-      # Bots that contribute no assignable IP are handled by cla.yml's `allowlist`, not by an
-      # exception here — a machine account missing from that list is a red `cla` (#1650).
-      - "check-success=cla"
+      # `cla` is deliberately NOT listed here — it belongs in branch protection, not in Mergify.
+      #
+      # #1653 added it and wedged the whole dev queue. Mergify's conditions gate the SPECULATIVE
+      # branch, and the draft PR Mergify opens for it carries a `mergify[bot]`-authored commit
+      # alongside the real ones — so the CLA was being evaluated over a commit set that includes
+      # Mergify's own merge. Allowlisting mergify[bot] (#1667) did not reliably clear it either:
+      # those speculative drafts kept resolving a STALE cla.yml, logging the pre-fix allowlist long
+      # after the fix was on `dev`, so the first run on each new draft failed and ejected the PR.
+      #
+      # The deeper point is that the speculative branch is the wrong subject. A CLA is a property of
+      # the PR's OWN commits, which is exactly what a required status check on the branch ruleset
+      # evaluates. Enforcement therefore lives in `infra/github/variables.tf`
+      # (`required_status_checks`) — where it gates the real PR and never sees mergify[bot].
     # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
     merge_method: squash
 
@@ -77,8 +79,7 @@ merge_protections:
       - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
       - "check-success=Authz / open-core guards"
       - "check-success=capabilities-security"
-      # See merge_conditions above: required here first, branch protection second.
-      - "check-success=cla"
+      # `cla` intentionally absent — see merge_conditions above; it is enforced by the branch ruleset.
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
 # success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).
