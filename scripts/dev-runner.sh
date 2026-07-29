@@ -30,11 +30,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-LOCK=/tmp/alethia-dev-runner.lock
-BIN=/tmp/alethia-dev-runner-bin           # compiled once, reused by all native runners
+# Every mutable path here is keyed by the checkout it belongs to. The sandbox box holds
+# up to env_cap (default 3) environments, each its own tree under /opt/alethia/envs/, and
+# these were fixed /tmp paths shared by all of them: a second env's `env:runner` saw the
+# first env's lock and no-op'd with "Local runners already up", the compiled binary was
+# whichever env built last, and the logs interleaved. ENV_KEY is the checkout directory
+# name — the env slug on the box, the worktree name locally.
+ENV_KEY="${ALETHIA_ENV_SLUG:-$(basename "$ROOT")}"
+LOCK="/tmp/alethia-dev-runner-$ENV_KEY.lock"
+BIN="/tmp/alethia-dev-runner-$ENV_KEY-bin"   # compiled once, reused by all native runners
 IMAGE=alethia-runner:dev
-CONTAINER_PREFIX=alethia-runner
-LOG_PREFIX=/tmp/alethia-dev-runner        # per-runner logs: ${LOG_PREFIX}-N.log
+CONTAINER_PREFIX="alethia-runner-$ENV_KEY"
+LOG_PREFIX="/tmp/alethia-dev-runner-$ENV_KEY"  # per-runner logs: ${LOG_PREFIX}-N.log
 
 RUNNERS="${RUNNERS:-1}"
 CRED="${CRED:-bootstrap}"
@@ -173,7 +180,17 @@ if [[ "$MODE" == "docker" ]]; then
     echo "✗ Docker daemon not responding — open Docker Desktop and retry." >&2
     exit 1
   fi
-  if [[ "${REBUILD:-}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  # RUNNER_IMAGE runs an ALREADY-PUBLISHED image instead of building one. Two reasons to
+  # want it: on the sandbox box a local build is 15-25 minutes of CPU and disk for an
+  # artifact that is thrown away, and pulling is the only way to test the image customers
+  # actually get. The trade is that a published image carries the templates and runner
+  # code of the commit it was built from (tags are pushed from main), NOT your worktree —
+  # so use native mode when what you are testing is a template or runner change.
+  if [[ -n "${RUNNER_IMAGE:-}" ]]; then
+    IMAGE="$RUNNER_IMAGE"
+    echo "→ pulling $IMAGE (published image; NOT built from this worktree)…"
+    docker pull "$IMAGE"
+  elif [[ "${REBUILD:-}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "→ building $IMAGE (first build is slow — bakes OpenTofu + cloud CLIs)…"
     # The runner image builds FROM a shared runner-base (Go binary + tofu + infracost + shared tools);
     # build it locally first so the FROM resolves without needing GHCR's published base.
@@ -186,10 +203,19 @@ fi
 if [[ "$MODE" == "native" ]]; then
   echo "→ building runner binary…"
   ( cd apps/runner && go build -o "$BIN" ./cmd/runner )
-  if ! command -v tofu >/dev/null 2>&1 && ! command -v terraform >/dev/null 2>&1; then
-    echo "⚠ neither 'tofu' nor 'terraform' on PATH — native runners register and claim"
-    echo "  jobs, but provisioning jobs that shell out to OpenTofu will fail."
-    echo "  For full job execution use:  MODE=docker pnpm dev:runner"
+  # kubectl and helm are the real blockers, not tofu. packages/core/tofu ensureBinary
+  # downloads and SHA-verifies its own pinned OpenTofu when none is on PATH, so a missing
+  # tofu costs one slow first job. kubectl/helm have no such fallback: RequiredCLIs() is
+  # {kubectl, helm} for aws/gcp/azure/alibaba and deploy.go preflights them through
+  # utils.CheckDependencies, a bare exec.LookPath. A runner missing them still registers
+  # and still CLAIMS the job — then fails it, after the environment has left QUEUED.
+  missing=()
+  command -v kubectl >/dev/null 2>&1 || missing+=(kubectl)
+  command -v helm >/dev/null 2>&1 || missing+=(helm)
+  if (( ${#missing[@]} )); then
+    echo "⚠ not on PATH: ${missing[*]} — this runner will CLAIM managed-cloud provisioning"
+    echo "  jobs and then fail them at preflight. Only hetzner (RequiredCLIs = {}) works."
+    echo "  Install them, or run the published image: MODE=docker RUNNER_IMAGE=<ref>"
   fi
 fi
 
@@ -215,6 +241,13 @@ for i in $(seq 1 "$RUNNERS"); do
       -e ALETHIA_RUNNER_OPERATOR="$OPERATOR"
       -e ALETHIA_RUNNER_SLOTS="$SLOTS"
     )
+    # Native mode inherits the whole parent environment (it runs `env ... sh -c`), docker
+    # mode gets only this allowlist — so anything omitted here silently behaves DIFFERENTLY
+    # between the two modes. The receipt key is the one that matters: without it
+    # verify.SigningKeyFromEnv returns ok=false and the deploy still SUCCEEDS, attaching a
+    # receipt with algorithm:"none". A docker-mode run would quietly produce unsigned
+    # evidence while native-mode produced signed evidence from the same .env.
+    [[ -n "${ALETHIA_RECEIPT_SIGNING_KEY:-}" ]] && args+=( -e ALETHIA_RECEIPT_SIGNING_KEY="$ALETHIA_RECEIPT_SIGNING_KEY" )
     [[ -n "${PROVIDERS:-}" ]] && args+=( -e ALETHIA_RUNNER_PROVIDERS="$PROVIDERS" )
     if [[ "$CRED" == "bootstrap" ]]; then
       args+=( -e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="$ALETHIA_RUNNER_BOOTSTRAP_TOKEN"
