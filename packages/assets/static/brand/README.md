@@ -1,9 +1,10 @@
 # Alethia brand assets
 
 The Alethia mark is **"the bracketed point"** — two brackets `[ ]` framing a center dot. It is
-monochrome by design and lives in the product's grayscale system (no color, ever, in the mark
-itself). These files are served at `/brand/<file>` and are safe to drop into decks, READMEs, and
-third‑party surfaces.
+monochrome by design and lives in the product's grayscale system. The current symbol is an
+**interim Alethia-owned asset under trademark-clearance review**. It may remain on Alethia-owned
+product and company surfaces, but these source files are not a public brand kit and do not grant
+third-party trademark permission.
 
 ## Files
 
@@ -24,6 +25,10 @@ third‑party surfaces.
 - **Wordmark** — the default in‑product logo (the product is "Alethia").
 - **Lockup** — company/legal/footer contexts (the company is "Alethia Labs").
 - **App icon** — home‑screen / PWA / store tile (iOS masks the corners).
+
+Until `BRAND_STATUS.downloadsEnabled` is true, do not add public download links, send the kit to
+partners, file the symbol as a trademark, or commission a large external rollout. See `/brand` for
+the review-safe public specimen and `docs/legal/DESIGN_SYSTEM_AUDIT.md` for the clearance hold.
 
 ## Color & background
 Use the **white** files on dark surfaces, **black** files on light surfaces. Pick `currentColor`

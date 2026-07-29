@@ -3,7 +3,7 @@
 
 import { getEmailConfig } from "@repo/email/config";
 import { sendEmail } from "@repo/email/send";
-import { ContactLeadEmail, subject as contactSubject } from "@/emails/contact-lead";
+import { ContactLeadEmail } from "@/emails/contact-lead";
 import { SALES_MAIL, type ContactLeadInput } from "@/lib/validations/contact.schema";
 
 /** The lead fields we notify on — the validated submission minus bot/control fields. */
@@ -21,7 +21,7 @@ export async function sendContactLeadEmail(lead: ContactLead): Promise<void> {
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
 		to: SALES_MAIL,
-		subject: contactSubject(lead.type, lead.name || lead.email),
+		subject: `Alethia ${lead.type} contact request`,
 		react: ContactLeadEmail({
 			type: lead.type,
 			name: lead.name,
@@ -33,6 +33,6 @@ export async function sendContactLeadEmail(lead: ContactLead): Promise<void> {
 			interest: lead.interest,
 			message: lead.message,
 		}),
-		devLog: `${lead.type} lead from ${lead.email}`,
+		devLog: `${lead.type} contact request; personal details omitted from logs`,
 	});
 }

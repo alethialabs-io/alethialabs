@@ -19,8 +19,7 @@ interface LegalShellProps {
  * Shared chrome and typography for the public legal pages (Terms, Privacy,
  * Cookies, Acceptable Use). Keeps every policy visually consistent with the
  * grayscale brand without pulling in a typography plugin — child semantic
- * elements are styled via arbitrary variants. Use <mark> for unresolved facts
- * so they read as obvious fill-in placeholders.
+ * elements are styled via arbitrary variants.
  */
 export function LegalShell({ title, lastUpdated, children }: LegalShellProps) {
 	return (

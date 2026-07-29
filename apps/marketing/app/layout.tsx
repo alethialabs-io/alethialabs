@@ -6,6 +6,7 @@ import { PublicEnvScript } from "next-runtime-env";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
+import { ConsentProvider } from "@repo/privacy/consent-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -68,8 +69,10 @@ export default function RootLayout({
 					forcedTheme="dark"
 					enableSystem={false}
 				>
-					{children}
-					<Toaster />
+					<ConsentProvider>
+						{children}
+						<Toaster />
+					</ConsentProvider>
 				</ThemeProvider>
 			</body>
 		</html>

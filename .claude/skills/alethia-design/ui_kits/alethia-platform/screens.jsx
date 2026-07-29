@@ -1,5 +1,5 @@
 /* Alethia platform UI kit — screen content. */
-const S_VX = window.VertexDesignSystem_8c015f;
+const S_VX = window.AlethiaDesignSystem;
 const { Button: SBtn, Badge: SBadge, StatusBadge: SStatus, Card: SCard, CardHeader: SCH, CardTitle: SCT, CardDescription: SCD, CardBody: SCB, CardFooter: SCF, Input: SInput, Field: SField, Label: SLabel, Hint: SHint, Select: SSelect, Switch: SSwitch, Checkbox: SCheck, Radio: SRadio, Tabs: STabs, Separator: SSep, Alert: SAlert } = S_VX;
 const SIc = window.VxIcons;
 const { Provider: SProvider } = window.VxApp;
