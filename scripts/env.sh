@@ -368,6 +368,14 @@ MSG
   exit 4
 }
 
+# NON-INTERACTIVE ON PURPOSE. tofu apply/destroy prompt for approval, and anything that
+# is not a terminal — an agent, a scheduled reap, CI — reads EOF and dies:
+#   Enter a value: Error: error asking for approval: EOF
+# env:reap hit exactly that after taking its snapshot. The prompt is not what makes these
+# safe: guard-iac.sh (raw tofu still blocked), require_main_checkout and
+# refuse_if_others_are_working all run before here. A prompt that only fires for humans
+# adds nothing and breaks every other caller — including the nightly reap the cost model
+# depends on.
 cmd_box() {
   require_main_checkout "env:box"
   need tofu
@@ -406,14 +414,14 @@ cmd_box() {
   and accept losing the box's state:   pnpm env:box --fresh"
     fi
     echo "→ RESTORING from snapshot $snap_id (databases and warm node_modules preserved)"
-    tofu -chdir="$TF_DIR" apply -var "image=$snap_id"
+    tofu -chdir="$TF_DIR" apply -input=false -auto-approve -var "image=$snap_id"
   else
     if [ -n "$fresh" ]; then
       echo "→ BUILDING FRESH (--fresh): no snapshot restored, so envs start empty"
     else
       echo "→ BUILDING FRESH: no snapshot found, so envs start empty"
     fi
-    tofu -chdir="$TF_DIR" apply
+    tofu -chdir="$TF_DIR" apply -input=false -auto-approve
   fi
 
   provision_box
@@ -885,7 +893,8 @@ cmd_reap() {
 
   # Only the server is destroyed. The tunnel, the DNS records and the Primary IP stay, so
   # env:box brings the same hostnames back ON THE SAME ADDRESS.
-  tofu -chdir="$TF_DIR" destroy -target=hcloud_server.sandbox
+  # -auto-approve: see the note above cmd_box. The gates that matter ran already.
+  tofu -chdir="$TF_DIR" destroy -input=false -auto-approve -target=hcloud_server.sandbox
   echo "✓ reaped — the server meter has stopped. Still billing: the Primary IP"
   echo "  (EUR 0.50/mo, which is what keeps the address stable) and the snapshot."
   echo "  Restore with: pnpm env:box   (~1-2 min, SAME address; hostnames error until then)"
