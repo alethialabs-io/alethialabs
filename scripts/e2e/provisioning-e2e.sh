@@ -96,10 +96,34 @@ else
   detail="${detail:-$(grep -E "cluster provisioned but not reachable|AUTH REJECTED|Error:|FAIL:|--- (PASS|FAIL)|terminal status" "$log" | tail -1 | sed 's/|/;/g' | cut -c1-200)}"
 fi
 
-# ── scrub the log (best-effort; the bundle must be secret-clean — the repo is public) ──────────
+# ── scrub the log — the bundle is COMMITTED to a public repo ───────────────────────────────────
+# SCRUB_LITERALS must be populated BEFORE scrub_file, exactly as demos/proofs/capture-proof.sh
+# does for the nightly. Without it, exact-value redaction is a no-op and only scrub.sh's
+# key-name regex runs — and that regex is anchored at ^, so it matches `hcloud_token: <value>`
+# on its own line but CANNOT match a secret embedded mid-line. The runner echoes the OpenTofu
+# plan as ONE line of JSON containing `"hcloud_token":{"value":"…"}`, so the raw token survived
+# into demos/proofs/<cloud>/<stamp>/run.log. Observed, not theoretical: a real Hetzner token
+# reached a bundle on 2026-07-29 and had to be rotated.
 if [[ -f "$root/demos/proofs/scrub.sh" ]]; then
+  literals=""
+  for v in "${HCLOUD_TOKEN:-}" "${E2E_GIT_TOKEN:-}" "${ALETHIA_E2E_GIT_TOKEN:-}" \
+    "${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}" "${ALICLOUD_ACCESS_KEY:-}" \
+    "${ALICLOUD_SECRET_KEY:-}" "${ARM_CLIENT_SECRET:-}"; do
+    [ -n "$v" ] && literals+="$v"$'\n'
+  done
+  SCRUB_LITERALS="$literals"
+  export SCRUB_LITERALS
   # shellcheck source=/dev/null
   source "$root/demos/proofs/scrub.sh" 2>/dev/null && scrub_file "$log" 2>/dev/null || true
+  # Tripwire, same as the nightly: refuse to leave a bundle that still looks secret-bearing.
+  # `|| true` on scrub_file above means a scrub failure is silent, so this is the actual gate.
+  if declare -F assert_grep_clean >/dev/null 2>&1; then
+    if ! assert_grep_clean "$outdir" 2>/dev/null; then
+      echo "✗ SECRET-BEARING BUNDLE at $outdir — refusing to record it. Rotate anything it names." >&2
+      rm -f "$log"
+      exit 1
+    fi
+  fi
 fi
 cat >"$outdir/provision-summary.json" <<EOF
 {"feature":"provisioning","cloud":"$cloud","dimension":"$dimension","verdict":"$verdict",
