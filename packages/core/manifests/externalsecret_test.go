@@ -38,7 +38,7 @@ func TestRenderExternalSecret_AWS(t *testing.T) {
 		t.Errorf("nothing should be skipped for aws username/password, got %v", skipped)
 	}
 	for _, want := range []string{
-		"apiVersion: external-secrets.io/v1beta1", // MUST match the deployed ESO 0.9.12
+		"apiVersion: external-secrets.io/v1beta1", // MUST match the deployed ESO 0.9.20
 		"kind: ExternalSecret",
 		"name: api-database-main", // BindingSecretName(service, target), dns1123-lowercased
 		"namespace: demo",

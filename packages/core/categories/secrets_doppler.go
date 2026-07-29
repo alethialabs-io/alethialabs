@@ -36,10 +36,12 @@ func init() {
 				Kind:       "doppler",
 				StoreName:  "secretstore-doppler",
 				CredSecret: "secretstore-doppler-creds",
-				CredKey:    "dopplerToken",
-				Namespace:  secretsSaaSNamespace,
-				Project:    pcString(ctx.ProviderConfig, "project", ""),
-				Config:     pcString(ctx.ProviderConfig, "config", ""),
+				Creds: []SecretsSaaSCredRef{
+					{Role: SaaSCredToken, Key: "dopplerToken", CredentialField: "token"},
+				},
+				Namespace: secretsSaaSNamespace,
+				Project:   pcString(ctx.ProviderConfig, "project", ""),
+				Config:    pcString(ctx.ProviderConfig, "config", ""),
 			}
 		},
 	})

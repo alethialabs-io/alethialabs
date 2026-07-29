@@ -98,13 +98,17 @@ func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Wr
 	return ApplyManifest(externalDNSSecretManifest(secretName, key, token), stdout, stderr)
 }
 
-// secretsSaaSCredentialManifest builds the namespace + token Secret manifest a pluggable SaaS
-// ClusterSecretStore's auth.secretRef reads (Vault tokenSecretRef / Doppler dopplerToken). The
-// namespace (the operator's own) is included so the Secret exists even before the operator's
-// Application first creates it — the store references it by (name, key, namespace).
-func secretsSaaSCredentialManifest(namespace, secretName, key, token string) string {
+// secretsSaaSCredentialManifest builds the namespace + credential Secret manifest a pluggable SaaS
+// ClusterSecretStore's auth.secretRef reads (Vault tokenSecretRef / Doppler dopplerToken / Infisical
+// universalAuthCredentials). The namespace (the operator's own) is included so the Secret exists even
+// before the operator's Application first creates it — the store references it by (name, key,
+// namespace). data carries one entry per key because auth arity is per-provider: one token for
+// vault/generic/doppler, two (clientId + clientSecret) for infisical's Universal Auth. Keys are
+// emitted in the caller's order so the rendered manifest is stable across deploys.
+func secretsSaaSCredentialManifest(namespace, secretName string, data []SecretsStoreCredential) string {
 	b64 := base64.StdEncoding.EncodeToString
-	return fmt.Sprintf(`apiVersion: v1
+	var b strings.Builder
+	fmt.Fprintf(&b, `apiVersion: v1
 kind: Namespace
 metadata:
   name: %s
@@ -115,22 +119,39 @@ metadata:
   name: %s
   namespace: %s
 data:
-  %s: %s
-`, namespace, secretName, namespace, key, b64([]byte(token)))
+`, namespace, secretName, namespace)
+	for _, d := range data {
+		fmt.Fprintf(&b, "  %s: %s\n", d.Key, b64([]byte(d.Value)))
+	}
+	return b.String()
 }
 
-// EnsureSecretsStoreCredential seeds the auth-token Secret a pluggable SaaS ClusterSecretStore
-// (Vault / OpenBao / Doppler / generic Vault-compatible) reads via auth.secretRef. Idempotent —
-// re-applying refreshes a rotated token every deploy. Refuses an empty token: the store's render gate
-// (a credential-present Validate in DominantSecretsSaaSStore) skips the store when the token is absent,
-// so a caller reaching here always has one. The token crosses only into the in-cluster Secret — never
-// a rendered manifest committed to git or execution_metadata (the #640/#427 no-plaintext-secrets rule).
-func EnsureSecretsStoreCredential(namespace, secretName, key, token string, stdout, stderr io.Writer) error {
-	if token == "" {
-		return fmt.Errorf("refusing to write an empty %s secret store credential", secretName)
+// SecretsStoreCredential is one key/value the SaaS store's credential Secret carries. Value is a
+// plaintext secret held only in memory on its way into the in-cluster Secret — it must never reach a
+// rendered manifest committed to git or execution_metadata (the #640/#427 no-plaintext-secrets rule).
+type SecretsStoreCredential struct {
+	Key   string
+	Value string
+}
+
+// EnsureSecretsStoreCredential seeds the credential Secret a pluggable SaaS ClusterSecretStore
+// (Vault / OpenBao / Doppler / generic Vault-compatible / Infisical) reads via auth.secretRef.
+// Idempotent — re-applying refreshes rotated credentials every deploy. Refuses an empty value for ANY
+// key: the store's render gate (a credential-present Validate in DominantSecretsSaaSStore) skips the
+// store when a credential is absent, so a caller reaching here always has every value. Checking each
+// key rather than just the first is what keeps a two-key store (infisical) from being seeded
+// half-written, which would render an authenticating store that can never authenticate.
+func EnsureSecretsStoreCredential(namespace, secretName string, data []SecretsStoreCredential, stdout, stderr io.Writer) error {
+	if len(data) == 0 {
+		return fmt.Errorf("refusing to write %s secret store credential with no keys", secretName)
+	}
+	for _, d := range data {
+		if d.Value == "" {
+			return fmt.Errorf("refusing to write an empty %s secret store credential (key %s)", secretName, d.Key)
+		}
 	}
 	fmt.Fprintf(stdout, "Seeding external-secrets store credential %s...\n", secretName)
-	return ApplyManifest(secretsSaaSCredentialManifest(namespace, secretName, key, token), stdout, stderr)
+	return ApplyManifest(secretsSaaSCredentialManifest(namespace, secretName, data), stdout, stderr)
 }
 
 // externalSecretsStoreMaxWait bounds how long EnsureExternalSecretsStore retries while ArgoCD
@@ -334,14 +355,18 @@ spec:
           roleArn: {{ .SecretsXacctRef }}
           sessionName: external-secrets-xacct
 {{- end }}
-{{- /* ── Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic Vault-compatible) ────────────
+{{- /* ── Pluggable SaaS secret store (Vault / OpenBao / Doppler / generic / Infisical) ─────────────────
        The credential-based external store the project selected via the secrets connector, read
-       IN-CLUSTER by ESO with a STATIC token seeded into an in-cluster Secret (auth.secretRef → the
-       CredSecret the runner seeds; the token never rides these facts). Rendered as a SEPARATE document
-       (leading '---') and CLOUD-AGNOSTIC — it renders on ANY provider, incl. Hetzner (no native store).
-       Kind is the ESO provider kind: "vault" (vault/generic) or "doppler". Infisical (first-class only
-       from ESO 0.9.20) and 1Password (Connect-only in 0.9.12) are documented runtime-read exclusions —
-       no branch renders for them (their write/provision path is unaffected). */}}
+       IN-CLUSTER by ESO with STATIC credentials seeded into an in-cluster Secret (auth.secretRef → the
+       CredSecret the runner seeds; the credentials never ride these facts). Rendered as a SEPARATE
+       document (leading '---') and CLOUD-AGNOSTIC — it renders on ANY provider, incl. Hetzner (no
+       native store). Kind is the ESO provider kind: "vault" (vault/generic), "doppler" or "infisical".
+       Keys are looked up by ROLE (CredKey "token" / "clientId" / "clientSecret") rather than by
+       position, so a provider's auth arity is its own business.
+       1Password remains a documented runtime-read exclusion — ESO's onepassword provider is
+       Connect-server-only, which a bare Service-Account token cannot satisfy — so no branch renders
+       for it (its write/provision path is unaffected).
+       NOTE: unlike the per-cloud stores above, these SaaS branches render NO spec.conditions. */}}
 {{- if .SecretsSaaS }}
 {{- if eq .SecretsSaaS.Kind "vault" }}
 ---
@@ -358,7 +383,7 @@ spec:
       auth:
         tokenSecretRef:
           name: {{ .SecretsSaaS.CredSecret }}
-          key: {{ .SecretsSaaS.CredKey }}
+          key: {{ .SecretsSaaS.CredKey "token" }}
           namespace: {{ .SecretsSaaS.Namespace }}
 {{- end }}
 {{- if eq .SecretsSaaS.Kind "doppler" }}
@@ -380,8 +405,33 @@ spec:
         secretRef:
           dopplerToken:
             name: {{ .SecretsSaaS.CredSecret }}
-            key: {{ .SecretsSaaS.CredKey }}
+            key: {{ .SecretsSaaS.CredKey "token" }}
             namespace: {{ .SecretsSaaS.Namespace }}
+{{- end }}
+{{- if eq .SecretsSaaS.Kind "infisical" }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: {{ .SecretsSaaS.StoreName }}
+spec:
+  provider:
+    infisical:
+      auth:
+        universalAuthCredentials:
+          clientId:
+            name: {{ .SecretsSaaS.CredSecret }}
+            key: {{ .SecretsSaaS.CredKey "clientId" }}
+            namespace: {{ .SecretsSaaS.Namespace }}
+          clientSecret:
+            name: {{ .SecretsSaaS.CredSecret }}
+            key: {{ .SecretsSaaS.CredKey "clientSecret" }}
+            namespace: {{ .SecretsSaaS.Namespace }}
+      secretsScope:
+        projectSlug: {{ printf "%q" .SecretsSaaS.ProjectSlug }}
+        environmentSlug: {{ printf "%q" .SecretsSaaS.EnvironmentSlug }}
+        secretsPath: {{ printf "%q" .SecretsSaaS.SecretsPath }}
+      hostAPI: {{ printf "%q" .SecretsSaaS.HostAPI }}
 {{- end }}
 {{- end }}
 `

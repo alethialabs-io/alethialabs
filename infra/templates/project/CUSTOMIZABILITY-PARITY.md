@@ -98,21 +98,24 @@ as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, 
 - **External secrets store on Hetzner** — Hetzner has no *cloud* secret manager, so there is no
   cloud-identity ClusterSecretStore. Source secrets via a **pluggable secrets connector** instead:
   the External Secrets Operator installs on every cloud (incl. Hetzner), and a selected
-  **Vault / OpenBao / Doppler / generic** connector renders a token-authenticated ClusterSecretStore
-  (`secretstore-<slug>`) so workloads resolve values in-cluster.
-- **Pluggable secrets runtime-read (ESO 0.9.12 provider support)** — the in-cluster read path exists
-  for the stores ESO 0.9.12 supports first-class with a static token:
+  **Vault / OpenBao / Doppler / generic / Infisical** connector renders a credential-authenticated
+  ClusterSecretStore (`secretstore-<slug>`) so workloads resolve values in-cluster.
+- **Pluggable secrets runtime-read (ESO 0.9.20 provider support)** — the in-cluster read path exists
+  for the stores ESO 0.9.20 supports first-class with static credentials:
   - **Vault / OpenBao** and **generic** (a Vault-KV-API-compatible endpoint — the `generic` connector
     is `vault` under a provider-neutral label, reusing the same module + `provider.vault` store) →
     `spec.provider.vault` with `auth.tokenSecretRef`.
   - **Doppler** → `spec.provider.doppler` with `auth.secretRef.dopplerToken`.
-  - **Infisical** — **runtime-read excluded**: ESO's `infisical` provider first ships in **v0.9.20**
-    (absent from the pinned 0.9.12 chart). The provision/write path is unaffected; enable runtime-read
-    by bumping ESO (a version coupling tracked by the compat matrix).
-  - **1Password** — **runtime-read excluded**: ESO's `onepassword` provider in 0.9.12 is **Connect-only**
+  - **Infisical** → `spec.provider.infisical` with `auth.universalAuthCredentials` (two secret refs,
+    `clientId` + `clientSecret`) and a `secretsScope`. Requires the chart at **0.9.20 or later** — the
+    `infisical` provider is absent from 0.9.12's CRD bundle, which is why the pin moved.
+    `secretsScope.projectSlug` is the project **slug**, a different identifier from the `workspace_id`
+    the tofu write path uses, so the connector collects both.
+  - **1Password** — **runtime-read excluded**: ESO's `onepassword` provider is **Connect-only**
     (needs a 1Password Connect server + connect token), which a bare Service-Account token cannot
-    satisfy. The provision/write path is unaffected.
-  Both exclusions are explicit and documented (not silent) — a store with no first-class read path on
+    satisfy. The provision/write path is unaffected. No chart bump unblocks this — it is a separate
+    feature with its own deployment story.
+  The exclusion is explicit and documented (not silent) — a store with no first-class read path on
   the pinned chart registers no `saasSecretStore` and renders no ClusterSecretStore.
 
 ### One real backlog item (a genuine analogue worth adding)
