@@ -819,9 +819,23 @@ cmd_test() {
 # On a shared box that difference is three usable slots versus one, and it is the reason a
 # smaller box could not host the very tests it exists to run. Restarting the console after
 # a run costs one Next cold start and returns ~6 GB.
+# RSS of everything running out of this env's tree. Resolved via /proc/<pid>/cwd, NOT by
+# matching process args: a Next server's argv is literally "next-server (v16.2.12)" with no
+# path in it, so an args grep silently matches nothing and reports 0.
+env_rss_mb() { # <slug>
+  ssh_box "tot=0
+    for p in \$(pgrep -f next-server 2>/dev/null); do
+      cwd=\$(readlink /proc/\$p/cwd 2>/dev/null)
+      case \"\$cwd\" in */envs/$1/*|*/envs/$1) ;; *) continue ;; esac
+      r=\$(awk '/VmRSS/{print \$2}' /proc/\$p/status 2>/dev/null)
+      tot=\$((tot + \${r:-0}))
+    done
+    echo \$((tot / 1024))" 2>/dev/null || echo ""
+}
+
 restart_env_console() { # <slug>
   local slug_="$1" before after row cport sport db
-  before="$(ssh_box "ps -eo rss,args | grep -F 'envs/$slug_' | grep -v grep | awk '{s+=\$1} END {print int(s/1024)}'" 2>/dev/null || echo "")"
+  before="$(env_rss_mb "$slug_")"
   row="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null | jq -c --arg s "$slug_" '.[$s] // empty')"
   [ -n "$row" ] || return 0
   cport="$(printf '%s' "$row" | jq -r .consolePort)"
@@ -833,7 +847,7 @@ restart_env_console() { # <slug>
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2
     return 0
   }
-  after="$(ssh_box "ps -eo rss,args | grep -F 'envs/$slug_' | grep -v grep | awk '{s+=\$1} END {print int(s/1024)}'" 2>/dev/null || echo "")"
+  after="$(env_rss_mb "$slug_")"
   if [ -n "$before" ] && [ -n "$after" ]; then
     echo "  console restarted — ${before}MB → ${after}MB"
   else
