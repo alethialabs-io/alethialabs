@@ -37,37 +37,33 @@ tofu apply         # a human runs this, never an agent
 
 Then, from the repo root, `pnpm env:up`.
 
-## Sizing, and why this is x86
+## Sizing and cost
 
-The default is **`cpx42`** (8 vCPU / 16 GB / 320 GB). Sized from measurement, not
-guesswork: the shared datastore tier costs ~0.5 GB live RSS, each `next dev` ~2 GB,
-and a warm Go build ~1 GB — so 16 GB holds `env_cap = 3`.
+Default **`cpx32`** (4 vCPU / 8 GB / 160 GB). Sized for **cost**, because billing is hourly
+and the box is removed when idle.
 
-It is x86 rather than the ~3× cheaper ARM `cax31` for three reasons, in order of how
-much they bite:
-
-1. **ARM is out of stock in EU.** Checked 2026-07-27: `nbg1`, `hel1` and `fsn1` list
-   zero `cax` types as available. The same scarcity is already recorded in
-   `infra/cp-hetzner/variables.tf`.
-2. **It interacts badly with reaping.** A Hetzner snapshot is architecture-bound, so
-   an ARM box snapshotted and deleted during a capacity crunch **cannot be restored
-   at all** until stock returns. x86 has no such cliff.
-3. **x86 matches the fleet.** Runner images ship `linux/amd64`; an ARM box builds
-   `arm64`, which is precisely the mismatch behind the ~100-VM/8h fleet churn
-   incident.
-
-Because reaping bills hourly, the sticker price is not what you pay:
-
-| Type | | Sticker | At 8h × 22d |
+| | per hour | 6h/day x 22d | always-on |
 |---|---|---|---|
-| `cpx32` | 4c / 8 GB / 160 GB | €35.49 | ~€10.01 |
-| **`cpx42`** | **8c / 16 GB / 320 GB** | **€69.49** | **~€19.61** |
-| `cpx62` | 16c / 32 GB / 640 GB | €138.49 | ~€39.06 |
-| `cax31` *(unavailable)* | 8c / 16 GB / 160 GB | €20.99 | ~€5.92 |
+| **cpx32** | EUR 0.0569 | **~7.51** | 35.49 |
+| cpx42 | EUR 0.1114 | ~14.70 | 69.49 |
 
-Set `server_type = "cax31"` once ARM returns; `pnpm env:up` preflights capacity and
-names alternatives before `tofu` runs, so you get a clear message rather than
-`resource_unavailable`.
+Idle floor is about **EUR 0.80/mo**: the Primary IP (0.50) plus the snapshot
+(~20 GB at 0.0143/GB). 8 GB still fits the shared tier (~1 GB), two environments
+(~2-3 GB each) and a Chromium run.
+
+**A stopped server is not free.** Hetzner bills *"for a server ... for as long as it
+exists, regardless of whether it is turned on or not"*, so stop/start saves nothing and
+removal is the only lever. That is why the lifecycle is snapshot-and-remove rather than
+power-off.
+
+**Going to a smaller type cannot use a snapshot.** Hetzner refuses to restore onto a
+smaller disk, so a cpx42 (320 GB) snapshot will not boot a cpx32 (160 GB). Downsizing means
+letting the box go and building fresh; upsizing is fine.
+
+It is x86 rather than the cheaper ARM `cax31` because ARM has been out of stock EU-wide
+(same scarcity `infra/cp-hetzner/variables.tf` records), snapshots are architecture-bound
+so an ARM box could not be restored during a shortage, and the runner fleet ships
+`linux/amd64`.
 
 ## Durability
 

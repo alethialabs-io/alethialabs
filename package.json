@@ -39,6 +39,7 @@
 		"env:open": "bash scripts/env.sh open",
 		"env:ssh": "bash scripts/env.sh ssh",
 		"env:check": "bash scripts/env.sh check",
+		"env:test": "bash scripts/env.sh test",
 		"env:runner": "bash scripts/env.sh runner",
 		"env:reap": "bash scripts/env.sh reap",
 		"wt": "bash scripts/worktree.sh",

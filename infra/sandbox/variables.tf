@@ -75,9 +75,16 @@ variable "server_type" {
   # ~1 GB for a warm Go build => 16 GB holds the cap of 3 envs. To go cheaper at 2
   # envs use cpx32 (4c/8GB, EUR 35.49). To try ARM once stock returns, set cax31 —
   # `pnpm env:up` preflights capacity and names alternatives before tofu runs.
+  # cpx32 (4c/8GB/160GB). Sized for COST, because billing is hourly and the box is
+  # deleted when idle: EUR 0.0569/h is ~EUR 7.51/mo at 6h x 22d, against EUR 14.70 for
+  # cpx42. It still fits the shared tier (~1GB) + two envs (~2-3GB each) + a Chromium run.
+  #
+  # ⚠ CHANGING THIS DOWNWARD CANNOT USE A SNAPSHOT. Hetzner refuses to restore a snapshot
+  # onto a smaller disk, so a cpx42 (320GB) snapshot will not boot a cpx32 (160GB). Going
+  # down means letting the box go and building fresh; going up is fine.
   description = "Hetzner server type for the sandbox box."
   type        = string
-  default     = "cpx42"
+  default     = "cpx32"
 }
 
 variable "location" {
