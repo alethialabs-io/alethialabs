@@ -7,7 +7,7 @@ import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Check, Loader2, RefreshCw } from "lucide-react";
 
 interface ConnectorCardProps {
 	integration: ConnectorWithConnection;
@@ -26,6 +26,14 @@ interface ConnectorCardProps {
 	 */
 	platformConfigured?: boolean;
 	isConnecting?: boolean;
+	/**
+	 * Pick mode (create-project cloud picker): a connected, healthy card becomes a radio-style pick
+	 * target — the whole card selects instead of offering Manage. Backward-compatible: off by default,
+	 * so the connectors page renders identically.
+	 */
+	selectable?: boolean;
+	selected?: boolean;
+	onSelect?: () => void;
 }
 
 /**
@@ -41,6 +49,9 @@ export function ConnectorCard({
 	onReverify,
 	platformConfigured = true,
 	isConnecting,
+	selectable = false,
+	selected = false,
+	onSelect,
 }: ConnectorCardProps) {
 	const isConnected = integration.connected;
 	// "Coming soon" only when NOT already connected. A connector can be marked coming_soon (e.g. DO/Civo
@@ -63,14 +74,27 @@ export function ConnectorCard({
 	// and says so rather than reporting an unqualified green.
 	const cloudDegraded = integration.cloud_health === "degraded";
 	const accountCount = integration.accounts?.length ?? 0;
+	// A connected, healthy card is a pick target in pick mode (the whole card selects).
+	const isPick =
+		selectable &&
+		isConnected &&
+		!isComingSoon &&
+		!platformUnavailable &&
+		!needsReconnection &&
+		!cloudFailed &&
+		!cloudTesting;
 
 	return (
 		<div
+			onClick={isPick ? onSelect : undefined}
 			className={cn(
 				"flex flex-col gap-3 rounded-xl border bg-background p-4 shadow-sm transition-colors",
 				isComingSoon
 					? "opacity-50 border-border/50"
-					: "border-border/60 hover:border-border",
+					: selected
+						? "border-foreground ring-1 ring-foreground"
+						: "border-border/60 hover:border-border",
+				isPick && "cursor-pointer",
 			)}
 		>
 			<div className="flex items-start gap-3">
@@ -156,6 +180,19 @@ export function ConnectorCard({
 						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
 					>
 						Unavailable
+					</span>
+				) : isPick ? (
+					// Pick mode: a radio-style indicator; the whole card selects.
+					<span
+						className={cn(
+							"grid size-[18px] shrink-0 place-items-center rounded-full border",
+							selected
+								? "border-foreground bg-foreground text-background"
+								: "border-border text-transparent",
+						)}
+						aria-hidden
+					>
+						<Check className="size-3" />
 					</span>
 				) : isConnected && needsReconnection && canManage ? (
 					<Button
