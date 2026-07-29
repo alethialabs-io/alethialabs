@@ -35,7 +35,12 @@ locals {
   # Unknown at plan time for a new cluster — that is fine, it resolves during apply and simply orders
   # the policy after the cluster. Empty only when no RDS cluster exists, which the precondition below
   # rejects rather than letting it degrade back into a wildcard.
-  rds_iam_cluster_resource_id = try(one(module.rds_maindb[*].rds_cluster_resource_id), "")
+  #
+  # NOT `try(one(...), "")`: try() rescues ERRORS, and `one([])` is not an error — it returns NULL. The
+  # fallback therefore never fired, and the null reached the policy's string template, which fails with
+  # "Invalid template interpolation value" instead of the precondition's explanation.
+  rds_iam_cluster_resource_id_raw = one(module.rds_maindb[*].rds_cluster_resource_id)
+  rds_iam_cluster_resource_id     = local.rds_iam_cluster_resource_id_raw == null ? "" : local.rds_iam_cluster_resource_id_raw
 }
 module "rds_iam_auth" {
 
@@ -47,7 +52,7 @@ module "rds_iam_auth" {
   create_role                = true
   role_name                  = "rds-iam-auth-${local.eks_name}"
   role_policy_arns = {
-    rds_iam_auth_policy = aws_iam_policy.rds_iam_auth.arn
+    rds_iam_auth_policy = aws_iam_policy.rds_iam_auth[0].arn
   }
   oidc_providers = {
     main = {
@@ -60,6 +65,12 @@ module "rds_iam_auth" {
 
 
 resource "aws_iam_policy" "rds_iam_auth" {
+  # Same count as the module that consumes it (below). Without this the policy was created
+  # UNCONDITIONALLY while its only consumer was gated on rds_iam_irsa — so on every shape that does not
+  # ask for the app's RDS-IAM identity (the default, and every e2e floor run) tofu still rendered an
+  # rds-db:connect ARN for a cluster that does not exist. That is what reds the AWS nightly at PLAN
+  # time, before a single resource is created.
+  count = var.rds_iam_irsa ? 1 : 0
 
   name_prefix = "rds_iam_auth"
   description = "Policy for the keyless app ServiceAccount allowing RDS IAM connect as alethia_app for cluster ${local.eks_name}"

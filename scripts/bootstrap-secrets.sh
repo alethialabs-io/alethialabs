@@ -52,11 +52,25 @@ rsa_b64() { openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/
 # base64(PKCS8 ECDSA-P256 PEM) on ONE line — the #885 receipt-anchor key. Hash-only hashedrekord
 # entries require ECDSA (pure ed25519 is rejected), so the anchor key is a dedicated P-256 key.
 ec_p256_b64() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null | openssl base64 -A; }
+# base64 of a RAW 64-byte ed25519 private key (seed||public) — the evidence-receipt signing
+# key (packages/core/verify, SigningKeyFromEnv). Go's ed25519.PrivateKey is those 64 bytes,
+# NOT a PEM, and openssl cannot emit them directly; for ed25519 both DER encodings are
+# fixed-length, so the seed is the last 32 bytes of the PKCS8 DER and the public key the
+# last 32 of the SPKI DER. Distinct from ALETHIA_RECEIPT_ANCHOR_KEY above: this one SIGNS
+# the receipt, that one anchors its hash in Rekor and must be ECDSA.
+ed25519_raw_b64() {
+  local der; der="$(mktemp)"
+  openssl genpkey -algorithm ED25519 -outform DER -out "$der" 2>/dev/null
+  { tail -c 32 "$der"; openssl pkey -inform DER -in "$der" -pubout -outform DER 2>/dev/null | tail -c 32; } \
+    | openssl base64 -A
+  rm -f "$der"
+}
 
 gen_if_absent BETTER_AUTH_SECRET "$(b64)"
 gen_if_absent CLI_JWT_SECRET "$(hex)"
 gen_if_absent ALETHIA_CRED_ENCRYPTION_KEY "$(b64)"   # base64, decodes to 32 bytes
 gen_if_absent ALETHIA_SNAPSHOT_HMAC_KEY "$(b64)"     # config_snapshot HMAC (lib/runners/snapshot-sig.ts)
+gen_if_absent ALETHIA_RECEIPT_SIGNING_KEY "$(ed25519_raw_b64)"  # signs the evidence receipt (packages/core/verify); ABSENT ⇒ every receipt ships algorithm:"none"
 gen_if_absent ALETHIA_RECEIPT_ANCHOR_KEY "$(ec_p256_b64)"  # #885 Rekor anchor key (ECDSA-P256, base64(PKCS8 PEM)); anchoring stays OFF until ALETHIA_REKOR_ANCHOR_ENABLED=true
 gen_if_absent ALETHIA_DB_PASSWORD "$(hex)"
 gen_if_absent ALETHIA_APP_DB_PASSWORD "$(hex)"
