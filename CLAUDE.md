@@ -63,7 +63,7 @@ type-check, lint, unit tests, git, read-only Docker.
 ## 4. Landing work
 
 Open a **non-draft PR into `dev`**. Mergify (`.mergify.yml`) auto-queues every non-draft,
-conflict-free dev PR and squash-merges it once the **8 required checks** pass, validating each
+conflict-free dev PR and squash-merges it once the **9 required checks** pass, validating each
 PR on its own branch — so you never merge against a `dev` that moved under you. Keep WIP as a
 draft. On a conflict, rebase onto `origin/dev` and push; it re-queues itself.
 
