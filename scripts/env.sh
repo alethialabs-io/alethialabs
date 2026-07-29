@@ -332,10 +332,18 @@ refuse_if_others_are_working() { # <force-flag>
 refuse_public_net_change_on_running_box() {
   local plan js pending status
   plan="$(mktemp)"
-  trap 'rm -f "$plan"' RETURN
-  tofu -chdir="$TF_DIR" plan -input=false -out="$plan" >/dev/null 2>&1 || return 0
+  # NO `trap ... RETURN` here. A RETURN trap set inside a function stays armed for LATER
+  # function returns, where $plan is out of scope — and with `set -u` that is fatal. It
+  # made env:box exit 1 AFTER a completely successful restore ("plan: unbound variable"),
+  # which any caller checking the exit code would read as a failed restore.
+  # Clean up explicitly instead; the paths are few and all of them are here.
+  tofu -chdir="$TF_DIR" plan -input=false -out="$plan" >/dev/null 2>&1 || {
+    rm -f "$plan"
+    return 0
+  }
 
   js="$(tofu -chdir="$TF_DIR" show -json "$plan" 2>/dev/null || true)"
+  rm -f "$plan"
   [ -n "$js" ] || return 0
   pending="$(printf '%s' "$js" | jq -r '
     [ .resource_changes[]?
