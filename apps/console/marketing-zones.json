@@ -26,6 +26,7 @@
             "/privacy",
             "/cookies",
             "/acceptable-use",
+            "/legal/:path*",
             "/mkt-assets/:path*",
             "/robots.txt",
             "/sitemap.xml"

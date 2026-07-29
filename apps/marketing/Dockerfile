@@ -16,6 +16,10 @@ WORKDIR /app
 
 # ---- build: install workspace deps (incl. @repo/{ui,brand,plan-catalog}) + build ----
 FROM base AS build
+ARG VERSION=development
+ARG ALETHIA_CORE_SOURCE_URL=https://github.com/alethialabs-io/alethialabs
+ENV ALETHIA_SOURCE_COMMIT=$VERSION
+ENV ALETHIA_CORE_SOURCE_URL=$ALETHIA_CORE_SOURCE_URL
 COPY . .
 RUN pnpm install --frozen-lockfile --filter marketing...
 # Stripe drives the live pricing label but falls back to the static plan-catalog,

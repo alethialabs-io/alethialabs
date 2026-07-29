@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Console (Next.js) self-host image. Build context = repo root:
+# Enterprise/hosted console image. For a community-only image use
+# Dockerfile.community. Build context = repo root:
 #   docker build -f apps/console/Dockerfile -t alethia-console .
 #
 # Targets:
@@ -42,6 +43,10 @@ ENV NEXT_PUBLIC_CANVAS_ENABLED=$NEXT_PUBLIC_CANVAS_ENABLED
 # source-map upload keys maps to the same release. CI passes VERSION=${{ github.sha }}.
 ARG VERSION=dev
 ENV NEXT_PUBLIC_APP_VERSION=$VERSION
+ENV ALETHIA_EDITION=enterprise \
+    ALETHIA_SOURCE_COMMIT=$VERSION
+ARG ALETHIA_CORE_SOURCE_URL=https://github.com/alethialabs-io/alethialabs
+ENV ALETHIA_CORE_SOURCE_URL=$ALETHIA_CORE_SOURCE_URL
 # PostHog Error-tracking source-map upload (see next.config.ts). projectId + API host are non-secret
 # build args; the personal WRITE key is a BuildKit secret mounted ONLY on the console build step below,
 # so it never lands in an image layer. No key → withPostHogConfig no-ops (OSS/local build unaffected).
@@ -66,7 +71,7 @@ CMD ["node", "scripts/migrate.mjs"]
 # ---- runner: slim standalone runtime ----
 FROM node:22-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production ALETHIA_EDITION=enterprise
 RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 COPY --from=build --chown=nextjs:nodejs /app/apps/console/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/apps/console/.next/static ./apps/console/.next/static
