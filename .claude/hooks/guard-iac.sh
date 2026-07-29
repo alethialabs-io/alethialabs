@@ -50,6 +50,20 @@ if [ "${1:-}" = "--self-test" ]; then
 	t block 'terraform -chdir=x apply'
 	t block 'cd infra/sandbox && tofu apply'
 	t block 'TF_LOG=debug tofu apply'
+
+	# The pnpm wrappers, which contain no "tofu" and so bypassed every text match. This
+	# is the hole require_box used to point agents straight at.
+	t block 'pnpm env:box'
+	t block 'pnpm env:reap'
+	t block 'bash scripts/env.sh box'
+	t block 'bash scripts/env.sh reap'
+	# Neighbouring env:* commands must stay usable — they are the whole point of the box.
+	t allow 'pnpm env:up'
+	t allow 'pnpm env:status'
+	t allow 'pnpm env:down'
+	t allow 'pnpm env:push'
+	t allow 'pnpm env:logs'
+	t allow 'pnpm env:check'
 	# `plan -destroy` is a destroy plan; infra/README.md forbids it explicitly.
 	t block 'tofu plan -destroy'
 	t block 'tofu -chdir=infra/cp-hetzner plan -destroy'
@@ -96,10 +110,25 @@ fi
 # Searching for the string is not running it.
 printf '%s' "$cmd" | grep -Eq '^[[:space:]]*(grep|egrep|rg|ag|sed|awk|cat|echo|printf|head|tail|jq|find)\b' && exit 0
 
-# `tofu`/`terraform` … `apply` or `destroy` anywhere after it, whatever flags intervene.
-# `[^&;|]*` keeps the match inside one command segment.
+# THE WRAPPER IS THE BYPASS.
+#
+# Matching `tofu`/`terraform` in the command text is necessary but NOT sufficient: the
+# repo ships pnpm scripts that shell out to tofu from INSIDE a script, where no PreToolUse
+# hook can see them. `pnpm env:box` runs `tofu -chdir=… apply` (scripts/env.sh) and
+# `pnpm env:reap` runs `tofu -chdir=… destroy` — neither command string contains the word
+# "tofu", so this hook and the settings.json deny rules both waved them straight through.
+#
+# That was not theoretical: `require_box`'s own error message instructed agents to run
+# `pnpm env:box`, and from a worktree (empty tofu state) that apply would have created a
+# SECOND server plus duplicate tunnel and DNS records, breaking dev.alethialabs.io.
+#
+# So the wrappers are named explicitly. scripts/env.sh ALSO refuses these two commands
+# when an agent is driving — a guard the wrapped script enforces itself cannot be dodged
+# by finding yet another wrapper, and this list cannot be kept exhaustive by inspection.
 if printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]](apply|destroy)\b' ||
-	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]]plan\b[^&;|]*[[:space:]]-destroy\b'; then
+	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]]plan\b[^&;|]*[[:space:]]-destroy\b' ||
+	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_-])pnpm[[:space:]]+env:(box|reap)\b' ||
+	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(bash|sh)[[:space:]]+scripts/env\.sh[[:space:]]+(box|reap)\b'; then
 	{
 		echo "BLOCKED: applying or destroying infrastructure is a human action."
 		echo ""

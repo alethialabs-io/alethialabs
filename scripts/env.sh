@@ -19,11 +19,46 @@
 #   env:box     create/restore the box  (runs tofu apply — a human action)
 set -euo pipefail
 
+# ── $ROOT was doing three jobs at once, and only the first was right ──────────────
+#
+#   1. "this branch's working tree"      — correct: cd, slug(), push_tree's source
+#   2. "where the box's IaC state lives" — WRONG: state is gitignored, so it exists ONLY
+#                                          in the main checkout
+#   3. "the box-global control scripts"  — WRONG: they belong to the shared box, not to
+#                                          whichever branch last ran env:up
+#
+# Conflating 1 and 2 made every worktree report `box: down (reaped or never created)`
+# while the box was up — `tofu output` does not error without state, it prints a warning
+# and nothing, which box_ip's shape-check correctly swallows. That silence gated env:up,
+# push, down, logs, ssh, check and runner: a session could not even RELEASE its own env.
+#
+# So they get separate names. MAIN_CHECKOUT is the same git-common-dir resolution
+# .claude/hooks/session-runtime.sh uses.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-TF_DIR="$ROOT/infra/sandbox"
+MAIN_CHECKOUT="$ROOT"
+_git_common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+case "$_git_common" in
+*/.git)
+  # In a linked worktree the common dir is the MAIN checkout's .git; its parent is the
+  # main checkout, which is the only tree holding terraform.tfstate / terraform.tfvars.
+  MAIN_CHECKOUT="$(cd "$(dirname "$_git_common")" 2>/dev/null && pwd || echo "$ROOT")"
+  ;;
+esac
+
+TF_DIR="$MAIN_CHECKOUT/infra/sandbox"
 SERVER_NAME="alethia-sandbox"
+# The hcloud CLI's "active context" is ONE global value in ~/.config/hcloud/cli.toml,
+# shared by every instance on this machine — and other sessions change it. It drifted to
+# `tovr-sandbox` and then to `alethia-infra-tests` during a single task here, which made
+# `hc server describe` fail and the live box read as DOWN.
+#
+# A wrong status is the mild failure. The severe one is env:reap: `server create-image`
+# followed by `tofu destroy`, aimed at whatever project someone else last selected. So
+# every call is pinned, and the active context is never consulted or mutated.
+HCLOUD_CONTEXT_NAME="${ALETHIA_HCLOUD_CONTEXT:-alethia-sandbox}"
+hc() { hcloud --context "$HCLOUD_CONTEXT_NAME" "$@"; }
 SNAPSHOT_LABEL="role=sandbox"
 REMOTE=/opt/alethia
 # Idle minutes before env:reap will snapshot-and-delete. Generous on purpose: the
@@ -64,34 +99,103 @@ box_ip() {
 }
 
 box_exists() {
-  [ -n "$(box_ip)" ] && hcloud server describe "$SERVER_NAME" >/dev/null 2>&1
+  [ -n "$(box_ip)" ] && hc server describe "$SERVER_NAME" >/dev/null 2>&1
 }
+
+# Is an agent driving? Same signal scripts/lib/wt-lease.sh uses. Outside Claude this is
+# unset, so a human is never gated by it.
+agent_driving() { [ -n "${CLAUDE_PID:-}" ] && [ "${ALETHIA_ALLOW_IAC:-}" != "1" ]; }
 
 require_box() {
   local ip
+
+  # "I cannot read the state" and "the box is gone" used to produce the SAME message, and
+  # the remedy it named (`pnpm env:box`) is catastrophic for the first case: applying
+  # against empty state creates a SECOND server plus duplicate tunnel and DNS records,
+  # breaking dev.alethialabs.io. Distinguish them, loudly.
+  if [ ! -s "$TF_DIR/terraform.tfstate" ]; then
+    cat >&2 <<MSG
+✗ Cannot read the sandbox box's OpenTofu state.
+
+  Looked in: $TF_DIR
+
+  The state and terraform.tfvars are gitignored, so they exist ONLY in the main checkout
+  — never in a worktree. This is NOT "the box is down", and running \`pnpm env:box\` here
+  would apply against empty state and build a SECOND box, breaking dev.alethialabs.io.
+
+  If you are in a worktree and see this, the resolution of MAIN_CHECKOUT above is wrong;
+  that is a bug in this script, not something to work around.
+MSG
+    exit 1
+  fi
+
   ip="$(box_ip)"
-  if [ -z "$ip" ] || ! hcloud server describe "$SERVER_NAME" >/dev/null 2>&1; then
+  if [ -z "$ip" ] || ! hc server describe "$SERVER_NAME" >/dev/null 2>&1; then
     cat >&2 <<MSG
 ✗ The sandbox box is not up.
 
   It was either never created, or env:reap snapshotted and deleted it (which is the
   normal idle state — a stopped Hetzner server still bills, a deleted one does not).
+MSG
+    if agent_driving; then
+      cat >&2 <<'MSG'
+
+  ASK THE MAINTAINER to bring it back. Restoring runs `tofu apply`, which is a human
+  action in this repo (infra/README.md) and is refused for agents by
+  .claude/hooks/guard-iac.sh. Do not try to route around that.
+MSG
+    else
+      cat >&2 <<'MSG'
 
   Bring it back with:   pnpm env:box
-
-  That runs \`tofu apply\` in infra/sandbox. Creating cloud infrastructure is a human
-  action in this repo, so it is deliberately not folded into env:up.
 MSG
+    fi
     exit 1
   fi
   printf '%s' "$ip"
 }
 
+# Hetzner RECYCLES IP addresses. The first real apply landed on 178.104.237.182 — the
+# address a previously-deleted box had held — so known_hosts still carried the old key and
+# every ssh/rsync failed with "Host key verification failed". `accept-new` does NOT cover
+# this: it accepts keys for UNKNOWN hosts, never a CHANGED one.
+#
+# That is fatal for a box designed to be reaped and recreated: each restore can land on a
+# recycled address, and the whole env:* surface is SSH. So drop the stale entry when the
+# box's key changes. This is not weakening host verification in any meaningful sense — the
+# box is ours, we just created it, and its identity is the Hetzner API's answer, not a key
+# we have ever pinned.
+forget_stale_host_key() { # <ip>
+  local ip="$1"
+  ssh-keygen -R "$ip" >/dev/null 2>&1 || true
+}
+
 ssh_box() {
-  local ip
+  local ip rc
   ip="$(require_box)"
   # shellcheck disable=SC2029  # remote expansion is intended
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@" && return 0
+  rc=$?
+  # NOT `if ! ssh …; then rc=$?`: inside that branch $? is the status of the NEGATION,
+  # which is always 0, so the retry below would never fire. Verified in a shell before
+  # relying on it.
+  #
+  # 255 is ssh's own transport failure — what a changed host key produces.
+  [ "$rc" = 255 ] || return "$rc"
+  forget_stale_host_key "$ip"
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@"
+}
+
+# The domain comes from state, or not at all. Both call sites used to fall back to the
+# literal "dev.alethialabs.io", which turned a state-read failure into a confident wrong
+# answer — and is why `env:open` appeared to work from a worktree while every other
+# command was failing.
+env_domain() {
+  local d
+  d="$(tofu -chdir="$TF_DIR" output -raw env_domain 2>/dev/null |
+    grep -Eo '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' || true)"
+  [ -n "$d" ] || die "cannot read env_domain from $TF_DIR — is the box's state readable?"
+  printf '%s' "$d"
 }
 
 # ── Capacity preflight ────────────────────────────────────────────────────────────
@@ -106,32 +210,58 @@ preflight_capacity() {
   loc="${loc:-nbg1}"
 
   command -v hcloud >/dev/null 2>&1 || return 0
-  avail="$(hcloud server-type list -o json 2>/dev/null |
+  avail="$(hc server-type list -o json 2>/dev/null |
     jq -r --arg w "$want" '.[] | select(.name == $w) | .name' || true)"
   [ -n "$avail" ] || return 0
 
-  # `hcloud datacenter describe` carries the authoritative per-DC availability list.
+  # `hc datacenter describe` carries the authoritative per-DC availability list.
   local dc ok
-  dc="$(hcloud datacenter list -o json 2>/dev/null | jq -r --arg l "$loc" '.[] | select(.name | startswith($l)) | .name' | head -1)"
+  dc="$(hc datacenter list -o json 2>/dev/null | jq -r --arg l "$loc" '.[] | select(.name | startswith($l)) | .name' | head -1)"
   [ -n "$dc" ] || return 0
-  ok="$(hcloud datacenter describe "$dc" -o json 2>/dev/null |
-    jq -r --arg w "$want" --slurpfile st <(hcloud server-type list -o json) \
+  ok="$(hc datacenter describe "$dc" -o json 2>/dev/null |
+    jq -r --arg w "$want" --slurpfile st <(hc server-type list -o json) \
       '[.server_types.available[]] as $a | ($st[0][] | select(.name==$w) | .id) as $id | if ($a | index($id)) then "yes" else "no" end' 2>/dev/null || echo yes)"
 
   if [ "$ok" = "no" ]; then
     echo "⚠ $want is OUT OF STOCK in $loc right now." >&2
     echo "  Available there with >=16 GB:" >&2
-    hcloud datacenter describe "$dc" -o json 2>/dev/null |
-      jq -r --slurpfile st <(hcloud server-type list -o json) \
+    hc datacenter describe "$dc" -o json 2>/dev/null |
+      jq -r --slurpfile st <(hc server-type list -o json) \
         '[.server_types.available[]] as $a | $st[0][] | select(.id as $i | $a | index($i)) | select(.memory >= 16) | "    \(.name)  \(.cores)c \(.memory)GB \(.disk)GB \(.architecture)"' 2>/dev/null >&2 || true
     echo "  Set server_type in $TF_DIR/terraform.tfvars and retry." >&2
     echo >&2
   fi
 }
 
+# The two commands that MUTATE infrastructure. Both are gated twice on purpose.
+#
+# `.claude/hooks/guard-iac.sh` blocks the tofu command text — but `pnpm env:box` contains
+# no "tofu" at all, and the real apply is spawned inside this script where no PreToolUse
+# hook can see it. THE WRAPPER WAS THE BYPASS, and require_box used to point agents
+# straight at it. A hook list of wrapper names can never be proven exhaustive, so the
+# wrapped script refuses too — that check cannot be dodged by finding another wrapper.
+#
+# They also have to run where the state file is: a worktree writing the main checkout's
+# state through a TF_DIR pointer is state mutation across trees.
+require_human_and_main_checkout() { # <command> <what it does>
+  if agent_driving; then
+    cat >&2 <<MSG
+✗ \`$1\` $2 — that is a human action in this repo (infra/README.md).
+
+  An agent reviews a plan; it does not apply one. Ask the maintainer to run it.
+  Deliberate, instructed operation: export ALETHIA_ALLOW_IAC=1 before launching claude.
+MSG
+    exit 2
+  fi
+  if [ "$ROOT" != "$MAIN_CHECKOUT" ]; then
+    die "\`$1\` must run in the main checkout ($MAIN_CHECKOUT) — it writes OpenTofu state."
+  fi
+}
+
 # ── Commands ──────────────────────────────────────────────────────────────────────
 
 cmd_box() {
+  require_human_and_main_checkout "env:box" "creates or restores the box"
   need tofu
   [ -f "$TF_DIR/terraform.tfvars" ] ||
     die "no $TF_DIR/terraform.tfvars — copy terraform.tfvars.example and fill it in."
@@ -142,7 +272,7 @@ cmd_box() {
   # its seeded databases and warm node_modules rather than empty.
   local snap=""
   if command -v hcloud >/dev/null 2>&1; then
-    snap="$(hcloud image list -t snapshot -l "$SNAPSHOT_LABEL" -o json 2>/dev/null |
+    snap="$(hc image list -t snapshot -l "$SNAPSHOT_LABEL" -o json 2>/dev/null |
       jq -r 'sort_by(.created) | last | .id // empty' || true)"
   fi
 
@@ -159,9 +289,19 @@ cmd_box() {
 
 # Push the box-side scripts, the pinned shared compose file and the tunnel
 # credentials. Runs on every env:up so changing a box script never means rebuilding.
+#
+# FROM THE MAIN CHECKOUT, not from this branch. These files are the shared box's
+# control plane — env-registry.sh arbitrates every env's ports and the cap — and this
+# runs on EVERY env:up. Sourcing them from the branch meant whichever branch ran
+# env:up last silently redefined the allocator for everyone else's env, including a
+# branch that happened to be mid-edit on those very files.
 provision_box() {
   local ip
   ip="$(require_box)"
+
+  # A freshly created or restored box may hold a RECYCLED address whose old key is still
+  # in known_hosts; clear it before the first connection rather than failing 60 times.
+  forget_stale_host_key "$ip"
 
   # Wait for cloud-init on a freshly created box.
   for _ in $(seq 1 60); do
@@ -171,7 +311,16 @@ provision_box() {
   done
 
   rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
-    "$ROOT/scripts/box/" "root@$ip:$REMOTE/bin/"
+    "$MAIN_CHECKOUT/scripts/box/" "root@$ip:$REMOTE/bin/"
+
+  # /opt/alethia/box.env carries the env cap and the domain. cloud-init wrote it once at
+  # creation, but user_data is now ignored on the server (changing it FORCES REPLACEMENT
+  # — bumping the cap once planned "1 to add, 1 to destroy" against the live box). So the
+  # cap is delivered here instead, and takes effect on the next env:up.
+  local cap dom
+  cap="$(grep -oE 'env_cap[^0-9]+[0-9]+' "$TF_DIR/terraform.tfvars" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+  dom="$(env_domain)"
+  ssh_box "printf 'ALETHIA_ENV_DOMAIN=%s\nALETHIA_ENV_CAP=%s\n' '$dom' '${cap:-4}' > $REMOTE/box.env"
   ssh_box "mkdir -p $REMOTE/shared && mv $REMOTE/bin/shared-compose.yml $REMOTE/shared/docker-compose.yml && chmod +x $REMOTE/bin/*.sh"
 
   # Tunnel credentials, minted from tofu state — no `cloudflared tunnel login`, no
@@ -274,7 +423,7 @@ cmd_up() {
 mint_env() {
   local slug_="$1" cport="$2" sport="$3" db="$4" fqdn url
   local domain
-  domain="$(tofu -chdir="$TF_DIR" output -raw env_domain 2>/dev/null || echo dev.alethialabs.io)"
+  domain="$(env_domain)"
   if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
   url="https://$fqdn"
 
@@ -329,15 +478,15 @@ cmd_status() {
   need jq
   local ip domain
   ip="$(box_ip)"
-  if [ -z "$ip" ] || ! hcloud server describe "$SERVER_NAME" >/dev/null 2>&1; then
+  if [ -z "$ip" ] || ! hc server describe "$SERVER_NAME" >/dev/null 2>&1; then
     echo "box:  down (reaped or never created) — pnpm env:box"
     return 0
   fi
-  domain="$(tofu -chdir="$TF_DIR" output -raw env_domain 2>/dev/null || echo '?')"
+  domain="$(env_domain)"
 
   local type created
-  type="$(hcloud server describe "$SERVER_NAME" -o json 2>/dev/null | jq -r '.server_type.name // "?"')"
-  created="$(hcloud server describe "$SERVER_NAME" -o json 2>/dev/null | jq -r '.created // empty')"
+  type="$(hc server describe "$SERVER_NAME" -o json 2>/dev/null | jq -r '.server_type.name // "?"')"
+  created="$(hc server describe "$SERVER_NAME" -o json 2>/dev/null | jq -r '.created // empty')"
   echo "box:  up   $ip   $type   since ${created:-?}"
   echo "envs: (cap from infra/sandbox env_cap)"
   ssh_box "$REMOTE/bin/env-registry.sh list" |
@@ -355,7 +504,7 @@ cmd_logs() { ssh_box "tail -n 200 -f /var/log/alethia-$(slug).log"; }
 
 cmd_open() {
   local domain slug_ url
-  domain="$(tofu -chdir="$TF_DIR" output -raw env_domain 2>/dev/null || echo dev.alethialabs.io)"
+  domain="$(env_domain)"
   slug_="$(slug)"
   if [ "$slug_" = "dev" ]; then url="https://$domain"; else url="https://$slug_.$domain"; fi
   echo "$url"
@@ -391,6 +540,7 @@ cmd_runner() {
 }
 
 cmd_reap() {
+  require_human_and_main_checkout "env:reap" "snapshots and DELETES the box"
   need jq
   local idle
   box_exists || {
@@ -404,7 +554,7 @@ cmd_reap() {
   fi
 
   echo "→ snapshotting before delete (everything idle ${idle}m)"
-  hcloud server create-image --type snapshot \
+  hc server create-image --type snapshot \
     --description "alethia-sandbox $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --label "$SNAPSHOT_LABEL" "$SERVER_NAME" ||
     die "snapshot failed — NOT deleting the box."
