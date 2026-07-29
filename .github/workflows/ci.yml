@@ -457,6 +457,17 @@ jobs:
           pnpm -F console gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
             || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+      # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
+      # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
+      # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that
+      # matters, a stale list lets the user pick a store the cluster will never resolve, surfacing at
+      # deploy time as unresolved secrets rather than at config time. The paired Go test
+      # (categories/secrets_runtime_read_mirror_test.go) proves the generator READ the source right.
+      - name: Secrets runtime-read mirror is in sync with the hooks (secrets_*.go → secrets-runtime-read.ts)
+        run: |
+          pnpm -F console gen:secrets-runtime-read
+          git diff --exit-code -- apps/console/lib/connectors/generated/secrets-runtime-read.ts \
+            || { echo "::error::Generated secrets-runtime-read.ts is stale — run 'pnpm -F console gen:secrets-runtime-read' and commit (source of truth: the saasSecretStore / keylessSecretStore hooks in packages/core/categories/secrets_*.go)."; exit 1; }
       - name: Project templates pin their providers (tofu lock files, no -upgrade)
         run: pnpm -F console check:tofu-lockfiles
       - name: Shipped version defaults are mutually compatible (compat matrix)
