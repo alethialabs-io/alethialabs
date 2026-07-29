@@ -78,10 +78,11 @@ func selectPlacementPath(pm types.PlacementMode, provider string) placementPath 
 
 // unactivatedPlacementError explains, per placement + cloud, WHY a placement isn't deployable yet — an
 // explicit, documented fail-closed exclusion (cloud parity is a hard rule: a per-cloud gap is never a
-// silent omission). namespace is activated on aws; other clouds + vcluster are tracked follow-ups.
+// silent omission). With azure wired, namespace and vcluster are both activated on EVERY supported
+// cloud, so these messages now only reach an unrecognized provider or a future placement mode.
 func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 	if pm == types.PlacementModeNamespace {
-		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA), gcp (GKE + Workload Identity), alibaba (ACK + RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure is the per-cloud follow-up. 'dedicated' provisions on every cloud", pm, provider)
+		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — namespace placement mints keyless access to an existing shared cluster + a per-namespace identity, wired for aws (EKS + IRSA), gcp (GKE + Workload Identity), azure (AKS + federated identity), alibaba (ACK + RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today — every supported cloud, so only an unrecognized provider reaches here. 'dedicated' provisions on every cloud", pm, provider)
 	}
 	if pm == types.PlacementModeVcluster {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters), alibaba (ACK DescribeClusterUserKubeconfig, keyless RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig) host re-mint today. 'dedicated' provisions on every cloud", pm, provider)
@@ -94,8 +95,8 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 // `namespace` placement. It is the SINGLE control that activates a cloud: selectPlacementPath routes to
 // the namespace path only for a cloud in this set, and runNamespaceDeploy fail-closes anything else.
 //
-// Parity follow-ups add their entry AS their per-cloud output-free mint + identity lands — cloud parity
-// is a hard rule, so each gap is a documented, fail-closed exclusion, never silent:
+// Every supported cloud is now wired — the parity follow-ups all landed, so this set has no remaining
+// documented exclusion and only an unrecognized provider fails closed:
 //   - #1127 gcp     — GKE clusters.get + Workload Identity
 //   - #1128 azure   — AKS ManagedClusters.Get (+ listClusterUserCredentials CA) + federated identity
 //   - #1129 alibaba — ACK DescribeClusterUserKubeconfig + RRSA
@@ -109,6 +110,7 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 var namespaceRemintProviders = map[string]bool{
 	"aws":     true,
 	"gcp":     true,
+	"azure":   true,
 	"alibaba": true,
 	"hetzner": true,
 }
@@ -135,7 +137,7 @@ var namespaceClusterNameOutputKey = map[string]string{
 // namespaceRemintNotWired is the fail-closed error for a cloud whose namespace re-mint seam isn't wired —
 // an explicit, cloud-named exclusion (parity is documented, never a silent omission).
 func namespaceRemintNotWired(provider string) error {
-	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA), gcp (GKE clusters.get + Workload Identity), alibaba (ACK DescribeClusterUserKubeconfig + RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today; azure is a per-cloud follow-up (#1128)", provider)
+	return fmt.Errorf("namespace placement: output-free keyless re-mint + per-namespace identity is not wired for provider %q — activated for aws (EKS DescribeCluster + IRSA), gcp (GKE clusters.get + Workload Identity), azure (AKS ManagedClusters.Get + federated identity), alibaba (ACK DescribeClusterUserKubeconfig + RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig; k8s-native isolation, no cloud IAM) today — every supported cloud, so this reports an unrecognized provider", provider)
 }
 
 // namespaceClusterConnKeys maps a provider whose ConfigureKubeconfig reads the control-plane endpoint +
@@ -283,6 +285,24 @@ func provisionAndBindNamespaceIdentity(ctx context.Context, identity NamespaceId
 			return fmt.Errorf("provisioned per-namespace RAM role name %q is malformed", roleName)
 		}
 		if err := bindACKNamespaceIdentity(ns, roleName, stdout, stderr); err != nil {
+			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
+		}
+		return nil
+	case "azure":
+		// Azure Workload Identity: the runner-injected provisioner get-or-creates a zero-perm per-namespace
+		// user-assigned managed identity + a federated credential trusting this namespace's default KSA on
+		// the AKS OIDC issuer (a live ARM write, done keyless by the runner), returning the UAMI clientId.
+		if identity == nil {
+			return fmt.Errorf("namespace placement: provider %q needs an injected NamespaceIdentity provisioner but none was provided — this is a runner wiring bug", providerSlug)
+		}
+		clientID, idErr := identity(ctx, providerSlug, config, clusterName, ns)
+		if idErr != nil {
+			return fmt.Errorf("failed to provision per-namespace identity for %q: %w", ns, idErr)
+		}
+		if !cloud.IsValidUAMIClientID(clientID) {
+			return fmt.Errorf("provisioned per-namespace UAMI clientId %q is malformed", clientID)
+		}
+		if err := bindAKSNamespaceIdentity(ns, clientID, stdout, stderr); err != nil {
 			return fmt.Errorf("failed to bind namespace %q default ServiceAccount to its identity: %w", ns, err)
 		}
 		return nil
@@ -553,6 +573,25 @@ func bindGKENamespaceIdentity(ns, gsaEmail string, stdout, stderr io.Writer) err
 	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace GCP identity...\n", ns)
 	return executeCommand(
 		fmt.Sprintf("kubectl annotate serviceaccount default -n %s iam.gke.io/gcp-service-account=%s --overwrite", ns, gsaEmail),
+		".", nil, stdout, stderr,
+	)
+}
+
+// bindAKSNamespaceIdentity labels + annotates the namespace's default ServiceAccount for Azure Workload
+// Identity: the `azure.workload.identity/use=true` label opts the SA into WI, and
+// `azure.workload.identity/client-id=<clientId>` names the per-namespace UAMI it federates as. `ns` is a
+// validated DNS-1123 label and `clientID` passed IsValidUAMIClientID (a GUID), so neither can inject the
+// `bash -c` shell this runs through. `--overwrite` keeps both idempotent across re-deploys.
+func bindAKSNamespaceIdentity(ns, clientID string, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stdout, "Binding namespace %q default ServiceAccount to its per-namespace Azure identity...\n", ns)
+	if err := executeCommand(
+		fmt.Sprintf("kubectl label serviceaccount default -n %s azure.workload.identity/use=true --overwrite", ns),
+		".", nil, stdout, stderr,
+	); err != nil {
+		return err
+	}
+	return executeCommand(
+		fmt.Sprintf("kubectl annotate serviceaccount default -n %s azure.workload.identity/client-id=%s --overwrite", ns, clientID),
 		".", nil, stdout, stderr,
 	)
 }

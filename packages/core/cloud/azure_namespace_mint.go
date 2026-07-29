@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -78,7 +79,68 @@ type aksManagedClusterResponse struct {
 		PowerState        struct {
 			Code string `json:"code"`
 		} `json:"powerState"`
+		OidcIssuerProfile struct {
+			Enabled   bool   `json:"enabled"`
+			IssuerURL string `json:"issuerURL"`
+		} `json:"oidcIssuerProfile"`
 	} `json:"properties"`
+}
+
+// ResolveAKSOIDCIssuer resolves an AKS cluster's Workload-Identity OIDC issuer URL BY NAME via ARM
+// managedClusters.get — the output-free trust anchor a federated-identity credential needs. `armToken`
+// is a keyless federated ARM bearer (never logged). Fail-closed: an issuer that is disabled or empty is
+// an error (the Fabric must have oidc-issuer + workload-identity enabled), never a guessed value.
+func ResolveAKSOIDCIssuer(
+	ctx context.Context,
+	client *http.Client,
+	armToken, subscriptionID, resourceGroup, clusterName string,
+) (string, error) {
+	if strings.TrimSpace(armToken) == "" {
+		return "", errors.New("aks oidc issuer: empty ARM token (a keyless federated-identity token is required)")
+	}
+	if subscriptionID == "" || resourceGroup == "" || clusterName == "" {
+		return "", fmt.Errorf("aks oidc issuer: subscription, resource group and cluster must all be set (got %q / %q / %q)", subscriptionID, resourceGroup, clusterName)
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	getURL := fmt.Sprintf("%s%s?api-version=%s", azureARMBase, AKSClusterResourceID(subscriptionID, resourceGroup, clusterName), aksAPIVersion)
+	body, err := armRequest(ctx, client, http.MethodGet, getURL, armToken)
+	if err != nil {
+		return "", fmt.Errorf("aks managedClusters.get %q: %w", clusterName, err)
+	}
+	var mc aksManagedClusterResponse
+	if err := json.Unmarshal(body, &mc); err != nil {
+		return "", fmt.Errorf("aks managedClusters.get %q: decode: %w", clusterName, err)
+	}
+	issuer := strings.TrimSpace(mc.Properties.OidcIssuerProfile.IssuerURL)
+	if issuer == "" {
+		return "", fmt.Errorf("aks cluster %q has no OIDC issuer (workload identity / oidc-issuer not enabled on the Fabric) — cannot provision a per-namespace federated identity", clusterName)
+	}
+	return issuer, nil
+}
+
+// armRequestBody performs a bearer-authenticated ARM REST call WITH a JSON body (PUT/POST) and returns
+// the (bounded) response body on a 2xx. The token is only ever in the Authorization header (never
+// logged); a non-2xx is an error carrying status + a bounded snippet.
+func armRequestBody(ctx context.Context, client *http.Client, method, rawURL, armToken string, reqBody []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+armToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, armErrSnippet(body))
+	}
+	return body, nil
 }
 
 // aksCredentialsResponse is the listClusterUserCredentials response — a list of base64-encoded kubeconfigs.
