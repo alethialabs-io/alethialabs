@@ -1,101 +1,86 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
-import { getScanProposal } from "@/app/server/actions/scanner";
-import { getCloudConnectSetup } from "@/lib/connectors/cloud-connect-setup";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
+import { getScanProposal } from "@/app/server/actions/scanner";
+import { ConfigureProject } from "@/components/create-project/configure-project";
 import { CreateProjectForm } from "@/components/create-project/create-project-form";
+import type { ScratchKind } from "@/components/create-project/start-from-scratch-cards";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
-import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
-import { ScanReviewNotice } from "@/components/create-project/scan-review-notice";
+import { getCloudConnectSetup } from "@/lib/connectors/cloud-connect-setup";
 import { pageMetadata } from "@/lib/seo/page-metadata";
+import { arrayIncludes } from "@/lib/type-guards";
 
 export const metadata = pageMetadata({
 	title: "New project",
 	description: "Create a project to provision multi-cloud infrastructure.",
 });
 
+const SCRATCH_KINDS: readonly ScratchKind[] = [
+	"template",
+	"blank",
+	"byo-helm",
+	"byo-iac",
+];
+
 /**
- * `/{org}/~/new` — create a project. Two entry paths:
- *  - `?scan=<jobId>`: a repo scan finished; seed the design workbench with the
- *    inferred project so the user reviews/edits before saving (the scan→design bridge).
- *  - otherwise: the quick create form (agent hero + manual name/template/cloud).
+ * `/{org}/~/new` — the two-step create flow.
+ *  - **Step 1 (bare):** the source chooser — an Elench hero + Import a repository + Start from scratch.
+ *  - **Step 2 (`?scan=<jobId>` or `?scratch=<kind>`):** the Configure screen — name, cloud + region,
+ *    environments — which creates the project and opens its canvas.
  */
 export default async function NewProjectPage({
 	params,
 	searchParams,
 }: {
 	params: Promise<{ org: string }>;
-	searchParams: Promise<{ scan?: string | string[] }>;
+	searchParams: Promise<{ scan?: string | string[]; scratch?: string | string[] }>;
 }) {
 	const { org } = await params;
 	const sp = await searchParams;
 	const scanJobId = typeof sp.scan === "string" ? sp.scan : undefined;
+	const scratch =
+		typeof sp.scratch === "string" && arrayIncludes(SCRATCH_KINDS, sp.scratch)
+			? sp.scratch
+			: undefined;
+	const byoHelmEnabled = isByoHelmEnabled();
 	const byoIacEnabled = isByoIacEnabled();
 
-	// Scan-review path: a finished scan's proposal seeds the workbench for review.
-	if (scanJobId) {
-		const result = await getScanProposal(scanJobId);
-		if (result.status === "READY") {
-			const [identities, connectors] = await Promise.all([
-				getVerifiedCloudIdentities(),
-				getConnectorsWithStatus(),
-			]);
-			return (
-				<div className="w-full space-y-6">
-					<div className="space-y-1.5">
-						<h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-							Review proposed infrastructure
-						</h1>
-						<p className="text-sm text-muted-foreground">
-							We scanned your repository and inferred the stack below. Review
-							and edit it, then save to create the project.
-						</p>
-					</div>
-					<DesignProjectWorkbench
-						cloudIdentities={identities}
-						connectors={connectors}
-						byoIacEnabled={byoIacEnabled}
-						sourceProject={{
-							formData: result.proposal.proposedProject,
-							provider: result.proposal.provider,
-						}}
-					/>
-				</div>
-			);
-		}
-		// PENDING / NEEDS_SETUP / NOT_FOUND — show status + a path forward, not the bare form.
-		return <ScanReviewNotice org={org} result={result} />;
+	// Step 2 — Configure (import or scratch). Both funnel through the same screen.
+	if (scanJobId || scratch) {
+		const setup = await getCloudConnectSetup();
+		const source = scanJobId
+			? {
+					kind: "import" as const,
+					scanJobId,
+					initial: await getScanProposal(scanJobId),
+				}
+			: { kind: "scratch" as const, scratch: scratch! };
+		return (
+			<ConfigureProject
+				orgSlug={org}
+				source={source}
+				canManage={setup.canManage}
+				integrations={setup.integrations}
+				awsSetup={setup.awsSetup ?? null}
+				gcpSetup={setup.gcpSetup ?? null}
+				azureSetup={setup.azureSetup ?? null}
+				extraSetup={setup.extraSetup}
+				platformConfigured={setup.platformConfigured}
+				byoHelmEnabled={byoHelmEnabled}
+				byoIacEnabled={byoIacEnabled}
+			/>
+		);
 	}
 
-	const [
-		{
-			canManage,
-			integrations,
-			awsSetup,
-			gcpSetup,
-			azureSetup,
-			extraSetup,
-			platformConfigured,
-		},
-		collab,
-	] = await Promise.all([getCloudConnectSetup(), getCollaborationAccess()]);
-
+	// Step 1 — the source chooser.
+	const collab = await getCollaborationAccess();
 	return (
 		<CreateProjectForm
 			orgSlug={org}
-			canManage={canManage}
 			canCollaborate={collab.canInvite}
-			integrations={integrations}
-			awsSetup={awsSetup}
-			gcpSetup={gcpSetup}
-			azureSetup={azureSetup}
-			extraSetup={extraSetup}
-			platformConfigured={platformConfigured}
-			byoHelmEnabled={isByoHelmEnabled()}
+			byoHelmEnabled={byoHelmEnabled}
 			byoIacEnabled={byoIacEnabled}
 		/>
 	);
