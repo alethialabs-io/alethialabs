@@ -103,8 +103,28 @@ if command -v tofu >/dev/null 2>&1; then
 	# printed "box down or not created" to EVERY worktree session while the box was up —
 	# the first fact an instance learned about the runtime was false, and the remedy it
 	# offered (pnpm env:box) would have built a second box.
-	ip="$(TO 5 tofu -chdir="$MAIN_CHECKOUT/infra/sandbox" output -raw server_ipv4 2>/dev/null |
-		grep -Eo '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || true)"
+	# The outputs ALONE are not evidence the box exists. env:reap runs
+	# `tofu destroy -target=hcloud_server.sandbox`, which removes the resource from state
+	# but leaves the ROOT OUTPUTS at their last known values — so after every reap
+	# `output server_ipv4` still returns the old address and server_status still says
+	# "running". This banner reported "box up" at a deleted server, which is the most
+	# expensive fact to be wrong about: nobody reaps a box they are told is already gone,
+	# and nobody restores one they are told is up.
+	#
+	# `state list` is the honest local check — the resource really is removed — and it
+	# needs no network. Capture and match; do NOT pipe into `grep -q`, which closes the
+	# pipe early and trips `set -o pipefail` (see cmd_timer in scripts/env.sh).
+	tfstate="$(TO 5 tofu -chdir="$MAIN_CHECKOUT/infra/sandbox" state list 2>/dev/null || true)"
+	case "$tfstate" in
+	*hcloud_server.sandbox*)
+		ip="$(TO 5 tofu -chdir="$MAIN_CHECKOUT/infra/sandbox" output -raw server_ipv4 2>/dev/null |
+			grep -Eo '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || true)"
+		;;
+	esac
+	# Never hardcode the domain here: it was hardcoded in env.sh once and turned a
+	# state-read failure into a confident wrong answer (see env_domain in scripts/env.sh).
+	domain="$(TO 5 tofu -chdir="$MAIN_CHECKOUT/infra/sandbox" output -raw env_domain 2>/dev/null |
+		grep -Eo '^[a-z0-9.-]+\.[a-z]{2,}$' || true)"
 fi
 if [ -n "$ip" ]; then
 	# Envs in use / cap, and this branch's URL if it already holds a slot. An instance
@@ -112,22 +132,49 @@ if [ -n "$ip" ]; then
 	# automatically, and `dev` permanently holds a slot as the integration env.
 	slug="$(printf '%s' "${branch#feat/}" | sed 's|^fix/||' | tr '[:upper:]/_' '[:lower:]--' | tr -cd 'a-z0-9-' | cut -c1-40)"
 	cap="$(TO 3 grep -oE 'env_cap[^0-9]+([0-9]+)' "$MAIN_CHECKOUT/infra/sandbox/terraform.tfvars" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
-	reg="$(TO 6 ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new \
-		"root@$ip" 'cat /opt/alethia/envs.json' 2>/dev/null || true)"
+	# One round trip for both facts. Box uptime doubles as billing age: a reaped box is
+	# DELETED and restored as a new server, so `up` time is how long the meter has run.
+	boxinfo="$(TO 6 ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new \
+		"root@$ip" 'cat /opt/alethia/envs.json; echo "@@"; cut -d. -f1 /proc/uptime' 2>/dev/null || true)"
+	reg="${boxinfo%%@@*}"
+	uphrs="$(printf '%s' "${boxinfo##*@@}" | tr -cd '0-9')"
+	uphrs="${uphrs:+$((uphrs / 3600))}"
 	used=""
 	mine=""
+	cport=""
 	if [ -n "$reg" ] && command -v jq >/dev/null 2>&1; then
 		used="$(printf '%s' "$reg" | jq -r 'length' 2>/dev/null || true)"
 		mine="$(printf '%s' "$reg" | jq -r --arg s "$slug" 'if has($s) then "yes" else "" end' 2>/dev/null || true)"
+		cport="$(printf '%s' "$reg" | jq -r --arg s "$slug" '.[$s].consolePort // empty' 2>/dev/null || true)"
 	fi
-	say "  box       up at $ip${used:+   envs ${used}/${cap:-4}}"
+	say "  box       up at $ip${used:+   envs ${used}/${cap:-4}}${uphrs:+   up ${uphrs}h}"
+
+	# Hetzner bills a server for as long as it EXISTS, running or not, so an idle box is
+	# the whole cost problem: 24/7 is EUR 69.49/mo against EUR 0.72 reaped. pnpm env:timer
+	# reaps it automatically, but a Mac that is shut simply misses the schedule — so the
+	# next session says so, rather than the next invoice.
+	if [ -n "$uphrs" ] && [ "$uphrs" -ge 12 ]; then
+		say "  ⚠ COST    the box has been up ${uphrs}h. Reap it if nobody is using it:"
+		say "            pnpm env:reap --now    ·  automate it: pnpm env:timer"
+	fi
+
 	if [ -n "$mine" ]; then
-		say "  your env  https://${slug}.dev.alethialabs.io   ·  pnpm env:down when finished"
+		# Slot-derived, matching env_fqdn in scripts/env.sh: 3100 -> 1, 3200 -> 2. The
+		# hostname belongs to the SLOT, not the branch, because Cloudflare's Universal SSL
+		# covers only ONE subdomain level — the old <slug>.dev.<domain> was two deep and
+		# failed the TLS handshake for every env except the bare `dev` one.
+		if [ "$slug" = "dev" ] || [ -z "$cport" ]; then
+			host="${domain:-dev.alethialabs.io}"
+		else
+			host="env$(((cport - 3000) / 100))-${domain:-dev.alethialabs.io}"
+		fi
+		say "  your env  https://${host}   ·  pnpm env:down when finished"
 	else
 		say "  your env  none — pnpm env:up takes a slot (only if you need a RUNNING app)"
 	fi
 else
 	say "  box       down or not created  →  pnpm env:box"
+	say "            (down is the CHEAP state — EUR 0.72/mo. Only bring it up to run something.)"
 fi
 
 say "  run it    pnpm env:up      ·  logs: pnpm env:logs  ·  push: pnpm env:push"
