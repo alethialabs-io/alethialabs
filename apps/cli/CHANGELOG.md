@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.3.0...cli-v0.4.0) (2026-07-30)
+
+
+### Features
+
+* **runner:** scan BYO charts pulled from an OCI registry ([#1300](https://github.com/alethialabs-io/alethialabs/issues/1300)) ([#1313](https://github.com/alethialabs-io/alethialabs/issues/1313)) ([e18d171](https://github.com/alethialabs-io/alethialabs/commit/e18d171088f0792fc1bb4fc7a65713acc48eb6d4))
+
+
+### Bug Fixes
+
+* **fleet:** `fleet set` creates a pool when the provider has none (upsert) ([#871](https://github.com/alethialabs-io/alethialabs/issues/871)) ([8a5510c](https://github.com/alethialabs-io/alethialabs/commit/8a5510c57715669d79aee86cbc32746071c0ed19))
+
 ## [0.3.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.2.1...cli-v0.3.0) (2026-07-19)
 
 
