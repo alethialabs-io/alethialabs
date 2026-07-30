@@ -115,12 +115,19 @@ if [[ -f "$root/demos/proofs/scrub.sh" ]]; then
   export SCRUB_LITERALS
   # shellcheck source=/dev/null
   source "$root/demos/proofs/scrub.sh" 2>/dev/null && scrub_file "$log" 2>/dev/null || true
-  # Tripwire, same as the nightly: refuse to leave a bundle that still looks secret-bearing.
+  # Tripwire, same as the nightly: refuse to record a bundle that still looks secret-bearing.
   # `|| true` on scrub_file above means a scrub failure is silent, so this is the actual gate.
+  #
+  # It does NOT delete the log. An earlier version did, on the theory that a secret-bearing
+  # artifact should not survive — but the tripwire is a heuristic over key NAMES, so a false
+  # positive destroyed a good bundle AND skipped the ledger row, losing the whole run's
+  # evidence. Deleting is also the wrong remedy even when the hit is real: by then the secret
+  # has already been written to disk, so the fix is to rotate it, not to hide the file. Leave
+  # the bundle in place, say plainly what to rotate, and let the non-zero exit stop the record.
   if declare -F assert_grep_clean >/dev/null 2>&1; then
-    if ! assert_grep_clean "$outdir" 2>/dev/null; then
-      echo "✗ SECRET-BEARING BUNDLE at $outdir — refusing to record it. Rotate anything it names." >&2
-      rm -f "$log"
+    if ! assert_grep_clean "$outdir" >&2; then
+      echo "✗ SECRET-BEARING BUNDLE at $outdir — not recording it, and NOT deleting it." >&2
+      echo "  Inspect the lines above, rotate anything they name, then delete the bundle by hand." >&2
       exit 1
     fi
   fi
