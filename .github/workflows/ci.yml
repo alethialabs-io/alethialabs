@@ -274,6 +274,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -F console db:migrate
+      # Build @alethia/ee FIRST. Its dist is gitignored and it has no prepare/postinstall
+      # hook, and `pnpm -F console build` calls the console's own script — bypassing turbo,
+      # so `build.dependsOn: ["^build"]` never fires. Without this, ee/dist/index.js does
+      # not exist, getEnterprise()'s tolerant require throws, and lib/auth/scope.ts falls
+      # back to `{ userId, orgId: userId }`.
+      #
+      # That fallback made this whole job VACUOUS: getOrgEvidence short-circuits to
+      # EMPTY_EVIDENCE whenever actor.orgId === actor.userId, so the evidence page rendered
+      # "No environments yet" regardless of data and the hero assertion could not fail. The
+      # EE scope — the one production and the sandbox box actually run — was never tested.
+      - name: Build @alethia/ee (the console resolves EE scope only when its dist exists)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the suite silently runs community scope
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — the console would fall back to community"
+            echo "::error::scope (actor.orgId === userId), which makes org-scoped assertions vacuous."
+            exit 1
+          }
       - name: Build the console (production image the browser drives)
         run: pnpm -F console build
       - name: Install Playwright (Chromium + OS deps)
@@ -361,6 +380,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -F console db:migrate
+      # Build @alethia/ee FIRST. Its dist is gitignored and it has no prepare/postinstall
+      # hook, and `pnpm -F console build` calls the console's own script — bypassing turbo,
+      # so `build.dependsOn: ["^build"]` never fires. Without this, ee/dist/index.js does
+      # not exist, getEnterprise()'s tolerant require throws, and lib/auth/scope.ts falls
+      # back to `{ userId, orgId: userId }`.
+      #
+      # That fallback made this whole job VACUOUS: getOrgEvidence short-circuits to
+      # EMPTY_EVIDENCE whenever actor.orgId === actor.userId, so the evidence page rendered
+      # "No environments yet" regardless of data and the hero assertion could not fail. The
+      # EE scope — the one production and the sandbox box actually run — was never tested.
+      - name: Build @alethia/ee (the console resolves EE scope only when its dist exists)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the suite silently runs community scope
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — the console would fall back to community"
+            echo "::error::scope (actor.orgId === userId), which makes org-scoped assertions vacuous."
+            exit 1
+          }
       - name: Build the console (production image the browser drives)
         run: pnpm -F console build
       - name: Install Playwright (Chromium + OS deps)
