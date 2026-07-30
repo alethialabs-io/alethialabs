@@ -19,7 +19,7 @@ databases and the `next dev` processes — is `scripts/env.sh` and `scripts/box/
 | `hcloud_server.sandbox` | The box. No data volume — see *Durability* below. |
 | `hcloud_firewall.sandbox` | SSH and nothing else; envs are reached through the tunnel. |
 | `cloudflare_zero_trust_tunnel_cloudflared.sandbox` | **Locally-managed** (`config_src = "local"`), so the box can rewrite ingress as envs come and go. |
-| `cloudflare_record.env_wildcard` | `*.dev` → the tunnel. One record covers every future branch. |
+| `cloudflare_record.env_slot` | One record per env slot: `env1-dev`, `env2-dev`, … **one label deep**, so Universal SSL covers them. |
 | `cloudflare_record.env_primary` | `dev` → the tunnel. The one hostname with OAuth + Stripe registered. |
 
 No `cloudflared tunnel login`, no hand-copied credentials file: the connector
@@ -79,6 +79,23 @@ warm `node_modules`, both cheap to rebuild. Nothing here is a system of record.
 tunnel dies with the box. `pnpm env:up` brings it back in 1–2 minutes. If that proves
 annoying in practice, raising the reap threshold is a one-line change in
 `scripts/env.sh`.
+
+## Why slot hostnames, not branch names
+
+Branch envs are `envN-dev.<domain>`, keyed to the registry's slot rather than the branch.
+
+The original design used `<slug>.dev.<domain>` behind a `*.dev` wildcard. DNS resolved and
+the tunnel routed correctly — and every request failed TLS:
+
+```
+dev.alethialabs.io          matched cert's "*.alethialabs.io"   OK
+fix-trap.dev.alethialabs.io sslv3 alert handshake failure       FAILS
+```
+
+Cloudflare's Universal SSL covers the apex and **one** level of subdomain. Two levels needs
+an Advanced Certificate, which costs about what the box does. A record per slot is one
+label deep, created once here, needs no Cloudflare API call during `env:up`, and avoids a
+wildcard that would catch every unregistered subdomain of the production zone.
 
 ## The OAuth constraint
 

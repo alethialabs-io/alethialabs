@@ -39,8 +39,11 @@ id="$(cat "$DIR/tunnel-id")"
   echo "tunnel: $id"
   echo "credentials-file: $DIR/credentials.json"
   echo "ingress:"
+  # envN-<domain>, ONE label deep: Cloudflare's Universal SSL covers only one level, so
+  # the old <slug>.<domain> ingress pointed at names whose TLS handshake always failed.
+  # Slot N is derived from the console port the registry allocated (3100 -> 1, 3200 -> 2).
   jq -r --arg d "$DOMAIN" \
-    'to_entries[] | "  - hostname: \(.key).\($d)\n    service: http://localhost:\(.value.consolePort)"' \
+    'to_entries[] | "  - hostname: env\(((.value.consolePort - 3000) / 100))-\($d)\n    service: http://localhost:\(.value.consolePort)"' \
     "$REG"
   # The integration env answers on the bare domain too, so dev.alethialabs.io works
   # as well as dev.dev.alethialabs.io would have.

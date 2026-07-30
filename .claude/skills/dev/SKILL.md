@@ -25,8 +25,14 @@ pnpm env:open        # open it in a browser
 pnpm env:down        # give the slot back when you're done with the branch
 ```
 
-`env:up` prints the URL. Branch envs are `https://<slug>.dev.alethialabs.io`, where
-`<slug>` is the branch with `feat/`/`fix/` stripped.
+`env:up` prints the URL. Branch envs get a **slot** hostname —
+`https://env1-dev.alethialabs.io`, `env2-dev…` — not a branch-named one, and
+`pnpm env:status` shows which slot your branch holds.
+
+That is not cosmetic. Cloudflare's Universal SSL covers the apex and **one** level of
+subdomain, so `<slug>.dev.alethialabs.io` is outside the certificate and every request
+fails the TLS handshake before it is sent. Only the integration env at
+`dev.alethialabs.io` worked. One label deep, per slot, costs nothing and always resolves.
 
 **There is no hot reload.** The sync is on command, so an edit on your Mac is invisible
 to the box until `pnpm env:push`. If you are iterating tightly, run `pnpm env:push
