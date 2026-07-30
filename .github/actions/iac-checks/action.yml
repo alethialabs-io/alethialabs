@@ -79,3 +79,26 @@ runs:
         TRIVY_TF_EXCLUDE_DOWNLOADED_MODULES: "true"
         TRIVY_SKIP_DIRS: "**/.terraform"
       run: trivy config .
+
+    # `tofu test` for stacks that ship *.tftest.hcl. Those use mock_provider, so they stay
+    # credential-free like everything else here and are safe on contributor PRs.
+    #
+    # This exists because `check` blocks are the repo's stated way to assert a resource's
+    # invariants (infra/README.md rule 2), and nothing has ever verified that a check can
+    # actually FAIL. infra/sandbox shipped one comparing a set of NUMBERs against a set of
+    # STRINGs — permanently true, therefore useless — and a memory budget that had drifted
+    # 3x from the measurement. A guard nobody has watched fail is not a guard.
+    - name: tofu test (only where a stack ships tests)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        shopt -s nullglob
+        tests=(*.tftest.hcl tests/*.tftest.hcl)
+        if [ ${#tests[@]} -eq 0 ]; then
+          echo "no *.tftest.hcl here — skipping"
+          exit 0
+        fi
+        echo "running ${#tests[@]} test file(s)"
+        # -backend=false: no state and no credentials; providers still download.
+        tofu init -backend=false -input=false
+        tofu test
