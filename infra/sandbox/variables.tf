@@ -68,23 +68,28 @@ variable "server_type" {
   #      builds arm64, which is exactly the mismatch behind the ~100-VM/8h churn
   #      incident. On x86 the box can build fleet-accurate images.
   #
-  # Because reaping bills hourly, the sticker price is not what you pay: cpx42 at a
-  # realistic 8h x 22d is ~EUR 19.61/mo — under an always-on cax31.
+  # SIZE FOLLOWS THE MEASUREMENT, and the measurement moved. An env was estimated at
+  # ~2 GB; on the box it floors at 5.2 GB and reaches ~7 GB after a Playwright run. So
+  # against 15.6 GB usable:
   #
-  # Sized for the measured footprint: ~0.5 GB shared tier + ~2 GB per `next dev` +
-  # ~1 GB for a warm Go build => 16 GB holds the cap of 3 envs. To go cheaper at 2
-  # envs use cpx32 (4c/8GB, EUR 35.49). To try ARM once stock returns, set cax31 —
-  # `pnpm env:up` preflights capacity and names alternatives before tofu runs.
-  # cpx32 (4c/8GB/160GB). Sized for COST, because billing is hourly and the box is
-  # deleted when idle: EUR 0.0569/h is ~EUR 7.51/mo at 6h x 22d, against EUR 14.70 for
-  # cpx42. It still fits the shared tier (~1GB) + two envs (~2-3GB each) + a Chromium run.
+  #   cpx42 (8c/16GB/320GB, EUR 0.1114/h) -> env_cap 2, with ~1.5 GB spare
+  #   cpx32 (4c/8GB/160GB,  EUR 0.0569/h) -> env_cap 1, and nothing spare
+  #
+  # cpx32 is half the hourly rate and was the default until the numbers came in. It
+  # cannot host two envs, and `dev` permanently holds one — so on cpx32 there is no
+  # branch slot at all. checks.tf asserts this pairing rather than trusting a comment.
+  #
+  # Because billing is hourly and the box is DELETED when idle, the sticker price is not
+  # what you pay: cpx42 is EUR 69.49/mo left up, ~EUR 13.55 at 4h/day, EUR 0.72 reaped.
+  # The lever is hours, not size — see `pnpm env:timer`.
   #
   # ⚠ CHANGING THIS DOWNWARD CANNOT USE A SNAPSHOT. Hetzner refuses to restore a snapshot
   # onto a smaller disk, so a cpx42 (320GB) snapshot will not boot a cpx32 (160GB). Going
-  # down means letting the box go and building fresh; going up is fine.
+  # down means letting the box go and building fresh (`pnpm env:box --fresh`); going up
+  # is fine. cmd_box refuses the mismatch rather than failing halfway.
   description = "Hetzner server type for the sandbox box."
   type        = string
-  default     = "cpx32"
+  default     = "cpx42"
 }
 
 variable "location" {
@@ -102,15 +107,22 @@ variable "image" {
 }
 
 variable "env_cap" {
-  # A memory budget, not a policy: at ~2 GB per `next dev` on a 16 GB box, the fourth
-  # environment is the one that starts swapping and turns every timing assertion into
-  # a coin flip. Surfaced here so resizing the box and the cap stay one decision.
+  # A memory budget, not a policy. The original "~2 GB per `next dev`" was a guess, and
+  # it was wrong by roughly 3x. MEASURED on the box: an env floors at 5.2 GB and reaches
+  # ~7 GB after a Playwright run — Turbopack does not give it back, which is why
+  # restart_env_console (scripts/env.sh) exists — against ~250 MB for the shared
+  # postgres/seaweedfs tier.
+  #
+  # On cpx42's 15.6 GB that is two envs with ~1.5 GB spare; a third OOMs the box rather
+  # than merely swapping. Surfaced here so resizing the box and the cap stay ONE decision
+  # — cpx32 (8 GB) holds exactly one env, not two.
+  #
   # Delivered to the box by `env:up` (provision_box writes /opt/alethia/box.env), NOT
   # by re-running cloud-init — user_data is ignored after creation because changing it
   # would replace the server. So raising this takes effect on the next env:up.
   description = "Maximum concurrent branch environments the box will allocate."
   type        = number
-  default     = 4
+  default     = 2
   validation {
     condition     = var.env_cap >= 1 && var.env_cap <= 6
     error_message = "env_cap must be between 1 and 6 (the port pools are sized for 6)."

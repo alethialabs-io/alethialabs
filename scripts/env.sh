@@ -17,6 +17,7 @@
 #   env:test    Playwright browser tests ON THE BOX; report + traces rsync'd back
 #   env:runner  a provisioning runner pointed at this env
 #   env:reap    snapshot + DELETE the box (stops the meter)   [--now]
+#   env:timer   reap the box automatically once idle   [off|status]
 #   env:box     create or restore the box   [--fresh = ignore snapshots]
 set -euo pipefail
 
@@ -62,10 +63,24 @@ HCLOUD_CONTEXT_NAME="${ALETHIA_HCLOUD_CONTEXT:-alethia-sandbox}"
 hc() { hcloud --context "$HCLOUD_CONTEXT_NAME" "$@"; }
 SNAPSHOT_LABEL="role=sandbox"
 REMOTE=/opt/alethia
-# Idle minutes before env:reap will snapshot-and-delete. Generous on purpose: the
-# restore path costs 1-2 minutes and a box reaped out from under a long test run is
-# far more expensive than a few idle euros.
-REAP_AFTER_MIN="${ALETHIA_REAP_AFTER_MIN:-180}"
+# Idle minutes before env:reap will snapshot-and-delete. The restore path costs 1-2
+# minutes and a box reaped out from under a long test run is far more expensive than a
+# few idle euros, so this stays well clear of any real run (the longest measured browser
+# run is 36 SECONDS).
+#
+# Was 180, sized for several people whose runs must not vanish mid-flight. With one user
+# that is three idle hours after every session, and idle hours are the entire cost
+# problem: Hetzner bills a server for as long as it EXISTS, so the difference between a
+# box reaped promptly and one left up is the difference between EUR 0.72/mo and EUR 69.49.
+REAP_AFTER_MIN="${ALETHIA_REAP_AFTER_MIN:-90}"
+
+# The launchd timer that makes the reap automatic. env:reap was complete and proven for
+# days while nothing ever CALLED it, and a cost control you have to remember is not a
+# cost control — the box ran 24/7 on that gap.
+LAUNCH_LABEL="io.alethialabs.sandbox-reap"
+LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
+REAP_TIMER_LOG="${ALETHIA_REAP_LOG:-/tmp/alethia-reap.log}"
+REAP_EVERY_SEC="${ALETHIA_REAP_EVERY_SEC:-1800}"
 
 die() {
   echo "✗ $*" >&2
@@ -99,6 +114,28 @@ slug() {
 }
 
 owner() { printf '%s@%s' "$(id -un)" "$(hostname -s)"; }
+
+# The env's public hostname. ONE label deep, always.
+#
+# Branch envs used to be <slug>.dev.<domain>, which resolved fine and then failed TLS on
+# every request: Cloudflare's Universal SSL covers the apex and ONE level of subdomain, so
+# a two-level name is outside the certificate and the handshake is refused. Only `dev`
+# itself worked. An Advanced Certificate would fix it for about the price of the box.
+#
+# So a hostname belongs to the SLOT, not the branch: the registry hands out a fixed console
+# port per slot, and slot N is envN-<sub>.<domain>. `dev` keeps the bare name because OAuth
+# redirect URIs and the Stripe webhook are registered against exactly that.
+env_fqdn() { # <slug> <consolePort>
+  local slug_="$1" port="$2" domain slot
+  domain="$(env_domain)"
+  [ "$slug_" = "dev" ] && {
+    printf '%s' "$domain"
+    return 0
+  }
+  # 3100 -> 1, 3200 -> 2, ... — the same pool env-registry.sh allocates from.
+  slot=$(((port - 3000) / 100))
+  printf 'env%s-%s' "$slot" "$domain"
+}
 
 # base64 of a RAW 64-byte ed25519 private key (seed||public). Go's ed25519.PrivateKey —
 # and therefore verify.SigningKeyFromEnv — wants those 64 bytes, not a PEM, and openssl
@@ -627,9 +664,7 @@ cmd_up() {
 # the connectors, or stash this file before `pnpm env:reap`.
 mint_env() {
   local slug_="$1" cport="$2" sport="$3" db="$4" fqdn url
-  local domain
-  domain="$(env_domain)"
-  if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
+  fqdn="$(env_fqdn "$slug_" "$cport")"
   url="https://$fqdn"
 
   local secret1 secret2 secret3 secret4 oidc_key receipt_key snapshot_key bootstrap_token
@@ -711,7 +746,7 @@ cmd_status() {
   echo "envs: (cap from infra/sandbox env_cap)"
   ssh_box "$REMOTE/bin/env-registry.sh list" |
     jq -r --arg d "$domain" 'to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else .key + "." + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
+      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
 
   Sign-in: OAuth redirect URIs cannot be wildcarded, so social sign-in and the Stripe
@@ -724,9 +759,10 @@ cmd_logs() { ssh_box "tail -n 200 -f /var/log/alethia-$(slug).log"; }
 
 cmd_open() {
   local domain slug_ url
-  domain="$(env_domain)"
   slug_="$(slug)"
-  if [ "$slug_" = "dev" ]; then url="https://$domain"; else url="https://$slug_.$domain"; fi
+  cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
+  [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
+  url="https://$(env_fqdn "$slug_" "$cport")"
   echo "$url"
   command -v open >/dev/null 2>&1 && open "$url"
 }
@@ -763,11 +799,10 @@ cmd_test() {
   need jq
   local slug_ cport domain fqdn proj=""
   slug_="$(slug)"
-  domain="$(env_domain)"
-  if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
 
   cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
   [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
+  fqdn="$(env_fqdn "$slug_" "$cport")"
 
   # Default to the project CI gates on. Anything else is opt-in and named.
   proj="${1:---project=hero}"
@@ -802,10 +837,57 @@ cmd_test() {
     echo "" >&2
     echo "✗ tests failed — pulling the report and traces back anyway." >&2
     fetch_artifacts "$slug_"
+    restart_env_console "$slug_"
     exit 1
   }
 
   fetch_artifacts "$slug_"
+  restart_env_console "$slug_"
+}
+
+# A dev-mode Next server that has served a Playwright run does not give the memory back.
+# Measured on the box: an env sat at ~3 GB RSS before its first browser run and ~9 GB
+# afterwards, and stayed there — while NODE_OPTIONS=--max-old-space-size=3072 was applied
+# the whole time. The heap cap bounds V8's old space, not Turbopack's native memory or its
+# workers, so it does not bound RSS at all.
+#
+# On a shared box that difference is three usable slots versus one, and it is the reason a
+# smaller box could not host the very tests it exists to run. Restarting the console after
+# a run costs one Next cold start and returns ~6 GB.
+# RSS of everything running out of this env's tree. Resolved via /proc/<pid>/cwd, NOT by
+# matching process args: a Next server's argv is literally "next-server (v16.2.12)" with no
+# path in it, so an args grep silently matches nothing and reports 0.
+env_rss_mb() { # <slug>
+  ssh_box "tot=0
+    for p in \$(pgrep -f next-server 2>/dev/null); do
+      cwd=\$(readlink /proc/\$p/cwd 2>/dev/null)
+      case \"\$cwd\" in */envs/$1/*|*/envs/$1) ;; *) continue ;; esac
+      r=\$(awk '/VmRSS/{print \$2}' /proc/\$p/status 2>/dev/null)
+      tot=\$((tot + \${r:-0}))
+    done
+    echo \$((tot / 1024))" 2>/dev/null || echo ""
+}
+
+restart_env_console() { # <slug>
+  local slug_="$1" before after row cport sport db
+  before="$(env_rss_mb "$slug_")"
+  row="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null | jq -c --arg s "$slug_" '.[$s] // empty')"
+  [ -n "$row" ] || return 0
+  cport="$(printf '%s' "$row" | jq -r .consolePort)"
+  sport="$(printf '%s' "$row" | jq -r .storagePort)"
+  db="$(printf '%s' "$row" | jq -r .database)"
+
+  ssh_box "tmux kill-session -t 'alethia-$slug_' 2>/dev/null || true
+           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db'" >/dev/null 2>&1 || {
+    echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2
+    return 0
+  }
+  after="$(env_rss_mb "$slug_")"
+  if [ -n "$before" ] && [ -n "$after" ]; then
+    echo "  console restarted — ${before}MB → ${after}MB"
+  else
+    echo "  console restarted"
+  fi
 }
 
 # Bring the report, screenshots and traces back. env.sh had no reverse path at all, so the
@@ -908,6 +990,111 @@ cmd_reap() {
   echo "  Restore with: pnpm env:box   (~1-2 min, SAME address; hostnames error until then)"
 }
 
+# `pnpm env:timer` — run env:reap on a schedule, so an idle box cannot survive the night.
+#
+# Deliberately runs reap WITHOUT --now: the script already does all the deciding, and it
+# is safe unattended for a reason worth stating. refuse_if_others_are_working only counts
+# envs touched in the last 60 minutes, and REAP_AFTER_MIN is 90 — so by the time a box is
+# reapable, nothing can still be blocking it. The two thresholds cannot deadlock as long
+# as REAP_AFTER_MIN stays above 60, which cmd_timer asserts below rather than trusting.
+#
+# A run that fires too early prints "not reaping" and exits 0. That is the common case and
+# it must stay cheap and silent.
+cmd_timer() {
+  case "${1:-on}" in
+  status)
+    if [ -f "$LAUNCH_PLIST" ]; then
+      echo "installed: $LAUNCH_PLIST"
+      # Capture, then match — do NOT pipe into `grep -q`. grep exits on the first match
+      # and closes the pipe, launchctl takes SIGPIPE, and `set -o pipefail` reports the
+      # pipeline as FAILED even though the match succeeded. It is timing-dependent, so
+      # it passes in a quick test and then lies in the field: this reported "loaded: NO"
+      # about a timer that was demonstrably loaded and had already run.
+      local loaded=""
+      loaded="$(launchctl list 2>/dev/null || true)"
+      case "$loaded" in
+      *"$LAUNCH_LABEL"*) echo "loaded:    yes (every $((REAP_EVERY_SEC / 60))m)" ;;
+      *) echo "loaded:    NO — pnpm env:timer to reload" ;;
+      esac
+      echo "log:       $REAP_TIMER_LOG"
+      [ -s "$REAP_TIMER_LOG" ] && {
+        echo "last runs:"
+        tail -5 "$REAP_TIMER_LOG" | sed 's/^/  /'
+      }
+    else
+      echo "not installed — an idle box will bill until someone remembers."
+      echo "  pnpm env:timer"
+    fi
+    return 0
+    ;;
+  off)
+    launchctl unload "$LAUNCH_PLIST" 2>/dev/null || true
+    rm -f "$LAUNCH_PLIST"
+    echo "✓ timer removed. Nothing reaps the box now — pnpm env:reap --now by hand."
+    return 0
+    ;;
+  on | "") ;;
+  *) die "usage: pnpm env:timer [on|off|status]" ;;
+  esac
+
+  # A deadlock here is silent and expensive: the box would simply never be reaped.
+  [ "$REAP_AFTER_MIN" -gt 60 ] ||
+    die "REAP_AFTER_MIN is ${REAP_AFTER_MIN}m but refuse_if_others_are_working blocks on
+  activity in the last 60m — the timer could never reap. Raise it above 60."
+
+  # launchd does NOT give a job your shell's PATH; it gets /usr/bin:/bin:/usr/sbin:/sbin,
+  # where none of these live. Resolve them now and embed the real directories, so the
+  # failure is at install time and visible rather than at 3am in a log nobody reads.
+  local paths="" p d
+  for p in hcloud tofu jq ssh rsync; do
+    d="$(command -v "$p" 2>/dev/null)" || die "$p is required by env:reap but not on PATH."
+    d="$(dirname "$d")"
+    case ":$paths:" in *":$d:"*) ;; *) paths="${paths:+$paths:}$d" ;; esac
+  done
+  paths="$paths:/usr/bin:/bin:/usr/sbin:/sbin"
+
+  case "$MAIN_CHECKOUT$paths" in
+  *'<'* | *'&'*) die "path contains XML metacharacters; refusing to write a broken plist." ;;
+  esac
+
+  mkdir -p "$(dirname "$LAUNCH_PLIST")"
+  cat >"$LAUNCH_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LAUNCH_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$MAIN_CHECKOUT/scripts/env.sh</string>
+    <string>reap</string>
+  </array>
+  <!-- require_main_checkout refuses to write OpenTofu state from anywhere else. -->
+  <key>WorkingDirectory</key><string>$MAIN_CHECKOUT</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$paths</string></dict>
+  <key>StartInterval</key><integer>$REAP_EVERY_SEC</integer>
+  <!-- Also on login: a laptop shut mid-session is exactly when a box gets forgotten. -->
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>$REAP_TIMER_LOG</string>
+  <key>StandardErrorPath</key><string>$REAP_TIMER_LOG</string>
+</dict>
+</plist>
+PLIST
+
+  launchctl unload "$LAUNCH_PLIST" 2>/dev/null || true
+  launchctl load "$LAUNCH_PLIST" || die "launchctl load failed — see $LAUNCH_PLIST"
+
+  echo "✓ timer installed — env:reap runs every $((REAP_EVERY_SEC / 60))m and reaps the box"
+  echo "  once it has been idle ${REAP_AFTER_MIN}m. An early run prints 'not reaping' and exits."
+  echo "  log:     $REAP_TIMER_LOG          status:  pnpm env:timer status"
+  echo "  remove:  pnpm env:timer off"
+  echo ""
+  echo "  This does NOT replace pnpm env:reap --now when you finish for the day — it only"
+  echo "  guarantees a forgotten box dies within ${REAP_AFTER_MIN}m rather than billing all month."
+}
+
 case "${1:-}" in
 box)
   shift || true
@@ -935,6 +1122,10 @@ runner) cmd_runner ;;
 reap)
   shift || true
   cmd_reap "$@"
+  ;;
+timer)
+  shift || true
+  cmd_timer "$@"
   ;;
 *)
   sed -n '5,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'

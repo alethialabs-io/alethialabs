@@ -54,11 +54,17 @@ pnpm env:status  # every env, who holds it, capacity
 pnpm env:down    # RELEASE the slot when you're finished with the branch
 ```
 
-The box is **shared** with every other instance and the maintainer: 4 environments, and
-`dev` permanently holds one as the integration env, leaving **3 branch slots**. Take one
-only when you need a *running* app — build, type-check, lint and unit tests do not need
-one — and release it when you are done. Nothing is reclaimed automatically. If the box is
-down, **ask the maintainer**; restoring it runs `tofu apply`, which agents are refused.
+The box is **shared** with every other instance and the maintainer: 2 environments (a
+measured memory ceiling — an env needs 5–7 GB), and `dev` permanently holds one as the
+integration env, leaving **one branch slot**. Take it only when you need a *running* app
+— build, type-check, lint and unit tests do not need one — and release it when you are
+done. Nothing is reclaimed automatically. If the box is down, **ask the maintainer**;
+restoring it runs `tofu apply`, which agents are refused.
+
+The box bills by the hour it **exists**, running or idle — deleting it is the only thing
+that stops the meter, so a box left up costs €69.49/mo against €0.72 reaped. Run
+`pnpm env:reap --now` when you finish; `pnpm env:timer` makes that automatic after 90
+idle minutes.
 
 The local dev servers and the destructive resets are **blocked** by
 `.claude/hooks/guard-runtime.sh`. Measured reason: the laptop sat at 92% disk and 86% swap with
