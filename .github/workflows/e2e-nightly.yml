@@ -197,6 +197,27 @@ jobs:
             echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. To enable it: docs/testing/e2e-nightly-enablement.md (apply the stack, set the companion vars FIRST, dispatch this cloud alone, kill-drill, then set the gate)."
           fi
 
+      # A gate-off matrix job still exists in the Actions jobs API, so job existence cannot say
+      # whether this cloud ran. Emit the same run-scoped summary contract as a real proof instead:
+      # the rollup can then distinguish an explicit inert leg from a job that started but failed
+      # before proof capture. If the gate itself fails, this step does not run and the missing
+      # current-run summary remains a hard failure.
+      - name: Record gate-off proof
+        if: steps.gate.outputs.run == 'false'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          OUT="demos/proofs/${PROVIDER}/gate-${RUN_ID}-${RUN_ATTEMPT}"
+          mkdir -p "$OUT"
+          jq -n \
+            --arg provider "$PROVIDER" \
+            --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
+            --arg verdict "${PROVIDER}: SKIPPED — gate off, no secret/var wired" \
+            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", verdict: $verdict}' \
+            > "$OUT/provision-summary.json"
+
       # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
       #    logical run identity: for hetzner it IS the `cluster` label every resource carries;
       #    for the managed clouds the unique handle is the `alethia:environment-id=<env>` tag
@@ -720,7 +741,7 @@ jobs:
           ./demos/proofs/capture-proof.sh "${{ matrix.provider }}"
 
       - name: Upload proof artifact
-        if: steps.gate.outputs.run == 'true' && always()
+        if: always() && (steps.gate.outputs.run == 'true' || steps.gate.outputs.run == 'false')
         uses: actions/upload-artifact@v7
         with:
           name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
@@ -807,8 +828,9 @@ jobs:
     permissions:
       contents: read
       issues: write
-      # The second source for "did this leg actually run?". Without it the rollup can only see
-      # proof bundles, and a leg that ran and left none is indistinguishable from one nobody wired.
+      # The fail-closed second source for "did this matrix job exist?". Enabled, failed, and gate-off
+      # legs all emit an explicit summary; a matching job with no current-run summary is a reporting
+      # failure rather than an inferred skip.
       actions: read
     steps:
       - uses: actions/checkout@v7
@@ -819,7 +841,7 @@ jobs:
           pattern: e2e-proof-*-${{ github.run_id }}
           path: proofs
           merge-multiple: false
-      # The run's own job conclusions — the independent second source for "did this leg run?".
+      # The run's own job conclusions — the independent fallback for a missing explicit summary.
       # Fetched into a file so the derivation stays pure and offline-testable. A failure here is NOT
       # fatal: the script degrades to proof-presence and says so loudly.
       - name: Fetch this run's job conclusions (existence cross-check)
