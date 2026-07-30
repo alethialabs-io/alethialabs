@@ -100,6 +100,28 @@ slug() {
 
 owner() { printf '%s@%s' "$(id -un)" "$(hostname -s)"; }
 
+# The env's public hostname. ONE label deep, always.
+#
+# Branch envs used to be <slug>.dev.<domain>, which resolved fine and then failed TLS on
+# every request: Cloudflare's Universal SSL covers the apex and ONE level of subdomain, so
+# a two-level name is outside the certificate and the handshake is refused. Only `dev`
+# itself worked. An Advanced Certificate would fix it for about the price of the box.
+#
+# So a hostname belongs to the SLOT, not the branch: the registry hands out a fixed console
+# port per slot, and slot N is envN-<sub>.<domain>. `dev` keeps the bare name because OAuth
+# redirect URIs and the Stripe webhook are registered against exactly that.
+env_fqdn() { # <slug> <consolePort>
+  local slug_="$1" port="$2" domain slot
+  domain="$(env_domain)"
+  [ "$slug_" = "dev" ] && {
+    printf '%s' "$domain"
+    return 0
+  }
+  # 3100 -> 1, 3200 -> 2, ... — the same pool env-registry.sh allocates from.
+  slot=$(((port - 3000) / 100))
+  printf 'env%s-%s' "$slot" "$domain"
+}
+
 # base64 of a RAW 64-byte ed25519 private key (seed||public). Go's ed25519.PrivateKey —
 # and therefore verify.SigningKeyFromEnv — wants those 64 bytes, not a PEM, and openssl
 # cannot emit them directly. For ed25519 both DER encodings are fixed-length, so the seed
@@ -627,9 +649,7 @@ cmd_up() {
 # the connectors, or stash this file before `pnpm env:reap`.
 mint_env() {
   local slug_="$1" cport="$2" sport="$3" db="$4" fqdn url
-  local domain
-  domain="$(env_domain)"
-  if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
+  fqdn="$(env_fqdn "$slug_" "$cport")"
   url="https://$fqdn"
 
   local secret1 secret2 secret3 secret4 oidc_key receipt_key snapshot_key bootstrap_token
@@ -711,7 +731,7 @@ cmd_status() {
   echo "envs: (cap from infra/sandbox env_cap)"
   ssh_box "$REMOTE/bin/env-registry.sh list" |
     jq -r --arg d "$domain" 'to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else .key + "." + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
+      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
 
   Sign-in: OAuth redirect URIs cannot be wildcarded, so social sign-in and the Stripe
@@ -724,9 +744,10 @@ cmd_logs() { ssh_box "tail -n 200 -f /var/log/alethia-$(slug).log"; }
 
 cmd_open() {
   local domain slug_ url
-  domain="$(env_domain)"
   slug_="$(slug)"
-  if [ "$slug_" = "dev" ]; then url="https://$domain"; else url="https://$slug_.$domain"; fi
+  cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
+  [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
+  url="https://$(env_fqdn "$slug_" "$cport")"
   echo "$url"
   command -v open >/dev/null 2>&1 && open "$url"
 }
@@ -763,11 +784,10 @@ cmd_test() {
   need jq
   local slug_ cport domain fqdn proj=""
   slug_="$(slug)"
-  domain="$(env_domain)"
-  if [ "$slug_" = "dev" ]; then fqdn="$domain"; else fqdn="$slug_.$domain"; fi
 
   cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
   [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
+  fqdn="$(env_fqdn "$slug_" "$cport")"
 
   # Default to the project CI gates on. Anything else is opt-in and named.
   proj="${1:---project=hero}"
