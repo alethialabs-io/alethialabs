@@ -240,7 +240,7 @@ export default function BrandPage() {
 						<Link href="/cookies" className="hover:text-foreground">
 							Cookies
 						</Link>
-						<Link href="/contact" className="hover:text-foreground">
+						<Link href="/contact/sales" className="hover:text-foreground">
 							Contact
 						</Link>
 					</div>
@@ -262,7 +262,7 @@ function BrandNav() {
 					<span className="hidden font-mono uppercase tracking-[0.14em] sm:inline">
 						Brand reference
 					</span>
-					<Link href="/contact" className="text-foreground hover:opacity-70">
+					<Link href="/contact/sales" className="text-foreground hover:opacity-70">
 						Contact
 					</Link>
 				</nav>

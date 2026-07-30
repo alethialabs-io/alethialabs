@@ -37,7 +37,7 @@ export function ReceiptEmail({
 	periodLabel,
 	cardLabel,
 	invoiceNumber,
-	billingUrl = "https://alethialabs.io/settings/billing",
+	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: ReceiptEmailProps) {
 	return (
 		<EmailLayout
@@ -87,7 +87,7 @@ ReceiptEmail.PreviewProps = {
 	periodLabel: "Jul 3 – Aug 3, 2026",
 	cardLabel: "Visa •••• 4242",
 	invoiceNumber: "ABCD-0001",
-	billingUrl: "https://alethialabs.io/settings/billing",
+	billingUrl: "https://alethialabs.io/dashboard/settings/billing",
 } satisfies ReceiptEmailProps;
 
 export default ReceiptEmail;
