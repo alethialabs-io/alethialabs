@@ -12,6 +12,10 @@ export const LEGAL_ENTITY = {
 	tradingName: "Alethia Labs",
 	/** Full current legal entity — the ONE place to edit when the entity changes. */
 	legalName: "Alethia Labs DPK",
+	/** The company has been submitted but is not a legal person until registration. */
+	formationPending: true,
+	/** Interim service operator and data controller while formation is pending. */
+	currentOperator: "Borislav Borisov, trading as Alethia Labs",
 	jurisdiction: "Bulgaria",
 	governingLaw: "Bulgaria",
 	/** TODO: Bulgarian EIK (unified identification code) — not yet registered. */
@@ -30,7 +34,7 @@ export const LEGAL_ENTITY = {
 	},
 } as const;
 
-/** Returns a filled value, or a visibly-flagged TODO marker until the value is provided. */
-export function legalField(value: string, label: string): string {
-	return value || `[TODO: ${label}]`;
-}
+/** Entity that can presently enter contracts and act as data controller. */
+export const CURRENT_LEGAL_OPERATOR = LEGAL_ENTITY.formationPending
+	? LEGAL_ENTITY.currentOperator
+	: LEGAL_ENTITY.legalName;

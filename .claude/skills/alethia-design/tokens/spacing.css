@@ -24,7 +24,7 @@
   --space-32:  8rem;     /* 128 */
 
   /* ---- Radii ---- Architectural, not soft. Controls are squared;
-     surfaces carry only a whisper of a corner. tovr-inspired. */
+     surfaces carry only a whisper of a corner. compact reference geometry (see design provenance ledger). */
   --radius-none: 0;
   --radius-xs:  0;        /* squared controls: buttons, inputs, selects, badges, chips */
   --radius-sm:  2px;      /* menus, popovers, small fills */

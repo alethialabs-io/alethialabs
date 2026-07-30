@@ -5,6 +5,7 @@
 import {
   ArrowUpRight,
   BookOpen,
+  Code2,
   History,
   Home,
   LifeBuoy,
@@ -199,6 +200,19 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
                 Docs
                 <BookOpen className="ml-auto h-4 w-4 text-muted-foreground" />
               </Link>
+            }
+          />
+          <DropdownMenuItem
+            render={
+              <a
+                href={legalUrl("/legal/source")}
+                target="_blank"
+                rel="noreferrer"
+                className="cursor-pointer"
+              >
+                Source &amp; licenses
+                <Code2 className="ml-auto h-4 w-4 text-muted-foreground" />
+              </a>
             }
           />
 
