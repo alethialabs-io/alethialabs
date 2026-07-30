@@ -17,6 +17,9 @@ on:
       - 'packages/**'
       - 'docker-compose.yml'
       - 'deploy/prod/**'
+      # A deploy-workflow-only fix must be able to deploy itself. The changes job
+      # retags the existing images for the new SHA, so this does not rebuild them.
+      - '.github/workflows/deploy-console.yml'
   workflow_dispatch:
 
 permissions:
@@ -699,5 +702,12 @@ jobs:
             echo "::endgroup::"
             exit 1
           fi
+          # `git checkout` replaces tracked files atomically. Caddy bind-mounts one
+          # tracked file, so its existing mount can stay attached to the old inode
+          # even though /opt/alethia now shows the new routes. Compose cannot detect
+          # bind-mounted content changes and otherwise reports the container as
+          # "Running". Recreate it on every release so routing changes take effect.
+          docker compose $cf up -d --force-recreate --no-deps caddy
+          docker compose $cf exec -T caddy caddy validate --config /etc/caddy/Caddyfile
           docker image prune -f
           REMOTE
