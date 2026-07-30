@@ -86,8 +86,16 @@ export function NavRow({
 		);
 	}
 
+	if (!item.href) {
+		return (
+			<button type="button" disabled aria-disabled className={className}>
+				{inner}
+			</button>
+		);
+	}
+
 	return (
-		<Link href={item.href ?? "#"} className={className} onClick={onClick}>
+		<Link href={item.href} className={className} onClick={onClick}>
 			{inner}
 		</Link>
 	);

@@ -8,6 +8,7 @@ import type React from "react";
 import { ConsentProvider } from "@repo/privacy/consent-provider";
 import { getQueryClient } from "@/lib/query/client";
 import { AnalyticsProvider } from "@/components/providers/analytics-provider";
+import { legalUrl } from "@/lib/legal";
 
 /**
  * Client-side data layer. Wraps the app in a single QueryClient (request-scoped on the
@@ -19,7 +20,10 @@ import { AnalyticsProvider } from "@/components/providers/analytics-provider";
 export function Providers({ children }: { children: React.ReactNode }) {
 	const queryClient = getQueryClient();
 	return (
-		<ConsentProvider>
+		<ConsentProvider
+			showPersistentTrigger={false}
+			cookieNoticeHref={legalUrl("/cookies")}
+		>
 			<QueryClientProvider client={queryClient}>
 				<AnalyticsProvider>{children}</AnalyticsProvider>
 				{process.env.NODE_ENV === "development" ? (

@@ -40,15 +40,7 @@ export function WelcomeEmail({
 			legal={
 				<>
 					You&apos;re receiving this because you created an Alethia
-					account. Manage{" "}
-					<Link
-						href="https://alethialabs.io/settings/notifications"
-						className="a-text-2"
-						style={footerLegalLink}
-					>
-						email preferences
-					</Link>{" "}
-					·{" "}
+					account.{" "}
 					<Link
 						href="https://alethialabs.io/privacy"
 						className="a-text-2"
