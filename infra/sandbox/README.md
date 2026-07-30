@@ -19,7 +19,7 @@ databases and the `next dev` processes — is `scripts/env.sh` and `scripts/box/
 | `hcloud_server.sandbox` | The box. No data volume — see *Durability* below. |
 | `hcloud_firewall.sandbox` | SSH and nothing else; envs are reached through the tunnel. |
 | `cloudflare_zero_trust_tunnel_cloudflared.sandbox` | **Locally-managed** (`config_src = "local"`), so the box can rewrite ingress as envs come and go. |
-| `cloudflare_record.env_wildcard` | `*.dev` → the tunnel. One record covers every future branch. |
+| `cloudflare_record.env_slot` | One record per env slot: `env1-dev`, `env2-dev`, … **one label deep**, so Universal SSL covers them. |
 | `cloudflare_record.env_primary` | `dev` → the tunnel. The one hostname with OAuth + Stripe registered. |
 
 No `cloudflared tunnel login`, no hand-copied credentials file: the connector
@@ -39,17 +39,32 @@ Then, from the repo root, `pnpm env:up`.
 
 ## Sizing and cost
 
-Default **`cpx32`** (4 vCPU / 8 GB / 160 GB). Sized for **cost**, because billing is hourly
-and the box is removed when idle.
+Default **`cpx42`** (8 vCPU / 16 GB / 320 GB), holding **`env_cap = 2`**.
 
-| | per hour | 6h/day x 22d | always-on |
-|---|---|---|---|
-| **cpx32** | EUR 0.0569 | **~7.51** | 35.49 |
-| cpx42 | EUR 0.1114 | ~14.70 | 69.49 |
+**The cost lever is hours, not size.** Billing is hourly for as long as the server
+*exists*, so what you pay is set by how promptly it is reaped:
 
-Idle floor is about **EUR 0.80/mo**: the Primary IP (0.50) plus the snapshot
-(~20 GB at 0.0143/GB). 8 GB still fits the shared tier (~1 GB), two environments
-(~2-3 GB each) and a Chromium run.
+| cpx42 @ EUR 0.1114/h | per month |
+|---|---|
+| left up 24/7 | **69.49** |
+| 8h/day | ~27.11 |
+| 4h/day | ~13.55 |
+| reaped — IP + snapshots only | **0.72** |
+
+That top row is not hypothetical: the box ran continuously for its first day because
+nothing scheduled the reap. `pnpm env:timer` now does (launchd, every 30 min, after 90
+idle minutes), and the session banner warns once the box has been up 12h. Neither
+replaces `pnpm env:reap --now` when you finish for the day.
+
+Idle floor is **~EUR 0.72/mo**: the Primary IP (0.50) plus two snapshots
+(~15 GB at 0.0143/GB). Note snapshots grow with what is on disk — 3.84 GB fresh, 12 GB
+once envs, `node_modules` and the Playwright browsers have accumulated.
+
+**Why not cpx32, at half the rate?** It holds exactly one environment. An env floors at
+**5.2 GB** and peaks near **7 GB** after a browser run (measured on the box; the earlier
+"~2–3 GB" was an estimate and wrong by 3x), against ~0.5 GB for the shared tier. Since
+`dev` permanently holds a slot, cpx32 would leave no branch slot at all. `checks.tf`
+asserts this pairing and `checks.tftest.hcl` proves the assertion actually fails.
 
 **A stopped server is not free.** Hetzner bills *"for a server ... for as long as it
 exists, regardless of whether it is turned on or not"*, so stop/start saves nothing and
@@ -79,6 +94,23 @@ warm `node_modules`, both cheap to rebuild. Nothing here is a system of record.
 tunnel dies with the box. `pnpm env:up` brings it back in 1–2 minutes. If that proves
 annoying in practice, raising the reap threshold is a one-line change in
 `scripts/env.sh`.
+
+## Why slot hostnames, not branch names
+
+Branch envs are `envN-dev.<domain>`, keyed to the registry's slot rather than the branch.
+
+The original design used `<slug>.dev.<domain>` behind a `*.dev` wildcard. DNS resolved and
+the tunnel routed correctly — and every request failed TLS:
+
+```
+dev.alethialabs.io          matched cert's "*.alethialabs.io"   OK
+fix-trap.dev.alethialabs.io sslv3 alert handshake failure       FAILS
+```
+
+Cloudflare's Universal SSL covers the apex and **one** level of subdomain. Two levels needs
+an Advanced Certificate, which costs about what the box does. A record per slot is one
+label deep, created once here, needs no Cloudflare API call during `env:up`, and avoids a
+wildcard that would catch every unregistered subdomain of the production zone.
 
 ## The OAuth constraint
 

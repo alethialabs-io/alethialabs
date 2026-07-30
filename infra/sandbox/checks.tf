@@ -16,13 +16,25 @@ check "tunnel_is_locally_managed" {
 
 # Unproxied, or pointed at a stale tunnel id, and every branch hostname resolves to
 # nothing — the failure mode looks like "my env is broken" rather than "DNS is wrong".
-check "wildcard_dns_onto_tunnel" {
+# Every slot record must be proxied and on THIS tunnel. A slot whose DNS drifts is an
+# env that resolves nowhere, and the symptom ("my env is broken") points at the app.
+check "slot_dns_onto_tunnel" {
   assert {
-    condition = (
-      cloudflare_record.env_wildcard.proxied &&
-      cloudflare_record.env_wildcard.content == "${cloudflare_zero_trust_tunnel_cloudflared.sandbox.id}.cfargotunnel.com"
-    )
-    error_message = "*.<env_subdomain> must be a proxied CNAME onto THIS sandbox tunnel (<tunnel-id>.cfargotunnel.com)."
+    condition = alltrue([
+      for r in cloudflare_record.env_slot :
+      r.proxied && r.content == "${cloudflare_zero_trust_tunnel_cloudflared.sandbox.id}.cfargotunnel.com"
+    ])
+    error_message = "Every envN-<env_subdomain> must be a proxied CNAME onto THIS sandbox tunnel."
+  }
+}
+
+# ONE label deep, always. Two levels is outside Cloudflare's Universal SSL and every
+# request fails the TLS handshake before it is made — which is how the original
+# *.dev.<domain> scheme shipped broken.
+check "slot_hostnames_are_one_label_deep" {
+  assert {
+    condition     = alltrue([for r in cloudflare_record.env_slot : length(split(".", r.name)) == 1])
+    error_message = "Env hostnames must be ONE label (envN-<sub>), not <slug>.<sub> — Universal SSL does not cover two levels."
   }
 }
 
@@ -98,5 +110,30 @@ check "env_cap_fits_the_port_pools" {
   assert {
     condition     = var.env_cap <= 6
     error_message = "env_cap exceeds the console/storage port pools in scripts/box/env-registry.sh (6 slots)."
+  }
+}
+
+# env_cap and server_type are ONE decision, and they drifted apart: the default was
+# cpx32 (8 GB) while the cap said 4, on an estimate of ~2 GB per env that turned out to
+# be 5.2-7 GB measured. Nothing caught it, because RAM exhaustion shows up as an OOM-
+# killed console on the box — a confusing runtime failure, hours after the apply.
+#
+# Budget: ~7 GB peak per env + ~0.5 GB for the shared postgres/seaweedfs tier.
+locals {
+  server_ram_gb = {
+    cpx32 = 8
+    cpx42 = 16
+    cpx52 = 32
+    cax31 = 8
+    cax41 = 16
+  }
+  ram_gb = lookup(local.server_ram_gb, var.server_type, 0)
+}
+
+check "env_cap_fits_the_memory" {
+  assert {
+    # Unknown types skip rather than block — the map is a convenience, not a registry.
+    condition     = local.ram_gb == 0 || (local.ram_gb - 1) >= var.env_cap * 7
+    error_message = "env_cap ${var.env_cap} needs ~${var.env_cap * 7}GB + 1GB shared tier, but ${var.server_type} has ${local.ram_gb}GB. An env peaks near 7GB (measured). Lower env_cap or raise server_type."
   }
 }
