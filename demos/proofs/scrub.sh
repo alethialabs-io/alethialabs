@@ -80,8 +80,16 @@ assert_grep_clean() {
 		echo "::error::proof-scrub: a PEM PRIVATE KEY survived into the proof bundle ($dir)" >&2
 		rc=1
 	fi
-	# 3) Any denylisted key still carrying a real (non-REDACTED) value.
-	hits="$(grep -rIhnE -- '(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)["]?[[:space:]]*[:=][[:space:]]*[^[:space:]]' "$dir" 2>/dev/null | grep -v 'REDACTED' || true)"
+	# 3) Any denylisted key still carrying a real value — one neither WE redacted ("REDACTED")
+	#    nor OpenTofu already withheld.
+	#
+	#    `(sensitive value)` is tofu's OWN redaction marker: a plan/apply line reading
+	#    `+ kubeconfig = (sensitive value)` is tofu telling you it withheld the value, and it
+	#    carries no secret. Without this exclusion the tripwire fires on EVERY tofu log — the
+	#    hetzner template alone emits kubeconfig, talosconfig and client_key in exactly that
+	#    shape — so a perfectly clean bundle is reported as secret-bearing. That is not a
+	#    harmless false alarm: a caller treating the tripwire as fatal discards a good bundle.
+	hits="$(grep -rIhnE -- '(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)["]?[[:space:]]*[:=][[:space:]]*[^[:space:]]' "$dir" 2>/dev/null | grep -v 'REDACTED' | grep -vF '(sensitive value)' || true)"
 	if [ -n "$hits" ]; then
 		echo "::error::proof-scrub: a denylisted key still carries a plaintext value in the proof bundle ($dir):" >&2
 		printf '%s\n' "$hits" | head -5 >&2
