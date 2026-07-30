@@ -17,6 +17,7 @@
 #   env:test    Playwright browser tests ON THE BOX; report + traces rsync'd back
 #   env:runner  a provisioning runner pointed at this env
 #   env:reap    snapshot + DELETE the box (stops the meter)   [--now]
+#   env:timer   reap the box automatically once idle   [off|status]
 #   env:box     create or restore the box   [--fresh = ignore snapshots]
 set -euo pipefail
 
@@ -62,10 +63,24 @@ HCLOUD_CONTEXT_NAME="${ALETHIA_HCLOUD_CONTEXT:-alethia-sandbox}"
 hc() { hcloud --context "$HCLOUD_CONTEXT_NAME" "$@"; }
 SNAPSHOT_LABEL="role=sandbox"
 REMOTE=/opt/alethia
-# Idle minutes before env:reap will snapshot-and-delete. Generous on purpose: the
-# restore path costs 1-2 minutes and a box reaped out from under a long test run is
-# far more expensive than a few idle euros.
-REAP_AFTER_MIN="${ALETHIA_REAP_AFTER_MIN:-180}"
+# Idle minutes before env:reap will snapshot-and-delete. The restore path costs 1-2
+# minutes and a box reaped out from under a long test run is far more expensive than a
+# few idle euros, so this stays well clear of any real run (the longest measured browser
+# run is 36 SECONDS).
+#
+# Was 180, sized for several people whose runs must not vanish mid-flight. With one user
+# that is three idle hours after every session, and idle hours are the entire cost
+# problem: Hetzner bills a server for as long as it EXISTS, so the difference between a
+# box reaped promptly and one left up is the difference between EUR 0.72/mo and EUR 69.49.
+REAP_AFTER_MIN="${ALETHIA_REAP_AFTER_MIN:-90}"
+
+# The launchd timer that makes the reap automatic. env:reap was complete and proven for
+# days while nothing ever CALLED it, and a cost control you have to remember is not a
+# cost control — the box ran 24/7 on that gap.
+LAUNCH_LABEL="io.alethialabs.sandbox-reap"
+LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
+REAP_TIMER_LOG="${ALETHIA_REAP_LOG:-/tmp/alethia-reap.log}"
+REAP_EVERY_SEC="${ALETHIA_REAP_EVERY_SEC:-1800}"
 
 die() {
   echo "✗ $*" >&2
@@ -908,6 +923,111 @@ cmd_reap() {
   echo "  Restore with: pnpm env:box   (~1-2 min, SAME address; hostnames error until then)"
 }
 
+# `pnpm env:timer` — run env:reap on a schedule, so an idle box cannot survive the night.
+#
+# Deliberately runs reap WITHOUT --now: the script already does all the deciding, and it
+# is safe unattended for a reason worth stating. refuse_if_others_are_working only counts
+# envs touched in the last 60 minutes, and REAP_AFTER_MIN is 90 — so by the time a box is
+# reapable, nothing can still be blocking it. The two thresholds cannot deadlock as long
+# as REAP_AFTER_MIN stays above 60, which cmd_timer asserts below rather than trusting.
+#
+# A run that fires too early prints "not reaping" and exits 0. That is the common case and
+# it must stay cheap and silent.
+cmd_timer() {
+  case "${1:-on}" in
+  status)
+    if [ -f "$LAUNCH_PLIST" ]; then
+      echo "installed: $LAUNCH_PLIST"
+      # Capture, then match — do NOT pipe into `grep -q`. grep exits on the first match
+      # and closes the pipe, launchctl takes SIGPIPE, and `set -o pipefail` reports the
+      # pipeline as FAILED even though the match succeeded. It is timing-dependent, so
+      # it passes in a quick test and then lies in the field: this reported "loaded: NO"
+      # about a timer that was demonstrably loaded and had already run.
+      local loaded=""
+      loaded="$(launchctl list 2>/dev/null || true)"
+      case "$loaded" in
+      *"$LAUNCH_LABEL"*) echo "loaded:    yes (every $((REAP_EVERY_SEC / 60))m)" ;;
+      *) echo "loaded:    NO — pnpm env:timer to reload" ;;
+      esac
+      echo "log:       $REAP_TIMER_LOG"
+      [ -s "$REAP_TIMER_LOG" ] && {
+        echo "last runs:"
+        tail -5 "$REAP_TIMER_LOG" | sed 's/^/  /'
+      }
+    else
+      echo "not installed — an idle box will bill until someone remembers."
+      echo "  pnpm env:timer"
+    fi
+    return 0
+    ;;
+  off)
+    launchctl unload "$LAUNCH_PLIST" 2>/dev/null || true
+    rm -f "$LAUNCH_PLIST"
+    echo "✓ timer removed. Nothing reaps the box now — pnpm env:reap --now by hand."
+    return 0
+    ;;
+  on | "") ;;
+  *) die "usage: pnpm env:timer [on|off|status]" ;;
+  esac
+
+  # A deadlock here is silent and expensive: the box would simply never be reaped.
+  [ "$REAP_AFTER_MIN" -gt 60 ] ||
+    die "REAP_AFTER_MIN is ${REAP_AFTER_MIN}m but refuse_if_others_are_working blocks on
+  activity in the last 60m — the timer could never reap. Raise it above 60."
+
+  # launchd does NOT give a job your shell's PATH; it gets /usr/bin:/bin:/usr/sbin:/sbin,
+  # where none of these live. Resolve them now and embed the real directories, so the
+  # failure is at install time and visible rather than at 3am in a log nobody reads.
+  local paths="" p d
+  for p in hcloud tofu jq ssh rsync; do
+    d="$(command -v "$p" 2>/dev/null)" || die "$p is required by env:reap but not on PATH."
+    d="$(dirname "$d")"
+    case ":$paths:" in *":$d:"*) ;; *) paths="${paths:+$paths:}$d" ;; esac
+  done
+  paths="$paths:/usr/bin:/bin:/usr/sbin:/sbin"
+
+  case "$MAIN_CHECKOUT$paths" in
+  *'<'* | *'&'*) die "path contains XML metacharacters; refusing to write a broken plist." ;;
+  esac
+
+  mkdir -p "$(dirname "$LAUNCH_PLIST")"
+  cat >"$LAUNCH_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LAUNCH_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$MAIN_CHECKOUT/scripts/env.sh</string>
+    <string>reap</string>
+  </array>
+  <!-- require_main_checkout refuses to write OpenTofu state from anywhere else. -->
+  <key>WorkingDirectory</key><string>$MAIN_CHECKOUT</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$paths</string></dict>
+  <key>StartInterval</key><integer>$REAP_EVERY_SEC</integer>
+  <!-- Also on login: a laptop shut mid-session is exactly when a box gets forgotten. -->
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>$REAP_TIMER_LOG</string>
+  <key>StandardErrorPath</key><string>$REAP_TIMER_LOG</string>
+</dict>
+</plist>
+PLIST
+
+  launchctl unload "$LAUNCH_PLIST" 2>/dev/null || true
+  launchctl load "$LAUNCH_PLIST" || die "launchctl load failed — see $LAUNCH_PLIST"
+
+  echo "✓ timer installed — env:reap runs every $((REAP_EVERY_SEC / 60))m and reaps the box"
+  echo "  once it has been idle ${REAP_AFTER_MIN}m. An early run prints 'not reaping' and exits."
+  echo "  log:     $REAP_TIMER_LOG          status:  pnpm env:timer status"
+  echo "  remove:  pnpm env:timer off"
+  echo ""
+  echo "  This does NOT replace pnpm env:reap --now when you finish for the day — it only"
+  echo "  guarantees a forgotten box dies within ${REAP_AFTER_MIN}m rather than billing all month."
+}
+
 case "${1:-}" in
 box)
   shift || true
@@ -935,6 +1055,10 @@ runner) cmd_runner ;;
 reap)
   shift || true
   cmd_reap "$@"
+  ;;
+timer)
+  shift || true
+  cmd_timer "$@"
   ;;
 *)
   sed -n '5,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
