@@ -19,8 +19,9 @@
 # So discovery here never looks at a path. It reads every provision-summary.json under the proofs
 # tree and keys on the bundle's OWN `.provider`, accepting it only when `.run_tag` names THIS run
 # (the tree also carries checked-in history — the aws artifact held a bundle from six days earlier).
-# Existence gets a SECOND, INDEPENDENT source: the run's own job conclusions. A leg whose job ran
-# but left no readable proof is FAIL, never SKIP.
+# Gate-off legs write an explicit `outcome: skipped` summary using that same contract. Existence gets
+# a SECOND, INDEPENDENT source from the run's jobs API only as a fail-closed fallback: a matrix job
+# with no current-run success/failure/skip summary is FAIL, never an inferred SKIP.
 #
 # Usage:
 #   nightly-rollup.sh                 # derive (reads the env below, writes OUT_DIR)
@@ -37,12 +38,12 @@
 #
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
-#   state.env               REDS / SKIPS / RAN_NO_PROOF / ENABLED_N / SKIP_N / TOTAL / COV_TITLE
+#   state.env               REDS / SKIPS / JOB_NO_SUMMARY / ENABLED_N / SKIP_N / TOTAL / COV_TITLE
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
-#   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per leg that RAN,
-#                           so the ledger step reuses this discovery instead of repeating the join
-#                           that just lost a whole run.
+#   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
+#                           explicit gate-off SKIPs are omitted. The ledger step reuses this
+#                           discovery instead of repeating the join that just lost a whole run.
 set -uo pipefail
 
 PROVIDERS="hetzner aws gcp azure alibaba"
@@ -83,10 +84,10 @@ summary_for() {
 	return 1
 }
 
-# job_ran <provider> — did this run actually execute this cloud's leg?
+# job_exists <provider> — did Actions create this cloud's matrix job?
 # Echoes yes | no | unknown. `unknown` is deliberate and distinct from `no`: it means we could not
-# ask, and the caller must NOT read it as "not enabled".
-job_ran() {
+# ask, and the caller must NOT infer whether the gate was enabled.
+job_exists() {
 	local want="$1"
 	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || { echo unknown; return; }
 	jq -e '(.jobs // []) | length > 0' "$JOBS_JSON" >/dev/null 2>&1 || { echo unknown; return; }
@@ -121,7 +122,7 @@ derive() {
 	mkdir -p "$out"
 	: >"$out/ledger.tsv"
 
-	local reds="" skips="" ran_no_proof="" p hit path outcome verdict detail status ran
+	local reds="" skips="" job_no_summary="" p hit path outcome verdict detail status exists
 
 	if jobs_payload_is_broken; then
 		echo "::warning::the jobs payload has no job starting with '${PROVISION_JOB_PREFIX}' — the existence cross-check is DEAD (was the matrix job renamed?). Falling back to proof-presence, which cannot tell a red leg from an unwired one."
@@ -138,7 +139,7 @@ derive() {
 
 	for p in $PROVIDERS; do
 		hit="$(summary_for "$p" "$run_id" || true)"
-		ran="$(job_ran "$p")"
+		exists="$(job_exists "$p")"
 		if [ -n "$hit" ]; then
 			path="${hit%%	*}"
 			outcome="$(jq -r '.outcome // "unknown"' "$path" 2>/dev/null || echo unknown)"
@@ -146,18 +147,22 @@ derive() {
 			detail="${verdict:-$outcome}"
 			if [ "$outcome" = "success" ]; then
 				status="PASS"
+				printf '%s\t%s\t%s\t%s\n' "$p" "$status" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
+			elif [ "$outcome" = "skipped" ]; then
+				status="SKIP"
+				skips="$skips $p"
 			else
 				status="FAIL"
 				reds="$reds $p"
+				printf '%s\t%s\t%s\t%s\n' "$p" "$status" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
 			fi
-			printf '%s\t%s\t%s\t%s\n' "$p" "$status" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
-		elif [ "$ran" = "yes" ]; then
-			# The case that made this file exist. The leg RAN — we have its job conclusion — and left
-			# no proof we can read. That is a failure to report, not a cloud nobody enabled.
+		elif [ "$exists" = "yes" ]; then
+			# The matrix job exists but emitted no explicit success/failure/skip summary. That is a
+			# failure to report, not evidence that the cloud's gate was off.
 			status="FAIL"
-			detail="ran, but produced no readable proof bundle"
+			detail="matrix job produced no readable explicit summary"
 			reds="$reds $p"
-			ran_no_proof="$ran_no_proof $p"
+			job_no_summary="$job_no_summary $p"
 			printf '%s\t%s\t%s\t%s\n' "$p" "FAIL" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
 		else
 			status="SKIP"
@@ -191,9 +196,9 @@ derive() {
 			echo
 			echo "> An inert leg proves nothing. See \`docs/testing/e2e-nightly-enablement.md\` to wire one."
 		fi
-		if [ -n "${ran_no_proof// /}" ]; then
+		if [ -n "${job_no_summary// /}" ]; then
 			echo
-			echo "> ⚠️ Ran but left no readable proof bundle:${ran_no_proof} — counted as FAIL, not as an unwired leg."
+			echo "> ⚠️ Matrix job left no readable explicit summary:${job_no_summary} — counted as FAIL, not as an unwired leg."
 		fi
 	} >>"$out/summary.md"
 
@@ -235,9 +240,9 @@ derive() {
 		{
 			printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\`."
 			printf '%s\n\n' "Run: ${RUN_URL:-}"
-			case " $ran_no_proof " in
+			case " $job_no_summary " in
 			*" $cloud "*)
-				printf '%s\n\n' "This leg **ran** — its job has a conclusion — but produced no readable \`provision-summary.json\`, so there is no verdict to quote. It is reported as FAIL rather than as an unwired leg."
+				printf '%s\n\n' "This cloud's matrix job existed but produced no readable \`provision-summary.json\`, so there is no explicit PASS, FAIL, or SKIP verdict to quote. It is reported as FAIL rather than inferred to be unwired."
 				;;
 			esac
 			printf '%s\n' "See the run's step-summary rollup + the \`e2e-proof-${cloud}-${run_id}\` artifact for the failing stage (deploy stage / cost / leak / stale sweep)."
@@ -251,7 +256,7 @@ derive() {
 	{
 		echo "REDS='${reds# }'"
 		echo "SKIPS='${skips# }'"
-		echo "RAN_NO_PROOF='${ran_no_proof# }'"
+		echo "JOB_NO_SUMMARY='${job_no_summary# }'"
 		echo "ENABLED_N='${enabled_n}'"
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
@@ -301,6 +306,8 @@ run_self_test() {
 		)
 		# shellcheck disable=SC1091
 		. "$out/state.env"
+		# Generated by derive() immediately above and loaded from state.env.
+		# shellcheck disable=SC2153
 		printf '%s|%s|%s' "$REDS" "$SKIPS" "$ENABLED_N"
 	}
 
@@ -336,13 +343,24 @@ run_self_test() {
 	write_jobs "$c/jobs.json" gcp
 	_a "gcp|hetzner aws azure alibaba|1" "$(_derive "$c")" "ran but left no proof ⇒ FAIL, never 'not enabled'"
 
-	# 5. ALL LEGS OFF — nothing ran, nothing found, no red. The genuinely-inert night.
+	# 5. EXPLICIT GATE-OFF — the matrix jobs exist, but every leg emitted the structured SKIP
+	# summary written by the workflow. Job existence must not turn those inert legs red (#1683).
+	c="$tmp/gateoff"
+	for p in hetzner aws gcp azure alibaba; do
+		write_summary "$c/proofs/$p/gate" "$p" "nightly-777-1" skipped
+	done
+	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
+		"explicit gate-off summaries stay SKIP even though all matrix jobs exist (#1683)"
+	_a "0" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "gate-off legs do not enter the execution ledger"
+
+	# 6. ALL LEGS OFF — nothing ran, nothing found, no red. The genuinely-inert night.
 	c="$tmp/alloff"
 	mkdir -p "$c/proofs"
 	printf '{"jobs":[{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' >"$c/jobs.json"
 	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" "no legs enabled ⇒ 0/5, no red"
 
-	# 6. MATRIX FALLBACK — red aggregate, nothing attributable. Labelled `(matrix)`, never `job`.
+	# 7. MATRIX FALLBACK — red aggregate, nothing attributable. Labelled `(matrix)`, never `job`.
 	c="$tmp/matrix"
 	mkdir -p "$c/proofs"
 	printf '{"jobs":[{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' >"$c/jobs.json"
@@ -350,7 +368,7 @@ run_self_test() {
 	_a "e2e nightly: matrix RED (no per-leg proof)" \
 		"$(cat "$c/out/issue-red-matrix.title")" "matrix red title cannot be mistaken for a cloud"
 
-	# 7. NON-VACUITY — an all-green fixture must produce NO reds. Without this the guard could pass
+	# 8. NON-VACUITY — an all-green fixture must produce NO reds. Without this the guard could pass
 	#    by finding nothing at all, which is exactly the failure it exists to catch.
 	c="$tmp/green"
 	local p
@@ -358,14 +376,16 @@ run_self_test() {
 	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
 	_a "||5" "$(CASE_MATRIX=success _derive "$c")" "all-green: 5/5 enabled and no red filed"
 
-	# 8. A MIXED night, which is what a real 5-cloud run looks like once more legs are wired.
+	# 9. A MIXED night, which is what a real 5-cloud run looks like once more legs are wired.
 	c="$tmp/mixed"
+	write_summary "$c/proofs/e2e-proof-hetzner-777/s" hetzner "nightly-777-1" skipped
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
 	write_summary "$c/proofs/e2e-proof-gcp-777/s" gcp "nightly-777-1" success
-	write_jobs "$c/jobs.json" aws gcp azure
+	write_summary "$c/proofs/e2e-proof-alibaba-777/s" alibaba "nightly-777-1" skipped
+	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
 	_a "aws azure|hetzner alibaba|3" "$(_derive "$c")" "mixed: aws FAIL + gcp PASS + azure ran-without-proof"
 
-	# 9. The existence cross-check DEGRADING must be loud. A renamed matrix job would otherwise put
+	# 10. The existence cross-check DEGRADING must be loud. A renamed matrix job would otherwise put
 	#    us straight back into "absence means never enabled" with nothing on screen to say so.
 	c="$tmp/renamed"
 	mkdir -p "$c/proofs" "$c/out"
@@ -375,7 +395,7 @@ run_self_test() {
 		MATRIX_RESULT=success RUN_URL=http://x derive 2>&1 | grep -c 'existence cross-check is DEAD' || true)"
 	_a "1" "$warn" "a renamed provision job warns loudly instead of silently degrading"
 
-	# 10. LEDGER rows come from the same discovery, so the parity ledger cannot lose a run the table
+	# 11. LEDGER rows come from the same discovery, so the parity ledger cannot lose a run the table
 	#     reported. Run 30341785056 appended nothing while showing a real aws failure.
 	_a "aws	FAIL	aws: verdict for nightly-777-1	e2e-proof-aws-777" \
 		"$(head -1 "$tmp/flat/out/ledger.tsv")" "ledger row is emitted for the leg the table reports"
