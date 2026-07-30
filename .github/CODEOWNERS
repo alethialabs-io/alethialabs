@@ -19,3 +19,15 @@
 
 # DB schema / migrations — linear-chain sensitive.
 /apps/console/lib/db/       @bobikenobi12
+
+# Open-core and legal boundary — changes alter rights or paid-feature isolation.
+/ee/                        @bobikenobi12
+/LICENSE                    @bobikenobi12
+/LICENSING.md               @bobikenobi12
+/NOTICE                     @bobikenobi12
+/COPYRIGHT.md                @bobikenobi12
+/THIRD_PARTY_NOTICES.md      @bobikenobi12
+/cla/                       @bobikenobi12
+/apps/console/lib/enterprise.ts @bobikenobi12
+/apps/marketing/app/legal/source/ @bobikenobi12
+/scripts/create-community-source.sh @bobikenobi12

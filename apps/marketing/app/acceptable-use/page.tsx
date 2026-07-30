@@ -1,100 +1,99 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LEGAL_ENTITY } from "@repo/brand/legal";
-import { LegalShell } from "@/components/legal/legal-shell";
+import { CURRENT_LEGAL_OPERATOR } from "@repo/brand/legal";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
 	title: "Acceptable Use Policy · Alethia",
-	description: "The rules governing acceptable use of the Alethia service.",
+	description: "Rules governing acceptable use of Alethia.",
 };
 
-/**
- * Public Acceptable Use Policy page. Defines prohibited uses of the Service,
- * enforcement, and reporting channels. Jurisdiction-specific clauses are
- * flagged with a <mark> placeholder for legal review.
- */
+/** Public rules for safe, lawful use of hosted Alethia services. */
 export default function AcceptableUsePage() {
 	return (
-		<LegalShell title="Acceptable Use Policy" lastUpdated="June 17, 2026">
+		<LegalShell title="Acceptable Use Policy" lastUpdated="July 29, 2026">
 			<p>
-				This Acceptable Use Policy (“AUP”) sets out the rules for using the
-				Alethia control plane, the alethia CLI, and related services (the
-				“Service”) provided by <strong>{LEGAL_ENTITY.legalName}</strong>. It is part
-				of, and incorporated by reference into, our{" "}
-				<Link href="/terms">Terms of Service</Link>. By using the Service you agree
-				to this AUP.
+				This policy applies to the Service provided by{" "}
+				<strong>{CURRENT_LEGAL_OPERATOR}</strong> and forms part of our{" "}
+				<Link href="/terms">Terms of Service</Link>. You are responsible for users,
+				workloads, and cloud accounts under your organization.
 			</p>
 
-			<h2>1. Prohibited activities</h2>
+			<h2>1. Illegal and harmful activity</h2>
 			<p>You must not use the Service to:</p>
 			<ul>
+				<li>violate law, regulation, sanctions, or another person’s rights;</li>
 				<li>
-					Provision or operate infrastructure for any unlawful purpose, or
-					in violation of any applicable law or regulation.
+					distribute malware, ransomware, phishing, spam, fraudulent content, or
+					tools primarily intended to facilitate those activities;
 				</li>
 				<li>
-					Host, distribute, or facilitate malware, phishing, spam, or other
-					malicious or fraudulent content.
+					exploit, threaten, harass, or facilitate sexual abuse or exploitation,
+					including any child sexual abuse material;
 				</li>
 				<li>
-					Attempt to gain unauthorised access to the Service, other
-					customers’ data, or the underlying systems — including any attempt
-					to bypass tenant isolation or Row Level Security.
+					operate infrastructure for unlawful surveillance, trafficking, weapons,
+					or evasion of lawful controls;
+				</li>
+				<li>infringe intellectual-property, privacy, or publicity rights.</li>
+			</ul>
+
+			<h2>2. Security and platform abuse</h2>
+			<ul>
+				<li>
+					Do not access accounts, systems, data, or cloud resources without
+					authorization.
 				</li>
 				<li>
-					Interfere with or disrupt the integrity or performance of the
-					Service, for example through denial-of-service attacks or
-					deliberate resource abuse.
+					Do not bypass authentication, authorization, tenant isolation, rate
+					limits, safety gates, plan limits, or billing controls.
 				</li>
 				<li>
-					Connect cloud accounts you are not authorised to manage, or
-					provision resources you are not entitled to create.
+					Do not disrupt the Service, conduct denial-of-service activity, mine
+					cryptocurrency without written approval, or create unreasonable load.
 				</li>
 				<li>
-					Reverse engineer, probe, or scan the Service except as expressly
-					permitted by law or a written agreement with us.
+					Do not probe or test Alethia-owned systems without permission. Good-faith
+					security research must follow <code>SECURITY.md</code> and be reported to{" "}
+					<a href="mailto:security@alethialabs.io">
+						security@alethialabs.io
+					</a>
+					.
 				</li>
 				<li>
-					Use the Service to infringe the intellectual property, privacy, or
-					other rights of any third party.
-				</li>
-				<li>
-					<mark>[PLACEHOLDER: any jurisdiction- or industry-specific prohibitions]</mark>
+					Do not connect a repository, organization, identity, or cloud account you
+					are not authorized to manage.
 				</li>
 			</ul>
 
-			<h2>2. Your responsibilities</h2>
+			<h2>3. High-risk use</h2>
 			<p>
-				You are responsible for all activity carried out through your account
-				and the cloud accounts you connect, including the lawful and secure
-				operation of the infrastructure you provision and any costs your
-				cloud providers charge for it.
+				Do not rely on the Service as the sole control for emergency services,
+				medical devices, nuclear facilities, weapons, life-support, or another use
+				where failure is reasonably likely to cause death, serious injury, or severe
+				environmental harm. Review generated infrastructure plans and maintain
+				appropriate human approval, backups, and recovery controls.
 			</p>
 
-			<h2>3. Enforcement</h2>
+			<h2>4. Enforcement</h2>
 			<p>
-				If we believe you have violated this AUP, we may suspend or terminate
-				your access to the Service, remove offending configurations, and take
-				any other action we consider appropriate, with or without notice
-				depending on the severity of the violation. Serious or unlawful
-				violations may be reported to the relevant authorities.
+				We may investigate suspected violations; limit, quarantine, or suspend the
+				relevant account or workload; preserve evidence; and report unlawful conduct
+				where required. When the risk permits, we will give notice and an opportunity
+				to cure. Urgent threats may be addressed immediately. We consider context,
+				intent, severity, history, and remediation.
 			</p>
 
-			<h2>4. Reporting abuse</h2>
+			<h2>5. Reporting and appeals</h2>
 			<p>
-				To report a security vulnerability, contact{" "}
-				<a href="mailto:security@alethialabs.io">security@alethialabs.io</a>.
-				To report other violations of this AUP, contact{" "}
-				<a href="mailto:legal@alethialabs.io">legal@alethialabs.io</a>.
-			</p>
-
-			<h2>5. Changes to this policy</h2>
-			<p>
-				We may update this AUP from time to time. Material changes will be
-				reflected in the “Last updated” date above.
+				Report abuse to <a href="mailto:legal@alethialabs.io">legal@alethialabs.io</a>{" "}
+				and security issues to{" "}
+				<a href="mailto:security@alethialabs.io">security@alethialabs.io</a>. Include
+				the affected URL or resource, time, and evidence. You may appeal an
+				enforcement decision through the same address.
 			</p>
 		</LegalShell>
 	);

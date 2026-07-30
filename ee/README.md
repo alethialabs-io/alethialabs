@@ -1,64 +1,37 @@
-<!--
-SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# Alethia Enterprise Edition
+
 SPDX-License-Identifier: LicenseRef-Alethia-Commercial
--->
 
-# Enterprise Edition (`ee/`)
+This directory contains source-visible enterprise functionality. It is not
+licensed under the repository's AGPL default. Review [`LICENSE`](LICENSE) before
+using any file in this directory.
 
-Source-available, **commercially licensed** features — see [`ee/LICENSE`](./LICENSE)
-(`LicenseRef-Alethia-Commercial`). Everything outside this directory is
-`AGPL-3.0-only`.
+## Boundary rules
 
-Production use of code under `ee/` requires a valid Alethia Labs subscription. You
-may read, fork, and contribute to it, but you may not run it in production without
-a subscription.
+- The community application must install, build, test, and run with this directory absent.
+- Community code may reference only the single optional enterprise loader.
+- Enterprise code receives capabilities through the registration interface; it
+  must not reach into community internals through additional runtime imports.
+- `ALETHIA_EDITION=community` never loads this package.
+- `ALETHIA_EDITION=enterprise` fails if this package is absent or broken.
+- `ALETHIA_EDITION=auto` loads the package when present and otherwise runs community mode.
+- Every file in this directory uses `LicenseRef-Alethia-Commercial`.
+- Enterprise dependencies must pass the proprietary-artifact dependency policy.
 
-## What lives here
+These rules improve engineering separation and reproducible community builds.
+They are not a declaration that every enterprise module is legally a separate
+copyright work.
 
-Cloud / enterprise features that are **not** part of the open-source core:
+## Copyright status
 
-- Role-based access control (RBAC)
-- Single sign-on (SSO) — SAML / OIDC
-- Teams and organizations
-- Other future enterprise / cloud capabilities
+Alethia Labs DPK is in formation. Founder-created enterprise code remains part of
+the founder's pre-incorporation works until the post-registration assignment is
+executed. External contributors retain copyright and must be covered by the
+active contribution agreement before their work is accepted.
 
-## Instance licensing (signed-JWT entitlement)
+## Production use
 
-A **self-managed / air-gapped enterprise** unlocks every feature for the whole instance by
-installing a **signed license** — a compact EdDSA (ed25519) JWT that Alethia Labs mints offline.
-This replaces the old `ALETHIA_LICENSE_ACTIVE=true` placeholder (still honored, but **only outside
-production**, as a local-dev convenience).
-
-- **`src/license.ts`** — the verifier. Reads the license from `ALETHIA_LICENSE_KEY` and verifies it
-  **offline** against the issuer public key baked into `ALETHIA_LICENSE_PUBLIC_KEY` (base64 SPKI PEM,
-  same env convention as the OIDC issuer's `ALETHIA_OIDC_SIGNING_KEY`). Pins `iss`/`aud` and enforces
-  `exp`; **fail-closed** — a missing, malformed, expired, or forged license leaves the instance
-  UNlicensed and falls back to per-org billing entitlements. Never crashes boot.
-- **`src/license-issue.ts`** — the issuer (`issueLicense`, `generateLicenseKeypair`). The **private**
-  signing key lives ONLY in the Alethia ops vault — never in this repo, never on a customer instance.
-
-Config on a licensed instance:
-
-| Env | Meaning |
-| --- | --- |
-| `ALETHIA_LICENSE_KEY` | the signed license JWT (the "license file" the customer installs) |
-| `ALETHIA_LICENSE_PUBLIC_KEY` | base64(SPKI PEM) ed25519 **public** key the license verifies against |
-| `ALETHIA_LICENSE_ACTIVE` | `true` unlocks a **non-production** instance only (dev bypass); ignored in prod |
-
-> Wiring the two new vars into the hosted deploy's env-emit list is a separate ops task (outside the
-> `ee/**` scope of this change).
-
-## Conventions
-
-- Every file under `ee/` carries `SPDX-License-Identifier: LicenseRef-Alethia-Commercial`.
-- Core (AGPL) code must **not** depend on `ee/` code; `ee/` may depend on core.
-- Today, authentication is still implemented inline in `apps/console/app/(public)/auth`
-  and `apps/console/app/api/auth`. As the enterprise auth surface (SSO, RBAC, teams)
-  is built out, it moves here.
-
-## Why this is allowed
-
-Alethia Labs DPK holds copyright across the whole codebase (contributions are
-consolidated via the [CLA](../cla/)). The AGPL binds *licensees*, not the
-copyright holder — so Alethia Labs DPK may combine this commercially-licensed code with
-the AGPL core and ship proprietary editions. See [`LICENSING.md`](../LICENSING.md).
+Source visibility is not a production licence. Production use requires a valid
+commercial subscription or order agreement with the registered Alethia entity.
+The repository licence is not a substitute for an MSA, order form, support terms,
+or data-processing agreement.

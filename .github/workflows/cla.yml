@@ -1,46 +1,50 @@
-# Contributor License Agreement enforcement.
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
 #
-# This uses the free, self-hosted "CLA Assistant Lite" GitHub Action
-# (contributor-assistant/github-action). Signatures are stored as a JSON file in
-# this repo at cla/signatures/. Alternatively, you can install the hosted app at
-# https://cla-assistant.io and delete this workflow.
-name: CLA Assistant
+# Formation-period gate. This privileged pull_request_target job checks out only
+# the trusted base commit and never executes pull-request-head code.
+name: Contribution legal gate
+
 on:
-  issue_comment:
-    types: [created]
   pull_request_target:
-    types: [opened, closed, synchronize]
+    types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
-  statuses: write
+  contents: read
 
 jobs:
-  cla:
+  contribution-legal:
+    name: contribution-legal
     runs-on: ubuntu-latest
     steps:
-      - name: CLA Assistant
-        if: >
-          (github.event.comment.body == 'recheck' ||
-           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') ||
-          github.event_name == 'pull_request_target'
-        uses: contributor-assistant/github-action@v2.6.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out trusted base
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path-to-signatures: 'cla/signatures/v1.0.json'
-          path-to-document: 'https://github.com/alethialabs-io/alethialabs/blob/main/cla/ICLA.md'
-          branch: 'main'
-          # Machine accounts, which contribute no third-party IP and so have nothing to assign.
-          # `alethia-labs-ci[bot]` is our own release-please App (it authors the `chore(main): release
-          # *` PRs); without it every release PR reports a red `cla` forever — #890 and #1031 each
-          # carried one for 10 days. Names must match the committer login exactly, `[bot]` suffix and
-          # all.
-          #
-          # The action also accepts a `bot*` wildcard. Deliberately NOT used: it would allowlist any
-          # account whose name merely starts with "bot", which anyone can register.
-          allowlist: 'dependabot[bot],github-actions[bot],renovate[bot],alethia-labs-ci[bot]'
-          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          custom-allsigned-prcomment: 'All contributors have signed the CLA. Thank you!'
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Enforce formation-period contribution policy
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          case "$AUTHOR" in
+            bobikenobi12|dependabot[bot]|github-actions[bot]|renovate[bot]|alethia-labs-ci[bot]|mergify[bot])
+              echo "Trusted founder or maintenance bot: $AUTHOR"
+              exit 0
+              ;;
+          esac
+
+          if test ! -f cla/ACTIVE; then
+            echo "::error::External merges are paused until Alethia Labs DPK is registered and the post-registration CLA is active."
+            exit 1
+          fi
+
+          echo "::error::cla/ACTIVE exists but the signing job has not replaced the formation gate. Fail closed."
+          exit 1
+
+# Activation template:
+# - retain trusted-base checkout and minimum permissions;
+# - pin contributor-assistant/github-action to
+#   ca4a40a7d1004f18d9960b404b97e5f30a505a08 (v2.6.1);
+# - store records on a dedicated cla-signatures branch;
+# - require the action's exact `cla` status in every branch ruleset.

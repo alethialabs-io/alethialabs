@@ -7,12 +7,15 @@ contribute and the one legal step we require.
 
 ## Contributor License Agreement (CLA)
 
-Before we can merge your contribution, you must sign our Contributor License
-Agreement. We enforce it with **CLA Assistant** (the GitHub Action committed at
-`.github/workflows/cla.yml`): the first time you open a pull request, a bot asks
-you to sign the Individual CLA in-line by commenting. It takes about a minute and
-is remembered for future PRs. (CLA enforcement activates once the repository is
-hosted at `github.com/alethialabs-io/alethialabs`.)
+> **Formation gate:** Alethia Labs DPK has been submitted for registration but
+> does not yet have an EIK. We welcome issues and discussion, but cannot merge
+> third-party code until the registered company is identified and the
+> post-registration CLA is activated. The required `contribution-legal` check
+> enforces this automatically.
+
+After activation, every external contributor must sign the versioned Contributor
+License Agreement before a contribution can merge. The signature record is tied
+to the exact CLA version and document hash.
 
 - **Individuals** sign the [Individual CLA](cla/ICLA.md) via the bot.
 - **Contributing on behalf of an employer?** Your employer must also have a
@@ -38,7 +41,8 @@ AGPL-only contribution would block us from shipping the commercial edition.
    `turbo build`, `turbo lint`, and `go test ./...` for Go packages.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are
    automated with release-please.
-5. Open a pull request and sign the CLA when prompted.
+5. Open a pull request. While formation is pending, external PRs remain
+   reviewable but cannot merge. After activation, sign the CLA when prompted.
 
 ## Branching & release flow
 
@@ -81,7 +85,7 @@ receives merges from `staging`.
 ## Reporting security issues
 
 Please do **not** open public issues for security vulnerabilities. Email
-security@alethialabs.io instead.
+security@alethialabs.io instead. See [SECURITY.md](SECURITY.md).
 
 ## License
 

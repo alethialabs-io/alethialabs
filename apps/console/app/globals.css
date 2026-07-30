@@ -10,6 +10,7 @@
 /* Scan shared workspace packages so their Tailwind classes are generated. */
 @source "../../../packages/ui/src";
 @source "../../../packages/brand/src";
+@source "../../../packages/privacy/src";
 
 /* Ultra-thin, semi-transparent floating scrollbar (Cloudflare-style) — used on scroll
    panes that shouldn't compete visually with the layout (e.g. the split-pane chat). */

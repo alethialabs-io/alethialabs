@@ -1,58 +1,91 @@
 # Licensing
 
-License names below use [SPDX identifiers](https://spdx.org/licenses/). The
-default license for this project is [`AGPL-3.0-only`](LICENSE).
+Alethia is a public open-core project. Licence identifiers below use SPDX
+identifiers. This file maps repository paths to their governing terms; it does
+not replace the licence texts.
 
-**Alethia Labs is open core.** The core is free and open source under the GNU
-Affero General Public License v3.0; a small set of cloud / enterprise features is
-commercially licensed. Alethia Labs DPK owns the copyright to the entire codebase
-(contributions are consolidated via a [CLA](cla/)), which is what lets it offer
-the `ee/` features under a separate commercial license while keeping the core AGPL.
+## Repository licence map
 
-## `AGPL-3.0-only` (default)
+| Path | Licence | Notes |
+|---|---|---|
+| Default, including `apps/`, `infra/`, `deploy/`, `scripts/`, and most `packages/` | `AGPL-3.0-only` | Community core |
+| `ee/` | `LicenseRef-Alethia-Commercial` | Source-visible enterprise code; production use requires an executed commercial agreement |
+| `apps/legacy-cli/` | `GPL-3.0-only` | Legacy Python CLI |
+| `packages/enterprise-api/` | `Apache-2.0` | Edition-neutral registration protocol; contains no Enterprise implementation |
+| `packages/typescript-config/` | `MIT` | Permissive shared configuration |
+| Identified vendored files | Their original licence | The file-level notice and `THIRD_PARTY_NOTICES.md` control |
 
-All files except those listed below are licensed `AGPL-3.0-only` (see `LICENSE`).
-This includes, among others:
+When a file carries its own SPDX identifier, that file-level identifier controls.
+The default AGPL licence applies only when no more specific repository exception
+or third-party notice applies.
 
-    apps/console/        apps/cli/        apps/runner/        apps/docs/
-    packages/core/   packages/ui/   packages/charts/   packages/eslint-config/
-    infra/   deploy/   scripts/   spec/
+## Copyright and pre-registration status
 
-## `LicenseRef-Alethia-Commercial`
+Alethia Labs DPK is in formation and does not yet have an EIK. Founder-created
+pre-incorporation works remain owned by the founder until a written assignment
+to the registered company is completed. External contributors retain copyright
+in their contributions and grant rights under the applicable project licence and,
+after activation, the Contributor Licence Agreement.
 
-The following directory and its subdirectories are commercially licensed
-(see [`ee/LICENSE`](ee/LICENSE)); production use requires a subscription:
+The CLA is a licence, not a copyright assignment. It is intended to give the
+registered company sufficient rights to offer accepted contributions under both
+open-source and commercial terms. It must not be described as consolidating
+ownership.
 
-    ee/
+See [`COPYRIGHT.md`](COPYRIGHT.md) for the current chain-of-title status.
 
-## `GPL-3.0-only`
+## AGPL community core
 
-The legacy Python CLI predates the open-core split and remains under GPL-3.0:
+The community core is licensed under GNU Affero General Public License version 3
+only. A licensee that modifies the covered program and lets users interact with
+that modified version remotely through a computer network must provide those
+users a qualifying opportunity to receive the Corresponding Source under AGPL
+section 13. Distribution of copies can create additional source and notice
+obligations under the licence.
 
-    apps/legacy-cli/        ->  apps/legacy-cli/LICENSE
+The copyright holder may offer its own code under additional licences. That does
+not permit Alethia to override the licence of third-party AGPL code or code for
+which it lacks sufficient relicensing rights.
 
-## `MIT`
+Program output, customer configuration, Terraform, manifests, and other generated
+material are not automatically AGPL-covered merely because Alethia processed
+them. Separate analysis is required if generated output contains substantial
+copyrightable portions of covered source.
 
-Trivial shared tooling kept permissive on purpose:
+## Enterprise code
 
-    packages/typescript-config/
+Files in `ee/` are not offered under the AGPL. Public visibility of their source
+does not itself grant production, distribution, or sublicensing rights.
+Repository access is governed by [`ee/LICENSE`](ee/LICENSE); production use
+requires a separate executed subscription or order agreement.
 
-## Third-party components
+The architectural boundary is maintained through one optional registration
+interface and a community build that operates with `ee/` absent. Architecture
+alone does not settle whether components are separate works under copyright law.
+Alethia does not rely on repository layout as a legal conclusion.
 
-Vendored third-party code keeps its original license, for example:
+## Source transparency
 
-    infra/templates/project/aws/modules/valkey/   ->  Apache-2.0
+Each hosted release records its source commit and links to the community source
+from `/legal/source`. Release automation can create an archive with:
 
-Full texts of referenced licenses live under [`LICENSES/`](LICENSES/), and
-third-party attributions are in [`NOTICE`](NOTICE).
+```sh
+scripts/create-community-source.sh <commit>
+```
 
-## Network use (AGPL §13)
+The archive excludes `ee/` and CLA signature records. This transparency promise
+does not expand the commercial licence or make enterprise files AGPL-covered.
 
-When you run a **modified** version of the core over a network, AGPL §13 requires
-you to offer those users the Corresponding Source of the exact version you run. The
-hosted Alethia Labs service publishes the Corresponding Source of the version it
-runs (the tagged commit / build the deployment is built from) and surfaces an
-in-app source offer linking to it. The commercially-licensed `ee/` code is a
-separate work and is not part of the AGPL Corresponding Source. (Whether a given
-`ee/` module is a separate work, and the precise §13 mechanism, should be confirmed
-with counsel.)
+## Contributions
+
+Third-party contributions are paused while Alethia Labs DPK is being registered.
+After registration, a versioned ICLA or CCLA must be active and the required CLA
+status check must pass before outside contributions may merge. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) and [`cla/README.md`](cla/README.md).
+
+## Third-party software
+
+Third-party software remains under its own terms. Required attribution and
+licence information belong in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+and release SBOMs. A dependency's presence in a package lockfile does not mean it
+is shipped in every Alethia artifact.

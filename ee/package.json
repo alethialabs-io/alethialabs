@@ -1,33 +1,34 @@
 {
-	"name": "@alethia/ee",
-	"version": "0.1.0",
-	"private": true,
-	"description": "Alethia Enterprise Edition — orgs, SSO, OpenFGA-backed RBAC. Commercial license (see ./LICENSE). Imports the AGPL core via its seams; the core never imports this.",
-	"license": "LicenseRef-Alethia-Commercial",
-	"main": "./dist/index.js",
-	"exports": {
-		".": {
-			"default": "./dist/index.js"
-		}
-	},
-	"scripts": {
-		"build": "esbuild src/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/index.js",
-		"check-types": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run"
-	},
-	"peerDependencies": {
-		"@better-auth/sso": "^1.6.0",
-		"@openfga/sdk": "^0.8.0",
-		"better-auth": "^1.6.19",
-		"drizzle-orm": "^0.45.2",
-		"jose": "^5.0.0",
-		"samlify": "^2.0.0"
-	},
-	"devDependencies": {
-		"@types/node": "^20",
-		"esbuild": "^0.28.1",
-		"jose": "^5.0.0",
-		"typescript": "^5",
-		"vitest": "^2.1.9"
-	}
+  "name": "@alethia/ee",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Alethia Enterprise Edition — orgs, SSO, OpenFGA-backed RBAC. Commercial license (see ./LICENSE). Imports the AGPL core via its seams; the core never imports this.",
+  "license": "LicenseRef-Alethia-Commercial",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/index.js",
+    "check-types": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@better-auth/sso": "^1.6.0",
+    "@openfga/sdk": "^0.8.0",
+    "better-auth": "^1.6.19",
+    "drizzle-orm": "^0.45.2",
+    "jose": "^5.0.0",
+    "samlify": "^2.0.0"
+  },
+  "devDependencies": {
+    "@alethia/enterprise-api": "workspace:*",
+    "@types/node": "^20",
+    "esbuild": "^0.28.1",
+    "jose": "^5.0.0",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
 }

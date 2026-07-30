@@ -1,0 +1,7 @@
+# Rename this file to ACTIVE only after every item in cla/README.md has been
+# completed. Replace every placeholder before doing so.
+entity: Alethia Labs DPK
+eik: "[PENDING]"
+cla_version: "1.1"
+effective_date: "[YYYY-MM-DD]"
+board_or_founder_approval_record: "[PATH-OR-REFERENCE]"
