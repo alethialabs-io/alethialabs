@@ -33,7 +33,7 @@ export function CreditPackReceiptEmail({
 	credits = 0,
 	amountLabel,
 	invoiceNumber,
-	usageUrl = "https://alethialabs.io/settings/usage",
+	usageUrl = "https://alethialabs.io/dashboard/usage",
 }: CreditPackReceiptEmailProps) {
 	const creditsLabel = credits.toLocaleString("en-US");
 	return (
@@ -82,7 +82,7 @@ CreditPackReceiptEmail.PreviewProps = {
 	credits: 2000,
 	amountLabel: "$29.00",
 	invoiceNumber: "ABCD-0002",
-	usageUrl: "https://alethialabs.io/settings/usage",
+	usageUrl: "https://alethialabs.io/dashboard/usage",
 } satisfies CreditPackReceiptEmailProps;
 
 export default CreditPackReceiptEmail;

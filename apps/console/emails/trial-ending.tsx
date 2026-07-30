@@ -25,7 +25,7 @@ export function TrialEndingEmail({
 	orgName,
 	planLabel,
 	trialEndLabel,
-	billingUrl = "https://alethialabs.io/settings/billing",
+	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: TrialEndingEmailProps) {
 	return (
 		<EmailLayout
@@ -69,7 +69,7 @@ TrialEndingEmail.PreviewProps = {
 	orgName: "Acme Cloud",
 	planLabel: "Pro",
 	trialEndLabel: "Jul 6, 2026",
-	billingUrl: "https://alethialabs.io/settings/billing",
+	billingUrl: "https://alethialabs.io/dashboard/settings/billing",
 } satisfies TrialEndingEmailProps;
 
 export default TrialEndingEmail;

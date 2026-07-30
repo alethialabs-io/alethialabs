@@ -28,7 +28,7 @@ interface SupportCaseAssignedEmailProps {
 export function SupportCaseAssignedEmail({
 	caseNumber = 1234,
 	agentName = "An Alethia agent",
-	url = "https://alethialabs.io/support",
+	url = "https://alethialabs.io/dashboard/support",
 }: SupportCaseAssignedEmailProps) {
 	return (
 		<EmailLayout
@@ -68,7 +68,7 @@ export function SupportCaseAssignedEmail({
 SupportCaseAssignedEmail.PreviewProps = {
 	caseNumber: 1234,
 	agentName: "Jordan from Alethia",
-	url: "https://alethialabs.io/support",
+	url: "https://alethialabs.io/dashboard/support",
 } satisfies SupportCaseAssignedEmailProps;
 
 export default SupportCaseAssignedEmail;

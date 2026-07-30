@@ -923,11 +923,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 
 		setStage("argocd")
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
-			if gitopsRequested {
-				result.GitopsStatus = gitopsFailed(argocd.GitopsStepArgocdInstall, err)
-				return &result, fmt.Errorf("ArgoCD install failed (GitOps requested for repo %s): %w", vc.Repositories.AppsDestinationRepo, err)
-			}
-			fmt.Fprintf(stderr, "Warning: ArgoCD installation failed: %v\n", err)
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepArgocdInstall, err)
+			return &result, fmt.Errorf("ArgoCD install failed: %w", err)
 		}
 
 		if gitopsRequested {
@@ -1336,18 +1333,16 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to add ArgoCD helm repo: %w", err)
 	}
 
-	// Pre-seed the argocd-redis secret BEFORE the chart's pre-install `redis-secret-init` hook
-	// runs. That hook (`argocd admin redis-initial-password`) crash-looped with exit 20 on Talos —
-	// argocd's generic-error exit on the first K8s API call from the hook pod (RBAC/hook-ordering
-	// race, or the hook pod on a node whose datapath wasn't ready) — which blocks the WHOLE chart
-	// install so `helm --wait` hangs then fails. Seeding the secret first makes the hook's Create a
-	// no-op (AlreadyExists) and its Get succeed. Redis keeps a strong random auth. Idempotent: we
-	// never overwrite an existing secret (that would desync running redis from its clients).
+	// Pre-seed the argocd-redis secret before installing the chart. The chart's
+	// `redis-secret-init` hook is disabled below because it is redundant once this secret exists
+	// and has previously blocked the whole Helm install when its pod could not reach the API.
+	// Redis keeps a strong random auth. Idempotent: we never overwrite an existing secret (that
+	// would desync running redis from its clients).
 	if err := ensureArgoRedisSecret(stdout, stderr); err != nil {
 		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
-	installCmd := fmt.Sprintf("helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s --wait --timeout 5m", utils.ShellQuote(argocd.ResolvedArgoChartVersion()))
+	installCmd := fmt.Sprintf("helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s --set redisSecretInit.enabled=false --wait --timeout 5m", utils.ShellQuote(argocd.ResolvedArgoChartVersion()))
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
@@ -1396,11 +1391,11 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 }
 
 // ensureArgoRedisSecret creates the `argocd-redis` Secret (key `auth`) with a strong random
-// password BEFORE the argo-cd helm install, but ONLY if it does not already exist. The chart's
-// pre-install `redis-secret-init` hook otherwise races/fails on Talos (E1 finding, exit 20),
-// blocking the whole install. Idempotent by design — never overwrite an existing auth, or a
-// running redis desyncs from its clients. The secret carries Helm ownership metadata so the chart
-// ADOPTS it (without these, Helm errors "invalid ownership metadata").
+// password before the argo-cd Helm install, but only if it does not already exist. Alethia owns
+// this initialization because the chart's equivalent hook has raced or failed on otherwise-ready
+// clusters, blocking the whole install. Idempotent by design — never overwrite an existing auth,
+// or a running Redis desyncs from its clients. The secret carries Helm ownership metadata so the
+// chart adopts it (without these, Helm errors "invalid ownership metadata").
 func ensureArgoRedisSecret(stdout, stderr io.Writer) error {
 	// Ensure the namespace exists (the helm install also uses --create-namespace, but we seed first).
 	nsCmd := "kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"

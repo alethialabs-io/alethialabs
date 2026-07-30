@@ -13,15 +13,19 @@ const SESSION_COOKIE_SECURE = "__Secure-better-auth.session_token";
  * the console (parity with the old console home, which redirected logged-in users
  * to their active org). When a Better Auth session cookie is present on `/`, hand
  * off to the console-owned `/dashboard`, which resolves the active org and
- * redirects to `/{org}`. Anonymous visitors see the marketing landing.
+ * redirects to `/{org}`. `/home` is the inverse alias: session-bearing visitors
+ * see the marketing homepage there, while anonymous visitors return to `/`.
  */
 export function proxy(req: NextRequest) {
 	const hasSession =
 		req.cookies.has(SESSION_COOKIE) || req.cookies.has(SESSION_COOKIE_SECURE);
-	if (hasSession) {
+	if (req.nextUrl.pathname === "/" && hasSession) {
 		return NextResponse.redirect(new URL("/dashboard", req.url));
+	}
+	if (req.nextUrl.pathname === "/home" && !hasSession) {
+		return NextResponse.redirect(new URL("/", req.url));
 	}
 	return NextResponse.next();
 }
 
-export const config = { matcher: ["/"] };
+export const config = { matcher: ["/", "/home"] };

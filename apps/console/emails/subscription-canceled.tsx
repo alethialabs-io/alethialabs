@@ -25,7 +25,7 @@ export function SubscriptionCanceledEmail({
 	orgName,
 	planLabel,
 	accessUntilLabel,
-	billingUrl = "https://alethialabs.io/settings/billing",
+	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: SubscriptionCanceledEmailProps) {
 	return (
 		<EmailLayout
@@ -77,7 +77,7 @@ SubscriptionCanceledEmail.PreviewProps = {
 	orgName: "Acme Cloud",
 	planLabel: "Pro",
 	accessUntilLabel: "Aug 3, 2026",
-	billingUrl: "https://alethialabs.io/settings/billing",
+	billingUrl: "https://alethialabs.io/dashboard/settings/billing",
 } satisfies SubscriptionCanceledEmailProps;
 
 export default SubscriptionCanceledEmail;

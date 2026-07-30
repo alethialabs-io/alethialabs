@@ -47,20 +47,41 @@ const COLUMNS: FooterCol[] = [
   },
   {
     title: "Company",
-    links: ["About Alethia Labs", "Brand", "Blog", "Status", "Contact"],
+    links: ["Brand", "Blog", "Status", "Contact"],
   },
 ];
 
-/** Maps known footer labels to real routes; the rest are placeholders. */
+/** Maps every footer label to a real first-party page or maintained external destination. */
 function hrefFor(label: string): string {
+  if (label === "Console") return "/docs/console";
+  if (label === "Project designer") return "/docs/console/design-project";
+  if (label === "alethia CLI") return "/docs/cli";
+  if (label === "Runners") return "/docs/runner";
+  if (label === "Jobs") return "/docs/console/jobs";
+  if (label === "Alerts") return "/docs/console/alerts";
+  if (label === "AI agent") return "/docs/console/assistant";
+  if (label === "Repo scanner") return "/docs/elench/architecture";
+  if (label === "MCP server") return "/docs/console/assistant/mcp";
+  if (label === "Organizations") return "/docs/access-control/organizations";
+  if (label === "SSO — OIDC & SAML") return "/docs/access-control/sso";
+  if (label === "Roles & RBAC")
+    return "/docs/access-control/roles-and-permissions";
+  if (label === "Audit log") return "/docs/access-control/activity-log";
   if (label === "Pricing") return "/pricing";
-  if (label === "Documentation" || label === "CLI reference") return "/docs";
+  if (label === "Documentation") return "/docs";
+  if (label === "Quickstart") return "/docs/console/getting-started";
+  if (label === "CLI reference") return "/docs/cli/commands";
+  if (label === "Architecture") return "/docs/elench/architecture";
   if (label === "GitHub")
     return "https://github.com/alethialabs-io/alethialabs";
   if (label === "Source & licenses") return "/legal/source";
+  if (label === "Changelog")
+    return "https://github.com/alethialabs-io/alethialabs/releases";
   if (label === "Brand") return "/brand";
-  if (label === "Contact") return "/contact";
-  return "#";
+  if (label === "Blog") return "/blog";
+  if (label === "Status") return "https://status.alethialabs.io";
+  if (label === "Contact") return "/contact/sales";
+  throw new Error(`Missing footer route for "${label}"`);
 }
 
 /** Public site footer — brand, link columns, and open-core attribution. */

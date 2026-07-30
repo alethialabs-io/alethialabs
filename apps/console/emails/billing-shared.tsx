@@ -17,7 +17,7 @@ export function BillingLegal(): ReactNode {
 			You&apos;re receiving this because you manage billing for an Alethia
 			organization. Manage{" "}
 			<Link
-				href="https://alethialabs.io/settings/billing"
+				href="https://alethialabs.io/dashboard/settings/billing"
 				className="a-text-2"
 				style={footerLegalLink}
 			>
