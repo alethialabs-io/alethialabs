@@ -10,8 +10,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -172,16 +174,48 @@ func mintGCPToken(ctx context.Context) (string, time.Time, error) {
 	return tok.AccessToken, tok.Expiry, nil
 }
 
-// mintAzureToken returns an AKS AAD bearer token via the workload-identity federated
-// assertion already on disk (AZURE_FEDERATED_TOKEN_FILE + AZURE_CLIENT_ID/TENANT_ID env,
-// read by NewWorkloadIdentityCredential). A short-lived AAD token — no long-lived admin
-// cert. Replaces az + kubelogin.
+// mintAzureToken returns a short-lived AKS AAD bearer token — no long-lived admin cert.
+// Replaces az + kubelogin.
+//
+// WORKLOAD IDENTITY FIRST, then whatever else the environment offers. The managed path
+// (ActivateAzureFederated) writes AZURE_FEDERATED_TOKEN_FILE + AZURE_CLIENT_ID/TENANT_ID, so
+// the first link resolves exactly as it always has and that behaviour is unchanged.
+//
+// The fallback exists because this used to be workload-identity ONLY, which made Azure the
+// odd cloud out: mintGCPToken uses google.FindDefaultCredentials and the AWS path resolves
+// ambient config, so both work for a runner holding ordinary credentials. Azure did not —
+// every non-pod runner died with "no client ID specified", including a self-hosted runner
+// using a service principal, an operator on `az login`, and the T2 harness (which passes a
+// nil cloud_identity precisely so the runner uses ambient creds). The cluster would provision
+// and then be unreachable, which reads as a broken cluster rather than a credential gap.
+//
+// Chained rather than DefaultAzureCredential alone: Default puts EnvironmentCredential ahead
+// of workload identity, so an AZURE_CLIENT_SECRET left in a pod's environment would silently
+// take precedence over the federated assertion. Pinning workload identity first keeps the
+// managed runner's identity unambiguous.
 func mintAzureToken(ctx context.Context) (string, time.Time, error) {
-	cred, err := azidentity.NewWorkloadIdentityCredential(nil)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("azure workload identity credential: %w", err)
+	var creds []azcore.TokenCredential
+	var reasons []string
+
+	if wi, err := azidentity.NewWorkloadIdentityCredential(nil); err == nil {
+		creds = append(creds, wi)
+	} else {
+		reasons = append(reasons, "workload-identity: "+err.Error())
 	}
-	tok, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{aksAADServerScope}})
+	if def, err := azidentity.NewDefaultAzureCredential(nil); err == nil {
+		creds = append(creds, def)
+	} else {
+		reasons = append(reasons, "default-chain: "+err.Error())
+	}
+	if len(creds) == 0 {
+		return "", time.Time{}, fmt.Errorf("no usable azure credential (%s)", strings.Join(reasons, "; "))
+	}
+
+	chain, err := azidentity.NewChainedTokenCredential(creds, nil)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("azure credential chain: %w", err)
+	}
+	tok, err := chain.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{aksAADServerScope}})
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("obtain AKS AAD token: %w", err)
 	}
