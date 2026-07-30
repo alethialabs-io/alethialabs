@@ -42,7 +42,7 @@
 	handle @authed_root {
 		reverse_proxy app:3000
 	}
-	@marketing path / /pricing /enterprise /open-source /brand /contact /contact/* /terms /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
+	@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /terms /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
 	handle @marketing {
 		reverse_proxy marketing:3000
 	}

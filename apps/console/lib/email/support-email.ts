@@ -193,7 +193,7 @@ export async function notifySupportInboxEmail(args: {
 }): Promise<void> {
 	const config = getEmailConfig();
 	const to = process.env.SUPPORT_EMAIL || DEFAULT_SUPPORT_EMAIL;
-	const url = args.url ?? consoleUrl(`/support/cases/${args.caseNumber}`);
+	const url = args.url ?? consoleUrl("/dashboard/support");
 	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,

@@ -26,7 +26,7 @@ interface SupportCaseClosedEmailProps {
  */
 export function SupportCaseClosedEmail({
 	caseNumber = 1234,
-	url = "https://alethialabs.io/support",
+	url = "https://alethialabs.io/dashboard/support",
 }: SupportCaseClosedEmailProps) {
 	return (
 		<EmailLayout
@@ -60,7 +60,7 @@ export function SupportCaseClosedEmail({
 
 SupportCaseClosedEmail.PreviewProps = {
 	caseNumber: 1234,
-	url: "https://alethialabs.io/support",
+	url: "https://alethialabs.io/dashboard/support",
 } satisfies SupportCaseClosedEmailProps;
 
 export default SupportCaseClosedEmail;
