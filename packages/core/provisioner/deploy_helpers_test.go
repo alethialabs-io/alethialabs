@@ -78,9 +78,10 @@ func TestDeployHelperPolicyFunctions(t *testing.T) {
 			t.Fatalf("GitopsStatus leaked token in error: %q", status.Error)
 		}
 
-		direct := readGitopsSnapshot(false, "", io.Discard, io.Discard)
-		if direct == nil || direct.Mode != "direct" {
-			t.Fatalf("readGitopsSnapshot direct = %#v", direct)
+		direct := gitopsFailure(false, "", argocd.GitopsStepArgocdInstall, errors.New("helm timeout"))
+		if direct.Mode != "direct" || direct.AppsRepo != "" ||
+			direct.FailedStep != argocd.GitopsStepArgocdInstall || direct.Error != "helm timeout" {
+			t.Fatalf("unexpected direct GitopsStatus: %#v", direct)
 		}
 	})
 
@@ -292,6 +293,8 @@ func TestInstallArgoCDBuildsIngressCommandOnlyWhenCertificateExists(t *testing.T
 	install := commands[len(commands)-1]
 	for _, want := range []string{
 		"helm upgrade --install argo-cd",
+		"--set redisSecretInit.enabled=false",
+		"--wait --timeout 5m",
 		"server.ingress.enabled=true",
 		"server.ingress.hostname=argocd.example.com",
 		"arn:aws:acm:region:acct:certificate/123",
