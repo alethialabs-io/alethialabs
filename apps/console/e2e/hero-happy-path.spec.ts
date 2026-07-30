@@ -87,17 +87,23 @@ test.describe("Hero happy-path", () => {
 		await expect(page.getByText("Pending changes").first()).toBeVisible();
 		await expect(page.getByRole("button", { name: /^deploy$/i })).toBeVisible();
 
-		// 8. Land on the evidence surface — the org's "keep proving it" roll-up. The hero run stops
-		//    before a deploy, so the org has NO environments yet — and the page now says so honestly:
-		//    a distinct onboarding state (with a create-project CTA) instead of an empty filter bar +
-		//    table. Assert that state; it is the truthful evidence story for this run. (An org WITH
-		//    environments renders the filter bar + posture table + waivers panel instead — covered by
-		//    the evidence unit/action tests, which seed data.)
+		// 8. Land on the evidence surface — the org's "keep proving it" roll-up. Creating a
+		//    project ALWAYS seeds its environment matrix (lib/queries/projects.ts — four rows
+		//    via DEFAULT_ENVIRONMENT_MATRIX, or two on the legacy path), so by now the org has
+		//    environments and the page renders the posture table. They are DRAFT and unverified,
+		//    which is the honest state for a run that stops before a deploy.
+		//
+		//    This used to assert the "No environments yet" onboarding state, and passed — because
+		//    CI ran a COMMUNITY console (ee/dist was never built), where getOrgEvidence
+		//    short-circuits to EMPTY_EVIDENCE for the personal scope. The page was empty
+		//    regardless of data, so the assertion could not fail. CI now builds ee, so this
+		//    exercises the EE scope that production and the sandbox box run.
 		await page.goto(`/${orgSlug}/~/evidence`);
-		await expect(page.getByText("No environments yet")).toBeVisible();
 		await expect(
-			page.getByRole("link", { name: /create a project/i }),
+			page.getByRole("heading", { name: /environments/i }).first(),
 		).toBeVisible();
+		await expect(page.getByText("production").first()).toBeVisible();
+		await expect(page.getByText("No environments yet")).toHaveCount(0);
 
 		// 9. …and the clusters surface. Nothing is provisioned (we stopped before a real deploy), so it
 		//    correctly renders the empty state — the truthful end of a hermetic hero run. (List pages no
