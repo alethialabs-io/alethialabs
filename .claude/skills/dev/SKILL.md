@@ -82,14 +82,22 @@ be the same machine. Browsers and their OS libraries install on first run, then 
 ## Rules that will bite you
 
 - **The box is SHARED — one box, one Postgres, one OpenFGA, for every instance and the
-  maintainer.** It caps at 4 environments (a memory budget: ~2–3 GB per `next dev` on
-  16 GB, measured). **`dev` permanently holds one** as the integration env at
-  `dev.alethialabs.io`, so there are **3 branch slots** for everyone else. The next one
-  is refused with a list of who holds the others — nothing is ever evicted
-  automatically, because a silent swap kills someone else's run.
+  maintainer.** It caps at **2** environments. That is a hard memory budget, not a
+  policy: an env floors at **5.2 GB** and reaches **~7 GB** after a browser run (measured
+  on the box; the earlier "~2–3 GB" was a guess, and wrong by 3x), against 15.6 GB of
+  RAM. A third env OOMs the box. **`dev` permanently holds one** as the integration env
+  at `dev.alethialabs.io`, so there is **one branch slot** for everyone else. The next
+  one is refused with a list of who holds it — nothing is ever evicted automatically,
+  because a silent swap kills someone else's run.
 - **Take a slot only when you need a RUNNING app** — reproducing a bug, checking UI,
-  testing auth. Building, type-checking, linting and unit tests do not need one.
+  testing auth. Building, type-checking, linting and unit tests do not need one. With
+  one shared branch slot this is now a courtesy to whoever is waiting, not just tidiness.
 - **`pnpm env:down` before you finish with a branch.** Nothing reclaims it for you.
+- **The box costs money by the hour it EXISTS, running or idle.** Deleting it is the only
+  thing that stops the meter — €69.49/mo left up 24/7 against **€0.72/mo reaped**. So
+  `pnpm env:reap --now` when you finish for the day, and if the box is up and idle it is
+  costing money right now. `pnpm env:timer` installs a launchd job that reaps it after
+  90 idle minutes; the session banner warns once the box has been up 12h.
 - **Never `docker compose down -v` or `pnpm db:reset`.** `docker-compose.yml` pins
   `name: alethia`, so those delete the volumes *every* window is using. Blocked.
 - **Never run `docker compose` from an env's tree on the box.** Each env is a different
@@ -100,12 +108,16 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   VMs in 8 hours.
 - **The box is billed BY THE HOUR, and only while it exists.** A stopped Hetzner server
   bills in full — *"you pay for a server for as long as it exists, regardless of whether
-  it is turned on or not"* — so removing it is the only thing that stops the meter.
-  Run `pnpm env:reap --now` when you finish for the day; that is the difference between about
-  **8 EUR/month and 35**.
-- **Reaping is MANUAL — nothing schedules it.** While the box is down the hostnames return
-  a Cloudflare origin error, and the only things still billing are the Primary IP
-  (0.50 EUR/mo) and the snapshot (~0.30).
+  it is turned on or not"* — so removing it is the only thing that stops the meter. On
+  cpx42 that is **69.49 EUR/mo left up 24/7 against 0.72 reaped**, and it is not
+  hypothetical: the box ran continuously for its first day because nothing stopped it.
+- **Reaping is automatic if someone installed the timer — check, do not assume.**
+  `pnpm env:timer status` says whether it is loaded; `pnpm env:timer` installs it (launchd,
+  every 30 min, reaps after 90 idle minutes). It is a per-machine opt-in, so on a fresh
+  machine there is nothing scheduled. Either way run `pnpm env:reap --now` when you finish
+  for the day — the timer is a backstop for forgetting, not a substitute for finishing.
+  While the box is down the hostnames return a Cloudflare origin error, and the only things
+  still billing are the Primary IP (0.50 EUR/mo) and the snapshots (~0.22).
 - **The address is stable across the cycle.** A Primary IP is held separately from the
   server, so a restored box comes back on the same address — no DNS change, no
   `known_hosts` surprise. That 0.50 EUR is what makes routine teardown safe.
