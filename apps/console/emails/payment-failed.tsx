@@ -28,7 +28,7 @@ export function PaymentFailedEmail({
 	amountLabel,
 	nextAttemptLabel,
 	cardLabel,
-	billingUrl = "https://alethialabs.io/settings/billing",
+	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: PaymentFailedEmailProps) {
 	return (
 		<EmailLayout
@@ -82,7 +82,7 @@ PaymentFailedEmail.PreviewProps = {
 	amountLabel: "$58.00",
 	nextAttemptLabel: "Jul 6, 2026",
 	cardLabel: "Visa •••• 4242",
-	billingUrl: "https://alethialabs.io/settings/billing",
+	billingUrl: "https://alethialabs.io/dashboard/settings/billing",
 } satisfies PaymentFailedEmailProps;
 
 export default PaymentFailedEmail;

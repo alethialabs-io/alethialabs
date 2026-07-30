@@ -40,8 +40,20 @@ export function useConsent(): ConsentContextValue {
 	return context;
 }
 
+interface ConsentProviderProps {
+	children: ReactNode;
+	/** Show the floating preferences launcher after the visitor has chosen. */
+	showPersistentTrigger?: boolean;
+	/** Deployment-aware destination for the cookie notice. */
+	cookieNoticeHref?: string;
+}
+
 /** Shared consent state, first-visit notice, and persistent preferences control. */
-export function ConsentProvider({ children }: { children: ReactNode }) {
+export function ConsentProvider({
+	children,
+	showPersistentTrigger = true,
+	cookieNoticeHref = "/cookies",
+}: ConsentProviderProps) {
 	const [consent, setConsent] = useState<ConsentRecord | null>(null);
 	const [ready, setReady] = useState(false);
 	const [preferencesOpen, setPreferencesOpen] = useState(false);
@@ -92,13 +104,14 @@ export function ConsentProvider({ children }: { children: ReactNode }) {
 					onAccept={() => save({ analytics: true, replay: true })}
 					onReject={() => save({ analytics: false, replay: false })}
 					onCustomize={() => setPreferencesOpen(true)}
+					cookieNoticeHref={cookieNoticeHref}
 				/>
 			) : null}
-			{ready && consent !== null ? (
+			{ready && consent !== null && showPersistentTrigger ? (
 				<button
 					type="button"
 					onClick={() => setPreferencesOpen(true)}
-					className="fixed bottom-4 left-4 z-[80] rounded-md border border-border bg-background px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground shadow-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					className="fixed bottom-4 right-4 z-[80] rounded-md border border-border bg-background px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground shadow-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
 					Privacy choices
 				</button>
@@ -118,6 +131,7 @@ interface ConsentNoticeProps {
 	onAccept: () => void;
 	onReject: () => void;
 	onCustomize: () => void;
+	cookieNoticeHref: string;
 }
 
 /** First-visit notice with equally prominent accept, reject, and customize controls. */
@@ -125,13 +139,14 @@ function ConsentNotice({
 	onAccept,
 	onReject,
 	onCustomize,
+	cookieNoticeHref,
 }: ConsentNoticeProps) {
 	return (
 		<section
 			aria-label="Privacy choices"
-			className="fixed inset-x-4 bottom-4 z-[90] mx-auto max-w-3xl rounded-lg border border-border bg-background p-5 shadow-xl sm:p-6"
+			className="fixed inset-x-4 bottom-4 z-[90] rounded-lg border border-border bg-background p-5 shadow-xl sm:left-auto sm:w-[28rem] sm:p-6"
 		>
-			<div className="grid gap-5 md:grid-cols-[1fr_auto] md:items-end">
+			<div className="grid gap-5">
 				<div>
 					<p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
 						Your privacy
@@ -145,13 +160,13 @@ function ConsentNotice({
 						You can change either choice at any time.
 					</p>
 					<a
-						href="/cookies"
+						href={cookieNoticeHref}
 						className="mt-3 inline-block text-xs text-foreground underline underline-offset-4"
 					>
 						Cookie notice
 					</a>
 				</div>
-				<div className="grid grid-cols-1 gap-2 sm:grid-cols-3 md:grid-cols-1">
+				<div className="grid grid-cols-1 gap-2">
 					<ChoiceButton onClick={onAccept}>Accept all</ChoiceButton>
 					<ChoiceButton onClick={onReject}>Reject non-essential</ChoiceButton>
 					<ChoiceButton onClick={onCustomize}>Customize</ChoiceButton>

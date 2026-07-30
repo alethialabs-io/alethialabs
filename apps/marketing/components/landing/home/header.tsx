@@ -25,8 +25,9 @@ interface MenuLink {
   ic: IconKey;
   name: string;
   desc: string;
-  href?: string;
+  href: string;
   badge?: boolean;
+  external?: boolean;
 }
 interface MenuGroup {
   group: string;
@@ -41,16 +42,19 @@ const PRODUCT_MENU: MenuGroup[] = [
         ic: "grid",
         name: "Console",
         desc: "Visual control plane — configure, deploy, observe",
+        href: "/docs/console",
       },
       {
         ic: "node",
         name: "Project designer",
         desc: "Design infrastructure visually — form or canvas, live cost",
+        href: "/docs/console/design-project",
       },
       {
         ic: "terminal",
         name: "alethia CLI",
         desc: "Plan, apply, and operate from your shell",
+        href: "/docs/cli",
       },
     ],
   },
@@ -61,16 +65,19 @@ const PRODUCT_MENU: MenuGroup[] = [
         ic: "server",
         name: "Runners",
         desc: "Self-healing warm pools that execute provisioning jobs",
+        href: "/docs/runner",
       },
       {
         ic: "jobs",
         name: "Jobs",
         desc: "Every plan, apply, and teardown — streamed live",
+        href: "/docs/console/jobs",
       },
       {
         ic: "bell",
         name: "Alerts",
         desc: "Policies match events; channels deliver them",
+        href: "/docs/console/alerts",
       },
     ],
   },
@@ -81,16 +88,19 @@ const PRODUCT_MENU: MenuGroup[] = [
         ic: "sparkles",
         name: "AI agent",
         desc: "An assistant that knows your infrastructure — ask or act",
+        href: "/docs/console/assistant",
       },
       {
         ic: "scan",
         name: "Repo scanner",
         desc: "Point it at a repo; get a proposed Project and cost",
+        href: "/docs/elench/architecture",
       },
       {
         ic: "plug",
         name: "MCP server",
         desc: "The same tools, exposed to Claude over MCP",
+        href: "/docs/console/assistant/mcp",
       },
     ],
   },
@@ -101,24 +111,31 @@ const PRODUCT_MENU: MenuGroup[] = [
         ic: "building",
         name: "Organizations & teams",
         desc: "Multi-tenant orgs, teams, and group-based grants",
+        href: "/docs/access-control/organizations",
       },
       {
         ic: "key",
         name: "SSO — OIDC & SAML",
         desc: "Okta, Entra ID, IAM Identity Center",
+        href: "/docs/access-control/sso",
       },
       {
         ic: "shield",
         name: "Roles & RBAC",
         desc: "Custom roles, granular allow/deny, audit log",
+        href: "/docs/access-control/roles-and-permissions",
       },
     ],
   },
 ];
 
-const PRODUCT_MENU_FOOT: { ic: IconKey; name: string }[] = [
-  { ic: "shield", name: "Zero-trust clouds" },
-  { ic: "git", name: "GitOps" },
+const PRODUCT_MENU_FOOT: { ic: IconKey; name: string; href: string }[] = [
+  {
+    ic: "shield",
+    name: "Zero-trust clouds",
+    href: "/docs/standards/workload-identity",
+  },
+  { ic: "git", name: "GitOps", href: "/docs/concepts/gitops-argocd" },
 ];
 
 const RESOURCE_MENU: MenuLink[] = [
@@ -136,12 +153,6 @@ const RESOURCE_MENU: MenuLink[] = [
     href: "/open-source",
   },
   {
-    ic: "building",
-    name: "About",
-    desc: "The team and mission behind Alethia Labs",
-    href: "/about",
-  },
-  {
     ic: "pen",
     name: "Blog",
     desc: "Engineering notes and product updates",
@@ -151,7 +162,8 @@ const RESOURCE_MENU: MenuLink[] = [
     ic: "list",
     name: "Changelog",
     desc: "What shipped, every week",
-    href: "/changelog",
+    href: `${GITHUB_URL}/releases`,
+    external: true,
   },
 ];
 
@@ -163,11 +175,13 @@ function formatStars(n: number): string {
 }
 
 /** Single mega-menu entry row (icon tile + name + description). */
-function MenuItem({ ic, name, desc, badge, href = "#" }: MenuLink) {
+function MenuItem({ ic, name, desc, badge, href, external }: MenuLink) {
   const [h, setH] = useState(false);
   return (
     <Link
       href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
       onMouseEnter={() => setH(true)}
       onMouseLeave={() => setH(false)}
       style={{
@@ -389,7 +403,13 @@ function useNavContext(): NavContext {
 }
 
 /** Public site header — brand lockup, Product/Resources menus, Enterprise & Pricing links, GitHub, and CTAs. */
-export function Header({ stars }: { stars?: number | null }) {
+export function Header({
+  stars,
+  homeHref = "/",
+}: {
+  stars?: number | null;
+  homeHref?: "/" | "/home";
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const nav = useNavContext();
@@ -413,7 +433,7 @@ export function Header({ stars }: { stars?: number | null }) {
           justifyContent: "space-between",
         }}
       >
-        <Link href="/" style={{ textDecoration: "none" }}>
+        <Link href={homeHref} style={{ textDecoration: "none" }}>
           <Lockup size={23} />
         </Link>
 
@@ -470,7 +490,7 @@ export function Header({ stars }: { stars?: number | null }) {
                 {PRODUCT_MENU_FOOT.map((f) => (
                   <a
                     key={f.name}
-                    href="#"
+                    href={f.href}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -489,7 +509,7 @@ export function Header({ stars }: { stars?: number | null }) {
                 ))}
               </div>
               <a
-                href="#"
+                href="/docs/console/getting-started"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -530,7 +550,10 @@ export function Header({ stars }: { stars?: number | null }) {
           {nav.status === "authed" ? (
             <>
               {nav.plan === "community" && (
-                <Link href={nav.upgradePath ?? "#"} className="ah-hide-sm">
+                <Link
+                  href={nav.upgradePath ?? "/dashboard/settings/billing"}
+                  className="ah-hide-sm"
+                >
                   <Button variant="outline" size="sm">
                     Upgrade to Pro
                   </Button>
@@ -543,7 +566,7 @@ export function Header({ stars }: { stars?: number | null }) {
                   </Button>
                 </Link>
               )}
-              <Link href={nav.dashboardPath ?? "#"}>
+              <Link href={nav.dashboardPath ?? "/dashboard"}>
                 <Button size="sm">
                   Dashboard <Icon k="arrow" size={14} />
                 </Button>
@@ -582,20 +605,22 @@ export function Header({ stars }: { stars?: number | null }) {
               <nav className="mt-8 flex flex-col gap-1">
                 <p className="vx-eyebrow px-3 pb-1 pt-2">Product</p>
                 {PRODUCT_MENU.flatMap((col) => col.items).map((it) => (
-                  <a
+                  <Link
                     key={it.name}
-                    href={it.href ?? "#"}
+                    href={it.href}
                     onClick={() => setMobile(false)}
                     className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary"
                   >
                     {it.name}
-                  </a>
+                  </Link>
                 ))}
                 <p className="vx-eyebrow px-3 pb-1 pt-3">Resources</p>
                 {RESOURCE_MENU.map((it) => (
                   <Link
                     key={it.name}
-                    href={it.href ?? "#"}
+                    href={it.href}
+                    target={it.external ? "_blank" : undefined}
+                    rel={it.external ? "noreferrer" : undefined}
                     onClick={() => setMobile(false)}
                     className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary"
                   >
@@ -621,7 +646,7 @@ export function Header({ stars }: { stars?: number | null }) {
                     <>
                       {nav.plan === "community" && (
                         <Link
-                          href={nav.upgradePath ?? "#"}
+                          href={nav.upgradePath ?? "/dashboard/settings/billing"}
                           onClick={() => setMobile(false)}
                         >
                           <Button
@@ -648,7 +673,7 @@ export function Header({ stars }: { stars?: number | null }) {
                         </Link>
                       )}
                       <Link
-                        href={nav.dashboardPath ?? "#"}
+                        href={nav.dashboardPath ?? "/dashboard"}
                         onClick={() => setMobile(false)}
                       >
                         <Button size="sm" className="w-full">

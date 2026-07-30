@@ -28,7 +28,7 @@ interface SupportCaseCreatedEmailProps {
 export function SupportCaseCreatedEmail({
 	caseNumber = 1234,
 	caseSubject = "Cluster provisioning failed in eu-central-1",
-	url = "https://alethialabs.io/support",
+	url = "https://alethialabs.io/dashboard/support",
 }: SupportCaseCreatedEmailProps) {
 	return (
 		<EmailLayout
@@ -68,7 +68,7 @@ export function SupportCaseCreatedEmail({
 SupportCaseCreatedEmail.PreviewProps = {
 	caseNumber: 1234,
 	caseSubject: "Cluster provisioning failed in eu-central-1",
-	url: "https://alethialabs.io/support",
+	url: "https://alethialabs.io/dashboard/support",
 } satisfies SupportCaseCreatedEmailProps;
 
 export default SupportCaseCreatedEmail;

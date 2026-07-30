@@ -84,7 +84,7 @@ describe("RESERVED_PROJECT_CHILD_SLUGS", () => {
 describe("RESERVED_SLUGS", () => {
 	it("reserves the personal scope and console route shadows", () => {
 		expect(PERSONAL_ORG_SLUG).toBe("~");
-		for (const s of ["~", "dashboard", "api", "auth", "docs", "blog"]) {
+		for (const s of ["~", "dashboard", "api", "auth", "docs", "blog", "home"]) {
 			expect(RESERVED_SLUGS.has(s)).toBe(true);
 		}
 	});

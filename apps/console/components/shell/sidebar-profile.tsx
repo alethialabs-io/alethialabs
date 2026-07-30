@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   BookOpen,
   Code2,
+  Cookie,
   History,
   Home,
   LifeBuoy,
@@ -22,6 +23,8 @@ import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InlineThemeSwitcher } from "@/components/theme-menu";
 import { authClient } from "@/lib/auth/client";
 import { legalUrl } from "@/lib/legal";
+import { globalHref } from "@/lib/routing";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { displayName, userInitials } from "@/lib/user-display";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
@@ -37,6 +40,7 @@ import {
 import { AccountSettingsDialog } from "./account-settings-dialog";
 import { FeedbackDialog } from "./feedback-dialog";
 import { NotificationsPopover } from "./notifications-popover";
+import { useConsent } from "@repo/privacy/consent-provider";
 
 /** Default issue tracker for self-hosted "Report an issue"; override per deployment. */
 const DEFAULT_ISSUES_URL =
@@ -52,7 +56,9 @@ const DEFAULT_ISSUES_URL =
  */
 export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const router = useRouter();
+  const orgSlug = useActiveOrgSlug();
   const { openUpgrade } = useUpgradeSheet();
+  const { openPreferences } = useConsent();
   const { data: session } = authClient.useSession();
   const user = session?.user ?? null;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -158,9 +164,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
           <DropdownMenuItem
             render={
               <a
-                href={legalUrl("/")}
-                target="_blank"
-                rel="noreferrer"
+                href={isHosted ? "/home" : legalUrl("/")}
                 className="cursor-pointer"
               >
                 Home Page
@@ -171,7 +175,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
           <DropdownMenuItem
             render={
               <a
-                href={legalUrl("/changelog")}
+                href="https://github.com/alethialabs-io/alethialabs/releases"
                 target="_blank"
                 rel="noreferrer"
                 className="cursor-pointer"
@@ -183,17 +187,22 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
           />
           <DropdownMenuItem
             render={
-              <a
-                href={legalUrl("/contact")}
-                target="_blank"
-                rel="noreferrer"
-                className="cursor-pointer"
-              >
+              <Link href={globalHref(orgSlug, "support")} className="cursor-pointer">
                 Help
                 <LifeBuoy className="ml-auto h-4 w-4 text-muted-foreground" />
-              </a>
+              </Link>
             }
           />
+          <DropdownMenuItem
+            onSelect={() => {
+              setMenuOpen(false);
+              openPreferences();
+            }}
+            className="cursor-pointer"
+          >
+            Privacy settings
+            <Cookie className="ml-auto h-4 w-4 text-muted-foreground" />
+          </DropdownMenuItem>
           <DropdownMenuItem
             render={
               <Link href="/docs" className="cursor-pointer">

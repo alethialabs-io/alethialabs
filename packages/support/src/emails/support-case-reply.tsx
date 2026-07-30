@@ -40,7 +40,7 @@ export function SupportCaseReplyEmail({
 	caseNumber = 1234,
 	author = "Alethia Support",
 	snippet = "Thanks for the details — could you share the job id so we can pull the runner logs?",
-	url = "https://alethialabs.io/support",
+	url = "https://alethialabs.io/dashboard/support",
 	audience = "customer",
 }: SupportCaseReplyEmailProps) {
 	const heading =
@@ -94,7 +94,7 @@ SupportCaseReplyEmail.PreviewProps = {
 	author: "Alethia Support",
 	snippet:
 		"Thanks for the details — could you share the job id so we can pull the runner logs?",
-	url: "https://alethialabs.io/support",
+	url: "https://alethialabs.io/dashboard/support",
 	audience: "customer",
 } satisfies SupportCaseReplyEmailProps;
 
