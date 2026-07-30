@@ -27,8 +27,14 @@ jobs:
         env:
           AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
+          # Each bot pattern is QUOTED so `[bot]` is a literal, not a glob. In a `case` pattern
+          # `[bot]` is a character class matching one of b/o/t, so the unquoted form failed both
+          # ways at once: `dependabot[bot]` never matched the real login, while `dependabott`,
+          # `dependaboto` and `dependabotb` DID — and likewise `mergifyt`, `renovateo`,
+          # `github-actionsb`, `alethia-labs-cit`. A gate whose purpose is pausing external merges
+          # was rejecting every maintenance bot and trusting a set of registrable names instead.
           case "$AUTHOR" in
-            bobikenobi12|dependabot[bot]|github-actions[bot]|renovate[bot]|alethia-labs-ci[bot]|mergify[bot])
+            bobikenobi12|'dependabot[bot]'|'github-actions[bot]'|'renovate[bot]'|'alethia-labs-ci[bot]'|'mergify[bot]')
               echo "Trusted founder or maintenance bot: $AUTHOR"
               exit 0
               ;;
