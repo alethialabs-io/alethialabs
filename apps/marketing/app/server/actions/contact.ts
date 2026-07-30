@@ -55,19 +55,12 @@ export async function submitContactLead(
 
 	try {
 		await sendContactLeadEmail(lead);
-	} catch (err) {
-		console.error("[contact] failed to notify sales", err);
+	} catch {
+		console.error("[contact] failed to notify sales; request details omitted");
 		throw new Error(
 			`Something went wrong sending your request — please email ${SALES_MAIL}.`,
 		);
 	}
-
-	// TODO(contact-submissions): persist the lead to a `contact_submissions`
-	// table (Drizzle schema + migration) once it exists, so leads survive even if
-	// email delivery is misconfigured. Logged for now so submissions aren't lost.
-	console.info(
-		`[contact] ${lead.type} lead from ${lead.email} (${lead.companySize}, ${lead.interest})`,
-	);
 
 	return { ok: true };
 }

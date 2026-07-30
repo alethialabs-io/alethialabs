@@ -238,7 +238,7 @@
   body {
     @apply bg-background text-foreground antialiased;
   }
-  /* Headings — tovr voice: Geist, heavy weight, tight tracking.
+  /* Headings — Alethia display voice: Geist, heavy weight, tight tracking.
      Explicit font-* utilities still win (higher layer priority). */
   h1, h2, h3, h4 {
     font-family: var(--font-geist-sans), sans-serif;

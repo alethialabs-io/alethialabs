@@ -5,9 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # PostHog — getting real value out of it
 
-The console ships PostHog wired for **product analytics + session replay + web-vitals + funnels**
-(EU cloud). This runbook is the "so what do I actually configure" half: the events the code now emits,
-and the dashboards/funnels/cohorts to build in the PostHog UI so the data answers real questions.
+The console ships PostHog wired for **consented product analytics + optional session replay +
+web-vitals + funnels** (EU cloud). Analytics and replay are separate choices and both default off.
+This runbook is the "so what do I actually configure" half.
 
 Nothing here needs a deploy — it's all clicked in the PostHog project. The instrumentation that makes it
 possible already lives in `apps/console/lib/analytics/*` + the call sites listed below.
@@ -15,18 +15,19 @@ possible already lives in `apps/console/lib/analytics/*` + the call sites listed
 ## 0. Prerequisites (one-time)
 
 - **Env**: `NEXT_PUBLIC_POSTHOG_KEY` (+ optional `NEXT_PUBLIC_POSTHOG_HOST`, default `https://eu.i.posthog.com`)
-  set in the prod vault. The **same key** powers both the browser SDK and the server-side capture
-  (`lib/analytics/server.ts`, used by the Stripe webhook) — no separate server key.
-- **Identity is live**: on sign-in the app calls `identify(userId, {email,name})` and
-  `group("organization", orgId, {name,slug,plan,role})` (see `components/analytics/analytics-identity.tsx`).
-  This is what makes every funnel/retention/cohort *per-user and per-org* instead of anonymous.
+  is set in the prod vault. It only configures the browser SDK; the SDK stays unloaded until consent.
+- **Identity is minimized**: after analytics consent the app identifies only the internal user ID and
+  groups by internal organization ID with `plan` and `role`. Email, personal name, organization name,
+  and slug are not sent (see `components/analytics/analytics-identity.tsx`).
+- **Server capture is disabled**: `lib/analytics/server.ts` preserves the call interface but sends no
+  third-party event from webhooks or workers, where browser consent cannot be proven.
 
 ## 1. Project settings (Settings → …)
 
-- **Person display name**: set to `email` (so people are readable in lists/replays).
-- **Session replay**: enable. Start at **100% sampling** while volume is low; add a **billing limit** so it
-  can't surprise-bill. Inputs are masked (`maskAllInputs`) and sensitive nodes carry `data-ph-mask`
-  (OTP code, billing card) — verify masking on a test replay before sharing.
+- **Person display name**: use the internal distinct ID; email and name are intentionally not collected.
+- **Session replay**: enable only if the public replay purpose remains current. Start with conservative
+  sampling and a billing limit. The app requires separate replay consent and masks all text and inputs;
+  verify masking on a test account before allowing staff access.
 - **Autocapture + heatmaps**: on (autocapture already is). Heatmaps need the toolbar authorized once.
 - **Group analytics**: confirm an **`organization`** group type exists (it's created automatically the first
   time `group()` fires). Set its display name property to `name`.
@@ -35,8 +36,8 @@ possible already lives in `apps/console/lib/analytics/*` + the call sites listed
 
 ## 2. The event catalog (what the code emits)
 
-Source of truth: `apps/console/lib/analytics/events.ts`. Client events fire from the browser; revenue
-events fire server-side from the Stripe webhook (so they're truthful even with no browser open).
+Source of truth: `apps/console/lib/analytics/events.ts`. Only consented browser events reach PostHog.
+Rows marked server-side remain application events, but third-party capture is disabled.
 
 | Event | Where | Key props |
 |---|---|---|
@@ -74,9 +75,9 @@ the login boundary.)
 
 ## 5. Revenue funnel
 
-`trial_started → upgrade_started → subscription_active`, plus a separate **trend** on
-`subscription_canceled` and `payment_failed`. Filter/segment by the `organization` group to see paying vs
-trialing orgs. (These are the server-side events, so they reflect Stripe truth, not client optimism.)
+`trial_started → upgrade_started` can be analyzed from consented browser events. Do not use PostHog as
+the source of truth for `subscription_active`, `subscription_canceled`, or `payment_failed`: server-side
+third-party capture is disabled. Use the billing database/Odoo for revenue truth.
 
 ## 6. Retention & cohorts (where replay pays off)
 
@@ -130,22 +131,16 @@ you configure/verify in the PostHog UI.
 
 ## 11. Error tracking (replaces Sentry)
 
-Wired: `capture_exceptions: true` catches unhandled client errors + promise rejections; the four React
-error boundaries call `captureException(error, {boundary})`; the Stripe webhook reports server errors via
-`captureServerException`. In PostHog: open **Error tracking** — issues are auto-grouped with **the session
-replay attached** (watch what the user did before it broke). Add an **alert** on *new issue* and on an error
-spike. (No Sentry needed; one less vendor + bill.)
+After analytics consent, `capture_exceptions: true` catches unhandled client errors + promise rejections
+and React error boundaries call `captureException(error, {boundary})`. Server exception capture is
+deliberately disabled in `lib/analytics/server.ts`; operational errors remain in the first-party logging
+stack. A replay is attached only where the user separately consented to replay.
 
 ## 12. LLM analytics (Elench, Ask-AI, verify, colony)
 
-Wired: every AI call funnels through `recordAiUsage()` (`lib/billing/ai-quota.ts`), which now also emits the
-reserved **`$ai_generation`** event (model, in/out/cached tokens, `$ai_total_cost_usd`, `$ai_trace_id`,
-`$ai_span_name` = the usage kind), on the org group, as the acting user. Open **LLM analytics** (or build
-insights on `$ai_generation`):
-- **Spend**: sum `$ai_total_cost_usd` over time, **broken down by `$ai_span_name`** (agent vs support vs
-  scan) and by `organization` — see which orgs/features cost you.
-- **Volume/mix**: generations by `$ai_model` (sonnet vs opus).
-- **Alert** on daily AI cost crossing a threshold. (Latency is emitted when available.)
+AI usage remains metered in the first-party billing database, but prompts, outputs, and `$ai_generation`
+events are not sent to PostHog. Build cost and usage reporting from first-party aggregate records, with
+access controls and retention appropriate to billing data.
 
 ## 13. Revenue analytics (Stripe) — Odoo stays the book of record
 

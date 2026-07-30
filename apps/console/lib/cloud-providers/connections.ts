@@ -291,10 +291,8 @@ async function verifyConnectionInline(
 	//    INVISIBLE server-side: the probe never throws, the error is only persisted to
 	//    cloud_identities.last_error and returned to the browser — so nothing reached the logs or
 	//    error tracking. Emit a structured line for EVERY outcome (one `cloud connection verify`
-	//    body, level by severity) so PostHog logs carry the exact per-provider result, and report a
-	//    real exception to PostHog Error tracking on a hard failure so a broken keyless federation
-	//    (AWS/Azure/Alibaba OIDC trust, sub/aud mismatch, …) surfaces as an issue with the message.
-	//    Both channels are NEXT_PUBLIC_POSTHOG_KEY-gated (no key ⇒ no-op) and never throw. ──
+	//    body, level by severity). The old third-party analytics hook remains a fail-closed no-op in
+	//    server contexts; structured application logs are the operational source of truth. ──
 	const logFields = {
 		org_id: scope.orgId,
 		provider: identity.provider,
