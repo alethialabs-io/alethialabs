@@ -35,8 +35,24 @@ LOG="/var/log/alethia-$SLUG.log"
 SESSION="alethia-$SLUG"
 SEAWEED="alethia-seaweed-$SLUG"
 SHARED_COMPOSE=(docker compose -f /opt/alethia/shared/docker-compose.yml)
-# The integration env answers on the bare domain; branch envs on <slug>.<domain>.
-if [ "$SLUG" = "dev" ]; then FQDN="$DOMAIN"; else FQDN="$SLUG.$DOMAIN"; fi
+# The hostname belongs to the SLOT, not the branch — the same mapping env_fqdn() applies
+# in scripts/env.sh, derived from the console port the registry allocated:
+# 3100 -> env1-, 3200 -> env2-. `dev` keeps the bare domain (OAuth redirect URIs and the
+# Stripe webhook are registered against exactly that name and cannot be wildcarded).
+#
+# This built "$SLUG.$DOMAIN" until 2026-07-30. That is TWO labels deep, outside
+# Cloudflare's Universal SSL, and once the `*.dev` wildcard was removed it stopped
+# resolving at all — so `env:up` finished by printing a URL that no longer existed, which
+# is worse than printing nothing. The minted .env was always correct; only this line lied.
+#
+# It survived the slot-hostname change because it is a SECOND, independent construction of
+# the same hostname: that change updated env.sh and env-tunnel.sh and claimed env_fqdn was
+# the only place a hostname is built. Grep before believing that kind of claim.
+if [ "$SLUG" = "dev" ]; then
+  FQDN="$DOMAIN"
+else
+  FQDN="env$(((CPORT - 3000) / 100))-$DOMAIN"
+fi
 URL="https://$FQDN"
 
 cd "$REPO"
