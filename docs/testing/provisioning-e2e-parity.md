@@ -20,16 +20,18 @@ ledger. Flip a matrix cell here when a dimension's verdict changes, and link the
 recorded, never hidden.**
 
 Legend: ✅ green (real-apply proof) · 🟡 floor-only (provisions + converges, full-bar dimension not yet run) ·
-⏳ pending · 🚫 blocked (open issue) · — n/a / out of scope
+⏳ pending · 🚫 blocked (open issue) · — n/a / out of scope. A green-skipped nightly is neither a
+proof nor a ledger row; a later `RETRACTED` ledger row corrects any historical claim without rewriting it.
 
 ## Parity matrix (cloud × capability)
 
 | Cloud | Provision + cluster_ready | All kinds (11) | 19 add-ons Healthy+Synced | BYO-IaC | BYO-IaC + services | Day-2 access | Teardown clean | Security-reviewed |
 |-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **AWS — EKS** | 🚫 [#1040] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | 🚫 [#1040] | ⏳ |
-| **GCP — GKE** | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
-| **Azure — AKS** | 🟡 | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
-| Hetzner · Alibaba | 🟡 | — | — | — | — | — | ✅ | — | <!-- tracked by the nightly; outside this 3-cloud FULLY-TESTED program -->
+| **AWS — EKS** | 🚫 [#1714] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
+| **GCP — GKE** | 🚫 [#1716] [#1714] [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
+| **Azure — AKS** | 🚫 [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
+| **Hetzner — Talos** | 🚫 [#1714] | — | — | — | — | — | ✅ | — | <!-- tracked by the nightly; outside this 3-cloud FULLY-TESTED program -->
+| **Alibaba — ACK** | ⏳ | — | — | — | — | — | ⏳ | — | <!-- tracked by the nightly; outside this 3-cloud FULLY-TESTED program -->
 
 Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 
@@ -51,10 +53,16 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 
 ## What's left
 
-- [ ] **AWS provision + teardown (#1040)** — real EKS apply succeeds (124 resources) but the runner **401s**
-      on the API server (EKS Access-Entry ↔ IAM-path mismatch; the pathed `alethia-e2e-nightly` role's
-      session isn't authorized), and the failure path leaves teardown `destroyed=false` → orphan
-      VPC/SG/NAT accumulation. **Blocks the entire AWS column.** Fix in progress (module-level access entry).
+- [ ] **AWS floor (#1714)** — the EKS access-entry defect in closed #1040 is resolved and its real-run
+      teardown was clean; the shared `addon-reloader` convergence defect now blocks the floor. A fresh signed
+      real-cloud run is required after that fix before this becomes a floor PASS.
+- [ ] **GCP floor (#1716, #1714, #1722)** — the node-pool name can overflow, and the add-on gate has two
+      independent convergence defects. The observed failed run tore down cleanly, but it is not a floor PASS.
+- [ ] **Azure floor (#1722)** — AKS's platform metrics-server collides with the catalog add-on. The observed
+      failed run tore down cleanly; a fixed real run is still required for floor proof.
+- [ ] **Hetzner floor (#1714)** — provisioning and teardown are verified clean, but `addon-reloader` remains
+      OutOfSync, so the floor is blocked rather than proven.
+- [ ] **Alibaba floor** — pending enablement and its first real run; no floor or teardown verdict exists.
 - [ ] **Raise the nightly (or a dispatch/weekly full-bar job) to the FULLY-TESTED dimensions** —
       `MAX_CONFIG` (11 kinds) + `ALL_ADDONS` (19) + A0.6 BYO/services + a real day-2 access assertion — per
       cloud. Because the full surface is heavy + costly, drive it as an **opt-in full-bar dimension**
@@ -70,7 +78,9 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 
 | Issue | Cloud | Dimension | Status |
 |-------|-------|-----------|--------|
-| **#1040** | AWS | Provision + teardown | OPEN — EKS access-entry 401 + teardown leak (root-caused) |
+| **#1714** | GCP · Hetzner | Provision + cluster_ready | OPEN — add-on Deployment default drift prevents ArgoCD convergence |
+| **#1716** | GCP | Provision + cluster_ready | OPEN — GKE node-pool name can exceed the provider limit |
+| **#1722** | GCP · Azure | Provision + cluster_ready | OPEN — platform metrics-server collides with the catalog add-on |
 
 ## Security findings
 
