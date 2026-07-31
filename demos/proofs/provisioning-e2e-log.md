@@ -11,7 +11,9 @@ audit trail; git history is the timeline. Parity board:
 - **dimension**: `floor` (provision + cluster_ready + ArgoCD converge) · `maxconfig` (all 11 kinds) ·
   `addons` (all 19 add-ons Healthy+Synced) · `byo` (A0.6 BYO-IaC + services) · `day2` (day-2 access) ·
   `teardown` (verify_swept to zero) · `full` (every dimension in one apply).
-- **verdict**: `PASS` · `FAIL` · `BLOCKED` (couldn't run — record why).
+- **verdict**: `PASS` · `FAIL` · `BLOCKED` (couldn't run — record why) · `RETRACTED` (an
+  append-only correction of a prior record). A `RETRACTED` row must name the superseded row and
+  explain the evidence that invalidates it; it never erases the original record.
 - **bundle**: proof path (or `nightly-<run_id>` for a scheduled run, or `—` for a manual pre-helper note).
 
 | UTC date | git sha | cloud | dimension | verdict | detail | bundle | issue |
@@ -21,5 +23,9 @@ audit trail; git history is the timeline. Parity board:
 | 2026-07-22 | 8c53441 | azure | floor | **PASS** | nightly green — provision + cluster_ready + ArgoCD converge (cheapest shape) | `nightly-29895597616` | — |
 | 2026-07-22 | 8c53441 | alibaba | floor | **PASS** | nightly green (out of the 3-cloud FULLY-TESTED program; tracked for parity) | `nightly-29895597616` | — |
 | 2026-07-22 | 8c53441 | hetzner | floor | **PASS** | nightly green (out of the 3-cloud FULLY-TESTED program; tracked for parity) | `nightly-29895597616` | — |
+| 2026-07-31 | 8c53441 | gcp | floor | **RETRACTED** | Supersedes the 2026-07-22 GCP/floor PASS: `nightly-29895597616` recorded an explicit gate-off SKIP (`E2E_GCP_WIF_PROVIDER` unset); no provision or proof bundle ran. | `nightly-29895597616` | #1723 |
+| 2026-07-31 | 8c53441 | azure | floor | **RETRACTED** | Supersedes the 2026-07-22 Azure/floor PASS: `nightly-29895597616` recorded an explicit gate-off SKIP; no provision or proof bundle ran. | `nightly-29895597616` | #1723 |
+| 2026-07-31 | 8c53441 | alibaba | floor | **RETRACTED** | Supersedes the 2026-07-22 Alibaba/floor PASS: `nightly-29895597616` recorded an explicit gate-off SKIP; no provision or proof bundle ran. | `nightly-29895597616` | #1723 |
+| 2026-07-31 | 8c53441 | hetzner | floor | **RETRACTED** | Supersedes the 2026-07-22 Hetzner/floor PASS: `nightly-29895597616` recorded an explicit gate-off SKIP; no provision or proof bundle ran. | `nightly-29895597616` | #1723 |
 
 <!-- provisioning-e2e.sh appends new rows below this line -->
