@@ -68,12 +68,16 @@ spec:
   # permanent SPURIOUS diff -> the Application is stuck OutOfSync, and selfHeal cannot fix it (you
   # cannot apply status). Client-side apps strip status and stay Synced; SSA apps (all marketplace
   # add-ons) do not. Ignore that status field so every Deployment-backed add-on reaches Synced (the
-  # floor's Healthy+Synced gate). RespectIgnoreDifferences makes the sync honor the ignore too.
+  # floor's Healthy+Synced gate). Kubernetes also defaults resourceFieldRef.divisor to "1"; ignore
+  # that API-server-only default so it cannot pin a Deployment-backed add-on OutOfSync. RespectIgnoreDifferences
+  # makes the sync honor both ignores too.
   ignoreDifferences:
     - group: apps
       kind: Deployment
       jsonPointers:
         - /status/terminatingReplicas
+      jqPathExpressions:
+        - .spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor
   {{- if eq .Source "git" }}
   syncPolicy:
     syncOptions:
