@@ -100,6 +100,9 @@ func TestRenderAddOnServerSideApply(t *testing.T) {
 			if !strings.Contains(manifest, "/status/terminatingReplicas") {
 				t.Errorf("%s manifest missing the terminatingReplicas ignoreDifferences\n---\n%s", tc.name, manifest)
 			}
+			if !strings.Contains(manifest, ".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor") {
+				t.Errorf("%s manifest missing the resourceFieldRef divisor ignoreDifferences\n---\n%s", tc.name, manifest)
+			}
 			if !strings.Contains(manifest, "- RespectIgnoreDifferences=true") {
 				t.Errorf("%s manifest missing RespectIgnoreDifferences=true\n---\n%s", tc.name, manifest)
 			}
