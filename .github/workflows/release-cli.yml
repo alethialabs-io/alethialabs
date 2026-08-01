@@ -46,7 +46,7 @@ jobs:
           echo "MIRROR_TAG=v$VER" >> "$GITHUB_ENV"
 
       - name: Checkout monorepo @ the release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ env.CLI_TAG }}
