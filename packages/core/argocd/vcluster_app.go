@@ -175,6 +175,11 @@ func (in VClusterAppInput) validate() error {
 	case strings.TrimSpace(in.VClusterName) == "":
 		return fmt.Errorf("vcluster app: vcluster name is required")
 	}
+	// Same fail-closed guard as the namespace tenant: the apps path is user-controlled and lands in
+	// the Application's source.path. Empty is valid and means the repo root.
+	if err := ValidateAppsPath(in.AppsPath); err != nil {
+		return fmt.Errorf("vcluster app: %w", err)
+	}
 	return nil
 }
 
