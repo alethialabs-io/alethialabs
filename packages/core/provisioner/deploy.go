@@ -39,6 +39,9 @@ import (
 var (
 	executeCommand           = utils.ExecuteCommand
 	executeCommandWithOutput = utils.ExecuteCommandWithOutput
+	// namespacePostMortem dumps a namespace's pods + events when a helm --wait expires. A seam so
+	// the failure-path test can assert the dump without shelling kubectl (mirrors k8s/probe.go).
+	namespacePostMortem = k8s.NamespacePostMortem
 )
 
 type DeployParams struct {
@@ -1342,7 +1345,11 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
-	installCmd := fmt.Sprintf("helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s --set redisSecretInit.enabled=false --wait --timeout 5m", utils.ShellQuote(argocd.ResolvedArgoChartVersion()))
+	installCmd := fmt.Sprintf(
+		"helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s"+
+			" --set redisSecretInit.enabled=false --wait --timeout %s",
+		utils.ShellQuote(argocd.ResolvedArgoChartVersion()),
+		utils.ShellQuote(argocd.ResolvedArgoInstallTimeout()))
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
@@ -1371,6 +1378,13 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	}
 
 	if err := executeCommand(installCmd, ".", nil, stdout, stderr); err != nil {
+		// helm's own "context deadline exceeded" names nothing: not which pod stalled, not why.
+		// Three nights of the aws nightly died here and produced no actionable evidence (#1734),
+		// and the guaranteed teardown destroys the cluster moments from now. Dump the namespace to
+		// STDOUT — so it reaches the runner log artifact, the shipped console job log AND the e2e
+		// failure output — before returning. Fail-closed is unchanged (#1718): the error still
+		// propagates and still fails the job.
+		fmt.Fprint(stdout, namespacePostMortem("argocd"))
 		return fmt.Errorf("failed to install ArgoCD: %w", err)
 	}
 
