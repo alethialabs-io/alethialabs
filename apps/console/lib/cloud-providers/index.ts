@@ -50,10 +50,8 @@ export { WAF_OPTIONS, CERT_OPTIONS } from "./dns";
 export { MESSAGING } from "./messaging";
 export { NETWORK } from "./network";
 export { convertProjectConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
-export {
-	useCloudProviderStore,
-	useCloudProviderStore as useCloudProvider,
-	useProviderSlug,
-	useProviderMeta,
-	type AnyCachedResources,
-} from "@/lib/stores/use-cloud-provider-store";
+
+// The cloud-provider STORE is deliberately not re-exported here. It is a client zustand store that
+// imports `@/app/server/actions/cloud-resources`, so re-exporting it pulled better-auth and the
+// database config into the module graph of anything that touched this barrel — including build-time
+// tooling that only wants the catalog data. Import it from `@/lib/stores/use-cloud-provider-store`.
