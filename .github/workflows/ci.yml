@@ -518,6 +518,16 @@ jobs:
           pnpm -F console gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
             || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+      # The offer surface — which canvas switches a user can actually see, per cloud. Derived by
+      # EVALUATING the inspector schema's visibleWhen predicates, because they are closures over
+      # (config, provider, capabilities) that no pattern-match can read. Checked in so the answer is
+      # reviewable, and diffed so it cannot move silently: adding a gate to a field is a real change
+      # to what the product offers, and until now it moved nothing a reviewer could see.
+      - name: Offer surface is in sync with the inspector schema (config-schema.ts → offer-surface.json)
+        run: |
+          pnpm -F console gen:offer-surface
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/offer-surface.json \
+            || { echo "::error::Generated offer-surface.json is stale — run 'pnpm -F console gen:offer-surface' and commit (source of truth: apps/console/components/design-project/canvas/inspector/config-schema.ts)."; exit 1; }
       # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
       # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
       # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that
