@@ -5,6 +5,16 @@
 variable "subscription_id" {
   type        = string
   description = "Azure subscription ID to deploy resources into"
+
+  # FAIL CLOSED — same shape as aws_account_id in the aws template. This flows from the same
+  # CloudAccountID field (packages/core/cloud/azure_provider.go emits it as `subscription_id`)
+  # and the runner resolves it the same way, so the same empty-value hole exists here. It is also
+  # the azurerm PROVIDER's subscription, so an empty value fails authentication rather than one
+  # resource — with an error that never names the input. Azure subscription ids are UUIDs.
+  validation {
+    condition     = can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.subscription_id))
+    error_message = "subscription_id must be a UUID. It is empty or malformed — the runner resolves it from the connector's CloudIdentity, or for an ambient-credential runner from $ARM_SUBSCRIPTION_ID."
+  }
 }
 
 variable "location" {
