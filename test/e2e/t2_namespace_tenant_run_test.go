@@ -129,5 +129,90 @@ func runT2NamespaceTenant(t *testing.T, ctx context.Context, cp *ControlPlane, k
 		t.Fatalf("no-reinstall assertion: %v", err)
 	}
 
-	t.Logf("namespace-tenant (#959) PROVEN: app deployed into %q on the SAME cluster %q, isolation applied, ArgoCD not reinstalled", ns, p.fabricClust)
+	// (7) The PER-NAMESPACE CLOUD IDENTITY is really bound — the half of the tenancy claim nothing
+	//     asserted. Everything above is Kubernetes-native; without this, every tenant pod inherits
+	//     the NODE's cloud credentials and one Fabric is namespaced but not genuinely multi-tenant.
+	assertTenantCloudIdentity(t, ctx, kc, p.provider, ns)
+
+	t.Logf("namespace-tenant (#959) PROVEN: app deployed into %q on the SAME cluster %q, isolation applied, per-namespace cloud identity bound, ArgoCD not reinstalled", ns, p.fabricClust)
+}
+
+// assertTenantCloudIdentity proves the tenant namespace's `default` ServiceAccount really carries
+// the per-namespace cloud identity the placement minted — or, on a cloud documented as having none,
+// that it carries NOTHING.
+//
+// The exclusion is asserted positively rather than skipped. A skip reads green whether the product
+// is correct or broken, and this is exactly the assertion whose absence would let a cloud ship with
+// tenant pods holding node credentials while the board stayed green.
+func assertTenantCloudIdentity(t *testing.T, ctx context.Context, kc, provider, ns string) {
+	t.Helper()
+
+	binding, err := tenantIdentityForProvider(provider)
+	if err != nil {
+		t.Fatalf("tenant identity: %v", err)
+	}
+
+	// jsonpath needs the dots inside an annotation KEY escaped, or it reads them as traversal.
+	readSA := func(field, key string) string {
+		out, err := nsKubectl(ctx, kc, "get", "serviceaccount", "default", "-n", ns,
+			"-o", "jsonpath={.metadata."+field+"."+strings.ReplaceAll(key, ".", `\.`)+"}")
+		if err != nil {
+			t.Fatalf("read default ServiceAccount %s %q in %s: %v\n%s", field, key, ns, err, out)
+		}
+		return strings.TrimSpace(out)
+	}
+
+	if binding.Excluded {
+		// Prove the absence for every mechanism, not just this cloud's — otherwise "hetzner binds
+		// nothing" would still pass if it had silently started binding an aws-shaped annotation.
+		for _, other := range []string{"aws", "gcp", "azure", "alibaba"} {
+			b, err := tenantIdentityForProvider(other)
+			if err != nil {
+				t.Fatalf("tenant identity: %v", err)
+			}
+			if got := readSA("annotations", b.SAAnnotation); got != "" {
+				t.Fatalf("provider %q is documented as binding NO per-namespace cloud identity, but the default ServiceAccount in %q carries %s=%q — the documented exclusion is wrong, which is a finding, not a pass",
+					provider, ns, b.SAAnnotation, got)
+			}
+		}
+		t.Logf("tenant identity on %s: none by design — %s", provider, binding.Reason)
+		return
+	}
+
+	ref := readSA("annotations", binding.SAAnnotation)
+	if ref == "" {
+		t.Fatalf("the default ServiceAccount in %q carries no %s annotation — the placement minted no per-namespace identity, so every pod in this tenant namespace falls back to the NODE's cloud credentials and the isolation is cosmetic",
+			ns, binding.SAAnnotation)
+	}
+	if binding.SALabel != "" {
+		if got := readSA("labels", binding.SALabel); got != binding.SALabelValue {
+			t.Fatalf("the default ServiceAccount in %q has %s=%q, want %q — without it the webhook never injects the federated token, so the annotation above is inert",
+				ns, binding.SALabel, got, binding.SALabelValue)
+		}
+	}
+	if binding.NamespaceLabel != "" {
+		out, err := nsKubectl(ctx, kc, "get", "namespace", ns,
+			"-o", "jsonpath={.metadata.labels."+strings.ReplaceAll(binding.NamespaceLabel, ".", `\.`)+"}")
+		if err != nil {
+			t.Fatalf("read namespace label %q on %s: %v\n%s", binding.NamespaceLabel, ns, err, out)
+		}
+		if got := strings.TrimSpace(out); got != binding.NamespaceLabelValue {
+			t.Fatalf("namespace %q has %s=%q, want %q — without it the pod-identity webhook never injects, so the SA annotation is inert",
+				ns, binding.NamespaceLabel, got, binding.NamespaceLabelValue)
+		}
+	}
+
+	// The other half of the isolation claim: the tenant SA must not hand its token to every pod by
+	// default. The guardrail bundle sets this, and nothing asserted it either.
+	// Top-level on the ServiceAccount, not under metadata.
+	out, err := nsKubectl(ctx, kc, "get", "serviceaccount", "default", "-n", ns,
+		"-o", "jsonpath={.automountServiceAccountToken}")
+	if err != nil {
+		t.Fatalf("read automountServiceAccountToken in %s: %v\n%s", ns, err, out)
+	}
+	if automount := strings.TrimSpace(out); automount != "false" {
+		t.Fatalf("the default ServiceAccount in %q has automountServiceAccountToken=%q, want false — a tenant SA that mounts its token into every pod undoes the identity scoping just asserted", ns, automount)
+	}
+
+	t.Logf("tenant identity on %s: ns %q default SA bound via %s to %q, automount disabled", provider, ns, binding.Mechanism, ref)
 }
