@@ -75,3 +75,102 @@ run "stem_one_over_the_limit_blocks_the_plan" {
     terraform_data.gcp_naming_guard,
   ]
 }
+
+################################################################################
+# The GKE default node-pool name (local.gke_node_pool_name)
+################################################################################
+#
+# The node pool is the one derived id NAMING-001 does NOT budget: it is solved by construction
+# instead, falling back to a truncated-plus-digest form once the readable name would overflow GKE's
+# 39-character cap. That fallback is the fix for a 400 that landed MID-APPLY (#1716), and its only
+# interesting behaviour is a branch that triggers past a length threshold — so it is pinned here.
+#
+# Expected names are HARDCODED rather than recomputed from the same expression. Restating the
+# derivation would assert only that it equals itself; a literal fails the moment an offset, the
+# digest length or the threshold moves — which is the whole point.
+#
+# Every stem below is within the 30-character NAMING-001 budget, so these plans pass the gate and
+# the only thing under test is the derivation. region = "europe-west3" -> short name "ew3", so the
+# cluster is "gke-ew3-<environment>-<project_name>" and the pool appends "-default-pool" (13).
+
+# 39 characters — the longest readable form GKE accepts. Must be kept BYTE-IDENTICAL: this is the
+# name real clusters already carry, and a changed name forces replacement of the node pool.
+run "node_pool_at_39_chars_keeps_the_readable_form" {
+  command = plan
+
+  variables {
+    environment  = "production" # 10
+    project_name = "alethia"    #  7  -> cluster 26, pool name 39
+  }
+
+  assert {
+    condition     = local.gke_node_pool_name == "gke-ew3-production-alethia-default-pool"
+    error_message = "A 39-character node-pool name must keep the readable form verbatim, got ${local.gke_node_pool_name}."
+  }
+}
+
+# 40 characters — one over, the first name GKE rejects, so the fallback must engage. Paired with the
+# run above, this pins the threshold from BOTH sides: without it a derivation that digested
+# everything would pass, and without its partner one that never digested would.
+run "node_pool_at_40_chars_falls_back_to_digest" {
+  command = plan
+
+  variables {
+    environment  = "production" # 10
+    project_name = "alethiax"   #  8  -> cluster 27, readable pool name 40
+  }
+
+  assert {
+    condition     = local.gke_node_pool_name == "gke-ew3-production-alethiax-def-c493fea"
+    error_message = "A 40-character node-pool name must fall back to truncate-plus-digest, got ${local.gke_node_pool_name}."
+  }
+}
+
+# When the 31-character truncation lands exactly on a hyphen it is trimmed, so this name is 38
+# characters, not 39. Asserting the literal keeps that trailing-hyphen handling from being dropped
+# as an apparent no-op — "gke-ew3-production-alethia-abc--93b7723" would be an ugly, valid name.
+run "node_pool_truncation_landing_on_a_hyphen_is_trimmed" {
+  command = plan
+
+  variables {
+    environment  = "production"  # 10
+    project_name = "alethia-abc" # 11  -> cluster 30, readable pool name 43
+  }
+
+  assert {
+    condition     = local.gke_node_pool_name == "gke-ew3-production-alethia-abc-93b7723"
+    error_message = "A truncation landing on a hyphen must trim it, got ${local.gke_node_pool_name}."
+  }
+}
+
+# The two runs below are a PAIR and neither is meaningful alone. Both cluster names share their
+# first 34 characters, so both collapse to the same 31-character truncation — only the digest can
+# tell them apart, and it is taken over the FULL name for exactly that reason. Digesting the
+# truncated stem instead would hand two different clusters one node-pool name.
+run "node_pool_shared_prefix_a_gets_a_distinct_digest" {
+  command = plan
+
+  variables {
+    environment  = "production"        # 10
+    project_name = "alethia-platfrm-a" # 17  -> cluster 36, readable pool name 49
+  }
+
+  assert {
+    condition     = local.gke_node_pool_name == "gke-ew3-production-alethia-plat-5bcc31a"
+    error_message = "Expected the -a cluster's own digest, got ${local.gke_node_pool_name}."
+  }
+}
+
+run "node_pool_shared_prefix_b_gets_a_distinct_digest" {
+  command = plan
+
+  variables {
+    environment  = "production"        # 10
+    project_name = "alethia-platfrm-b" # 17  -> same 31-char truncation as -a above
+  }
+
+  assert {
+    condition     = local.gke_node_pool_name == "gke-ew3-production-alethia-plat-1d17b77"
+    error_message = "Expected the -b cluster's own digest (distinct from -a's 5bcc31a), got ${local.gke_node_pool_name}."
+  }
+}

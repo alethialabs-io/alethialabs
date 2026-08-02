@@ -27,11 +27,44 @@ locals {
   #
   # The GKE default NODE POOL is deliberately absent from this table. It is the cluster name plus a
   # fixed 13 characters against a limit of 39, which would force stem <= 18 and reject ordinary names
-  # like `production`/`alethia-nl`. That one is solved by CONSTRUCTION instead — modules/gke/main.tf
-  # falls back to a deterministic truncated-plus-digest name once the readable form would overflow —
-  # so it imposes no budget here. See #1716: the readable form 400'd MID-APPLY, after the cluster and
-  # network existed, because nothing validated it and this stem check passed at 22 characters.
+  # like `production`/`alethia-nl`. That one is solved by CONSTRUCTION instead — see
+  # gke_node_pool_name below — so it imposes no budget here. See #1716: the readable form 400'd
+  # MID-APPLY, after the cluster and network existed, because nothing validated it and this stem
+  # check passed at 22 characters.
   gcp_name_stem_max = 30
+
+  # GKE rejects a node-pool name of 40 characters or more:
+  #   Error 400: Node_pool.name must be less than 40 characters., badRequest
+  # The suffixed form is the cluster name plus a fixed 13 characters, and the cluster name is
+  # itself "gke-<region-short>-<environment>-<project_name>" (8 + the naming stem), so the plain
+  # concatenation only fits while `len(environment) + len(project_name) <= 18`. Ordinary names blow
+  # that: `alethia-nl` + `production` renders 42 characters, and the e2e nightly's own
+  # `<run_id>-<attempt>` environment (13 characters) overflows with any project name over 5. The
+  # cluster and the VPC are created first, so the 400 lands MID-APPLY and leaves a half-built
+  # environment behind (#1716).
+  #
+  # So derive the name defensively: keep the readable form whenever it fits, and fall back to a
+  # deterministic truncation-plus-digest of at most 39 characters (31 + "-" + 7, one fewer when the
+  # truncation lands on a hyphen and it is trimmed). Digesting the FULL name rather than the
+  # truncated stem is what keeps two clusters sharing a 31-character prefix from colliding.
+  #
+  # This is backward-compatible by construction: every name the fallback produces is one the GKE API
+  # currently REJECTS, so no node pool that exists today can change name — and a rename would force
+  # replacement of the pool. Names that fit stay byte-identical.
+  #
+  # It lives HERE, at the template root, rather than in modules/gke where it is consumed, for one
+  # reason: it has to be TESTABLE. The gke module cannot be planned under mocked providers at all —
+  # `master_auth` is computed-only and OpenTofu 1.12 populates it through neither
+  # `mock_resource.defaults` nor `override_resource.values` — so a test can never reach a local
+  # inside it. At the root it is plain string arithmetic over variables, decided before any resource
+  # exists, which is the same property NAMING-001 relies on and is what lets
+  # checks_naming.tftest.hcl assert it directly. The module takes the finished name as an input.
+  gke_node_pool_full = "${local.gke_name}-default-pool"
+  gke_node_pool_name = length(local.gke_node_pool_full) < 40 ? local.gke_node_pool_full : format(
+    "%s-%s",
+    trimsuffix(substr(local.gke_node_pool_full, 0, 31), "-"),
+    substr(sha256(local.gke_node_pool_full), 0, 7),
+  )
 }
 
 # NAMING-001: surface an over-long stem loudly at plan time. A `check` block only WARNS, so the hard

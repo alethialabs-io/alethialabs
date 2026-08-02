@@ -10,31 +10,6 @@ terraform {
 }
 
 locals {
-  # GKE rejects a node-pool name of 40 characters or more:
-  #   Error 400: Node_pool.name must be less than 40 characters., badRequest
-  # The suffixed form is the cluster name plus a fixed 13 characters, and the cluster name is
-  # itself "gke-<region-short>-<environment>-<project_name>" (8 + the naming stem), so the plain
-  # concatenation only fits while `len(environment) + len(project_name) <= 18`. Ordinary names blow
-  # that: `alethia-nl` + `production` renders 42 characters, and the e2e nightly's own
-  # `<run_id>-<attempt>` environment (13 characters) overflows with any project name over 5. The
-  # cluster and the VPC are created first, so the 400 lands MID-APPLY and leaves a half-built
-  # environment behind (#1716).
-  #
-  # So derive the name defensively: keep the readable form whenever it fits, and fall back to a
-  # deterministic truncation-plus-digest of at most 39 characters (31 + "-" + 7, one fewer when the
-  # truncation lands on a hyphen and it is trimmed). Digesting the FULL name rather than the
-  # truncated stem is what keeps two clusters sharing a 31-character prefix from colliding.
-  #
-  # This is backward-compatible by construction: every name the fallback produces is one the GKE API
-  # currently REJECTS, so no node pool that exists today can change name — and a rename would force
-  # replacement of the pool. Names that fit stay byte-identical.
-  node_pool_full = "${var.cluster_name}-default-pool"
-  node_pool_name = length(local.node_pool_full) < 40 ? local.node_pool_full : format(
-    "%s-%s",
-    trimsuffix(substr(local.node_pool_full, 0, 31), "-"),
-    substr(sha256(local.node_pool_full), 0, 7),
-  )
-
   merged_labels = merge(var.labels, {
     environment = var.environment
     managed-by  = "opentofu"
@@ -167,7 +142,11 @@ resource "google_container_cluster" "cluster" {
 resource "google_container_node_pool" "default" {
   count = var.enable_autopilot ? 0 : 1
 
-  name     = local.node_pool_name
+  # Derived at the template root (checks_naming.tf, local.gke_node_pool_name), not here: GKE caps
+  # this at 39 characters and the readable form overflows on ordinary names, so the name is built
+  # defensively — and it is built where a `tofu test` can reach it, which this module is not (its
+  # computed-only `master_auth` block cannot be mocked). See #1716 / #1746.
+  name     = var.node_pool_name
   project  = var.project_id
   location = var.region
   cluster  = google_container_cluster.cluster.name
