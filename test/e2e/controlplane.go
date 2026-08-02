@@ -671,10 +671,16 @@ func (cp *ControlPlane) handleStateLock(w http.ResponseWriter, r *http.Request) 
 
 // ─────────────────────────── receipt / teardown / kube helpers ───────────────────────────
 
-// VerifySignedReceipt unmarshals a persisted verify_receipt JSON object and checks it
-// is a REAL ed25519 signature over the REAL plan hash: PlanSHA256 is a 64-char hex
-// sha256 sealing it to the plan, the algorithm is ed25519, an embedded report exists,
-// and the detached signature verifies under pub. Returns the sealed plan hash.
+// VerifySignedReceipt unmarshals a persisted verify_receipt JSON object and checks it is a REAL
+// ed25519 signature over the REAL plan hash, AND that what it seals is evidence rather than an
+// empty envelope: the algorithm is ed25519, the detached signature verifies under pub, and
+// AssertReceiptEvidence holds over the embedded report. Returns the sealed plan hash.
+//
+// The evidence half runs HERE, at the single choke point both legs already call, rather than beside
+// each call site — a receipt assertion that a leg can forget to make is one a leg will eventually
+// forget to make. It also closes a gap between this function and its own documentation: it promised
+// "a 64-char HEX sha256" while checking only the length, so a 64-character non-hex string — bound to
+// no plan at all — satisfied it.
 func VerifySignedReceipt(raw json.RawMessage, pub ed25519.PublicKey) (planSHA string, err error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", errors.New("verify_receipt is absent — the signing/receipt path did not run")
@@ -683,17 +689,20 @@ func VerifySignedReceipt(raw json.RawMessage, pub ed25519.PublicKey) (planSHA st
 	if err := json.Unmarshal(raw, &sr); err != nil {
 		return "", fmt.Errorf("decode signed receipt: %w", err)
 	}
-	if len(sr.Receipt.PlanSHA256) != 64 {
-		return "", fmt.Errorf("receipt PlanSHA256 = %q, want a 64-char hex sha256", sr.Receipt.PlanSHA256)
-	}
 	if sr.Algorithm != "ed25519" {
 		return "", fmt.Errorf("receipt algorithm = %q, want ed25519", sr.Algorithm)
 	}
-	if sr.Receipt.Report == nil {
-		return "", errors.New("receipt does not embed the verification report")
-	}
 	if err := sr.Verify(pub); err != nil {
 		return "", fmt.Errorf("receipt signature does not verify: %w", err)
+	}
+	// Cryptography proves WHO said it and that it was not altered. It says nothing about whether
+	// anything was actually evaluated — and a perfectly signed receipt over zero controls is exactly
+	// what a compliance reader would accept as proof.
+	if err := AssertReceiptEvidence(sr); err != nil {
+		return "", fmt.Errorf("the receipt verifies cryptographically but is not evidence: %w", err)
+	}
+	if err := assertRekorAnchorIfPresent(sr); err != nil {
+		return "", fmt.Errorf("rekor anchor: %w", err)
 	}
 	return sr.Receipt.PlanSHA256, nil
 }
