@@ -54,7 +54,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version-file: go.work
           cache-dependency-path: apps/cli/go.sum
 
       # Token for the alethia-cli release home (release + tag + source push). Separate from the tap
