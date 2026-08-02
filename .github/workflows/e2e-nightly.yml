@@ -426,12 +426,37 @@ jobs:
       #    (see infra/aws-oidc/e2e-nightly.tf). aws-region MUST equal the role's locked region
       #    (E2E_REGION defaults to us-east-1 for aws — set in the compute step). ──
       - name: Configure AWS credentials (OIDC)
+        id: aws_creds
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
           aws-region: ${{ env.E2E_REGION }}
           role-duration-seconds: 7200
+
+      # ── The ACCOUNT ID, which credentials alone do not carry into the template. The T2 harness
+      #    runs a self-operator runner with no stored CloudIdentity, so the runner falls through to
+      #    resolveAmbientAccountID (apps/runner/internal/agent/runner.go) — which for aws reads
+      #    $AWS_ACCOUNT_ID. Nothing set it, so every nightly emitted "aws_account_id":{"value":""}
+      #    and the apply died hours in at the RDS secret's KMS key with `InvalidArnException`,
+      #    naming KMS rather than the missing input (run 30738253176). configure-aws-credentials
+      #    resolves the account for the role it just assumed; take it from there rather than
+      #    parsing the role ARN, so a re-pointed role cannot silently disagree.
+      #
+      #    The template now REFUSES an empty value at plan time, so a regression here fails fast
+      #    and says which input is wrong instead of burning an hour of real cloud first. ──
+      - name: Export AWS_ACCOUNT_ID for the T2 harness
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        env:
+          ACCOUNT_ID: ${{ steps.aws_creds.outputs.aws-account-id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACCOUNT_ID}" ]; then
+            echo "::error::configure-aws-credentials returned no aws-account-id — the template would emit an empty aws_account_id and fail mid-apply."
+            exit 1
+          fi
+          echo "AWS_ACCOUNT_ID=${ACCOUNT_ID}" >> "$GITHUB_ENV"
+          echo "::notice::AWS_ACCOUNT_ID resolved for the T2 harness (${ACCOUNT_ID})."
 
       # ── Signal to the T2 harness that AWS creds are configured. The provider table's
       #    credsPresent() for aws requires ALETHIA_E2E_AWS_READY=1 AND a concrete handle
