@@ -10,7 +10,21 @@
 # so the cluster's native Artifact Registry is untouched.
 
 locals {
-  enable_gar_pull = var.registry_pull_provider == "gar-xacct"
+  # What the OPERATOR ASKED FOR, cluster-independent — this is what checks_registry.tf judges, so the
+  # misconfiguration warning stays armed on a cluster-less shape.
+  gar_pull_requested = var.registry_pull_provider == "gar-xacct"
+
+  # What gets BUILT additionally needs the cluster. This GSA exists solely to be impersonated through
+  # GKE WORKLOAD IDENTITY by the in-cluster refresher KSA, and the WI pool (<project>.svc.id.goog) is
+  # created BY the cluster. Without `provision_gke` this is AWS #1772 in its quieter form: `member`
+  # below names the pool as a STRING rather than an index, so instead of dying at plan the way AWS
+  # did, it planned clean and died at APPLY —
+  #   Error 400: Identity Pool does not exist (<project>.svc.id.goog)
+  # — the exact failure workload-identity.tf already records from a real apply. Azure's
+  # registry-pull.tf carries `&& var.provision_aks` and AWS's now carries `var.provision_eks`; this
+  # is the GCP parity. Worth fixing in the same pass precisely because it fails LATER: a plan-time
+  # crash is found by CI, an apply-time one is found by a customer.
+  enable_gar_pull = var.provision_gke && local.gar_pull_requested
   # Coupling point with packages/core/manifests (the registry-pull refresher KSA the wiring PR emits).
   registry_pull_ksa_namespace = "default"
   registry_pull_ksa_name      = "alethia-registry-pull"

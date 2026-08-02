@@ -44,8 +44,13 @@ locals {
 }
 module "rds_iam_auth" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  count   = var.rds_iam_irsa ? 1 : 0
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # `provision_eks` is part of the count, not merely of the body: every IRSA role in this file is
+  # federated to THIS cluster's OIDC provider (module.eks[0].oidc_provider_arn below), which does not
+  # exist on a cluster-less shape. Without the term the module was still instantiated and indexed an
+  # empty tuple — "Invalid index … module.eks is empty tuple" — so `provision_eks = false` could not
+  # even PLAN (#1772). A role trusting a nonexistent OIDC provider is also useless if it were built.
+  count   = var.rds_iam_irsa && var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringEquals"
@@ -70,7 +75,11 @@ resource "aws_iam_policy" "rds_iam_auth" {
   # ask for the app's RDS-IAM identity (the default, and every e2e floor run) tofu still rendered an
   # rds-db:connect ARN for a cluster that does not exist. That is what reds the AWS nightly at PLAN
   # time, before a single resource is created.
-  count = var.rds_iam_irsa ? 1 : 0
+  #
+  # The `provision_eks` term is the same bug in its second form (#1772): the module below dropped out
+  # on a cluster-less shape, and a policy whose only consumer is gone is an ORPHAN IAM policy that
+  # nothing detaches. Both counts must stay byte-identical.
+  count = var.rds_iam_irsa && var.provision_eks ? 1 : 0
 
   name_prefix = "rds_iam_auth"
   description = "Policy for the keyless app ServiceAccount allowing RDS IAM connect as alethia_app for cluster ${local.eks_name}"
@@ -109,14 +118,16 @@ EOT
 ##########################
 module "irsa_alethia_agent" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
+  count   = var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringLike"
   create_role                = true
   role_name                  = "irsa-alethia-${local.eks_name}"
   role_policy_arns = {
-    alethia_agent_policy = aws_iam_policy.irsa_alethia_agent.arn
+    alethia_agent_policy = aws_iam_policy.irsa_alethia_agent[0].arn
   }
   oidc_providers = {
     main = {
@@ -127,6 +138,9 @@ module "irsa_alethia_agent" {
 }
 
 resource "aws_iam_policy" "irsa_alethia_agent" {
+  # Same count as the role that consumes it (above) — a policy outliving its only consumer is an
+  # orphan nothing detaches. Same pairing as aws_iam_policy.rds_iam_auth (#1772).
+  count = var.provision_eks ? 1 : 0
 
   name_prefix = "irsa_alethia_agent"
   description = "Policy for ServiceAccounts allowing calls to AWS metering API for cluster ${local.eks_name}"
@@ -152,7 +166,9 @@ EOT
 #############################################
 module "irsa_fluentbit_cloudwatch" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
+  count   = var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringLike"
@@ -173,6 +189,10 @@ module "irsa_fluentbit_cloudwatch" {
 #IRSA for Karpenter                         #
 #############################################
 resource "aws_iam_policy" "irsa_karpenter" {
+  # Same count as the role that consumes it (below) — an orphan otherwise (#1772). Deliberately NOT
+  # also gated on enable_karpenter: that would change what an existing cluster has already applied,
+  # which is a separate decision from making a cluster-less shape plan.
+  count = var.provision_eks ? 1 : 0
 
   name_prefix = "irsa_karpenter"
   description = "Policy for Karpenter ServiceAccounts for cluster ${local.eks_name}"
@@ -281,14 +301,16 @@ EOT
 
 module "irsa_karpenter" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
+  count   = var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringEquals"
   create_role                = true
   role_name                  = "KarpenterIRSA-${local.eks_name}"
   role_policy_arns = {
-    alethia_agent_policy = aws_iam_policy.irsa_karpenter.arn
+    alethia_agent_policy = aws_iam_policy.irsa_karpenter[0].arn
   }
   oidc_providers = {
     main = {
@@ -303,7 +325,9 @@ module "irsa_karpenter" {
 ##########################
 module "irsa_ai_bedrock" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
+  count   = var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringLike"
@@ -311,8 +335,8 @@ module "irsa_ai_bedrock" {
   role_name                  = "ai-bedrock-${local.eks_name}"
   role_policy_arns = {
     aws_managed_policy            = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
-    irsa_ai_bedrock_custom_policy = aws_iam_policy.irsa_ai_bedrock_custom.arn
-    irsa_ai_bedrock_s3_policy     = aws_iam_policy.irsa_ai_bedrock_s3.arn
+    irsa_ai_bedrock_custom_policy = aws_iam_policy.irsa_ai_bedrock_custom[0].arn
+    irsa_ai_bedrock_s3_policy     = aws_iam_policy.irsa_ai_bedrock_s3[0].arn
 
   }
   oidc_providers = {
@@ -323,6 +347,8 @@ module "irsa_ai_bedrock" {
   }
 }
 resource "aws_iam_policy" "irsa_ai_bedrock_custom" {
+  # Same count as the role that consumes it (above) — an orphan otherwise (#1772).
+  count = var.provision_eks ? 1 : 0
 
   name_prefix = "irsa_ai_bedrock_custom"
   description = "Policy for ServiceAccounts allowing invoking bedrock model"
@@ -343,6 +369,8 @@ resource "aws_iam_policy" "irsa_ai_bedrock_custom" {
  EOT
 }
 resource "aws_iam_policy" "irsa_ai_bedrock_s3" {
+  # Same count as the role that consumes it (above) — an orphan otherwise (#1772).
+  count = var.provision_eks ? 1 : 0
 
   name_prefix = "irsa_ai_bedrock_s3"
   description = "Policy for ServiceAccounts allowing S3 bucket access"
@@ -383,7 +411,11 @@ locals {
 }
 
 resource "aws_iam_policy" "irsa_ecr_build" {
-  count = var.provision_ecr ? 1 : 0
+  # `provision_ecr` alone was NOT this policy's predicate: its only consumer is the IRSA role below,
+  # which additionally needs a cluster OIDC provider. On `provision_ecr = true, provision_eks = false`
+  # the role dropped out and the policy did not — an orphan nothing detaches (#1772). Both counts
+  # must stay byte-identical.
+  count = var.provision_ecr && var.provision_eks ? 1 : 0
 
   name_prefix = "irsa_ecr_build"
   description = "ECR push for the in-cluster build ServiceAccount of cluster ${local.eks_name}"
@@ -420,8 +452,11 @@ EOT
 
 module "irsa_ecr_build" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  count   = var.provision_ecr ? 1 : 0
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # `provision_ecr` was the WRONG flag on its own: this role federates to the cluster's OIDC provider,
+  # so it exploded on `provision_ecr = true, provision_eks = false` (#1772). The kaniko builder has
+  # nowhere to run without a cluster anyway.
+  count   = var.provision_ecr && var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringEquals"
@@ -443,7 +478,9 @@ module "irsa_ecr_build" {
 ##########################
 module "s3_bucket_irsa_role" {
 
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
+  count   = var.provision_eks ? 1 : 0
   version = "5.34.0"
 
   assume_role_condition_test = "StringLike"

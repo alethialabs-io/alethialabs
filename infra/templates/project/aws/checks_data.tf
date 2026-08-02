@@ -20,7 +20,11 @@ check "rds_db_name_present_when_created" {
 # no workload identity can mint one and the keyless binding fails closed.
 check "keyless_rds_iam_irsa_wired" {
   assert {
-    condition     = !var.rds_iam_auth_enabled || length(module.rds_iam_auth) == 1
+    # The `provision_eks` term is not a loophole, it is the truth (#1772): the IRSA role federates to
+    # THIS cluster's OIDC provider, so a cluster-less shape has no identity to mint tokens with and
+    # the role is correctly absent. Naming it keeps the message actionable — without the term this
+    # would tell an operator to "set rds_iam_irsa" on a shape where rds_iam_irsa changes nothing.
+    condition     = !var.rds_iam_auth_enabled || !var.provision_eks || length(module.rds_iam_auth) == 1
     error_message = "rds_iam_auth_enabled is on but the app RDS-IAM IRSA role is missing; set rds_iam_irsa (the iam_auth toggle should drive both)."
   }
 }
