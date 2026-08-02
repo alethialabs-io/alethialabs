@@ -15,6 +15,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -79,8 +80,8 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		Outputs:          strOutputs,
 		Provider:         string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
 		KeylessDBAuth:    keylessOn,
-		Databases:        vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
-		RunnerImage:      os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
+		Databases:        vc.Databases,    // lookup source for a binding target's iam_auth (#722)
+		RunnerImage:      selfimage.Ref(), // the db-authproxy / db-bootstrap sidecar image (#1787)
 		ImagePullSecrets: pullSecrets,
 		SecretStores:     secretStores, // secret-kind binding → pluggable SaaS store (runtime-read, #1207)
 	}
@@ -254,7 +255,7 @@ func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[str
 		SecretName:    tgt.SecretName(),
 		RegistryHost:  tgt.RegistryHost,
 		Region:        tgt.Region,
-		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"),
+		RunnerImage:   selfimage.Ref(),
 		SAAnnotations: map[string]string{},
 		SALabels:      map[string]string{},
 		PodLabels:     map[string]string{},

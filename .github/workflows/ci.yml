@@ -472,6 +472,8 @@ jobs:
         run: pnpm -F console check:ee-boundary
       - name: Repository-wide open-core boundary and community image contract
         run: pnpm check:open-core
+      - name: Runner self-image is baked, matches its job, and is multi-arch
+        run: pnpm check:runner-self-image
       - name: Community edition type-checks without enterprise activation
         env:
           ALETHIA_EDITION: community

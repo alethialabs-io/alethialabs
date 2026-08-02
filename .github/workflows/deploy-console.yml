@@ -244,6 +244,9 @@ jobs:
           build-args: |
             VERSION=${{ github.sha }}
             RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
+            # The FINAL multi-arch tag, never the per-arch one this job pushes: this ref gets
+            # baked in and is later rendered as a sidecar on the CUSTOMER's nodes (#1787).
+            SELF_IMAGE=${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}-amd64
           cache-from: type=gha,scope=${{ matrix.image }}-amd64
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-amd64
@@ -279,6 +282,9 @@ jobs:
           build-args: |
             VERSION=${{ github.sha }}
             RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
+            # The FINAL multi-arch tag, never the per-arch one this job pushes: this ref gets
+            # baked in and is later rendered as a sidecar on the CUSTOMER's nodes (#1787).
+            SELF_IMAGE=${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}-arm64
           cache-from: type=gha,scope=${{ matrix.image }}-arm64
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-arm64
@@ -334,6 +340,9 @@ jobs:
           build-args: |
             VERSION=${{ github.sha }}
             RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
+            # The FINAL multi-arch tag, never the per-arch one this job pushes: this ref gets
+            # baked in and is later rendered as a sidecar on the CUSTOMER's nodes (#1787).
+            SELF_IMAGE=${{ env.IMAGE_PREFIX }}/runner:${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runner-amd64
           cache-to: type=gha,mode=max,scope=runner-amd64
@@ -364,6 +373,9 @@ jobs:
           build-args: |
             VERSION=${{ github.sha }}
             RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
+            # The FINAL multi-arch tag, never the per-arch one this job pushes: this ref gets
+            # baked in and is later rendered as a sidecar on the CUSTOMER's nodes (#1787).
+            SELF_IMAGE=${{ env.IMAGE_PREFIX }}/runner:${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runner-arm64
           cache-to: type=gha,mode=max,scope=runner-arm64
