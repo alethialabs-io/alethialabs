@@ -156,10 +156,14 @@ leave IAM authentication off and use the generated-password path, which is fully
 
 <Callout type="warn">
 Keyless database auth is **behind a feature flag** while it completes real-cloud verification. The
-runner enables it with `ALETHIA_KEYLESS_DB_AUTH_ENABLED=true`. The AWS and Azure paths also need
-`ALETHIA_RUNNER_IMAGE` set, because that image carries the `db-authproxy` sidecar; the bootstrap Job
-fails closed rather than rendering without it. With the flag off, an IAM-auth database binding uses
-the normal password path unchanged.
+runner enables it with `ALETHIA_KEYLESS_DB_AUTH_ENABLED=true`. With the flag off, an IAM-auth
+database binding uses the normal password path unchanged.
+
+Keyless renders schedule the runner image twice: as the `db-authproxy` sidecar, and as the bootstrap
+Job. A published runner image carries its own reference, so there is nothing to set. Set
+`ALETHIA_RUNNER_IMAGE` only to name a different image than the one running — a private mirror or an
+air-gapped registry. A runner built from source has no published reference, so keyless renders fail
+closed there; run a published image to exercise this path.
 
 If a keyless binding can't be fully wired at deploy time (a missing identity, for example), it
 **fails closed**: the binding is omitted and the reason is surfaced on the deployment's **Deploy** tab
