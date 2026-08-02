@@ -31,6 +31,14 @@ variable "environment" {
   description = "Environment in which the infrastructure is deployed (e.g. dev, staging, production)"
 }
 
+# DOCUMENTED EXCLUSION from the fail-closed account-id guard that aws_account_id (aws),
+# project_id (gcp) and subscription_id (azure) now carry. Those three are interpolated into
+# account-scoped ARNs/resource ids, so an empty value produces a confusing mid-apply failure and
+# has to be rejected at plan time. This one is INFORMATIONAL — it is not interpolated into any
+# resource, it is declared optional with an empty default, and an empty value changes nothing.
+# Adding a validation here would break every existing caller to guard a value nothing reads.
+# hetzner is excluded for a different reason: it is account-less at the tofu layer entirely.
+# If this ever starts feeding a real resource id, it needs the guard.
 variable "alibaba_account" {
   type        = string
   default     = ""

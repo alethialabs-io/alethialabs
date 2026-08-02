@@ -21,6 +21,10 @@ module "ecr" {
   registry_scan_type                     = var.ecr_registry_scan_type
   registry_scan_rules                    = var.ecr_registry_scan_rules
   create_lifecycle_policy                = var.ecr_create_lifecycle_policy
+  # MUST accompany create_lifecycle_policy. Upstream creates aws_ecr_lifecycle_policy with
+  # whatever this holds — its own default is "" — and AWS rejects a policy document shorter
+  # than 100 characters, so an unset value FAILS the apply rather than skipping the policy.
+  repository_lifecycle_policy = local.lifecycle_policy
 
   tags = merge(
     var.resources_tags,
