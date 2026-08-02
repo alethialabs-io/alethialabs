@@ -31,12 +31,12 @@ interface FieldSpec {
 	key: string;
 	type: string;
 	label?: string;
-	visibleWhen?: (config: unknown, ctx: unknown) => boolean;
-	unavailableWhen?: (config: unknown, ctx: unknown) => string | null;
-}
-
-interface KindSpec {
-	sections?: Array<{ fields?: FieldSpec[] }>;
+	// Held as `unknown` and called through callPredicate. `typeof x === "function"` narrows to
+	// `Function`, which is not assignable to a specific signature — and the only ways to bridge that
+	// are a cast (forbidden) or asserting a shape we have not checked. The return value is validated
+	// at the call site instead, which is where it actually matters.
+	visibleWhen?: unknown;
+	unavailableWhen?: unknown;
 }
 
 interface OfferCell {
@@ -68,6 +68,12 @@ interface Offer {
 function prop(value: unknown, key: string): unknown {
 	if (typeof value !== "object" || value === null) return undefined;
 	return Reflect.get(value, key);
+}
+
+/** Call an unknown value as a predicate, or undefined when it is not callable. */
+function callPredicate(fn: unknown, config: unknown, ctx: unknown): unknown {
+	if (typeof fn !== "function") return undefined;
+	return Reflect.apply(fn, undefined, [config, ctx]);
 }
 
 function asArray(value: unknown): unknown[] {
@@ -113,9 +119,9 @@ const kindUnsupported = (kind: string, provider: Provider): boolean => {
 function witnessesFor(kind: string, provider: Provider): unknown[] {
 	const defaultData = prop(prop(NODE_REGISTRY, kind), "defaultData");
 	let base: Record<string, unknown> = {};
-	if (typeof defaultData === "function") {
+	if (defaultData !== undefined) {
 		try {
-			const produced = defaultData(provider);
+			const produced = callPredicate(defaultData, provider, undefined);
 			if (typeof produced === "object" && produced !== null) {
 				base = { ...produced };
 			}
@@ -134,9 +140,9 @@ function witnessesFor(kind: string, provider: Provider): unknown[] {
 function evaluate(field: FieldSpec, config: unknown, provider: Provider): OfferCell {
 	const ctx = { provider, config, caps: NO_CAPABILITIES };
 	let visible = true;
-	if (typeof field.visibleWhen === "function") {
+	if (field.visibleWhen !== undefined) {
 		try {
-			visible = field.visibleWhen(config, ctx) === true;
+			visible = callPredicate(field.visibleWhen, config, ctx) === true;
 		} catch {
 			visible = false;
 		}
@@ -144,9 +150,10 @@ function evaluate(field: FieldSpec, config: unknown, provider: Provider): OfferC
 	if (!visible) return { visible: false };
 
 	let unavailable: string | undefined;
-	if (typeof field.unavailableWhen === "function") {
+	if (field.unavailableWhen !== undefined) {
 		try {
-			unavailable = field.unavailableWhen(config, ctx) ?? undefined;
+			const reason = callPredicate(field.unavailableWhen, config, ctx);
+			unavailable = typeof reason === "string" && reason !== "" ? reason : undefined;
 		} catch {
 			unavailable = undefined;
 		}
@@ -189,7 +196,7 @@ for (const kind of Object.keys(CONFIG_SCHEMA)) {
 			key: field.key,
 			type: field.type,
 			label: field.label,
-			gated: typeof field.visibleWhen === "function",
+			gated: field.visibleWhen !== undefined,
 			offeredOn,
 			unavailableOn,
 			notOfferedOn,
