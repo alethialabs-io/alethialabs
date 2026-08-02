@@ -36,10 +36,19 @@ func runT2NamespaceTenant(t *testing.T, ctx context.Context, cp *ControlPlane, k
 		t.Log("namespace-tenant scenario (#959) disabled — set ALETHIA_E2E_NAMESPACE_TENANT=1 to run it")
 		return
 	}
-	if p.provider != "aws" {
-		t.Logf("namespace-tenant scenario is aws-first (#955) — skipped for %s", p.provider)
-		return
-	}
+	// NO per-cloud guard here, deliberately. This scenario used to skip every cloud but aws while
+	// #955's keyless re-mint was aws-only. #1389 finished that activation: the product's OWN
+	// allowlist (provisioner.namespaceRemintProviders) now carries all five clouds, and it is the
+	// SINGLE control — a cloud outside it fails the DEPLOY closed with a documented reason. A
+	// mirrored `p.provider != "aws"` here is a SECOND literal describing the same fact, and it
+	// drifted: it silently no-op'd 4 of the 5 clouds long after they were wired, which is exactly
+	// how a parity gap hides behind a green run. If a cloud regresses, the placement job now fails
+	// loudly with the product's blocked reason instead of being skipped into a false pass.
+	//
+	// hetzner caveat (documented, not asserted past): its namespace tenants get k8s-native
+	// isolation only, no per-namespace CLOUD identity (deploy_namespace.go). Every assertion below
+	// is k8s-native — PSA label, guardrail bundle, Application routing, AppProject lockdown — so it
+	// holds there too.
 
 	ns := namespaceTenantSlug(p.env)
 	t.Logf("namespace-tenant (#959): placing a namespace env into %q on the EXISTING Fabric cluster %q", ns, p.fabricClust)
@@ -60,7 +69,7 @@ func runT2NamespaceTenant(t *testing.T, ctx context.Context, cp *ControlPlane, k
 	}
 	t.Logf("seeded QUEUED namespace DEPLOY job %s (placement=namespace, cluster=%s, ns=%s)", jobID, p.fabricClust, ns)
 
-	status, err := cp.WaitTerminal(ctx, jobID, 15*time.Minute)
+	status, err := cp.WaitTerminal(ctx, jobID, nsTenantDeployWait)
 	if err != nil {
 		t.Fatalf("waiting for namespace job: %v", err)
 	}

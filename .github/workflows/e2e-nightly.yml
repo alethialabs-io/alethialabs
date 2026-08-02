@@ -76,7 +76,13 @@ jobs:
     # deploy→ArgoCD→teardown chain still finishes well inside the old bound (a tiny Talos
     # cluster provisions in ~10-15m), and the soak adds a bounded ~10-25m of day-2 loops on
     # that same cheap cluster (cents/hour). The finer step timeout below kills a hang first.
-    timeout-minutes: 90
+    #
+    # 90→165 ONLY when the #845 acceptance gate is on. That gate places 2 namespace tiers + a whole
+    # vcluster (its own deploy + app-health + destroy waits) on top of the base proof, for a test ctx
+    # of ~135m — which the 75m step cap would kill mid-run, so an enabled gate could never finish.
+    # The raise is conditional because a fabric-demo night roughly doubles the billed cluster-hours
+    # per cloud; with E2E_FABRIC_DEMO unset the bound is unchanged and so is the cost.
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 165 || 90 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -563,10 +569,15 @@ jobs:
       # ArgoCD Healthy+Synced convergence assertion 8m + build headroom) PLUS the opt-in soak
       # budget (window + drift/PVC bounds, BYOC A0.3), so a soak run has headroom; a non-soak
       # run still finishes far inside this. All three exceed the ctx so the ctx cancels first.
+      #
+      # With the #845 gate on the arithmetic becomes 135m ctx < 145m go-timeout < 150m step < 165m
+      # job — the SAME invariant (the ctx must always cancel first, so a failure reports as the
+      # scenario that ran long rather than as an opaque step kill), just shifted up. See the job
+      # timeout above for why the raise is conditional.
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: 75
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 150 || 75 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -623,8 +634,10 @@ jobs:
           #    harness layers a SECOND DEPLOY onto the SAME cluster with placement_mode=namespace and
           #    asserts the tenant app landed in <ns> on that cluster — no new cluster provisioned,
           #    ArgoCD not reinstalled, hardened per-namespace isolation applied (the #955+#956+#957
-          #    activation). aws-first (a clean skip on the other clouds, whose keyless re-mint is a
-          #    follow-up) and REQUIRES the A0.6 apps repo above (E2E_ARGO_APPS_REPO) — the tenant-app
+          #    activation). Runs on EVERY cloud since #1389 finished the activation — the harness's
+          #    old `provider != aws` skip was a second literal that silently no-op'd 4 of the 5
+          #    clouds and has been removed (#845); the product's own allowlist is the single
+          #    control. REQUIRES the A0.6 apps repo above (E2E_ARGO_APPS_REPO) — the tenant-app
           #    routing assertion needs an apps destination to deliver into. Absent ⇒ a clean skip of
           #    this layer (the base T2 proof is unchanged). Real-apply is main-gated, so this
           #    exercises meaningfully only from `main`. Set the repo VARIABLE E2E_NAMESPACE_TENANT
@@ -636,7 +649,9 @@ jobs:
           #    unreachable from the nightly and silently never ran — see the guard test
           #    TestScenarioEnablesReachTheNightly, which now fails if that happens again. Referenced
           #    here so a maintainer can turn it on; UNSET ⇒ empty ⇒ a clean skip, so adding the line
-          #    changes nothing until E2E_VCLUSTER is set. ──
+          #    changes nothing until E2E_VCLUSTER is set. Its own `provider != aws` skip was removed
+          #    in #845 for the same reason as the namespace layer above — a vcluster runs ON the host
+          #    Fabric, so it was never aws-specific, and the mirrored literal hid 4 clouds. ──
           ALETHIA_E2E_VCLUSTER: ${{ vars.E2E_VCLUSTER }}
           # ── DAY-2 ACCESS layer (BYOC A0.2). Same story as vcluster: harness present, never
           #    referenced by the nightly. Off unless E2E_DAY2_ACCESS is set. ──
@@ -649,6 +664,30 @@ jobs:
           #    E2E_DAY2_OFFER is set. ──
           ALETHIA_E2E_DAY2_OFFER: ${{ vars.E2E_DAY2_OFFER }}
           ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json
+          # ── FABRIC ENTERPRISE-DEMO acceptance gate (#845). Places dev+staging as NAMESPACE envs
+          #    PLUS one vcluster env on the Fabric this leg just provisioned, each syncing its OWN
+          #    Kustomize overlay (repositories.apps_path) from the apps-destination repo, and proves
+          #    every placement genuinely CAUSED the ArgoCD artifacts it is credited with — the base
+          #    deploy already populated this Fabric, so absent-before/present-after is the only
+          #    honest evidence. It then re-proves the Fabric's drift posture and writes a verdict.
+          #
+          #    NOTE: this does NOT assert the apps-overlays ApplicationSet. That is rendered only on
+          #    the DEDICATED path (provisioner/deploy.go) and never by a placement, so an earlier
+          #    draft of this gate waited on an artifact no placement can create. The
+          #    DeriveExpectedArgoApps blindness to ApplicationSet-generated apps is real, but it
+          #    belongs to the A0.6 base leg where that ApplicationSet is genuinely rendered.
+          #
+          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, which ArgoCD
+          #    clones anonymously — so unlike the A0.6 layer above this needs NO git token, and
+          #    E2E_FABRIC_DEMO is the only variable a maintainer must set to turn it on. UNSET ⇒
+          #    empty ⇒ a clean skip, so these lines change nothing until then. Real-apply is
+          #    main-gated, so this exercises meaningfully only from `main`. ──
+          ALETHIA_E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
+          ALETHIA_E2E_FABRIC_DEMO_REPO: ${{ vars.E2E_FABRIC_DEMO_REPO }}
+          ALETHIA_E2E_FABRIC_DEMO_OVERLAYS: ${{ vars.E2E_FABRIC_DEMO_OVERLAYS }}
+          ALETHIA_E2E_FABRIC_DEMO_VCLUSTER: ${{ vars.E2E_FABRIC_DEMO_VCLUSTER }}
+          ALETHIA_E2E_FABRIC_DEMO_TIMEOUT: ${{ vars.E2E_FABRIC_DEMO_TIMEOUT }}
+          ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -723,7 +762,7 @@ jobs:
           ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_FULL_BAR == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
         run: |
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout 80m -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout ${{ vars.E2E_FABRIC_DEMO != '' && '145m' || '80m' }} -v
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
@@ -755,6 +794,9 @@ jobs:
           # Day-2 offer postures (#1495), written by the T2 test; folded into the bundle +
           # step-summary verdict exactly like the soak summary above (absent ⇒ unchanged).
           ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json
+          # Fabric enterprise-demo acceptance verdict (#845), written by the T2 test at the SAME
+          # path the t2 step set; folded into the bundle + step summary (absent ⇒ unchanged).
+          ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}

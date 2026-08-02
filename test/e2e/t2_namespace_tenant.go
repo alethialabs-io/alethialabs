@@ -15,8 +15,11 @@
 // cluster or reinstalling the shared Fabric's ArgoCD. The run half (t2_namespace_tenant_run_test.go)
 // asserts exactly that: the app landed in `<ns>` on the SAME cluster, and ArgoCD was not reinstalled.
 //
-// aws-first: #955 mints keyless EKS access by name; the other clouds are fail-closed follow-ups, so
-// this scenario is aws-only (a clean skip elsewhere).
+// Every cloud, not just aws. #1389 finished the placement-parity activation, so
+// provisioner.namespaceRemintProviders carries all five clouds and is the SINGLE control: an unwired
+// cloud fails closed with the product's own documented reason. The harness used to mirror that
+// allowlist as an aws-only skip, which silently no-op'd four of five clouds long after they were
+// wired — a parity gap hiding behind a green run.
 package e2e
 
 import (
@@ -25,6 +28,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // namespaceTenantParams carries what the scenario needs from the completed base provision.
@@ -37,6 +41,14 @@ type namespaceTenantParams struct {
 	owner       string // the SeedRunner owner (so the still-running runner claims the second job)
 	appsRepo    string // apps-destination repo (reuse the A0.6 apps repo; empty ⇒ isolation-only)
 }
+
+// The bounded waits one namespace placement can consume, named here (in the UNTAGGED half) so the
+// parent context's budget term is computed from the SAME constants the run half waits on.
+const (
+	nsTenantDeployWait = 15 * time.Minute
+	// namespaceTenantBudget adds room for the kubectl assertion round-trips after the job lands.
+	namespaceTenantBudget = nsTenantDeployWait + 5*time.Minute
+)
 
 // namespaceTenantEnabled reports whether the opt-in scenario should run (ALETHIA_E2E_NAMESPACE_TENANT
 // truthy). Off by default: the base T2 proof is unchanged unless a maintainer opts in.
@@ -86,12 +98,26 @@ type namespaceAppState struct {
 		Name string `json:"name"`
 	} `json:"metadata"`
 	Spec struct {
-		Project     string `json:"project"`
+		Project string `json:"project"`
+		// Source is what the tenant app actually syncs. #959 ignores it; #845 asserts on it, because
+		// "which path did this placement deliver" is the whole per-tier overlay claim.
+		Source struct {
+			RepoURL string `json:"repoURL"`
+			Path    string `json:"path"`
+		} `json:"source"`
 		Destination struct {
 			Server    string `json:"server"`
 			Namespace string `json:"namespace"`
 		} `json:"destination"`
 	} `json:"spec"`
+	Status struct {
+		Health struct {
+			Status string `json:"status"`
+		} `json:"health"`
+		Sync struct {
+			Status string `json:"status"`
+		} `json:"sync"`
+	} `json:"status"`
 }
 
 // findNamespaceApp parses a `kubectl get applications -o json` list and returns the Application whose
