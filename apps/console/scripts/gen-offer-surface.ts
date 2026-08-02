@@ -56,14 +56,49 @@ interface Offer {
 	notOfferedOn: Provider[];
 }
 
-const fieldsOf = (kind: string): FieldSpec[] => {
-	const spec = CONFIG_SCHEMA[kind as keyof typeof CONFIG_SCHEMA] as KindSpec | undefined;
-	return (spec?.sections ?? []).flatMap((s) => s.fields ?? []);
-};
+/**
+ * Read a property off an unknown value, or undefined.
+ *
+ * The schema is walked structurally rather than through its declared types: this reads across
+ * fifteen kinds whose field unions differ, and the shapes that matter here (`sections`, `fields`,
+ * `visibleWhen`) are common to all of them. Narrowing at runtime keeps that honest without a cast —
+ * an `as` would assert a shape rather than check one, and a schema change would then surface as a
+ * silent undefined instead of a loud failure.
+ */
+function prop(value: unknown, key: string): unknown {
+	if (typeof value !== "object" || value === null) return undefined;
+	return Reflect.get(value, key);
+}
+
+function asArray(value: unknown): unknown[] {
+	return Array.isArray(value) ? value : [];
+}
+
+function asFieldSpec(value: unknown): FieldSpec | null {
+	const key = prop(value, "key");
+	const type = prop(value, "type");
+	if (typeof key !== "string" || typeof type !== "string") return null;
+	const label = prop(value, "label");
+	const visibleWhen = prop(value, "visibleWhen");
+	const unavailableWhen = prop(value, "unavailableWhen");
+	return {
+		key,
+		type,
+		label: typeof label === "string" ? label : undefined,
+		visibleWhen: typeof visibleWhen === "function" ? visibleWhen : undefined,
+		unavailableWhen: typeof unavailableWhen === "function" ? unavailableWhen : undefined,
+	};
+}
+
+const fieldsOf = (kind: string): FieldSpec[] =>
+	asArray(prop(CONFIG_SCHEMA, kind) === undefined ? undefined : prop(prop(CONFIG_SCHEMA, kind), "sections"))
+		.flatMap((section) => asArray(prop(section, "fields")))
+		.map(asFieldSpec)
+		.filter((f): f is FieldSpec => f !== null);
 
 const kindUnsupported = (kind: string, provider: Provider): boolean => {
-	const list = (UNSUPPORTED_KINDS_BY_PROVIDER as Record<string, readonly string[] | undefined>)[provider];
-	return Array.isArray(list) && list.includes(kind);
+	const list = prop(UNSUPPORTED_KINDS_BY_PROVIDER, provider);
+	return asArray(list).includes(kind);
 };
 
 /**
@@ -76,12 +111,17 @@ const kindUnsupported = (kind: string, provider: Provider): boolean => {
  * `c.generate !== false` or `c.foo_enabled`).
  */
 function witnessesFor(kind: string, provider: Provider): unknown[] {
-	const entry = (NODE_REGISTRY as Record<string, { defaultData?: (p: string) => unknown } | undefined>)[kind];
+	const defaultData = prop(prop(NODE_REGISTRY, kind), "defaultData");
 	let base: Record<string, unknown> = {};
-	try {
-		base = (entry?.defaultData?.(provider) as Record<string, unknown>) ?? {};
-	} catch {
-		base = {};
+	if (typeof defaultData === "function") {
+		try {
+			const produced = defaultData(provider);
+			if (typeof produced === "object" && produced !== null) {
+				base = { ...produced };
+			}
+		} catch {
+			base = {};
+		}
 	}
 	const allOn: Record<string, unknown> = { ...base };
 	for (const f of fieldsOf(kind)) {
