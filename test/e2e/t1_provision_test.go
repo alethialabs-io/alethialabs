@@ -284,7 +284,10 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 	//     addon_status metadata, never hardcoded, never empty — must reach Healthy AND
 	//     Synced over the same independent kubeconfig. A degraded/missing app fails
 	//     the tier instead of sliding by as "installed".
-	expectedApps, err := DeriveExpectedArgoApps(metaRaw)
+	// T1 drives the LOCAL kind module as Provider="hetzner" (see the template staging
+	// above), so it takes the INSTALLING branch of the metrics-server gate — kind, like
+	// Talos, ships no metrics-server. Unchanged behaviour from before #1722.
+	expectedApps, err := DeriveExpectedArgoApps("hetzner", metaRaw)
 	if err != nil {
 		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
 	}

@@ -361,7 +361,50 @@ func TestRender_Hetzner(t *testing.T) {
 		t.Errorf("no ClusterSecretStore may render on Hetzner:\n%s", eso)
 	}
 	if _, ok := files["metrics-server.yaml"]; !ok {
-		t.Errorf("metrics-server should render on every cloud")
+		t.Errorf("metrics-server should render on Hetzner — bare Talos ships none")
+	}
+}
+
+// TestRender_MetricsServerPerCloud pins the #1722 gate: metrics-server renders ONLY on
+// the clouds whose managed control plane does not already ship one.
+//
+// It used to render everywhere, which on GKE produced two Deployments in kube-system,
+// an ArgoCD app that could never reach Synced, and — because the cloud's addon-manager
+// and Helm fought over the cluster-scoped objects — NO v1beta1.metrics.k8s.io APIService
+// at all, i.e. a broken Metrics API on a cluster where it had worked out of the box.
+//
+// The negative half is the half that matters: asserting only that it renders on aws
+// would have passed happily throughout the entire bug.
+func TestRender_MetricsServerPerCloud(t *testing.T) {
+	// Minimal per-cloud outputs — just enough for BuildFromOutputs to set Provider and
+	// the cluster name every template reads.
+	outputs := map[string]map[string]interface{}{
+		"aws":     {"eks_cluster_name": "eks-demo"},
+		"gcp":     {"gke_cluster_name": "gke-demo"},
+		"azure":   {"aks_cluster_name": "aks-demo"},
+		"alibaba": {"ack_cluster_name": "ack-demo"},
+		"hetzner": {"talos_cluster_name": "talos-demo"},
+	}
+	// want=true  → the cloud ships no metrics-server, so Alethia must install one.
+	// want=false → the cloud already ships one in kube-system; a second is the collision.
+	for _, tc := range []struct {
+		provider string
+		want     bool
+		why      string
+	}{
+		{"aws", true, "EKS does not deploy metrics-server by default"},
+		{"hetzner", true, "bare Talos ships no metrics-server"},
+		{"gcp", false, "GKE ships it as an addonmanager Reconcile-mode managed addon"},
+		{"azure", false, "AKS ships an AKS-managed one with a VPA sidecar"},
+		{"alibaba", false, "ACK ships it as a system component in kube-system"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			files := renderAll(t, BuildFromOutputs(outputs[tc.provider], cfg(tc.provider)))
+			_, got := files["metrics-server.yaml"]
+			if got != tc.want {
+				t.Errorf("metrics-server.yaml rendered=%v on %s, want %v — %s", got, tc.provider, tc.want, tc.why)
+			}
+		})
 	}
 }
 
