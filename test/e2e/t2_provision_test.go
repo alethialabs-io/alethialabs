@@ -445,7 +445,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     addon_status metadata, never hardcoded, never empty — must reach Healthy AND
 	//     Synced on the real cluster. A degraded/missing app fails the nightly instead
 	//     of sliding by as "installed".
-	expectedApps, err := DeriveExpectedArgoApps(metaRaw)
+	expectedApps, err := DeriveExpectedArgoApps(provider, metaRaw)
 	if err != nil {
 		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
 	}
