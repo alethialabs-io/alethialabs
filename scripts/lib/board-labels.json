@@ -1,0 +1,59 @@
+{
+	"_comment": [
+		"The board's label set — one source, read by both consumers.",
+		"",
+		"`coordinate.sh --init-labels` mints every entry here. `decompose-validate.mjs` derives the",
+		"label names a proposal may carry from the same file. They used to be two hand-written lists",
+		"that had to agree, and they stopped agreeing: seven program waves (fabric, canvas, frontdoor,",
+		"connectors-v2, capabilities, compat, offer-parity) existed on GitHub and were in use, while",
+		"the validator rejected all of them as `unknown label` and a fresh repo would never create",
+		"them. A decomposition for any of those programs could not be seeded.",
+		"",
+		"`kind` decides how each consumer treats a label:",
+		"  wave | lane | class  — a proposal must carry exactly one of each",
+		"  authorable           — a proposal MAY carry it (mutex/needs)",
+		"  runtime              — maintained by claim-work.sh / coordinate.sh; a proposal must NOT",
+		"                         pre-set it, or it corrupts the claim/blocked bookkeeping",
+		"  board                — minted for the board, never valid on a proposed unit (e.g. `epic`,",
+		"                         which is an umbrella and is never directly built or claimed)",
+		"",
+		"Adding a program wave is one entry here — nothing else to keep in step."
+	],
+	"labels": [
+		{ "name": "wave:W1", "kind": "wave", "color": "1d76db", "description": "north-star wave 1" },
+		{ "name": "wave:W2", "kind": "wave", "color": "1d76db", "description": "north-star wave 2" },
+		{ "name": "wave:W3", "kind": "wave", "color": "1d76db", "description": "north-star wave 3" },
+		{ "name": "wave:W4", "kind": "wave", "color": "1d76db", "description": "north-star wave 4" },
+		{ "name": "wave:W5", "kind": "wave", "color": "1d76db", "description": "north-star wave 5" },
+		{ "name": "wave:W6", "kind": "wave", "color": "1d76db", "description": "north-star wave 6" },
+		{ "name": "wave:W7", "kind": "wave", "color": "1d76db", "description": "north-star wave 7" },
+		{ "name": "wave:hygiene", "kind": "wave", "color": "0e8a16", "description": "launch-hygiene track (parallel)" },
+		{ "name": "wave:fabric", "kind": "wave", "color": "1d76db", "description": "program track: Fabric / Placement" },
+		{ "name": "wave:canvas", "kind": "wave", "color": "1d76db", "description": "program track: canvas overhaul" },
+		{ "name": "wave:frontdoor", "kind": "wave", "color": "1d76db", "description": "program track: front door" },
+		{ "name": "wave:connectors-v2", "kind": "wave", "color": "1d76db", "description": "program track: connectors v2" },
+		{ "name": "wave:capabilities", "kind": "wave", "color": "1d76db", "description": "program track: cloud capabilities catalog" },
+		{ "name": "wave:compat", "kind": "wave", "color": "1d76db", "description": "program track: version-compatibility matrix" },
+		{ "name": "wave:offer-parity", "kind": "wave", "color": "1d76db", "description": "program track: offer parity" },
+
+		{ "name": "lane:schema", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: schema" },
+		{ "name": "lane:server", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: server" },
+		{ "name": "lane:runner", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: runner" },
+		{ "name": "lane:core", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: core" },
+		{ "name": "lane:canvas", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: canvas" },
+		{ "name": "lane:tests", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: tests" },
+		{ "name": "lane:docs", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: docs" },
+
+		{ "name": "class:backend", "kind": "class", "color": "0e8a16", "description": "autonomous: claim→PR→enqueue on green (merge queue)" },
+		{ "name": "class:ui", "kind": "class", "color": "d93f0b", "description": "human-in-loop: design-spec → Claude Design → gated merge" },
+
+		{ "name": "mutex:migration", "kind": "authorable", "color": "e99695", "description": "generates a drizzle migration — serialized, one at a time" },
+		{ "name": "needs:design", "kind": "authorable", "color": "d4c5f9", "description": "UI unit awaiting the Claude-Design build" },
+		{ "name": "needs:human", "kind": "authorable", "color": "d4c5f9", "description": "awaiting a human decision/gate" },
+
+		{ "name": "claimed", "kind": "runtime", "color": "fbca04", "description": "held by an instance (carries a lease comment)" },
+		{ "name": "blocked", "kind": "runtime", "color": "b60205", "description": "a blocked-by dependency is still open (coordinate-maintained)" },
+
+		{ "name": "epic", "kind": "board", "color": "8b5cf6", "description": "umbrella/tracking issue — decomposed into sub-issues, never directly built/claimed" }
+	]
+}
