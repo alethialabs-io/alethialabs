@@ -575,6 +575,8 @@ jobs:
         run: bash scripts/lib/wt-lease.sh --self-test
       - name: Worktree lease guard — replays incident #1247
         run: bash scripts/lib/wt-lease-hook-test.sh
+      - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
+        run: bash scripts/lib/wt-landed-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         run: bash scripts/claim-work.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
