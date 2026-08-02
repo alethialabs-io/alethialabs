@@ -4,6 +4,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { getServiceDb } from "@/lib/db";
+import { dbNow } from "@/lib/db/now";
 import { jobs } from "@/lib/db/schema/jobs";
 import { projectEnvironments } from "@/lib/db/schema/project-environments";
 import {
@@ -35,11 +36,16 @@ import { notifyScaler } from "@/lib/scaler";
  *      idempotent, read-only dial that appends one history row — so the residual window (two
  *      replicas inserting in the same instant) at worst writes one redundant probe, which is
  *      harmless, unlike a duplicate tofu-running drift. Add the unique index if that ever matters.
+ *
+ * `now` is the clock the cadence is measured against — same contract as the drift sweeper. Leave it
+ * unset in production so the sweep reads the DATABASE's clock, the one that stamped the `created_at`
+ * timestamps it compares. Pass it only from a test, which must then also control those timestamps.
  */
-export async function sweepProbeSchedule(
-	now: Date = new Date(),
-): Promise<{ enqueued: number }> {
+export async function sweepProbeSchedule(now?: Date): Promise<{ enqueued: number }> {
 	const db = getServiceDb();
+	// One clock, and it is the database's — see lib/db/now.ts and the drift sweeper for why the
+	// application must not write `jobs.created_at` and therefore must not measure against its own.
+	const at = now ?? (await dbNow(db));
 
 	// Latest successful DEPLOY per environment — the state-locating snapshot source. Only envs
 	// with a successful deploy have a cluster whose state a probe can read.
@@ -123,7 +129,7 @@ export async function sweepProbeSchedule(
 			lastCheckedAt: lastProbeByEnv.get(id) ?? null,
 		}));
 
-	const due = selectDueForProbe(candidates, now);
+	const due = selectDueForProbe(candidates, at);
 
 	let enqueued = 0;
 	for (const c of due) {
