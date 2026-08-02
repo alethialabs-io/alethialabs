@@ -9,6 +9,7 @@ module "gke" {
   environment = var.environment
 
   cluster_name     = local.gke_name
+  node_pool_name   = local.gke_node_pool_name
   cluster_version  = var.gke_cluster_version
   enable_autopilot = var.gke_enable_autopilot
 
