@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
@@ -116,9 +116,38 @@ export async function setIacSourceStatus(
 		.where(
 			and(
 				eq(projectIacSources.project_id, projectId),
-				eq(projectIacSources.environment_id, environmentId),
+				iacSourceFabricScope(environmentId),
 			),
 		);
+}
+
+/**
+ * Scopes a `project_iac_sources` write to the row that serves `environmentId` — the source attached
+ * to that environment's FABRIC.
+ *
+ * #839 moved BYO-IaC's attach point from Environment to Fabric (one source per Fabric, shared by
+ * every env placed on it) and moved every READ onto `fabric_id`. The writes here were left keying on
+ * `environment_id`, which still matches for a `dedicated` env (it owns its Fabric 1:1) but matches
+ * ZERO ROWS whenever a source attached through one env is deployed by another env on the same shared
+ * Fabric — precisely the namespace/vcluster placement model.
+ *
+ * The consequences were not cosmetic: `deployed_commit_sha` stayed NULL, so `assertIacSourceQueueable`
+ * refused to DESTROY live BYO infrastructure, while `detachIacSource` — which treats a null
+ * `deployed_commit_sha` as "nothing is deployed" — would happily delete the row holding the only
+ * handle to it.
+ *
+ * Expressed as a subquery rather than a resolved id so these best-effort status writes keep their
+ * single-statement shape and stay no-ops for a template env (no row matches) and for an env with no
+ * Fabric (the subquery yields NULL, which matches nothing).
+ */
+function iacSourceFabricScope(environmentId: string) {
+	return inArray(
+		projectIacSources.fabric_id,
+		getServiceDb()
+			.select({ id: projectEnvironments.fabric_id })
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.id, environmentId)),
+	);
 }
 
 /**
@@ -176,7 +205,10 @@ export async function finalizeDeployment(jobId: string) {
 				.where(
 					and(
 						eq(projectIacSources.project_id, job.project_id),
-						eq(projectIacSources.environment_id, job.environment_id),
+						// Keyed on the env's FABRIC, matching every read since #839 — see
+						// iacSourceFabricScope. Keying on environment_id lost this write entirely
+						// whenever the deploying env was not the env the source was attached through.
+						iacSourceFabricScope(job.environment_id),
 					),
 				);
 		}

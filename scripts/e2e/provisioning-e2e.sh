@@ -13,7 +13,11 @@
 #   dimension : floor     — base T2: provision + cluster_ready + ArgoCD Healthy+Synced (cheapest shape).
 #               maxconfig — + ALETHIA_E2E_MAX_CONFIG=1  (all 11 resource kinds land in tofu state).
 #               addons    — + ALETHIA_E2E_ALL_ADDONS=1  (all 19 marketplace add-ons Healthy+Synced).
-#               byo       — + the A0.6 BYO-IaC + services proof (needs ALETHIA_E2E_ARGO_* + _GIT_TOKEN).
+#               byo       — + the A0.6 bring-your-own HELM CHART + apps-repo ArgoCD proof (needs
+#                           ALETHIA_E2E_ARGO_* + _GIT_TOKEN). NOT bring-your-own IaC: no customer
+#                           OpenTofu runs in this dimension. It was labelled "BYO-IaC" here and in
+#                           demos/proofs/provisioning-e2e-log.md, so the ledger has been recording a
+#                           customer-tofu proof that has never run.
 #               day2      — + a day-2 access/soak assertion (ALETHIA_E2E_SOAK defaults 10m).
 #               full      — every dimension above in one real apply (the FULLY-TESTED bar).
 #
