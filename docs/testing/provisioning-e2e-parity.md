@@ -58,8 +58,8 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
       real-cloud run is required after that fix before this becomes a floor PASS.
 - [ ] **GCP floor (#1716, #1714, #1722)** — the node-pool name can overflow, and the add-on gate has two
       independent convergence defects. The observed failed run tore down cleanly, but it is not a floor PASS.
-- [ ] **Azure floor (#1722)** — AKS's platform metrics-server collides with the catalog add-on. The observed
-      failed run tore down cleanly; a fixed real run is still required for floor proof.
+- [ ] **Azure floor (#1722)** — AKS's platform metrics-server collided with ours; the render gate now skips
+      it there. The observed failed run tore down cleanly; a real run is still required for floor proof.
 - [ ] **Hetzner floor (#1714)** — provisioning and teardown are verified clean, but `addon-reloader` remains
       OutOfSync, so the floor is blocked rather than proven.
 - [ ] **Alibaba floor** — pending enablement and its first real run; no floor or teardown verdict exists.
@@ -80,7 +80,7 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 |-------|-------|-----------|--------|
 | **#1714** | GCP · Hetzner | Provision + cluster_ready | OPEN — add-on Deployment default drift prevents ArgoCD convergence |
 | **#1716** | GCP | Provision + cluster_ready | OPEN — GKE node-pool name can exceed the provider limit |
-| **#1722** | GCP · Azure | Provision + cluster_ready | OPEN — platform metrics-server collides with the catalog add-on |
+| **#1722** | GCP · Azure · Alibaba | Provision + cluster_ready | FIXED — the platform metrics-server collided with ours on all three (ACK was the unlogged third); `metrics-server.yaml` now renders on AWS/Hetzner only. Needs a real run per cloud to become a floor PASS |
 
 ## Security findings
 

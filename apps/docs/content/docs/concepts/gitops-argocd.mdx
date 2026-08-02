@@ -114,7 +114,7 @@ Templates are stored in `infra/templates/argocd/` and staged into the Runner Doc
 | `external-dns.yaml` | Route53/Cloud DNS/Azure DNS sync (renders only when DNS is enabled with a domain and the cloud has a supported backend + workload identity) |
 | `external-secrets-operator.yaml` | Secrets Manager → Kubernetes Secrets |
 | `karpenter.yaml` | Node auto-provisioning |
-| `metrics-server.yaml` | CPU/memory metrics for HPA |
+| `metrics-server.yaml` | CPU/memory metrics for HPA (renders on AWS and Hetzner only — GKE, AKS and ACK ship their own) |
 | `storage-class-gp3.yaml` | GP3 EBS storage class |
 | `project-infra.yaml` | ArgoCD AppProject boundary |
 

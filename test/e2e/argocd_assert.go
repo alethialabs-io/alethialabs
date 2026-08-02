@@ -101,15 +101,28 @@ var infraServiceNoApp = map[string]struct{}{
 //   - external-secrets-operator: the operator Application in
 //     external-secrets-operator.yaml is ungated (only the per-cloud
 //     ClusterSecretStores inside the same template are conditional).
-//   - metrics-server: metrics-server.yaml has no gate at all.
 //
 // A template gaining a render gate must move its app out of here and into the
-// decision-derived mapping above.
-var alwaysRenderedArgoApps = []string{"external-secrets-operator", "metrics-server"}
+// decision-derived mapping above — metrics-server did exactly that in #1722; see
+// metricsServerProviders.
+var alwaysRenderedArgoApps = []string{"external-secrets-operator"}
+
+// metricsServerProviders are the clouds whose metrics-server.yaml actually renders:
+// the ones whose managed control plane does NOT already ship a metrics-server.
+// gcp (GKE addon-manager), azure (AKS-managed, with a VPA sidecar) and alibaba (ACK
+// system component) each install their own into kube-system, so Alethia installing a
+// second one is the #1722 ownership collision — there, no Application exists and
+// waiting for one would hang the assertion until timeout on a cluster that is fine.
+//
+// This MUST mirror the `if` in infra/templates/argocd/metrics-server.yaml.
+// TestMetricsServerGateMatchesTemplate pins the two together by parsing the template,
+// so the pair cannot drift silently.
+var metricsServerProviders = map[string]bool{"aws": true, "hetzner": true}
 
 // DeriveExpectedArgoApps derives the ArgoCD Application names a successful deploy is
 // REQUIRED to have converged: the always-rendered platform apps
-// (alwaysRenderedArgoApps), plus — from the job's persisted execution_metadata —
+// (alwaysRenderedArgoApps), plus metrics-server on the clouds that render it
+// (metricsServerProviders), plus — from the job's persisted execution_metadata —
 // every `infra_services` decision with status "installed" that ships an Application,
 // plus every `addon_status` key (the runner records one per enabled add-on, named
 // `addon-<id>` — see packages/core/argocd/addons.go AllAddOnNames). Returns the names
@@ -119,13 +132,21 @@ var alwaysRenderedArgoApps = []string{"external-secrets-operator", "metrics-serv
 //   - an "installed" service that is in NEITHER infraServiceArgoApps NOR
 //     infraServiceNoApp is an error — a renamed/new decision must widen the
 //     assertion, never silently shrink it;
+//   - an unknown `provider` is an error rather than a silent "no metrics-server";
 //   - an empty derived set is an error, not an empty assertion (defense-in-depth;
 //     structurally unreachable while alwaysRenderedArgoApps is non-empty). The tiers
 //     additionally seed an add-on (seedAddOns) so the ADD-ON pipeline is always
 //     exercised too, not just the platform apps.
-func DeriveExpectedArgoApps(metaRaw []byte) ([]string, error) {
+func DeriveExpectedArgoApps(provider string, metaRaw []byte) ([]string, error) {
 	if len(metaRaw) == 0 {
 		return nil, errors.New("execution_metadata is empty — cannot derive the expected ArgoCD Application set")
+	}
+	// The provider decides one membership question (metrics-server), so an empty or
+	// unknown one must NOT quietly answer it. Refuse instead: a typo'd provider would
+	// otherwise silently drop metrics-server from the expected set on aws/hetzner and
+	// turn a real regression into a pass.
+	if _, known := t2LookupProvider(provider); !known {
+		return nil, fmt.Errorf("unknown provider %q — cannot derive the expected ArgoCD Application set (known: %s)", provider, t2SupportedProviders())
 	}
 	var meta struct {
 		InfraServices []struct {
@@ -141,6 +162,9 @@ func DeriveExpectedArgoApps(metaRaw []byte) ([]string, error) {
 	set := map[string]struct{}{}
 	for _, app := range alwaysRenderedArgoApps {
 		set[app] = struct{}{}
+	}
+	if metricsServerProviders[provider] {
+		set["metrics-server"] = struct{}{}
 	}
 	for _, d := range meta.InfraServices {
 		if d.Status != "installed" {

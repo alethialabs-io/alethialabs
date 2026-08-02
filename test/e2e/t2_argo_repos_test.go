@@ -274,7 +274,7 @@ func TestDeriveExpectedArgoApps_AppsRepoFromDecision(t *testing.T) {
 		"infra_services": installed,
 		"addon_status":   map[string]any{"addon-reloader": map[string]string{"health": "Healthy", "sync": "Synced"}},
 	})
-	apps, err := DeriveExpectedArgoApps(meta)
+	apps, err := DeriveExpectedArgoApps("aws", meta)
 	if err != nil {
 		t.Fatalf("derive with apps-repo installed: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestDeriveExpectedArgoApps_AppsRepoFromDecision(t *testing.T) {
 		"infra_services": skipped,
 		"addon_status":   map[string]any{"addon-reloader": map[string]string{"health": "Healthy", "sync": "Synced"}},
 	})
-	appsSkip, err := DeriveExpectedArgoApps(metaSkip)
+	appsSkip, err := DeriveExpectedArgoApps("aws", metaSkip)
 	if err != nil {
 		t.Fatalf("derive with apps-repo skipped: %v", err)
 	}
