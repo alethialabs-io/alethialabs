@@ -92,6 +92,15 @@ mock_provider "aws" {
     }
   }
 }
+
+# main.tf declares a SECOND aws provider (alias `virginia`, for the WAF module). mock_provider
+# mocks one provider CONFIGURATION, not one provider type, so without this the aliased one still
+# tries to authenticate — "No valid credential sources found" — even with every WAF flag off.
+# It defines no resources here, so it needs no mocked attributes.
+mock_provider "aws" {
+  alias = "virginia"
+}
+
 mock_provider "random" {}
 
 variables {
