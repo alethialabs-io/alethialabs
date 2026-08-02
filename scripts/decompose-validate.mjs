@@ -39,36 +39,27 @@
 
 import { readFileSync } from "node:fs";
 
-// ── the known board label set (mirror of coordinate.sh --init-labels) ──────────
-const WAVE_LABELS = new Set([
-	"wave:W1",
-	"wave:W2",
-	"wave:W3",
-	"wave:W4",
-	"wave:W5",
-	"wave:W6",
-	"wave:W7",
-	"wave:hygiene",
-]);
-const LANE_LABELS = new Set([
-	"lane:schema",
-	"lane:server",
-	"lane:runner",
-	"lane:core",
-	"lane:canvas",
-	"lane:tests",
-	"lane:docs",
-]);
-const CLASS_LABELS = new Set(["class:backend", "class:ui"]);
+// ── the known board label set ─────────────────────────────────────────────────
+// DERIVED from scripts/lib/board-labels.json, which `coordinate.sh --init-labels` also reads. This
+// was a hand-written mirror of that script, and it drifted: seven program waves (fabric, canvas,
+// frontdoor, connectors-v2, capabilities, compat, offer-parity) were live on the board and rejected
+// here as `unknown label`, so none of those programs could be decomposed.
+const LABEL_CATALOG = JSON.parse(
+	readFileSync(new URL("./lib/board-labels.json", import.meta.url), "utf8"),
+);
+const namesOfKind = (kind) =>
+	new Set(LABEL_CATALOG.labels.filter((l) => l.kind === kind).map((l) => l.name));
+
+const WAVE_LABELS = namesOfKind("wave");
+const LANE_LABELS = namesOfKind("lane");
+const CLASS_LABELS = namesOfKind("class");
 // Operational labels are maintained at RUNTIME by claim-work.sh / coordinate.sh — a fresh
 // proposal must not pre-set them (they'd corrupt the claim/blocked bookkeeping). mutex/needs
-// labels ARE legitimately authored into a proposal.
-const RUNTIME_LABELS = new Set(["claimed", "blocked"]);
-const AUTHORABLE_EXTRA = new Set([
-	"mutex:migration",
-	"needs:design",
-	"needs:human",
-]);
+// labels ARE legitimately authored into a proposal. `kind: "board"` labels (today just `epic`) are
+// minted for the board but are never valid on a proposed unit, so they stay out of KNOWN_LABELS
+// and a proposal carrying one still fails — same behaviour as before.
+const RUNTIME_LABELS = namesOfKind("runtime");
+const AUTHORABLE_EXTRA = namesOfKind("authorable");
 const KNOWN_LABELS = new Set([
 	...WAVE_LABELS,
 	...LANE_LABELS,
@@ -534,6 +525,33 @@ function runSelfTest() {
 		},
 	];
 	expect("unknown label FAILs", badLabel, false);
+
+	// A PROGRAM wave (not one of W1-W7 / hygiene) validates. These live on the board and were
+	// rejected here as `unknown label` while the set was a hand-written mirror of coordinate.sh, so
+	// no program could be decomposed. Pinned so the two cannot drift apart again silently.
+	const programWave = [
+		{
+			id: 1,
+			title: "seams: shared",
+			labels: ["wave:offer-parity", "lane:core", "class:backend"],
+			scope: ["apps/console/scripts/check-offer-parity.mjs"],
+			blockedBy: [],
+		},
+	];
+	expect("a program wave (wave:offer-parity) PASSes", programWave, true);
+
+	// `epic` is minted for the board but is never valid on a proposed unit — an umbrella is
+	// decomposed, not built. It carries kind "board" in the catalog for exactly this reason.
+	const epicLabel = [
+		{
+			id: 1,
+			title: "seams: shared",
+			labels: ["wave:hygiene", "lane:core", "class:backend", "epic"],
+			scope: ["apps/console/lib/db/schema/shared.ts"],
+			blockedBy: [],
+		},
+	];
+	expect("a proposal carrying `epic` FAILs", epicLabel, false);
 
 	// Two class labels.
 	const twoClasses = [
