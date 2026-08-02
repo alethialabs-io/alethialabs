@@ -30,6 +30,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -164,15 +165,19 @@ var MaxConfigKinds = []MaxConfigKind{
 			min, max := 0.5, 4.0
 			port, backup := 5432, 7
 			iam := true
-			engineVersion, instanceClass := "16.6", "db.r6g.large"
+			// Aurora takes a FULL minor, and it must be one AWS still offers — pinning a withdrawn
+			// one fails the apply outright ("Cannot find version 16.6 for aurora-postgresql", the
+			// break this constant was introduced to end). Sourced from packages/core/cloud so the
+			// nightly can never test a version the provisioner does not default to.
+			engineVersion, instanceClass := cloud.DefaultAuroraPostgresVersion, "db.r6g.large"
 			switch provider {
 			case "gcp":
-				// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, "16.6" is not; and
-				// db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
+				// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, a full minor is not;
+				// and db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
 				engineVersion, instanceClass = "16", "db-f1-micro"
 			case "azure":
 				// PostgreSQL Flexible Server takes a bare major version ("16") and a B_/GP_/MO_ SKU
-				// name — "16.6" and the RDS class db.r6g.large are both rejected.
+				// name — a full minor and the RDS class db.r6g.large are both rejected.
 				engineVersion, instanceClass = "16", "B_Standard_B1ms"
 			}
 			pc.Databases = []types.ProjectDatabaseConfig{{
