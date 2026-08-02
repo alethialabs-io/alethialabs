@@ -594,6 +594,26 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		appsRepo:    repos.appsRepo,
 	})
 
+	// (10b) FABRIC ENTERPRISE-DEMO acceptance gate (#845). Opt-in via ALETHIA_E2E_FABRIC_DEMO —
+	//       places dev+staging as namespace envs on THIS Fabric, each carrying the public
+	//       enterprise-demo apps repo, and proves the apps-overlays ApplicationSet's generated
+	//       Kustomize overlay Applications converge and manage real resources. That path has no
+	//       other e2e coverage: DeriveExpectedArgoApps derives names from infra_services +
+	//       addon_status and is structurally blind to ApplicationSet-generated apps. It then
+	//       re-proves the Fabric's drift posture and records a machine-readable verdict, carrying
+	//       the Fabric's ALREADY-VERIFIED plan digest (a namespace placement runs no tofu, so it
+	//       has no receipt of its own). Runs BEFORE the guaranteed teardown, reusing the runner.
+	runT2FabricDemo(t, ctx, cp, kc, fabricDemoParams{
+		project:     project,
+		env:         env,
+		provider:    provider,
+		region:      region,
+		fabricClust: meta.ClusterName,
+		owner:       owner,
+		deployJobID: jobID,
+		planSHA:     planSHA,
+	})
+
 	// (11) CROSS-ACCOUNT KEYLESS SECRETS (#1268). Opt-in via ALETHIA_E2E_SECRETS_XACCT — the base
 	//      DEPLOY already carried the *-xacct connector row and a secret-kind binding, so the runner
 	//      rendered secretstore-<cloud>-xacct AND the ExternalSecret that reads through it. This

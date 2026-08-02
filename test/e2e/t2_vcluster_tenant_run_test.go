@@ -37,10 +37,13 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 		t.Log("vcluster-tenant scenario (#1308) disabled — set ALETHIA_E2E_VCLUSTER=1 to run it")
 		return
 	}
-	if p.provider != "aws" {
-		t.Logf("vcluster-tenant scenario is aws-first (#1231) — skipped for %s", p.provider)
-		return
-	}
+	// NO per-cloud guard here, deliberately — same reasoning as the namespace scenario. A vcluster
+	// runs ON the host Fabric and reaches it exactly as the host does, so it was never truly
+	// aws-specific; #1389 wired the remaining clouds and the product's own allowlist
+	// (provisioner.vclusterPlacementProviders) is the SINGLE control. Keeping `p.provider != "aws"`
+	// here would be a second literal that silently skipped 4 of 5 clouds — the vcluster tier is the
+	// headline differentiator #845 asks to prove on ALL of them, so a skip that reads green is the
+	// worst possible outcome. An unwired cloud now fails the placement job closed, with a reason.
 
 	vcName := vclusterTenantSlug(p.env)
 	hostNS := vcHostNamespacePrefix + vcName
