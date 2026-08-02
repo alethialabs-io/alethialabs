@@ -184,6 +184,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 
 	root := t2RepoRoot(t)
 	waitTimeout := resolveT2WaitTimeout(p)
+
+	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
+	// these (derived from the GitHub run id/attempt) and feeds the SAME
+	// `<project>-<env>` to the belt-and-suspenders cleanup, so the label filter is an
+	// exact match. A random fallback keeps a local invocation safe (never a bare or
+	// shared name that a broad delete could catch). Resolved BEFORE the ctx budget below,
+	// which needs `env` to parse the placement tiers. ──
+	project := t2Env("ALETHIA_E2E_PROJECT", "alethia-nl")
+	env := t2Env("ALETHIA_E2E_ENV", "local"+t2ShortHex(t))
+	// Generalized ALETHIA_E2E_REGION (legacy ALETHIA_E2E_HCLOUD_REGION still honored for
+	// hetzner), falling back to the provider row's cheap default.
+	region := resolveT2Region(p)
+	clusterName := project + "-" + env
+	t.Logf("T2 target: provider=%s region=%s cluster=%s", provider, region, clusterName)
 	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
 	// for the runner build. Derived from the provider row (hetzner 25m+8m+7m = 40m,
 	// bit-identical to the pre-table constant; managed clouds get their longer waits). When
@@ -211,21 +225,35 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if keylessOn {
 		keylessBudget = keyless.dwell + 20*time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+7*time.Minute)
+	// The three PLACEMENT scenarios each seed their OWN jobs onto this Fabric after the base proof,
+	// and none of them had a ctx term. An overrun therefore surfaced as "the placement never
+	// converged" — indistinguishable from a real product failure, which is the exact confusion the
+	// soak/xacct/keyless terms above were written to prevent.
+	nsTenantBudget := time.Duration(0)
+	if namespaceTenantEnabled() {
+		nsTenantBudget = namespaceTenantBudget
+	}
+	vclusterBudget := time.Duration(0)
+	if vclusterTenantEnabled() {
+		vclusterBudget = vclusterTenantBudget
+	}
+	// #845 is the widest term: one bounded placement plus one bounded convergence poll PER namespace
+	// tier, one WHOLE vcluster placement (its own deploy + app-health + destroy waits), and the drift
+	// re-prove. A malformed tier list fails LOUD here — before any provisioning spend — exactly like
+	// the soak parse error above.
+	fabricDemoBudget := time.Duration(0)
+	if fabricDemoEnabled() {
+		tiers, tErr := fabricDemoTiers(env, provider)
+		if tErr != nil {
+			t.Fatalf("fabric-demo (#845): %v", tErr)
+		}
+		d := fabricDemoTimeout()
+		fabricDemoBudget = time.Duration(len(tiers))*2*d + d + vclusterTenantBudget
+	}
+	ctx, cancel := context.WithTimeout(context.Background(),
+		waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+
+			nsTenantBudget+vclusterBudget+fabricDemoBudget+7*time.Minute)
 	defer cancel()
-
-	// ── The cluster identity is DETERMINISTIC + unique per run. The workflow passes
-	// these (derived from the GitHub run id/attempt) and feeds the SAME
-	// `<project>-<env>` to the belt-and-suspenders cleanup, so the label filter is an
-	// exact match. A random fallback keeps a local invocation safe (never a bare or
-	// shared name that a broad delete could catch). ──
-	project := t2Env("ALETHIA_E2E_PROJECT", "alethia-nl")
-	env := t2Env("ALETHIA_E2E_ENV", "local"+t2ShortHex(t))
-	// Generalized ALETHIA_E2E_REGION (legacy ALETHIA_E2E_HCLOUD_REGION still honored for
-	// hetzner), falling back to the provider row's cheap default.
-	region := resolveT2Region(p)
-	clusterName := project + "-" + env
-	t.Logf("T2 target: provider=%s region=%s cluster=%s", provider, region, clusterName)
 
 	// ── Build the REAL runner binary (this is what makes it a spine proof, not a unit
 	// test) — identical to T1. ──
@@ -560,12 +588,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		clusterName:  clusterName,
 		deployJobID:  jobID,
 		expectedApps: expectedApps,
+		owner:        owner,
 	})
 
 	// (9) NAMESPACE-PLACEMENT scenario (#959). Opt-in via ALETHIA_E2E_NAMESPACE_TENANT — layers a
 	//     SECOND DEPLOY onto the SAME cluster with placement_mode=namespace (cluster.cluster_name =
 	//     this Fabric) and asserts the app landed in <ns> on that cluster: no new cluster, ArgoCD not
-	//     reinstalled, hardened per-namespace isolation applied. aws-first (a clean skip elsewhere).
+	//     reinstalled, hardened per-namespace isolation applied. EVERY cloud (#1389 wired them all;
+	//     the product's own allowlist is the single control and fails an unwired cloud closed).
 	//     Runs BEFORE the guaranteed teardown (registered earlier), reusing the still-running runner.
 	runT2NamespaceTenant(t, ctx, cp, kc, namespaceTenantParams{
 		project:     project,
@@ -581,8 +611,8 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      onto the SAME cluster with placement_mode=vcluster (cluster.cluster_name = this Fabric) and
 	//      asserts the virtual cluster was provisioned + registered with the host ArgoCD + the app
 	//      delivered onto it by destination.name: no new cloud cluster, ArgoCD not reinstalled; then a
-	//      DESTROY job deregisters it cleanly (no orphaned registration). aws-first (a clean skip
-	//      elsewhere). The e2e-vc-* env is disjoint from #959's e2e-ns-*, so the two never collide.
+	//      DESTROY job deregisters it cleanly (no orphaned registration). EVERY cloud, same reasoning
+	//      as #959. The e2e-vc-* env is disjoint from #959's e2e-ns-*, so the two never collide.
 	//      Runs BEFORE the guaranteed teardown (registered earlier), reusing the still-running runner.
 	runT2VClusterTenant(t, ctx, cp, kc, vclusterTenantParams{
 		project:     project,
@@ -595,22 +625,22 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	})
 
 	// (10b) FABRIC ENTERPRISE-DEMO acceptance gate (#845). Opt-in via ALETHIA_E2E_FABRIC_DEMO —
-	//       places dev+staging as namespace envs on THIS Fabric, each carrying the public
-	//       enterprise-demo apps repo, and proves the apps-overlays ApplicationSet's generated
-	//       Kustomize overlay Applications converge and manage real resources. That path has no
-	//       other e2e coverage: DeriveExpectedArgoApps derives names from infra_services +
-	//       addon_status and is structurally blind to ApplicationSet-generated apps. It then
-	//       re-proves the Fabric's drift posture and records a machine-readable verdict, carrying
-	//       the Fabric's ALREADY-VERIFIED plan digest (a namespace placement runs no tofu, so it
-	//       has no receipt of its own). Runs BEFORE the guaranteed teardown, reusing the runner.
+	//       places dev+staging as namespace envs on THIS Fabric plus one vcluster tier, each
+	//       syncing its OWN Kustomize overlay from the public enterprise-demo repo, and proves every
+	//       placement genuinely CAUSED the artifacts it is credited with — the base deploy already
+	//       populated this Fabric, so absent-before/present-after is the only honest evidence. It
+	//       then re-proves the Fabric's drift posture and records a machine-readable verdict,
+	//       carrying the Fabric's ALREADY-VERIFIED plan digest (a placement runs no tofu, so it has
+	//       no receipt of its own). Runs BEFORE the guaranteed teardown, reusing the runner.
 	runT2FabricDemo(t, ctx, cp, kc, fabricDemoParams{
-		project:     project,
-		env:         env,
-		provider:    provider,
-		region:      region,
-		fabricClust: meta.ClusterName,
-		owner:       owner,
-		deployJobID: jobID,
+		project:      project,
+		env:          env,
+		provider:     provider,
+		region:       region,
+		fabricClust:  meta.ClusterName,
+		owner:        owner,
+		baseAppsRepo: repos.appsRepo,
+		deployJobID:  jobID,
 		planSHA:     planSHA,
 	})
 

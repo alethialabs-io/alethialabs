@@ -18,15 +18,16 @@ import (
 	"time"
 )
 
-// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: place
-// each overlay tier as a namespace env carrying the enterprise-demo apps repo, prove the
-// ApplicationSet-generated Kustomize overlay Applications converge and manage real resources,
-// re-prove the Fabric's drift posture, and record the whole thing as a machine-readable verdict.
+// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: place each
+// tier as a namespace env syncing its OWN Kustomize overlay, place one tier as a vcluster env, prove
+// every placement genuinely CAUSED the artifacts it is credited with, re-prove the Fabric's drift
+// posture, and record the whole thing as a machine-readable verdict.
 func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc string, p fabricDemoParams) {
 	summary := FabricDemoSummary{
 		Provider:     p.provider,
 		Fabric:       p.fabricClust,
 		ReceiptScope: "fabric",
+		BaseAppsRepo: p.baseAppsRepo,
 	}
 	if !fabricDemoEnabled() {
 		t.Logf("fabric enterprise-demo scenario (#845) disabled — set %s=1 to run it", envFabricDemo)
@@ -45,23 +46,51 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 		}()
 	}
 
-	tiers, err := fabricDemoOverlays(p.provider)
+	tiers, err := fabricDemoTiers(p.env, p.provider)
 	if err != nil {
 		t.Fatalf("fabric-demo: %v", err)
 	}
 	repo := fabricDemoRepo(p.provider)
 	if strings.TrimSpace(repo) == "" {
-		t.Fatalf("fabric-demo: %s resolved empty — with no apps repo the ApplicationSet generates nothing and the gate would prove nothing", envFabricDemoRepo)
+		t.Fatalf("fabric-demo: %s resolved empty — with no apps repo nothing is delivered and the gate would prove nothing", envFabricDemoRepo)
 	}
 	summary.Repo = repo
+	// Refuse the ambiguous setup BEFORE seeding any job or spending any cloud time.
+	if err := fabricDemoRepoPrecondition(p.baseAppsRepo, repo); err != nil {
+		t.Fatalf("fabric-demo: %v", err)
+	}
+	vcTier, err := fabricDemoVClusterTier(p.provider, tiers)
+	if err != nil {
+		t.Fatalf("fabric-demo: %v", err)
+	}
 	// The Fabric's plan digest was VERIFIED by the base run (VerifySignedReceipt). Carrying it here
 	// is what ties these placements to a proven Fabric; an absent digest fails the verdict rather
 	// than quietly reporting placements on an unproven cluster.
 	summary.FabricPlanSHA = strings.TrimSpace(p.planSHA)
 
 	timeout := fabricDemoTimeout()
-	t.Logf("fabric-demo (#845): placing %d overlay tier(s) %v onto Fabric %q from %s (bound %s)",
-		len(tiers), tiers, p.fabricClust, repo, timeout)
+	t.Logf("fabric-demo (#845): placing %d namespace tier(s) %v + one vcluster tier (%s) onto Fabric %q from %s (bound %s)",
+		len(tiers), tiers, vcTier.Tier, p.fabricClust, repo, timeout)
+
+	// ── (0) CAUSALITY BASELINE ────────────────────────────────────────────────────────────────
+	//    The base deploy already populated this Fabric with Applications, AppProjects and
+	//    Namespaces. Everything asserted below must be proven NEW against this snapshot; without
+	//    it, an artifact the base run created reads as a placement's work and the gate is theatre.
+	beforeApps, err := kubeIdentsOf(ctx, kc, "applications", "argocd")
+	if err != nil {
+		t.Fatalf("fabric-demo: causality baseline (applications): %v", err)
+	}
+	beforeProjects, err := kubeIdentsOf(ctx, kc, "appprojects", "argocd")
+	if err != nil {
+		t.Fatalf("fabric-demo: causality baseline (appprojects): %v", err)
+	}
+	beforeNS, err := kubeIdentsOf(ctx, kc, "namespaces", "")
+	if err != nil {
+		t.Fatalf("fabric-demo: causality baseline (namespaces): %v", err)
+	}
+	summary.PreExistingApps = len(beforeApps)
+	t.Logf("fabric-demo: causality baseline — %d Application(s), %d AppProject(s), %d Namespace(s) existed BEFORE any placement",
+		len(beforeApps), len(beforeProjects), len(beforeNS))
 
 	// ArgoCD must survive every placement — capture its identity once, before any of them.
 	argoBefore, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
@@ -69,75 +98,171 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 		t.Fatalf("fabric-demo: read argocd-server before placements: %v\n%s", err, argoBefore)
 	}
 
-	// ── (1) Place every tier as a namespace env on the SAME Fabric ────────────────────────────
+	// ── (1) Place every tier as a namespace env on the SAME Fabric, and prove what it delivered ──
 	for _, tier := range tiers {
-		ns := fabricDemoSlug(p.env, tier)
-		res := FabricDemoTier{Tier: tier, Namespace: ns, OverlayApp: overlayAppName(tier)}
+		res := FabricDemoTier{Tier: tier.Tier, Namespace: tier.Namespace}
+		record := func() { summary.Tiers = append(summary.Tiers, res) }
 
-		snap := buildFabricDemoSnapshot(p, tier, ns, repo)
+		// A tier namespace that already exists means the base leg is already delivering this
+		// overlay — the placement would have nothing left to prove and two Applications would
+		// fight over one namespace.
+		if _, exists := beforeNS[tier.Namespace]; exists {
+			record()
+			t.Fatalf("fabric-demo: namespace %q already existed BEFORE the %s placement — the base deploy is already delivering this overlay, so the placement proves nothing. Point %s at a different repo, or disable this gate for this leg",
+				tier.Namespace, tier.Tier, envArgoAppsRepo)
+		}
+
+		snap := buildFabricDemoSnapshot(p, tier, repo)
 		jobID, err := seedT2DeployJob(ctx, cp, snap, nil, p.owner)
 		if err != nil {
-			summary.Tiers = append(summary.Tiers, res)
-			t.Fatalf("fabric-demo: seed %s placement DEPLOY: %v", tier, err)
+			record()
+			t.Fatalf("fabric-demo: seed %s placement DEPLOY: %v", tier.Tier, err)
 		}
-		t.Logf("fabric-demo: seeded QUEUED %s placement DEPLOY %s (namespace=%s)", tier, jobID, ns)
+		t.Logf("fabric-demo: seeded QUEUED %s placement DEPLOY %s (namespace=%s, overlay=%s)",
+			tier.Tier, jobID, tier.Namespace, fabricDemoOverlayPath(tier.Tier))
 
 		status, err := cp.WaitTerminal(ctx, jobID, timeout)
 		if err != nil {
-			summary.Tiers = append(summary.Tiers, res)
-			t.Fatalf("fabric-demo: waiting for the %s placement: %v", tier, err)
+			record()
+			t.Fatalf("fabric-demo: waiting for the %s placement: %v", tier.Tier, err)
 		}
 		if status != "SUCCESS" {
-			summary.Tiers = append(summary.Tiers, res)
-			t.Fatalf("fabric-demo: %s placement terminal status = %q, want SUCCESS", tier, status)
+			record()
+			t.Fatalf("fabric-demo: %s placement terminal status = %q, want SUCCESS", tier.Tier, status)
 		}
 
 		// It must have landed on the EXISTING Fabric — a placement that provisioned its own cluster
 		// is the failure this whole model exists to prevent.
 		_, metaRaw, err := cp.JobState(ctx, jobID)
 		if err != nil {
-			summary.Tiers = append(summary.Tiers, res)
-			t.Fatalf("fabric-demo: read %s placement metadata: %v", tier, err)
+			record()
+			t.Fatalf("fabric-demo: read %s placement metadata: %v", tier.Tier, err)
 		}
 		var meta struct {
 			ClusterName string `json:"cluster_name"`
 		}
 		if err := json.Unmarshal(metaRaw, &meta); err != nil {
-			summary.Tiers = append(summary.Tiers, res)
-			t.Fatalf("fabric-demo: decode %s placement metadata: %v\nraw: %s", tier, err, metaRaw)
+			record()
+			t.Fatalf("fabric-demo: decode %s placement metadata: %v\nraw: %s", tier.Tier, err, metaRaw)
 		}
 		if err := namespaceClusterUnchanged(p.fabricClust, meta.ClusterName); err != nil {
-			summary.Tiers = append(summary.Tiers, res)
-			t.Fatalf("fabric-demo: %s placement no-new-cluster assertion: %v", tier, err)
+			record()
+			t.Fatalf("fabric-demo: %s placement no-new-cluster assertion: %v", tier.Tier, err)
 		}
 		res.Placed = true
-		summary.Tiers = append(summary.Tiers, res)
-		t.Logf("fabric-demo: %s placed into namespace %q on Fabric %q", tier, ns, p.fabricClust)
+
+		// (a) The artifact the placement ACTUALLY creates: a tenant Application in a hardened
+		//     per-namespace AppProject. findNamespaceApp already fails closed on a wrong destination
+		//     server and on the wide-open infra/apps projects.
+		appsJSON, err := nsKubectl(ctx, kc, "get", "applications", "-n", "argocd", "-o", "json")
+		if err != nil {
+			record()
+			t.Fatalf("fabric-demo: list applications after the %s placement: %v\n%s", tier.Tier, err, appsJSON)
+		}
+		app, err := findNamespaceApp([]byte(appsJSON), tier.Namespace)
+		if err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s placement delivery: %v", tier.Tier, err)
+		}
+		res.TenantApp = app.Metadata.Name
+		res.TenantProject = app.Spec.Project
+
+		// (b) CAUSALITY: both the Application and its AppProject must be NEW.
+		afterApps, err := kubeIdentsOf(ctx, kc, "applications", "argocd")
+		if err != nil {
+			record()
+			t.Fatalf("fabric-demo: re-read applications after the %s placement: %v", tier.Tier, err)
+		}
+		afterProjects, err := kubeIdentsOf(ctx, kc, "appprojects", "argocd")
+		if err != nil {
+			record()
+			t.Fatalf("fabric-demo: re-read appprojects after the %s placement: %v", tier.Tier, err)
+		}
+		if err := assertCausedByPlacement("Application", app.Metadata.Name, beforeApps, afterApps); err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s placement causality: %v", tier.Tier, err)
+		}
+		if err := assertCausedByPlacement("AppProject", app.Spec.Project, beforeProjects, afterProjects); err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s placement causality: %v", tier.Tier, err)
+		}
+		res.CausedByPlacement = true
+
+		// (c) THE CLAIM: it syncs THIS tier's overlay from THIS repo, not the repository root.
+		if err := assertTenantAppOverlay(app, repo, tier.Tier); err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s overlay routing: %v", tier.Tier, err)
+		}
+		res.SourcePath = strings.TrimSpace(app.Spec.Source.Path)
+
+		// (d) The hardened AppProject really is locked down (mirrors #959's assertion).
+		cw, err := nsKubectl(ctx, kc, "get", "appproject", app.Spec.Project, "-n", "argocd", "-o", "jsonpath={.spec.clusterResourceWhitelist}")
+		if err != nil {
+			record()
+			t.Fatalf("fabric-demo: read AppProject %q: %v\n%s", app.Spec.Project, err, cw)
+		}
+		if w := strings.TrimSpace(cw); w != "" && w != "[]" {
+			record()
+			t.Fatalf("fabric-demo: tenant AppProject %q clusterResourceWhitelist = %q, want empty — a namespace tenant must not create cluster-scoped resources", app.Spec.Project, w)
+		}
+
+		// (e) Converged, then the non-vacuity floor.
+		if _, err := waitNamespaceAppConverged(ctx, kc, tier.Namespace, timeout); err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s overlay: %v", tier.Tier, err)
+		}
+		res.Converged = true
+		if err := assertArgoAppManagesResources(ctx, kc, app.Metadata.Name); err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s overlay manages no resources: %v", tier.Tier, err)
+		}
+		n, err := argoAppResourceCount(ctx, kc, app.Metadata.Name)
+		if err != nil {
+			record()
+			t.Fatalf("fabric-demo: %s overlay resource count: %v", tier.Tier, err)
+		}
+		res.ResourceCount = n
+		record()
+		t.Logf("fabric-demo: %s → Application %q (project %q) Healthy+Synced from %q into ns %q managing %d resource(s)",
+			tier.Tier, app.Metadata.Name, app.Spec.Project, res.SourcePath, tier.Namespace, n)
 	}
 
-	// ── (2) The Kustomize overlays converged — the assertion nothing else in test/e2e makes ───
-	//    DeriveExpectedArgoApps cannot see ApplicationSet-generated apps, so without this the
-	//    multi-environment delivery path has no end-to-end coverage at all.
-	for i := range summary.Tiers {
-		tier := summary.Tiers[i].Tier
-		app, err := waitOverlayAppConverged(ctx, kc, tier, timeout)
-		if err != nil {
-			t.Fatalf("fabric-demo: overlay %s: %v", tier, err)
-		}
-		summary.Tiers[i].Converged = true
-		summary.Tiers[i].OverlayNS = app.Spec.Destination.Namespace
+	// ── (2) The vcluster tier — #845's headline differentiator ────────────────────────────────
+	//    Reuses #1308's whole proof body (place → register → deliver → deregister) rather than a
+	//    forked copy that would drift, with the resource floor and the overlay path turned ON.
+	vcName := fabricDemoVClusterSlug(p.env)
+	summary.VCluster = FabricDemoVCluster{Name: vcName, Tier: vcTier.Tier}
+	if _, exists := beforeNS[vcHostNamespacePrefix+vcName]; exists {
+		t.Fatalf("fabric-demo: host namespace %q already existed BEFORE the vcluster placement", vcHostNamespacePrefix+vcName)
+	}
+	var vcRes vclusterTenantResult
+	func() {
+		// Copy the partial result out however the body exits, so a t.Fatalf inside it still leaves
+		// the deferred summary write an honest record of how far the vcluster tier got.
+		defer func() {
+			summary.VCluster.Placed = vcRes.Placed
+			summary.VCluster.App = vcRes.App
+			summary.VCluster.SourcePath = vcRes.SourcePath
+			summary.VCluster.ResourceCount = vcRes.ResourceCount
+			summary.VCluster.Deregistered = vcRes.Deregistered
+		}()
+		driveT2VClusterTenant(t, ctx, cp, kc, vclusterTenantParams{
+			project: p.project, env: p.env, provider: p.provider, region: p.region,
+			fabricClust: p.fabricClust, owner: p.owner,
+			appsRepo: repo, appsPath: fabricDemoOverlayPath(vcTier.Tier),
+			vcName: vcName, label: "fabric-demo vcluster tier (#845)", requireAppResources: true,
+		}, &vcRes)
+	}()
 
-		// Non-vacuity: Healthy+Synced over an EMPTY overlay directory is trivially true.
-		if err := assertArgoAppManagesResources(ctx, kc, app.Metadata.Name); err != nil {
-			t.Fatalf("fabric-demo: overlay %s manages no resources: %v", tier, err)
-		}
-		n, err := overlayResourceCount(ctx, kc, app.Metadata.Name)
+	if vcRes.App != "" {
+		afterApps, err := kubeIdentsOf(ctx, kc, "applications", "argocd")
 		if err != nil {
-			t.Fatalf("fabric-demo: overlay %s resource count: %v", tier, err)
+			t.Fatalf("fabric-demo: re-read applications after the vcluster placement: %v", err)
 		}
-		summary.Tiers[i].ResourceCount = n
-		t.Logf("fabric-demo: overlay %s → Application %q Healthy+Synced into ns %q managing %d resource(s)",
-			tier, app.Metadata.Name, app.Spec.Destination.Namespace, n)
+		if err := assertCausedByPlacement("Application", vcRes.App, beforeApps, afterApps); err != nil {
+			t.Fatalf("fabric-demo: vcluster tier causality: %v", err)
+		}
+		summary.VCluster.CausedByPlacement = true
 	}
 
 	// ── (3) ArgoCD was never reinstalled by any placement ─────────────────────────────────────
@@ -167,25 +292,40 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	t.Logf("fabric-demo (#845) PROVEN: %s", fabricDemoSummaryVerdict(summary))
 }
 
-// waitOverlayAppConverged bounded-polls the ApplicationSet-generated Application for a tier until it
-// is Healthy+Synced. The generator itself needs a refresh cycle to even CREATE the app, so a
-// not-found is a retry, not an immediate failure — but the last routing error is reported verbatim
-// on timeout so a misrouted overlay is diagnosable from logs alone.
-func waitOverlayAppConverged(ctx context.Context, kc, tier string, timeout time.Duration) (overlayAppState, error) {
+// kubeIdentsOf lists a kind and returns name → identity, for the causality baseline. ns == "" lists
+// cluster-scoped objects (namespaces).
+func kubeIdentsOf(ctx context.Context, kc, kind, ns string) (map[string]kubeIdent, error) {
+	args := []string{"get", kind}
+	if ns != "" {
+		args = append(args, "-n", ns)
+	}
+	args = append(args, "-o", "json")
+	out, err := nsKubectl(ctx, kc, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %v\n%s", kind, err, out)
+	}
+	return parseKubeIdents([]byte(out))
+}
+
+// waitNamespaceAppConverged bounded-polls the placed tenant Application (addressed by its
+// destination namespace) until it is Healthy+Synced. A not-found is a retry — ArgoCD needs a cycle
+// to register and first-sync the app — but the last routing error is reported verbatim on timeout so
+// a misrouted placement is diagnosable from logs alone.
+func waitNamespaceAppConverged(ctx context.Context, kc, ns string, timeout time.Duration) (namespaceAppState, error) {
 	deadline := time.Now().Add(timeout)
 	var last error
-	var lastState overlayAppState
+	var lastState namespaceAppState
 	for {
 		listJSON, err := nsKubectl(ctx, kc, "get", "applications", "-n", "argocd", "-o", "json")
 		if err != nil {
 			last = fmt.Errorf("list applications: %v\n%s", err, listJSON)
 		} else {
-			app, ferr := findOverlayApp([]byte(listJSON), tier)
+			app, ferr := findNamespaceApp([]byte(listJSON), ns)
 			if ferr != nil {
 				last = ferr
 			} else {
 				lastState = app
-				if overlayConverged(app) {
+				if app.Status.Health.Status == "Healthy" && app.Status.Sync.Status == "Synced" {
 					return app, nil
 				}
 				last = fmt.Errorf("Application %q is health=%q sync=%q, want Healthy+Synced",
@@ -193,35 +333,14 @@ func waitOverlayAppConverged(ctx context.Context, kc, tier string, timeout time.
 			}
 		}
 		if time.Now().After(deadline) {
-			return lastState, fmt.Errorf("overlay did not converge within %s: %v", timeout, last)
+			return lastState, fmt.Errorf("the placement into %q did not converge within %s: %v", ns, timeout, last)
 		}
 		select {
 		case <-ctx.Done():
-			return lastState, fmt.Errorf("context cancelled while waiting for overlay %s (%v); last: %v", tier, ctx.Err(), last)
+			return lastState, fmt.Errorf("context cancelled while waiting for the placement into %s (%v); last: %v", ns, ctx.Err(), last)
 		case <-time.After(fabricDemoPollInterval):
 		}
 	}
-}
-
-// overlayResourceCount reads how many manifests the generated Application actually manages. The
-// count is the honest "GitOps delivered a workload" signal recorded in the summary;
-// assertArgoAppManagesResources already enforces the >0 floor.
-func overlayResourceCount(ctx context.Context, kc, name string) (int, error) {
-	out, err := nsKubectl(ctx, kc, "get", "applications.argoproj.io", name, "-n", "argocd", "-o", "json")
-	if err != nil {
-		return 0, fmt.Errorf("read Application %q: %v\n%s", name, err, out)
-	}
-	var app struct {
-		Status struct {
-			Resources []struct {
-				Kind string `json:"kind"`
-			} `json:"resources"`
-		} `json:"status"`
-	}
-	if err := json.Unmarshal([]byte(out), &app); err != nil {
-		return 0, fmt.Errorf("decode Application %q: %w", name, err)
-	}
-	return len(app.Status.Resources), nil
 }
 
 // fabricDemoDriftCheck seeds a DETECT_DRIFT over the Fabric's real state (aliased to the base
@@ -229,7 +348,7 @@ func overlayResourceCount(ctx context.Context, kc, name string) (int, error) {
 // changes nothing in tofu, so right after these placements the Fabric must still read in-sync —
 // a drifted posture here means a placement touched infrastructure it had no business touching.
 func fabricDemoDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p fabricDemoParams, timeout time.Duration, s *FabricDemoSummary) error {
-	driftJobID, err := seedT2DriftJob(ctx, cp, p.project, p.env, p.provider, p.region)
+	driftJobID, err := seedT2DriftJob(ctx, cp, p.project, p.env, p.provider, p.region, p.owner)
 	if err != nil {
 		return fmt.Errorf("seed drift job: %w", err)
 	}

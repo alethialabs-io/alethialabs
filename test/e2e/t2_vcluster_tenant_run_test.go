@@ -5,8 +5,8 @@
 
 // vcluster-placement T2 scenario (#1308) — the tagged run half. Layered onto the base T2 provision
 // (t2_provision_test.go) after the cluster is up + ArgoCD Healthy, INSIDE the same ephemeral cluster
-// lifetime (the base's single t.Cleanup destroys it once). Opt-in via ALETHIA_E2E_VCLUSTER; aws-first
-// (a clean skip on the other clouds, whose keyless host re-mint is a follow-up). Real-apply is
+// lifetime (the base's single t.Cleanup destroys it once). Opt-in via ALETHIA_E2E_VCLUSTER, on EVERY
+// cloud — #1389 wired all five and the product's own allowlist is the single control. Real-apply is
 // main-gated — this exercises meaningfully only from `main` (e2e-nightly).
 package e2e
 
@@ -37,6 +37,17 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 		t.Log("vcluster-tenant scenario (#1308) disabled — set ALETHIA_E2E_VCLUSTER=1 to run it")
 		return
 	}
+	driveT2VClusterTenant(t, ctx, cp, kc, p, &vclusterTenantResult{})
+}
+
+// driveT2VClusterTenant is the whole placement + registration + delivery + teardown proof, with NO
+// enable gate of its own. Two callers: #1308 above (standalone, opt-in), and #845's acceptance gate,
+// which REQUIRES a vcluster tier and must record it in its verdict. Splitting the gate from the body
+// is what lets #845 reuse this instead of forking a near-identical copy that would drift.
+//
+// res is filled progressively so a t.Fatalf mid-run still leaves the caller's summary honest about
+// how far it got.
+func driveT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc string, p vclusterTenantParams, res *vclusterTenantResult) {
 	// NO per-cloud guard here, deliberately — same reasoning as the namespace scenario. A vcluster
 	// runs ON the host Fabric and reaches it exactly as the host does, so it was never truly
 	// aws-specific; #1389 wired the remaining clouds and the product's own allowlist
@@ -45,10 +56,12 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 	// headline differentiator #845 asks to prove on ALL of them, so a skip that reads green is the
 	// worst possible outcome. An unwired cloud now fails the placement job closed, with a reason.
 
-	vcName := vclusterTenantSlug(p.env)
+	vcName := vclusterTenantName(p)
+	label := vclusterTenantLabel(p)
 	hostNS := vcHostNamespacePrefix + vcName
 	kubeconfigSecret := vcKubeconfigSecretPrefix + vcName
-	t.Logf("vcluster-tenant (#1308): placing a vcluster env %q onto the EXISTING Fabric cluster %q (host ns %q)", vcName, p.fabricClust, hostNS)
+	res.Name = vcName
+	t.Logf("%s: placing a vcluster env %q onto the EXISTING Fabric cluster %q (host ns %q)", label, vcName, p.fabricClust, hostNS)
 
 	// Capture the argocd-server creationTimestamp BEFORE — the vcluster deploy must NOT reinstall the
 	// shared Fabric's ArgoCD (it belongs to the Fabric; the vcluster registers WITH it).
@@ -65,7 +78,7 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 	}
 	t.Logf("seeded QUEUED vcluster DEPLOY job %s (placement=vcluster, cluster=%s, vcluster=%s)", jobID, p.fabricClust, vcName)
 
-	status, err := cp.WaitTerminal(ctx, jobID, 20*time.Minute)
+	status, err := cp.WaitTerminal(ctx, jobID, vcDeployWait)
 	if err != nil {
 		t.Fatalf("waiting for vcluster DEPLOY job: %v", err)
 	}
@@ -87,6 +100,7 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 	if meta.ClusterName != vcName {
 		t.Fatalf("vcluster DEPLOY job cluster_name = %q, want the vcluster name %q", meta.ClusterName, vcName)
 	}
+	res.Placed = true
 
 	// (b) The vcluster control-plane StatefulSet is Ready in `vcluster-<vcName>` on the SAME Fabric
 	//     (read over the SAME host kubeconfig — proof no new cloud cluster was provisioned).
@@ -111,10 +125,30 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 	// (d) The tenant app Application routes to the vcluster by destination.name and syncs Healthy —
 	//     only when an apps repo was configured (an app was delivered).
 	if p.appsRepo != "" {
-		app := waitVClusterAppHealthy(t, ctx, kc, vcName, 10*time.Minute)
-		t.Logf("tenant app %q routed to vcluster %q (project %q, name-based) — Healthy + Synced", app.Metadata.Name, vcName, app.Spec.Project)
+		app := waitVClusterAppHealthy(t, ctx, kc, vcName, vcAppHealthWait)
+		res.App = app.Metadata.Name
+		res.SourcePath = strings.TrimSpace(app.Spec.Source.Path)
+		t.Logf("%s: tenant app %q routed to vcluster %q (project %q, name-based) — Healthy + Synced", label, app.Metadata.Name, vcName, app.Spec.Project)
+
+		// The non-vacuity floor, on only for callers that asked for it (#845). Healthy+Synced over an
+		// empty directory is trivially true, so without a managed-resource count and a source-path
+		// check "the overlay converged" can mean "nothing was delivered, twice".
+		if p.requireAppResources {
+			if err := assertArgoAppManagesResources(ctx, kc, app.Metadata.Name); err != nil {
+				t.Fatalf("%s: vcluster app delivered nothing: %v", label, err)
+			}
+			n, err := argoAppResourceCount(ctx, kc, app.Metadata.Name)
+			if err != nil {
+				t.Fatalf("%s: read managed resource count: %v", label, err)
+			}
+			res.ResourceCount = n
+			if want := strings.TrimSpace(p.appsPath); want != "" && res.SourcePath != want {
+				t.Fatalf("%s: vcluster app %q syncs %q, want %q — the per-tier overlay never reached the runner", label, app.Metadata.Name, res.SourcePath, want)
+			}
+			t.Logf("%s: vcluster app manages %d resource(s) from %q", label, n, res.SourcePath)
+		}
 	} else {
-		t.Log("no apps repo configured — vcluster provisioned + registered; skipping the app-delivery assertion")
+		t.Logf("%s: no apps repo configured — vcluster provisioned + registered; skipping the app-delivery assertion", label)
 	}
 
 	// (e) ArgoCD was NOT reinstalled — creationTimestamp unchanged.
@@ -133,7 +167,7 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 	}
 	t.Logf("seeded QUEUED vcluster DESTROY job %s (deregister vcluster=%s)", destroyID, vcName)
 
-	dstatus, err := cp.WaitTerminal(ctx, destroyID, 15*time.Minute)
+	dstatus, err := cp.WaitTerminal(ctx, destroyID, vcDestroyWait)
 	if err != nil {
 		t.Fatalf("waiting for vcluster DESTROY job: %v", err)
 	}
@@ -153,8 +187,9 @@ func runT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, kc
 	if err := assertKubeResourceGone(ctx, kc, "secret", kubeconfigSecret, "argocd"); err != nil {
 		t.Fatalf("vcluster teardown: exported kubeconfig Secret leaked: %v", err)
 	}
+	res.Deregistered = true
 
-	t.Logf("vcluster-tenant (#1308) PROVEN: virtual cluster %q provisioned + registered + app delivered on the SAME Fabric %q, ArgoCD not reinstalled, and torn down cleanly (no orphaned registration)", vcName, p.fabricClust)
+	t.Logf("%s PROVEN: virtual cluster %q provisioned + registered + app delivered on the SAME Fabric %q, ArgoCD not reinstalled, and torn down cleanly (no orphaned registration)", label, vcName, p.fabricClust)
 }
 
 // waitVClusterAppHealthy polls until the tenant app Application (routed to vcName) reports Synced +

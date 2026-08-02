@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Unit tests for the PURE fabric enterprise-demo helpers (#845) — no cloud, no Postgres, no
-// e2e_t2 tag. These prove the acceptance gate cannot pass vacuously: an empty overlay list is a
-// HARD error rather than a zero-iteration success, a misrouted ApplicationSet-generated app is
-// refused rather than matched, and the verdict only reads green when every tier actually placed,
-// converged, and delivered resources.
+// e2e_t2 tag. These prove the acceptance gate cannot pass vacuously: an empty tier list is a HARD
+// error rather than a zero-iteration success, an artifact that PRE-EXISTED the placements is
+// refused rather than credited to them, a repo-root sync is refused rather than accepted as a
+// per-tier overlay, and the verdict only reads green when every tier actually placed, was caused by
+// its placement, converged, and delivered resources.
 package e2e
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -42,253 +46,509 @@ func TestFabricDemoSlug(t *testing.T) {
 		t.Fatalf("truncated slug %q ends in '-', which is not a valid namespace", long)
 	}
 
-	// Disjoint from the sibling placement scenarios: three placements run inside ONE cluster
+	// Disjoint from the sibling placement scenarios: several placements run inside ONE cluster
 	// lifetime, so colliding prefixes would have them fight over the same namespace.
 	if ns := fabricDemoSlug("e", "dev"); strings.HasPrefix(ns, namespaceTenantSlug("e")) || strings.HasPrefix(ns, vclusterTenantSlug("e")) {
 		t.Fatalf("fabric-demo slug %q collides with the #959/#1308 namespaces", ns)
 	}
 }
 
-func TestFabricDemoOverlays(t *testing.T) {
+func TestFabricDemoVClusterSlugIsDisjoint(t *testing.T) {
+	const env = "run-1"
+	got := fabricDemoVClusterSlug(env)
+
+	// #845 places its own vcluster inside the SAME Fabric lifetime as #1308's. Identical names would
+	// have the two scenarios helm-install over each other and destroy each other's registration.
+	if got == vclusterTenantSlug(env) {
+		t.Fatalf("fabric-demo vcluster %q collides with #1308's %q", got, vclusterTenantSlug(env))
+	}
+	if got == namespaceTenantSlug(env) {
+		t.Fatalf("fabric-demo vcluster %q collides with #959's namespace", got)
+	}
+	// The host namespace is `vcluster-<name>` (prefix adds 9), which must still fit 63.
+	if len(got) > 54 {
+		t.Fatalf("vcluster name %q is %d chars — `vcluster-` + it would exceed the 63-char namespace limit", got, len(got))
+	}
+	if len(fabricDemoVClusterSlug(strings.Repeat("longenv", 20))) > 54 {
+		t.Fatal("a long env must still be bounded to 54 chars")
+	}
+}
+
+func TestFabricDemoTiers(t *testing.T) {
 	t.Run("default tracks the enterprise-demo layout", func(t *testing.T) {
-		tiers, err := fabricDemoOverlays("aws")
+		tiers, err := fabricDemoTiers("run1", "aws")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(tiers) != 2 || tiers[0] != "dev" || tiers[1] != "staging" {
-			t.Fatalf("default overlays = %v, want [dev staging]", tiers)
+		want := []fabricDemoOverlayTier{{"dev", "boutique-dev"}, {"staging", "boutique-staging"}}
+		if len(tiers) != len(want) {
+			t.Fatalf("default tiers = %v, want %v", tiers, want)
+		}
+		for i := range want {
+			if tiers[i] != want[i] {
+				t.Fatalf("tier %d = %+v, want %+v", i, tiers[i], want[i])
+			}
 		}
 	})
 
-	t.Run("explicit list is parsed and normalised", func(t *testing.T) {
-		t.Setenv(envFabricDemoOverlays, " Dev , STAGING ,, prod ")
-		tiers, err := fabricDemoOverlays("aws")
+	t.Run("normalises case and whitespace", func(t *testing.T) {
+		t.Setenv(envFabricDemoOverlays, " Dev = Boutique-Dev , staging=boutique-staging ")
+		tiers, err := fabricDemoTiers("run1", "aws")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(tiers) != 3 || tiers[0] != "dev" || tiers[1] != "staging" || tiers[2] != "prod" {
-			t.Fatalf("overlays = %v, want [dev staging prod]", tiers)
+		if tiers[0] != (fabricDemoOverlayTier{"dev", "boutique-dev"}) {
+			t.Fatalf("tier 0 = %+v, want {dev boutique-dev}", tiers[0])
 		}
 	})
 
-	t.Run("per-provider override wins", func(t *testing.T) {
+	t.Run("a bare tier falls back to the derived slug", func(t *testing.T) {
 		t.Setenv(envFabricDemoOverlays, "dev")
-		t.Setenv(envFabricDemoOverlays+"_GCP", "dev,staging")
-		tiers, err := fabricDemoOverlays("gcp")
+		tiers, err := fabricDemoTiers("run1", "aws")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tiers[0].Namespace != fabricDemoSlug("run1", "dev") {
+			t.Fatalf("bare tier namespace = %q, want the derived slug %q", tiers[0].Namespace, fabricDemoSlug("run1", "dev"))
+		}
+	})
+
+	t.Run("the per-provider override wins", func(t *testing.T) {
+		t.Setenv(envFabricDemoOverlays, "dev=boutique-dev")
+		t.Setenv(envFabricDemoOverlays+"_GCP", "qa=boutique-qa")
+		tiers, err := fabricDemoTiers("run1", "gcp")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(tiers) != 1 || tiers[0].Tier != "qa" {
+			t.Fatalf("gcp tiers = %v, want the per-provider override [qa]", tiers)
+		}
+	})
+
+	// A BLANK value means "unset" and falls back to the default (t2Env's convention, shared by every
+	// var in this harness) — so it can never yield zero tiers.
+	t.Run("blank falls back to the default, never to zero tiers", func(t *testing.T) {
+		t.Setenv(envFabricDemoOverlays, "   ")
+		tiers, err := fabricDemoTiers("run1", "aws")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(tiers) != 2 {
-			t.Fatalf("gcp overlays = %v, want the per-provider override [dev staging]", tiers)
+			t.Fatalf("blank value = %v, want the 2 default tiers", tiers)
 		}
 	})
 
-	// The vacuity refuter: an all-separator value must be a HARD error. A scenario that iterates
-	// zero tiers would otherwise report success having asserted nothing at all.
-	t.Run("empty list is a hard error", func(t *testing.T) {
-		t.Setenv(envFabricDemoOverlays, " , , ")
-		if _, err := fabricDemoOverlays("aws"); err == nil {
-			t.Fatal("expected a HARD FAIL for an empty overlay list — the gate would prove nothing")
+	// Every one of these must be a HARD error. A gate that quietly accepts them asserts nothing, or
+	// has two placements fighting over one namespace, and still reports success.
+	refuters := map[string]string{
+		"only separators":        " , , ",
+		"empty tier name":        "=boutique-dev",
+		"duplicate tier":         "dev=boutique-dev,dev=other-ns",
+		"duplicate namespace":    "dev=shared-ns,staging=shared-ns",
+		"invalid namespace":      "dev=Boutique_Dev!",
+		"namespace with a slash": "dev=boutique/dev",
+	}
+	for name, raw := range refuters {
+		t.Run("refutes/"+name, func(t *testing.T) {
+			t.Setenv(envFabricDemoOverlays, raw)
+			tiers, err := fabricDemoTiers("run1", "aws")
+			if err == nil {
+				t.Fatalf("%s = %q was accepted (tiers=%v) — it must be a hard error", envFabricDemoOverlays, raw, tiers)
+			}
+		})
+	}
+}
+
+// TestFabricDemoDefaultTracksTheProductTemplate is the vacuity trap the DEFAULTS sit in.
+//
+// The default namespaces are load-bearing: RenderNamespaceTenant pins the tenant AppProject to the
+// single placed namespace, so if the overlays declare a different one, ArgoCD refuses every sync and
+// nothing ever converges. infra/templates/argocd/user-apps-overlays.yaml is the in-repo source of
+// truth for what the enterprise-demo overlays actually target. Reading it here means a drift between
+// the demo's layout and this harness fails in 200ms, not two hours into a real cloud run.
+func TestFabricDemoDefaultTracksTheProductTemplate(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	tmpl, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "infra", "templates", "argocd", "user-apps-overlays.yaml"))
+	if err != nil {
+		t.Fatalf("read user-apps-overlays.yaml: %v", err)
+	}
+	body := string(tmpl)
+
+	tiers, err := fabricDemoTiers("run1", "aws")
+	if err != nil {
+		t.Fatalf("default tiers: %v", err)
+	}
+	for _, tier := range tiers {
+		if !strings.Contains(body, tier.Namespace) {
+			t.Errorf("default tier %q maps to namespace %q, which the product's own ApplicationSet template never mentions — the defaults have drifted from the enterprise-demo layout, and a placement into the wrong namespace can never converge (the tenant AppProject refuses it)", tier.Tier, tier.Namespace)
 		}
-	})
+	}
+}
+
+func TestFabricDemoOverlayPathAndStage(t *testing.T) {
+	if got := fabricDemoOverlayPath(" Dev "); got != "overlays/dev" {
+		t.Fatalf("fabricDemoOverlayPath = %q, want overlays/dev", got)
+	}
+	stages := map[string]string{
+		"dev": "development", "staging": "staging", "stage": "staging",
+		"prod": "production", "production": "production", "qa": "development",
+	}
+	for tier, want := range stages {
+		got := fabricDemoStage(tier)
+		if got != want {
+			t.Errorf("fabricDemoStage(%q) = %q, want %q", tier, got, want)
+		}
+		// Whatever the mapping, it must be a REAL environment_stage enum value — these snapshots are
+		// the shape a customer's console would emit, and a demo that ships an impossible value is
+		// not a demo.
+		switch got {
+		case "development", "staging", "production":
+		default:
+			t.Errorf("fabricDemoStage(%q) = %q, which is not an environment_stage enum value", tier, got)
+		}
+	}
 }
 
 func TestFabricDemoTimeout(t *testing.T) {
 	if got := fabricDemoTimeout(); got != 10*time.Minute {
-		t.Fatalf("default timeout = %v, want 10m", got)
+		t.Fatalf("default timeout = %s, want 10m", got)
 	}
-	t.Setenv(envFabricDemoTimeout, "90s")
-	if got := fabricDemoTimeout(); got != 90*time.Second {
-		t.Fatalf("override timeout = %v, want 90s", got)
+	t.Setenv(envFabricDemoTimeout, "3m")
+	if got := fabricDemoTimeout(); got != 3*time.Minute {
+		t.Fatalf("override timeout = %s, want 3m", got)
 	}
-	// A non-positive or unparseable bound must fall back rather than becoming an instant timeout.
-	for _, bad := range []string{"-1m", "0s", "soon", ""} {
-		t.Setenv(envFabricDemoTimeout, bad)
-		if got := fabricDemoTimeout(); got != 10*time.Minute {
-			t.Fatalf("timeout for %q = %v, want the 10m fallback", bad, got)
-		}
+	t.Setenv(envFabricDemoTimeout, "not-a-duration")
+	if got := fabricDemoTimeout(); got != 10*time.Minute {
+		t.Fatalf("a malformed duration must fall back to 10m, got %s", got)
+	}
+	t.Setenv(envFabricDemoTimeout, "-5m")
+	if got := fabricDemoTimeout(); got != 10*time.Minute {
+		t.Fatalf("a non-positive duration must fall back to 10m, got %s", got)
 	}
 }
 
 func TestBuildFabricDemoSnapshot(t *testing.T) {
-	p := fabricDemoParams{
-		project: "alethia-nl", env: "30735441957-1", provider: "aws", region: "us-east-1",
-		fabricClust: "eks-ue1-x-alethia-nl",
-	}
-	snap := buildFabricDemoSnapshot(p, "dev", "e2e-demo-dev-x", "https://github.com/o/r")
+	p := fabricDemoParams{project: "acme", env: "run1", provider: "aws", region: "us-east-1", fabricClust: "acme-run1"}
+	snap := buildFabricDemoSnapshot(p, fabricDemoOverlayTier{"dev", "boutique-dev"}, "https://github.com/o/r")
 
 	if snap["placement_mode"] != "namespace" {
-		t.Fatalf("placement_mode = %v, want namespace", snap["placement_mode"])
+		t.Errorf("placement_mode = %v, want namespace", snap["placement_mode"])
 	}
-	// The tier — not the base env — is the environment_stage: the overlay directory and the placed
-	// env must name the same thing or the ApplicationSet's app and the placement diverge.
-	if snap["environment_stage"] != "dev" {
-		t.Fatalf("environment_stage = %v, want the tier 'dev'", snap["environment_stage"])
+	if snap["namespace"] != "boutique-dev" {
+		t.Errorf("namespace = %v, want boutique-dev — it must be the namespace the OVERLAY declares, or the tenant AppProject refuses every resource", snap["namespace"])
 	}
-	if snap["namespace"] != "e2e-demo-dev-x" {
-		t.Fatalf("namespace = %v", snap["namespace"])
+	if snap["environment_stage"] != "development" {
+		t.Errorf("environment_stage = %v, want development", snap["environment_stage"])
 	}
-	// No cluster SHAPE — a placement must never trigger a tofu run.
+
+	// A namespace placement runs NO tofu. Carrying a node shape would silently ask for one.
 	cluster, ok := snap["cluster"].(map[string]any)
-	if !ok || cluster["cluster_name"] != p.fabricClust {
-		t.Fatalf("cluster = %v, want only the existing Fabric's name", snap["cluster"])
+	if !ok || len(cluster) != 1 || cluster["cluster_name"] != "acme-run1" {
+		t.Errorf("cluster = %v, want exactly {cluster_name: acme-run1} — any extra key is a node shape, and a placement provisions nothing", snap["cluster"])
 	}
-	if len(cluster) != 1 {
-		t.Fatalf("cluster carries %d keys (%v) — a namespace placement must carry NO node shape", len(cluster), cluster)
-	}
+
 	repos, ok := snap["repositories"].(map[string]any)
 	if !ok || repos["apps_destination_repo"] != "https://github.com/o/r" {
-		t.Fatalf("repositories = %v — without the apps repo the ApplicationSet generates nothing", snap["repositories"])
+		t.Fatalf("repositories = %v, want the demo repo", snap["repositories"])
+	}
+	if repos["apps_path"] != "overlays/dev" {
+		t.Errorf("apps_path = %v, want overlays/dev", repos["apps_path"])
+	}
+	// The refuter: without apps_path the runner renders the repo ROOT, every tier delivers the whole
+	// repository, and "the dev overlay converged" means nothing.
+	if repos["apps_path"] == "." || repos["apps_path"] == "" {
+		t.Fatal("a root sync delivers the whole repo, not this tier's overlay — the Kustomize claim would be vacuous")
 	}
 }
 
-func TestOverlayAppName(t *testing.T) {
-	// Must match the ApplicationSet template's `apps-{{ .path.basename }}` over `overlays/*`
-	// (infra/templates/argocd/user-apps-overlays.yaml) or the assertion addresses a name ArgoCD
-	// never created.
-	if got := overlayAppName(" Dev "); got != "apps-dev" {
-		t.Fatalf("overlayAppName = %q, want apps-dev", got)
+func TestParseKubeIdents(t *testing.T) {
+	const list = `{"items":[
+	  {"metadata":{"name":"app-a","uid":"u1","creationTimestamp":"2026-08-01T10:00:00Z"}},
+	  {"metadata":{"name":"app-b","uid":"u2","creationTimestamp":"2026-08-01T11:00:00Z"}}]}`
+	got, err := parseKubeIdents([]byte(list))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got["app-a"].UID != "u1" || got["app-b"].Created != "2026-08-01T11:00:00Z" {
+		t.Fatalf("parseKubeIdents = %+v", got)
+	}
+
+	empty, err := parseKubeIdents([]byte(`{"items":[]}`))
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty list = %+v, err=%v; want an empty map and no error", empty, err)
+	}
+	if _, err := parseKubeIdents([]byte(`not json`)); err == nil {
+		t.Fatal("malformed JSON must be an error, not an empty baseline — an empty baseline would make every artifact look newly created")
 	}
 }
 
-// overlayAppJSON builds a one-item Application list in the shape kubectl returns.
-func overlayAppJSON(name, project, path, ns, health, sync string) string {
-	return `{"items":[{"metadata":{"name":"` + name + `"},"spec":{"project":"` + project +
-		`","source":{"repoURL":"https://github.com/o/r","path":"` + path + `"},` +
-		`"destination":{"server":"https://kubernetes.default.svc","namespace":"` + ns + `"}},` +
-		`"status":{"health":{"status":"` + health + `"},"sync":{"status":"` + sync + `"}}}]}`
-}
-
-func TestFindOverlayApp(t *testing.T) {
-	t.Run("matches the generated app", func(t *testing.T) {
-		app, err := findOverlayApp([]byte(overlayAppJSON("apps-dev", "apps", "overlays/dev", "boutique-dev", "Healthy", "Synced")), "dev")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if app.Spec.Destination.Namespace != "boutique-dev" {
-			t.Fatalf("destination namespace = %q", app.Spec.Destination.Namespace)
-		}
-		if !overlayConverged(app) {
-			t.Fatal("Healthy+Synced app did not read as converged")
-		}
-	})
-
-	// Fail-closed refuters. Each is a way a misrouted or absent overlay could otherwise slide
-	// through as "converged".
-	refuters := []struct {
-		name, raw, tier string
+// TestAssertCausedByPlacement is the anti-vacuity refuter set. The "PRE-EXISTING artifact is
+// refused" case is the one that fails if this scenario ever regresses to crediting a placement with
+// something the base deploy created.
+func TestAssertCausedByPlacement(t *testing.T) {
+	const name = "app-acme-boutique-dev"
+	cases := []struct {
+		name           string
+		before, after  map[string]kubeIdent
+		wantErr        bool
+		wantErrContain string
 	}{
-		{"no such app", overlayAppJSON("apps-staging", "apps", "overlays/staging", "boutique-staging", "Healthy", "Synced"), "dev"},
-		{"wrong project", overlayAppJSON("apps-dev", "infra", "overlays/dev", "boutique-dev", "Healthy", "Synced"), "dev"},
-		{"wrong source path", overlayAppJSON("apps-dev", "apps", "overlays/production", "boutique-dev", "Healthy", "Synced"), "dev"},
-		{"no destination namespace", overlayAppJSON("apps-dev", "apps", "overlays/dev", "   ", "Healthy", "Synced"), "dev"},
-		{"empty list", `{"items":[]}`, "dev"},
-		{"malformed json", `{"items":`, "dev"},
+		{
+			name:   "absent before, present after",
+			before: map[string]kubeIdent{},
+			after:  map[string]kubeIdent{name: {UID: "u1", Created: "2026-08-01T12:00:00Z"}},
+		},
+		{
+			name:           "PRE-EXISTING artifact is refused",
+			before:         map[string]kubeIdent{name: {UID: "u0", Created: "2026-08-01T09:00:00Z"}},
+			after:          map[string]kubeIdent{name: {UID: "u0", Created: "2026-08-01T09:00:00Z"}},
+			wantErr:        true,
+			wantErrContain: "already existed BEFORE",
+		},
+		{
+			name:    "pre-existing under a NEW uid is still refused",
+			before:  map[string]kubeIdent{name: {UID: "u0"}},
+			after:   map[string]kubeIdent{name: {UID: "u9"}},
+			wantErr: true,
+		},
+		{
+			name:           "absent after",
+			before:         map[string]kubeIdent{},
+			after:          map[string]kubeIdent{},
+			wantErr:        true,
+			wantErrContain: "created nothing",
+		},
+		{
+			name:    "present after but with no uid",
+			before:  map[string]kubeIdent{},
+			after:   map[string]kubeIdent{name: {UID: "  "}},
+			wantErr: true,
+		},
 	}
-	for _, r := range refuters {
-		t.Run(r.name, func(t *testing.T) {
-			if _, err := findOverlayApp([]byte(r.raw), r.tier); err == nil {
-				t.Fatalf("expected a HARD FAIL for %q", r.name)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := assertCausedByPlacement("Application", name, c.before, c.after)
+			if c.wantErr && err == nil {
+				t.Fatal("expected an error — crediting a placement with an artifact it did not create makes the whole gate theatre")
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if c.wantErrContain != "" && !strings.Contains(err.Error(), c.wantErrContain) {
+				t.Fatalf("error %q should mention %q", err.Error(), c.wantErrContain)
 			}
 		})
 	}
+}
 
-	// Degraded / OutOfSync is FOUND (so the poll can report why) but must not read as converged.
-	app, err := findOverlayApp([]byte(overlayAppJSON("apps-dev", "apps", "overlays/dev", "boutique-dev", "Degraded", "OutOfSync")), "dev")
-	if err != nil {
-		t.Fatalf("a routed-but-unhealthy app must still be found: %v", err)
+func TestSameRepoURL(t *testing.T) {
+	base := "https://github.com/alethialabs-io/enterprise-demo"
+	for _, equal := range []string{base, base + ".git", base + "/", strings.ToUpper(base), " " + base + " "} {
+		if !sameRepoURL(base, equal) {
+			t.Errorf("sameRepoURL(%q, %q) = false, want true", base, equal)
+		}
 	}
-	if overlayConverged(app) {
-		t.Fatal("Degraded/OutOfSync read as converged")
+	for _, diff := range []string{"https://github.com/other/repo", "", "   "} {
+		if sameRepoURL(base, diff) {
+			t.Errorf("sameRepoURL(%q, %q) = true, want false", base, diff)
+		}
+	}
+	if sameRepoURL("", "") {
+		t.Error("two empty URLs must not compare equal — that would make the repo precondition vacuous")
 	}
 }
 
-// passingSummary is the shape of a fully-proven run; each refuter below breaks exactly one field.
-func passingSummary() FabricDemoSummary {
+func TestFabricDemoRepoPrecondition(t *testing.T) {
+	const demo = "https://github.com/alethialabs-io/enterprise-demo"
+	if err := fabricDemoRepoPrecondition("", demo); err != nil {
+		t.Errorf("no base apps repo must be fine: %v", err)
+	}
+	if err := fabricDemoRepoPrecondition("https://github.com/acme/other", demo); err != nil {
+		t.Errorf("a different base repo must be fine: %v", err)
+	}
+	for _, same := range []string{demo, demo + ".git", demo + "/", strings.ToUpper(demo)} {
+		if err := fabricDemoRepoPrecondition(same, demo); err == nil {
+			t.Errorf("base repo %q is the demo repo — the base ApplicationSet already delivers these overlays, so the placements would prove nothing and would collide", same)
+		}
+	}
+}
+
+func TestAssertTenantAppOverlay(t *testing.T) {
+	const repo = "https://github.com/alethialabs-io/enterprise-demo"
+	app := func(repoURL, path string) namespaceAppState {
+		var a namespaceAppState
+		a.Metadata.Name = "app-acme-boutique-dev"
+		a.Spec.Source.RepoURL = repoURL
+		a.Spec.Source.Path = path
+		return a
+	}
+
+	if err := assertTenantAppOverlay(app(repo, "overlays/dev"), repo, "dev"); err != nil {
+		t.Fatalf("the matching overlay must be accepted: %v", err)
+	}
+	if err := assertTenantAppOverlay(app(repo+".git", "overlays/dev"), repo, "dev"); err != nil {
+		t.Fatalf("a .git suffix must not matter: %v", err)
+	}
+
+	t.Run("a repo-ROOT sync is refused", func(t *testing.T) {
+		err := assertTenantAppOverlay(app(repo, "."), repo, "dev")
+		if err == nil {
+			t.Fatal("syncing the repo root is NOT a per-tier overlay proof — it is what the product did before apps_path was wired, and it converges Healthy just the same")
+		}
+		if !strings.Contains(err.Error(), "apps_path") {
+			t.Errorf("the error should name apps_path so the cause is diagnosable; got %q", err.Error())
+		}
+	})
+
+	if err := assertTenantAppOverlay(app(repo, ""), repo, "dev"); err == nil {
+		t.Error("an empty source path must be refused")
+	}
+	if err := assertTenantAppOverlay(app(repo, "overlays/staging"), repo, "dev"); err == nil {
+		t.Error("the WRONG tier's overlay must be refused — otherwise two tiers could both 'prove' the same directory")
+	}
+	if err := assertTenantAppOverlay(app("https://github.com/acme/other", "overlays/dev"), repo, "dev"); err == nil {
+		t.Error("a foreign repo must be refused")
+	}
+}
+
+func TestFabricDemoVClusterTier(t *testing.T) {
+	tiers := []fabricDemoOverlayTier{{"dev", "boutique-dev"}, {"staging", "boutique-staging"}}
+
+	got, err := fabricDemoVClusterTier("aws", tiers)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Tier != "staging" {
+		t.Fatalf("default vcluster tier = %q, want staging", got.Tier)
+	}
+
+	t.Run("an unknown tier is refused", func(t *testing.T) {
+		t.Setenv(envFabricDemoVCluster, "prod")
+		if _, err := fabricDemoVClusterTier("aws", tiers); err == nil {
+			t.Fatal("a vcluster tier that is not among the configured tiers must be a hard error")
+		}
+	})
+
+	// There is NO configuration that yields zero vcluster tiers, which is the property #845 needs:
+	// a blank value falls back to the default (t2Env's convention), and any non-blank value that
+	// does not name a configured tier is a hard error. So the headline differentiator can never be
+	// silently dropped — only explicitly mis-configured, loudly.
+	t.Run("blank falls back to the default, never to no vcluster", func(t *testing.T) {
+		t.Setenv(envFabricDemoVCluster, "   ")
+		got, err := fabricDemoVClusterTier("aws", tiers)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Tier != fabricDemoDefaultVClusterTier {
+			t.Fatalf("blank value = %q, want the default %q", got.Tier, fabricDemoDefaultVClusterTier)
+		}
+	})
+}
+
+// passingFabricDemoSummary is the minimal fully-green verdict. Every refuter below breaks exactly
+// one field of it, so each assertion is proven load-bearing rather than decorative.
+func passingFabricDemoSummary() FabricDemoSummary {
 	return FabricDemoSummary{
-		Enabled: true, Provider: "aws", Fabric: "eks-ue1-x", Repo: "https://github.com/o/r",
+		Enabled:  true,
+		Provider: "aws",
+		Fabric:   "acme-run1",
+		Repo:     "https://github.com/alethialabs-io/enterprise-demo",
 		Tiers: []FabricDemoTier{
-			{Tier: "dev", Placed: true, Converged: true, ResourceCount: 12, OverlayNS: "boutique-dev"},
-			{Tier: "staging", Placed: true, Converged: true, ResourceCount: 12, OverlayNS: "boutique-staging"},
+			{Tier: "dev", Namespace: "boutique-dev", Placed: true, TenantApp: "app-acme-boutique-dev", TenantProject: "tenant-acme-boutique-dev", SourcePath: "overlays/dev", CausedByPlacement: true, Converged: true, ResourceCount: 3},
+			{Tier: "staging", Namespace: "boutique-staging", Placed: true, TenantApp: "app-acme-boutique-staging", TenantProject: "tenant-acme-boutique-staging", SourcePath: "overlays/staging", CausedByPlacement: true, Converged: true, ResourceCount: 3},
 		},
+		VCluster:           FabricDemoVCluster{Name: "e2e-vcdemo-run1", Tier: "staging", Placed: true, App: "vc-app", SourcePath: "overlays/staging", CausedByPlacement: true, ResourceCount: 2, Deregistered: true},
 		ArgoNotReinstalled: true,
 		ReceiptScope:       "fabric",
 		FabricPlanSHA:      strings.Repeat("a", 64),
-		DriftChecked:       true, DriftInSync: true, DriftDrifted: 0,
+		DriftChecked:       true,
+		DriftInSync:        true,
 	}
 }
 
 func TestFabricDemoVerdictPass(t *testing.T) {
-	if !fabricDemoVerdictPass(passingSummary()) {
-		t.Fatal("a fully-proven summary did not pass")
+	if !fabricDemoVerdictPass(passingFabricDemoSummary()) {
+		t.Fatal("the fully-green summary must pass, or every refuter below is meaningless")
 	}
 
-	refuters := []struct {
-		name   string
-		break_ func(*FabricDemoSummary)
-	}{
-		{"disabled", func(s *FabricDemoSummary) { s.Enabled = false }},
-		{"no tiers at all", func(s *FabricDemoSummary) { s.Tiers = nil }},
-		{"a tier never placed", func(s *FabricDemoSummary) { s.Tiers[1].Placed = false }},
-		{"a tier never converged", func(s *FabricDemoSummary) { s.Tiers[0].Converged = false }},
-		{"a tier delivered no resources", func(s *FabricDemoSummary) { s.Tiers[0].ResourceCount = 0 }},
-		{"argocd was reinstalled", func(s *FabricDemoSummary) { s.ArgoNotReinstalled = false }},
-		{"no verified fabric receipt", func(s *FabricDemoSummary) { s.FabricPlanSHA = "" }},
-		{"drift ran and found drift", func(s *FabricDemoSummary) { s.DriftDrifted = 3 }},
-		{"drift ran and is not in-sync", func(s *FabricDemoSummary) { s.DriftInSync = false }},
+	refuters := map[string]func(*FabricDemoSummary){
+		"disabled":                          func(s *FabricDemoSummary) { s.Enabled = false },
+		"no tiers at all":                   func(s *FabricDemoSummary) { s.Tiers = nil },
+		"a tier never placed":               func(s *FabricDemoSummary) { s.Tiers[0].Placed = false },
+		"a tier's app PRE-EXISTED":          func(s *FabricDemoSummary) { s.Tiers[0].CausedByPlacement = false },
+		"a tier never converged":            func(s *FabricDemoSummary) { s.Tiers[0].Converged = false },
+		"a tier delivered nothing":          func(s *FabricDemoSummary) { s.Tiers[0].ResourceCount = 0 },
+		"a tier synced the repo ROOT":       func(s *FabricDemoSummary) { s.Tiers[0].SourcePath = "." },
+		"a tier synced the WRONG overlay":   func(s *FabricDemoSummary) { s.Tiers[0].SourcePath = "overlays/staging" },
+		"no vcluster tier at all":           func(s *FabricDemoSummary) { s.VCluster = FabricDemoVCluster{} },
+		"the vcluster never placed":         func(s *FabricDemoSummary) { s.VCluster.Placed = false },
+		"the vcluster PRE-EXISTED":          func(s *FabricDemoSummary) { s.VCluster.CausedByPlacement = false },
+		"the vcluster delivered nothing":    func(s *FabricDemoSummary) { s.VCluster.ResourceCount = 0 },
+		"the vcluster leaked registration":  func(s *FabricDemoSummary) { s.VCluster.Deregistered = false },
+		"argocd was reinstalled":            func(s *FabricDemoSummary) { s.ArgoNotReinstalled = false },
+		"no verified fabric receipt":        func(s *FabricDemoSummary) { s.FabricPlanSHA = "" },
+		"drift ran and reported not-synced": func(s *FabricDemoSummary) { s.DriftInSync = false },
+		"drift ran and found drift":         func(s *FabricDemoSummary) { s.DriftDrifted = 2 },
 	}
-	for _, r := range refuters {
-		t.Run(r.name, func(t *testing.T) {
-			s := passingSummary()
-			r.break_(&s)
+	for name, breakOne := range refuters {
+		t.Run("refutes/"+name, func(t *testing.T) {
+			s := passingFabricDemoSummary()
+			breakOne(&s)
 			if fabricDemoVerdictPass(s) {
-				t.Fatalf("summary still passed with %q — the verdict is vacuous", r.name)
+				t.Fatalf("%q still read GREEN — that assertion is decorative, not load-bearing", name)
 			}
 		})
 	}
 
-	// A drift check that did NOT run must not gate (it is bounded work the scenario may skip when
-	// there is no base deploy job to alias state from) — but everything else must still hold.
-	s := passingSummary()
-	s.DriftChecked, s.DriftInSync, s.DriftDrifted = false, false, 7
+	// An UN-RUN drift check must not gate: it is an optional layer, unlike the vcluster tier.
+	s := passingFabricDemoSummary()
+	s.DriftChecked, s.DriftInSync, s.DriftDrifted = false, false, 0
 	if !fabricDemoVerdictPass(s) {
-		t.Fatal("an un-run drift check gated the verdict; only a check that RAN should")
+		t.Fatal("a drift check that never ran must not fail the verdict — only one that ran and reported badly")
 	}
 }
 
 func TestFabricDemoSummaryVerdict(t *testing.T) {
-	if got := fabricDemoSummaryVerdict(FabricDemoSummary{}); !strings.Contains(got, "skipped") {
-		t.Fatalf("disabled verdict = %q, want a skip line", got)
-	}
-	pass := fabricDemoSummaryVerdict(passingSummary())
-	if !strings.HasPrefix(pass, "✅") {
-		t.Fatalf("passing verdict = %q, want a ✅ prefix", pass)
-	}
-	for _, want := range []string{"dev→boutique-dev", "staging→boutique-staging", "receipt(fabric)", "drift: in_sync=true"} {
-		if !strings.Contains(pass, want) {
-			t.Fatalf("verdict %q is missing %q", pass, want)
+	t.Run("skipped", func(t *testing.T) {
+		got := fabricDemoSummaryVerdict(FabricDemoSummary{})
+		if !strings.Contains(got, "skipped") || !strings.Contains(got, envFabricDemo) {
+			t.Fatalf("verdict = %q, want a skip mentioning %s", got, envFabricDemo)
 		}
-	}
-	// The 64-char digest must be abbreviated — the verdict is a ONE-LINE step-summary row.
-	if strings.Contains(pass, strings.Repeat("a", 64)) {
-		t.Fatalf("verdict dumps the full plan digest: %q", pass)
-	}
+	})
 
-	s := passingSummary()
-	s.Tiers[0].Converged = false
-	if got := fabricDemoSummaryVerdict(s); !strings.HasPrefix(got, "❌") {
-		t.Fatalf("failing verdict = %q, want a ❌ prefix", got)
-	}
+	t.Run("passing", func(t *testing.T) {
+		got := fabricDemoSummaryVerdict(passingFabricDemoSummary())
+		for _, want := range []string{"✅", "overlays/dev", "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("verdict %q is missing %q", got, want)
+			}
+		}
+		// The digest is abbreviated, never dumped in full.
+		if strings.Contains(got, strings.Repeat("a", 64)) {
+			t.Errorf("verdict should abbreviate the plan digest, got %q", got)
+		}
+	})
+
+	t.Run("failing", func(t *testing.T) {
+		s := passingFabricDemoSummary()
+		s.Tiers[0].ResourceCount = 0
+		if got := fabricDemoSummaryVerdict(s); !strings.Contains(got, "❌") {
+			t.Fatalf("a failing summary must render ❌, got %q", got)
+		}
+	})
 }
 
 func TestShortPlanSHA(t *testing.T) {
 	if got := shortPlanSHA(""); got != "absent" {
-		t.Fatalf("empty digest rendered %q, want 'absent' — a missing receipt must SAY so", got)
+		t.Errorf("empty digest = %q, want absent", got)
 	}
 	if got := shortPlanSHA("abc"); got != "abc" {
-		t.Fatalf("short digest = %q", got)
+		t.Errorf("short digest = %q, want it verbatim", got)
 	}
-	if got := shortPlanSHA(strings.Repeat("b", 64)); got != strings.Repeat("b", 12)+"…" {
-		t.Fatalf("long digest = %q", got)
+	if got := shortPlanSHA(strings.Repeat("f", 64)); got != strings.Repeat("f", 12)+"…" {
+		t.Errorf("long digest = %q, want a 12-char abbreviation", got)
 	}
 }

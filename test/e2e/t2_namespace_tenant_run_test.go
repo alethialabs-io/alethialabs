@@ -69,7 +69,7 @@ func runT2NamespaceTenant(t *testing.T, ctx context.Context, cp *ControlPlane, k
 	}
 	t.Logf("seeded QUEUED namespace DEPLOY job %s (placement=namespace, cluster=%s, ns=%s)", jobID, p.fabricClust, ns)
 
-	status, err := cp.WaitTerminal(ctx, jobID, 15*time.Minute)
+	status, err := cp.WaitTerminal(ctx, jobID, nsTenantDeployWait)
 	if err != nil {
 		t.Fatalf("waiting for namespace job: %v", err)
 	}
