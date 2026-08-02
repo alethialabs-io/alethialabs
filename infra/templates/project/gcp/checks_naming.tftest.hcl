@@ -20,16 +20,30 @@ variables {
 
   # Everything the template can provision is off: NAMING-001 is decided from plain variables, before
   # any resource exists, and that is exactly the property under test.
+  #
+  # These are the REAL names from variables.tf. Eight of the ten this block used to set did not
+  # exist — provision_cloud_sql, provision_memorystore, provision_cloud_dns, provision_cloud_armor,
+  # provision_cloud_storage, provision_pubsub, provision_firestore, and provision_secret_manager
+  # (which has no flag at all; the template has no secret-manager toggle). Tofu's test harness
+  # silently IGNORES an undeclared variable, so the block read as "everything off" while only
+  # provision_gke and provision_artifact_registry took effect and every other component planned at
+  # its default. The test passed throughout, which is the problem: it proved far less than it
+  # claimed, and nothing failed to say so.
+  # provision_network stays ON, deliberately. Turning it off is a brownfield choice, not a
+  # "component off" toggle: checks_network.tf's brownfield_subnet_guard precondition then requires a
+  # resolvable external subnetwork and blocks the plan without one. That is the guard behaving
+  # correctly, and it is also the first proof that these names now bind to something — under the old
+  # misspelled list, setting a flag had no effect whatsoever.
   provision_gke               = false
-  provision_cloud_sql         = false
-  provision_memorystore       = false
-  provision_cloud_dns         = false
-  provision_cloud_armor       = false
-  provision_cloud_storage     = false
   provision_artifact_registry = false
-  provision_pubsub            = false
-  provision_secret_manager    = false
-  provision_firestore         = false
+  create_cloud_sql            = false
+  create_memorystore          = false
+  create_memorystore_valkey   = false
+  create_pubsub               = false
+  create_firestore            = false
+  create_cloud_storage        = false
+  cloud_dns_enabled           = false
+  cloud_armor_enabled         = false
 }
 
 # The stem at exactly its documented maximum (30 chars) must PASS. Paired with the 31-char run

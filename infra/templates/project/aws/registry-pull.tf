@@ -16,7 +16,19 @@ variable "registry_pull_target_role_arn" {
 }
 
 locals {
-  enable_ecr_pull = var.registry_pull_provider == "ecr-xacct"
+  # Two predicates, deliberately. What the OPERATOR ASKED FOR is cluster-independent and is what the
+  # misconfiguration checks in checks_registry.tf must keep judging; what gets BUILT additionally
+  # needs a cluster. Folding the cluster term into a single local would have silently disarmed those
+  # checks on every cluster-less shape — a wrong `registry_pull_target_role_arn` would then plan
+  # clean and be discovered when a pod could not pull.
+  ecr_pull_requested = var.registry_pull_provider == "ecr-xacct"
+
+  # `provision_eks` is part of the build predicate (#1772): the IRSA role below federates to
+  # module.eks[0].oidc_provider_arn, so `registry_pull_provider = ecr-xacct` on a cluster-less shape
+  # failed at PLAN ("Invalid index … module.eks is empty tuple"). The refresher is an in-cluster
+  # Deployment — with no cluster there is no KSA to annotate. Azure's registry-pull.tf already
+  # includes `var.provision_aks` in the identical local; this is the AWS parity.
+  enable_ecr_pull = var.provision_eks && local.ecr_pull_requested
   # Coupling point with packages/core/manifests (the registry-pull refresher KSA the wiring PR emits).
   registry_pull_ksa_namespace = "default"
   registry_pull_ksa_name      = "alethia-registry-pull"

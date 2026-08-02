@@ -11,9 +11,26 @@ module "rds_maindb" {
   aws_account_id = var.aws_account_id
   project_name   = var.project_name
 
-  rds_vpc_id          = var.provision_vpc ? module.common_vpc[0].vpc_id : var.vpc_id
-  rds_subnets         = var.provision_vpc ? module.common_vpc[0].database_subnets : var.vpc_private_subnet_ids
-  rds_security_groups = [module.eks[0].node_security_group_id]
+  rds_vpc_id  = var.provision_vpc ? module.common_vpc[0].vpc_id : var.vpc_id
+  rds_subnets = var.provision_vpc ? module.common_vpc[0].database_subnets : var.vpc_private_subnet_ids
+  # The cluster's node security group is what the DB admits traffic from — but a database is
+  # provisionable WITHOUT a cluster (`create_rds = true, provision_eks = false`), and the unguarded
+  # [0] failed the whole plan there (#1772). An empty list means "no cluster to admit";
+  # rds_allowed_cidr_blocks remains the caller's other way in.
+  #
+  # `var.provision_eks ?`, NOT the `length(module.eks) > 0` / `module.eks[*]` form used in outputs.tf.
+  # Both of those reference the module AS A WHOLE, and here that closes a dependency CYCLE that
+  # `tofu validate` refuses outright: module.eks reads local.secrets_kms_key_arns +
+  # local.eso_secret_arns, both of which read module.rds_maindb, which would then wait on module.eks.
+  # Testing the plain VARIABLE adds no graph edge at all, so the only module.eks reference left here
+  # is the single output — the edge stays output-to-output and the graph stays acyclic.
+  #
+  # And NOT `try()`, which was the first shape of this fix: try() swallows every evaluation error,
+  # not just the empty-tuple one, so the day `node_security_group_id` is renamed in modules/eks a
+  # NORMAL `provision_eks = true` apply silently degrades to an Aurora cluster with no cluster
+  # ingress instead of failing the plan. A ternary on a known variable short-circuits — the untaken
+  # branch is never evaluated — so it is exactly as safe and stays fail-closed.
+  rds_security_groups = var.provision_eks ? [module.eks[0].node_security_group_id] : []
 
   rds_allowed_cidr_blocks = var.rds_allowed_cidr_blocks
 

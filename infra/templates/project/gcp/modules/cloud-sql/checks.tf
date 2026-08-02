@@ -48,12 +48,22 @@ check "mysql_iam_auth_flag_present" {
 # Cloud SQL MySQL truncates the @ and domain, so the login is the SA local part — capped at 32 chars
 # on MySQL 8.0+ and required to be all lowercase. There is NO remediation for an over-long local
 # part: the SA has to be named ≤32 up front, which is why this fails the plan instead of truncating.
+#
+# `coalesce` in the MESSAGE, not in the condition. OpenTofu evaluates an error_message EAGERLY —
+# whether or not its condition failed — so interpolating `local.app_iam_user` raw broke the plan
+# outright on every shape where `app_iam_sa_email` is null:
+#   Error: Invalid template interpolation value … local.app_iam_user is null
+# and that is not a keyless-only shape: it is EVERY Cloud SQL instance without IAM auth
+# (`create_cloud_sql = true, cloud_sql_iam_auth = false`), which could not plan at all. Verified
+# against origin/dev, so it predates #1772 — found here because adding `var.provision_gke` to
+# locals.enable_app_db_iam makes a cluster-less keyless request produce exactly that null. The
+# conditions are unchanged and still fail-closed; only the message is made renderable.
 check "mysql_iam_user_fits_mysql_limits" {
   assert {
     condition = !(var.engine == "MYSQL" && var.app_iam_sa_email != null) || (
       length(local.app_iam_user) <= 32 && local.app_iam_user == lower(local.app_iam_user)
     )
-    error_message = "MySQL IAM login '${local.app_iam_user}' is longer than 32 characters or not lowercase; rename the app service account (its local part IS the login)."
+    error_message = "MySQL IAM login '${coalesce(local.app_iam_user, "(none)")}' is longer than 32 characters or not lowercase; rename the app service account (its local part IS the login)."
   }
 }
 
@@ -82,7 +92,9 @@ resource "terraform_data" "mysql_iam_auth_guard" {
       condition = !(var.engine == "MYSQL" && var.app_iam_sa_email != null) || (
         length(local.app_iam_user) <= 32 && local.app_iam_user == lower(local.app_iam_user)
       )
-      error_message = "GCP-MYSQL-IAM-002: MySQL IAM login '${local.app_iam_user}' exceeds 32 characters or is not lowercase. Apply blocked fail-closed — Cloud SQL MySQL truncates the @ and domain, so the service account's local part IS the login and there is no remediation but renaming it."
+      # coalesce for the same reason as the check above — a message that cannot render turns a
+      # passing precondition into a failed plan.
+      error_message = "GCP-MYSQL-IAM-002: MySQL IAM login '${coalesce(local.app_iam_user, "(none)")}' exceeds 32 characters or is not lowercase. Apply blocked fail-closed — Cloud SQL MySQL truncates the @ and domain, so the service account's local part IS the login and there is no remediation but renaming it."
     }
 
     precondition {

@@ -41,18 +41,26 @@ check "ecr_build_role_name_within_limit" {
 
 # Cross-account ECR pull (PR B): if ecr-xacct is selected, the refresher needs a target-account role
 # to assume — a missing ARN is a misconfigured connector, so fail the plan loudly.
+#
+# Keyed on `ecr_pull_requested`, NOT `enable_ecr_pull`: a missing target role is a mistake in the
+# CONNECTOR the operator configured, and it is just as wrong on a shape that happens to have no
+# cluster yet. Keying it on the build predicate (which gained `provision_eks` in #1772) would have
+# made this warning vanish exactly when the operator was setting the connector up.
 check "ecr_pull_xacct_target_configured" {
   assert {
-    condition     = !local.enable_ecr_pull || var.registry_pull_target_role_arn != ""
+    condition     = !local.ecr_pull_requested || var.registry_pull_target_role_arn != ""
     error_message = "registry_pull_provider = ecr-xacct requires registry_pull_target_role_arn (the target-account role the refresher assumes for cross-account ECR pull)."
   }
 }
 
 
 # The cross-account pull IRSA role name must fit IAM's 64-char role-name limit (it embeds the EKS name).
+# Keyed on the request, not the build — see the note above. `local.eks_name` is derived from
+# environment/project_name and exists whether or not the cluster does, so the name is checkable
+# either way, and a too-long name is worth reporting before the cluster is switched on.
 check "ecr_pull_xacct_role_name_within_limit" {
   assert {
-    condition     = !local.enable_ecr_pull || length("ecr-pull-xacct-${local.eks_name}") <= 64
+    condition     = !local.ecr_pull_requested || length("ecr-pull-xacct-${local.eks_name}") <= 64
     error_message = "Derived ecr-pull-xacct-<eks_name> role name exceeds IAM's 64-character limit; shorten environment/project_name."
   }
 }
