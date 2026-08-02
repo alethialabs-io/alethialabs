@@ -587,6 +587,12 @@ jobs:
       # whatever diff is nearby. These fixtures are hermetic — no network, no gh, no token.
       - name: Nightly rollup derivation (a red leg is never "not enabled")
         run: bash scripts/e2e/nightly-rollup.sh --self-test
+      # Which dimension a nightly proved decides the tracking issue's TITLE, and the title is the
+      # dedup key: keyed on the cloud alone, the floor and the weekly full bar collapse onto one
+      # issue and the second red filed is silently dropped — which is how the full bar ran unwatched
+      # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
+      - name: Nightly dimension resolution (floor and full-bar never collide)
+        run: bash scripts/e2e/resolve-dimension.sh --self-test
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
