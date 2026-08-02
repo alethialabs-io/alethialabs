@@ -249,7 +249,17 @@ describeIfDb("BYO-IaC continuous re-proving + reconcile — real Postgres", () =
 		expect(first).toHaveLength(1);
 
 		// Complete the first check and advance past the cadence.
-		await db.update(jobs).set({ status: "SUCCESS" }).where(eq(jobs.id, first[0].id));
+		//
+		// `created_at` MUST be pinned to the simulated clock, not left at the database's now().
+		// sweepDriftSchedule stamps the row it inserts with the DB's wall clock, while the cadence
+		// comparison below advances `now` — so leaving it implicit puts two different clocks in one
+		// assertion and the test passes only while real time happens to sit far enough behind
+		// `now`. With a 7-day dev cadence that made it green before 13:00 UTC on 2026-08-02 and red
+		// for every run after, on every branch at once (#1783). One clock, always.
+		await db
+			.update(jobs)
+			.set({ status: "SUCCESS", created_at: now })
+			.where(eq(jobs.id, first[0].id));
 		const later = new Date(now.getTime() + DRIFT_CADENCE_MS.dev + 3_600_000);
 
 		await sweepDriftSchedule(later);
