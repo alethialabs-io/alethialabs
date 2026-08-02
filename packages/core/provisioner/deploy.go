@@ -25,6 +25,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -1093,7 +1094,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		var desiredHelmRepoRefreshers []string
 		if os.Getenv("ALETHIA_XACCT_HELM_ECR_ENABLED") == "true" {
 			irsa, _ := result.Outputs["helm_repo_pull_irsa_arn"].(string)
-			res := renderKeylessHelmRefreshers(vc, irsa, os.Getenv("ALETHIA_RUNNER_IMAGE"))
+			res := renderKeylessHelmRefreshers(vc, irsa, selfimage.Ref())
 			if res.SkippedTargets != nil {
 				fmt.Fprintf(stderr, "Warning: some keyless Helm ECR targets were skipped: %v\n", res.SkippedTargets)
 			}
