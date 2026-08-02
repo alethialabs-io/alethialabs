@@ -1781,6 +1781,15 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "ArgoCD apps repository",
 						description: "The Git repo ArgoCD syncs application manifests from.",
 					},
+					{
+						key: "apps_path",
+						type: "text",
+						label: "Overlay path",
+						mono: true,
+						placeholder: "repository root",
+						description:
+							"Subdirectory this environment syncs, e.g. overlays/dev. Leave empty to sync the repository root.",
+					},
 				],
 			},
 		],

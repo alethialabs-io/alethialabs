@@ -138,7 +138,7 @@ const KINDS: Record<string, KindDef> = {
 		table: projectRepositories,
 		singleton: true,
 		fields: createInsertSchema(projectRepositories)
-			.pick({ apps_destination_repo: true })
+			.pick({ apps_destination_repo: true, apps_path: true })
 			.partial(),
 	},
 	databases: {

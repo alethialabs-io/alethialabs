@@ -730,11 +730,15 @@ export const NODE_REGISTRY: NodeRegistry = {
 						.replace(/\.git$/, ""),
 				},
 				{ label: "Syncs", value: "ArgoCD" },
+				{ label: "Path", value: config.apps_path || "repository root" },
 			],
 		},
 		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },
 		defaultData: () => ({
 			apps_destination_repo: "",
+			// "" is the unset form, not a distinct value — the snapshot emit treats empty
+			// and null alike and leaves the key absent, so the runner syncs the repo root.
+			apps_path: "",
 		}),
 	},
 	// A marketplace add-on the cluster comes up with (Grafana, Loki, Vault, …). Browsed from the Add

@@ -77,6 +77,7 @@ export type CliProjectConfig = {
 
 	// Repositories
 	apps_destination_repo: string | null;
+	apps_path: string | null;
 
 	// Aggregated (mirrors the view: scoped to non-DESTROYED components)
 	has_database: boolean;
@@ -152,6 +153,7 @@ function toCliConfig(
 		dns_status: c.dns?.status ?? null,
 
 		apps_destination_repo: c.repositories?.apps_destination_repo ?? null,
+		apps_path: c.repositories?.apps_path ?? null,
 
 		has_database: activeDbs.length > 0,
 		db_min_capacity: minCaps.length ? Math.min(...minCaps) : null,
