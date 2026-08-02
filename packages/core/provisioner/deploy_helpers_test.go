@@ -16,6 +16,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 )
 
@@ -23,9 +24,11 @@ func resetDeploySeams(t *testing.T) {
 	t.Helper()
 	origExecuteCommand := executeCommand
 	origExecuteCommandWithOutput := executeCommandWithOutput
+	origNamespacePostMortem := namespacePostMortem
 	t.Cleanup(func() {
 		executeCommand = origExecuteCommand
 		executeCommandWithOutput = origExecuteCommandWithOutput
+		namespacePostMortem = origNamespacePostMortem
 	})
 }
 
@@ -294,7 +297,9 @@ func TestInstallArgoCDBuildsIngressCommandOnlyWhenCertificateExists(t *testing.T
 	for _, want := range []string{
 		"helm upgrade --install argo-cd",
 		"--set redisSecretInit.enabled=false",
-		"--wait --timeout 5m",
+		// Derived from the resolver, not a literal, so the assertion cannot drift from the source
+		// when the default budget is retuned. The env-override case is covered separately below.
+		"--wait --timeout " + utils.ShellQuote(argocd.ResolvedArgoInstallTimeout()),
 		"server.ingress.enabled=true",
 		"server.ingress.hostname=argocd.example.com",
 		"arn:aws:acm:region:acct:certificate/123",
@@ -314,6 +319,81 @@ func TestInstallArgoCDBuildsIngressCommandOnlyWhenCertificateExists(t *testing.T
 	}
 	if strings.Contains(commands[len(commands)-1], "server.ingress.enabled=true") {
 		t.Fatalf("install command enabled ingress without certificate:\n%s", commands[len(commands)-1])
+	}
+}
+
+// TestInstallArgoCDHonoursTimeoutOverride pins that the env knob actually reaches the helm command.
+// The assertion above derives its expectation from the same resolver, so it would pass even if the
+// timeout were never interpolated — this is the case that proves the wiring.
+func TestInstallArgoCDHonoursTimeoutOverride(t *testing.T) {
+	resetDeploySeams(t)
+	t.Setenv(argocd.ArgoInstallTimeoutEnv, "23m")
+
+	executeCommandWithOutput = func(string, string, []string) (string, error) {
+		return "existing-auth", nil
+	}
+	var commands []string
+	executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+		commands = append(commands, command)
+		return nil
+	}
+
+	err := installArgoCD(context.Background(), &types.ProjectConfig{}, nil, &PlanResult{}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("installArgoCD: %v", err)
+	}
+	install := commands[len(commands)-1]
+	if !strings.Contains(install, "--wait --timeout '23m'") {
+		t.Fatalf("install command did not carry the overridden timeout:\n%s", install)
+	}
+}
+
+// TestInstallArgoCDDumpsPostMortemOnHelmFailure pins the #1734 contract: when the helm install
+// fails, the namespace's state is dumped to STDOUT before the error propagates — and the install
+// still FAILS CLOSED (#1718). Three nights of the aws nightly died here with nothing to act on
+// because helm's "context deadline exceeded" names neither the pod nor the reason.
+func TestInstallArgoCDDumpsPostMortemOnHelmFailure(t *testing.T) {
+	resetDeploySeams(t)
+
+	executeCommandWithOutput = func(string, string, []string) (string, error) {
+		return "existing-auth", nil
+	}
+	executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+		if strings.Contains(command, "helm upgrade --install argo-cd") {
+			return errors.New("exit status 1")
+		}
+		return nil
+	}
+	var dumped []string
+	namespacePostMortem = func(ns string) string {
+		dumped = append(dumped, ns)
+		return "POST-MORTEM BODY"
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := installArgoCD(context.Background(), &types.ProjectConfig{}, nil, &PlanResult{}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("installArgoCD returned nil — the install must still FAIL CLOSED (#1718)")
+	}
+	if len(dumped) != 1 || dumped[0] != "argocd" {
+		t.Fatalf("post-mortem calls = %#v, want exactly one for the argocd namespace", dumped)
+	}
+	if !strings.Contains(stdout.String(), "POST-MORTEM BODY") {
+		t.Fatalf("post-mortem did not reach stdout:\n%s", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "POST-MORTEM BODY") {
+		t.Fatal("post-mortem went to stderr; it must be on stdout so the runner log and console job log both carry it")
+	}
+
+	// The success path must not dump: a post-mortem on a healthy install is noise that trains
+	// readers to ignore it.
+	dumped = nil
+	executeCommand = func(string, string, []string, io.Writer, io.Writer) error { return nil }
+	if err := installArgoCD(context.Background(), &types.ProjectConfig{}, nil, &PlanResult{}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("installArgoCD on the success path: %v", err)
+	}
+	if len(dumped) != 0 {
+		t.Fatalf("post-mortem ran on the success path: %#v", dumped)
 	}
 }
 
