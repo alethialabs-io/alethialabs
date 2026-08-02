@@ -1,0 +1,295 @@
+{
+	"generated_from": "config-schema.ts",
+	"providers": [
+		"aws",
+		"gcp",
+		"azure",
+		"alibaba",
+		"hetzner"
+	],
+	"offers": [
+		{
+			"kind": "bucket",
+			"key": "encryption_enabled",
+			"type": "switch",
+			"label": "Encryption at rest",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "bucket",
+			"key": "public_access",
+			"type": "switch",
+			"label": "Public access",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "bucket",
+			"key": "versioning",
+			"type": "switch",
+			"label": "Versioning",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "cache",
+			"key": "multi_az",
+			"type": "switch",
+			"label": "Multi-AZ",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "database",
+			"key": "iam_auth",
+			"type": "switch",
+			"label": "IAM authentication",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {
+				"alibaba": "Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password.",
+				"hetzner": "Unavailable on Hetzner. Postgres runs in-cluster via CloudNativePG — there is no managed instance and no cloud identity plane to mint database tokens against. This database keeps a generated password."
+			},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "dns",
+			"key": "enabled",
+			"type": "switch",
+			"label": "Enabled",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "dns",
+			"key": "managed_certificate",
+			"type": "switch",
+			"label": "Managed TLS certificate",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "dns",
+			"key": "waf_enabled",
+			"type": "switch",
+			"label": "Web application firewall (WAF)",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "network",
+			"key": "provision_network",
+			"type": "switch",
+			"label": "Provision a new network",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "network",
+			"key": "single_nat_gateway",
+			"type": "switch",
+			"label": "Single NAT gateway",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		},
+		{
+			"kind": "nosql",
+			"key": "point_in_time_recovery",
+			"type": "switch",
+			"label": "Point-in-time recovery",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "queue",
+			"key": "ordered",
+			"type": "switch",
+			"label": "Ordered (FIFO) delivery",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "registry",
+			"key": "immutable_tags",
+			"type": "switch",
+			"label": "Immutable tags",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "registry",
+			"key": "vulnerability_scanning",
+			"type": "switch",
+			"label": "Vulnerability scanning",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "secret",
+			"key": "generate",
+			"type": "switch",
+			"label": "Auto-generate value",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "secret",
+			"key": "special_chars",
+			"type": "switch",
+			"label": "Include special characters",
+			"gated": true,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": [
+				"hetzner"
+			]
+		},
+		{
+			"kind": "service",
+			"key": "probe_enabled",
+			"type": "switch",
+			"label": "Health check",
+			"gated": false,
+			"offeredOn": [
+				"aws",
+				"gcp",
+				"azure",
+				"alibaba",
+				"hetzner"
+			],
+			"unavailableOn": {},
+			"notOfferedOn": []
+		}
+	]
+}
