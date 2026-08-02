@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 )
 
 // Container runs a job's untrusted work in a fresh per-job container by re-exec'ing
@@ -49,8 +51,9 @@ type Container struct {
 
 var _ Sandbox = Container{}
 
-// NewContainerFromEnv builds a Container from ALETHIA_SANDBOX_* env, defaulting the
-// image to the runner's own image ref (ALETHIA_SANDBOX_IMAGE, else ALETHIA_RUNNER_IMAGE).
+// NewContainerFromEnv builds a Container from ALETHIA_SANDBOX_* env, defaulting the image to the
+// runner's own image ref: ALETHIA_SANDBOX_IMAGE first, then selfimage.Ref() (the operator override
+// ALETHIA_RUNNER_IMAGE, else the ref baked into a published runner image at build time).
 func NewContainerFromEnv(operator string) (Container, error) {
 	runtime := strings.TrimSpace(os.Getenv("ALETHIA_SANDBOX_RUNTIME"))
 	if runtime == "" {
@@ -61,7 +64,7 @@ func NewContainerFromEnv(operator string) (Container, error) {
 	}
 	image := strings.TrimSpace(os.Getenv("ALETHIA_SANDBOX_IMAGE"))
 	if image == "" {
-		image = strings.TrimSpace(os.Getenv("ALETHIA_RUNNER_IMAGE"))
+		image = selfimage.Ref()
 	}
 	c := Container{
 		Runtime:        runtime,
@@ -73,7 +76,13 @@ func NewContainerFromEnv(operator string) (Container, error) {
 		MemLimit:       envOr("ALETHIA_SANDBOX_MEMORY", "2g"),
 	}
 	if c.Image == "" {
-		return Container{}, fmt.Errorf("sandbox image is required (set ALETHIA_SANDBOX_IMAGE)")
+		// Reached only by a runner with no published image ref — a locally built or natively run
+		// one. Name both remedies rather than only the sandbox variable, because the usual cause is
+		// running outside a published image rather than a missing sandbox override.
+		return Container{}, fmt.Errorf(
+			"sandbox image is required: set %s, or run a published runner image (the build bakes %s)",
+			"ALETHIA_SANDBOX_IMAGE", selfimage.EnvBaked,
+		)
 	}
 	return c, nil
 }
