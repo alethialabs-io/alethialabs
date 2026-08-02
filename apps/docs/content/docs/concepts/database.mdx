@@ -117,6 +117,7 @@ Application deployment repository reference.
 | `id` | uuid (PK) | |
 | `project_id` | uuid (UNIQUE FK) | |
 | `apps_destination_repo` | text | Application output destination repo |
+| `apps_path` | text | Subpath of that repo the environment syncs — its per-tier overlay, such as `overlays/dev`. Empty means the repository root. Namespace and vcluster placements only. |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
 
