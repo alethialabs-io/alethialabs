@@ -13,7 +13,8 @@ import {
 	getVerifiedCloudIdentities,
 	type CloudIdentityOption,
 } from "@/app/server/actions/aws/identities";
-import { useCloudProvider, groupRegions } from "@/lib/cloud-providers";
+import { groupRegions } from "@/lib/cloud-providers";
+import { useCloudProviderStore as useCloudProvider } from "@/lib/stores/use-cloud-provider-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
