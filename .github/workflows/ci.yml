@@ -620,7 +620,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
           cache-dependency-path: ${{ matrix.module }}/go.sum
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
@@ -761,7 +761,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: "1.9.0"
@@ -808,7 +808,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -850,7 +850,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - run: pnpm install --frozen-lockfile
       - name: TS mutation (Stryker — lib + actions)
         run: pnpm -F console mutate || true
