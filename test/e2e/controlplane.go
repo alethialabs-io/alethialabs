@@ -245,6 +245,21 @@ func (cp *ControlPlane) JobState(ctx context.Context, jobID string) (status stri
 	return status, metaRaw, err
 }
 
+// JobFailureDetail returns a job's error_message and execution_metadata — the two columns a
+// terminal-failure report needs. Kept separate from JobState (which three call sites share)
+// because only the failure path wants error_message; widening JobState would churn all of them.
+func (cp *ControlPlane) JobFailureDetail(ctx context.Context, jobID string) (errMsg string, meta []byte, err error) {
+	var msg *string
+	var metaRaw []byte
+	err = cp.pool.QueryRow(ctx,
+		`SELECT error_message, execution_metadata FROM public.jobs WHERE id = $1`, jobID).
+		Scan(&msg, &metaRaw)
+	if msg != nil {
+		errMsg = *msg
+	}
+	return errMsg, metaRaw, err
+}
+
 // WaitTerminal polls the job row until it reaches a terminal status (SUCCESS/FAILED/
 // CANCELLED) or the deadline elapses — a BOUNDED wait so a runner that never claims,
 // or a spine that hangs, fails loudly instead of blocking forever.

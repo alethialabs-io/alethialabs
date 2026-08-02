@@ -368,12 +368,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	})
 
 	// ── Wait (bounded) for the job to go terminal, then assert on the REAL DB rows. ──
+	// The DB block goes FIRST, before the runner output: the runner buffer is what the CI log
+	// renderer truncates, and on the #1734 nightlies it cut off long before the actual error, so
+	// triage meant downloading the t2-runner-log artifact. error_message + gitops_status say which
+	// step died in the first few lines of the failure.
 	status, err := cp.WaitTerminal(ctx, jobID, waitTimeout)
 	if err != nil {
-		t.Fatalf("waiting for job to finish: %v\n──── runner output ────\n%s", err, runnerOut.String())
+		t.Fatalf("waiting for job to finish: %v\n%s──── runner output ────\n%s",
+			err, jobFailureDump(ctx, cp, jobID), runnerOut.String())
 	}
 	if status != "SUCCESS" {
-		t.Fatalf("job terminal status = %q, want SUCCESS\n──── runner output ────\n%s", status, runnerOut.String())
+		t.Fatalf("job terminal status = %q, want SUCCESS\n%s──── runner output ────\n%s",
+			status, jobFailureDump(ctx, cp, jobID), runnerOut.String())
 	}
 
 	_, metaRaw, err := cp.JobState(ctx, jobID)

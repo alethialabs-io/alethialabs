@@ -6,6 +6,7 @@ package argocd
 import (
 	"os"
 	"strings"
+	"time"
 )
 
 // The ArgoCD Helm chart repo + version the installer uses. Kept config-driven (env override with the
@@ -30,6 +31,21 @@ const (
 	ArgoHelmRepoEnv = "ALETHIA_ARGOCD_HELM_REPO"
 	// ArgoChartVersionEnv overrides DefaultArgoChartVersion.
 	ArgoChartVersionEnv = "ALETHIA_ARGOCD_CHART_VERSION"
+
+	// DefaultArgoInstallTimeout is the `helm --wait` budget for the argo-cd chart. The previous 5m
+	// was too tight on the T2 green-floor shape: ONE t3.large (2 BURSTABLE vCPU / 8 GiB, 20 GB disk,
+	// cold image cache) has to schedule ~7 pods, pull the argocd/dex/redis images and pass every
+	// readiness probe, and it timed out three nights running with `context deadline exceeded` (#1734).
+	//
+	// The ceiling is NOT the 80m go-test timeout — it is the T2 harness's per-job WaitTerminal
+	// (aws: 50m, test/e2e/t2_providers.go). The failing run reached its terminal status in 24m37s
+	// WITH the full 5m wait consumed, so the rest of the deploy spine costs ~20m; on the success
+	// path the post-ArgoCD work (infra-services + addonConvergeTimeout, itself 10m) still has to
+	// fit. 10m doubles the budget while leaving that headroom intact. Raise it per-run with the env
+	// override rather than by editing this constant.
+	DefaultArgoInstallTimeout = "10m"
+	// ArgoInstallTimeoutEnv overrides DefaultArgoInstallTimeout (a Go duration, e.g. "20m").
+	ArgoInstallTimeoutEnv = "ALETHIA_ARGOCD_INSTALL_TIMEOUT"
 )
 
 // ResolvedArgoHelmRepo returns ALETHIA_ARGOCD_HELM_REPO when set, else DefaultArgoHelmRepo.
@@ -46,4 +62,22 @@ func ResolvedArgoChartVersion() string {
 		return v
 	}
 	return DefaultArgoChartVersion
+}
+
+// ResolvedArgoInstallTimeout returns ALETHIA_ARGOCD_INSTALL_TIMEOUT when it parses as a POSITIVE Go
+// duration, else DefaultArgoInstallTimeout.
+//
+// Unlike the two resolvers above this VALIDATES rather than passing the value through: helm rejects
+// a malformed --timeout and exits immediately, so a typo'd override would surface as an instant
+// "ArgoCD install failed" and read as a broken chart rather than a bad env var — the same class of
+// misdiagnosis this whole change exists to remove.
+func ResolvedArgoInstallTimeout() string {
+	v := strings.TrimSpace(os.Getenv(ArgoInstallTimeoutEnv))
+	if v == "" {
+		return DefaultArgoInstallTimeout
+	}
+	if d, err := time.ParseDuration(v); err != nil || d <= 0 {
+		return DefaultArgoInstallTimeout
+	}
+	return v
 }
