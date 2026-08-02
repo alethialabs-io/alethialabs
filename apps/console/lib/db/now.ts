@@ -14,12 +14,22 @@ import type { Db } from "@/lib/db";
  * it. A sweeper that reads those timestamps back and asks "is this older than the cadence?" has to
  * ask the same clock, not its own replica's — otherwise the arithmetic spans two clocks that are
  * free to drift apart, and the answer is wrong by however far they have drifted.
+ *
+ * Asked for as epoch seconds rather than as a `timestamptz`, and read positionally, so the value
+ * crosses the driver boundary as a plain number under whatever shape `execute` returns. `select
+ * now()` was tried first and came back as something that failed an `instanceof Date` check — and
+ * that check is unreliable regardless, because a test framework faking time replaces the global
+ * `Date`, so a driver-built date is no longer an instance of it. The explicit `::double precision`
+ * also pins the return type across the PG14 change where `extract()` began yielding `numeric`.
  */
 export async function dbNow(db: Db): Promise<Date> {
-	const rows = await db.execute<{ now: Date }>(sql`select now() as now`);
-	const now = rows[0]?.now;
-	if (!(now instanceof Date)) {
-		throw new Error("dbNow: the database did not return a timestamp");
+	const rows = await db.execute<Record<string, unknown>>(
+		sql`select extract(epoch from now())::double precision as epoch_s`,
+	);
+	const row = rows[0];
+	const epochSeconds = row === undefined ? Number.NaN : Number(Object.values(row)[0]);
+	if (!Number.isFinite(epochSeconds)) {
+		throw new Error("dbNow: the database did not return a usable timestamp");
 	}
-	return now;
+	return new Date(epochSeconds * 1000);
 }
