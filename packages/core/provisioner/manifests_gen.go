@@ -584,3 +584,26 @@ func hasManifests(dir string) bool {
 	}
 	return false
 }
+
+// liveCellKeylessFailures names the keyless bindings that failed closed on a cell we claim to
+// support, formatted for the deploy error. Returns nothing for an excluded or pending cell — that
+// refusal is a product boundary, already surfaced as a warning and on the Deploy tab.
+//
+// A decision with an EMPTY cell state is treated as a failure too. That state means the provider ×
+// engine pair is not in the table at all, which is the fail-closed table's own "unknown" — and an
+// unknown must not be quieter than a known-supported one. Reading it as "not live, so only a
+// warning" is precisely the fail-open direction this whole gate exists to prevent.
+func liveCellKeylessFailures(decisions []manifests.KeylessBindingDecision) []string {
+	var failed []string
+	for _, d := range decisions {
+		if d.Status != manifests.KeylessBindingFailedClosed {
+			continue
+		}
+		if d.CellState == manifests.KeylessCellExcluded || d.CellState == manifests.KeylessCellPending {
+			continue
+		}
+		failed = append(failed, fmt.Sprintf("%s→%s/%s (%s): %s",
+			d.Service, d.TargetKind, d.TargetName, d.Engine, d.Reason))
+	}
+	return failed
+}

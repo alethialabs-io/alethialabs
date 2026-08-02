@@ -1062,6 +1062,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// exactly what explains a half-wired app.
 		result.KeylessBindings = keylessBindings
 
+		// A keyless binding that failed closed on a LIVE cell fails the deploy (#1790).
+		//
+		// Fail-closed at render time was always right — the alternative is silently handing the
+		// workload a password the operator asked us not to use. What was wrong is what happened
+		// next: the refusal became a warning on a job reporting success, so "keyless binding
+		// omitted" and "deploy succeeded" were the same event, and the app came up with no database
+		// environment at all. That is how the missing ALETHIA_RUNNER_IMAGE (#1787) stayed invisible
+		// long enough to hold up two programs.
+		//
+		// The severity turns on the CELL, not on the refusal. An excluded or pending cell is a
+		// product boundary doing its job — the canvas disables the toggle there and the server gate
+		// at projects.ts already throws — so it stays a warning. A LIVE cell is one we claim to
+		// support: a refusal there is always a defect on our side, and is exactly the case nobody
+		// was being told about.
+		//
+		// Runs after the apply, so the infrastructure exists and stays. What the failure reports is
+		// the truth — the app wiring did not complete. Deliberately not overridable: unlike
+		// COMPAT-001 there is nothing here for an operator to weigh. A live cell that cannot wire is
+		// our bug to fix, not their risk to accept.
+		if failed := liveCellKeylessFailures(keylessBindings); len(failed) > 0 {
+			return nil, fmt.Errorf(
+				"keyless database binding failed closed on %d supported cell(s), leaving the workload with no database credentials: %s",
+				len(failed), strings.Join(failed, "; "))
+		}
+
 		setStage("addons")
 		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos
 		// (helm_registry connectors) BEFORE the add-on / BYO Applications sync — ArgoCD matches these
