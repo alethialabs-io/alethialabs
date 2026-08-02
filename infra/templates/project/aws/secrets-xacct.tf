@@ -22,6 +22,19 @@ locals {
   # The external-secrets operator's IRSA role NAME, derived from its ARN
   # (arn:aws:iam::<acct>:role/<name>). ESO's operator ServiceAccount is annotated with this role, so
   # adding the assume permission here is what lets `spec.provider.aws.role` reach the target account.
+  #
+  # This local was NOT one of #1772's thirteen break sites, and it needs no `try()`. Two facts make
+  # the bare index safe, and both are worth stating because the opposite was believed while #1772 was
+  # being fixed: (1) `enable_secrets_xacct` above already carries `var.provision_eks`, so on a
+  # cluster-less shape the condition is FALSE; and (2) OpenTofu SHORT-CIRCUITS a conditional whose
+  # condition is known at plan time — the untaken branch is never evaluated, so `module.eks[0]` is
+  # never reached. (Measured: reverting this line to the bare index leaves the cluster-less proof in
+  # checks_cluster_optional.tftest.hcl green, and the unfixed template's thirteen "Invalid index"
+  # errors name outputs.tf and irsa.tf only.)
+  #
+  # Left fail-closed on purpose. A `try()` here would swallow a future rename of
+  # eks_irsa_external_secrets_arn into "" → `element(split("/", ""), 1)` → an aws_iam_role_policy with
+  # an empty `role`, demoting a loud plan error into a mid-apply one on the greenfield path.
   eso_irsa_role_name = local.enable_secrets_xacct ? element(split("/", module.eks[0].eks_irsa_external_secrets_arn), 1) : ""
 }
 

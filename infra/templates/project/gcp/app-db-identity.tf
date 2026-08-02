@@ -15,7 +15,25 @@ locals {
   # Coupling point with packages/core/manifests (keylessKSAName / keylessKSANamespace).
   app_ksa_namespace = "default"
   app_ksa_name      = "alethia-app"
-  enable_app_db_iam = var.create_cloud_sql && var.cloud_sql_iam_auth
+
+  # What the OPERATOR ASKED FOR, cluster-independent — checks_data.tf judges this, so the
+  # keyless_cloud_sql_app_identity_wired warning keeps firing on a cluster-less shape instead of
+  # going silent the moment the build predicate learned about the cluster.
+  app_db_iam_requested = var.create_cloud_sql && var.cloud_sql_iam_auth
+
+  # What gets BUILT additionally needs the cluster, for the same reason as registry-pull.tf's
+  # enable_gar_pull: google_service_account_iam_member.app_db_wi below binds this GSA into the GKE
+  # WORKLOAD IDENTITY POOL, which is created BY the cluster and named as a plain STRING — so with
+  # `create_cloud_sql = true, cloud_sql_iam_auth = true, provision_gke = false` it planned clean and
+  # failed at APPLY with "Error 400: Identity Pool does not exist". Azure gates the equivalent local
+  # on `var.provision_aks` (app-db-identity.tf) and AWS's RDS-IAM IRSA role now gates on
+  # `var.provision_eks`; this is the GCP parity for #1772.
+  #
+  # Consequence, deliberately: with no cluster the app GSA is not created and cloud-sql.tf therefore
+  # registers no CLOUD_IAM_SERVICE_ACCOUNT database user. That is the honest answer — the identity's
+  # whole purpose is to be impersonated by an in-cluster KSA — and the check above still says so out
+  # loud rather than letting it pass unremarked.
+  enable_app_db_iam = var.provision_gke && local.app_db_iam_requested
 }
 
 resource "google_service_account" "app_db" {

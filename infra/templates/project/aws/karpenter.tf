@@ -5,7 +5,11 @@ resource "aws_iam_service_linked_role" "spot" {
 
 ## Karpenter
 module "karpenter" {
-  count   = var.enable_karpenter ? 1 : 0
+  # `enable_karpenter` was the WRONG flag on its own (#1772): every argument below reads
+  # module.eks[0], so `enable_karpenter = true, provision_eks = false` failed at PLAN with
+  # "Invalid index … module.eks is empty tuple" instead of simply provisioning nothing. Karpenter
+  # is a node autoscaler for a cluster — without one there is nothing for it to scale.
+  count   = var.enable_karpenter && var.provision_eks ? 1 : 0
   source  = "terraform-aws-modules/eks/aws//modules/karpenter"
   version = "20.31.6"
 
