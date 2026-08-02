@@ -10,10 +10,6 @@
 # append-point is what made concurrent feature branches conflict here repeatedly.
 
 locals {
-  # GCP resource ids (GKE cluster, Cloud SQL instance) are commonly capped around 40 characters.
-  # The templates name them from "<environment>-<project_name>[-suffix]"; assert the stem is short.
-  gcp_name_stem_len = length("${var.environment}-${var.project_name}")
-
   # Kubernetes major/minor parsed from gke_cluster_version ("1.35" -> 1 / 35). -1 when unparseable, so a
   # missing/garbage version fails the COMPAT-001 guard closed rather than passing vacuously. The window
   # literals below are the GCP supported minors from the compat matrix
@@ -31,14 +27,9 @@ check "project_name_non_empty" {
   }
 }
 
-# The <environment>-<project_name> naming stem must stay short enough for GKE / Cloud SQL ids
-# (which cap around 40 chars, minus room for per-resource suffixes).
-check "gcp_name_stem_within_limit" {
-  assert {
-    condition     = local.gcp_name_stem_len <= 30
-    error_message = "environment-project_name stem exceeds 30 chars; GKE/Cloud SQL resource ids will overflow their ~40-char cap once suffixed."
-  }
-}
+# The <environment>-<project_name> naming-stem invariant moved to checks_naming.tf (NAMING-001),
+# where it is paired with the terraform_data precondition that actually BLOCKS an over-long stem.
+# It lived here as a `check` alone, which only warns — see #1716.
 
 # A GKE Kubernetes master version must be set when GKE is provisioned.
 check "gke_cluster_version_present" {
