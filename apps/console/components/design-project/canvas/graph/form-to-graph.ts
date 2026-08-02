@@ -86,7 +86,12 @@ export function formToGraph(
 		);
 	if (form.dns?.enabled)
 		nodes.push(makeNode("dns", { ...form.dns }, { x: 680, y: 180 }, ownOf(form.dns)));
-	if (form.repositories?.apps_destination_repo)
+	// The node exists when EITHER repositories column is set. Gating on the repo URL alone was
+	// safe while it was the only column, but #1767 made `apps_path` independently settable (the
+	// CLI's `--set apps_path=…` takes one field at a time). A repo-less row would then build no
+	// node, graphToForm would hand back `{}`, and updateProjectDesign's delete-then-insert would
+	// re-insert an empty row — the overlay path silently gone on the next canvas save, no error.
+	if (form.repositories?.apps_destination_repo || form.repositories?.apps_path)
 		nodes.push(
 			makeNode("repositories", { ...form.repositories }, { x: 900, y: 180 }),
 		);

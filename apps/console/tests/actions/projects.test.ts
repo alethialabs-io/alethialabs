@@ -1907,7 +1907,10 @@ describe("getProjectAsFormData", () => {
 				],
 			],
 			[projectDns, [{ enabled: false }]],
-			[projectRepositories, [{ apps_destination_repo: "git@x" }]],
+			[
+				projectRepositories,
+				[{ apps_destination_repo: "git@x", apps_path: "overlays/dev" }],
+			],
 			[
 				projectDatabases,
 				[
@@ -1971,6 +1974,30 @@ describe("getProjectAsFormData", () => {
 			instance_types: ["m5.large"],
 			cluster_version: "1.31",
 		});
+	});
+
+	// #1767 — the DB → form direction, which the config-snapshot tests cannot see. This is the
+	// path a clone, a duplicate-environment and EVERY canvas edit-page load run through: the
+	// mapper builds `repositories` field by field, so a column it forgets is silently dropped and
+	// then written back as empty by the next save. `toEqual` (not `toMatchObject`) so a future
+	// column added to the table and forgotten here fails rather than passing unnoticed.
+	it("round-trips repositories.apps_path out of the DB — the clone/edit hydration path", async () => {
+		setupDb({ select: formSelect() });
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.repositories).toEqual({
+			apps_destination_repo: "git@x",
+			apps_path: "overlays/dev",
+		});
+	});
+
+	it("leaves apps_path undefined when the stored row has none", async () => {
+		const m = formSelect();
+		m.set(projectRepositories, [{ apps_destination_repo: "git@x", apps_path: null }]);
+		setupDb({ select: m });
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.repositories.apps_path).toBeUndefined();
 	});
 
 	it("throws when the linked identity cannot be resolved", async () => {
