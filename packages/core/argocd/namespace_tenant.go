@@ -210,6 +210,12 @@ func (in NamespaceTenantInput) validate() error {
 	case strings.TrimSpace(in.Namespace) == "":
 		return fmt.Errorf("namespace tenant: namespace is required")
 	}
+	// The apps path is user-controlled project data that lands in the Application's source.path —
+	// fail closed on a traversal or a YAML-hostile rune rather than rendering a half-formed
+	// manifest. Empty is valid and means the repo root.
+	if err := ValidateAppsPath(in.AppsPath); err != nil {
+		return fmt.Errorf("namespace tenant: %w", err)
+	}
 	return nil
 }
 

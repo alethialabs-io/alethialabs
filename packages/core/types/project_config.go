@@ -193,6 +193,14 @@ type ProjectObservabilityConfig struct {
 
 type ProjectRepositoriesConfig struct {
 	AppsDestinationRepo string `json:"apps_destination_repo"`
+	// AppsPath is the subpath within AppsDestinationRepo that a PLACED environment's ArgoCD
+	// Application syncs — the per-tier Kustomize overlay ("overlays/dev") that makes a
+	// namespace/vcluster placement deliver its own tier instead of the whole repository.
+	//
+	// EMPTY MEANS THE REPOSITORY ROOT: unset renders `path: '.'`, byte-identical to every deploy
+	// that predates this field, so no existing tenant's Application moves. Ignored on the
+	// `dedicated` path, which discovers overlays through the apps-overlays ApplicationSet instead.
+	AppsPath string `json:"apps_path,omitempty"`
 }
 
 // ProjectSourceRepoConfig is a scanned source repo (1:N) + its detected services,
