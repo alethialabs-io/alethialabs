@@ -24,7 +24,7 @@
 
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
-import { beforeAll, afterAll, beforeEach, expect, it } from "vitest";
+import { beforeAll, afterAll, beforeEach, expect, it, vi } from "vitest";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import { getServiceDb } from "@/lib/db";
@@ -35,6 +35,7 @@ import {
 	projectIacSources,
 	projects,
 } from "@/lib/db/schema";
+import type { ProvisionJobType } from "@/lib/db/schema/enums";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { DRIFT_CADENCE_MS } from "@/lib/drift/schedule";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
@@ -111,7 +112,7 @@ describeIfDb("BYO-IaC continuous re-proving + reconcile — real Postgres", () =
 		return j.id;
 	}
 
-	async function jobsOfType(envId: string, jobType: string) {
+	async function jobsOfType(envId: string, jobType: ProvisionJobType) {
 		return db
 			.select({
 				id: jobs.id,
@@ -185,16 +186,26 @@ describeIfDb("BYO-IaC continuous re-proving + reconcile — real Postgres", () =
 	});
 
 	it("signs the copied snapshot, so the runner's claim endpoint will accept the drift job", async () => {
+		// Snapshot signing is OFF unless ALETHIA_SNAPSHOT_HMAC_KEY is set (a deliberate back-compat
+		// rollout: no key ⇒ sig null and verify is a no-op). Turn it ON for this test rather than
+		// asserting whatever the CI environment happens to be configured with — otherwise this
+		// passes vacuously wherever signing is disabled, which is precisely where the bug would be.
+		vi.stubEnv("ALETHIA_SNAPSHOT_HMAC_KEY", "test-hmac-key-for-drift-signing");
+
 		const env = await seedEnv("byo-dev-sig", "development");
 		await seedJob(env, "DEPLOY", "SUCCESS", ago(DRIFT_CADENCE_MS.dev * 2));
 
 		await sweepDriftSchedule(now);
 		const [drift] = await jobsOfType(env, "DETECT_DRIFT");
 
-		// An unsigned (or stale-signed) drift job is rejected at claim time — a silently dead loop
-		// that still reads as "scheduling works".
+		// A drift job whose stored signature does not match its snapshot is rejected at claim time —
+		// a silently dead loop that still reads as "scheduling works".
 		expect(drift.config_snapshot_sig).toBeTruthy();
 		expect(verifySnapshot(drift.config_snapshot, drift.config_snapshot_sig)).toBe(true);
+
+		// And the signature must actually be OVER this snapshot: a signature that verifies against
+		// anything is not a signature.
+		expect(verifySnapshot({ tampered: true }, drift.config_snapshot_sig)).toBe(false);
 	});
 
 	it("honours the per-tier cadence through the real dispatch, not just the pure selector", async () => {
