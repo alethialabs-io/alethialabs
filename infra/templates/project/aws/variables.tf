@@ -237,11 +237,17 @@ variable "create_rds" {
   description = "If a new RDS and Proxy needs to be created"
   default     = false
 }
+# The `engine_version` defaults below (there are TWO — the optional() one and the whole-object one)
+# are COUPLED to cloud.DefaultAuroraPostgresVersion in packages/core/cloud/aws_provider.go and are
+# asserted equal to it by TestAuroraVersionCouplings. Change them together or CI fails.
+#
+# They were 16.6 until AWS withdrew that minor and every full-bar aws nightly died at the cluster.
+# `cluster_family` tracks this version's MAJOR (Aurora PostgreSQL families are major-only).
 variable "rds_config" {
   description = "Configuration for RDS resources"
   type = object({
     engine         = optional(string, "aurora-postgresql")
-    engine_version = optional(string, "16.6")
+    engine_version = optional(string, "16.8")
     engine_mode    = optional(string, "provisioned")
     cluster_family = optional(string, "aurora-postgresql16")
     cluster_size   = optional(number, 1)
@@ -250,7 +256,7 @@ variable "rds_config" {
   })
   default = ({
     engine         = "aurora-postgresql"
-    engine_version = "16.6"
+    engine_version = "16.8"
     engine_mode    = "provisioned"
     cluster_family = "aurora-postgresql16"
     cluster_size   = 1

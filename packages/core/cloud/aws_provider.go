@@ -15,6 +15,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 )
 
+// DefaultAuroraPostgresVersion is the single source of truth for the Aurora PostgreSQL minor that
+// every unversioned AWS path provisions on. Four copies of this value used to live apart — here, in
+// the template's `rds_config` variable (BOTH its optional() and whole-object defaults), in the rds
+// module, and in the e2e max-config table — and nothing coupled them.
+//
+// That cost a nightly: AWS WITHDREW plain 16.6 (only the unrelated "16.6-limitless" remains), so
+// every full-bar aws apply died at the cluster with "Cannot find version 16.6 for aurora-postgresql".
+// It surfaced only on the weekly full-bar run because the weekday floor provisions no data services.
+//
+// It is a FULL minor, not a bare major, even though the gcp and azure templates pin bare majors:
+// AWS's own DescribeOrderableDBInstanceOptions rejects "16" with "Engine version is not a valid full
+// version". 16.8 is the lowest still-offered plain 16.x, and the offered set is identical across
+// us-east-1, eu-central-1, eu-west-1 and us-west-2 — one pin serves every region.
+//
+// Two guards keep it honest, and they catch different things:
+//   - TestAuroraVersionCouplings (this package) fails when a .tf copy drifts from this constant.
+//     Runs on every PR, needs no cloud.
+//   - .github/workflows/catalog-drift.yml re-derives what AWS actually offers each month and files an
+//     issue when a shipped version is withdrawn. Only that one can catch the next retirement.
+const DefaultAuroraPostgresVersion = "16.8"
+
 type awsProvider struct{}
 
 func (p *awsProvider) Name() string { return "aws" }
@@ -143,7 +164,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		tfvars["rds_scaling_config"] = scalingConfig
 		engine, version := resolveDBEngine("aws", db)
 		engine = orDefault(engine, "aurora-postgresql")
-		version = orDefault(version, "16.6")
+		version = orDefault(version, DefaultAuroraPostgresVersion)
 		// Engine-aware composition (#1504). Everything below must follow the RESOLVED engine — the
 		// template's defaults are all Aurora-PostgreSQL-shaped, so an aurora-mysql engine that only
 		// set engine/version would get a Postgres parameter-group family, port 5432 and the
