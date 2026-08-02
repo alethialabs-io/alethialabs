@@ -30,6 +30,7 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 } from "@/lib/db/schema";
+import { appsPathSchema } from "@/lib/validations/apps-path";
 
 /** A component as it appears on the CLI wire — uniform across every kind. `config` is the
  * kind-specific column set as an open object (mirrors componentWire). */
@@ -139,7 +140,12 @@ const KINDS: Record<string, KindDef> = {
 		singleton: true,
 		fields: createInsertSchema(projectRepositories)
 			.pick({ apps_destination_repo: true, apps_path: true })
-			.partial(),
+			.partial()
+			// #1767 — `.extend` LAST so the mirrored guard wins over the bare nullable text()
+			// column drizzle-zod infers. Without it `--set apps_path=../../etc` is a clean 200
+			// straight into the DB and thence into buildConfigSnapshot, and the user only finds
+			// out when the deploy job dies on argocd.ValidateAppsPath.
+			.extend({ apps_path: appsPathSchema }),
 	},
 	databases: {
 		table: projectDatabases,

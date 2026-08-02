@@ -1787,8 +1787,14 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Overlay path",
 						mono: true,
 						placeholder: "repository root",
+						// The second sentence is not padding. The runner ignores apps_path on the
+						// `dedicated` placement — it discovers overlays through the apps-overlays
+						// ApplicationSet — and `dedicated` is the DEFAULT placement_mode. Saying
+						// only "the subdirectory this environment syncs" would be false for most
+						// environments, which is the same defect class (#1767) as a field nothing
+						// could set: a knob whose label does not describe what it does.
 						description:
-							"Subdirectory this environment syncs, e.g. overlays/dev. Leave empty to sync the repository root.",
+							"Subdirectory this environment syncs, e.g. overlays/dev. Leave empty to sync the repository root. Applies to namespace and vcluster placements; a dedicated-cluster environment finds its overlays through the apps-overlays ApplicationSet and ignores this.",
 					},
 				],
 			},

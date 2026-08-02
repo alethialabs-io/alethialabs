@@ -730,7 +730,12 @@ export const NODE_REGISTRY: NodeRegistry = {
 						.replace(/\.git$/, ""),
 				},
 				{ label: "Syncs", value: "ArgoCD" },
-				{ label: "Path", value: config.apps_path || "repository root" },
+				// Shown only when SET. The card has no placement context, and the runner IGNORES
+				// apps_path on the `dedicated` path (ProjectRepositoriesConfig.AppsPath — it
+				// discovers overlays through the apps-overlays ApplicationSet instead). A fact
+				// that always read "Path: repository root" would therefore assert, on the
+				// default placement, something the runner never consulted.
+				...(config.apps_path ? [{ label: "Overlay", value: config.apps_path }] : []),
 			],
 		},
 		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },

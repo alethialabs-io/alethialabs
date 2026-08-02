@@ -77,6 +77,8 @@ export type CliProjectConfig = {
 
 	// Repositories
 	apps_destination_repo: string | null;
+	/** The apps-repo subpath this environment syncs (its per-tier overlay, e.g. "overlays/dev").
+	 * Null or empty means the repository root. */
 	apps_path: string | null;
 
 	// Aggregated (mirrors the view: scoped to non-DESTROYED components)
