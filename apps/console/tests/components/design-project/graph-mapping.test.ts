@@ -232,6 +232,56 @@ describe("formToGraph / graphToForm round-trip", () => {
 	});
 });
 
+// #1767 — the overlay path has to survive the canvas round-trip, which is the SAME
+// delete-then-insert the save path runs (updateProjectDesign → writeComponents). Anything
+// formToGraph declines to put on the graph is gone from the next save with no error, which is
+// exactly the silent-wipe class this issue exists to close.
+describe("repositories.apps_path survives the canvas round-trip (#1767)", () => {
+	const roundTrip = (repositories: ProjectFormData["repositories"]) => {
+		const { nodes } = formToGraph({ ...sampleForm(), repositories }, IDENTITIES);
+		return { nodes, parsed: projectFormSchema.safeParse(graphToForm(nodes)) };
+	};
+
+	it("round-trips the overlay path alongside the repo", () => {
+		const { parsed } = roundTrip({
+			apps_destination_repo: "https://github.com/acme/apps",
+			apps_path: "overlays/dev",
+		});
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.repositories).toMatchObject({
+			apps_destination_repo: "https://github.com/acme/apps",
+			apps_path: "overlays/dev",
+		});
+	});
+
+	// The CLI can set the two columns independently (`--set apps_path=overlays/dev`), so a
+	// repo-less row is reachable. Gating the node on the repo URL alone silently dropped it.
+	it("keeps an overlay path set WITHOUT an apps repo — the CLI can set them independently", () => {
+		const { nodes, parsed } = roundTrip({ apps_path: "overlays/dev" });
+		expect(nodes.filter((n) => n.data.kind === "repositories")).toHaveLength(1);
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.repositories.apps_path).toBe("overlays/dev");
+	});
+
+	it("still builds no node when neither column is set", () => {
+		const { nodes } = roundTrip({ apps_destination_repo: "", apps_path: "" });
+		expect(nodes.filter((n) => n.data.kind === "repositories")).toHaveLength(0);
+	});
+
+	// The save gate itself: design-project-canvas's handleSave/handleDeploy both run this exact
+	// parse, so a traversal is refused in the console rather than at deploy time.
+	it("refuses a traversal at the whole-graph save parse", () => {
+		const { parsed } = roundTrip({
+			apps_destination_repo: "https://github.com/acme/apps",
+			apps_path: "../../etc",
+		});
+		expect(parsed.success).toBe(false);
+		if (!parsed.success) {
+			expect(parsed.error.issues[0]?.path.join(".")).toBe("repositories.apps_path");
+		}
+	});
+});
+
 describe("secret store selection validation", () => {
 	const parseSecret = (row: Record<string, unknown>) =>
 		projectFormSchema.safeParse({ ...sampleForm(), secrets: [row] });

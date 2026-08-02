@@ -730,11 +730,20 @@ export const NODE_REGISTRY: NodeRegistry = {
 						.replace(/\.git$/, ""),
 				},
 				{ label: "Syncs", value: "ArgoCD" },
+				// Shown only when SET. The card has no placement context, and the runner IGNORES
+				// apps_path on the `dedicated` path (ProjectRepositoriesConfig.AppsPath — it
+				// discovers overlays through the apps-overlays ApplicationSet instead). A fact
+				// that always read "Path: repository root" would therefore assert, on the
+				// default placement, something the runner never consulted.
+				...(config.apps_path ? [{ label: "Overlay", value: config.apps_path }] : []),
 			],
 		},
 		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },
 		defaultData: () => ({
 			apps_destination_repo: "",
+			// "" is the unset form, not a distinct value — the snapshot emit treats empty
+			// and null alike and leaves the key absent, so the runner syncs the repo root.
+			apps_path: "",
 		}),
 	},
 	// A marketplace add-on the cluster comes up with (Grafana, Loki, Vault, …). Browsed from the Add

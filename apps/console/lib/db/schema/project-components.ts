@@ -352,6 +352,13 @@ export const projectRepositories = pgTable(
 		project_id: projectRef(),
 		environment_id: envRef(),
 		apps_destination_repo: text(),
+		// Subdirectory of apps_destination_repo that ArgoCD syncs for THIS environment —
+		// the per-tier Kustomize overlay (e.g. "overlays/dev"). Nullable with no default,
+		// deliberately: the runner contract is `apps_path,omitempty` where empty means the
+		// repository root, so the key must be able to be ABSENT from the config snapshot.
+		// A `.default("").notNull()` here (the scan_path / iac_sources.path precedent) would
+		// put the key on every snapshot and break byte-identity for existing deploys.
+		apps_path: text(),
 		created_at: ts(),
 		updated_at: ts(),
 	},
