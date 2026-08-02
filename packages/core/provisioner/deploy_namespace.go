@@ -107,6 +107,22 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 // hetzner namespace tenant gets k8s-native isolation only — no per-namespace cloud identity (an explicit,
 // documented exclusion in provisionAndBindNamespaceIdentity; cloud parity is a hard rule, so the gap is
 // never silent).
+// namespaceTenantInput builds the tenant renderer's input from the config snapshot. Extracted as a
+// PURE function so the wiring — and in particular that AppsPath actually reaches the renderer — is
+// unit-testable without a cluster, a cloud or a kubeconfig. It was the absence of exactly this seam
+// that let AppsPath sit unwired: the field existed, rendered and defaulted, and nothing ever set it.
+func namespaceTenantInput(vc *types.ProjectConfig, ns string) argocd.NamespaceTenantInput {
+	return argocd.NamespaceTenantInput{
+		Project:     vc.ProjectName,
+		Namespace:   ns,
+		AppsRepoURL: vc.Repositories.AppsDestinationRepo,
+		// Per-tier Kustomize overlay subpath ("overlays/dev"). EMPTY ⇒ the renderer defaults to "."
+		// (the repo root), so every environment that predates this field syncs exactly as before.
+		AppsPath: vc.Repositories.AppsPath,
+		Labels:   cloud.ClassificationLabels(vc),
+	}
+}
+
 var namespaceRemintProviders = map[string]bool{
 	"aws":     true,
 	"gcp":     true,
@@ -399,6 +415,13 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	if !isValidClusterName(clusterName) {
 		return nil, fmt.Errorf("namespace placement: serving cluster name %q contains invalid characters", clusterName)
 	}
+	// Same trust-boundary argument for the apps-repo subpath: it is project data that ends up in the
+	// tenant Application's source.path. Reject a traversal or a YAML-hostile value HERE — before
+	// minting kube access or touching the shared Fabric — rather than eleven steps later at render
+	// time. Empty is valid and means the repo root.
+	if err := argocd.ValidateAppsPath(vc.Repositories.AppsPath); err != nil {
+		return nil, fmt.Errorf("namespace placement: %w", err)
+	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
 	if err != nil {
@@ -467,12 +490,7 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	}
 
 	// Render the hardened isolation (Namespace + AppProject) + the app Application.
-	manifests, renderErr := argocd.RenderNamespaceTenant(argocd.NamespaceTenantInput{
-		Project:     vc.ProjectName,
-		Namespace:   ns,
-		AppsRepoURL: vc.Repositories.AppsDestinationRepo,
-		Labels:      cloud.ClassificationLabels(vc),
-	})
+	manifests, renderErr := argocd.RenderNamespaceTenant(namespaceTenantInput(vc, ns))
 	if renderErr != nil {
 		result.GitopsStatus = gitopsFailed(argocd.GitopsStepRender, renderErr)
 		return &result, fmt.Errorf("failed to render namespace tenant isolation: %w", renderErr)
