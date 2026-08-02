@@ -4,6 +4,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { getServiceDb } from "@/lib/db";
+import { dbNow } from "@/lib/db/now";
 import { jobs } from "@/lib/db/schema/jobs";
 import { projectEnvironments } from "@/lib/db/schema/project-environments";
 import { notifyScaler } from "@/lib/scaler";
@@ -19,11 +20,19 @@ import {
  * a platform cron via the internal sweep route. The drift snapshot is copied from
  * the environment's latest successful DEPLOY job, so a refresh-only plan reads the
  * exact provisioned config/state. Selection is the unit-tested `selectDueForDrift`.
+ *
+ * `now` is the clock the cadence is measured against. Leave it unset in production: the sweep then
+ * reads the DATABASE's clock, which is the same one that stamped the `created_at` timestamps it is
+ * comparing. Pass it only from a test, which must then also control those stored timestamps — a
+ * simulated clock on one side and `defaultNow()` on the other is the two-clock bug (#1783).
  */
-export async function sweepDriftSchedule(
-	now: Date = new Date(),
-): Promise<{ enqueued: number }> {
+export async function sweepDriftSchedule(now?: Date): Promise<{ enqueued: number }> {
 	const db = getServiceDb();
+	// One clock, and it is the database's. `jobs.created_at` is stamped by `defaultNow()` and has to
+	// stay that way — the org 24h quota and the retention GC compare it against the database's
+	// `now()`, and the claim queue orders by it, so a replica writing it would skew all three. That
+	// makes the database the only authority this comparison may use.
+	const at = now ?? (await dbNow(db));
 
 	// Latest successful DEPLOY per environment — the drift snapshot source.
 	const deployRows = await db
@@ -93,7 +102,7 @@ export async function sweepDriftSchedule(
 			lastCheckedAt: lastDriftByEnv.get(id) ?? null,
 		}));
 
-	const due = selectDueForDrift(candidates, now);
+	const due = selectDueForDrift(candidates, at);
 
 	let enqueued = 0;
 	for (const c of due) {
