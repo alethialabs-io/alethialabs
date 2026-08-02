@@ -644,6 +644,13 @@ type KeylessBindingDecision struct {
 	Engine string `json:"engine"`
 	// Status is wired or failed_closed.
 	Status KeylessBindingStatus `json:"status"`
+	// CellState is the cloud × engine cell's own state — live, pending or excluded. It is what
+	// separates the two very different things a failed_closed record can mean: a refusal on an
+	// EXCLUDED cell is a product boundary working (the canvas already disables the toggle there),
+	// while a refusal on a LIVE cell is a defect on our side — we say we support that cell and
+	// could not deliver it. Without this field the record cannot tell them apart, so neither can
+	// the deploy, which is how a fail-closed binding came to sit under a successful deploy (#1790).
+	CellState KeylessCellState `json:"cell_state"`
 	// Reason carries WHY on both outcomes: on a refusal it is the cell's own product-voice sentence
 	// (the same string the canvas shows on the disabled toggle), and on a success it is the mechanism
 	// from keylessMechanism — "aws · postgres over RDS IAM, token minted per connection by the
@@ -655,7 +662,7 @@ type KeylessBindingDecision struct {
 // keylessDecision builds the record for one binding. Both reasons are supplied by the caller from a
 // single source each — the refusal from keylessCellSupported's error, the success from
 // keylessMechanism — so this constructor never composes prose of its own to drift against them.
-func keylessDecision(serviceName, engine string, t types.ServiceBindingTarget, status KeylessBindingStatus, reason string) KeylessBindingDecision {
+func keylessDecision(serviceName, engine string, t types.ServiceBindingTarget, status KeylessBindingStatus, reason string, cellState KeylessCellState) KeylessBindingDecision {
 	return KeylessBindingDecision{
 		Service:    serviceName,
 		TargetKind: string(t.Kind),
@@ -663,7 +670,20 @@ func keylessDecision(serviceName, engine string, t types.ServiceBindingTarget, s
 		Engine:     engine,
 		Status:     status,
 		Reason:     reason,
+		CellState:  cellState,
 	}
+}
+
+// cellStateFor answers the table for the decision record. An unknown provider or engine has no
+// cell, and naming that "" rather than guessing keeps the record honest: it is the same unknown
+// that made keylessCellSupported refuse in the first place, so it must not read as a live cell a
+// severity check would then fail the deploy on.
+func cellStateFor(provider, engine string) KeylessCellState {
+	state, _, err := KeylessCell(provider, engine)
+	if err != nil {
+		return ""
+	}
+	return state
 }
 
 func resolveBindings(serviceName string, opts Options, bindings []types.ServiceBinding) bindingResolution {
@@ -692,12 +712,14 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 					// make "no bad record" indistinguishable from "nothing was even attempted" — the
 					// ambiguity that hid a keyless path which had never authenticated (#1500/#1511).
 					r.keyless = append(r.keyless, keylessDecision(
-						serviceName, engine, b.Target, KeylessBindingFailedClosed, err.Error()))
+						serviceName, engine, b.Target, KeylessBindingFailedClosed, err.Error(),
+						cellStateFor(opts.Provider, engine)))
 					continue
 				}
 				proxied[key] = true
 				r.keyless = append(r.keyless, keylessDecision(
-					serviceName, engine, b.Target, KeylessBindingWired, keylessMechanism(opts.Provider, engine)))
+					serviceName, engine, b.Target, KeylessBindingWired, keylessMechanism(opts.Provider, engine),
+					cellStateFor(opts.Provider, engine)))
 				r.sidecars = append(r.sidecars, w.sidecars...)
 				r.volumes = append(r.volumes, w.volumes...)
 				// The keyless pod runs as the Workload-Identity KSA (all keyless bindings on a service
