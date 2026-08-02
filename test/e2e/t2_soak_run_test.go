@@ -48,6 +48,9 @@ type soakParams struct {
 	clusterName  string
 	deployJobID  string
 	expectedApps []string
+	// owner is the SeedRunner owner — required so the drift job this scenario seeds can actually be
+	// claimed (see seedT2DriftJob).
+	owner string
 }
 
 // runT2Soak drives the day-2 soak window. It is a no-op (clean skip) unless ALETHIA_E2E_SOAK
@@ -158,7 +161,7 @@ func soakDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p soakP
 	s.DriftStateResources = resCount
 	t.Logf("A0.3 drift: deploy state records %d managed resource instances", resCount)
 
-	driftJobID, err := seedT2DriftJob(ctx, cp, p.project, p.env, p.provider, p.region)
+	driftJobID, err := seedT2DriftJob(ctx, cp, p.project, p.env, p.provider, p.region, p.owner)
 	if err != nil {
 		t.Fatalf("A0.3 drift: seed DETECT_DRIFT job: %v", err)
 	}
@@ -221,7 +224,17 @@ func soakDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p soakP
 // as the deploy (+ the same ALETHIA_E2E_CLUSTER_JSON node-shape override), so its
 // ProviderTfvars match and its refresh-only plan reconciles the deploy's exact state. The
 // running runner claims it on its safety poll.
-func seedT2DriftJob(ctx context.Context, cp *ControlPlane, project, env, provider, region string) (string, error) {
+//
+// owner MUST equal the SeedRunner owner. claim_next_job's self-runner branch scopes to
+// `j.org_id = v_runner_org_id` (#392, programmables.sql), so a job seeded into a RANDOM org is never
+// claimed — it sits QUEUED until the wait times out and surfaces as "drift never finished", which
+// reads like a product failure rather than a harness bug. This used to pass newUUID() here, making
+// every drift re-prove structurally unclaimable; seedT2DeployJob and seedT2VClusterDestroyJob
+// already take the owner for exactly this reason.
+func seedT2DriftJob(ctx context.Context, cp *ControlPlane, project, env, provider, region, owner string) (string, error) {
+	if strings.TrimSpace(owner) == "" {
+		return "", fmt.Errorf("seed drift job: empty owner — the job would be unclaimable (the self-runner claim is org-scoped, #392)")
+	}
 	jobID := newUUID()
 	snap := t2BaseSnapshot(project, env, provider, region)
 	if err := t2MergeClusterJSON(snap); err != nil {
@@ -235,7 +248,7 @@ func seedT2DriftJob(ctx context.Context, cp *ControlPlane, project, env, provide
 		INSERT INTO public.jobs
 		  (id, user_id, org_id, job_type, config_snapshot, status, provider)
 		VALUES ($1, $2, $2, 'DETECT_DRIFT', $3::jsonb, 'QUEUED', NULL)`,
-		jobID, newUUID(), string(snapshot))
+		jobID, owner, string(snapshot))
 	if err != nil {
 		return "", fmt.Errorf("seed drift job: %w", err)
 	}

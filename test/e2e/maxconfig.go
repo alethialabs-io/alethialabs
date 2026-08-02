@@ -29,7 +29,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -164,15 +166,19 @@ var MaxConfigKinds = []MaxConfigKind{
 			min, max := 0.5, 4.0
 			port, backup := 5432, 7
 			iam := true
-			engineVersion, instanceClass := "16.6", "db.r6g.large"
+			// Aurora takes a FULL minor, and it must be one AWS still offers — pinning a withdrawn
+			// one fails the apply outright ("Cannot find version 16.6 for aurora-postgresql", the
+			// break this constant was introduced to end). Sourced from packages/core/cloud so the
+			// nightly can never test a version the provisioner does not default to.
+			engineVersion, instanceClass := cloud.DefaultAuroraPostgresVersion, "db.r6g.large"
 			switch provider {
 			case "gcp":
-				// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, "16.6" is not; and
-				// db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
+				// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, a full minor is not;
+				// and db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
 				engineVersion, instanceClass = "16", "db-f1-micro"
 			case "azure":
 				// PostgreSQL Flexible Server takes a bare major version ("16") and a B_/GP_/MO_ SKU
-				// name — "16.6" and the RDS class db.r6g.large are both rejected.
+				// name — a full minor and the RDS class db.r6g.large are both rejected.
 				engineVersion, instanceClass = "16", "B_Standard_B1ms"
 			}
 			pc.Databases = []types.ProjectDatabaseConfig{{
@@ -341,8 +347,11 @@ var MaxConfigKinds = []MaxConfigKind{
 		Doc:  "cloud-native DNS (Route 53). cloud_dns_enabled fires only when enabled AND no zone_id is brought.",
 		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.DNS = types.ProjectDNSConfig{
-				Enabled: true, DomainName: "example.com", ZoneID: "",
-				ProviderConfig: map[string]any{"acm_certificate": true},
+				Enabled: true, DomainName: MaxConfigDomain(), ZoneID: "",
+				// ACM is OFF. See MaxConfigDomain: a DNS-validated certificate cannot be
+				// issued for a zone nothing on the public internet delegates to us, so this
+				// is an EXPLICIT, documented exclusion rather than a silent one.
+				ProviderConfig: map[string]any{"acm_certificate": false},
 			}
 		},
 		Populated:     func(pc *types.ProjectConfig) bool { return pc.DNS.Enabled },
@@ -362,6 +371,45 @@ var maxConfigSnapshotKeys = []string{
 	"network", "cluster", "dns",
 	"databases", "caches", "queues", "topics", "nosql_tables",
 	"secrets", "container_registries", "storage_buckets",
+}
+
+// maxConfigDomainSuffix is the zone the fixture's DNS name sits under. It is a domain Alethia
+// actually owns, which matters for three independent reasons:
+//
+//   - AWS RESERVES example.com. `aws_route53_zone` refuses it outright
+//     ("InvalidDomainName: example.com is reserved by AWS!"), so the full bar had never once
+//     proven the `dns` kind on aws — it failed identically every Sunday (run 30738253176).
+//   - A made-up name would squat on somebody's real registration. Route 53, Cloud DNS and Azure
+//     DNS all create a public zone for ANY syntactically valid name without checking ownership.
+//   - A reserved-for-testing TLD (.test, .invalid) avoids the squatting problem but trades a
+//     verified fact for a guess: whether each cloud's zone API accepts it is not documented, and
+//     the full bar is main-gated, so a wrong guess costs a whole week to discover.
+//
+// It is also the name we would DELEGATE if the ACM path is ever to be proven — see MaxConfigDomain.
+const maxConfigDomainSuffix = "e2e.alethialabs.io"
+
+// MaxConfigDomain is the DNS zone name the max-config fixture provisions, scoped to this run so
+// two runs never contend for one zone name. ALETHIA_E2E_ENV is the same run-scoped identifier the
+// harness already uses for the project/environment pair; the constant fallback keeps the fixture
+// deterministic for the pure unit tests, which run with no environment at all.
+//
+// WHY ACM IS OFF ALONGSIDE THIS. The fixture used to set acm_certificate: true, and the run's ACM
+// timeout looked downstream of the Route 53 failure. It is not, and this is the part worth not
+// assuming: modules/acm uses validation_method = "DNS" and aws_acm_certificate_validation BLOCKS
+// until the certificate is issued, which requires the validation CNAME to be resolvable on the
+// PUBLIC internet. Creating a zone is not the same as being delegated one — no infra/ stack
+// delegates a zone to the e2e account today, so ACM can never issue here no matter which domain
+// this returns. Fixing the name alone would have swapped one guaranteed 5-minute timeout for
+// another and looked like progress.
+//
+// So the `dns` kind is proven and the cert path is an explicit exclusion. Delegating
+// e2e.alethialabs.io (its NS records live on Cloudflare, with the control-plane stacks) into the
+// e2e account would make ACM real; that is a maintainer step, tracked separately.
+func MaxConfigDomain() string {
+	if env := strings.TrimSpace(os.Getenv("ALETHIA_E2E_ENV")); env != "" {
+		return env + "." + maxConfigDomainSuffix
+	}
+	return maxConfigDomainSuffix
 }
 
 // MaxConfigEnabled reports whether this run should provision the FULL 11-kind surface.

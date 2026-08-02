@@ -1,3 +1,31 @@
+{{- /* Install metrics-server ONLY on clouds whose managed control plane does not already
+       ship one. This is an ALLOWLIST, not a denylist: a cloud added later renders NOTHING
+       until someone checks, because the two failure modes are not symmetric. A missing
+       metrics-server degrades visibly (HPA and `kubectl top` report no metrics); a SECOND
+       one is worse and quieter — it fights the cloud's own copy for ownership of the
+       cluster-scoped objects and can leave `v1beta1.metrics.k8s.io` owned by neither, so
+       the Metrics API breaks on a cluster where it worked out of the box (#1722).
+
+       Where the cloud already ships one, in kube-system, under the same name:
+         gcp     — GKE managed addon, `addonmanager.kubernetes.io/mode=Reconcile`, so its
+                   addon-manager actively reconciles the objects and fights any other owner.
+                   Observed directly on gke-ew3-gk730-alethia-nl (k8s 1.35.6): two
+                   Deployments, no v1beta1.metrics.k8s.io APIService at all.
+         azure   — AKS-managed, with a `metrics-server-vpa` sidecar and a PodDisruptionBudget
+                   (learn.microsoft.com/azure/aks/use-metrics-server-vertical-pod-autoscaler).
+         alibaba — ACK "system component", deployed to kube-system at cluster creation
+                   (alibabacloud.com/help/en/ack/.../user-guide/component-overview).
+
+       Where it does NOT, so we must:
+         aws     — "isn't deployed by default in Amazon EKS clusters"
+                   (docs.aws.amazon.com/eks/latest/userguide/metrics-server.html).
+         hetzner — bare Talos ships no metrics-server; the --kubelet-insecure-tls value below
+                   exists precisely because Talos kubelets serve self-signed certs.
+
+       render.go drops an empty render, so the `if` is the whole gate. Changing this set means
+       changing metricsServerProviders in test/e2e/argocd_assert.go — the e2e expected-app set
+       is derived, and it would otherwise wait forever for an Application nobody installed. */}}
+{{- if or (eq .Provider "aws") (eq .Provider "hetzner") }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -44,3 +72,4 @@ spec:
     syncOptions:
       - CreateNamespace=true
   revisionHistoryLimit: 3
+{{- end }}

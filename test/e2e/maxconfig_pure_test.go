@@ -12,6 +12,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
@@ -307,5 +308,78 @@ func TestMaxConfigClusterVersionTracksMatrix(t *testing.T) {
 					"packages/core/compat/matrix.json.", provider, got, cloudK8s.Supported)
 			}
 		})
+	}
+}
+
+// TestMaxConfigDNSFixtureIsProvisionable is the guard for a fixture value that had NEVER once
+// worked and looked fine in review.
+//
+// The `dns` kind shipped with DomainName "example.com". AWS RESERVES that name, so
+// aws_route53_zone refused it outright ("InvalidDomainName: example.com is reserved by AWS!") and
+// the weekly full bar failed identically on the dns kind every Sunday — invisible, because the
+// nightly floor never exercises the kind at all and the auto-filer deduped the full-bar red away
+// against the floor's (#1755).
+//
+// So this asserts the two properties that actually matter, in the free every-PR tier rather than
+// in the main-gated nightly, where the feedback loop is a week long:
+//
+//   - the domain is not one of the names a cloud reserves or an RFC parks, and
+//   - the ACM path stays OFF while no zone is delegated to the e2e account (see MaxConfigDomain:
+//     aws_acm_certificate_validation BLOCKS until PUBLIC issuance, which a zone we merely created
+//     can never satisfy — so leaving it on would swap one guaranteed timeout for another).
+//
+// The reserved list is spelled out rather than pattern-matched: these are the specific names that
+// have burned this fixture or would, and a literal is what fails loudly when someone reaches for
+// the familiar placeholder again.
+func TestMaxConfigDNSFixtureIsProvisionable(t *testing.T) {
+	reserved := []string{
+		"example.com", "example.net", "example.org", // RFC 2606 + explicitly reserved by AWS
+		"example", "invalid", "localhost", "test", // RFC 2606 / RFC 6761 parked TLDs
+	}
+
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
+		t.Run(provider, func(t *testing.T) {
+			pc := MaxConfigProjectConfig(provider)
+
+			if pc.DNS.DomainName == "" {
+				t.Fatal("the dns kind must set a DomainName — an empty zone name provisions nothing and the kind reports vacuously green")
+			}
+			for _, bad := range reserved {
+				if pc.DNS.DomainName == bad || strings.HasSuffix(pc.DNS.DomainName, "."+bad) {
+					t.Errorf("dns fixture domain %q is reserved (%q) — no cloud will create a public zone for it; "+
+						"use a name under a domain Alethia actually owns", pc.DNS.DomainName, bad)
+				}
+			}
+
+			// ACM issuance is unprovable without a delegated zone. If this ever flips back on, it
+			// must be because e2e.alethialabs.io was delegated into the e2e account — and then this
+			// assertion is the thing that should be deleted deliberately, not silently drifted past.
+			if acm, ok := pc.DNS.ProviderConfig["acm_certificate"].(bool); ok && acm {
+				t.Error("acm_certificate must stay false until a zone is DELEGATED to the e2e account: " +
+					"aws_acm_certificate_validation blocks on PUBLIC issuance, which a zone we merely created cannot satisfy")
+			}
+		})
+	}
+}
+
+// TestMaxConfigDomainIsRunScoped pins the run-scoping, because two nightly runs sharing one zone
+// name is the failure mode that replaces the one being fixed: a leaked zone from a failed run would
+// collide with the next run's, and Route 53 happily creates a SECOND zone with the same name rather
+// than erroring — so the collision would be silent.
+func TestMaxConfigDomainIsRunScoped(t *testing.T) {
+	t.Setenv("ALETHIA_E2E_ENV", "30738253176-1")
+	scoped := MaxConfigDomain()
+	if !strings.HasPrefix(scoped, "30738253176-1.") {
+		t.Errorf("MaxConfigDomain must be scoped by ALETHIA_E2E_ENV, got %q", scoped)
+	}
+	if !strings.HasSuffix(scoped, ".e2e.alethialabs.io") {
+		t.Errorf("MaxConfigDomain must sit under a domain Alethia owns, got %q", scoped)
+	}
+
+	// No environment (the pure unit tier) must still yield a usable, deterministic name — otherwise
+	// the fixture would emit a bare "." -prefixed label and every assertion above would test nothing.
+	t.Setenv("ALETHIA_E2E_ENV", "")
+	if bare := MaxConfigDomain(); bare != "e2e.alethialabs.io" {
+		t.Errorf("with no ALETHIA_E2E_ENV the domain must fall back to the bare suffix, got %q", bare)
 	}
 }

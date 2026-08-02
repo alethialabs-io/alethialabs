@@ -9,7 +9,8 @@ audit trail; git history is the timeline. Parity board:
 [`docs/testing/provisioning-e2e-parity.md`](../../docs/testing/provisioning-e2e-parity.md).
 
 - **dimension**: `floor` (provision + cluster_ready + ArgoCD converge) · `maxconfig` (all 11 kinds) ·
-  `addons` (all 19 add-ons Healthy+Synced) · `byo` (A0.6 BYO-IaC + services) · `day2` (day-2 access) ·
+  `addons` (all 19 add-ons Healthy+Synced) · `byo` (A0.6 bring-your-own **Helm chart** + apps repo —
+  **not** bring-your-own IaC; no customer OpenTofu runs in it) · `day2` (day-2 access) ·
   `teardown` (verify_swept to zero) · `full` (every dimension in one apply).
 - **verdict**: `PASS` · `FAIL` · `BLOCKED` (couldn't run — record why) · `RETRACTED` (an
   append-only correction of a prior record). A `RETRACTED` row must name the superseded row and

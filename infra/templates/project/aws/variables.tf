@@ -5,6 +5,21 @@
 variable "aws_account_id" {
   type        = string
   description = "AWS account to deploy resources"
+
+  # FAIL CLOSED. This id is interpolated into account-scoped ARNs all over the template — the RDS
+  # secret KMS key policy, every IRSA policy, the ECR repository ARNs, the DynamoDB assume-role.
+  # An empty value renders `arn:aws:iam:::root` and the apply dies deep in the graph, hours in,
+  # with an error that names KMS rather than the missing input:
+  #
+  #   InvalidArnException: An ARN in the specified key policy is invalid.
+  #
+  # That is exactly what run 30738253176 hit: the emitted plan JSON carried
+  # "aws_account_id":{"value":""} while the credentials themselves were fine. A malformed account
+  # id must never reach apply, so this rejects at plan time and says which input is wrong.
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.aws_account_id))
+    error_message = "aws_account_id must be a 12-digit AWS account id. It is empty or malformed — the runner resolves it from the connector's CloudIdentity, or for an ambient-credential runner from $AWS_ACCOUNT_ID."
+  }
 }
 
 variable "region" {
@@ -237,11 +252,17 @@ variable "create_rds" {
   description = "If a new RDS and Proxy needs to be created"
   default     = false
 }
+# The `engine_version` defaults below (there are TWO — the optional() one and the whole-object one)
+# are COUPLED to cloud.DefaultAuroraPostgresVersion in packages/core/cloud/aws_provider.go and are
+# asserted equal to it by TestAuroraVersionCouplings. Change them together or CI fails.
+#
+# They were 16.6 until AWS withdrew that minor and every full-bar aws nightly died at the cluster.
+# `cluster_family` tracks this version's MAJOR (Aurora PostgreSQL families are major-only).
 variable "rds_config" {
   description = "Configuration for RDS resources"
   type = object({
     engine         = optional(string, "aurora-postgresql")
-    engine_version = optional(string, "16.6")
+    engine_version = optional(string, "16.8")
     engine_mode    = optional(string, "provisioned")
     cluster_family = optional(string, "aurora-postgresql16")
     cluster_size   = optional(number, 1)
@@ -250,7 +271,7 @@ variable "rds_config" {
   })
   default = ({
     engine         = "aurora-postgresql"
-    engine_version = "16.6"
+    engine_version = "16.8"
     engine_mode    = "provisioned"
     cluster_family = "aurora-postgresql16"
     cluster_size   = 1
@@ -489,6 +510,17 @@ variable "ecr_create_lifecycle_policy" {
   description = "Determines whether a lifecycle policy will be created"
   type        = bool
   default     = true
+}
+
+# The DOCUMENT that goes with the flag above. It defaults on, so leaving this unset used to fail
+# every native-ECR apply outright (InvalidParameterException on an empty lifecyclePolicyText) —
+# not just in e2e: any tenant with provision_ecr + registry_provider == "native" hit it on their
+# first apply. Null keeps the module's default (expire untagged after 14d, keep the last 30
+# tagged) rather than meaning "no policy": an unbounded registry is a real, recurring storage bill.
+variable "ecr_repository_lifecycle_policy" {
+  description = "ECR lifecycle policy document (JSON). Null ⇒ the template default: expire untagged after 14 days, keep the last 30 tagged images."
+  type        = string
+  default     = null
 }
 
 #########################################################################

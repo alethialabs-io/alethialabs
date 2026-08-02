@@ -61,15 +61,21 @@ locals {
   # present, otherwise use var.region as-is. Every short-name reference indexes by this derived key.
   gcp_region_key = can(regex("-[a-z]$", var.region)) ? substr(var.region, 0, length(var.region) - 2) : var.region
 
-  # Naming conventions
-  vpc_name = "vpc-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
-  gke_name = "gke-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
-
-  cloud_sql_name        = "sql-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
-  memorystore_name      = "redis-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
-  cloud_dns_name        = "dns-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
-  cloud_armor_name      = "armor-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
-  secret_manager_prefix = "${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  # Naming conventions. ONLY ids that something actually consumes belong here.
+  #
+  # This block also held vpc_name, cloud_sql_name, memorystore_name, cloud_armor_name and
+  # secret_manager_prefix, none of which any resource ever read — every module builds its own id by
+  # suffixing "-<kind>" instead. A derived name that nothing consumes is indistinguishable from a
+  # live naming contract, and that is not free: #1716 was a GKE id that overflowed its cap
+  # mid-apply, and answering "do its siblings share the bug?" meant reading six near-identical
+  # interpolations to establish that five of them cannot overflow anything because they reach no
+  # resource. The next reader may well answer it the other way.
+  #
+  # So: adding a name back here means WIRING it up, and a newly-consumed id is a new length
+  # constraint on the shared "<environment>-<project_name>" stem — it needs its own budget row in
+  # checks_naming.tf (NAMING-001).
+  gke_name       = "gke-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
+  cloud_dns_name = "dns-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
 
   # The external-secrets GSA this deploy uses: the caller's adopted one, or the one we created.
   # Everything that grants to, binds, or exports the ESO identity reads these — never the resource

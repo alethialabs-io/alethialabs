@@ -209,6 +209,21 @@ if [ -n "$day2_offer_summary" ] && [ -f "$day2_offer_summary" ]; then
 	[ -n "$day2_offer_verdict" ] && echo "  · day2-offer: $day2_offer_verdict"
 fi
 
+# ── Fabric enterprise-demo acceptance gate (#845). The T2 layer writes per-tier placement +
+#    Kustomize-overlay convergence results, the Fabric's PUBLIC plan digest and the drift posture
+#    to ALETHIA_E2E_FABRIC_DEMO_SUMMARY — names, booleans and counts, never a secret. Fold it in
+#    (scrubbed as a backstop) and surface a one-line verdict, exactly like the layers above.
+#    Absent ⇒ the gate was disabled/never ran and the capture is unchanged. ──
+fabric_demo_summary="${ALETHIA_E2E_FABRIC_DEMO_SUMMARY:-}"
+fabric_demo_verdict=""
+if [ -n "$fabric_demo_summary" ] && [ -f "$fabric_demo_summary" ]; then
+	scrub_stream <"$fabric_demo_summary" >"$out/fabric-demo-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/fabric-demo-summary.json" ]; then
+		fabric_demo_verdict="$(jq -r '.verdict // empty' "$out/fabric-demo-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$fabric_demo_verdict" ] && echo "  · fabric-demo: $fabric_demo_verdict"
+fi
+
 # ── Keyless database auth summary (#1511). The T2 layer writes verdicts, the mechanism it wired
 #    and the rotation dwell it actually held — booleans, names and a duration, never the canary
 #    (compared as a digest inside the test) and never a token. Fold it in (scrubbed as a backstop)
@@ -310,6 +325,9 @@ duration:  ${duration_s:-?}s
 soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
 day2-access: ${day2_access_verdict:-n/a (P2-E day-2 access off or not reached)}
 day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
+fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
+xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
+keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
 EOF
 
 # ── FAIL-CLOSED tripwire: the finished bundle MUST be grep-clean. A surviving secret makes
@@ -340,6 +358,9 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| day-2 soak (A0.3) | ${soak_verdict:-n/a} |"
 	echo "| day-2 access (P2-E) | ${day2_access_verdict:-n/a} |"
 	echo "| day-2 offer postures | ${day2_offer_verdict:-n/a} |"
+	echo "| fabric placements (#845) | ${fabric_demo_verdict:-n/a} |"
+	echo "| xacct secrets (#1268) | ${xacct_verdict:-n/a} |"
+	echo "| keyless DB (#1511) | ${keyless_verdict:-n/a} (rotation dwell ${keyless_dwell:-?}s) |"
 	echo "| commit | \`${git_sha}\` |"
 	echo
 } >>"${GITHUB_STEP_SUMMARY:-/dev/stdout}"

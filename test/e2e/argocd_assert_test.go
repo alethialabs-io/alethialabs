@@ -13,7 +13,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -164,7 +166,7 @@ func TestDeriveExpectedArgoApps(t *testing.T) {
 			"addon-reloader": {"health":"Unknown","sync":"Unknown"}
 		}
 	}`)
-	got, err := DeriveExpectedArgoApps(meta)
+	got, err := DeriveExpectedArgoApps("hetzner", meta)
 	if err != nil {
 		t.Fatalf("DeriveExpectedArgoApps: %v", err)
 	}
@@ -185,7 +187,7 @@ func TestDeriveExpectedArgoApps_InstalledInfraServicesMap(t *testing.T) {
 			{"service":"argocd-url","status":"installed","reason":"ALB ingress"}
 		]
 	}`)
-	got, err := DeriveExpectedArgoApps(meta)
+	got, err := DeriveExpectedArgoApps("aws", meta)
 	if err != nil {
 		t.Fatalf("DeriveExpectedArgoApps: %v", err)
 	}
@@ -206,7 +208,7 @@ func TestDeriveExpectedArgoApps_XacctStore(t *testing.T) {
 			{"service":"external-secrets-store-xacct","status":"installed","reason":"cross-account AWS Secrets Manager"}
 		]
 	}`)
-	got, err := DeriveExpectedArgoApps(meta)
+	got, err := DeriveExpectedArgoApps("aws", meta)
 	if err != nil {
 		t.Fatalf("DeriveExpectedArgoApps: %v", err)
 	}
@@ -228,13 +230,104 @@ func TestDeriveExpectedArgoApps_LeanPathStillAssertsPlatformApps(t *testing.T) {
 			{"service":"storage-class","status":"installed","reason":"r"}
 		]
 	}`)
-	got, err := DeriveExpectedArgoApps(meta)
+	got, err := DeriveExpectedArgoApps("hetzner", meta)
 	if err != nil {
 		t.Fatalf("DeriveExpectedArgoApps: %v", err)
 	}
 	want := []string{"external-secrets-operator", "metrics-server"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("derived = %v, want exactly the always-rendered apps %v", got, want)
+	}
+
+	// The SAME lean shape on a cloud that ships its own metrics-server (#1722): the set
+	// shrinks to the operator alone. This is the half that matters — before the gate, the
+	// assertion waited for a metrics-server Application that GKE/AKS/ACK deploys never
+	// render, so it could only ever time out.
+	gotGCP, err := DeriveExpectedArgoApps("gcp", meta)
+	if err != nil {
+		t.Fatalf("DeriveExpectedArgoApps(gcp): %v", err)
+	}
+	wantGCP := []string{"external-secrets-operator"}
+	if strings.Join(gotGCP, ",") != strings.Join(wantGCP, ",") {
+		t.Fatalf("derived on gcp = %v, want %v (GKE ships its own metrics-server)", gotGCP, wantGCP)
+	}
+}
+
+// TestMetricsServerGateMatchesTemplate pins metricsServerProviders to the actual gate in
+// infra/templates/argocd/metrics-server.yaml, by parsing the template rather than trusting
+// a comment.
+//
+// The two live in different modules and are edited months apart, and they fail in opposite
+// directions: widen the template without widening the map and the assertion stops checking
+// a real app; narrow the template without narrowing the map and every run on that cloud
+// waits the full ArgoCD timeout for an Application nobody rendered. Neither shows up as a
+// compile error, and #1722 is precisely the second failure arriving by accident.
+func TestMetricsServerGateMatchesTemplate(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	path := filepath.Join(root, "infra", "templates", "argocd", "metrics-server.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	// The gate is the first `{{- if ... }}` action in the file. Read the providers out of
+	// it rather than the whole file, so a provider named in the explanatory comment above
+	// cannot be mistaken for one the gate actually admits.
+	gate := regexp.MustCompile(`\{\{-?\s*if\s+([^}]*?)\s*-?\}\}`).FindSubmatch(b)
+	if gate == nil {
+		t.Fatalf("no {{ if }} gate found in %s — metrics-server renders unconditionally again, which is the #1722 regression", path)
+	}
+	found := map[string]bool{}
+	for _, m := range regexp.MustCompile(`eq\s+\.Provider\s+"([a-z]+)"`).FindAllSubmatch(gate[1], -1) {
+		found[string(m[1])] = true
+	}
+	if len(found) == 0 {
+		t.Fatalf("gate %q names no provider — cannot pin it to metricsServerProviders", gate[1])
+	}
+
+	if !equalStringSets(found, metricsServerProviders) {
+		t.Fatalf("metrics-server gate DRIFT:\n  template %s admits: %v\n  metricsServerProviders:  %v\nThey must match — see the comment block in the template.",
+			path, sortedKeys(found), sortedKeys(metricsServerProviders))
+	}
+}
+
+func equalStringSets(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if v != b[k] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		if v {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestDeriveExpectedArgoApps_UnknownProviderFails(t *testing.T) {
+	// FAIL-CLOSED on the new parameter: the provider decides metrics-server membership,
+	// so a typo'd or empty one must hard-error rather than quietly answer "not expected"
+	// — that would drop a real app from the assertion on aws/hetzner and turn a genuine
+	// regression into a pass.
+	meta := []byte(`{"infra_services":[{"service":"external-dns","status":"skipped","reason":"r"}]}`)
+	for _, bad := range []string{"", "gpc", "AWS"} {
+		if _, err := DeriveExpectedArgoApps(bad, meta); err == nil || !strings.Contains(err.Error(), "unknown provider") {
+			t.Fatalf("provider %q: want an unknown-provider error, got: %v", bad, err)
+		}
 	}
 }
 
@@ -247,12 +340,12 @@ func TestDeriveExpectedArgoApps_UnrecognizedInstalledServiceFails(t *testing.T) 
 			{"service":"brand-new-service","status":"installed","reason":"r"}
 		]
 	}`)
-	if _, err := DeriveExpectedArgoApps(meta); err == nil || !strings.Contains(err.Error(), "unrecognized installed infra service") {
+	if _, err := DeriveExpectedArgoApps("aws", meta); err == nil || !strings.Contains(err.Error(), "unrecognized installed infra service") {
 		t.Fatalf("want a fail-closed error for an unmapped installed service, got: %v", err)
 	}
 	// The same unknown service SKIPPED is fine — only installed services must map.
 	skipped := []byte(`{"infra_services":[{"service":"brand-new-service","status":"skipped","reason":"r"}]}`)
-	if _, err := DeriveExpectedArgoApps(skipped); err != nil {
+	if _, err := DeriveExpectedArgoApps("aws", skipped); err != nil {
 		t.Fatalf("a skipped unknown service must not error, got: %v", err)
 	}
 }
@@ -346,10 +439,10 @@ func TestSeedAddOnsPinnedToCatalog(t *testing.T) {
 }
 
 func TestDeriveExpectedArgoApps_EmptyMetadataFails(t *testing.T) {
-	if _, err := DeriveExpectedArgoApps(nil); err == nil {
+	if _, err := DeriveExpectedArgoApps("aws", nil); err == nil {
 		t.Fatal("want an error for empty execution_metadata")
 	}
-	if _, err := DeriveExpectedArgoApps([]byte("{not json")); err == nil {
+	if _, err := DeriveExpectedArgoApps("aws", []byte("{not json")); err == nil {
 		t.Fatal("want an error for malformed execution_metadata")
 	}
 }

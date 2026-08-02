@@ -5,6 +5,16 @@
 variable "project_id" {
   type        = string
   description = "GCP project ID to deploy resources into"
+
+  # FAIL CLOSED — same shape as aws_account_id in the aws template. This flows from the same
+  # CloudAccountID field (packages/core/cloud/gcp_provider.go emits it as `project_id`) and the
+  # runner resolves it the same way, so the same empty-value hole exists here. An empty project
+  # id fails EVERY google_* resource rather than one, so it must be caught at plan time.
+  # Google's rule: 6-30 chars, lowercase letter first, letters/digits/hyphens, no trailing hyphen.
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id must be a valid GCP project id (6-30 chars, lowercase letter first, letters/digits/hyphens, no trailing hyphen). It is empty or malformed — the runner resolves it from the connector's CloudIdentity, or for an ambient-credential runner from $GOOGLE_PROJECT."
+  }
 }
 
 variable "region" {

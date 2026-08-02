@@ -10,8 +10,6 @@ terraform {
 }
 
 locals {
-  node_pool_name = "${var.cluster_name}-default-pool"
-
   merged_labels = merge(var.labels, {
     environment = var.environment
     managed-by  = "opentofu"
@@ -144,7 +142,11 @@ resource "google_container_cluster" "cluster" {
 resource "google_container_node_pool" "default" {
   count = var.enable_autopilot ? 0 : 1
 
-  name     = local.node_pool_name
+  # Derived at the template root (checks_naming.tf, local.gke_node_pool_name), not here: GKE caps
+  # this at 39 characters and the readable form overflows on ordinary names, so the name is built
+  # defensively — and it is built where a `tofu test` can reach it, which this module is not (its
+  # computed-only `master_auth` block cannot be mocked). See #1716 / #1746.
+  name     = var.node_pool_name
   project  = var.project_id
   location = var.region
   cluster  = google_container_cluster.cluster.name
