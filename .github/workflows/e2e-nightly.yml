@@ -262,7 +262,8 @@ jobs:
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
       #    proves all 11 resource kinds land in tofu state AND all 19 marketplace add-ons converge.
       #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
-      #    row (full vs floor). Both are also read by the rollup job, which recomputes the same way.
+      #    row and its issue titles (full vs floor). $GITHUB_ENV is per-JOB, so neither reaches the
+      #    rollup job — it calls the SAME resolve-dimension.sh rather than retyping the cron (#1755).
       #
       #    This MUST resolve BEFORE the cluster shape is chosen: the two are coupled, because the
       #    full-bar surface needs a bigger node pool than the cheap floor (see the next step). It used
@@ -275,10 +276,12 @@ jobs:
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |
+          # ONE deriver, every consumer (#1755). This step, the rollup's issue titles and the parity
+          # ledger all read the answer from scripts/e2e/resolve-dimension.sh — which owns the
+          # `17 5 * * 0` cron string and is self-tested — instead of each retyping the comparison.
+          dim="$(bash scripts/e2e/resolve-dimension.sh)"
           full="false"
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then full="true"; fi
-          # The weekly Sunday cron (05:17 UTC) is the scheduled full-bar run.
-          if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then full="true"; fi
+          if [ "$dim" = "full" ]; then full="true"; fi
           if [ "$full" = "true" ]; then
             {
               echo "E2E_FULL_BAR=true"
@@ -864,8 +867,19 @@ jobs:
           PROOFS_DIR: proofs
           JOBS_JSON: ${{ runner.temp }}/run-jobs.json
           OUT_DIR: ${{ runner.temp }}/rollup
+          # The provision job's $GITHUB_ENV does not cross the job boundary, so the dimension is
+          # re-resolved here from the SAME script rather than a second copy of the cron comparison.
+          EVENT: ${{ github.event_name }}
+          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
+          # The dimension is part of every red issue TITLE, which is the dedup key: keyed on the cloud
+          # alone, the floor and the full bar collapse onto one issue and the second one filed is
+          # silently dropped (#1755).
+          E2E_DIMENSION="$(bash scripts/e2e/resolve-dimension.sh)"
+          export E2E_DIMENSION
+          echo "::notice::rollup dimension = ${E2E_DIMENSION}"
           # Derive. Everything below just POSTS what this wrote.
           bash scripts/e2e/nightly-rollup.sh
           cat "${OUT_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -904,10 +918,21 @@ jobs:
             echo "::warning::red legs (${REDS}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only)."
             exit 0
           fi
+          # The dedup CANDIDATES come from the LABELS this filer applies, not from a full-text search
+          # of the title (#1755). `--search` is a fuzzy recall filter, and punctuation in a title can
+          # make it miss an issue that plainly exists: searching the exact open title of #1754
+          # (`fix(e2e): full-bar DNS fixture …`) returns nothing, because `fix(e2e):` parses as a
+          # qualifier. A false negative here files a DUPLICATE every night. `--label` is served live
+          # rather than from the search index, so it also cannot miss an issue filed minutes ago.
+          # The exact-title match below is still what decides — this only widens what it sees.
+          open_reds="${RUNNER_TEMP}/open-red-issues.json"
+          gh issue list --state open --limit 200 \
+            --label class:backend --label lane:tests --label wave:hygiene \
+            --json title >"$open_reds" 2>/dev/null || echo '[]' >"$open_reds"
+
           for cloud in $REDS; do
             title="$(cat "${OUT_DIR}/issue-red-${cloud}.title")"
-            existing="$(gh issue list --state open --search "${title} in:title" --json title \
-              --jq "[.[] | select(.title == \"${title}\")] | length" 2>/dev/null || echo 0)"
+            existing="$(jq --arg t "$title" '[.[] | select(.title == $t)] | length' "$open_reds" 2>/dev/null || echo 0)"
             if [ "${existing:-0}" -gt 0 ]; then
               echo "::notice::an open issue titled '${title}' already exists — skipping create (deduped)."
               continue
@@ -936,15 +961,16 @@ jobs:
       #    nothing said otherwise (#1613). One discovery, one answer, both consumers. ──
       - name: Append provisioning-e2e ledger rows (RECORD_ONLY)
         env:
-          EVENT: ${{ github.event_name }}
-          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
-          SCHEDULE: ${{ github.event.schedule }}
           OUT_DIR: ${{ runner.temp }}/rollup
         run: |
           set -uo pipefail
-          dim="floor"
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then dim="full"; fi
-          if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then dim="full"; fi
+          # The dimension comes from the rollup's own state.env — the SAME value that titled the
+          # issues one step above, so a ledger row and its tracking issue can never disagree about
+          # which dimension failed. This used to be a third hand-written copy of the cron comparison
+          # (#1755), the same duplicate-discovery mistake #1613 removed from the row derivation.
+          # shellcheck disable=SC1091
+          . "${OUT_DIR}/state.env"
+          dim="${DIMENSION:-floor}"
           sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
           if [ ! -s "${OUT_DIR}/ledger.tsv" ]; then
             echo "::notice::no leg produced a ledger row (nothing ran) — ledger unchanged."
