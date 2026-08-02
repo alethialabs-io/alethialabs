@@ -26,6 +26,8 @@ cd "$(dirname "$0")/.." # the invoking worktree's top-level
 
 # shellcheck source=lib/wt-lease.sh
 . "$(dirname "$0")/lib/wt-lease.sh"
+# shellcheck source=lib/wt-landed.sh
+. "$(dirname "$0")/lib/wt-landed.sh"
 
 usage() {
 	echo "Usage: pnpm wt <name> [--install] | pnpm wt:ls | pnpm wt:who | pnpm wt:rm <name> | pnpm wt:release [name] | pnpm wt:steal <name>" >&2
@@ -110,14 +112,23 @@ if [ "${1:-}" = "--steal" ]; then
 	exit 0
 fi
 
-# `pnpm wt:prune` — remove worktrees whose branch is already merged into dev.
+# `pnpm wt:prune` — remove worktrees whose branch has already landed on dev.
 #
 # Only ever touches trees that are (a) free (no live lease), (b) clean (no uncommitted
-# or untracked files), and (c) on a branch already contained in origin/dev. Anything
+# or untracked files), and (c) on a branch that has LANDED on origin/dev. Anything
 # failing any test is REPORTED AND SKIPPED, never forced: on 2026-07-27 a sweep found a
 # tree with 22 untracked .tf files that a bad scan had cleared for deletion, and the
 # only thing that saved it was `git worktree remove` refusing without --force.
+#
+# (c) used to be a bare `git merge-base --is-ancestor`, which cannot see the squash merge
+# that every dev PR lands as — so this whole command was a no-op and 30 dead trees piled
+# up before anyone measured it. wt_branch_landed() answers it properly, and fails safe.
+# See scripts/lib/wt-landed.sh for the rule and why clause (b) of it is load-bearing.
+#
+# --dry-run reports what it WOULD do and removes nothing.
 if [ "${1:-}" = "--prune" ]; then
+	dry=0
+	[ "${2:-}" = "--dry-run" ] && dry=1
 	git fetch -q origin dev 2>/dev/null || true
 	base="origin/dev"
 	git rev-parse --verify -q "$base" >/dev/null 2>&1 || base="dev"
@@ -133,9 +144,22 @@ if [ "${1:-}" = "--prune" ]; then
 			kept=$((kept + 1))
 			continue
 		fi
-		if ! git merge-base --is-ancestor "$br" "$base" 2>/dev/null; then
-			echo "  skip  $wt  ($br) — not merged into ${base}"
+		if ! wt_branch_landed "$wt" "$br" "$base"; then
+			echo "  skip  $wt  ($br) — ${WT_LANDED_WHY}"
 			kept=$((kept + 1))
+			continue
+		fi
+		if [ "$dry" = 1 ]; then
+			# Read the lease instead of acquiring it: a dry run must not take ownership of
+			# trees it is not going to remove.
+			ld="$(wt_lease_dir "$wt" 2>/dev/null || true)"
+			if [ -n "$ld" ] && wt_lease_read "$ld" 2>/dev/null && wt_lease_live && ! wt_lease_is_mine; then
+				echo "  skip  $wt  ($br) — held by another live instance"
+				kept=$((kept + 1))
+			else
+				echo "  WOULD rm  $wt  ($br) — ${WT_LANDED_WHY}"
+				removed=$((removed + 1))
+			fi
 			continue
 		fi
 		if ! wt_lease_acquire "$wt" >/dev/null 2>&1; then
@@ -154,9 +178,13 @@ if [ "${1:-}" = "--prune" ]; then
 	done <<EOF
 $(git worktree list --porcelain | awk '/^worktree /{print $2}')
 EOF
-	git worktree prune
 	echo ""
-	echo "✓ removed $removed, kept $kept. Nothing was forced."
+	if [ "$dry" = 1 ]; then
+		echo "✓ dry run: would remove $removed, keep $kept. Nothing was touched."
+	else
+		git worktree prune
+		echo "✓ removed $removed, kept $kept. Nothing was forced."
+	fi
 	exit 0
 fi
 
