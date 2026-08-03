@@ -47,6 +47,23 @@ variable "location_id" {
   default     = null
 }
 
+variable "point_in_time_recovery" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Whether to enable point-in-time recovery on the database.
+
+    A property of the DATABASE, not of a table: GCP allows one Firestore database per project and
+    the canvas's NoSQL "tables" are collections inside it, so the caller aggregates the per-table
+    switch with ANY before handing it here.
+
+    true keeps 1-minute snapshots for 7 days; false reaches back one hour, which is also
+    Firestore's own default. `point_in_time_recovery_enablement` is NOT a force-new argument, so
+    changing this updates the existing database in place rather than replacing it — which matters
+    because this module sets deletion_policy = "DELETE" outside production.
+  EOT
+}
+
 ################################################################################
 # Indexes
 ################################################################################
