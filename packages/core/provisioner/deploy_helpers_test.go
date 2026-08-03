@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -524,4 +525,90 @@ func TestInstallArgoCDAttachesWAFWebACLOnlyWhenPresent(t *testing.T) {
 			t.Fatalf("annotated an ingress that was never configured:\n%s", install)
 		}
 	})
+}
+
+// TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits is the anti-drift assertion between
+// the two halves of the same claim: installArgoCD DECIDES what to emit, and
+// argocd.InfraServiceDecisions REPORTS what was emitted, from separate packages that had no
+// test forcing them to agree.
+//
+// They disagreed. installArgoCD renders the ingress inside `if vc.DNS.Enabled &&
+// vc.DNS.DomainName != ""` and only then when the ACM certificate output is present;
+// argocdURLGates["aws"] checked the certificate ALONE. A project with DNS off, a domain, a zone
+// id and the certificate switch on therefore got a real certificate ARN, NO ingress, and a
+// console reporting "installed — ArgoCD is exposed over the ALB ingress" plus a WAF "attached"
+// via an annotation that was never emitted. Reachable in practice: acm_certificate_enable comes
+// from DNS.ManagedCertificate, which is independent of DNS.Enabled and settable straight through
+// provider_config.
+//
+// Asserting equivalence over the whole matrix rather than spot-checking the one broken cell is
+// the point — it is what makes the next ingress lane unable to reintroduce the same gap.
+func TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits(t *testing.T) {
+	const wafArn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/app-waf/0c4e-1"
+	const certArn = "arn:aws:acm:us-east-1:123456789012:certificate/123"
+
+	decisionStatus := func(t *testing.T, f *argocd.InfraFacts, service string) string {
+		t.Helper()
+		for _, d := range argocd.InfraServiceDecisions(f) {
+			if d.Service == service {
+				return d.Status
+			}
+		}
+		t.Fatalf("no %q decision was produced", service)
+		return ""
+	}
+
+	for _, dnsEnabled := range []bool{true, false} {
+		for _, domain := range []string{"example.com", ""} {
+			for _, cert := range []string{certArn, ""} {
+				for _, acl := range []string{wafArn, ""} {
+					name := fmt.Sprintf("dns=%t domain=%q cert=%t acl=%t", dnsEnabled, domain, cert != "", acl != "")
+					t.Run(name, func(t *testing.T) {
+						resetDeploySeams(t)
+						executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+						var commands []string
+						executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+							commands = append(commands, command)
+							return nil
+						}
+						vc := &types.ProjectConfig{DNS: types.ProjectDNSConfig{Enabled: dnsEnabled, DomainName: domain}}
+						outputs := map[string]interface{}{}
+						if cert != "" {
+							outputs["acm_certificate_arn"] = cert
+						}
+						if acl != "" {
+							outputs["waf_webacl_arn"] = acl
+						}
+						if err := installArgoCD(context.Background(), vc, outputs, &PlanResult{}, io.Discard, io.Discard); err != nil {
+							t.Fatalf("installArgoCD: %v", err)
+						}
+						if len(commands) == 0 {
+							t.Fatal("no commands executed")
+						}
+						install := commands[len(commands)-1]
+
+						// The facts the runner would build from the same deploy.
+						f := &argocd.InfraFacts{
+							Provider: "aws", DNSEnabled: dnsEnabled, DomainName: domain,
+							ACMCertificateArn: cert, WAFWebACLArn: acl,
+						}
+
+						emittedIngress := strings.Contains(install, "server.ingress.enabled=true")
+						reportedURL := decisionStatus(t, f, "argocd-url") == "installed"
+						if emittedIngress != reportedURL {
+							t.Errorf("argocd-url decision (%t) disagrees with the emitted ingress (%t)\n%s",
+								reportedURL, emittedIngress, install)
+						}
+
+						emittedWAF := strings.Contains(install, "wafv2-acl-arn")
+						reportedWAF := decisionStatus(t, f, "waf") == "installed"
+						if emittedWAF != reportedWAF {
+							t.Errorf("waf decision (%t) disagrees with the emitted annotation (%t)\n%s",
+								reportedWAF, emittedWAF, install)
+						}
+					})
+				}
+			}
+		}
+	}
 }

@@ -228,9 +228,13 @@ type providerDecision struct {
 	installed func(f *InfraFacts) bool
 	// installedReason is recorded when the service shipped. Required for every entry.
 	installedReason string
-	// skippedReason is recorded when installed returns false. Empty ⇒ the table's shared
-	// default skip reason, which is also what a cloud ABSENT from the table gets.
-	skippedReason string
+	// skippedReason is recorded when installed returns false. A FUNCTION, not a constant,
+	// because `installed` is usually a conjunction and the operator needs to know WHICH half
+	// was missing: "you left DNS off" and "you left the certificate off" are different
+	// problems with different fixes, and a single sentence covering both tells them neither.
+	// Same shape as wafNoACLReason below. nil — or a "" return — ⇒ the table's shared default
+	// skip reason, which is also what a cloud ABSENT from the table gets.
+	skippedReason func(f *InfraFacts) string
 }
 
 // perProviderDecision resolves a per-cloud table into an InfraServiceDecision. A cloud absent
@@ -243,8 +247,10 @@ func perProviderDecision(service string, f *InfraFacts, table map[string]provide
 		return d
 	}
 	if entry.installed != nil && !entry.installed(f) {
-		if entry.skippedReason != "" {
-			d.Reason = entry.skippedReason
+		if entry.skippedReason != nil {
+			if reason := entry.skippedReason(f); reason != "" {
+				d.Reason = reason
+			}
 		}
 		return d
 	}
@@ -303,21 +309,44 @@ func storageClassDecision(f *InfraFacts) InfraServiceDecision {
 }
 
 // argocdURLGates is the per-cloud "what makes a managed ArgoCD URL reachable here" table.
-// The predicate is the cloud's own: AWS's ALB ingress renders only when the ACM certificate
-// output is present (installArgoCD gates the whole `server.ingress.*` block on it), so a
-// certificate-less AWS deploy has no URL. A cloud ABSENT from the table has no managed
-// ingress at all and records argocdURLNoIngressReason.
+// A cloud ABSENT from the table has no managed ingress at all and records
+// argocdURLNoIngressReason.
+//
+// Each predicate must mirror installArgoCD's emitter for that cloud EXACTLY — every condition,
+// not just the interesting one. AWS's ingress renders inside `if vc.DNS.Enabled &&
+// vc.DNS.DomainName != ""`, and only then when the ACM certificate output is present; a gate
+// that checked the certificate alone reported "installed — ArgoCD is exposed over the ALB
+// ingress" for a deploy that emitted no ingress at all. That is reachable rather than
+// theoretical: `acm_certificate_enable` comes from DNS.ManagedCertificate, a field independent
+// of DNS.Enabled, and provider_config passthrough can set it directly — so DNS off + a domain
+// + a zone id yields a real certificate ARN and no ingress. wafDecision reads this decision
+// rather than re-deriving the ingress gate, so the same mismatch made the WAF claim "attached"
+// about an annotation that was never emitted.
 //
 // This is the SECOND site a per-cloud ingress lane must touch, and the reason it is a table:
 // the lane's cloud contributes its own predicate (an issued cert-manager Certificate, an
 // Application Gateway id, an SLB address) without rewriting anyone else's.
 var argocdURLGates = map[string]providerDecision{
 	"aws": {
-		installed:       func(f *InfraFacts) bool { return f.ACMCertificateArn != "" },
+		installed: func(f *InfraFacts) bool {
+			return f.DNSEnabled && f.DomainName != "" && f.ACMCertificateArn != ""
+		},
 		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
-		// No skippedReason: an AWS deploy without the certificate has no managed ingress
-		// either, which is exactly what the shared default says — unchanged from before.
+		skippedReason:   awsArgocdURLSkipReason,
 	},
+}
+
+// awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
+// deliberately returns "" so a certificate-less deploy keeps recording the shared default,
+// byte-identical to before this gate learned about DNS.
+func awsArgocdURLSkipReason(f *InfraFacts) string {
+	switch {
+	case !f.DNSEnabled:
+		return "DNS is disabled for this project — the ALB ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
+	case f.DomainName == "":
+		return "no domain is configured — the ALB ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	}
+	return ""
 }
 
 // argocdURLNoIngressReason is what a cloud with no managed ArgoCD ingress records. Kept

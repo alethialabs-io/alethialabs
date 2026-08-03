@@ -385,6 +385,39 @@ func TestInfraServiceDecisions_WAFBuiltButNoIngress(t *testing.T) {
 	}
 }
 
+// The AWS ingress gate is a conjunction, so its skip reason must name WHICH half was missing:
+// "turn DNS on" and "turn the certificate on" are different fixes, and an operator told the
+// wrong one goes looking in the wrong place. The certificate arm deliberately keeps the shared
+// default, so that message is pinned here too — it is the pre-existing behaviour.
+func TestArgocdURLSkipReasonNamesTheMissingHalf(t *testing.T) {
+	full := func() *InfraFacts {
+		return &InfraFacts{Provider: "aws", DNSEnabled: true, DomainName: "example.com",
+			ACMCertificateArn: "arn:aws:acm:us-east-1:123:certificate/abc"}
+	}
+	cases := []struct {
+		name   string
+		mutate func(*InfraFacts)
+		want   string
+	}{
+		{"dns off", func(f *InfraFacts) { f.DNSEnabled = false }, "dns is disabled"},
+		{"no domain", func(f *InfraFacts) { f.DomainName = "" }, "no domain is configured"},
+		{"no certificate", func(f *InfraFacts) { f.ACMCertificateArn = "" }, "no managed ingress on this cloud yet"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := full()
+			c.mutate(f)
+			d := decisionFor(t, InfraServiceDecisions(f), "argocd-url")
+			if d.Status != infraStatusSkipped {
+				t.Fatalf("want skipped, got %s (%s)", d.Status, d.Reason)
+			}
+			if !strings.Contains(strings.ToLower(d.Reason), c.want) {
+				t.Errorf("skip reason should contain %q, got %q", c.want, d.Reason)
+			}
+		})
+	}
+}
+
 // The WAF decision must never outrun the ingress that carries it: "installed" implies the
 // argocd-url decision is installed too, on every cloud and every fact shape. They are derived
 // from one another precisely so they cannot drift, and this is the assertion that says so.
@@ -481,11 +514,20 @@ func TestPerProviderDecision_TableSemantics(t *testing.T) {
 		"conditional": {
 			installed:       func(f *InfraFacts) bool { return f.ClusterName != "" },
 			installedReason: "in",
-			skippedReason:   "specific skip",
+			skippedReason:   func(*InfraFacts) string { return "specific skip" },
 		},
 		"conditional without its own skip reason": {
 			installed:       func(f *InfraFacts) bool { return f.ClusterName != "" },
 			installedReason: "in",
+		},
+		// A skippedReason that declines to speak for THIS shape of miss. The "" return is how
+		// a per-cloud reason function covers only the arms it has something specific to say
+		// about and leaves the rest to the shared default — awsArgocdURLSkipReason does exactly
+		// this for the missing-certificate case, to stay byte-identical to the pre-gate reason.
+		"conditional whose skip reason returns empty": {
+			installed:       func(f *InfraFacts) bool { return f.ClusterName != "" },
+			installedReason: "in",
+			skippedReason:   func(*InfraFacts) string { return "" },
 		},
 	}
 	cases := []struct {
@@ -495,6 +537,7 @@ func TestPerProviderDecision_TableSemantics(t *testing.T) {
 		{"conditional", "c", infraStatusInstalled, "in"},
 		{"conditional", "", infraStatusSkipped, "specific skip"},
 		{"conditional without its own skip reason", "", infraStatusSkipped, def},
+		{"conditional whose skip reason returns empty", "", infraStatusSkipped, def},
 		{"absent from the table", "c", infraStatusSkipped, def},
 	}
 	for _, c := range cases {
