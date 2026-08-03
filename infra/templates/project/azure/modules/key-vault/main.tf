@@ -4,7 +4,10 @@ data "azurerm_client_config" "current" {}
 # (Hetzner) runner needs data-plane write access at provision time, so access restriction is
 # left customer-configurable per environment rather than default-on.
 resource "azurerm_key_vault" "this" {
-  name                       = "${var.project_name}-${var.environment}-kv"
+  # Derived at the template root (checks_naming.tf, local.azure_key_vault_name), not here: Key Vault
+  # caps names at 24 characters and the readable composition has no budget, so the caller resolves
+  # the overflow. See #1873.
+  name                       = var.vault_name
   location                   = var.location
   resource_group_name        = var.resource_group_name
   tenant_id                  = var.tenant_id

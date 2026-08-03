@@ -409,6 +409,23 @@ variable "firestore_delete_protection_state" {
   description = "Delete protection state for Firestore (DELETE_PROTECTION_ENABLED or DELETE_PROTECTION_DISABLED)"
 }
 
+variable "firestore_point_in_time_recovery" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Whether to enable point-in-time recovery on the Firestore database.
+
+    Aggregated with ANY across the project's NoSQL tables, because PITR is a property of the
+    DATABASE and GCP allows exactly one Firestore database per project — what the canvas calls a
+    "table" is a collection inside that single database. One table asking for point-in-time
+    recovery therefore turns it on for all of them.
+
+    When true the database keeps 1-minute snapshots for 7 days; when false, reads reach back one
+    hour only. False is also Firestore's own default, so leaving this off leaves an existing
+    database exactly as it is. The argument is not force-new: toggling it is an in-place PATCH.
+  EOT
+}
+
 #########################################################################
 ##                   Cloud DNS Variables                               ##
 #########################################################################
@@ -485,12 +502,18 @@ variable "create_cloud_storage" {
 
 variable "cloud_storage_buckets" {
   type = list(object({
-    name_suffix    = string
-    location       = optional(string)
-    storage_class  = optional(string, "STANDARD")
-    versioning     = optional(bool, false)
-    force_destroy  = optional(bool, false)
-    uniform_access = optional(bool, true)
+    name_suffix   = string
+    location      = optional(string)
+    storage_class = optional(string, "STANDARD")
+    versioning    = optional(bool, false)
+    force_destroy = optional(bool, false)
+    # Uniform bucket-level access is NOT a knob, and this attribute is no longer `uniform_access`.
+    # UBLA only disables per-object ACLs — it says nothing about public reads — and Cloud Storage
+    # REFUSES to turn it back off more than 90 days after it was enabled, so a user-facing switch
+    # routed through it would eventually become an apply that can never succeed. UBLA is on for
+    # every bucket, permanently; `public_access` drives `public_access_prevention` and the allUsers
+    # IAM binding in modules/cloud-storage, which is what actually decides public readability.
+    public_access = optional(bool, false)
     lifecycle_rules = optional(list(object({
       action_type          = string
       action_storage_class = optional(string)
