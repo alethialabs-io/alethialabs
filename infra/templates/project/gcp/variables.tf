@@ -375,6 +375,10 @@ variable "pubsub_topics" {
     subscriptions = list(object({
       name                 = string
       ack_deadline_seconds = optional(number, 10)
+      # Ordered delivery. Pub/Sub orders per orderingKey and only on the SUBSCRIPTION side, so a
+      # canvas queue carries its switch here rather than on the topic. Changing it FORCES
+      # REPLACEMENT of the subscription, dropping its unacknowledged backlog.
+      enable_message_ordering = optional(bool, false)
     }))
   }))
   default     = {}

@@ -24,6 +24,9 @@ locals {
         topic_key            = topic_key
         subscription_name    = sub.name
         ack_deadline_seconds = sub.ack_deadline_seconds
+        # Ordered delivery travels with the subscription, not the topic. Dropping it here is how a
+        # per-subscription switch silently becomes a template default.
+        enable_message_ordering = sub.enable_message_ordering
       }
     }
   ]...)
@@ -62,6 +65,12 @@ resource "google_pubsub_subscription" "this" {
   ack_deadline_seconds       = each.value.ack_deadline_seconds
   message_retention_duration = "604800s" # 7 days
   retain_acked_messages      = false
+
+  # Ordered delivery. Pub/Sub orders messages that share an orderingKey, which the publisher must
+  # set — and it must publish them from one region. The argument FORCES REPLACEMENT of the
+  # subscription (google_pubsub_subscription.enable_message_ordering is ForceNew, and the Pub/Sub
+  # API refuses the change outright), which is why the type is in day2StatefulTypes.
+  enable_message_ordering = each.value.enable_message_ordering
 
   expiration_policy {
     ttl = "" # never expires
