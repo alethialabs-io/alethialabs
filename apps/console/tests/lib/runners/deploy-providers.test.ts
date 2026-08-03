@@ -3,10 +3,15 @@
 // @vitest-environment node
 
 // The drift guard for RUNNER_DEPLOY_PROVIDERS. The list is what the console gates on; the runner
-// gates on the DIRECTORY NAMES under `infra/templates/runner/`. Two hand-maintained literals for
-// one fact is how a boundary starts denying (or accepting) silently, so this test derives the
-// truth from the filesystem and reds the moment the two disagree — adding a template directory is
-// then the single edit that widens the list.
+// gates on the DIRECTORY NAMES under `infra/templates/runner/`. A hand-maintained literal for a
+// fact the filesystem already decides is how a boundary starts denying (or accepting) silently,
+// so this test derives the truth from the filesystem and reds the moment the two disagree.
+//
+// `packages/core/runners/deploy_providers_test.go` is this test's twin. The Go binaries need the
+// same fact, cannot import this module, and cannot read the repo at runtime (the CLI ships as a
+// standalone binary on a laptop), so they carry their own one-line list pinned by the SAME
+// readdir. Adding a template directory reds both tests, and each names the list it wants widened
+// — so neither derivation can drift from the directory, or from the other, without CI saying so.
 
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";

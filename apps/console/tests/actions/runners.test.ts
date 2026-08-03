@@ -430,6 +430,56 @@ describe("destroyRunner", () => {
 		);
 		await expect(destroyRunner("r-del")).rejects.toThrow(/no cloud identity/);
 	});
+
+	// Day-2 on a runner deployed BEFORE the enqueue gate existed. Its identity row is gone, so
+	// the provider can only come from what was recorded at deploy time — and it must be that,
+	// not a hard-coded "aws" that would point `tofu destroy` at an entirely different cloud.
+	// Note this path deliberately does NOT gate on RUNNER_DEPLOY_PROVIDERS: refusing here would
+	// wedge a legacy runner's row with no way to tear it down.
+	it("destroys a pre-gate GCP runner against gcp, not a hard-coded aws", async () => {
+		mock.queue.push(
+			[
+				{
+					...runnerRow,
+					metadata: {
+						deploy_config: {
+							region: "europe-west1",
+							cloud_provider: "gcp",
+							image_tag: "v1",
+						},
+					},
+				},
+			],
+			[], // identity row deleted since the deploy
+			[], // no active lifecycle job
+			[{ id: "job-del" }],
+		);
+		await destroyRunner("r-del");
+		expect(mock.valuesSpy.mock.calls[0][0].config_snapshot).toMatchObject({
+			cloud_provider: "gcp",
+			region: "europe-west1",
+		});
+	});
+
+	// Neither source knows the cloud. Guessing "aws" is how a destroy runs against an account
+	// that never held this runner; a hard error puts the question in front of a human instead.
+	it("refuses to guess a cloud when nothing recorded one", async () => {
+		mock.queue.push(
+			[
+				{
+					...runnerRow,
+					metadata: { deploy_config: { region: "us-east-1", image_tag: "v1" } },
+				},
+			],
+			[], // no identity row
+			[], // no active lifecycle job
+		);
+		await expect(destroyRunner("r-del")).rejects.toThrow(
+			/no recorded cloud provider/i,
+		);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
 });
 
 describe("updateRunner", () => {

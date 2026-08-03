@@ -17,6 +17,7 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
 import { POST } from "@/app/api/cli/runners/deploy/route";
 import { authorizeCli } from "@/lib/authz/guard";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
 import { notifyScaler } from "@/lib/scaler";
 
@@ -102,5 +103,46 @@ describe("POST /api/cli/runners/deploy", () => {
 		const res = await POST(req(DEPLOY));
 		expect(res.status).toBe(404);
 		expect(mock.valuesSpy).not.toHaveBeenCalled();
+	});
+
+	// The quota assert used to run BETWEEN the runners insert and the jobs insert, so an
+	// over-quota `alethia runner deploy` left a `provisioning=deployed` runners row holding a
+	// live token_hash with no job to build it — an orphan the user can see and cannot use.
+	// deployRunner() has always asserted before its inserts; this proves the route now matches.
+	it("rejects an over-quota deploy without inserting a runner row", async () => {
+		mock.queue.push(
+			[{ id: "ci-1", provider: "aws", org_id: "org-1" }], // identity lookup
+			[{ version: "1.4.0" }], // latest release (must not be reached)
+			[{ id: "r-dep", name: "Cloud" }], // runner insert (must not be reached)
+		);
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(
+			new Error("Monthly job quota exceeded"),
+		);
+
+		const res = await POST(req(DEPLOY));
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toMatch(/quota/i);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	// Ordering, stated directly: the quota gate is consulted before the first write, not after.
+	it("asserts the quota before any insert on the happy path", async () => {
+		const order: string[] = [];
+		vi.mocked(assertJobQuotaAllowed).mockImplementationOnce(async () => {
+			order.push("quota");
+		});
+		mock.valuesSpy.mockImplementation(() => {
+			order.push("insert");
+		});
+		mock.queue.push(
+			[{ id: "ci-1", provider: "aws", org_id: "org-1" }],
+			[{ version: "1.4.0" }],
+			[{ id: "r-dep", name: "Cloud" }],
+			[{ id: "job-1", status: "QUEUED", created_at: new Date() }],
+		);
+
+		expect((await POST(req(DEPLOY))).status).toBe(201);
+		expect(order).toEqual(["quota", "insert", "insert"]);
 	});
 });

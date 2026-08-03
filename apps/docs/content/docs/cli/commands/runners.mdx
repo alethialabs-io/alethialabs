@@ -9,7 +9,7 @@ Runners execute infrastructure jobs. Manage them with `alethia runner`.
 
 ## `alethia runner deploy`
 
-Deploy a new runner to a cloud account. Creates a runner record and queues a
+Deploy a new runner to an AWS account. Creates a runner record and queues a
 `DEPLOY_RUNNER` job using the latest stable release.
 
 ```bash
@@ -18,11 +18,22 @@ alethia runner deploy --cloud-identity-id <id> --name <name> --region <region>
 
 | Flag | Description |
 |------|-------------|
-| `--cloud-identity-id` | Cloud identity to deploy into |
+| `--cloud-identity-id` | Cloud identity to deploy into (AWS only) |
 | `--name` | Runner name |
 | `--region` | Cloud region |
 | `--assigned-runner-id` | Which runner executes the deployment |
 | `--wait`, `-w` | Wait for job completion |
+
+<Callout type="warn">
+  **Deployed runners are available on AWS only.** `infra/templates/runner/` holds one template,
+  `aws`, so there is no runner template for GCP, Azure, Alibaba Cloud or Hetzner. Omit
+  `--cloud-identity-id` and the picker lists your verified AWS accounts alone. Pass an identity
+  for another cloud and the server refuses the deploy before it creates a runner or a job.
+
+  This limits **where the runner itself runs**, not what it provisions: a registered runner
+  provisions every cloud Alethia supports, wherever it runs. To run a runner on another cloud,
+  register one there — see [self-operated runners](/runner/self-hosted).
+</Callout>
 
 ## `alethia runner list`
 
