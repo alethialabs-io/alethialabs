@@ -25,7 +25,33 @@ locals {
 
   name_string = "${local.aws_regions_short[var.aws_region]}-${var.environment}-${var.project_name}"
 
-  ecr_input = var.ecr_create_repository && length(var.ecr_names_map) > 0 ? var.ecr_names_map : {}
+  # What a repository gets when `ecr_repo_settings` does not name it: the project-wide defaults,
+  # which are the template's own and which every repository built before #1811 already has.
+  ecr_repo_defaults = {
+    immutable_tags         = var.ecr_repository_image_tag_mutability == "IMMUTABLE"
+    vulnerability_scanning = var.ecr_repository_image_scan_on_push
+  }
+
+  # One entry per repository: the base name, plus the two switches resolved against those defaults.
+  #
+  # `merge` and not a per-attribute `try(var.ecr_repo_settings[k].immutable_tags, …)`, deliberately.
+  # The offer-parity carrier probe counts a read of `.immutable_tags` anywhere in a `locals`, `module`
+  # or `resource` block on this chain, so resolving attribute-by-attribute HERE would satisfy the
+  # probe from this file — and ecr.tf could then hardcode the argument and still measure as carried.
+  # Written this way, the one and only `.immutable_tags` read on the chain is the one in ecr.tf that
+  # actually reaches the repository, so hardcoding it is caught. (Checked: `output` blocks are not
+  # scanned, which is why outputs.tf may spell the attribute freely.)
+  #
+  # An entry present in the map always carries BOTH attributes — the object type's `optional(bool,
+  # true)` fills whichever the caller omitted — so naming a repository at all opts it out of the
+  # project-wide defaults for both switches.
+  ecr_input = var.ecr_create_repository && length(var.ecr_names_map) > 0 ? {
+    for k, base in var.ecr_names_map : k => merge(
+      local.ecr_repo_defaults,
+      { repo_base = base },
+      try(var.ecr_repo_settings[k], {}),
+    )
+  } : {}
 
   # Default ECR lifecycle policy. Two rules, in the order AWS evaluates them:
   #   1. untagged images expire 14 days after push — build churn and orphaned layers,

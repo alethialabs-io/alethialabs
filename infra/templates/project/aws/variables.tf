@@ -458,10 +458,41 @@ variable "ecr_names_map" {
   description = "Map of repositories to create. Example: { r1 = \"myfirstrepo\", r2 = \"mysecondrepo\" }"
 }
 
+# Per-repository answers to the canvas's two registry switches, keyed by the SAME logical name as
+# `ecr_names_map` — the key the user typed, and the key `repository_urls_map` is keyed by.
+#
+# It is a map rather than the two scalars below because the canvas offers both switches PER registry
+# component and `aws_ecr_repository` accepts both PER repository: `image_tag_mutability` and
+# `image_scan_on_push` are repository properties, not registry-wide ones, and ecr.tf already
+# for_eaches. An earlier cut of #1811 OR-aggregated the components into the two scalars on the
+# grounds that "ECR expresses these registry-wide", which is not true of ECR — it was true only of
+# this template's own variable shape. The cost was silent: two registries with different answers
+# both got the safer one, so a user asking for MUTABLE was overruled without being told.
+#
+# An entry is OPTIONAL. A key absent from this map falls back to the two scalars below, which keep
+# the template's own defaults — so a project that emits nothing here plans exactly what it planned
+# before, and a live registry is never rewritten by a snapshot that simply predates the switch.
+variable "ecr_repo_settings" {
+  type = map(object({
+    immutable_tags         = optional(bool, true)
+    vulnerability_scanning = optional(bool, true)
+  }))
+  default     = {}
+  description = "Per-repository registry switches, keyed like ecr_names_map. Omitted repositories use ecr_repository_image_tag_mutability / ecr_repository_image_scan_on_push."
+}
+
+# The project-wide DEFAULT for tag mutability — the answer for any repository `ecr_repo_settings`
+# does not name. It stays IMMUTABLE: it is what every repository built so far already has, and it is
+# the safer position, so a snapshot that omits the key must not quietly downgrade a live registry.
 variable "ecr_repository_image_tag_mutability" {
   description = "The tag mutability setting for the repository. Must be one of: `MUTABLE` or `IMMUTABLE`. Defaults to `IMMUTABLE`"
   type        = string
   default     = "IMMUTABLE"
+
+  validation {
+    condition     = contains(["MUTABLE", "IMMUTABLE"], var.ecr_repository_image_tag_mutability)
+    error_message = "ecr_repository_image_tag_mutability must be MUTABLE or IMMUTABLE."
+  }
 }
 
 variable "ecr_repository_encryption_type" {
@@ -470,6 +501,11 @@ variable "ecr_repository_encryption_type" {
   default     = "AES256"
 }
 
+# The project-wide DEFAULT for scan-on-push, read the same way. This is ECR BASIC scanning, a
+# per-repository setting. It is deliberately NOT wired to
+# `aws_ecr_registry_scanning_configuration` (enhanced/Inspector scanning), which is account- AND
+# region-wide and, per its own provider docs, "can't be completely deleted" — a per-project switch
+# must not reach that far.
 variable "ecr_repository_image_scan_on_push" {
   description = "Indicates whether images are scanned after being pushed to the repository (`true`) or not scanned (`false`)"
   type        = bool

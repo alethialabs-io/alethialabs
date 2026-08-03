@@ -540,14 +540,23 @@ variable "provision_artifact_registry" {
   description = "Whether to provision Artifact Registry repositories"
 }
 
+# `format` used to be declared here with a default of "DOCKER" and was DROPPED at the module
+# boundary: modules/artifact-registry's own `repos` object type never named it, so tofu's type
+# conversion discarded it and main.tf hardcoded format = "DOCKER" regardless. A knob that reads as
+# configurable and silently is not is worse than no knob, and the canvas offers no non-Docker
+# registry, so it is gone rather than threaded. Whoever adds a second format has to add it to BOTH
+# object types and make `docker_config` dynamic — that block is only valid for DOCKER.
+#
+# `immutable_tags` now defaults TRUE, matching the console column and the other clouds' templates:
+# it is the setting a repository built without an opinion should have, and the OFF position has to
+# be asked for explicitly rather than arrived at by omission.
 variable "artifact_registry_repos" {
   type = map(object({
-    format         = optional(string, "DOCKER")
     description    = optional(string, "")
-    immutable_tags = optional(bool, false)
+    immutable_tags = optional(bool, true)
   }))
   default     = {}
-  description = "Map of Artifact Registry repositories to create"
+  description = "Map of Artifact Registry repositories to create, keyed by the registry component's name"
 }
 
 #########################################################################
